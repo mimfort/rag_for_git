@@ -1,5 +1,6 @@
 from __future__ import annotations
 import json
+import logging
 import re
 from pydantic import BaseModel, Field
 from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage
@@ -9,6 +10,8 @@ from reviewer.agent.prompts import ANALYZE_SYSTEM, VERIFY_SYSTEM, SYNTHESIZE_SYS
 from reviewer.tools.code_tools import make_tools, ToolContext
 from reviewer.vcs.base import Finding
 from reviewer.llm.budget import BudgetTracker, BudgetExceeded
+
+_log = logging.getLogger(__name__)
 
 _VALID_SEVERITY = {"low", "medium", "high", "critical"}
 _SEVERITY_ORDER = {"low": 0, "medium": 1, "high": 2, "critical": 3}
@@ -329,4 +332,9 @@ class LLMSynthesizer:
             return findings   # fail-open
         if not parsed.findings:
             return findings   # пусто -> не теряем вход
-        return _to_findings(parsed.findings, default_file=findings[0].file)
+        default_file = findings[0].file
+        missing = sum(1 for m in parsed.findings if not m.file)
+        if missing:
+            _log.warning("synthesize: %d находок без поля file — отнесены к %s",
+                         missing, default_file)
+        return _to_findings(parsed.findings, default_file=default_file)

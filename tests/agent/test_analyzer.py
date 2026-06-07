@@ -193,3 +193,11 @@ def test_synthesize_fail_open_keeps_input_on_empty_or_unparseable():
     inp = [_finding(severity="high", msg="keep me")]
     out = s.synthesize(inp, _deps())
     assert out == inp
+
+
+def test_synthesize_fail_open_on_empty_findings_list():
+    prov = FakeProvider([AIMessage(content="done")], '{"findings": []}')
+    s = LLMSynthesizer(prov, max_iterations=2)
+    inp = [_finding(severity="high", msg="keep me")]
+    out = s.synthesize(inp, _deps())
+    assert out == inp   # пустой список -> не теряем вход
