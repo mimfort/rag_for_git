@@ -51,13 +51,13 @@ class GraphStore:
 
     def find_symbol(self, name: str) -> list[str]:
         """Резолв имени символа в node_id ('path#fqn'). Точное имя (#name / .name)
-        приоритетнее подстроки. Возврат — до 25 id, точные сперва."""
+        приоритетнее подстроки — порядок задаётся в Cypher ДО LIMIT, чтобы точные
+        совпадения не вытеснялись на частых коротких именах. Возврат — до 25 id."""
         records, _, _ = self._driver.execute_query(
             "MATCH (s:Symbol) WHERE s.id CONTAINS $needle "
-            "RETURN s.id AS id LIMIT 50",
-            needle=name)
-        ids = [r["id"] for r in records]
-        suffix = "#" + name
-        exact = [i for i in ids if i.endswith(suffix) or i.endswith("." + name)]
-        rest = [i for i in ids if i not in exact]
-        return (exact + rest)[:25]
+            "RETURN s.id AS id "
+            "ORDER BY (CASE WHEN s.id ENDS WITH $suffix OR s.id ENDS WITH $dotname "
+            "THEN 0 ELSE 1 END), s.id "
+            "LIMIT 25",
+            needle=name, suffix="#" + name, dotname="." + name)
+        return [r["id"] for r in records]

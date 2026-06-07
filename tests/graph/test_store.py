@@ -41,3 +41,15 @@ def test_find_symbol_prefers_exact_suffix():
     assert ids.index("c.py#runner") > ids.index("a.py#run")
     assert ids.index("c.py#runner") > ids.index("b.py#A.run")
     g.close()
+
+
+@pytest.mark.integration
+def test_find_symbol_exact_not_evicted_by_many_substring_hits():
+    s = Settings()
+    g = GraphStore(s.neo4j_uri, s.neo4j_user, s.neo4j_password)
+    g.init_schema(); g.clear()
+    # много узлов с подстрокой "run" + один точный
+    g.upsert_nodes([f"pkg/mod{i}.py#runner{i}" for i in range(40)] + ["a.py#run"])
+    ids = g.find_symbol("run")
+    assert ids[0] == "a.py#run"   # точное не вытеснено и идёт первым
+    g.close()
