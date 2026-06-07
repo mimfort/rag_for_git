@@ -38,4 +38,6 @@ def test_find_symbol_prefers_exact_suffix():
     # точное имя (#run, A.run) раньше, чем подстрока (runner)
     assert ids[0] in {"a.py#run", "b.py#A.run"}
     assert "a.py#run" in ids and "b.py#A.run" in ids
+    assert ids.index("c.py#runner") > ids.index("a.py#run")
+    assert ids.index("c.py#runner") > ids.index("b.py#A.run")
     g.close()
