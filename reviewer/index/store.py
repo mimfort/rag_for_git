@@ -109,3 +109,21 @@ class ChunkStore:
         return [Retrieved(node_id=f"{p}#{f}", path=p, symbol_fqn=f, kind=k,
                           start_line=sl, end_line=el, text=t, score=float(sc))
                 for (p, f, k, sl, el, t, sc) in rows]
+
+    def fetch_nodes(self, node_ids, overlay_ref, changed_paths):
+        if not node_ids:
+            return []
+        pairs = [nid.split("#", 1) for nid in node_ids]
+        sql = """
+        SELECT c.path, c.symbol_fqn, c.kind, c.start_line, c.end_line, c.text
+        FROM chunks c JOIN unnest(%(paths)s::text[], %(fqns)s::text[]) AS q(p,f)
+          ON c.path=q.p AND c.symbol_fqn=q.f
+        WHERE (c.ref='base' AND NOT (c.path = ANY(%(changed)s))) OR c.ref=%(overlay)s
+        """
+        params = {"paths": [p for p, _ in pairs], "fqns": [f for _, f in pairs],
+                  "changed": changed_paths, "overlay": overlay_ref}
+        with self._connect() as conn:
+            rows = conn.execute(sql, params).fetchall()
+        return [Retrieved(node_id=f"{p}#{f}", path=p, symbol_fqn=f, kind=k,
+                          start_line=sl, end_line=el, text=t, score=0.0)
+                for (p, f, k, sl, el, t) in rows]
