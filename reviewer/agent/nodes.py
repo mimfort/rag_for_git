@@ -47,8 +47,10 @@ def make_assemble_node(deps: Deps):
                 inline.append(InlineComment(f.file, f.line, f.side, body))
             else:
                 summary_lines.append(f"- `{f.file}:{f.line}` {body}")
+        if inline:
+            summary_lines.insert(1, f"Выставлено inline-замечаний на строки диффа: {len(inline)}.\n")
         if len(summary_lines) == 1:
-            summary_lines.append("Замечаний в пределах диффа не найдено.")
+            summary_lines.append("Замечаний не найдено.")
         return {"inline_comments": inline, "summary": "\n".join(summary_lines)}
     return assemble
 
