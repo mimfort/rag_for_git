@@ -73,3 +73,24 @@ def test_get_changed_file_diff_returns_patch():
     assert "+y" in out
     out2 = tools["get_changed_file_diff"].invoke({"path": "other.py"})
     assert "не входит" in out2
+
+
+def test_read_file_caps_at_400_lines():
+    big = "\n".join(f"x{i}" for i in range(1, 1001))   # 1000 строк
+    tools = {t.name: t for t in make_tools(_rich_ctx(read_file_fn=lambda p: big))}
+    out = tools["read_file"].invoke({"path": "a.py", "start": 1, "end": 1000})
+    assert "1|x1" in out and "400|x400" in out
+    assert "401|x401" not in out and "(…усечено)" in out
+
+
+def test_read_file_subrange_within_file_has_no_truncation_marker():
+    big = "\n".join(f"x{i}" for i in range(1, 101))    # 100 строк
+    tools = {t.name: t for t in make_tools(_rich_ctx(read_file_fn=lambda p: big))}
+    out = tools["read_file"].invoke({"path": "a.py", "start": 1, "end": 10})
+    assert "10|x10" in out and "(…усечено)" not in out
+
+
+def test_read_file_start_beyond_eof():
+    tools = {t.name: t for t in make_tools(_rich_ctx())}   # файл a.py = 3 строки
+    out = tools["read_file"].invoke({"path": "a.py", "start": 50})
+    assert "нет строки 50" in out

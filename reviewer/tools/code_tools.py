@@ -38,19 +38,20 @@ def make_tools(ctx: ToolContext) -> list[StructuredTool]:
         if not lines:
             return "(файл пуст)"
         s = max(1, start)
-        e = min(len(lines), end)
-        if e - s + 1 > 400:
-            e = s + 399
         if s > len(lines):
             return f"(нет строки {s}; в файле {len(lines)} строк)"
+        e = min(len(lines), end)
+        capped = (e - s + 1 > 400)
+        if capped:
+            e = s + 399
         body = "\n".join(f"{i}|{lines[i - 1]}" for i in range(s, e + 1))
-        if e < len(lines):
+        if capped:
             body += "\n(…усечено)"
         return body
 
     def get_definition(symbol: str) -> str:
         """Где определён символ + его исходный код. Резолв имени через граф, код — через индекс.
-        Фолбэк на семантический поиск, если граф/стор пусты."""
+        Фолбэк на семантический поиск, если граф не нашёл совпадений или стор недоступен."""
         ids: list[str] = []
         if ctx.graph is not None and hasattr(ctx.graph, "find_symbol"):
             ids = ctx.graph.find_symbol(symbol)
