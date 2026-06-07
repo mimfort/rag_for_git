@@ -178,16 +178,37 @@ def test_agentic_verify_low_severity_but_uncertain_is_checked():
     assert out == []   # проверка отработала и отбросила находку
 
 
-def test_synthesize_replaces_with_parsed_findings():
-    final = ('{"findings":[{"category":"correctness","severity":"high","line":5,'
-             '"message":"caller mismatch","file":"b.py"}]}')
+def test_synthesize_keeps_originals_and_adds_cross_file():
+    final = '{"keep": [0], "add": [{"category":"correctness","severity":"high","line":5,"message":"caller mismatch","file":"b.py"}]}'
     prov = FakeProvider([AIMessage(content="done")], final)
     s = LLMSynthesizer(prov, max_iterations=2)
     out = s.synthesize([_finding(severity="high", msg="orig")], _deps())
-    assert len(out) == 1 and out[0].file == "b.py" and out[0].message == "caller mismatch"
+    msgs = {f.message for f in out}
+    assert msgs == {"orig", "caller mismatch"}
+    assert any(f.file == "b.py" for f in out)
 
 
-def test_synthesize_fail_open_keeps_input_on_empty_or_unparseable():
+def test_synthesize_preserves_fix_of_kept_finding():
+    kept = Finding(category="correctness", severity="high", file="a.py", line=2,
+                   side="RIGHT", message="bug", suggestion=None, confidence=0.9,
+                   fix_start=2, fix_end=2, replacement="x = 1")
+    prov = FakeProvider([AIMessage(content="done")], '{"keep": [0], "add": []}')
+    s = LLMSynthesizer(prov, max_iterations=2)
+    out = s.synthesize([kept], _deps())
+    assert len(out) == 1
+    assert out[0].replacement == "x = 1" and out[0].fix_start == 2 and out[0].fix_end == 2
+
+
+def test_synthesize_drops_via_keep_omission():
+    prov = FakeProvider([AIMessage(content="done")], '{"keep": [1], "add": []}')
+    s = LLMSynthesizer(prov, max_iterations=2)
+    a = _finding(severity="high", msg="dupe-a")
+    b = _finding(severity="high", msg="keep-b")
+    out = s.synthesize([a, b], _deps())
+    assert [f.message for f in out] == ["keep-b"]
+
+
+def test_synthesize_fail_open_on_unparseable():
     prov = FakeProvider([AIMessage(content="done")], "не json")
     s = LLMSynthesizer(prov, max_iterations=2)
     inp = [_finding(severity="high", msg="keep me")]
@@ -195,9 +216,9 @@ def test_synthesize_fail_open_keeps_input_on_empty_or_unparseable():
     assert out == inp
 
 
-def test_synthesize_fail_open_on_empty_findings_list():
-    prov = FakeProvider([AIMessage(content="done")], '{"findings": []}')
+def test_synthesize_fail_open_on_empty_result():
+    prov = FakeProvider([AIMessage(content="done")], '{"keep": [], "add": []}')
     s = LLMSynthesizer(prov, max_iterations=2)
     inp = [_finding(severity="high", msg="keep me")]
     out = s.synthesize(inp, _deps())
-    assert out == inp   # пустой список -> не теряем вход
+    assert out == inp   # пустой результат -> не теряем вход

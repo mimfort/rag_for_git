@@ -19,11 +19,14 @@ _VERDICT_ONE_SCHEMA = 'Верни СТРОГО один JSON-объект: {"is_
 
 _SYNTH_SCHEMA = (
     'Верни СТРОГО один JSON-объект без пояснений и markdown:\n'
-    '{"findings": [{"file": "<путь>", "category": "correctness|security|performance|style", '
+    '{"keep": [<индексы исходных находок, которые оставить, как в списке выше>], '
+    '"add": [{"file": "<путь>", "category": "correctness|security|performance|style", '
     '"severity": "low|medium|high|critical", "line": <int|null>, "message": "...", '
     '"suggestion": "... или null", "confidence": 0.0}]}\n'
-    'Верни ИТОГОВЫЙ список по всему PR: добавь кросс-файловые проблемы '
-    '(рассогласование сигнатура↔вызовы), убери дубли. Поле file обязательно у каждой находки.'
+    'keep — индексы исходных находок, которые остаются (исключи дубли/неверные, не переписывай их). '
+    'add — ТОЛЬКО новые кросс-файловые проблемы, не входящие в исходный список '
+    '(рассогласование сигнатура↔вызовы и т.п.). Поле file обязательно у каждой add-находки. '
+    'Если новых проблем нет — "add": []. Если все исходные верны — перечисли все их индексы в keep.'
 )
 
 _FINDINGS_SCHEMA = (
@@ -124,6 +127,10 @@ class _FindingModel(BaseModel):
 
 class _Findings(BaseModel):
     findings: list[_FindingModel] = Field(default_factory=list)
+
+class _SynthDecision(BaseModel):
+    keep: list[int] = Field(default_factory=list)
+    add: list[_FindingModel] = Field(default_factory=list)
 
 def _to_findings(models, default_file: str) -> list[Finding]:
     """Преобразовать распарсенные модели в Finding. file берётся из модели либо default."""
@@ -301,14 +308,16 @@ class LLMSynthesizer:
         resp = self.provider.chat_model().invoke(messages + [HumanMessage(_SYNTH_SCHEMA)])
         data = _extract_json(_text_of(resp))
         try:
-            parsed = _Findings(**data)
+            decision = _SynthDecision(**data)
         except Exception:
-            return findings   # fail-open
-        if not parsed.findings:
-            return findings   # пусто -> не теряем вход
-        default_file = findings[0].file
-        missing = sum(1 for m in parsed.findings if not m.file)
-        if missing:
-            _log.warning("synthesize: %d находок без поля file — отнесены к %s",
-                         missing, default_file)
-        return _to_findings(parsed.findings, default_file=default_file)
+            return findings   # fail-open: не разобрали -> исходные как есть
+        n = len(findings)
+        kept = [findings[i] for i in decision.keep if 0 <= i < n]
+        added = _to_findings(decision.add, default_file=findings[0].file)
+        if decision.add:
+            missing = sum(1 for m in decision.add if not m.file)
+            if missing:
+                _log.warning("synthesize: %d add-находок без поля file — отнесены к %s",
+                             missing, findings[0].file)
+        result = kept + added
+        return result or findings   # пусто -> не теряем вход (fail-open)
