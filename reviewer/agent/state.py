@@ -11,6 +11,7 @@ class ReviewUnit:
     path: str
     node_ids: list[str]
     changed_text: str
+    new_source: str = ""        # полная новая версия файла (для точных fix-диапазонов)
 
 @dataclass
 class Deps:
@@ -25,6 +26,7 @@ class Deps:
     overlay_ref: str
     changed_paths: list[str]
     patches: dict[str, str | None]
+    suggestions_mode: str = "apply"   # apply | text
 
 class UnitAnalyzer(Protocol):
     def analyze(self, unit: ReviewUnit, deps: "Deps") -> list[Finding]: ...

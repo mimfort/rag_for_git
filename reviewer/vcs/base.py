@@ -35,6 +35,10 @@ class Finding:
     message: str
     suggestion: str | None
     confidence: float        # 0..1
+    # опц. applyable-правка: точная замена непрерывного диапазона строк НОВОЙ версии (RIGHT)
+    fix_start: int | None = None
+    fix_end: int | None = None
+    replacement: str | None = None
 
     def fingerprint(self) -> str:
         import hashlib

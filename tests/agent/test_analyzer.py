@@ -73,6 +73,14 @@ def test_analyze_normalizes_unknown_severity_plain_json():
     assert out[0].severity == "medium"   # 'info' -> medium
 
 
+def test_analyze_parses_fix_into_finding():
+    final = ('{"findings":[{"category":"correctness","severity":"high","line":2,'
+             '"message":"m","fix":{"start_line":1,"end_line":2,"replacement":"A\\nB"}}]}')
+    prov = FakeProvider([AIMessage(content="done")], final)
+    out = LLMAnalyzer(prov, max_iterations=10).analyze(ReviewUnit("a.py", [], "code"), _deps())
+    assert out[0].fix_start == 1 and out[0].fix_end == 2 and out[0].replacement == "A\nB"
+
+
 def test_analyze_empty_on_unparseable_output():
     prov = FakeProvider([AIMessage(content="done")], "извините, JSON не дам")
     out = LLMAnalyzer(prov, max_iterations=10).analyze(

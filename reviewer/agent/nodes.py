@@ -25,10 +25,27 @@ def make_verify_node(deps: Deps):
         return {"verified": kept}
     return verify
 
+def _range_in_diff(right: set[int], start: int, end: int) -> bool:
+    """Все строки [start..end] должны быть в RIGHT-строках диффа (иначе GitHub 422/промах)."""
+    return start <= end and all(ln in right for ln in range(start, end + 1))
+
+def _overlaps(used: list[tuple[int, int]], start: int, end: int) -> bool:
+    return any(not (end < s or start > e) for (s, e) in used)
+
+def _can_apply(f, right: set[int], used: list[tuple[int, int]], mode: str) -> bool:
+    """applyable suggestion разрешён только если: режим apply, есть точная замена,
+    весь диапазон в диффе (RIGHT) и не пересекается с уже выставленными правками."""
+    return (mode == "apply"
+            and f.replacement is not None
+            and f.fix_start is not None and f.fix_end is not None
+            and _range_in_diff(right, f.fix_start, f.fix_end)
+            and not _overlaps(used, f.fix_start, f.fix_end))
+
 def make_assemble_node(deps: Deps):
     def assemble(state: ReviewState):
         existing = deps.vcs.list_existing_fingerprints(deps.pr_number)
         commentable = {p: commentable_lines(deps.patches.get(p)) for p in deps.changed_paths}
+        used: dict[str, list[tuple[int, int]]] = {}
         inline: list[InlineComment] = []
         summary_lines: list[str] = ["## Авто-ревью\n"]
         ranked = sorted(state["verified"], key=lambda f: (-f.confidence,))
@@ -38,13 +55,25 @@ def make_assemble_node(deps: Deps):
             fp = f.fingerprint()
             if fp in existing:
                 continue
+            allowed = commentable.get(f.file, {"RIGHT": set(), "LEFT": set()})
+            right = allowed.get("RIGHT", set())
             body = f"**[{f.category}/{f.severity}]** {f.message}"
             if f.suggestion:
-                # предложение — обычным текстом, НЕ в ```suggestion: модель часто пишет
-                # совет словами, а GitHub-блок suggestion применяется как точная замена кода
                 body += f"\n\n💡 _Предложение:_ {f.suggestion}"
+            # 1) applyable ```suggestion — только при безопасных инвариантах
+            if _can_apply(f, right, used.get(f.file, []), deps.suggestions_mode):
+                repl = f.replacement.rstrip("\n")
+                body += f"\n\n```suggestion\n{repl}\n```"
+                body += f"\n<!-- ai-review:{fp} -->"
+                used.setdefault(f.file, []).append((f.fix_start, f.fix_end))
+                if f.fix_start < f.fix_end:   # многострочный диапазон
+                    inline.append(InlineComment(f.file, f.fix_end, "RIGHT", body,
+                                                start_line=f.fix_start, start_side="RIGHT"))
+                else:                          # одна строка
+                    inline.append(InlineComment(f.file, f.fix_end, "RIGHT", body))
+                continue
+            # 2) обычный inline (текстовый совет) на строке диффа, иначе — в сводку
             body += f"\n<!-- ai-review:{fp} -->"
-            allowed = commentable.get(f.file, {"RIGHT": set(), "LEFT": set()})
             if f.line is not None and f.line in allowed.get(f.side, set()):
                 inline.append(InlineComment(f.file, f.line, f.side, body))
             else:

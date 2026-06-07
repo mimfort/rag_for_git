@@ -17,7 +17,15 @@ _FINDINGS_SCHEMA = (
     '{"findings": [{"category": "correctness|security|performance|style", '
     '"severity": "low|medium|high|critical", '
     '"line": <номер строки в НОВОЙ версии файла или null>, '
-    '"message": "...", "suggestion": "... или null", "confidence": 0.0}]}\n'
+    '"message": "...", "suggestion": "... или null", '
+    '"fix": {"start_line": <int>, "end_line": <int>, '
+    '"replacement": "<точный новый код для строк start_line..end_line НОВОЙ версии, '
+    'дословно, с правильными отступами, без markdown-обёртки>"}, '
+    '"confidence": 0.0}]}\n'
+    'fix указывай ТОЛЬКО когда можешь дать точную замену непрерывного диапазона строк '
+    'новой версии (start_line ≤ end_line по показанной нумерации), а replacement — '
+    'буквальное новое содержимое ИМЕННО этих строк. Если точную замену дать нельзя — '
+    'ставь "fix": null и опиши словами в suggestion. Номера строк бери из показанной новой версии.\n'
     'Если реальных проблем нет — верни {"findings": []}.'
 )
 _VERDICT_SCHEMA = (
@@ -33,6 +41,15 @@ def _text_of(msg) -> str:
     if isinstance(c, list):
         return "".join(p.get("text", "") if isinstance(p, dict) else str(p) for p in c)
     return str(c)
+
+
+def _numbered(source: str, limit: int = 1200) -> str:
+    """Новая версия файла с номерами строк (1-based) для точных fix-диапазонов.
+    Слишком большие файлы пропускаем (модель тогда даёт только текстовый совет)."""
+    lines = source.splitlines()
+    if not lines or len(lines) > limit:
+        return ""
+    return "\n".join(f"{i}|{ln}" for i, ln in enumerate(lines, 1))
 
 
 def _extract_json(text: str) -> dict:
@@ -52,12 +69,18 @@ def _extract_json(text: str) -> dict:
     except Exception:
         return {}
 
+class _Fix(BaseModel):
+    start_line: int | None = None
+    end_line: int | None = None
+    replacement: str | None = None
+
 class _FindingModel(BaseModel):
     category: str
     severity: str = Field(description="low|medium|high|critical")
     line: int | None = None
     message: str
     suggestion: str | None = None
+    fix: _Fix | None = None
     confidence: float = 0.7
 
 class _Findings(BaseModel):
@@ -84,8 +107,12 @@ class LLMAnalyzer:
         llm = self.provider.chat_model_with_tools(tools)
         tools_by_name = {t.name: t for t in tools}
         budget = BudgetTracker(self.max_iterations)
-        messages = [SystemMessage(ANALYZE_SYSTEM),
-                    HumanMessage(f"Файл: {unit.path}\nИзменения:\n{unit.changed_text}")]
+        numbered = _numbered(unit.new_source)
+        human = f"Файл: {unit.path}\n"
+        if numbered:
+            human += f"Новая версия файла (с номерами строк N|код):\n{numbered}\n\n"
+        human += f"Изменения (дифф):\n{unit.changed_text}"
+        messages = [SystemMessage(ANALYZE_SYSTEM), HumanMessage(human)]
         try:
             while True:
                 budget.tick()
@@ -111,12 +138,20 @@ class LLMAnalyzer:
             parsed = _Findings(**data)
         except Exception:
             parsed = _Findings()
-        return [Finding(category=f.category,
-                        severity=(f.severity if f.severity in _VALID_SEVERITY else "medium"),
-                        file=unit.path,
-                        line=f.line, side="RIGHT", message=f.message,
-                        suggestion=f.suggestion, confidence=f.confidence)
-                for f in parsed.findings]
+        out: list[Finding] = []
+        for f in parsed.findings:
+            fs = f.fix.start_line if f.fix else None
+            fe = f.fix.end_line if f.fix else None
+            rp = f.fix.replacement if f.fix else None
+            if rp is not None and (fs is None or fe is None):
+                rp = None   # замена без диапазона бессмысленна
+            out.append(Finding(
+                category=f.category,
+                severity=(f.severity if f.severity in _VALID_SEVERITY else "medium"),
+                file=unit.path, line=f.line, side="RIGHT", message=f.message,
+                suggestion=f.suggestion, confidence=f.confidence,
+                fix_start=fs, fix_end=fe, replacement=rp))
+        return out
 
 class LLMVerifier:
     def __init__(self, llm_provider):

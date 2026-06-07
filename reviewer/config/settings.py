@@ -23,7 +23,8 @@ class Settings(BaseSettings):
     review_severity_threshold: str = "medium"     # low|medium|high|critical — ниже отбрасываем
     review_min_confidence: float = 0.5            # отбрасывать findings с confidence ниже
     review_max_comments: int = 25                 # кап inline-комментариев на ревью
-    review_categories: str = ""                    # CSV вайтлист категорий; пусто = все включены
+    review_categories: str = ""                    # CSV вайтлист категорий; пусто = все
+    review_suggestions: str = "apply"             # apply = applyable ```suggestion; text = только текстом включены
     # Voyage
     voyage_api_key: str = ""
     embedding_model: str = "voyage-code-3"
