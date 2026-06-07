@@ -16,6 +16,9 @@ class GitHubProvider:
                      "Accept": "application/vnd.github+json"},
             timeout=30)
 
+    def close(self) -> None:
+        self._c.close()
+
     def _base(self) -> str:
         return f"/repos/{self.owner}/{self.repo}"
 

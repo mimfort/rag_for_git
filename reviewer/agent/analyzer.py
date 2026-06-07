@@ -8,10 +8,12 @@ from reviewer.tools.code_tools import make_tools, ToolContext
 from reviewer.vcs.base import Finding
 from reviewer.llm.budget import BudgetTracker, BudgetExceeded
 
+_VALID_SEVERITY = {"low", "medium", "high", "critical"}
+
 class _FindingModel(BaseModel):
     category: str
     severity: str = Field(description="low|medium|high|critical")
-    line: int | None
+    line: int | None = None
     message: str
     suggestion: str | None = None
     confidence: float = 0.7
@@ -50,14 +52,23 @@ class LLMAnalyzer:
                 if not ai.tool_calls:
                     break
                 for call in ai.tool_calls:
-                    result = tools_by_name[call["name"]].invoke(call["args"])
+                    tool = tools_by_name.get(call["name"])
+                    try:
+                        if tool is None:
+                            result = f"(неизвестный инструмент: {call['name']})"
+                        else:
+                            result = tool.invoke(call["args"])
+                    except Exception as e:  # инструмент упал — не рвём диалог
+                        result = f"(ошибка инструмента {call['name']}: {e})"
                     messages.append(ToolMessage(str(result), tool_call_id=call["id"]))
         except BudgetExceeded:
             pass
         structured = self.provider.chat_model().with_structured_output(_Findings)
         parsed: _Findings = structured.invoke(
             messages + [HumanMessage("Выведи итоговые findings структурой.")])
-        return [Finding(category=f.category, severity=f.severity, file=unit.path,
+        return [Finding(category=f.category,
+                        severity=(f.severity if f.severity in _VALID_SEVERITY else "medium"),
+                        file=unit.path,
                         line=f.line, side="RIGHT", message=f.message,
                         suggestion=f.suggestion, confidence=f.confidence)
                 for f in parsed.findings]

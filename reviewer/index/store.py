@@ -1,8 +1,15 @@
 from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
+import re
 import psycopg
 from pgvector.psycopg import register_vector, Vector
+
+_BM25_STRIP = re.compile(r"[^\w\s]")
+
+def _bm25_query(text: str) -> str:
+    cleaned = _BM25_STRIP.sub(" ", text).strip()
+    return cleaned or "____nomatch____"
 
 _SCHEMA = Path(__file__).with_name("schema.sql").read_text()
 
@@ -102,7 +109,7 @@ class ChunkStore:
         GROUP BY c.id, c.path, c.symbol_fqn, c.kind, c.start_line, c.end_line, c.text
         ORDER BY score DESC LIMIT %(k)s
         """
-        params = {"q": query_text, "vec": Vector(query_embedding), "overlay": overlay_ref,
+        params = {"q": _bm25_query(query_text), "vec": Vector(query_embedding), "overlay": overlay_ref,
                   "changed": changed_paths, "cand": candidates, "k": top_k}
         with self._connect() as conn:
             rows = conn.execute(sql, params).fetchall()
@@ -113,7 +120,9 @@ class ChunkStore:
     def fetch_nodes(self, node_ids, overlay_ref, changed_paths):
         if not node_ids:
             return []
-        pairs = [nid.split("#", 1) for nid in node_ids]
+        pairs = [nid.split("#", 1) for nid in node_ids if "#" in nid]
+        if not pairs:
+            return []
         sql = """
         SELECT c.path, c.symbol_fqn, c.kind, c.start_line, c.end_line, c.text
         FROM chunks c JOIN unnest(%(paths)s::text[], %(fqns)s::text[]) AS q(p,f)

@@ -23,7 +23,12 @@ def test_extracts_functions_classes_methods_with_ranges():
     assert by_fqn["A"].kind == "class"
     assert by_fqn["A.method"].kind == "method"
     assert by_fqn["A.method"].path == "m.py"
-    assert by_fqn["A.method"].content_hash == by_fqn["A.method"].content_hash
+
+def test_content_hash_stable_and_distinct():
+    a1 = {c.symbol_fqn: c for c in chunk_python("m.py", SRC)}
+    a2 = {c.symbol_fqn: c for c in chunk_python("m.py", SRC)}
+    assert a1["A.method"].content_hash == a2["A.method"].content_hash   # стабилен
+    assert a1["A.method"].content_hash != a1["top"].content_hash        # различен для разных тел
 
 def test_handles_syntax_errors_without_crashing():
     chunks = chunk_python("bad.py", b"def f(:\n    pass\n")
