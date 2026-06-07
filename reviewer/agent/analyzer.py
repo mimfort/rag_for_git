@@ -11,6 +11,8 @@ from reviewer.vcs.base import Finding
 from reviewer.llm.budget import BudgetTracker, BudgetExceeded
 
 _VALID_SEVERITY = {"low", "medium", "high", "critical"}
+_SEVERITY_ORDER = {"low": 0, "medium": 1, "high": 2, "critical": 3}
+_VERDICT_ONE_SCHEMA = 'Верни СТРОГО один JSON-объект: {"is_real": true|false}'
 
 _FINDINGS_SCHEMA = (
     'Верни СТРОГО один JSON-объект без пояснений и без markdown-обёртки:\n'
@@ -180,23 +182,82 @@ class LLMAnalyzer:
         return _to_findings(parsed.findings, default_file=unit.path)
 
 class LLMVerifier:
-    def __init__(self, llm_provider):
+    """Верификатор находок. agentic=True — поштучная проверка с инструментами;
+    agentic=False — прежний one-shot список (обратносовместимо)."""
+    def __init__(self, llm_provider, agentic: bool = False,
+                 max_iterations: int = 3, min_severity: str = "medium"):
         self.provider = llm_provider
+        self.agentic = agentic
+        self.max_iterations = max_iterations
+        self.min_severity = min_severity
 
     def verify(self, findings: list[Finding], deps: Deps) -> list[Finding]:
         if not findings:
             return []
-        listing = "\n".join(f"{i}. [{f.category}/{f.severity}] {f.file}:{f.line} {f.message}"
-                            for i, f in enumerate(findings))
+        if not self.agentic:
+            return self._verify_oneshot(findings, deps)
+        return [f for f in findings if self._verify_one(f, deps)]
+
+    def _needs_check(self, f: Finding) -> bool:
+        sev_ok = (_SEVERITY_ORDER.get(f.severity, 1)
+                  >= _SEVERITY_ORDER.get(self.min_severity, 1))
+        return sev_ok or f.confidence < 0.5
+
+    def _verify_one(self, f: Finding, deps: Deps) -> bool:
+        if not self._needs_check(f):
+            return True   # дёшево пропускаем (не теряем находку)
+        ctx = ToolContext(
+            retriever=deps.retriever, graph=deps.graph,
+            overlay_ref=deps.overlay_ref, changed_paths=deps.changed_paths,
+            changed_node_ids=[],
+            read_file_fn=((lambda p: deps.vcs.get_file_at_ref(p, deps.head_sha))
+                          if deps.vcs else None),
+            patches=deps.patches, store=getattr(deps.retriever, "store", None))
+        tools = make_tools(ctx)
+        llm = self.provider.chat_model_with_tools(tools)
+        tools_by_name = {t.name: t for t in tools}
+        budget = BudgetTracker(self.max_iterations)
+        human = (f"Замечание для проверки:\n[{f.category}/{f.severity}] "
+                 f"{f.file}:{f.line} {f.message}\n\n"
+                 "Проверь по реальному коду через инструменты (read_file, find_callers, "
+                 "get_definition), затем верни вердикт.")
+        messages = [SystemMessage(VERIFY_SYSTEM), HumanMessage(human)]
+        try:
+            while True:
+                budget.tick()
+                ai = llm.invoke(messages)
+                messages.append(ai)
+                if not ai.tool_calls:
+                    break
+                for call in ai.tool_calls:
+                    tool = tools_by_name.get(call["name"])
+                    try:
+                        result = (tool.invoke(call["args"]) if tool
+                                  else f"(неизвестный инструмент: {call['name']})")
+                    except Exception as e:
+                        result = f"(ошибка инструмента {call['name']}: {e})"
+                    messages.append(ToolMessage(str(result), tool_call_id=call["id"]))
+        except BudgetExceeded:
+            pass
+        resp = self.provider.chat_model().invoke(
+            messages + [HumanMessage(_VERDICT_ONE_SCHEMA)])
+        data = _extract_json(_text_of(resp))
+        if "is_real" not in data:
+            return True   # fail-open: не разобрали -> оставляем
+        return bool(data.get("is_real", True))
+
+    def _verify_oneshot(self, findings: list[Finding], deps: Deps) -> list[Finding]:
+        listing = "\n".join(
+            f"{i}. [{f.category}/{f.severity}] {f.file}:{f.line} {f.message}"
+            for i, f in enumerate(findings))
         resp = self.provider.chat_model().invoke(
             [SystemMessage(VERIFY_SYSTEM), HumanMessage(listing + "\n\n" + _VERDICT_SCHEMA)])
         data = _extract_json(_text_of(resp))
         if "verdicts" not in data:
-            return findings   # не разобрали вердикт — fail-open, не теряем реальные баги
+            return findings
         try:
             vb = _VerdictBatch(**data)
         except Exception:
             return findings
         verdict_by_idx = {v.index: v.is_real for v in vb.verdicts}
-        # оставляем пункт, если он не помечен явно как ложный
         return [f for i, f in enumerate(findings) if verdict_by_idx.get(i, True)]

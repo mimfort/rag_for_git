@@ -83,7 +83,9 @@ def review(slug: str, pr: int) -> None:
         changed_status = {f.path: f.status for f in files}
         deps = Deps(vcs=vcs, retriever=c.retriever, graph=c.graph, policy=policy,
                     analyzer=LLMAnalyzer(c.llm_provider, s.review_max_tool_iterations),
-                    verifier=LLMVerifier(c.llm_provider), pr_number=pr,
+                    verifier=LLMVerifier(c.llm_provider, agentic=s.review_agentic_verify,
+                                         max_iterations=s.review_verify_max_iterations,
+                                         min_severity=s.review_verify_min_severity), pr_number=pr,
                     head_sha=prq.head_sha, overlay_ref=f"pr:{pr}",
                     changed_paths=changed, patches={f.path: f.patch for f in files},
                     suggestions_mode=s.review_suggestions,

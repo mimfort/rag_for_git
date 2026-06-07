@@ -131,3 +131,40 @@ def test_to_findings_respects_model_file_then_default():
     out = _to_findings(models, default_file="a.py")
     assert out[0].file == "other.py"     # из модели
     assert out[1].file == "a.py"         # фолбэк на default
+
+
+def _finding(severity="high", confidence=0.9, msg="bug"):
+    return Finding(category="correctness", severity=severity, file="a.py", line=2,
+                   side="RIGHT", message=msg, suggestion=None, confidence=confidence)
+
+
+def test_agentic_verify_low_severity_passes_without_llm():
+    # severity ниже порога и confidence высокий -> проходит без обращения к LLM
+    class BoomProvider:
+        def chat_model_with_tools(self, tools): raise AssertionError("не должно вызываться")
+        def chat_model(self): raise AssertionError("не должно вызываться")
+    v = LLMVerifier(BoomProvider(), agentic=True, max_iterations=2, min_severity="high")
+    out = v.verify([_finding(severity="low", confidence=0.9)], _deps())
+    assert len(out) == 1
+
+
+def test_agentic_verify_drops_false_positive():
+    final = '{"is_real": false}'
+    prov = FakeProvider([AIMessage(content="done")], final)   # без tool_calls -> сразу вердикт
+    v = LLMVerifier(prov, agentic=True, max_iterations=2, min_severity="low")
+    out = v.verify([_finding(severity="high")], _deps())
+    assert out == []
+
+
+def test_agentic_verify_fail_open_on_unparseable():
+    prov = FakeProvider([AIMessage(content="done")], "мусор без json")
+    v = LLMVerifier(prov, agentic=True, max_iterations=2, min_severity="low")
+    out = v.verify([_finding(severity="high")], _deps())
+    assert len(out) == 1   # не разобрали вердикт -> оставляем
+
+
+def test_oneshot_verify_still_works_when_not_agentic():
+    prov = FakeProvider([], '{"verdicts":[{"index":0,"is_real":false}]}')
+    v = LLMVerifier(prov, agentic=False)
+    out = v.verify([_finding(severity="high")], _deps())
+    assert out == []
