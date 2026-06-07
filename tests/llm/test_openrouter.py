@@ -6,7 +6,7 @@ def test_extra_body_carries_provider_block_and_models(monkeypatch):
     monkeypatch.setenv("OPENROUTER_MAX_PRICE_PROMPT", "3.0")
     monkeypatch.setenv("OPENROUTER_MAX_PRICE_COMPLETION", "15.0")
     monkeypatch.setenv("OPENROUTER_MODELS_FALLBACK", "openai/gpt-5-mini")
-    prov = OpenRouterProvider(Settings())
+    prov = OpenRouterProvider(Settings(_env_file=None))   # игнорировать локальный .env — тест герметичен
     llm = prov.chat_model()
     eb = llm.extra_body
     assert eb["provider"]["max_price"] == {"prompt": 3.0, "completion": 15.0}

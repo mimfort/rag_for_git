@@ -6,7 +6,7 @@ services:
       POSTGRES_PASSWORD: reviewer
       POSTGRES_DB: reviewer
     # loopback-only: локальный dev-стек не должен слушать LAN. Креды — одноразовые dev-дефолты.
-    ports: ["127.0.0.1:5432:5432"]
+    ports: ["127.0.0.1:5433:5432"]   # 5433 на хосте: 5432 занят локальным Postgres разработчика
     volumes: ["paradedb_data:/var/lib/postgresql/"]
   neo4j:
     image: neo4j:5

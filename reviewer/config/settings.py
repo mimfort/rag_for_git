@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     embedding_dim: int = 1024
     rerank_model: str = "rerank-2.5"
     # stores
-    pg_dsn: str = "postgresql://reviewer:reviewer@localhost:5432/reviewer"
+    pg_dsn: str = "postgresql://reviewer:reviewer@localhost:5433/reviewer"
     neo4j_uri: str = "neo4j://localhost:7687"
     neo4j_user: str = "neo4j"
     neo4j_password: str = "reviewerpass"
