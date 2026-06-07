@@ -40,7 +40,9 @@ def make_assemble_node(deps: Deps):
                 continue
             body = f"**[{f.category}/{f.severity}]** {f.message}"
             if f.suggestion:
-                body += f"\n\n```suggestion\n{f.suggestion}\n```"
+                # предложение — обычным текстом, НЕ в ```suggestion: модель часто пишет
+                # совет словами, а GitHub-блок suggestion применяется как точная замена кода
+                body += f"\n\n💡 _Предложение:_ {f.suggestion}"
             body += f"\n<!-- ai-review:{fp} -->"
             allowed = commentable.get(f.file, {"RIGHT": set(), "LEFT": set()})
             if f.line is not None and f.line in allowed.get(f.side, set()):
