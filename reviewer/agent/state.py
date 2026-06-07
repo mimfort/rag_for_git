@@ -27,6 +27,10 @@ class Deps:
     changed_paths: list[str]
     patches: dict[str, str | None]
     suggestions_mode: str = "apply"   # apply | text
+    pr_title: str = ""
+    pr_body: str = ""
+    changed_status: dict | None = None
+    synthesizer: object = None        # LLMSynthesizer (Task 6); None = узел выключен
 
 class UnitAnalyzer(Protocol):
     def analyze(self, unit: ReviewUnit, deps: "Deps") -> list[Finding]: ...

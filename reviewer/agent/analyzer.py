@@ -76,6 +76,7 @@ class _Fix(BaseModel):
 
 class _FindingModel(BaseModel):
     category: str
+    file: str | None = None
     severity: str = Field(description="low|medium|high|critical")
     line: int | None = None
     message: str
@@ -85,6 +86,38 @@ class _FindingModel(BaseModel):
 
 class _Findings(BaseModel):
     findings: list[_FindingModel] = Field(default_factory=list)
+
+def _to_findings(models, default_file: str) -> list[Finding]:
+    """Преобразовать распарсенные модели в Finding. file берётся из модели либо default."""
+    out: list[Finding] = []
+    for f in models:
+        fs = f.fix.start_line if f.fix else None
+        fe = f.fix.end_line if f.fix else None
+        rp = f.fix.replacement if f.fix else None
+        if rp is not None and (fs is None or fe is None):
+            rp = None
+        out.append(Finding(
+            category=f.category,
+            severity=(f.severity if f.severity in _VALID_SEVERITY else "medium"),
+            file=(f.file or default_file), line=f.line, side="RIGHT", message=f.message,
+            suggestion=f.suggestion, confidence=f.confidence,
+            fix_start=fs, fix_end=fe, replacement=rp))
+    return out
+
+
+def _pr_context(deps, changed_paths: list[str]) -> str:
+    """Префикс human-промпта: интент PR + манифест изменённых файлов."""
+    parts: list[str] = []
+    if getattr(deps, "pr_title", ""):
+        parts.append(f"Заголовок PR: {deps.pr_title}")
+    if getattr(deps, "pr_body", ""):
+        parts.append(f"Описание PR: {deps.pr_body[:1500]}")
+    status = getattr(deps, "changed_status", None) or {}
+    manifest = "\n".join(f"  - {p} ({status.get(p, 'modified')})" for p in changed_paths)
+    if manifest:
+        parts.append("Изменённые файлы PR:\n" + manifest)
+    return "\n".join(parts)
+
 
 class _Verdict(BaseModel):
     index: int
@@ -100,15 +133,21 @@ class LLMAnalyzer:
         self.max_iterations = max_iterations
 
     def analyze(self, unit: ReviewUnit, deps: Deps) -> list[Finding]:
-        ctx = ToolContext(retriever=deps.retriever, graph=deps.graph,
-                          overlay_ref=deps.overlay_ref, changed_paths=deps.changed_paths,
-                          changed_node_ids=unit.node_ids)
+        ctx = ToolContext(
+            retriever=deps.retriever, graph=deps.graph,
+            overlay_ref=deps.overlay_ref, changed_paths=deps.changed_paths,
+            changed_node_ids=unit.node_ids,
+            read_file_fn=((lambda p: deps.vcs.get_file_at_ref(p, deps.head_sha))
+                          if deps.vcs else None),
+            patches=deps.patches, store=getattr(deps.retriever, "store", None))
         tools = make_tools(ctx)
         llm = self.provider.chat_model_with_tools(tools)
         tools_by_name = {t.name: t for t in tools}
         budget = BudgetTracker(self.max_iterations)
         numbered = _numbered(unit.new_source)
-        human = f"Файл: {unit.path}\n"
+        pr_ctx = _pr_context(deps, deps.changed_paths)
+        human = (pr_ctx + "\n\n") if pr_ctx else ""
+        human += f"Файл: {unit.path}\n"
         if numbered:
             human += f"Новая версия файла (с номерами строк N|код):\n{numbered}\n\n"
         human += f"Изменения (дифф):\n{unit.changed_text}"
@@ -127,7 +166,7 @@ class LLMAnalyzer:
                             result = f"(неизвестный инструмент: {call['name']})"
                         else:
                             result = tool.invoke(call["args"])
-                    except Exception as e:  # инструмент упал — не рвём диалог
+                    except Exception as e:
                         result = f"(ошибка инструмента {call['name']}: {e})"
                     messages.append(ToolMessage(str(result), tool_call_id=call["id"]))
         except BudgetExceeded:
@@ -138,20 +177,7 @@ class LLMAnalyzer:
             parsed = _Findings(**data)
         except Exception:
             parsed = _Findings()
-        out: list[Finding] = []
-        for f in parsed.findings:
-            fs = f.fix.start_line if f.fix else None
-            fe = f.fix.end_line if f.fix else None
-            rp = f.fix.replacement if f.fix else None
-            if rp is not None and (fs is None or fe is None):
-                rp = None   # замена без диапазона бессмысленна
-            out.append(Finding(
-                category=f.category,
-                severity=(f.severity if f.severity in _VALID_SEVERITY else "medium"),
-                file=unit.path, line=f.line, side="RIGHT", message=f.message,
-                suggestion=f.suggestion, confidence=f.confidence,
-                fix_start=fs, fix_end=fe, replacement=rp))
-        return out
+        return _to_findings(parsed.findings, default_file=unit.path)
 
 class LLMVerifier:
     def __init__(self, llm_provider):

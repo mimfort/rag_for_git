@@ -1,6 +1,6 @@
 from langchain_core.messages import AIMessage
 
-from reviewer.agent.analyzer import LLMAnalyzer, LLMVerifier
+from reviewer.agent.analyzer import LLMAnalyzer, LLMVerifier, _pr_context, _to_findings, _FindingModel
 from reviewer.agent.state import ReviewUnit, Deps
 from reviewer.vcs.base import Finding
 
@@ -112,3 +112,22 @@ def test_verify_fail_open_on_unparseable():
     prov = VerifyProvider("не смог разобрать вердикт")
     out = LLMVerifier(prov).verify([_F(1)], _deps())
     assert len(out) == 1   # fail-open: реальный баг не теряем
+
+
+def test_pr_context_includes_title_and_manifest():
+    deps = _deps()
+    deps.pr_title = "Fix auth"
+    deps.pr_body = "body text"
+    deps.changed_status = {"a.py": "modified"}
+    out = _pr_context(deps, ["a.py"])
+    assert "Fix auth" in out and "body text" in out and "a.py (modified)" in out
+
+
+def test_to_findings_respects_model_file_then_default():
+    models = [
+        _FindingModel(category="correctness", severity="high", message="m1", file="other.py"),
+        _FindingModel(category="security", severity="low", message="m2"),
+    ]
+    out = _to_findings(models, default_file="a.py")
+    assert out[0].file == "other.py"     # из модели
+    assert out[1].file == "a.py"         # фолбэк на default
