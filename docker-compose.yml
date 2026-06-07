@@ -1,0 +1,18 @@
+services:
+  paradedb:
+    image: paradedb/paradedb:latest
+    environment:
+      POSTGRES_USER: reviewer
+      POSTGRES_PASSWORD: reviewer
+      POSTGRES_DB: reviewer
+    ports: ["5432:5432"]
+    volumes: ["paradedb_data:/var/lib/postgresql/"]
+  neo4j:
+    image: neo4j:5
+    environment:
+      NEO4J_AUTH: neo4j/reviewerpass
+    ports: ["7474:7474", "7687:7687"]
+    volumes: ["neo4j_data:/data"]
+volumes:
+  paradedb_data:
+  neo4j_data:
