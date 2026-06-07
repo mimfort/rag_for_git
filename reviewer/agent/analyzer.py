@@ -1,4 +1,6 @@
 from __future__ import annotations
+import json
+import re
 from pydantic import BaseModel, Field
 from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage
 
@@ -9,6 +11,46 @@ from reviewer.vcs.base import Finding
 from reviewer.llm.budget import BudgetTracker, BudgetExceeded
 
 _VALID_SEVERITY = {"low", "medium", "high", "critical"}
+
+_FINDINGS_SCHEMA = (
+    'Верни СТРОГО один JSON-объект без пояснений и без markdown-обёртки:\n'
+    '{"findings": [{"category": "correctness|security|performance|style", '
+    '"severity": "low|medium|high|critical", '
+    '"line": <номер строки в НОВОЙ версии файла или null>, '
+    '"message": "...", "suggestion": "... или null", "confidence": 0.0}]}\n'
+    'Если реальных проблем нет — верни {"findings": []}.'
+)
+_VERDICT_SCHEMA = (
+    'Для КАЖДОГО пункта реши, реальная ли это проблема. Верни СТРОГО JSON:\n'
+    '{"verdicts": [{"index": <номер пункта>, "is_real": true|false}]}'
+)
+
+
+def _text_of(msg) -> str:
+    c = getattr(msg, "content", "")
+    if isinstance(c, str):
+        return c
+    if isinstance(c, list):
+        return "".join(p.get("text", "") if isinstance(p, dict) else str(p) for p in c)
+    return str(c)
+
+
+def _extract_json(text: str) -> dict:
+    """Достаёт первый JSON-объект из ответа модели (с markdown-фенсами или без)."""
+    if not text:
+        return {}
+    m = re.search(r"```(?:json)?\s*(\{.*\})\s*```", text, re.DOTALL)
+    if m:
+        candidate = m.group(1)
+    elif "{" in text and "}" in text:
+        candidate = text[text.find("{"):text.rfind("}") + 1]
+    else:
+        return {}
+    try:
+        obj = json.loads(candidate)
+        return obj if isinstance(obj, dict) else {}
+    except Exception:
+        return {}
 
 class _FindingModel(BaseModel):
     category: str
@@ -63,9 +105,12 @@ class LLMAnalyzer:
                     messages.append(ToolMessage(str(result), tool_call_id=call["id"]))
         except BudgetExceeded:
             pass
-        structured = self.provider.chat_model().with_structured_output(_Findings)
-        parsed: _Findings = structured.invoke(
-            messages + [HumanMessage("Выведи итоговые findings структурой.")])
+        resp = self.provider.chat_model().invoke(messages + [HumanMessage(_FINDINGS_SCHEMA)])
+        data = _extract_json(_text_of(resp))
+        try:
+            parsed = _Findings(**data)
+        except Exception:
+            parsed = _Findings()
         return [Finding(category=f.category,
                         severity=(f.severity if f.severity in _VALID_SEVERITY else "medium"),
                         file=unit.path,
@@ -80,10 +125,17 @@ class LLMVerifier:
     def verify(self, findings: list[Finding], deps: Deps) -> list[Finding]:
         if not findings:
             return []
-        llm = self.provider.chat_model().with_structured_output(_VerdictBatch)
         listing = "\n".join(f"{i}. [{f.category}/{f.severity}] {f.file}:{f.line} {f.message}"
                             for i, f in enumerate(findings))
-        verdicts: _VerdictBatch = llm.invoke([SystemMessage(VERIFY_SYSTEM),
-                                              HumanMessage(listing)])
-        keep_idx = {v.index for v in verdicts.verdicts if v.is_real}
-        return [f for i, f in enumerate(findings) if i in keep_idx]
+        resp = self.provider.chat_model().invoke(
+            [SystemMessage(VERIFY_SYSTEM), HumanMessage(listing + "\n\n" + _VERDICT_SCHEMA)])
+        data = _extract_json(_text_of(resp))
+        if "verdicts" not in data:
+            return findings   # не разобрали вердикт — fail-open, не теряем реальные баги
+        try:
+            vb = _VerdictBatch(**data)
+        except Exception:
+            return findings
+        verdict_by_idx = {v.index: v.is_real for v in vb.verdicts}
+        # оставляем пункт, если он не помечен явно как ложный
+        return [f for i, f in enumerate(findings) if verdict_by_idx.get(i, True)]
