@@ -28,7 +28,8 @@ def build_components(settings: Settings, connect: bool = True) -> Components:
     store = ChunkStore(settings.pg_dsn)
     vclient = _voyage_client(settings)
     embedder = VoyageEmbedder(client=vclient, model=settings.embedding_model,
-                              dim=settings.embedding_dim)
+                              dim=settings.embedding_dim,
+                              batch_size=settings.embedding_batch_size)
     reranker = VoyageReranker(client=vclient, model=settings.rerank_model)
     graph = GraphStore(settings.neo4j_uri, settings.neo4j_user, settings.neo4j_password) \
         if connect else None

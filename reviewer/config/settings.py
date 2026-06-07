@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     voyage_api_key: str = ""
     embedding_model: str = "voyage-code-3"
     embedding_dim: int = 1024
+    embedding_batch_size: int = 256
     rerank_model: str = "rerank-2.5"
     # stores
     pg_dsn: str = "postgresql://reviewer:reviewer@localhost:5433/reviewer"
