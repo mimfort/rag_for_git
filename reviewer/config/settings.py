@@ -19,7 +19,7 @@ class Settings(BaseSettings):
     openrouter_app_url: str = ""
     openrouter_app_title: str = ""
     # review tuning (дефолты; per-repo .review.yml может переопределить)
-    review_max_tool_iterations: int = 40          # потолок tool-вызовов агента на файл
+    review_max_tool_iterations: int = 12          # потолок tool-вызовов агента на файл
     review_severity_threshold: str = "medium"     # low|medium|high|critical — ниже отбрасываем
     review_min_confidence: float = 0.5            # отбрасывать findings с confidence ниже
     review_max_comments: int = 25                 # кап inline-комментариев на ревью
@@ -27,8 +27,8 @@ class Settings(BaseSettings):
     review_suggestions: str = "apply"             # apply = applyable ```suggestion; text = только текстом включены
     review_agentic_verify: bool = True            # агентная поштучная верификация находок
     review_synthesis: bool = True                 # кросс-файловый узел synthesize
-    review_verify_min_severity: str = "medium"    # порог severity для агентной проверки
-    review_verify_max_iterations: int = 3         # бюджет tool-loop верификатора на находку
+    review_verify_min_severity: str = "high"      # порог severity для агентной проверки
+    review_verify_max_iterations: int = 2         # бюджет tool-loop верификатора на находку
     # Voyage
     voyage_api_key: str = ""
     embedding_model: str = "voyage-code-3"
