@@ -79,7 +79,7 @@ def review(slug: str, pr: int) -> None:
             node_ids = [ch.node_id for ch in chunk_python(f.path, src.encode())]
             units.append(ReviewUnit(f.path, node_ids, f.patch or ""))
 
-        policy = ReviewPolicy.from_yaml(vcs.get_file_at_ref(".review.yml", prq.base_ref))
+        policy = ReviewPolicy.load(s, vcs.get_file_at_ref(".review.yml", prq.base_ref))
         deps = Deps(vcs=vcs, retriever=c.retriever, graph=c.graph, policy=policy,
                     analyzer=LLMAnalyzer(c.llm_provider, s.review_max_tool_iterations),
                     verifier=LLMVerifier(c.llm_provider), pr_number=pr,

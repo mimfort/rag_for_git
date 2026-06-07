@@ -18,8 +18,12 @@ class Settings(BaseSettings):
     openrouter_data_collection: str = "deny"
     openrouter_app_url: str = ""
     openrouter_app_title: str = ""
-    # budget
-    review_max_tool_iterations: int = 40
+    # review tuning (дефолты; per-repo .review.yml может переопределить)
+    review_max_tool_iterations: int = 40          # потолок tool-вызовов агента на файл
+    review_severity_threshold: str = "medium"     # low|medium|high|critical — ниже отбрасываем
+    review_min_confidence: float = 0.5            # отбрасывать findings с confidence ниже
+    review_max_comments: int = 25                 # кап inline-комментариев на ревью
+    review_categories: str = ""                    # CSV вайтлист категорий; пусто = все включены
     # Voyage
     voyage_api_key: str = ""
     embedding_model: str = "voyage-code-3"
@@ -40,6 +44,9 @@ class Settings(BaseSettings):
 
     def openrouter_models_list(self) -> list[str]:
         return self._csv(self.openrouter_models_fallback)
+
+    def review_categories_list(self) -> list[str]:
+        return self._csv(self.review_categories)
 
     def openrouter_provider_block(self) -> dict:
         """Собрать объект provider для extra_body. Только заданные поля."""

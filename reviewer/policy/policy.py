@@ -5,12 +5,15 @@ import yaml
 
 _SEV = {"low": 0, "medium": 1, "high": 2, "critical": 3}
 
+
 @dataclass
 class ReviewPolicy:
-    categories: dict[str, bool] = field(default_factory=dict)
+    categories: dict[str, bool] = field(default_factory=dict)   # явный on/off (форма .review.yml)
+    enabled_only: list[str] = field(default_factory=list)        # вайтлист (форма env); пусто = без вайтлиста
     severity_threshold: str = "low"
     ignore: list[str] = field(default_factory=list)
     max_comments: int = 25
+    min_confidence: float = 0.0
 
     @classmethod
     def from_yaml(cls, text: str | None) -> "ReviewPolicy":
@@ -22,15 +25,51 @@ class ReviewPolicy:
             severity_threshold=data.get("severity_threshold", "low"),
             ignore=(data.get("paths") or {}).get("ignore", []),
             max_comments=data.get("max_comments", 25),
+            min_confidence=data.get("min_confidence", 0.0),
         )
 
+    @classmethod
+    def from_settings(cls, settings) -> "ReviewPolicy":
+        """Дефолтная политика из env."""
+        return cls(
+            enabled_only=settings.review_categories_list(),
+            severity_threshold=settings.review_severity_threshold,
+            max_comments=settings.review_max_comments,
+            min_confidence=settings.review_min_confidence,
+        )
+
+    @classmethod
+    def load(cls, settings, yaml_text: str | None) -> "ReviewPolicy":
+        """Дефолты из env, поверх — переопределения из .review.yml (только заданные ключи)."""
+        policy = cls.from_settings(settings)
+        if not yaml_text:
+            return policy
+        data = yaml.safe_load(yaml_text) or {}
+        if "categories" in data:
+            policy.categories = data["categories"] or {}
+            policy.enabled_only = []   # явная форма .yml отменяет env-вайтлист
+        if "severity_threshold" in data:
+            policy.severity_threshold = data["severity_threshold"]
+        if "max_comments" in data:
+            policy.max_comments = data["max_comments"]
+        if "min_confidence" in data:
+            policy.min_confidence = data["min_confidence"]
+        ignore = (data.get("paths") or {}).get("ignore")
+        if ignore is not None:
+            policy.ignore = ignore
+        return policy
+
     def category_enabled(self, category: str) -> bool:
+        if self.enabled_only:
+            return category in self.enabled_only
         return self.categories.get(category, True)
 
     def gate(self, finding) -> bool:
         if not self.category_enabled(finding.category):
             return False
         if _SEV.get(finding.severity, 0) < _SEV.get(self.severity_threshold, 0):
+            return False
+        if finding.confidence < self.min_confidence:
             return False
         if any(fnmatch(finding.file, pat) for pat in self.ignore):
             return False

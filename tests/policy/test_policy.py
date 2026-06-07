@@ -1,8 +1,9 @@
 from reviewer.policy.policy import ReviewPolicy
+from reviewer.config.settings import Settings
 from reviewer.vcs.base import Finding
 
-def F(cat, sev, file="a.py"):
-    return Finding(cat, sev, file, 1, "RIGHT", "msg", None, 0.9)
+def F(cat, sev, file="a.py", confidence=0.9):
+    return Finding(cat, sev, file, 1, "RIGHT", "msg", None, confidence)
 
 def test_gate_filters_disabled_category_low_severity_and_ignored_paths():
     p = ReviewPolicy.from_yaml("""
@@ -20,3 +21,29 @@ max_comments: 10
 def test_defaults_when_no_yaml():
     p = ReviewPolicy.from_yaml(None)
     assert p.gate(F("correctness", "medium")) is True
+
+
+def test_min_confidence_gate():
+    p = ReviewPolicy(min_confidence=0.7)
+    assert p.gate(F("correctness", "high", confidence=0.9)) is True
+    assert p.gate(F("correctness", "high", confidence=0.5)) is False
+
+
+def test_enabled_only_whitelist():
+    p = ReviewPolicy(enabled_only=["security"])
+    assert p.gate(F("security", "high")) is True
+    assert p.gate(F("correctness", "high")) is False
+
+
+def test_load_env_defaults_then_yaml_override():
+    s = Settings(_env_file=None)   # дефолты: medium / min_conf 0.5 / max 25 / без вайтлиста
+    p = ReviewPolicy.load(s, None)
+    assert p.severity_threshold == "medium"
+    assert p.min_confidence == 0.5
+    assert p.max_comments == 25
+    assert p.gate(F("correctness", "high", confidence=0.4)) is False   # ниже env-порога confidence
+
+    p2 = ReviewPolicy.load(s, "severity_threshold: high\nmax_comments: 5\nmin_confidence: 0.8")
+    assert p2.severity_threshold == "high"
+    assert p2.max_comments == 5
+    assert p2.min_confidence == 0.8
