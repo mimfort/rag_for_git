@@ -40,3 +40,24 @@ class GraphStore:
             f"RETURN DISTINCT n.id AS id",
             ids=list(node_ids))
         return {r["id"] for r in records}
+
+    def callers(self, node_ids: list[str]) -> set[str]:
+        """Кто вызывает данные символы — направленные входящие CALLS."""
+        records, _, _ = self._driver.execute_query(
+            "UNWIND $ids AS sid MATCH (c:Symbol)-[:CALLS]->(s:Symbol {id: sid}) "
+            "RETURN DISTINCT c.id AS id",
+            ids=list(node_ids))
+        return {r["id"] for r in records}
+
+    def find_symbol(self, name: str) -> list[str]:
+        """Резолв имени символа в node_id ('path#fqn'). Точное имя (#name / .name)
+        приоритетнее подстроки. Возврат — до 25 id, точные сперва."""
+        records, _, _ = self._driver.execute_query(
+            "MATCH (s:Symbol) WHERE s.id CONTAINS $needle "
+            "RETURN s.id AS id LIMIT 50",
+            needle=name)
+        ids = [r["id"] for r in records]
+        suffix = "#" + name
+        exact = [i for i in ids if i.endswith(suffix) or i.endswith("." + name)]
+        rest = [i for i in ids if i not in exact]
+        return (exact + rest)[:25]
