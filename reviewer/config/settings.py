@@ -25,6 +25,10 @@ class Settings(BaseSettings):
     review_max_comments: int = 25                 # кап inline-комментариев на ревью
     review_categories: str = ""                    # CSV вайтлист категорий; пусто = все
     review_suggestions: str = "apply"             # apply = applyable ```suggestion; text = только текстом включены
+    review_agentic_verify: bool = True            # агентная поштучная верификация находок
+    review_synthesis: bool = True                 # кросс-файловый узел synthesize
+    review_verify_min_severity: str = "medium"    # порог severity для агентной проверки
+    review_verify_max_iterations: int = 3         # бюджет tool-loop верификатора на находку
     # Voyage
     voyage_api_key: str = ""
     embedding_model: str = "voyage-code-3"
