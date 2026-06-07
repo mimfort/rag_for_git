@@ -1,6 +1,6 @@
 from langchain_core.messages import AIMessage
 
-from reviewer.agent.analyzer import LLMAnalyzer, LLMVerifier, _pr_context, _to_findings, _FindingModel
+from reviewer.agent.analyzer import LLMAnalyzer, LLMVerifier, LLMSynthesizer, _pr_context, _to_findings, _FindingModel
 from reviewer.agent.state import ReviewUnit, Deps
 from reviewer.vcs.base import Finding
 
@@ -176,3 +176,20 @@ def test_agentic_verify_low_severity_but_uncertain_is_checked():
     v = LLMVerifier(prov, agentic=True, max_iterations=2, min_severity="high")
     out = v.verify([_finding(severity="low", confidence=0.3)], _deps())
     assert out == []   # проверка отработала и отбросила находку
+
+
+def test_synthesize_replaces_with_parsed_findings():
+    final = ('{"findings":[{"category":"correctness","severity":"high","line":5,'
+             '"message":"caller mismatch","file":"b.py"}]}')
+    prov = FakeProvider([AIMessage(content="done")], final)
+    s = LLMSynthesizer(prov, max_iterations=2)
+    out = s.synthesize([_finding(severity="high", msg="orig")], _deps())
+    assert len(out) == 1 and out[0].file == "b.py" and out[0].message == "caller mismatch"
+
+
+def test_synthesize_fail_open_keeps_input_on_empty_or_unparseable():
+    prov = FakeProvider([AIMessage(content="done")], "не json")
+    s = LLMSynthesizer(prov, max_iterations=2)
+    inp = [_finding(severity="high", msg="keep me")]
+    out = s.synthesize(inp, _deps())
+    assert out == inp

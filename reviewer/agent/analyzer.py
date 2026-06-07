@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field
 from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage
 
 from reviewer.agent.state import ReviewUnit, Deps
-from reviewer.agent.prompts import ANALYZE_SYSTEM, VERIFY_SYSTEM
+from reviewer.agent.prompts import ANALYZE_SYSTEM, VERIFY_SYSTEM, SYNTHESIZE_SYSTEM
 from reviewer.tools.code_tools import make_tools, ToolContext
 from reviewer.vcs.base import Finding
 from reviewer.llm.budget import BudgetTracker, BudgetExceeded
@@ -13,6 +13,15 @@ from reviewer.llm.budget import BudgetTracker, BudgetExceeded
 _VALID_SEVERITY = {"low", "medium", "high", "critical"}
 _SEVERITY_ORDER = {"low": 0, "medium": 1, "high": 2, "critical": 3}
 _VERDICT_ONE_SCHEMA = 'Верни СТРОГО один JSON-объект: {"is_real": true|false}'
+
+_SYNTH_SCHEMA = (
+    'Верни СТРОГО один JSON-объект без пояснений и markdown:\n'
+    '{"findings": [{"file": "<путь>", "category": "correctness|security|performance|style", '
+    '"severity": "low|medium|high|critical", "line": <int|null>, "message": "...", '
+    '"suggestion": "... или null", "confidence": 0.0}]}\n'
+    'Верни ИТОГОВЫЙ список по всему PR: добавь кросс-файловые проблемы '
+    '(рассогласование сигнатура↔вызовы), убери дубли. Поле file обязательно у каждой находки.'
+)
 
 _FINDINGS_SCHEMA = (
     'Верни СТРОГО один JSON-объект без пояснений и без markdown-обёртки:\n'
@@ -263,3 +272,61 @@ class LLMVerifier:
             return findings
         verdict_by_idx = {v.index: v.is_real for v in vb.verdicts}
         return [f for i, f in enumerate(findings) if verdict_by_idx.get(i, True)]
+
+
+class LLMSynthesizer:
+    """Кросс-файловый проход по всем находкам PR: добавляет кросс-файловые проблемы,
+    дедуплицирует. Tool-enabled. Fail-open: при неразборе/пустом ответе — возвращает вход."""
+
+    def __init__(self, llm_provider, max_iterations: int = 6):
+        self.provider = llm_provider
+        self.max_iterations = max_iterations
+
+    def synthesize(self, findings: list[Finding], deps: Deps) -> list[Finding]:
+        if not findings:
+            return findings
+        ctx = ToolContext(
+            retriever=deps.retriever, graph=deps.graph,
+            overlay_ref=deps.overlay_ref, changed_paths=deps.changed_paths,
+            changed_node_ids=[],
+            read_file_fn=((lambda p: deps.vcs.get_file_at_ref(p, deps.head_sha))
+                          if deps.vcs else None),
+            patches=deps.patches, store=getattr(deps.retriever, "store", None))
+        tools = make_tools(ctx)
+        llm = self.provider.chat_model_with_tools(tools)
+        tools_by_name = {t.name: t for t in tools}
+        budget = BudgetTracker(self.max_iterations)
+        listing = "\n".join(
+            f"{i}. [{f.category}/{f.severity}] {f.file}:{f.line} {f.message}"
+            for i, f in enumerate(findings))
+        pr_ctx = _pr_context(deps, deps.changed_paths)
+        human = ((pr_ctx + "\n\n") if pr_ctx else "")
+        human += (f"Текущие находки по всему PR:\n{listing}\n\n"
+                  "Проверь кросс-файловую согласованность инструментами и верни итоговый список.")
+        messages = [SystemMessage(SYNTHESIZE_SYSTEM), HumanMessage(human)]
+        try:
+            while True:
+                budget.tick()
+                ai = llm.invoke(messages)
+                messages.append(ai)
+                if not ai.tool_calls:
+                    break
+                for call in ai.tool_calls:
+                    tool = tools_by_name.get(call["name"])
+                    try:
+                        result = (tool.invoke(call["args"]) if tool
+                                  else f"(неизвестный инструмент: {call['name']})")
+                    except Exception as e:
+                        result = f"(ошибка инструмента {call['name']}: {e})"
+                    messages.append(ToolMessage(str(result), tool_call_id=call["id"]))
+        except BudgetExceeded:
+            pass
+        resp = self.provider.chat_model().invoke(messages + [HumanMessage(_SYNTH_SCHEMA)])
+        data = _extract_json(_text_of(resp))
+        try:
+            parsed = _Findings(**data)
+        except Exception:
+            return findings   # fail-open
+        if not parsed.findings:
+            return findings   # пусто -> не теряем вход
+        return _to_findings(parsed.findings, default_file=findings[0].file)

@@ -91,3 +91,9 @@ def make_publish_node(deps: Deps):
                                 state["summary"], state["inline_comments"])
         return {}
     return publish
+
+
+def make_synthesize_node(deps: Deps):
+    def synthesize(state: ReviewState):
+        return {"verified": deps.synthesizer.synthesize(state["verified"], deps)}
+    return synthesize

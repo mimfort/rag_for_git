@@ -14,7 +14,12 @@ def build_graph(deps: Deps):
     b.add_edge(START, "plan")
     b.add_conditional_edges("plan", nodes.fan_out, ["analyze"])
     b.add_edge("analyze", "verify")
-    b.add_edge("verify", "assemble")
+    if getattr(deps, "synthesizer", None) is not None:
+        b.add_node("synthesize", nodes.make_synthesize_node(deps))
+        b.add_edge("verify", "synthesize")
+        b.add_edge("synthesize", "assemble")
+    else:
+        b.add_edge("verify", "assemble")
     b.add_edge("assemble", "publish")
     b.add_edge("publish", END)
     return b.compile()

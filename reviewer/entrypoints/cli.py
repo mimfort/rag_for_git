@@ -54,7 +54,7 @@ def review(slug: str, pr: int) -> None:
     from reviewer.vcs.github import GitHubProvider
     from reviewer.agent.graph import build_graph
     from reviewer.agent.state import Deps, ReviewUnit
-    from reviewer.agent.analyzer import LLMAnalyzer, LLMVerifier
+    from reviewer.agent.analyzer import LLMAnalyzer, LLMVerifier, LLMSynthesizer
     from reviewer.policy.policy import ReviewPolicy
     from reviewer.index.chunker import chunk_python
 
@@ -89,7 +89,9 @@ def review(slug: str, pr: int) -> None:
                     head_sha=prq.head_sha, overlay_ref=f"pr:{pr}",
                     changed_paths=changed, patches={f.path: f.patch for f in files},
                     suggestions_mode=s.review_suggestions,
-                    pr_title=prq.title, pr_body=prq.body, changed_status=changed_status)
+                    pr_title=prq.title, pr_body=prq.body, changed_status=changed_status,
+                    synthesizer=(LLMSynthesizer(c.llm_provider)
+                                 if s.review_synthesis else None))
         build_graph(deps).invoke({"review_units": units, "findings": [],
                                   "verified": [], "summary": "", "inline_comments": []})
         click.echo("Ревью опубликовано.")

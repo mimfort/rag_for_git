@@ -100,3 +100,21 @@ def test_finding_off_diff_goes_to_summary():
                               "findings":[],"verified":[],"summary":"","inline_comments":[]})
     summary, comments = vcs.published
     assert comments == [] and "far away" in summary
+
+
+def _min_deps(**over):
+    base = dict(vcs=None, retriever=None, graph=None, policy=None, analyzer=None,
+                verifier=None, pr_number=1, head_sha="s", overlay_ref="pr:1",
+                changed_paths=[], patches={})
+    base.update(over)
+    return Deps(**base)
+
+
+def test_graph_includes_synthesize_when_synthesizer_present():
+    g = build_graph(_min_deps(synthesizer=object()))
+    assert "synthesize" in g.get_graph().nodes
+
+
+def test_graph_skips_synthesize_when_no_synthesizer():
+    g = build_graph(_min_deps(synthesizer=None))
+    assert "synthesize" not in g.get_graph().nodes
