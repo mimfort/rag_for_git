@@ -20,7 +20,16 @@ def index(repo: str, ref: str) -> None:
     files = list_python_files(repo, ref)
     update_base(c.store, c.embedder, repo, ref, files,
                 read=lambda p: file_at_ref(repo, p, ref))
-    click.echo(f"Проиндексировано файлов: {len(files)}")
+    # --- граф кода ---
+    from reviewer.graph.builder import build_graph_from_files
+    src_by_path = {p: file_at_ref(repo, p, ref) for p in files}
+    src_by_path = {p: v for p, v in src_by_path.items() if v is not None}
+    gnodes, gedges = build_graph_from_files(src_by_path)
+    c.graph.init_schema()
+    c.graph.upsert_nodes(list(gnodes))
+    c.graph.upsert_edges(gedges)
+    c.graph.close()
+    click.echo(f"Проиндексировано файлов: {len(files)}; граф: узлов {len(gnodes)}, рёбер {len(gedges)}")
 
 @cli.command()
 @click.argument("query")
