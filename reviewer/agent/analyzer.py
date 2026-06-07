@@ -66,6 +66,30 @@ def _numbered(source: str, limit: int = 1200) -> str:
     return "\n".join(f"{i}|{ln}" for i, ln in enumerate(lines, 1))
 
 
+def _run_tool_loop(messages: list, llm, tools_by_name: dict, budget) -> list:
+    """Гоняет tool-loop до отсутствия tool_calls или исчерпания бюджета.
+    Мутирует и возвращает messages (добавляет AI- и ToolMessage). При BudgetExceeded —
+    мягко выходит, оставляя накопленную историю для финального структурного запроса."""
+    try:
+        while True:
+            budget.tick()
+            ai = llm.invoke(messages)
+            messages.append(ai)
+            if not ai.tool_calls:
+                break
+            for call in ai.tool_calls:
+                tool = tools_by_name.get(call["name"])
+                try:
+                    result = (tool.invoke(call["args"]) if tool
+                              else f"(неизвестный инструмент: {call['name']})")
+                except Exception as e:
+                    result = f"(ошибка инструмента {call['name']}: {e})"
+                messages.append(ToolMessage(str(result), tool_call_id=call["id"]))
+    except BudgetExceeded:
+        pass
+    return messages
+
+
 def _extract_json(text: str) -> dict:
     """Достаёт первый JSON-объект из ответа модели (с markdown-фенсами или без)."""
     if not text:
@@ -166,25 +190,7 @@ class LLMAnalyzer:
             human += f"Новая версия файла (с номерами строк N|код):\n{numbered}\n\n"
         human += f"Изменения (дифф):\n{unit.changed_text}"
         messages = [SystemMessage(ANALYZE_SYSTEM), HumanMessage(human)]
-        try:
-            while True:
-                budget.tick()
-                ai = llm.invoke(messages)
-                messages.append(ai)
-                if not ai.tool_calls:
-                    break
-                for call in ai.tool_calls:
-                    tool = tools_by_name.get(call["name"])
-                    try:
-                        if tool is None:
-                            result = f"(неизвестный инструмент: {call['name']})"
-                        else:
-                            result = tool.invoke(call["args"])
-                    except Exception as e:
-                        result = f"(ошибка инструмента {call['name']}: {e})"
-                    messages.append(ToolMessage(str(result), tool_call_id=call["id"]))
-        except BudgetExceeded:
-            pass
+        _run_tool_loop(messages, llm, tools_by_name, budget)
         resp = self.provider.chat_model().invoke(messages + [HumanMessage(_FINDINGS_SCHEMA)])
         data = _extract_json(_text_of(resp))
         try:
@@ -236,23 +242,7 @@ class LLMVerifier:
                  "Проверь по реальному коду через инструменты (read_file, find_callers, "
                  "get_definition), затем верни вердикт.")
         messages = [SystemMessage(VERIFY_SYSTEM), HumanMessage(human)]
-        try:
-            while True:
-                budget.tick()
-                ai = llm.invoke(messages)
-                messages.append(ai)
-                if not ai.tool_calls:
-                    break
-                for call in ai.tool_calls:
-                    tool = tools_by_name.get(call["name"])
-                    try:
-                        result = (tool.invoke(call["args"]) if tool
-                                  else f"(неизвестный инструмент: {call['name']})")
-                    except Exception as e:
-                        result = f"(ошибка инструмента {call['name']}: {e})"
-                    messages.append(ToolMessage(str(result), tool_call_id=call["id"]))
-        except BudgetExceeded:
-            pass
+        _run_tool_loop(messages, llm, tools_by_name, budget)
         resp = self.provider.chat_model().invoke(
             messages + [HumanMessage(_VERDICT_ONE_SCHEMA)])
         data = _extract_json(_text_of(resp))
@@ -307,23 +297,7 @@ class LLMSynthesizer:
         human += (f"Текущие находки по всему PR:\n{listing}\n\n"
                   "Проверь кросс-файловую согласованность инструментами и верни итоговый список.")
         messages = [SystemMessage(SYNTHESIZE_SYSTEM), HumanMessage(human)]
-        try:
-            while True:
-                budget.tick()
-                ai = llm.invoke(messages)
-                messages.append(ai)
-                if not ai.tool_calls:
-                    break
-                for call in ai.tool_calls:
-                    tool = tools_by_name.get(call["name"])
-                    try:
-                        result = (tool.invoke(call["args"]) if tool
-                                  else f"(неизвестный инструмент: {call['name']})")
-                    except Exception as e:
-                        result = f"(ошибка инструмента {call['name']}: {e})"
-                    messages.append(ToolMessage(str(result), tool_call_id=call["id"]))
-        except BudgetExceeded:
-            pass
+        _run_tool_loop(messages, llm, tools_by_name, budget)
         resp = self.provider.chat_model().invoke(messages + [HumanMessage(_SYNTH_SCHEMA)])
         data = _extract_json(_text_of(resp))
         try:
