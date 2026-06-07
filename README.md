@@ -29,3 +29,11 @@
 ## Стек
 
 Python · LangGraph/LangChain · Postgres (pgvector + pg_search) · Neo4j · Voyage AI · OpenRouter · Docker
+
+## Запуск (dev)
+1. `cp .env.example .env` и заполнить `OPENROUTER_API_KEY`, `VOYAGE_API_KEY`, `GITHUB_TOKEN`.
+2. `docker compose up -d` (Postgres/ParadeDB на :5433 + Neo4j).
+3. `python -m venv .venv && .venv/bin/pip install -e ".[dev]"`.
+4. Индексация локального репо: `reviewer index /path/to/repo --ref main`.
+5. Ревью PR: `reviewer review owner/repo 123`.
+6. Тесты: `pytest -q` (unit) или `pytest -m integration` (нужны поднятые БД + ключи Voyage).

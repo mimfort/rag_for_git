@@ -33,6 +33,7 @@ reviewer = "reviewer.entrypoints.cli:cli"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 markers = ["integration: требует поднятых Postgres/Neo4j (docker-compose up)"]
+addopts = "-m 'not integration'"
 
 [tool.ruff]
 line-length = 100
@@ -43,4 +44,4 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
-include = ["reviewer*"]
+include = ["reviewer*", "eval*"]
