@@ -168,3 +168,11 @@ def test_oneshot_verify_still_works_when_not_agentic():
     v = LLMVerifier(prov, agentic=False)
     out = v.verify([_finding(severity="high")], _deps())
     assert out == []
+
+
+def test_agentic_verify_low_severity_but_uncertain_is_checked():
+    # низкая severity, но низкий confidence -> проверка ВЫЗЫВАЕТСЯ и может отсеять
+    prov = FakeProvider([AIMessage(content="done")], '{"is_real": false}')
+    v = LLMVerifier(prov, agentic=True, max_iterations=2, min_severity="high")
+    out = v.verify([_finding(severity="low", confidence=0.3)], _deps())
+    assert out == []   # проверка отработала и отбросила находку

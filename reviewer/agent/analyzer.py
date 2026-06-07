@@ -201,6 +201,8 @@ class LLMVerifier:
     def _needs_check(self, f: Finding) -> bool:
         sev_ok = (_SEVERITY_ORDER.get(f.severity, 1)
                   >= _SEVERITY_ORDER.get(self.min_severity, 1))
+        # Проверяем находку, если она достаточно важная ИЛИ если агент в ней не уверен
+        # (низкая важность + высокая уверенность -> дёшево пропускаем; неуверенность -> проверяем).
         return sev_ok or f.confidence < 0.5
 
     def _verify_one(self, f: Finding, deps: Deps) -> bool:
