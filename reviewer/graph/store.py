@@ -4,7 +4,11 @@ from neo4j import GraphDatabase
 
 class GraphStore:
     def __init__(self, uri: str, user: str, password: str):
-        self._driver = GraphDatabase.driver(uri, auth=(user, password))
+        # notifications_min_severity="OFF" глушит notification-спам драйвера
+        # (напр. «relationship type IMPLEMENTS does not exist», когда граф наполнен
+        # только частью типов рёбер) — на выполнение запросов это не влияет.
+        self._driver = GraphDatabase.driver(
+            uri, auth=(user, password), notifications_min_severity="OFF")
 
     def close(self) -> None:
         self._driver.close()
