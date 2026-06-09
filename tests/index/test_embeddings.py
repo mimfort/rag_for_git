@@ -22,3 +22,33 @@ def test_embed_query_uses_query_input_type():
     emb = VoyageEmbedder(client=fake, model="voyage-code-3", dim=8)
     v = emb.embed_query("find me")
     assert len(v) == 8 and fake.calls[0][1] == "query"
+
+def test_embed_query_cache_deduplicates_identical_texts():
+    """Два вызова embed_query с одним текстом → один вызов клиента (кэш)."""
+    fake = FakeClient()
+    emb = VoyageEmbedder(client=fake, model="voyage-code-3", dim=8)
+    v1 = emb.embed_query("токены")
+    v2 = emb.embed_query("токены")
+    assert v1 == v2
+    assert len(fake.calls) == 1   # второй вызов взят из кэша
+
+def test_embed_query_cache_separates_different_texts():
+    """Разные тексты → разные вызовы клиента."""
+    fake = FakeClient()
+    emb = VoyageEmbedder(client=fake, model="voyage-code-3", dim=8)
+    emb.embed_query("alpha")
+    emb.embed_query("beta")
+    assert len(fake.calls) == 2
+
+def test_embed_query_cache_fifo_eviction():
+    """При переполнении кэша самая старая запись вытесняется (FIFO)."""
+    fake = FakeClient()
+    emb = VoyageEmbedder(client=fake, model="voyage-code-3", dim=8, cache_size=2)
+    emb.embed_query("first")    # кэш: {first}
+    emb.embed_query("second")   # кэш: {first, second}
+    emb.embed_query("third")    # кэш: {second, third}; "first" вытеснен
+    calls_before = len(fake.calls)
+    emb.embed_query("second")   # "second" всё ещё в кэше → без вызова
+    assert len(fake.calls) == calls_before
+    emb.embed_query("first")    # "first" уже не в кэше → новый вызов
+    assert len(fake.calls) == calls_before + 1

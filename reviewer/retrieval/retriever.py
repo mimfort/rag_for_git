@@ -29,5 +29,9 @@ class Retriever:
         merged: dict[str, object] = {}
         for it in [*hits, *related]:
             merged.setdefault(it.node_id, it)
+        # Если кандидатов не больше top_k — rerank пропускаем: экономим вызов Voyage rerank.
+        # Порядок и так осмысленный: сначала hits по RRF-score, затем graph-related.
+        if len(merged) <= top_k:
+            return ContextPack(items=list(merged.values()))
         ranked = self.reranker.rerank(query, list(merged.values()), top_k=top_k)
         return ContextPack(items=ranked)

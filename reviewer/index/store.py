@@ -82,6 +82,12 @@ class ChunkStore:
             ).fetchall()
         return {r[0] for r in rows}
 
+    def delete_ref(self, ref: str) -> None:
+        """Удалить все чанки указанного ref (например, эфемерный overlay pr:N после ревью)."""
+        with self._connect() as conn:
+            conn.execute("DELETE FROM chunks WHERE ref = %s", (ref,))
+            conn.commit()
+
     def hybrid_search(self, query_text, query_embedding, overlay_ref,
                       changed_paths, top_k=20, candidates=50) -> list[Retrieved]:
         where = "((ref='base' AND NOT (path = ANY(%(changed)s))) OR ref=%(overlay)s)"
