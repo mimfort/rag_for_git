@@ -10,6 +10,7 @@ from reviewer.agent.prompts import ANALYZE_SYSTEM, VERIFY_SYSTEM, SYNTHESIZE_SYS
 from reviewer.tools.code_tools import make_tools, ToolContext
 from reviewer.vcs.base import Finding
 from reviewer.llm.budget import BudgetTracker, BudgetExceeded
+from reviewer.llm._retry import with_llm_retry
 from reviewer.index.chunker import chunk_python
 
 _log = logging.getLogger(__name__)
@@ -228,7 +229,7 @@ def _run_tool_loop(
     try:
         while True:
             budget.tick()
-            ai = llm.invoke(messages)
+            ai = with_llm_retry(lambda: llm.invoke(messages))
             if usage is not None:
                 usage.add(stage, ai)
             messages.append(ai)
@@ -385,7 +386,8 @@ class LLMAnalyzer:
             except Exception:
                 pass
         # Fallback: отдельный invoke со схемой
-        resp = self.provider.chat_model().invoke(messages + [HumanMessage(_FINDINGS_SCHEMA)])
+        _fallback_msgs = messages + [HumanMessage(_FINDINGS_SCHEMA)]
+        resp = with_llm_retry(lambda: self.provider.chat_model().invoke(_fallback_msgs))
         if deps.usage is not None:
             deps.usage.add("analyze", resp)
         data = _extract_json(_text_of(resp))
@@ -461,8 +463,9 @@ class LLMVerifier:
         if "is_real" in data:
             return self._verdict(f, bool(data.get("is_real", True)), deps)
         # Fallback: отдельный invoke со схемой
-        resp = self.provider.chat_model(model=self.model).invoke(
-            messages + [HumanMessage(_VERDICT_ONE_SCHEMA)])
+        _fallback_msgs = messages + [HumanMessage(_VERDICT_ONE_SCHEMA)]
+        resp = with_llm_retry(
+            lambda: self.provider.chat_model(model=self.model).invoke(_fallback_msgs))
         if deps.usage is not None:
             deps.usage.add("verify", resp)
         data = _extract_json(_text_of(resp))
@@ -481,8 +484,9 @@ class LLMVerifier:
         listing = "\n".join(
             f"{i}. [{f.category}/{f.severity}] {f.file}:{f.line} {f.message}"
             for i, f in enumerate(findings))
-        resp = self.provider.chat_model(model=self.model).invoke(
-            [SystemMessage(VERIFY_SYSTEM), HumanMessage(listing + "\n\n" + _VERDICT_SCHEMA)])
+        _oneshot_msgs = [SystemMessage(VERIFY_SYSTEM), HumanMessage(listing + "\n\n" + _VERDICT_SCHEMA)]
+        resp = with_llm_retry(
+            lambda: self.provider.chat_model(model=self.model).invoke(_oneshot_msgs))
         if deps.usage is not None:
             deps.usage.add("verify", resp)
         data = _extract_json(_text_of(resp))
@@ -560,7 +564,8 @@ class LLMSynthesizer:
             except Exception:
                 pass
         # Fallback: отдельный invoke со схемой
-        resp = self.provider.chat_model().invoke(messages + [HumanMessage(_SYNTH_SCHEMA)])
+        _fallback_msgs = messages + [HumanMessage(_SYNTH_SCHEMA)]
+        resp = with_llm_retry(lambda: self.provider.chat_model().invoke(_fallback_msgs))
         if deps.usage is not None:
             deps.usage.add("synthesize", resp)
         data = _extract_json(_text_of(resp))
