@@ -18,6 +18,8 @@ class Settings(BaseSettings):
     openrouter_data_collection: str = "deny"
     openrouter_app_url: str = ""
     openrouter_app_title: str = ""
+    openrouter_model_verify: str = ""   # модель для верификации находок; пусто = основная
+    openrouter_prompt_cache: bool = True  # cache_control-блоки для Anthropic-моделей (prompt caching)
     # review tuning (дефолты; per-repo .review.yml может переопределить)
     review_max_tool_iterations: int = 12          # потолок tool-вызовов агента на файл
     review_severity_threshold: str = "medium"     # low|medium|high|critical — ниже отбрасываем

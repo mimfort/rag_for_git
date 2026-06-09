@@ -24,15 +24,27 @@ class OpenRouterProvider:
             h["X-Title"] = self.s.openrouter_app_title
         return h
 
-    def chat_model(self) -> ChatOpenAI:
+    def chat_model(self, model: str | None = None) -> ChatOpenAI:
+        """Вернуть ChatOpenAI для OpenRouter.
+
+        Args:
+            model: переопределение модели для этапа (например, дешёвая для verify).
+                   Если не задано — используется ``settings.openrouter_model``.
+        """
         return ChatOpenAI(
             base_url=self.BASE_URL,
             api_key=self.s.openrouter_api_key,
-            model=self.s.openrouter_model,
+            model=model or self.s.openrouter_model,
             temperature=0,
             default_headers=self._headers() or None,
             extra_body=self._extra_body(),
         )
 
-    def chat_model_with_tools(self, tools: list):
-        return self.chat_model().bind_tools(tools)
+    def chat_model_with_tools(self, tools: list, model: str | None = None):
+        """Вернуть ChatOpenAI с привязанными инструментами.
+
+        Args:
+            tools: список инструментов для bind_tools.
+            model: переопределение модели для этапа (например, дешёвая для verify).
+        """
+        return self.chat_model(model=model).bind_tools(tools)
