@@ -20,8 +20,10 @@ def make_analyze_node(deps: Deps):
 
 def make_verify_node(deps: Deps):
     def verify(state: ReviewState):
-        kept = deps.verifier.verify(state["findings"], deps)
-        kept = [f for f in kept if deps.policy.gate(f)]
+        # Gate первым: не тратим LLM-вызовы верификации на находки,
+        # которые всё равно будут отброшены по категории/severity/confidence/путям.
+        kept = [f for f in state["findings"] if deps.policy.gate(f)]
+        kept = deps.verifier.verify(kept, deps)
         return {"verified": kept}
     return verify
 
@@ -95,5 +97,6 @@ def make_publish_node(deps: Deps):
 
 def make_synthesize_node(deps: Deps):
     def synthesize(state: ReviewState):
-        return {"verified": deps.synthesizer.synthesize(state["verified"], deps)}
+        result = deps.synthesizer.synthesize(state["verified"], deps)
+        return {"verified": [f for f in result if deps.policy.gate(f)]}
     return synthesize

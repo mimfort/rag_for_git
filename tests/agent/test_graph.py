@@ -1,4 +1,5 @@
 from reviewer.agent.graph import build_graph
+from reviewer.agent.nodes import make_verify_node, make_synthesize_node
 from reviewer.agent.state import Deps, ReviewUnit
 from reviewer.vcs.base import Finding
 from reviewer.policy.policy import ReviewPolicy
@@ -118,3 +119,106 @@ def test_graph_includes_synthesize_when_synthesizer_present():
 def test_graph_skips_synthesize_when_no_synthesizer():
     g = build_graph(_min_deps(synthesizer=None))
     assert "synthesize" not in g.get_graph().nodes
+
+
+# ---------------------------------------------------------------------------
+# Тесты порядка gate → verify и фильтрации синтезатора
+# ---------------------------------------------------------------------------
+
+def _make_finding(category="correctness", severity="high", confidence=0.9, file="a.py"):
+    return Finding(category, severity, file, 1, "RIGHT", "msg", None, confidence)
+
+
+def _node_deps(policy, verifier, synthesizer=None):
+    """Минимальный Deps для изолированного теста узлов verify/synthesize."""
+    return Deps(
+        vcs=None, retriever=None, graph=None,
+        policy=policy,
+        analyzer=None,
+        verifier=verifier,
+        pr_number=1, head_sha="s", overlay_ref="pr:1",
+        changed_paths=[], patches={},
+        synthesizer=synthesizer,
+    )
+
+
+class _RecordingVerifier:
+    """Запоминает, что передали в verify; пропускает все находки (pass-through)."""
+    def __init__(self):
+        self.received: list = []
+
+    def verify(self, findings, deps):
+        self.received = list(findings)
+        return findings
+
+
+def test_verify_node_gate_before_verifier():
+    """Gate запускается до verifier: находка, не проходящая gate, в verifier не попадает."""
+    # Политика пропускает только severity=high; low-находка должна быть отброшена до verifier
+    policy = ReviewPolicy(severity_threshold="high")
+    verifier = _RecordingVerifier()
+    deps = _node_deps(policy, verifier)
+
+    high_finding = _make_finding(severity="high")
+    low_finding = _make_finding(severity="low")
+
+    node = make_verify_node(deps)
+    result = node({"findings": [high_finding, low_finding]})
+
+    # verifier получил только high-находку
+    assert low_finding not in verifier.received
+    assert high_finding in verifier.received
+    # в результате — только high-находка
+    assert result["verified"] == [high_finding]
+
+
+def test_verify_node_passes_confirmed_finding():
+    """Находка, прошедшая gate и подтверждённая verifier, сохраняется в verified."""
+    policy = ReviewPolicy()   # пропускает всё
+    verifier = _RecordingVerifier()
+    deps = _node_deps(policy, verifier)
+
+    f = _make_finding()
+    node = make_verify_node(deps)
+    result = node({"findings": [f]})
+
+    assert result["verified"] == [f]
+
+
+def test_synthesize_node_filters_add_finding_via_gate():
+    """add-находка синтезатора, не проходящая gate, отбрасывается."""
+    policy = ReviewPolicy(severity_threshold="high")  # low не пройдёт
+
+    good_finding = _make_finding(severity="high")
+    bad_finding = _make_finding(severity="low")
+
+    class _Synthesizer:
+        def synthesize(self, verified, deps):
+            # добавляет новую low-находку к уже подтверждённым
+            return list(verified) + [bad_finding]
+
+    deps = _node_deps(policy, verifier=None, synthesizer=_Synthesizer())
+    node = make_synthesize_node(deps)
+    result = node({"verified": [good_finding]})
+
+    assert good_finding in result["verified"]
+    assert bad_finding not in result["verified"]
+
+
+def test_synthesize_node_keeps_passing_add_finding():
+    """add-находка синтезатора, прошедшая gate, остаётся в verified."""
+    policy = ReviewPolicy()   # пропускает всё
+
+    existing = _make_finding(severity="high")
+    new_finding = _make_finding(severity="high", file="b.py")
+
+    class _Synthesizer:
+        def synthesize(self, verified, deps):
+            return list(verified) + [new_finding]
+
+    deps = _node_deps(policy, verifier=None, synthesizer=_Synthesizer())
+    node = make_synthesize_node(deps)
+    result = node({"verified": [existing]})
+
+    assert existing in result["verified"]
+    assert new_finding in result["verified"]
