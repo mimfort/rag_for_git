@@ -1,10 +1,13 @@
 from __future__ import annotations
+import logging
 import click
 
 from reviewer.config.settings import Settings
 from reviewer.app import build_components
 from reviewer.gitutil import file_at_ref, list_python_files
 from reviewer.index.freshness import update_base, build_overlay
+
+log = logging.getLogger(__name__)
 
 @click.group()
 def cli() -> None: ...
@@ -57,6 +60,7 @@ def review(slug: str, pr: int) -> None:
     from reviewer.agent.analyzer import LLMAnalyzer, LLMVerifier, LLMSynthesizer
     from reviewer.policy.policy import ReviewPolicy
     from reviewer.index.chunker import chunk_python
+    from reviewer.llm.usage import UsageLog
 
     s = Settings()
     c = build_components(s)
@@ -66,7 +70,8 @@ def review(slug: str, pr: int) -> None:
         vcs = GitHubProvider(owner, repo, token=s.github_token)
         prq = vcs.get_pull_request(pr)
         files = vcs.get_changed_files(pr)
-        changed = [f.path for f in files if f.path.endswith(".py")]
+        # Только существующие .py-файлы попадают в индекс и ревью
+        changed = [f.path for f in files if f.path.endswith(".py") and f.status != "removed"]
 
         build_overlay(c.store, c.embedder, pr, changed,
                       read_head=lambda p: vcs.get_file_at_ref(p, prq.head_sha))
@@ -75,27 +80,74 @@ def review(slug: str, pr: int) -> None:
         for f in files:
             if not f.path.endswith(".py"):
                 continue
+            # Пропускаем удалённые файлы и файлы, у которых head-версия пуста:
+            # на удалённый/пустой файл нечего ревьюить, экономим полный tool-loop.
+            if f.status == "removed":
+                continue
             src = vcs.get_file_at_ref(f.path, prq.head_sha) or ""
+            if not src:
+                continue
             node_ids = [ch.node_id for ch in chunk_python(f.path, src.encode())]
             units.append(ReviewUnit(f.path, node_ids, f.patch or "", new_source=src))
 
+        # sources нужны верификатору для проверки наличия символов в актуальном коде
+        sources = {u.path: u.new_source for u in units}
+
+        usage = UsageLog()
+
         policy = ReviewPolicy.load(s, vcs.get_file_at_ref(".review.yml", prq.base_ref))
         changed_status = {f.path: f.status for f in files}
-        deps = Deps(vcs=vcs, retriever=c.retriever, graph=c.graph, policy=policy,
-                    analyzer=LLMAnalyzer(c.llm_provider, s.review_max_tool_iterations),
-                    verifier=LLMVerifier(c.llm_provider, agentic=s.review_agentic_verify,
-                                         max_iterations=s.review_verify_max_iterations,
-                                         min_severity=s.review_verify_min_severity), pr_number=pr,
-                    head_sha=prq.head_sha, overlay_ref=f"pr:{pr}",
-                    changed_paths=changed, patches={f.path: f.patch for f in files},
-                    suggestions_mode=s.review_suggestions,
-                    pr_title=prq.title, pr_body=prq.body, changed_status=changed_status,
-                    synthesizer=(LLMSynthesizer(c.llm_provider)
-                                 if s.review_synthesis else None))
+
+        # Кросс-файловый синтез имеет смысл только при ≥2 файлах в PR
+        synthesizer = (
+            LLMSynthesizer(c.llm_provider, prompt_cache=s.openrouter_prompt_cache)
+            if s.review_synthesis and len(changed) >= 2
+            else None
+        )
+
+        deps = Deps(
+            vcs=vcs,
+            retriever=c.retriever,
+            graph=c.graph,
+            policy=policy,
+            analyzer=LLMAnalyzer(
+                c.llm_provider,
+                s.review_max_tool_iterations,
+                prompt_cache=s.openrouter_prompt_cache,
+            ),
+            verifier=LLMVerifier(
+                c.llm_provider,
+                agentic=s.review_agentic_verify,
+                max_iterations=s.review_verify_max_iterations,
+                min_severity=s.review_verify_min_severity,
+                model=(s.openrouter_model_verify or None),
+                prompt_cache=s.openrouter_prompt_cache,
+            ),
+            pr_number=pr,
+            head_sha=prq.head_sha,
+            overlay_ref=f"pr:{pr}",
+            changed_paths=changed,
+            patches={f.path: f.patch for f in files},
+            suggestions_mode=s.review_suggestions,
+            pr_title=prq.title,
+            pr_body=prq.body,
+            changed_status=changed_status,
+            synthesizer=synthesizer,
+            sources=sources,
+            usage=usage,
+        )
         build_graph(deps).invoke({"review_units": units, "findings": [],
                                   "verified": [], "summary": "", "inline_comments": []})
         click.echo("Ревью опубликовано.")
+        rep = usage.report()
+        if rep:
+            click.echo(rep)
     finally:
+        # Удаляем эфемерный overlay pr:N — он не нужен после завершения ревью
+        try:
+            c.store.delete_ref(f"pr:{pr}")
+        except Exception:
+            log.warning("Не удалось очистить overlay pr:%s", pr, exc_info=True)
         if c.graph:
             c.graph.close()
         if vcs:

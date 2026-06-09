@@ -220,7 +220,11 @@ PR удаляет «лишнюю», на первый взгляд, провер
 | `REVIEW_CATEGORIES` | CSV вайтлист категорий (пусто = все) |
 | `REVIEW_SUGGESTIONS` | `apply` = applyable `suggestion`-блоки (кнопка «Apply»), `text` = только текстовые советы |
 | `REVIEW_MAX_TOOL_ITERATIONS` | потолок tool-вызовов агента на файл |
+| `OPENROUTER_MODEL_VERIFY` | отдельная (дешёвая) модель для verify-прохода; пусто — использовать основную модель |
+| `OPENROUTER_PROMPT_CACHE` | `true` = включить prompt caching (экономия input-токенов на длинных tool-loop'ах, поддерживается через OpenRouter для Anthropic и ряда других провайдеров) |
 | `PG_DSN`, `NEO4J_URI/USER/PASSWORD`, `GITHUB_TOKEN` | подключения и доступ |
+
+После завершения ревью CLI печатает сводку токенов по этапам (analyze/verify/synthesize). Эфемерный overlay `pr:N` удаляется из Postgres автоматически по окончании команды.
 
 **Политика per-repo.** Файл `.review.yml` в **целевой ветке** репозитория переопределяет env-дефолты (PR не может ослабить собственное ревью):
 
