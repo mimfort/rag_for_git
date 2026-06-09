@@ -17,3 +17,7 @@ def file_at_ref(repo: str, path: str, ref: str) -> str | None:
 def list_python_files(repo: str, ref: str) -> list[str]:
     out = _git(repo, "ls-tree", "-r", "--name-only", ref)
     return [l for l in out.splitlines() if l.endswith(".py")]
+
+def rev_parse(repo: str, ref: str) -> str:
+    """Полный SHA коммита, на который указывает ref (`git rev-parse <ref>`)."""
+    return _git(repo, "rev-parse", ref).strip()

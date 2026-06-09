@@ -30,9 +30,11 @@ cp .env.example .env        # .env gitignored, ключи только лока�
 .venv/bin/ruff check .        # line-length 100, target py311
 
 # CLI (после pip install -e .)
+reviewer check                             # проверить готовность окружения (ключи, Postgres, Neo4j, GitHub)
 reviewer index /path/to/repo --ref main   # построить/обновить base-индекс (вектора + граф) из локального клона
 reviewer search "token verification"       # диагностический гибрид-поиск по base-индексу
 reviewer review owner/repo 123             # отревьюить PR и запостить inline + сводку
+reviewer review owner/repo 123 --dry-run  # прогон без публикации, вывод в консоль
 ```
 
 `pytest` по умолчанию **исключает** integration-тесты (`addopts = -m 'not integration'` в `pyproject.toml`) — маркер `integration` помечает тесты, требующие поднятых Postgres/Neo4j.
@@ -81,6 +83,9 @@ reviewer review owner/repo 123             # отревьюить PR и запо
 - **Граф v1 — tree-sitter-резолвер по имени вызова** (`graph/builder.py`), быстрый и без внешних тулов. Точный кросс-файловый граф через `scip-python` (`graph/scip.py`) написан, но **не подключён** в `index` — это апгрейд на будущее.
 - **Voyage free tier = 3 RPM / 10K TPM.** TPM — главный блокер: полный `reviewer index` большого репо упирается в лимит и троттлится; есть retry/backoff (`index/_retry.py`). Ревью одного PR (overlay + query-эмбеддинги) в лимит укладывается.
 - **`.review.yml` берётся из целевой (base) ветки**, не из PR — PR не может ослабить собственное ревью.
+- **SHA base-индекса** хранится в таблице `index_meta` (пишется при `reviewer index`). При каждом `reviewer review` CLI сравнивает его с `base_sha` PR и при расхождении автоматически досинхронизирует чанки изменившихся файлов через GitHub compare API. Граф (Neo4j) обновляется **только** при явном `reviewer index`.
+- **Индекс single-repo**: нет namespace по репозиторию — один инстанс (одна БД) на один репозиторий. Несколько репо требуют отдельных деплоев с разными `PG_DSN`/`NEO4J_URI`.
+- **`reviewer check`** проверяет готовность окружения (ключи, Postgres, Neo4j, GitHub) без трат квот Voyage/OpenRouter. **`--dry-run`** для `reviewer review` прогоняет полный анализ без публикации в GitHub.
 - **Overlay удаляется автоматически** (`c.store.delete_ref("pr:N")` в `finally`-блоке CLI) — после ревью эфемерный ref не остаётся в Postgres.
 - **verify может работать на отдельной дешёвой модели** (`OPENROUTER_MODEL_VERIFY`); prompt caching включён по умолчанию (`OPENROUTER_PROMPT_CACHE=true`) и передаётся через `cache_control` во все три этапа (analyze/verify/synthesize) — экономит input-токены на длинных tool-loop'ах.
 
