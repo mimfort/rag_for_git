@@ -9,6 +9,7 @@ class PullRequest:
     base_ref: str            # напр. "main"
     title: str
     body: str
+    draft: bool = False
 
 @dataclass
 class ChangedFile:
@@ -52,3 +53,4 @@ class VCSProvider(Protocol):
     def list_existing_fingerprints(self, number: int) -> set[str]: ...
     def publish_review(self, number: int, head_sha: str, summary: str,
                        comments: list[InlineComment]) -> None: ...
+    def compare_files(self, base_sha: str, head_sha: str) -> list[ChangedFile]: ...

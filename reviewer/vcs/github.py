@@ -26,7 +26,8 @@ class GitHubProvider:
         d = self._c.get(f"{self._base()}/pulls/{number}").raise_for_status().json()
         return PullRequest(number=number, base_sha=d["base"]["sha"],
                            head_sha=d["head"]["sha"], base_ref=d["base"]["ref"],
-                           title=d.get("title", ""), body=d.get("body") or "")
+                           title=d.get("title", ""), body=d.get("body") or "",
+                           draft=bool(d.get("draft", False)))
 
     def get_changed_files(self, number: int) -> list[ChangedFile]:
         files, page = [], 1
@@ -59,6 +60,19 @@ class GitHubProvider:
                 break
             page += 1
         return fps
+
+    def compare_files(self, base_sha: str, head_sha: str) -> list[ChangedFile]:
+        """Изменённые файлы между двумя коммитами (GitHub compare).
+
+        Внимание: API отдаёт максимум 300 файлов — для синка base-индекса после
+        обычного продвижения ветки этого достаточно.
+
+        404 (например, force-push, sha недоступен) пробрасывается как есть —
+        вызывающий обработает.
+        """
+        r = self._c.get(f"{self._base()}/compare/{base_sha}...{head_sha}").raise_for_status()
+        files = r.json().get("files", [])
+        return [ChangedFile(f["filename"], f["status"], f.get("patch")) for f in files]
 
     def publish_review(self, number: int, head_sha: str, summary: str,
                        comments: list[InlineComment]) -> None:
