@@ -32,6 +32,9 @@ class Settings(BaseSettings):
     review_verify_min_severity: str = "high"      # порог severity для агентной проверки
     review_verify_max_iterations: int = 2         # бюджет tool-loop верификатора на находку
     review_verdict_log: str = ""                  # путь к JSONL-логу вердиктов/публикаций; пусто = выключено
+    review_max_parallel_files: int = 4            # кап параллельных analyze (LangGraph max_concurrency)
+    review_max_files: int = 50                    # кап файлов PR на ревью; остальные — в сводку как пропущенные
+    review_skip_drafts: bool = True               # не ревьюить draft-PR
     # Voyage
     voyage_api_key: str = ""
     embedding_model: str = "voyage-code-3"

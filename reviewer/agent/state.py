@@ -34,6 +34,7 @@ class Deps:
     sources: dict[str, str] | None = None   # path -> новая версия файла (контекст для верификатора)
     usage: object = None                    # UsageLog | None — учёт токенов прогона
     verdicts: object = None                 # VerdictLog | None — JSONL-лог вердиктов/публикаций
+    skipped_paths: list[str] | None = None  # файлы сверх review_max_files (попадут в сводку)
 
 class UnitAnalyzer(Protocol):
     def analyze(self, unit: ReviewUnit, deps: "Deps") -> list[Finding]: ...
@@ -44,6 +45,7 @@ class Verifier(Protocol):
 class ReviewState(TypedDict):
     review_units: list[ReviewUnit]
     findings: Annotated[list[Finding], operator.add]
+    failed_units: Annotated[list[str], operator.add]
     verified: list[Finding]
     summary: str
     inline_comments: list[InlineComment]

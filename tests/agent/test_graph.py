@@ -25,7 +25,7 @@ def test_end_to_end_inline_on_diff_line():
     vcs = FakeVCS()
     g = build_graph(_deps(vcs))
     g.invoke({"review_units": [ReviewUnit("a.py", ["a.py#f"], "y")],
-              "findings": [], "verified": [], "summary": "", "inline_comments": []})
+              "findings": [], "failed_units": [], "verified": [], "summary": "", "inline_comments": []})
     summary, comments = vcs.published
     assert len(comments) == 1 and comments[0].path == "a.py" and comments[0].line == 2
     assert "ai-review:" in comments[0].body
@@ -39,7 +39,8 @@ def test_suggestion_rendered_as_text_not_github_suggestion_block():
                             "bug", "Добавить guard перед делением", 0.9)]
     deps.analyzer = WithSuggestion()
     build_graph(deps).invoke({"review_units": [ReviewUnit("a.py", ["a.py#f"], "y")],
-                              "findings": [], "verified": [], "summary": "", "inline_comments": []})
+                              "findings": [], "failed_units": [], "verified": [], "summary": "",
+                              "inline_comments": []})
     _, comments = vcs.published
     body = comments[0].body
     assert "Добавить guard" in body            # совет присутствует как текст
@@ -56,7 +57,8 @@ class _Analyzer:
 
 def _run(deps):
     build_graph(deps).invoke({"review_units": [ReviewUnit("a.py", ["a.py#f"], "y")],
-                              "findings": [], "verified": [], "summary": "", "inline_comments": []})
+                              "findings": [], "failed_units": [], "verified": [], "summary": "",
+                              "inline_comments": []})
 
 def test_applyable_multiline_suggestion_in_diff():
     vcs = FakeVCS(); deps = _deps(vcs)            # diff RIGHT = {1, 2}
@@ -98,7 +100,8 @@ def test_finding_off_diff_goes_to_summary():
             return [Finding("correctness","high","a.py",999,"RIGHT","far away",None,0.8)]
     deps.analyzer = OffDiff()
     build_graph(deps).invoke({"review_units":[ReviewUnit("a.py",["a.py#f"],"y")],
-                              "findings":[],"verified":[],"summary":"","inline_comments":[]})
+                              "findings":[],"failed_units":[],"verified":[],"summary":"",
+                              "inline_comments":[]})
     summary, comments = vcs.published
     assert comments == [] and "far away" in summary
 
@@ -329,3 +332,79 @@ def test_assemble_without_verdicts_does_not_raise():
     node = make_assemble_node(deps)
     # Не должно бросать исключений
     node({"verified": [f]})
+
+
+# ---------------------------------------------------------------------------
+# Тесты fail-soft analyze, skipped_paths и чистая сводка
+# ---------------------------------------------------------------------------
+
+class _ErrorAnalyzer:
+    """Анализатор, бросающий исключение для файла с именем 'bad.py', иначе возвращает одну находку."""
+    def analyze(self, unit, deps):
+        if unit.path == "bad.py":
+            raise RuntimeError("намеренная ошибка")
+        return [Finding("correctness", "high", unit.path, 2, "RIGHT", f"bug in {unit.path}", None, 0.9)]
+
+
+def _two_file_deps(vcs):
+    """Deps с двумя файлами: a.py (успех) и bad.py (ошибка)."""
+    return Deps(
+        vcs=vcs, retriever=None, graph=None, policy=ReviewPolicy(),
+        analyzer=_ErrorAnalyzer(), verifier=PassVerifier(),
+        pr_number=1, head_sha="sha", overlay_ref="pr:1",
+        changed_paths=["a.py", "bad.py"],
+        patches={
+            "a.py": "@@ -1,2 +1,2 @@\n x\n+y\n",
+            "bad.py": "@@ -1,2 +1,2 @@\n x\n+y\n",
+        },
+    )
+
+
+def test_analyze_fail_soft_one_file_does_not_crash_graph():
+    """Ошибка анализа одного файла не валит граф; находки второго публикуются,
+    в summary присутствует секция «Не проанализировано» с путём и типом ошибки."""
+    vcs = FakeVCS()
+    deps = _two_file_deps(vcs)
+    g = build_graph(deps)
+    g.invoke({
+        "review_units": [
+            ReviewUnit("a.py", ["a.py#f"], "y"),
+            ReviewUnit("bad.py", ["bad.py#f"], "y"),
+        ],
+        "findings": [], "failed_units": [], "verified": [], "summary": "", "inline_comments": [],
+    })
+    summary, comments = vcs.published
+    # Находка из a.py опубликована
+    assert any(c.path == "a.py" for c in comments)
+    # Секция ошибок присутствует в сводке
+    assert "Не проанализировано" in summary
+    assert "bad.py" in summary
+    assert "RuntimeError" in summary
+
+
+def test_skipped_paths_appear_in_summary():
+    """deps.skipped_paths=[...] → в summary секция про лимит с обоими путями."""
+    vcs = FakeVCS()
+    deps = _deps(vcs)
+    deps.skipped_paths = ["a.py", "b.py"]
+    build_graph(deps).invoke({
+        "review_units": [ReviewUnit("a.py", ["a.py#f"], "y")],
+        "findings": [], "failed_units": [], "verified": [], "summary": "", "inline_comments": [],
+    })
+    summary, _ = vcs.published
+    assert "Пропущено по лимиту файлов" in summary
+    assert "a.py" in summary
+    assert "b.py" in summary
+
+
+def test_clean_summary_has_no_error_or_skipped_sections():
+    """Без ошибок и без skipped_paths — секции «Не проанализировано» и «Пропущено» отсутствуют."""
+    vcs = FakeVCS()
+    deps = _deps(vcs)
+    build_graph(deps).invoke({
+        "review_units": [ReviewUnit("a.py", ["a.py#f"], "y")],
+        "findings": [], "failed_units": [], "verified": [], "summary": "", "inline_comments": [],
+    })
+    summary, _ = vcs.published
+    assert "Не проанализировано" not in summary
+    assert "Пропущено по лимиту файлов" not in summary

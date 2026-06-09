@@ -1,10 +1,13 @@
 from __future__ import annotations
+import logging
 from langgraph.types import Send
 
 from reviewer.agent.dedup import dedup_findings
 from reviewer.agent.state import ReviewState, ReviewUnit, Deps
 from reviewer.vcs.base import InlineComment
 from reviewer.vcs.diff import commentable_lines
+
+_log = logging.getLogger(__name__)
 
 def plan_node(state: ReviewState):
     return {}
@@ -15,8 +18,12 @@ def fan_out(state: ReviewState):
 def make_analyze_node(deps: Deps):
     def analyze(payload: dict):
         unit: ReviewUnit = payload["unit"]
-        found = deps.analyzer.analyze(unit, deps)
-        return {"findings": found}
+        try:
+            found = deps.analyzer.analyze(unit, deps)
+        except Exception as e:
+            _log.warning("analyze %s: %s", unit.path, e, exc_info=True)
+            return {"findings": [], "failed_units": [f"{unit.path}: {type(e).__name__}: {e}"]}
+        return {"findings": found, "failed_units": []}
     return analyze
 
 def make_verify_node(deps: Deps):
@@ -98,6 +105,19 @@ def make_assemble_node(deps: Deps):
             summary_lines.insert(1, f"Выставлено inline-замечаний на строки диффа: {len(inline)}.\n")
         if len(summary_lines) == 1:
             summary_lines.append("Замечаний не найдено.")
+        failed = state.get("failed_units", [])
+        if failed:
+            summary_lines.append("\n### Не проанализировано (ошибки)")
+            for entry in failed:
+                summary_lines.append(f"- {entry}")
+        skipped = deps.skipped_paths or []
+        if skipped:
+            summary_lines.append("\n### Пропущено по лимиту файлов (review_max_files)")
+            shown = skipped[:20]
+            for p in shown:
+                summary_lines.append(f"- {p}")
+            if len(skipped) > 20:
+                summary_lines.append(f"- … и ещё {len(skipped) - 20}")
         return {"inline_comments": inline, "summary": "\n".join(summary_lines)}
     return assemble
 
