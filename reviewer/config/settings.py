@@ -31,6 +31,7 @@ class Settings(BaseSettings):
     review_synthesis: bool = True                 # кросс-файловый узел synthesize
     review_verify_min_severity: str = "high"      # порог severity для агентной проверки
     review_verify_max_iterations: int = 2         # бюджет tool-loop верификатора на находку
+    review_verdict_log: str = ""                  # путь к JSONL-логу вердиктов/публикаций; пусто = выключено
     # Voyage
     voyage_api_key: str = ""
     embedding_model: str = "voyage-code-3"

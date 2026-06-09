@@ -30,3 +30,14 @@ def test_openrouter_prompt_cache_reads_from_env(monkeypatch):
     monkeypatch.setenv("OPENROUTER_PROMPT_CACHE", "false")
     s = Settings(_env_file=None)
     assert s.openrouter_prompt_cache is False
+
+
+def test_review_verdict_log_default_empty():
+    s = Settings(_env_file=None)
+    assert s.review_verdict_log == ""
+
+
+def test_review_verdict_log_reads_from_env(monkeypatch):
+    monkeypatch.setenv("REVIEW_VERDICT_LOG", "./review_verdicts.jsonl")
+    s = Settings(_env_file=None)
+    assert s.review_verdict_log == "./review_verdicts.jsonl"
