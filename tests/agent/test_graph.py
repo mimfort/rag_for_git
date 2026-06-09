@@ -1,5 +1,5 @@
 from reviewer.agent.graph import build_graph
-from reviewer.agent.nodes import make_verify_node, make_synthesize_node
+from reviewer.agent.nodes import make_verify_node, make_synthesize_node, make_assemble_node
 from reviewer.agent.state import Deps, ReviewUnit
 from reviewer.vcs.base import Finding
 from reviewer.policy.policy import ReviewPolicy
@@ -222,3 +222,110 @@ def test_synthesize_node_keeps_passing_add_finding():
 
     assert existing in result["verified"]
     assert new_finding in result["verified"]
+
+
+# ---------------------------------------------------------------------------
+# Тесты dedup в verify-узле и логирования публикаций
+# ---------------------------------------------------------------------------
+
+def test_verify_node_dedup_before_verifier():
+    """Два одинаковых finding (file/line/category/message) → verifier получает один."""
+    policy = ReviewPolicy()   # пропускает всё
+    verifier = _RecordingVerifier()
+    deps = _node_deps(policy, verifier)
+
+    # Два идентичных finding с одинаковым file/line/category/message
+    f1 = Finding("correctness", "high", "a.py", 5, "RIGHT", "ошибка X", None, 0.9)
+    f2 = Finding("correctness", "high", "a.py", 5, "RIGHT", "ошибка X", None, 0.8)
+
+    node = make_verify_node(deps)
+    node({"findings": [f1, f2]})
+
+    # После dedup verifier должен получить ровно одну находку
+    assert len(verifier.received) == 1
+
+
+class _FakeVerdictLog:
+    """Фейковый VerdictLog: записывает вызовы log_published."""
+    def __init__(self):
+        self.calls: list[tuple] = []   # [(finding, inline), ...]
+
+    def log_published(self, finding, inline: bool) -> None:
+        self.calls.append((finding, inline))
+
+
+def _assemble_deps(vcs, policy=None, verdicts=None):
+    """Deps для изолированного теста make_assemble_node."""
+    if policy is None:
+        policy = ReviewPolicy()
+    return Deps(
+        vcs=vcs, retriever=None, graph=None,
+        policy=policy,
+        analyzer=None,
+        verifier=None,
+        pr_number=1, head_sha="s", overlay_ref="pr:1",
+        changed_paths=["a.py"],
+        patches={"a.py": "@@ -1,2 +1,2 @@\n x\n+y\n"},
+        verdicts=verdicts,
+    )
+
+
+def test_log_published_inline_finding():
+    """Inline-находка логируется с inline=True."""
+    vcs = FakeVCS()
+    vlog = _FakeVerdictLog()
+    deps = _assemble_deps(vcs, verdicts=vlog)
+
+    # Строка 2 есть в диффе (RIGHT)
+    f = Finding("correctness", "high", "a.py", 2, "RIGHT", "bug inline", None, 0.9)
+    node = make_assemble_node(deps)
+    node({"verified": [f]})
+
+    assert len(vlog.calls) == 1
+    assert vlog.calls[0] == (f, True)
+
+
+def test_log_published_summary_finding():
+    """Находка вне диффа уходит в сводку и логируется с inline=False."""
+    vcs = FakeVCS()
+    vlog = _FakeVerdictLog()
+    deps = _assemble_deps(vcs, verdicts=vlog)
+
+    # Строка 999 вне диффа → попадёт в сводку
+    f = Finding("correctness", "high", "a.py", 999, "RIGHT", "bug in summary", None, 0.8)
+    node = make_assemble_node(deps)
+    node({"verified": [f]})
+
+    assert len(vlog.calls) == 1
+    assert vlog.calls[0] == (f, False)
+
+
+def test_log_published_skips_existing_fingerprint():
+    """Находка с фингерпринтом из предыдущего прогона не логируется."""
+    f = Finding("correctness", "high", "a.py", 2, "RIGHT", "already there", None, 0.9)
+
+    class _VCSWithExisting:
+        def list_existing_fingerprints(self, n):
+            return {f.fingerprint()}
+        def publish_review(self, *args, **kwargs):
+            pass
+
+    vcs = _VCSWithExisting()
+    vlog = _FakeVerdictLog()
+    deps = _assemble_deps(vcs, verdicts=vlog)
+
+    node = make_assemble_node(deps)
+    node({"verified": [f]})
+
+    assert vlog.calls == []
+
+
+def test_assemble_without_verdicts_does_not_raise():
+    """deps.verdicts = None → ничего не падает."""
+    vcs = FakeVCS()
+    deps = _assemble_deps(vcs, verdicts=None)
+
+    f = Finding("correctness", "high", "a.py", 2, "RIGHT", "тест без лога", None, 0.9)
+    node = make_assemble_node(deps)
+    # Не должно бросать исключений
+    node({"verified": [f]})

@@ -1,6 +1,7 @@
 from __future__ import annotations
 from langgraph.types import Send
 
+from reviewer.agent.dedup import dedup_findings
 from reviewer.agent.state import ReviewState, ReviewUnit, Deps
 from reviewer.vcs.base import InlineComment
 from reviewer.vcs.diff import commentable_lines
@@ -23,6 +24,9 @@ def make_verify_node(deps: Deps):
         # Gate первым: не тратим LLM-вызовы верификации на находки,
         # которые всё равно будут отброшены по категории/severity/confidence/путям.
         kept = [f for f in state["findings"] if deps.policy.gate(f)]
+        # Dedup до verify: analyze идёт параллельно по файлам и может порождать дубли
+        # (особенно на скопированном коде) — не платим за верификацию дублей.
+        kept = dedup_findings(kept)
         kept = deps.verifier.verify(kept, deps)
         return {"verified": kept}
     return verify
@@ -44,6 +48,12 @@ def _can_apply(f, right: set[int], used: list[tuple[int, int]], mode: str) -> bo
             and not _overlaps(used, f.fix_start, f.fix_end))
 
 def make_assemble_node(deps: Deps):
+    def _log_published(f, inline: bool) -> None:
+        """Логировать факт публикации находки, если VerdictLog подключён."""
+        v = getattr(deps, "verdicts", None)
+        if v:
+            v.log_published(f, inline=inline)
+
     def assemble(state: ReviewState):
         existing = deps.vcs.list_existing_fingerprints(deps.pr_number)
         commentable = {p: commentable_lines(deps.patches.get(p)) for p in deps.changed_paths}
@@ -56,6 +66,7 @@ def make_assemble_node(deps: Deps):
                 break
             fp = f.fingerprint()
             if fp in existing:
+                # дубликат прошлого прогона — не логируем
                 continue
             allowed = commentable.get(f.file, {"RIGHT": set(), "LEFT": set()})
             right = allowed.get("RIGHT", set())
@@ -73,13 +84,16 @@ def make_assemble_node(deps: Deps):
                                                 start_line=f.fix_start, start_side="RIGHT"))
                 else:                          # одна строка
                     inline.append(InlineComment(f.file, f.fix_end, "RIGHT", body))
+                _log_published(f, inline=True)
                 continue
             # 2) обычный inline (текстовый совет) на строке диффа, иначе — в сводку
             body += f"\n<!-- ai-review:{fp} -->"
             if f.line is not None and f.line in allowed.get(f.side, set()):
                 inline.append(InlineComment(f.file, f.line, f.side, body))
+                _log_published(f, inline=True)
             else:
                 summary_lines.append(f"- `{f.file}:{f.line}` {body}")
+                _log_published(f, inline=False)
         if inline:
             summary_lines.insert(1, f"Выставлено inline-замечаний на строки диффа: {len(inline)}.\n")
         if len(summary_lines) == 1:
