@@ -3,6 +3,7 @@ from langchain_core.messages import AIMessage, HumanMessage
 from reviewer.agent.analyzer import (
     LLMAnalyzer, LLMVerifier, LLMSynthesizer,
     _pr_context, _to_findings, _FindingModel, _window,
+    _file_context, _signature_changes,
 )
 from reviewer.agent.state import ReviewUnit, Deps
 from reviewer.vcs.base import Finding
@@ -570,3 +571,264 @@ def test_verify_one_no_window_without_sources():
     combined = "\n".join(human_texts)
 
     assert "Контекст кода" not in combined
+
+
+# ---------------------------------------------------------------------------
+# _file_context — адаптивный контекст файла в analyze
+# ---------------------------------------------------------------------------
+
+
+def _gen_module(n_funcs: int, body_lines: int) -> str:
+    """Синтезирует валидный python-модуль из n_funcs функций по body_lines строк тела."""
+    out: list[str] = []
+    for k in range(n_funcs):
+        out.append(f"def func_{k}():")
+        for j in range(body_lines):
+            out.append(f"    x_{k}_{j} = {j}")
+        out.append("")
+    return "\n".join(out)
+
+
+def test_file_context_small_file_is_full():
+    """Файл ≤ 400 строк показывается целиком с нумерацией N|код."""
+    source = "\n".join(f"line{i}" for i in range(1, 51))  # 50 строк
+    unit = ReviewUnit("a.py", [], "@@ -1,1 +1,1 @@\n+x", new_source=source)
+    ctx = _file_context(unit)
+    lines = ctx.splitlines()
+    assert len(lines) == 50
+    assert lines[0] == "1|line1"
+    assert lines[-1] == "50|line50"
+
+
+def test_file_context_empty_source():
+    unit = ReviewUnit("a.py", [], "", new_source="")
+    assert _file_context(unit) == ""
+
+
+def test_file_context_large_file_windows_real_line_numbers():
+    """Большой файл (>400) -> окна вокруг хунков с реальной нумерацией + сигнатуры + маркер пропуска."""
+    source = _gen_module(n_funcs=120, body_lines=4)  # ~720 строк
+    total = len(source.splitlines())
+    assert total > 400
+    # два далёких хунка (200 и 500) -> два отдельных окна с маркером пропуска между ними
+    changed = ("@@ -200,3 +200,3 @@\n-old\n+new\n context\n"
+               "@@ -500,3 +500,3 @@\n-old\n+new\n context\n")
+    unit = ReviewUnit("big.py", [], changed, new_source=source)
+    ctx = _file_context(unit)
+    # реальные номера строк вокруг хунков (radius=50)
+    assert "200|" in ctx
+    assert "500|" in ctx
+    assert "Структура модуля (сигнатуры):" in ctx
+    assert "def func_" in ctx          # сигнатура из chunk_python
+    # между двумя окнами должен быть маркер пропуска
+    assert "пропущены" in ctx
+    # окно не охватывает весь файл -> строка 1 не показана как код окна
+    assert "1|def func_0" not in ctx
+
+
+def test_file_context_large_file_merges_overlapping_hunks():
+    """Пересекающиеся/смежные хунки сливаются в одно окно (без дубля маркеров между ними)."""
+    source = _gen_module(n_funcs=120, body_lines=4)  # ~720 строк
+    # два близких хунка: 300 и 320 — после ±50 окна пересекаются -> 1 окно
+    changed = ("@@ -300,2 +300,2 @@\n-a\n+b\n"
+               "@@ -320,2 +320,2 @@\n-c\n+d\n")
+    unit = ReviewUnit("big.py", [], changed, new_source=source)
+    ctx = _file_context(unit)
+    # между 300 и 320 НЕ должно быть маркера пропуска (слиты)
+    body = ctx.split("Структура модуля (сигнатуры):")[-1]
+    # отрезаем блок сигнатур, ищем маркеры в окнах
+    skips = [ln for ln in body.splitlines() if "пропущены" in ln]
+    # допустим максимум 1 ведущий маркер (до первого окна), но не между 300 и 320
+    assert "300|" in ctx and "320|" in ctx
+    # обе строки в одном непрерывном окне -> между ними реальные номера 301..319
+    assert "310|" in ctx
+    assert len(skips) <= 1
+
+
+def test_file_context_large_file_empty_diff_falls_back_to_head():
+    """Большой файл с пустым/кривым диффом -> первые 400 строк целиком."""
+    source = "\n".join(f"row{i}" for i in range(1, 601))  # 600 строк, не парсится как модуль
+    unit = ReviewUnit("a.py", [], "", new_source=source)
+    ctx = _file_context(unit)
+    lines = ctx.splitlines()
+    assert len(lines) == 400
+    assert lines[0] == "1|row1"
+    assert lines[-1] == "400|row400"
+    assert "Структура модуля" not in ctx   # fallback без сигнатур
+
+
+def test_file_context_1300_lines_now_windows_not_empty():
+    """Файл 1300+ строк (раньше _numbered давал пустоту) -> теперь непустые окна."""
+    source = _gen_module(n_funcs=220, body_lines=4)  # ~1320 строк
+    total = len(source.splitlines())
+    assert total > 1300
+    changed = "@@ -600,3 +600,3 @@\n-old\n+new\n context"
+    unit = ReviewUnit("huge.py", [], changed, new_source=source)
+    ctx = _file_context(unit)
+    assert ctx != ""
+    assert "600|" in ctx
+
+
+# ---------------------------------------------------------------------------
+# _signature_changes — подсказка об изменённых сигнатурах в synthesize
+# ---------------------------------------------------------------------------
+
+
+def test_signature_changes_captures_both_def_lines():
+    patch = ("@@ -1,1 +1,1 @@\n"
+             "-def connect(host, port):\n"
+             "+def connect(host, port, timeout):\n")
+    out = _signature_changes({"a.py": patch})
+    assert "a.py:" in out
+    assert "- def connect(host, port):" in out
+    assert "+ def connect(host, port, timeout):" in out
+
+
+def test_signature_changes_handles_class_and_async_def():
+    patch = ("@@ -1,1 +1,1 @@\n"
+             "+class Foo:\n"
+             "+async def run(self):\n"
+             "+    x = 1\n")
+    out = _signature_changes({"b.py": patch})
+    assert "+ class Foo:" in out
+    assert "+ async def run(self):" in out
+    assert "x = 1" not in out   # тела не попадают
+
+
+def test_signature_changes_empty_when_no_signatures():
+    patch = "@@ -1,1 +1,1 @@\n-x = 1\n+x = 2\n"
+    assert _signature_changes({"a.py": patch}) == ""
+
+
+def test_signature_changes_ignores_file_headers():
+    """Строки ---/+++ не считаются изменениями сигнатур даже при совпадении."""
+    patch = "--- a/x.py\n+++ b/x.py\n@@ -1,1 +1,1 @@\n-x=1\n+x=2\n"
+    assert _signature_changes({"x.py": patch}) == ""
+
+
+def test_synthesize_prompt_includes_signature_changes():
+    """Блок изменённых сигнатур попадает в human-промпт синтезатора."""
+    captured: list = []
+
+    class CaptureLLM:
+        def invoke(self, messages):
+            captured.extend(messages)
+            return AIMessage(content='{"keep": [0], "add": []}')
+
+        def bind_tools(self, tools):
+            return self
+
+    class CapProvider:
+        def chat_model_with_tools(self, tools, model=None):
+            return CaptureLLM()
+        def chat_model(self, model=None):
+            return FinalLLM("FALLBACK")
+
+    patch = ("@@ -1,1 +1,1 @@\n"
+             "-def connect(host, port):\n"
+             "+def connect(host, port, timeout):\n")
+    deps = _deps(patches={"a.py": patch})
+    s = LLMSynthesizer(CapProvider(), max_iterations=2)
+    s.synthesize([_finding(severity="high")], deps)
+
+    human_texts = []
+    for msg in captured:
+        if isinstance(msg, HumanMessage):
+            c = msg.content
+            human_texts.append("".join(p.get("text", "") for p in c if isinstance(p, dict))
+                               if isinstance(c, list) else str(c))
+    combined = "\n".join(human_texts)
+    assert "Изменённые сигнатуры в PR" in combined
+    assert "+ def connect(host, port, timeout):" in combined
+
+
+# ---------------------------------------------------------------------------
+# VerdictLog-хук в верификаторе
+# ---------------------------------------------------------------------------
+
+
+class FakeVerdictLog:
+    """Фейковый VerdictLog: записывает вызовы log_verdict."""
+
+    def __init__(self):
+        self.verdicts: list[tuple[object, bool, str]] = []
+
+    def log_verdict(self, finding, is_real: bool, source: str = "agentic") -> None:
+        self.verdicts.append((finding, is_real, source))
+
+    def log_published(self, finding, inline: bool) -> None:  # для полноты интерфейса
+        pass
+
+
+def test_verdict_logged_agentic_true():
+    prov = FakeProvider([AIMessage(content='{"is_real": true}')], "FALLBACK")
+    vlog = FakeVerdictLog()
+    deps = _deps(verdicts=vlog)
+    v = LLMVerifier(prov, agentic=True, max_iterations=2, min_severity="low")
+    v.verify([_finding(severity="high")], deps)
+    assert len(vlog.verdicts) == 1
+    _, is_real, source = vlog.verdicts[0]
+    assert is_real is True and source == "agentic"
+
+
+def test_verdict_logged_agentic_false():
+    prov = FakeProvider([AIMessage(content='{"is_real": false}')], "FALLBACK")
+    vlog = FakeVerdictLog()
+    deps = _deps(verdicts=vlog)
+    v = LLMVerifier(prov, agentic=True, max_iterations=2, min_severity="low")
+    out = v.verify([_finding(severity="high")], deps)
+    assert out == []
+    assert vlog.verdicts[0][1] is False and vlog.verdicts[0][2] == "agentic"
+
+
+def test_verdict_logged_on_fallback_path():
+    """Fallback-инвок (последний ответ без JSON) тоже логирует вердикт."""
+    prov = FakeProvider([AIMessage(content="мысли вслух")], '{"is_real": false}')
+    vlog = FakeVerdictLog()
+    deps = _deps(verdicts=vlog)
+    v = LLMVerifier(prov, agentic=True, max_iterations=2, min_severity="low")
+    out = v.verify([_finding(severity="high")], deps)
+    assert out == []
+    assert len(vlog.verdicts) == 1
+    assert vlog.verdicts[0][1] is False and vlog.verdicts[0][2] == "agentic"
+
+
+def test_verdict_logged_on_fail_open():
+    """Fail-open (неразборный вердикт -> оставляем) логирует is_real=True."""
+    prov = FakeProvider([AIMessage(content="done")], "мусор без json")
+    vlog = FakeVerdictLog()
+    deps = _deps(verdicts=vlog)
+    v = LLMVerifier(prov, agentic=True, max_iterations=2, min_severity="low")
+    out = v.verify([_finding(severity="high")], deps)
+    assert len(out) == 1
+    assert len(vlog.verdicts) == 1
+    assert vlog.verdicts[0][1] is True and vlog.verdicts[0][2] == "agentic"
+
+
+def test_verdict_not_logged_on_needs_check_skip():
+    """Дёшево пропущенная находка (_needs_check=False) НЕ логируется — это не вердикт."""
+    class BoomProvider:
+        def chat_model_with_tools(self, tools, model=None):
+            raise AssertionError("не должно вызываться")
+        def chat_model(self, model=None):
+            raise AssertionError("не должно вызываться")
+
+    vlog = FakeVerdictLog()
+    deps = _deps(verdicts=vlog)
+    v = LLMVerifier(BoomProvider(), agentic=True, max_iterations=2, min_severity="high")
+    out = v.verify([_finding(severity="low", confidence=0.9)], deps)
+    assert len(out) == 1
+    assert vlog.verdicts == []
+
+
+def test_verdict_oneshot_logs_all_with_source_oneshot():
+    prov = FakeProvider([], '{"verdicts":[{"index":0,"is_real":true},'
+                            '{"index":1,"is_real":false}]}')
+    vlog = FakeVerdictLog()
+    deps = _deps(verdicts=vlog)
+    v = LLMVerifier(prov, agentic=False)
+    out = v.verify([_finding(msg="a"), _finding(msg="b")], deps)
+    assert [f.message for f in out] == ["a"]
+    assert len(vlog.verdicts) == 2
+    assert all(src == "oneshot" for _, _, src in vlog.verdicts)
+    assert vlog.verdicts[0][1] is True and vlog.verdicts[1][1] is False

@@ -33,6 +33,7 @@ class Deps:
     synthesizer: object = None        # LLMSynthesizer (Task 6); None = узел выключен
     sources: dict[str, str] | None = None   # path -> новая версия файла (контекст для верификатора)
     usage: object = None                    # UsageLog | None — учёт токенов прогона
+    verdicts: object = None                 # VerdictLog | None — JSONL-лог вердиктов/публикаций
 
 class UnitAnalyzer(Protocol):
     def analyze(self, unit: ReviewUnit, deps: "Deps") -> list[Finding]: ...

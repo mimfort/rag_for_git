@@ -10,8 +10,12 @@ from reviewer.agent.prompts import ANALYZE_SYSTEM, VERIFY_SYSTEM, SYNTHESIZE_SYS
 from reviewer.tools.code_tools import make_tools, ToolContext
 from reviewer.vcs.base import Finding
 from reviewer.llm.budget import BudgetTracker, BudgetExceeded
+from reviewer.index.chunker import chunk_python
 
 _log = logging.getLogger(__name__)
+
+# Заголовок хунка unified diff: @@ -a,b +c,d @@ (b/d опциональны — тогда =1).
+_HUNK_HEADER = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
 
 _VALID_SEVERITY = {"low", "medium", "high", "critical"}
 _SEVERITY_ORDER = {"low": 0, "medium": 1, "high": 2, "critical": 3}
@@ -87,6 +91,131 @@ def _window(source: str, line: int, radius: int = 25) -> str:
     start = max(0, idx - radius)
     end = min(len(lines), idx + radius + 1)
     return "\n".join(f"{i + 1}|{ln}" for i, ln in enumerate(lines[start:end], start))
+
+
+_FILE_FULL_LIMIT = 400      # ≤ этого числа строк показываем файл целиком
+_WINDOWS_LINE_CAP = 1500    # суммарный кап строк во всех окнах
+
+
+def _hunk_ranges(changed_text: str) -> list[tuple[int, int]]:
+    """Диапазоны новой версии [c, c+max(d,1)-1] из заголовков хунков unified diff."""
+    ranges: list[tuple[int, int]] = []
+    for line in changed_text.splitlines():
+        m = _HUNK_HEADER.match(line)
+        if not m:
+            continue
+        c = int(m.group(1))
+        d = int(m.group(2)) if m.group(2) is not None else 1
+        ranges.append((c, c + max(d, 1) - 1))
+    return ranges
+
+
+def _merge_ranges(ranges: list[tuple[int, int]], total: int,
+                  radius: int, gap: int = 10) -> list[tuple[int, int]]:
+    """Расширить каждый диапазон на ±radius, обрезать по [1, total], слить
+    пересекающиеся/смежные (зазор ≤ gap) в отсортированном порядке."""
+    expanded: list[tuple[int, int]] = []
+    for lo, hi in ranges:
+        s = max(1, lo - radius)
+        e = min(total, hi + radius)
+        if s <= e:
+            expanded.append((s, e))
+    expanded.sort()
+    merged: list[tuple[int, int]] = []
+    for s, e in expanded:
+        if merged and s <= merged[-1][1] + gap + 1:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], e))
+        else:
+            merged.append((s, e))
+    return merged
+
+
+def _render_windows(lines: list[str], windows: list[tuple[int, int]]) -> str:
+    """Отрисовать окна с реальной нумерацией N|код; между окнами — маркер пропуска."""
+    parts: list[str] = []
+    prev_end = 0
+    for s, e in windows:
+        if prev_end and s > prev_end + 1:
+            parts.append(f"… (строки {prev_end + 1}–{s - 1} пропущены)")
+        parts.append("\n".join(f"{i}|{lines[i - 1]}" for i in range(s, e + 1)))
+        prev_end = e
+    return "\n".join(parts)
+
+
+def _module_signatures(path: str, source: str) -> str:
+    """Список символов модуля (kind fqn (строки start–end)) без тел — структура файла."""
+    try:
+        chunks = chunk_python(path, source.encode("utf-8"))
+    except Exception:
+        return ""
+    lines = [f"{c.kind} {c.symbol_fqn} (строки {c.start_line}–{c.end_line})" for c in chunks]
+    return "\n".join(lines)
+
+
+def _file_context(unit: ReviewUnit) -> str:
+    """Адаптивный контекст новой версии файла для analyze.
+
+    ≤ 400 строк — весь файл с нумерацией N|код. Больше — «окна вокруг изменений»
+    (диапазоны хунков ±50, слитые) плюс сигнатуры модуля; нумерация реальная,
+    между окнами — маркеры пропусков. Суммарный кап окон — 1500 строк."""
+    source = unit.new_source
+    lines = source.splitlines()
+    total = len(lines)
+    if total == 0:
+        return ""
+    if total <= _FILE_FULL_LIMIT:
+        return _numbered(source)
+
+    ranges = _hunk_ranges(unit.changed_text)
+    if not ranges:
+        # Нет/кривой дифф — fallback: первые 400 строк целиком.
+        head = min(_FILE_FULL_LIMIT, total)
+        return "\n".join(f"{i}|{lines[i - 1]}" for i in range(1, head + 1))
+
+    truncated = False
+    windows = _merge_ranges(ranges, total, radius=50)
+    if sum(e - s + 1 for s, e in windows) > _WINDOWS_LINE_CAP:
+        windows = _merge_ranges(ranges, total, radius=20)
+        truncated = True
+    # Если и при меньшем радиусе перебор — обрезаем самые поздние окна.
+    while windows and sum(e - s + 1 for s, e in windows) > _WINDOWS_LINE_CAP:
+        windows.pop()
+        truncated = True
+
+    parts: list[str] = []
+    sigs = _module_signatures(unit.path, source)
+    if sigs:
+        parts.append("Структура модуля (сигнатуры):\n" + sigs)
+    parts.append(_render_windows(lines, windows))
+    if truncated:
+        parts.append("(часть контекста опущена)")
+    return "\n\n".join(parts)
+
+
+def _signature_changes(patches: dict[str, str | None]) -> str:
+    """Изменённые сигнатуры (def/class/async def) в патчах PR, сгруппированные по файлу.
+
+    Возвращает блок вида:
+        file.py:
+          - def connect(host, port):
+          + def connect(host, port, timeout):
+    Если изменений сигнатур нет — пустая строка."""
+    blocks: list[str] = []
+    for path, patch in (patches or {}).items():
+        if not patch:
+            continue
+        sig_lines: list[str] = []
+        for line in patch.splitlines():
+            if not line or line[0] not in "+-":
+                continue
+            if line.startswith("---") or line.startswith("+++"):
+                continue
+            body = line[1:].lstrip()
+            if body.startswith(("def ", "class ", "async def ")):
+                sig_lines.append(f"{line[0]} {body}")
+        if sig_lines:
+            blocks.append(f"{path}:\n" + "\n".join(f"  {sl}" for sl in sig_lines))
+    return "\n".join(blocks)
 
 
 def _run_tool_loop(
@@ -228,12 +357,17 @@ class LLMAnalyzer:
         llm = self.provider.chat_model_with_tools(tools)
         tools_by_name = {t.name: t for t in tools}
         budget = BudgetTracker(self.max_iterations)
-        numbered = _numbered(unit.new_source)
+        ctx_text = _file_context(unit)
         pr_ctx = _pr_context(deps, deps.changed_paths)
         human = (pr_ctx + "\n\n") if pr_ctx else ""
         human += f"Файл: {unit.path}\n"
-        if numbered:
-            human += f"Новая версия файла (с номерами строк N|код):\n{numbered}\n\n"
+        if ctx_text:
+            total = len(unit.new_source.splitlines())
+            if total <= _FILE_FULL_LIMIT:
+                human += f"Новая версия файла (с номерами строк N|код):\n{ctx_text}\n\n"
+            else:
+                human += ("Контекст новой версии файла (нумерация строк реальная; "
+                          f"fix указывай только для показанных строк):\n{ctx_text}\n\n")
         human += f"Изменения (дифф):\n{unit.changed_text}"
         human += f"\n\nКогда закончишь работу с инструментами, верни итог в формате:\n{_FINDINGS_SCHEMA}"
         messages = [
@@ -325,7 +459,7 @@ class LLMVerifier:
         # Пробуем достать JSON из последнего AI-ответа без доп. вызова
         data = _last_ai_json(messages)
         if "is_real" in data:
-            return bool(data.get("is_real", True))
+            return self._verdict(f, bool(data.get("is_real", True)), deps)
         # Fallback: отдельный invoke со схемой
         resp = self.provider.chat_model(model=self.model).invoke(
             messages + [HumanMessage(_VERDICT_ONE_SCHEMA)])
@@ -333,8 +467,15 @@ class LLMVerifier:
             deps.usage.add("verify", resp)
         data = _extract_json(_text_of(resp))
         if "is_real" not in data:
-            return True   # fail-open: не разобрали -> оставляем
-        return bool(data.get("is_real", True))
+            return self._verdict(f, True, deps)   # fail-open: не разобрали -> оставляем
+        return self._verdict(f, bool(data.get("is_real", True)), deps)
+
+    def _verdict(self, f: Finding, result: bool, deps: Deps) -> bool:
+        """Залогировать agentic-вердикт (если включён VerdictLog) и вернуть его."""
+        v = getattr(deps, "verdicts", None)
+        if v:
+            v.log_verdict(f, is_real=result, source="agentic")
+        return result
 
     def _verify_oneshot(self, findings: list[Finding], deps: Deps) -> list[Finding]:
         listing = "\n".join(
@@ -352,6 +493,10 @@ class LLMVerifier:
         except Exception:
             return findings
         verdict_by_idx = {v.index: v.is_real for v in vb.verdicts}
+        vlog = getattr(deps, "verdicts", None)
+        if vlog:
+            for i, f in enumerate(findings):
+                vlog.log_verdict(f, is_real=bool(verdict_by_idx.get(i, True)), source="oneshot")
         return [f for i, f in enumerate(findings) if verdict_by_idx.get(i, True)]
 
 
@@ -383,6 +528,10 @@ class LLMSynthesizer:
             for i, f in enumerate(findings))
         pr_ctx = _pr_context(deps, deps.changed_paths)
         human = ((pr_ctx + "\n\n") if pr_ctx else "")
+        sig_changes = _signature_changes(getattr(deps, "patches", None) or {})
+        if sig_changes:
+            human += ("Изменённые сигнатуры в PR (проверь согласованность с вызовами "
+                      f"через find_callers):\n{sig_changes}\n\n")
         human += (f"Текущие находки по всему PR:\n{listing}\n\n"
                   "Проверь кросс-файловую согласованность инструментами и верни итоговый список.")
         human += f"\n\nКогда закончишь работу с инструментами, верни итог в формате:\n{_SYNTH_SCHEMA}"
