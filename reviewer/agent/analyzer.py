@@ -3,7 +3,7 @@ import json
 import logging
 import re
 from pydantic import BaseModel, Field
-from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage
+from langchain_core.messages import AIMessage, SystemMessage, HumanMessage, ToolMessage
 
 from reviewer.agent.state import ReviewUnit, Deps
 from reviewer.agent.prompts import ANALYZE_SYSTEM, VERIFY_SYSTEM, SYNTHESIZE_SYSTEM
@@ -51,6 +51,14 @@ _VERDICT_SCHEMA = (
 )
 
 
+def _cacheable(text: str, enabled: bool):
+    """Содержимое сообщения с anthropic cache_control (prompt caching через OpenRouter).
+    Кэш-префикс стабилен между итерациями tool-loop — история только дописывается."""
+    if not enabled:
+        return text
+    return [{"type": "text", "text": text, "cache_control": {"type": "ephemeral"}}]
+
+
 def _text_of(msg) -> str:
     c = getattr(msg, "content", "")
     if isinstance(c, str):
@@ -69,7 +77,22 @@ def _numbered(source: str, limit: int = 1200) -> str:
     return "\n".join(f"{i}|{ln}" for i, ln in enumerate(lines, 1))
 
 
-def _run_tool_loop(messages: list, llm, tools_by_name: dict, budget) -> list:
+def _window(source: str, line: int, radius: int = 25) -> str:
+    """Пронумерованное окно строк вокруг указанной строки (1-based), обрезанное по границам файла."""
+    lines = source.splitlines()
+    if not lines:
+        return ""
+    # line — 1-based, перевести в 0-based индекс
+    idx = line - 1
+    start = max(0, idx - radius)
+    end = min(len(lines), idx + radius + 1)
+    return "\n".join(f"{i + 1}|{ln}" for i, ln in enumerate(lines[start:end], start))
+
+
+def _run_tool_loop(
+    messages: list, llm, tools_by_name: dict, budget,
+    usage=None, stage: str = "",
+) -> list:
     """Гоняет tool-loop до отсутствия tool_calls или исчерпания бюджета.
     Мутирует и возвращает messages (добавляет AI- и ToolMessage). При BudgetExceeded —
     мягко выходит, оставляя накопленную историю для финального структурного запроса."""
@@ -77,6 +100,8 @@ def _run_tool_loop(messages: list, llm, tools_by_name: dict, budget) -> list:
         while True:
             budget.tick()
             ai = llm.invoke(messages)
+            if usage is not None:
+                usage.add(stage, ai)
             messages.append(ai)
             if not ai.tool_calls:
                 break
@@ -109,6 +134,19 @@ def _extract_json(text: str) -> dict:
         return obj if isinstance(obj, dict) else {}
     except Exception:
         return {}
+
+
+def _last_ai_json(messages: list) -> dict:
+    """Извлечь JSON из последнего AIMessage без tool_calls (иначе вернуть {})."""
+    if not messages:
+        return {}
+    last = messages[-1]
+    if not isinstance(last, AIMessage):
+        return {}
+    if getattr(last, "tool_calls", None):
+        return {}
+    return _extract_json(_text_of(last))
+
 
 class _Fix(BaseModel):
     start_line: int | None = None
@@ -173,9 +211,10 @@ class _VerdictBatch(BaseModel):
 
 class LLMAnalyzer:
     """Tool-loop + структурированный вывод findings для одного файла."""
-    def __init__(self, llm_provider, max_iterations: int):
+    def __init__(self, llm_provider, max_iterations: int, prompt_cache: bool = False):
         self.provider = llm_provider
         self.max_iterations = max_iterations
+        self.prompt_cache = prompt_cache
 
     def analyze(self, unit: ReviewUnit, deps: Deps) -> list[Finding]:
         ctx = ToolContext(
@@ -196,9 +235,25 @@ class LLMAnalyzer:
         if numbered:
             human += f"Новая версия файла (с номерами строк N|код):\n{numbered}\n\n"
         human += f"Изменения (дифф):\n{unit.changed_text}"
-        messages = [SystemMessage(ANALYZE_SYSTEM), HumanMessage(human)]
-        _run_tool_loop(messages, llm, tools_by_name, budget)
+        human += f"\n\nКогда закончишь работу с инструментами, верни итог в формате:\n{_FINDINGS_SCHEMA}"
+        messages = [
+            SystemMessage(_cacheable(ANALYZE_SYSTEM, self.prompt_cache)),
+            HumanMessage(_cacheable(human, self.prompt_cache)),
+        ]
+        _run_tool_loop(messages, llm, tools_by_name, budget,
+                       usage=deps.usage, stage="analyze")
+        # Пробуем достать JSON из последнего AI-ответа без доп. вызова
+        data = _last_ai_json(messages)
+        if "findings" in data:
+            try:
+                parsed = _Findings(**data)
+                return _to_findings(parsed.findings, default_file=unit.path)
+            except Exception:
+                pass
+        # Fallback: отдельный invoke со схемой
         resp = self.provider.chat_model().invoke(messages + [HumanMessage(_FINDINGS_SCHEMA)])
+        if deps.usage is not None:
+            deps.usage.add("analyze", resp)
         data = _extract_json(_text_of(resp))
         try:
             parsed = _Findings(**data)
@@ -210,11 +265,14 @@ class LLMVerifier:
     """Верификатор находок. agentic=True — поштучная проверка с инструментами;
     agentic=False — прежний one-shot список (обратносовместимо)."""
     def __init__(self, llm_provider, agentic: bool = False,
-                 max_iterations: int = 3, min_severity: str = "medium"):
+                 max_iterations: int = 3, min_severity: str = "medium",
+                 model: str | None = None, prompt_cache: bool = False):
         self.provider = llm_provider
         self.agentic = agentic
         self.max_iterations = max_iterations
         self.min_severity = min_severity
+        self.model = model
+        self.prompt_cache = prompt_cache
 
     def verify(self, findings: list[Finding], deps: Deps) -> list[Finding]:
         if not findings:
@@ -241,17 +299,38 @@ class LLMVerifier:
                           if deps.vcs else None),
             patches=deps.patches, store=getattr(deps.retriever, "store", None))
         tools = make_tools(ctx)
-        llm = self.provider.chat_model_with_tools(tools)
+        llm = self.provider.chat_model_with_tools(tools, model=self.model)
         tools_by_name = {t.name: t for t in tools}
         budget = BudgetTracker(self.max_iterations)
         human = (f"Замечание для проверки:\n[{f.category}/{f.severity}] "
-                 f"{f.file}:{f.line} {f.message}\n\n"
-                 "Проверь по реальному коду через инструменты (read_file, find_callers, "
-                 "get_definition), затем верни вердикт.")
-        messages = [SystemMessage(VERIFY_SYSTEM), HumanMessage(human)]
-        _run_tool_loop(messages, llm, tools_by_name, budget)
-        resp = self.provider.chat_model().invoke(
+                 f"{f.file}:{f.line} {f.message}\n\n")
+        # Добавляем окно кода и дифф файла, если доступны — верификатор не тратит итерации на чтение
+        sources = getattr(deps, "sources", None)
+        if sources and f.file in sources and f.line:
+            win = _window(sources[f.file], f.line)
+            if win:
+                human += f"Контекст кода ({f.file}, строки вокруг {f.line}):\n{win}\n\n"
+        patches = getattr(deps, "patches", None)
+        if patches and f.file in patches and patches[f.file]:
+            human += f"Дифф файла:\n{patches[f.file]}\n\n"
+        human += ("Проверь по реальному коду через инструменты (read_file, find_callers, "
+                  "get_definition), затем верни вердикт.")
+        human += f"\n\nКогда закончишь работу с инструментами, верни итог в формате:\n{_VERDICT_ONE_SCHEMA}"
+        messages = [
+            SystemMessage(_cacheable(VERIFY_SYSTEM, self.prompt_cache)),
+            HumanMessage(_cacheable(human, self.prompt_cache)),
+        ]
+        _run_tool_loop(messages, llm, tools_by_name, budget,
+                       usage=deps.usage, stage="verify")
+        # Пробуем достать JSON из последнего AI-ответа без доп. вызова
+        data = _last_ai_json(messages)
+        if "is_real" in data:
+            return bool(data.get("is_real", True))
+        # Fallback: отдельный invoke со схемой
+        resp = self.provider.chat_model(model=self.model).invoke(
             messages + [HumanMessage(_VERDICT_ONE_SCHEMA)])
+        if deps.usage is not None:
+            deps.usage.add("verify", resp)
         data = _extract_json(_text_of(resp))
         if "is_real" not in data:
             return True   # fail-open: не разобрали -> оставляем
@@ -261,8 +340,10 @@ class LLMVerifier:
         listing = "\n".join(
             f"{i}. [{f.category}/{f.severity}] {f.file}:{f.line} {f.message}"
             for i, f in enumerate(findings))
-        resp = self.provider.chat_model().invoke(
+        resp = self.provider.chat_model(model=self.model).invoke(
             [SystemMessage(VERIFY_SYSTEM), HumanMessage(listing + "\n\n" + _VERDICT_SCHEMA)])
+        if deps.usage is not None:
+            deps.usage.add("verify", resp)
         data = _extract_json(_text_of(resp))
         if "verdicts" not in data:
             return findings
@@ -278,9 +359,10 @@ class LLMSynthesizer:
     """Кросс-файловый проход по всем находкам PR: добавляет кросс-файловые проблемы,
     дедуплицирует. Tool-enabled. Fail-open: при неразборе/пустом ответе — возвращает вход."""
 
-    def __init__(self, llm_provider, max_iterations: int = 6):
+    def __init__(self, llm_provider, max_iterations: int = 6, prompt_cache: bool = False):
         self.provider = llm_provider
         self.max_iterations = max_iterations
+        self.prompt_cache = prompt_cache
 
     def synthesize(self, findings: list[Finding], deps: Deps) -> list[Finding]:
         if not findings:
@@ -303,9 +385,35 @@ class LLMSynthesizer:
         human = ((pr_ctx + "\n\n") if pr_ctx else "")
         human += (f"Текущие находки по всему PR:\n{listing}\n\n"
                   "Проверь кросс-файловую согласованность инструментами и верни итоговый список.")
-        messages = [SystemMessage(SYNTHESIZE_SYSTEM), HumanMessage(human)]
-        _run_tool_loop(messages, llm, tools_by_name, budget)
+        human += f"\n\nКогда закончишь работу с инструментами, верни итог в формате:\n{_SYNTH_SCHEMA}"
+        messages = [
+            SystemMessage(_cacheable(SYNTHESIZE_SYSTEM, self.prompt_cache)),
+            HumanMessage(_cacheable(human, self.prompt_cache)),
+        ]
+        _run_tool_loop(messages, llm, tools_by_name, budget,
+                       usage=deps.usage, stage="synthesize")
+        # Пробуем достать JSON из последнего AI-ответа без доп. вызова
+        data = _last_ai_json(messages)
+        valid_inline = "keep" in data or "add" in data
+        if valid_inline:
+            try:
+                decision = _SynthDecision(**data)
+                n = len(findings)
+                kept = [findings[i] for i in decision.keep if 0 <= i < n]
+                added = _to_findings(decision.add, default_file=findings[0].file)
+                if decision.add:
+                    missing = sum(1 for m in decision.add if not m.file)
+                    if missing:
+                        _log.warning("synthesize: %d add-находок без поля file — отнесены к %s",
+                                     missing, findings[0].file)
+                result = kept + added
+                return result or findings   # пусто -> не теряем вход (fail-open)
+            except Exception:
+                pass
+        # Fallback: отдельный invoke со схемой
         resp = self.provider.chat_model().invoke(messages + [HumanMessage(_SYNTH_SCHEMA)])
+        if deps.usage is not None:
+            deps.usage.add("synthesize", resp)
         data = _extract_json(_text_of(resp))
         try:
             decision = _SynthDecision(**data)
