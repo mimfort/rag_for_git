@@ -61,6 +61,8 @@ def review(slug: str, pr: int) -> None:
     from reviewer.policy.policy import ReviewPolicy
     from reviewer.index.chunker import chunk_python
     from reviewer.llm.usage import UsageLog
+    # JSONL-лог решений ревью для анализа ложных срабатываний; выключен по умолчанию
+    from reviewer.llm.verdicts import VerdictLog
 
     s = Settings()
     c = build_components(s)
@@ -94,6 +96,7 @@ def review(slug: str, pr: int) -> None:
         sources = {u.path: u.new_source for u in units}
 
         usage = UsageLog()
+        verdicts = VerdictLog(s.review_verdict_log, pr=pr) if s.review_verdict_log else None
 
         policy = ReviewPolicy.load(s, vcs.get_file_at_ref(".review.yml", prq.base_ref))
         changed_status = {f.path: f.status for f in files}
@@ -135,6 +138,7 @@ def review(slug: str, pr: int) -> None:
             synthesizer=synthesizer,
             sources=sources,
             usage=usage,
+            verdicts=verdicts,
         )
         build_graph(deps).invoke({"review_units": units, "findings": [],
                                   "verified": [], "summary": "", "inline_comments": []})

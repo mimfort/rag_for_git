@@ -26,12 +26,14 @@ class Retriever:
             changed_paths=changed_paths, top_k=candidates, candidates=candidates)
         related_ids = self.graph.expand(changed_node_ids, hops=2)
         related = self.store.fetch_nodes(list(related_ids), overlay_ref, changed_paths)
+        hit_ids = {h.node_id for h in hits}
+        graph_new = [it for it in related if it.node_id not in hit_ids]
         merged: dict[str, object] = {}
         for it in [*hits, *related]:
             merged.setdefault(it.node_id, it)
-        # Если кандидатов не больше top_k — rerank пропускаем: экономим вызов Voyage rerank.
-        # Порядок и так осмысленный: сначала hits по RRF-score, затем graph-related.
-        if len(merged) <= top_k:
+        # rerank пропускаем, если совсем мало кандидатов, либо все они уже ранжированы RRF
+        # (graph-expansion ничего нового не добавил)
+        if len(merged) <= 3 or (len(merged) <= top_k and not graph_new):
             return ContextPack(items=list(merged.values()))
         ranked = self.reranker.rerank(query, list(merged.values()), top_k=top_k)
         return ContextPack(items=ranked)
