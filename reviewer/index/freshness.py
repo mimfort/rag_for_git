@@ -39,8 +39,17 @@ def build_overlay(store, embedder, pr_number: int, changed_files: list[str],
 
 def update_base(store, embedder, repo: str, target_ref: str,
                 changed_files: list[str],
-                read: Callable[[str], str | None]) -> None:
-    """Инкрементально обновляет ref='base' по изменённым файлам целевой ветки."""
+                read: Callable[[str], str | None],
+                removed_files: list[str] | tuple[str, ...] = ()) -> None:
+    """Инкрементально обновляет ref='base' по изменённым файлам целевой ветки.
+
+    removed_files — пути файлов, удалённых из репо; их чанки вычищаются из индекса.
+    Для каждого обработанного файла удаляются символы, исчезнувшие из новой версии.
+    """
+    # Удаляем чанки файлов, явно удалённых из репо
+    py_removed = [p for p in removed_files if p.endswith(".py")]
+    store.delete_paths("base", py_removed)
+
     seen = store.existing_hashes("base")
     batch: list[ChunkRow] = []
     for path in changed_files:
@@ -48,8 +57,13 @@ def update_base(store, embedder, repo: str, target_ref: str,
             continue
         src = read(path)
         if src is None:
+            # Файл недоступен/удалён — вычищаем его чанки из индекса
+            store.delete_paths("base", [path])
             continue
-        for row in _rows_for_file(path, src, "base"):
+        rows = _rows_for_file(path, src, "base")
+        # Удаляем символы, исчезнувшие из новой версии файла
+        store.delete_missing_symbols("base", path, [r.symbol_fqn for r in rows])
+        for row in rows:
             if row.content_hash not in seen:
                 seen.add(row.content_hash)
                 batch.append(row)

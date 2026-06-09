@@ -88,6 +88,82 @@ class ChunkStore:
             conn.execute("DELETE FROM chunks WHERE ref = %s", (ref,))
             conn.commit()
 
+    def get_index_meta(self, ref: str) -> str | None:
+        """Вернуть SHA последней индексации для ref, или None если запись отсутствует.
+
+        Отсутствие самой таблицы (индекс построен старой версией, init_schema не
+        выполнялся) равнозначно отсутствию записи — review не должен падать."""
+        import psycopg.errors
+        try:
+            with self._connect() as conn:
+                row = conn.execute(
+                    "SELECT sha FROM index_meta WHERE ref = %s", (ref,)
+                ).fetchone()
+        except psycopg.errors.UndefinedTable:
+            return None
+        return row[0] if row else None
+
+    def set_index_meta(self, ref: str, sha: str) -> None:
+        """Записать/обновить SHA индексации для ref (UPSERT, обновляет updated_at)."""
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO index_meta (ref, sha, updated_at)
+                VALUES (%s, %s, now())
+                ON CONFLICT (ref) DO UPDATE SET sha = EXCLUDED.sha, updated_at = now()
+                """,
+                (ref, sha),
+            )
+            conn.commit()
+
+    def delete_paths(self, ref: str, paths: list[str]) -> None:
+        """Удалить чанки указанных путей для ref (гигиена: удалённые файлы из индекса).
+
+        Пустой список — no-op.
+        """
+        if not paths:
+            return
+        with self._connect() as conn:
+            conn.execute(
+                "DELETE FROM chunks WHERE ref = %s AND path = ANY(%s)",
+                (ref, paths),
+            )
+            conn.commit()
+
+    def delete_missing_symbols(self, ref: str, path: str, keep_fqns: list[str]) -> None:
+        """Удалить из индекса символы path, отсутствующие в keep_fqns (гигиена: переименованные/удалённые символы).
+
+        Пустой keep_fqns означает удалить все чанки указанного path.
+        """
+        if keep_fqns:
+            with self._connect() as conn:
+                conn.execute(
+                    "DELETE FROM chunks WHERE ref = %s AND path = %s AND NOT (symbol_fqn = ANY(%s))",
+                    (ref, path, keep_fqns),
+                )
+                conn.commit()
+        else:
+            with self._connect() as conn:
+                conn.execute(
+                    "DELETE FROM chunks WHERE ref = %s AND path = %s",
+                    (ref, path),
+                )
+                conn.commit()
+
+    def delete_paths_except(self, ref: str, keep_paths: list[str]) -> None:
+        """Удалить из индекса все пути ref, кроме перечисленных в keep_paths (гигиена: файлы удалённые из репо).
+
+        Пустой keep_paths — no-op (защита от случайного полного удаления индекса).
+        """
+        if not keep_paths:
+            return
+        with self._connect() as conn:
+            conn.execute(
+                "DELETE FROM chunks WHERE ref = %s AND NOT (path = ANY(%s))",
+                (ref, keep_paths),
+            )
+            conn.commit()
+
     def hybrid_search(self, query_text, query_embedding, overlay_ref,
                       changed_paths, top_k=20, candidates=50) -> list[Retrieved]:
         where = "((ref='base' AND NOT (path = ANY(%(changed)s))) OR ref=%(overlay)s)"

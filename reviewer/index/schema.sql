@@ -25,3 +25,10 @@ USING bm25 (id, text, path, ref) WITH (key_field='id');
 -- ANN (pgvector HNSW, косинус)
 CREATE INDEX IF NOT EXISTS chunks_hnsw ON chunks
 USING hnsw (embedding vector_cosine_ops) WITH (m = 16, ef_construction = 64);
+
+-- Метаданные индексирования: SHA последней индексации по ref
+CREATE TABLE IF NOT EXISTS index_meta (
+    ref        TEXT        PRIMARY KEY,
+    sha        TEXT        NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);

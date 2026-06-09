@@ -48,3 +48,99 @@ def test_delete_ref_removes_only_target_ref():
             "SELECT ref, path FROM chunks ORDER BY ref, path"
         ).fetchall()
     assert remaining == [("base", "x.py")]
+
+
+@pytest.mark.integration
+def test_delete_missing_symbols_removes_stale_only():
+    """delete_missing_symbols удаляет только символы path, отсутствующие в keep_fqns."""
+    s = Settings()
+    store = ChunkStore(s.pg_dsn)
+    store.init_schema()
+    store.clear()
+    d = s.embedding_dim
+    vec = [0.0] * d
+    store.upsert([
+        _row("base", "mod.py", "alpha", "def alpha(): pass", vec),
+        _row("base", "mod.py", "beta", "def beta(): pass", vec),
+        _row("base", "mod.py", "gamma", "def gamma(): pass", vec),
+        _row("base", "other.py", "delta", "def delta(): pass", vec),
+    ])
+    # Оставляем только alpha и beta; gamma должна исчезнуть
+    store.delete_missing_symbols("base", "mod.py", ["alpha", "beta"])
+    with psycopg.connect(s.pg_dsn) as conn:
+        remaining = {(r[0], r[1]) for r in conn.execute(
+            "SELECT path, symbol_fqn FROM chunks WHERE ref='base' ORDER BY path, symbol_fqn"
+        ).fetchall()}
+    assert ("mod.py", "alpha") in remaining
+    assert ("mod.py", "beta") in remaining
+    assert ("mod.py", "gamma") not in remaining
+    assert ("other.py", "delta") in remaining  # не трогаем другой path
+
+
+@pytest.mark.integration
+def test_delete_missing_symbols_empty_keep_fqns_removes_all():
+    """delete_missing_symbols с пустым keep_fqns удаляет все чанки path."""
+    s = Settings()
+    store = ChunkStore(s.pg_dsn)
+    store.init_schema()
+    store.clear()
+    d = s.embedding_dim
+    vec = [0.0] * d
+    store.upsert([
+        _row("base", "mod.py", "alpha", "def alpha(): pass", vec),
+        _row("base", "mod.py", "beta", "def beta(): pass", vec),
+        _row("base", "other.py", "delta", "def delta(): pass", vec),
+    ])
+    store.delete_missing_symbols("base", "mod.py", [])
+    with psycopg.connect(s.pg_dsn) as conn:
+        remaining = {(r[0], r[1]) for r in conn.execute(
+            "SELECT path, symbol_fqn FROM chunks WHERE ref='base'"
+        ).fetchall()}
+    assert ("mod.py", "alpha") not in remaining
+    assert ("mod.py", "beta") not in remaining
+    assert ("other.py", "delta") in remaining
+
+
+@pytest.mark.integration
+def test_delete_paths_except_removes_unlisted_paths():
+    """delete_paths_except удаляет пути, не входящие в keep_paths."""
+    s = Settings()
+    store = ChunkStore(s.pg_dsn)
+    store.init_schema()
+    store.clear()
+    d = s.embedding_dim
+    vec = [0.0] * d
+    store.upsert([
+        _row("base", "a.py", "fa", "def fa(): pass", vec),
+        _row("base", "b.py", "fb", "def fb(): pass", vec),
+        _row("base", "c.py", "fc", "def fc(): pass", vec),
+        _row("pr:1", "a.py", "fa", "def fa(): pass", vec),
+    ])
+    store.delete_paths_except("base", ["a.py", "b.py"])
+    with psycopg.connect(s.pg_dsn) as conn:
+        remaining = {(r[0], r[1]) for r in conn.execute(
+            "SELECT ref, path FROM chunks ORDER BY ref, path"
+        ).fetchall()}
+    assert ("base", "a.py") in remaining
+    assert ("base", "b.py") in remaining
+    assert ("base", "c.py") not in remaining   # удалён
+    assert ("pr:1", "a.py") in remaining        # другой ref — не трогаем
+
+
+@pytest.mark.integration
+def test_delete_paths_except_empty_keep_is_noop():
+    """delete_paths_except с пустым keep_paths — no-op, ничего не удаляется."""
+    s = Settings()
+    store = ChunkStore(s.pg_dsn)
+    store.init_schema()
+    store.clear()
+    d = s.embedding_dim
+    vec = [0.0] * d
+    store.upsert([
+        _row("base", "a.py", "fa", "def fa(): pass", vec),
+        _row("base", "b.py", "fb", "def fb(): pass", vec),
+    ])
+    store.delete_paths_except("base", [])
+    with psycopg.connect(s.pg_dsn) as conn:
+        count = conn.execute("SELECT count(*) FROM chunks WHERE ref='base'").fetchone()[0]
+    assert count == 2
