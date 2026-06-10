@@ -846,8 +846,12 @@ class CountingRetrieverA:
 
 
 def test_analyze_shares_tool_cache_across_units():
-    """Два analyze с общим deps.tool_cache не пересчитывают одинаковый search_code
-    (одинаковые changed_node_ids=[] у обоих юнитов)."""
+    """Общий deps.tool_cache шарится между юнитами при совпадающем ctx_sig.
+
+    Здесь оба юнита имеют changed_node_ids=[] (как стадии verify/synthesize) -> ctx_sig
+    одинаков -> второй analyze берёт результат search_code из общего кэша (1 вызов retrieve).
+    Обратный случай (разные node_ids -> кэш-промах) покрыт на уровне тулов тестом
+    test_run_cache_respects_changed_node_ids."""
     tool_call = AIMessage(content="", tool_calls=[
         {"name": "search_code", "args": {"query": "q"}, "id": "t1", "type": "tool_call"}])
     final_json = AIMessage(content='{"findings":[]}')
