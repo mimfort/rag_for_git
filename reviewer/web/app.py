@@ -14,9 +14,9 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
 from reviewer.config.settings import Settings
@@ -70,9 +70,30 @@ def create_app(settings: Settings) -> FastAPI:
 
     # Статика / SPA
     if _FRONTEND_DIST.is_dir():
-        # Монтируем статику, SPA-fallback на index.html
-        app.mount("/", StaticFiles(directory=str(_FRONTEND_DIST), html=True), name="frontend")
-        log.info("Фронтенд смонтирован из %s", _FRONTEND_DIST)
+        # Собранные ассеты (js/css/шрифты) — отдельным mount'ом на /assets.
+        _assets = _FRONTEND_DIST / "assets"
+        if _assets.is_dir():
+            app.mount("/assets", StaticFiles(directory=str(_assets)), name="assets")
+        _index = _FRONTEND_DIST / "index.html"
+        _dist_root = _FRONTEND_DIST.resolve()
+
+        # SPA-fallback: реальный файл (favicon и т.п.) если есть, иначе index.html.
+        # Без этого обновление страницы на клиентском роуте (напр. /runs/11) отдавало
+        # 404 — StaticFiles ищет файл `runs/11`, не находит и не делает fallback.
+        @app.get("/{full_path:path}", include_in_schema=False)
+        def spa(full_path: str):
+            # Несуществующий /api/* — JSON-404 (а не HTML), чтобы фронт корректно ловил
+            if full_path == "api" or full_path.startswith("api/"):
+                raise HTTPException(status_code=404, detail="Not Found")
+            if full_path:
+                try:
+                    candidate = (_FRONTEND_DIST / full_path).resolve()
+                    if candidate.is_file() and candidate.is_relative_to(_dist_root):
+                        return FileResponse(candidate)
+                except (OSError, ValueError):
+                    pass
+            return FileResponse(_index)
+        log.info("Фронтенд (SPA) обслуживается из %s", _FRONTEND_DIST)
     else:
         # Заглушка — подсказка разработчику
         @app.get("/", response_class=HTMLResponse, include_in_schema=False)

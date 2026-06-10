@@ -4,6 +4,7 @@
 """
 from __future__ import annotations
 
+import pathlib
 from datetime import datetime, timezone
 
 import pytest
@@ -11,6 +12,28 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from reviewer.web.api import make_router
+
+_DIST_INDEX = (
+    pathlib.Path(__file__).resolve().parent.parent.parent
+    / "web" / "frontend" / "dist" / "index.html"
+)
+
+
+@pytest.mark.skipif(not _DIST_INDEX.exists(), reason="фронт не собран (web/frontend/dist)")
+def test_spa_fallback_serves_index_on_client_routes():
+    """SPA-fallback: клиентские роуты при прямом запросе/обновлении отдают index.html
+    (а не 404), несуществующий /api/* остаётся JSON-404."""
+    from reviewer.config.settings import Settings
+    from reviewer.web.app import create_app
+
+    client = TestClient(create_app(Settings()))
+    for route in ("/", "/runs", "/runs/11"):
+        r = client.get(route)
+        assert r.status_code == 200, route
+        assert "text/html" in r.headers["content-type"], route
+    r = client.get("/api/does-not-exist")
+    assert r.status_code == 404
+    assert "application/json" in r.headers["content-type"]
 
 
 # ---------------------------------------------------------------------------
