@@ -35,6 +35,10 @@ reviewer index /path/to/repo --ref main   # построить/обновить 
 reviewer search "token verification"       # диагностический гибрид-поиск по base-индексу
 reviewer review owner/repo 123             # отревьюить PR и запостить inline + сводку
 reviewer review owner/repo 123 --dry-run  # прогон без публикации, вывод в консоль
+reviewer serve                             # веб-админка наблюдаемости (история прогонов, стоимость, находки)
+
+# Фронт админки (React/Vite) собирается отдельно; FastAPI раздаёт собранный dist:
+pip install -e ".[web]" && (cd web/frontend && npm install && npm run build)
 ```
 
 `pytest` по умолчанию **исключает** integration-тесты (`addopts = -m 'not integration'` в `pyproject.toml`) — маркер `integration` помечает тесты, требующие поднятых Postgres/Neo4j.
