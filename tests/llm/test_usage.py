@@ -135,6 +135,71 @@ def test_cost_omitted_when_absent():
     assert "$" not in log.report()
 
 
+def test_snapshot_returns_per_stage_dict():
+    """snapshot() возвращает словарь с правильными полями для каждого этапа."""
+    log = UsageLog()
+    log.add("analyze", _msg(1000, 100, cache_read=200, cost=0.01))
+    log.add("analyze", _msg(500, 50))
+    log.add("verify", _msg(300, 30, cost=0.005))
+
+    snap = log.snapshot()
+    assert set(snap.keys()) == {"analyze", "verify"}
+
+    a = snap["analyze"]
+    assert a["calls"] == 2
+    assert a["input_tokens"] == 1500
+    assert a["output_tokens"] == 150
+    assert a["cache_read_tokens"] == 200
+    assert abs(a["cost"] - 0.01) < 1e-9
+
+    v = snap["verify"]
+    assert v["calls"] == 1
+    assert v["input_tokens"] == 300
+    assert v["output_tokens"] == 30
+    assert v["cache_read_tokens"] == 0
+    assert abs(v["cost"] - 0.005) < 1e-9
+
+
+def test_snapshot_empty_when_no_calls():
+    """snapshot() возвращает пустой словарь, если вызовов не было."""
+    log = UsageLog()
+    assert log.snapshot() == {}
+
+
+def test_snapshot_does_not_modify_state():
+    """Изменение возвращённого словаря не влияет на внутреннее состояние."""
+    log = UsageLog()
+    log.add("analyze", _msg(100, 10))
+
+    snap = log.snapshot()
+    snap["analyze"]["calls"] = 999  # мутируем снимок
+
+    # Оригинальные данные не тронуты
+    assert log.snapshot()["analyze"]["calls"] == 1
+
+
+def test_snapshot_is_thread_safe():
+    """snapshot() под параллельными add() не ломает счётчики."""
+    import threading
+
+    log = UsageLog()
+    n = 30
+
+    def worker():
+        for _ in range(n):
+            log.add("analyze", _msg(10, 1))
+
+    threads = [threading.Thread(target=worker) for _ in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    snap = log.snapshot()
+    assert snap["analyze"]["calls"] == 4 * n
+    assert snap["analyze"]["input_tokens"] == 4 * n * 10
+
+
 def test_add_never_raises_on_garbage_message():
     """add() не должен бросать исключения даже при мусорном вводе."""
     log = UsageLog()

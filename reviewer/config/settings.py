@@ -35,6 +35,7 @@ class Settings(BaseSettings):
     review_max_parallel_files: int = 4            # кап параллельных analyze (LangGraph max_concurrency)
     review_max_files: int = 50                    # кап файлов PR на ревью; остальные — в сводку как пропущенные
     review_skip_drafts: bool = True               # не ревьюить draft-PR
+    review_history: bool = True                   # сохранять историю прогонов в Postgres
     # Voyage
     voyage_api_key: str = ""
     embedding_model: str = "voyage-code-3"

@@ -26,6 +26,10 @@ dev = [
     "ruff>=0.5",
     "grpcio-tools>=1.64",
 ]
+web = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+]
 
 [project.scripts]
 reviewer = "reviewer.entrypoints.cli:cli"
@@ -45,3 +49,7 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 include = ["reviewer*", "eval*"]
+
+[tool.setuptools.package-data]
+"reviewer.web" = ["*.sql"]
+"reviewer.index" = ["*.sql"]

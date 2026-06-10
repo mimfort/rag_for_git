@@ -62,6 +62,36 @@ class UsageLog:
         except Exception:  # noqa: BLE001 — учёт не должен ломать агент
             pass
 
+    def snapshot(self) -> dict[str, dict]:
+        """Вернуть снимок счётчиков по этапам в виде словаря (потокобезопасно).
+
+        Возвращает::
+
+            {
+                "analyze": {
+                    "calls": 12,
+                    "input_tokens": 45230,
+                    "output_tokens": 3400,
+                    "cache_read_tokens": 30100,
+                    "cost": 0.0123,
+                },
+                ...
+            }
+
+        Изменения состояния после вызова на возвращённый dict не влияют.
+        """
+        with self._lock:
+            return {
+                stage: {
+                    "calls": c.calls,
+                    "input_tokens": c.input_tokens,
+                    "output_tokens": c.output_tokens,
+                    "cache_read_tokens": c.cache_read_tokens,
+                    "cost": c.cost,
+                }
+                for stage, c in self._stages.items()
+            }
+
     def report(self) -> str:
         """Вернуть многострочную сводку по этапам на русском языке.
 

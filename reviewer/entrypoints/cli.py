@@ -139,11 +139,26 @@ def search(query: str) -> None:
         c.graph.close()
 
 @cli.command()
+@click.option("--host", default="127.0.0.1", show_default=True, help="Хост для uvicorn")
+@click.option("--port", default=8000, show_default=True, type=int, help="Порт для uvicorn")
+def serve(host: str, port: int) -> None:
+    """Запустить веб-админку наблюдаемости (FastAPI + uvicorn)."""
+    import uvicorn
+    from reviewer.web.app import create_app
+
+    s = Settings()
+    app = create_app(s)
+    click.echo(f"Запуск веб-сервера на http://{host}:{port} ...")
+    uvicorn.run(app, host=host, port=port)
+
+@cli.command()
 @click.argument("slug")
 @click.argument("pr", type=int)
 @click.option("--dry-run", is_flag=True, help="Посчитать ревью и вывести в консоль, не публикуя")
 def review(slug: str, pr: int, dry_run: bool) -> None:
     """Отревьюить PR на GitHub и запостить inline+сводку."""
+    from datetime import datetime, timezone
+
     from reviewer.vcs.github import GitHubProvider
     from reviewer.agent.graph import build_graph
     from reviewer.agent.state import Deps, ReviewUnit
@@ -166,15 +181,48 @@ def review(slug: str, pr: int, dry_run: bool) -> None:
             "Не задан " + ", ".join(missing) + " (.env)")
 
     c = build_components(s)
-    owner, repo = slug.split("/")
+    owner, repo_name = slug.split("/")
     vcs = None
     try:
-        vcs = GitHubProvider(owner, repo, token=s.github_token)
+        vcs = GitHubProvider(owner, repo_name, token=s.github_token)
         prq = vcs.get_pull_request(pr)
-        # Драфт-PR пропускаем (overlay ещё не построен — ничего чистить не нужно)
+
+        # Драфт-PR пропускаем; записываем в историю со статусом draft_skip
         if prq.draft and s.review_skip_drafts:
             click.echo("PR — драфт, ревью пропущено (REVIEW_SKIP_DRAFTS=true).")
+            if s.review_history:
+                try:
+                    from reviewer.web.history import ReviewHistory
+                    _now = datetime.now(timezone.utc)
+                    _run = {
+                        "repo": slug,
+                        "pr_number": pr,
+                        "base_sha": prq.base_sha,
+                        "head_sha": prq.head_sha,
+                        "model": s.openrouter_model,
+                        "model_verify": s.openrouter_model_verify or None,
+                        "dry_run": dry_run,
+                        "started_at": _now,
+                        "finished_at": _now,
+                        "duration_ms": 0,
+                        "status": "draft_skip",
+                        "files_reviewed": 0,
+                        "files_skipped": 0,
+                        "files_failed": 0,
+                        "findings_analyzed": 0,
+                        "findings_kept": 0,
+                        "verify_rejected": 0,
+                        "comments_inline": 0,
+                        "comments_summary": 0,
+                        "usage": {},
+                        "total_cost": 0.0,
+                        "error_text": None,
+                    }
+                    ReviewHistory(s.pg_dsn).record_run(_run, [])
+                except Exception as _exc:
+                    log.warning("Не удалось сохранить draft_skip в историю: %s", _exc)
             return
+
         files = vcs.get_changed_files(pr)
         # Только существующие .py-файлы попадают в индекс и ревью
         changed = [f.path for f in files if f.path.endswith(".py") and f.status != "removed"]
@@ -274,11 +322,16 @@ def review(slug: str, pr: int, dry_run: bool) -> None:
             verdicts=verdicts,
             skipped_paths=skipped_paths,
         )
+
+        started_at = datetime.now(timezone.utc)
         state = build_graph(deps, publish=not dry_run).invoke(
             {"review_units": units, "findings": [], "failed_units": [],
              "verified": [], "summary": "", "inline_comments": []},
             config={"max_concurrency": s.review_max_parallel_files},
         )
+        finished_at = datetime.now(timezone.utc)
+        duration_ms = int((finished_at - started_at).total_seconds() * 1000)
+
         if dry_run:
             click.echo(state["summary"])
             for ic in state["inline_comments"]:
@@ -289,6 +342,77 @@ def review(slug: str, pr: int, dry_run: bool) -> None:
         rep = usage.report()
         if rep:
             click.echo(rep)
+
+        # --- запись истории прогона (fail-soft) ---
+        if s.review_history:
+            try:
+                from reviewer.web.history import ReviewHistory
+
+                usage_snap = usage.snapshot()
+                total_cost = sum(v.get("cost", 0.0) for v in usage_snap.values())
+
+                # fingerprint-сет опубликованных inline-комментариев
+                inline_fps: set[str] = set()
+                for ic in state["inline_comments"]:
+                    # Fingerprint зашит в тело комментария; ищем по вхождению в body
+                    # (формат: <!-- ai-review:FINGERPRINT -->)
+                    import re as _re
+                    m = _re.search(r"<!--\s*ai-review:([0-9a-f]+)\s*-->", ic.body)
+                    if m:
+                        inline_fps.add(m.group(1))
+
+                analyzed_fps: set[str] = {f.fingerprint() for f in state["findings"]}
+                findings_analyzed = len(analyzed_fps)
+                findings_kept = len(state["verified"])
+                verify_rejected = max(0, findings_analyzed - findings_kept)
+                comments_inline = len(state["inline_comments"])
+                comments_summary = max(0, findings_kept - comments_inline)
+
+                run_dict = {
+                    "repo": slug,
+                    "pr_number": pr,
+                    "base_sha": prq.base_sha,
+                    "head_sha": prq.head_sha,
+                    "model": s.openrouter_model,
+                    "model_verify": s.openrouter_model_verify or None,
+                    "dry_run": dry_run,
+                    "started_at": started_at,
+                    "finished_at": finished_at,
+                    "duration_ms": duration_ms,
+                    "status": "ok",
+                    "files_reviewed": len(units),
+                    "files_skipped": len(skipped_paths or []),
+                    "files_failed": len(state["failed_units"]),
+                    "findings_analyzed": findings_analyzed,
+                    "findings_kept": findings_kept,
+                    "verify_rejected": verify_rejected,
+                    "comments_inline": comments_inline,
+                    "comments_summary": comments_summary,
+                    "usage": usage_snap,
+                    "total_cost": round(total_cost, 6),
+                    "error_text": None,
+                }
+
+                findings_list = [
+                    {
+                        "file": f.file,
+                        "line": f.line,
+                        "category": f.category,
+                        "severity": f.severity,
+                        "confidence": f.confidence,
+                        "message": (f.message or "")[:500],
+                        "fingerprint": f.fingerprint(),
+                        "is_real": True,
+                        "published": True,
+                        "inline": f.fingerprint() in inline_fps,
+                    }
+                    for f in state["verified"]
+                ]
+
+                ReviewHistory(s.pg_dsn).record_run(run_dict, findings_list)
+            except Exception as _exc:
+                log.warning("Не удалось сохранить историю прогона: %s", _exc)
+
     finally:
         # Удаляем эфемерный overlay pr:N — он не нужен после завершения ревью
         try:
