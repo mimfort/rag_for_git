@@ -16,6 +16,7 @@ dependencies = [
     "langgraph>=1.2,<2",
     "pyyaml>=6.0",
     "click>=8.1",
+    "protobuf>=5.27",
 ]
 
 [project.optional-dependencies]
@@ -23,7 +24,6 @@ dev = [
     "pytest>=8.2",
     "pytest-asyncio>=0.23",
     "ruff>=0.5",
-    "protobuf>=5.27",
     "grpcio-tools>=1.64",
 ]
 

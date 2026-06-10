@@ -1,4 +1,8 @@
+import os
+import shutil
 import subprocess
+import tempfile
+
 
 def _git(repo: str, *args: str) -> str:
     return subprocess.run(["git", "-C", repo, *args],
@@ -21,3 +25,24 @@ def list_python_files(repo: str, ref: str) -> list[str]:
 def rev_parse(repo: str, ref: str) -> str:
     """Полный SHA коммита, на который указывает ref (`git rev-parse <ref>`)."""
     return _git(repo, "rev-parse", ref).strip()
+
+
+def add_worktree(repo: str, ref: str) -> str:
+    """Создать временный git worktree на ``ref`` и вернуть путь к нему.
+
+    Worktree создаётся в временном каталоге; по завершении работы следует
+    вызвать :func:`remove_worktree`.
+    """
+    parent = tempfile.mkdtemp()
+    wt = os.path.join(parent, "wt")  # каталог «wt» — git создаст сам
+    _git(repo, "worktree", "add", "--detach", wt, ref)
+    return wt
+
+
+def remove_worktree(repo: str, path: str) -> None:
+    """Удалить git worktree по пути ``path`` и очистить временный каталог."""
+    try:
+        _git(repo, "worktree", "remove", "--force", path)
+    except Exception:
+        pass  # worktree мог уже не существовать — не падаем
+    shutil.rmtree(os.path.dirname(path), ignore_errors=True)

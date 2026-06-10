@@ -69,7 +69,7 @@
 |---|---|---|
 | VCS-провайдер | `reviewer/vcs/` | получить PR/дифф/файлы, запостить ревью; маппинг строк диффа; идемпотентность |
 | Индекс (RAG) | `reviewer/index/` | чанкинг (tree-sitter), эмбеддинги (Voyage), хранилище (pgvector+BM25), свежесть |
-| Граф кода | `reviewer/graph/` | построение рёбер `CALLS` (IMPLEMENTS — опц. через SCIP), хранение и обход в Neo4j |
+| Граф кода | `reviewer/graph/` | построение рёбер `CALLS` + `IMPLEMENTS` (SCIP-бэкенд) или только `CALLS` (tree-sitter); оркестрация в `backend.py`; хранение и обход в Neo4j |
 | Ретрив | `reviewer/retrieval/` | гибрид (RRF) + graph-expansion + Voyage rerank → контекст |
 | LLM | `reviewer/llm/` | OpenRouter-провайдер (модель/потолок цены/роутинг из env) + бюджет |
 | Инструменты | `reviewer/tools/` | `search_code`, `get_related_symbols` для агента |
@@ -278,7 +278,7 @@ reviewer/
   config/      Settings (pydantic-settings): env → провайдер-блок OpenRouter, пороги ревью
   vcs/         VCSProvider + github.py (httpx) · diff.py (строки, доступные для inline)
   index/       chunker(tree-sitter) · embeddings(Voyage) · reranker · store(pgvector+pg_search/RRF) · freshness
-  graph/       builder(tree-sitter call-graph) · scip(парсер SCIP, апгрейд точности) · store(Neo4j)
+  graph/       builder(tree-sitter call-graph) · scip(точный парсер SCIP) · backend(оркестратор бэкенда) · store(Neo4j)
   retrieval/   Retriever: гибрид + graph-expansion + rerank → ContextPack
   llm/         OpenRouterProvider (extra_body: provider/max_price/models) · BudgetTracker
   tools/       инструменты агента (search_code, get_related_symbols)
@@ -301,7 +301,10 @@ docker-compose.yml   ParadeDB (pgvector+pg_search) + Neo4j
 ## Ограничения и заметки
 
 - **v1 — только Python** (чанкер и граф). Другие языки — за тем же интерфейсом `GraphIndexer`/чанкера.
-- **Граф v1** строится tree-sitter-резолвером по имени вызова (быстро, без внешних тулов). Точный кросс-файловый граф через `scip-python` — заложен (`graph/scip.py`), подключается как апгрейд.
+- **Граф кода — два бэкенда** (настройка `GRAPH_BACKEND=auto|scip|treesitter`):
+  - **SCIP** (`@sourcegraph/scip-python`, npm): точный type-aware граф с рёбрами `CALLS` + `IMPLEMENTS`; требует `scip-python` в PATH; индексирует через временный git worktree.
+  - **tree-sitter** (fallback): быстрый, без внешних зависимостей, только `CALLS` по имени.
+  - Режим `auto` (по умолчанию): SCIP если найден, иначе tree-sitter; при ошибке SCIP — автооткат на tree-sitter с предупреждением.
 - **Voyage free tier** = 3 RPM / 10K TPM: полная индексация большого репо требует привязанной карты (бесплатные 200M токенов сохраняются) либо медленной инкрементальной индексации; в коде есть retry/backoff.
 - **VCS** — пока GitHub; GitLab/др. добавляются реализацией `VCSProvider`.
 - **Запуск** — пока CLI; webhook-сервис добавляется как точка входа (ядро уже библиотека).

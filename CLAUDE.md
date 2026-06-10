@@ -61,7 +61,7 @@ reviewer review owner/repo 123 --dry-run  # прогон без публикац
 |---|---|
 | `reviewer/vcs/` | `VCSProvider` + `github.py` (httpx); `diff.py` — какие строки диффа доступны для inline |
 | `reviewer/index/` | `chunker` (tree-sitter) · `embeddings`/`reranker` (Voyage) · `store` (pgvector + pg_search/BM25, RRF) · `freshness` (base/overlay) |
-| `reviewer/graph/` | `builder` (tree-sitter call-graph) · `scip` (парсер SCIP, **не подключён**) · `store` (Neo4j) |
+| `reviewer/graph/` | `builder` (tree-sitter call-graph) · `scip` (парсер SCIP) · `backend` (оркестратор бэкенда: SCIP / tree-sitter) · `store` (Neo4j) |
 | `reviewer/retrieval/` | `Retriever`: гибрид (RRF) + graph-expansion + Voyage rerank → `ContextPack` |
 | `reviewer/llm/` | `OpenRouterProvider` (provider-блок/max_price/fallback через `extra_body`) · `BudgetTracker` |
 | `reviewer/tools/` | инструменты агента (`search_code`, `get_related_symbols`) |
@@ -80,7 +80,10 @@ reviewer review owner/repo 123 --dry-run  # прогон без публикац
 
 - **ParadeDB слушает host-порт 5433**, а не 5432 (на машине разработчика 5432 занят нативным Postgres). `PG_DSN` по умолчанию указывает на 5433.
 - **Модель-агностичный разбор JSON.** `analyzer.py` НЕ использует langchain `with_structured_output` — некоторые модели OpenRouter (напр. minimax) возвращали с ним 0 findings. Вместо этого findings/вердикты вытаскиваются из обычного текста ответа (`_extract_json`), а `verify` работает fail-open (при невозможности разобрать вердикт — оставляет находку). Не «чини» это обратно на structured output.
-- **Граф v1 — tree-sitter-резолвер по имени вызова** (`graph/builder.py`), быстрый и без внешних тулов. Точный кросс-файловый граф через `scip-python` (`graph/scip.py`) написан, но **не подключён** в `index` — это апгрейд на будущее.
+- **Граф кода — два бэкенда.** Оркестратор `graph/backend.py` выбирает бэкенд через `GRAPH_BACKEND` (auto|scip|treesitter):
+  - **SCIP** (`scip-python`, npm `@sourcegraph/scip-python`) — точный type-aware граф, рёбра CALLS и IMPLEMENTS, требует `scip-python` в PATH. Индексация выполняется через временный git worktree на `ref` (`add_worktree`/`remove_worktree` в `gitutil.py`).
+  - **tree-sitter** (`graph/builder.py`) — быстрый fallback без внешних зависимостей, только CALLS по имени.
+  - Режим `auto` (по умолчанию): если `scip-python` найден в PATH — SCIP, иначе tree-sitter. При `backend=scip` сбой пробрасывается; при `auto` — откат на tree-sitter с `log.warning`. Команда `reviewer index` полностью перестраивает граф (clear + upsert), чтобы рёбра разных бэкендов не смешивались.
 - **Voyage free tier = 3 RPM / 10K TPM.** TPM — главный блокер: полный `reviewer index` большого репо упирается в лимит и троттлится; есть retry/backoff (`index/_retry.py`). Ревью одного PR (overlay + query-эмбеддинги) в лимит укладывается.
 - **`.review.yml` берётся из целевой (base) ветки**, не из PR — PR не может ослабить собственное ревью.
 - **SHA base-индекса** хранится в таблице `index_meta` (пишется при `reviewer index`). При каждом `reviewer review` CLI сравнивает его с `base_sha` PR и при расхождении автоматически досинхронизирует чанки изменившихся файлов через GitHub compare API. Граф (Neo4j) обновляется **только** при явном `reviewer index`.

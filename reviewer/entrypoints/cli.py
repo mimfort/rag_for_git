@@ -63,7 +63,14 @@ def check() -> None:
         click.echo(f"✗ Neo4j: {e}")
         failed = True
 
-    # 4. GitHub (только если токен задан)
+    # 4. scip-python (информационно, не влияет на exit-code)
+    import shutil as _shutil
+    if _shutil.which("scip-python"):
+        click.echo("✓ scip-python: найден (точный граф)")
+    else:
+        click.echo("  scip-python: не найден — граф через tree-sitter (fallback)")
+
+    # 5. GitHub (только если токен задан)
     if s.github_token:
         try:
             resp = httpx.get(
@@ -104,16 +111,17 @@ def index(repo: str, ref: str) -> None:
     sha = rev_parse(repo, ref)
     c.store.set_index_meta("base", sha)
     # --- граф кода ---
-    from reviewer.graph.builder import build_graph_from_files
+    from reviewer.graph.backend import build_code_graph
     src_by_path = {p: file_at_ref(repo, p, ref) for p in files}
     src_by_path = {p: v for p, v in src_by_path.items() if v is not None}
-    gnodes, gedges = build_graph_from_files(src_by_path)
+    gnodes, gedges, backend = build_code_graph(repo, ref, files, src_by_path, s.graph_backend)
     c.graph.init_schema()
+    c.graph.clear()   # полный rebuild: не смешивать рёбра разных бэкендов, чистить устаревшее
     c.graph.upsert_nodes(list(gnodes))
     c.graph.upsert_edges(gedges)
     c.graph.close()
     click.echo(f"Проиндексировано файлов: {len(files)} @ {sha[:7]}; "
-               f"граф: узлов {len(gnodes)}, рёбер {len(gedges)}")
+               f"граф [{backend}]: узлов {len(gnodes)}, рёбер {len(gedges)}")
 
 @cli.command()
 @click.argument("query")
