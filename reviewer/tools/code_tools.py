@@ -115,7 +115,8 @@ def make_tools(ctx: ToolContext) -> list[StructuredTool]:
         return patch or "(файл не входит в изменения PR)"
 
     seen: set = set()
-    ctx_sig = tuple(sorted(ctx.changed_node_ids or []))
+    ctx_sig = (ctx.overlay_ref, tuple(sorted(ctx.changed_paths or [])),
+               tuple(sorted(ctx.changed_node_ids or [])))
     raw = [search_code, get_related_symbols, read_file,
            get_definition, find_callers, get_changed_file_diff]
     return [StructuredTool.from_function(_memoize(fn, ctx_sig, seen, ctx.cache)) for fn in raw]
