@@ -136,7 +136,7 @@
 # 1. зависимости и инфраструктура
 git clone https://github.com/mimfort/rag_for_git && cd rag_for_git
 python -m venv .venv && .venv/bin/pip install -e ".[dev]"
-docker compose up -d                 # Postgres/ParadeDB (:5433) + Neo4j (:7687)
+docker compose up -d                 # Postgres/ParadeDB (:5433) + Neo4j (:7687) + web-админка (:8000)
 
 # 2. конфиг
 cp .env.example .env                 # заполнить OPENROUTER_API_KEY, VOYAGE_API_KEY, GITHUB_TOKEN
@@ -196,16 +196,22 @@ reviewer review owner/repo 123 --dry-run
 $/прогон, % отсева verify, графики во времени, находки по категориям/severity) и детали каждого
 прогона с drill-down по находкам.
 
+**Через Docker (без ручных шагов).** Сервис `web` в `docker-compose.yml` сам собирает фронт
+(multi-stage: node → python) и поднимает FastAPI, читая ту же БД, что пишет `reviewer review`:
+
 ```bash
-# Один раз: поставить веб-зависимости и собрать фронт.
+docker compose up -d                 # поднимает Postgres + Neo4j + web-админку
+# открыть http://127.0.0.1:8000
+```
+
+**На хосте (для разработки фронта).** Альтернатива без Docker:
+
+```bash
 pip install -e ".[web]"
 cd web/frontend && npm install && npm run build && cd -
+reviewer serve                       # http://127.0.0.1:8000 (опции: --host/--port)
 
-# Запустить админку — FastAPI раздаёт собранный SPA и JSON-API на одном порту.
-reviewer serve                       # http://127.0.0.1:8000
-# опции: --host 0.0.0.0 --port 8080
-
-# Разработка фронта с hot-reload (в отдельном терминале, при запущенном reviewer serve):
+# hot-reload фронта (в отдельном терминале, при запущенном reviewer serve):
 cd web/frontend && npm run dev       # http://localhost:5173, /api проксируется на :8000
 ```
 
