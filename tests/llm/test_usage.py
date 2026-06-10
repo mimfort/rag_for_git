@@ -8,12 +8,13 @@ from reviewer.llm.usage import UsageLog
 # Вспомогательные фабрики фейковых сообщений
 # ---------------------------------------------------------------------------
 
-def _msg(input_tokens: int, output_tokens: int, cache_read: int = 0):
-    """Сообщение с usage_metadata, как у langchain AIMessage."""
+def _msg(input_tokens: int, output_tokens: int, cache_read: int = 0, cost: float = 0.0):
+    """Сообщение с usage_metadata (и опц. response_metadata.cost), как у langchain AIMessage."""
     meta: dict = {"input_tokens": input_tokens, "output_tokens": output_tokens}
     if cache_read:
         meta["input_token_details"] = {"cache_read": cache_read}
-    return SimpleNamespace(usage_metadata=meta)
+    rmeta: dict = {"token_usage": {"cost": cost}} if cost else {}
+    return SimpleNamespace(usage_metadata=meta, response_metadata=rmeta)
 
 
 def _msg_no_meta():
@@ -104,6 +105,34 @@ def test_single_stage_no_itogo():
 
     report = log.report()
     assert "итого" not in report
+
+
+def test_cost_aggregated_and_shown_in_report():
+    log = UsageLog()
+    log.add("analyze", _msg(1000, 100, cost=0.01))
+    log.add("analyze", _msg(2000, 200, cost=0.02))
+
+    report = log.report()
+    # 0.01 + 0.02 = 0.0300
+    assert "$0.0300" in report
+
+
+def test_cost_summed_into_itogo():
+    log = UsageLog()
+    log.add("analyze", _msg(1000, 100, cost=0.1))
+    log.add("verify", _msg(500, 50, cost=0.05))
+
+    lines = log.report().splitlines()
+    itogo_line = next((line for line in lines if line.startswith("итого")), None)
+    assert itogo_line is not None
+    assert "$0.1500" in itogo_line   # суммарная стоимость 0.1 + 0.05
+
+
+def test_cost_omitted_when_absent():
+    log = UsageLog()
+    log.add("analyze", _msg(100, 10))   # без cost
+
+    assert "$" not in log.report()
 
 
 def test_add_never_raises_on_garbage_message():

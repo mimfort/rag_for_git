@@ -14,6 +14,10 @@ class OpenRouterProvider:
         models = self.s.openrouter_models_list()
         if models:
             eb["models"] = models
+        # Просим OpenRouter вернуть фактическую стоимость генерации в usage.cost
+        # (приходит в response_metadata["token_usage"]["cost"]). Бесплатно — это
+        # лишь учётные метаданные; UsageLog суммирует реальные деньги по этапам.
+        eb["usage"] = {"include": True}
         return eb
 
     def _headers(self) -> dict:

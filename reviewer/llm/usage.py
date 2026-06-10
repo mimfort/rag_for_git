@@ -13,6 +13,7 @@ class _StageCounters:
     input_tokens: int = 0
     output_tokens: int = 0
     cache_read_tokens: int = 0
+    cost: float = 0.0   # фактическая стоимость в USD (OpenRouter usage.cost)
 
 
 class UsageLog:
@@ -37,12 +38,14 @@ class UsageLog:
             message: LLM-ответ (langchain AIMessage или любой объект).
                      Ожидается атрибут ``usage_metadata`` — dict с ключами
                      ``input_tokens``, ``output_tokens`` и опционально
-                     ``input_token_details["cache_read"]``.
+                     ``input_token_details["cache_read"]``. Фактическая стоимость
+                     берётся из ``response_metadata["token_usage"]["cost"]`` (USD).
                      При отсутствии метаданных учитывается только счётчик вызовов.
                      Никогда не бросает исключений.
         """
         try:
             meta = getattr(message, "usage_metadata", None)
+            rmeta = getattr(message, "response_metadata", None)
             with self._lock:
                 if stage not in self._stages:
                     self._stages[stage] = _StageCounters()
@@ -53,6 +56,9 @@ class UsageLog:
                     c.output_tokens += int(meta.get("output_tokens", 0))
                     details = meta.get("input_token_details") or {}
                     c.cache_read_tokens += int(details.get("cache_read", 0))
+                if isinstance(rmeta, dict):
+                    token_usage = rmeta.get("token_usage") or {}
+                    c.cost += float(token_usage.get("cost") or 0.0)
         except Exception:  # noqa: BLE001 — учёт не должен ломать агент
             pass
 
@@ -62,7 +68,7 @@ class UsageLog:
         Возвращает пустую строку, если вызовов не было.
         Формат строки этапа::
 
-            analyze: 12 вызовов, in 45230 (кэш 30100), out 3400
+            analyze: 12 вызовов, in 45230 (кэш 30100), out 3400, $0.0123
 
         Строка «итого» добавляется всегда при наличии хотя бы одного этапа.
         """
@@ -81,6 +87,7 @@ class UsageLog:
             total.input_tokens += c.input_tokens
             total.output_tokens += c.output_tokens
             total.cache_read_tokens += c.cache_read_tokens
+            total.cost += c.cost
 
         if len(snapshot) > 1:
             lines.append(_format_stage("итого", total))
@@ -95,4 +102,6 @@ class UsageLog:
 def _format_stage(label: str, c: _StageCounters) -> str:
     """Отформатировать одну строку сводки."""
     cache_part = f" (кэш {c.cache_read_tokens})" if c.cache_read_tokens else ""
-    return f"{label}: {c.calls} вызовов, in {c.input_tokens}{cache_part}, out {c.output_tokens}"
+    cost_part = f", ${c.cost:.4f}" if c.cost else ""
+    return (f"{label}: {c.calls} вызовов, in {c.input_tokens}{cache_part}, "
+            f"out {c.output_tokens}{cost_part}")
