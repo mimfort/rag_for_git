@@ -1,13 +1,29 @@
 import json
 import pytest
 import httpx
-from reviewer.vcs.github import GitHubProvider
+from reviewer.vcs.github import GitHubProvider, _RetryTransport
 from reviewer.vcs.base import InlineComment
+
 
 def make_provider(handler):
     client = httpx.Client(transport=httpx.MockTransport(handler),
                           base_url="https://api.github.com")
     return GitHubProvider("o", "r", token="t", client=client)
+
+
+def make_retry_provider(handler, *, attempts=3, backoff_base=1.0, sleeps=None):
+    sleeps = sleeps if sleeps is not None else []
+    base_transport = httpx.MockTransport(handler)
+    retry_transport = _RetryTransport(
+        base_transport,
+        attempts=attempts,
+        backoff_base=backoff_base,
+        _sleep=sleeps.append,
+    )
+    client = httpx.Client(transport=retry_transport,
+                          base_url="https://api.github.com")
+    return GitHubProvider("o", "r", token="t", client=client), sleeps
+
 
 def test_get_pull_request_draft_true():
     def handler(req):
@@ -82,8 +98,10 @@ def test_list_existing_fingerprints_parses_markers():
     p = make_provider(handler)
     assert p.list_existing_fingerprints(5) == {"abc123"}
 
+
 def test_publish_review_posts_review_payload():
     captured = {}
+
     def handler(req):
         if req.method == "POST" and req.url.path.endswith("/reviews"):
             captured.update(json.loads(req.content))
@@ -96,3 +114,98 @@ def test_publish_review_posts_review_payload():
     assert captured["commit_id"] == "deadbeef"
     assert captured["comments"][0] == {"path": "a.py", "line": 10,
                                        "side": "RIGHT", "body": "body\n<!-- ai-review:fp1 -->"}
+
+
+def test_retry_429_eventually_succeeds():
+    calls = []
+
+    def handler(req):
+        calls.append(req)
+        if len(calls) < 3:
+            return httpx.Response(429, headers={"retry-after": "1"})
+        return httpx.Response(200, json={
+            "base": {"sha": "aaa", "ref": "main"},
+            "head": {"sha": "bbb"},
+            "title": "PR",
+            "body": "",
+            "draft": False,
+        })
+
+    p, sleeps = make_retry_provider(handler, attempts=3, backoff_base=1.0)
+    pr = p.get_pull_request(1)
+    assert pr.title == "PR"
+    assert len(calls) == 3
+    assert sleeps == [1.0, 1.0]
+
+
+def test_retry_502_exhausted_raises():
+    calls = []
+
+    def handler(req):
+        calls.append(req)
+        return httpx.Response(502)
+
+    p, sleeps = make_retry_provider(handler, attempts=3, backoff_base=2.0)
+    with pytest.raises(httpx.HTTPStatusError):
+        p.get_pull_request(1)
+    assert len(calls) == 3
+    assert sleeps == [2.0, 4.0]
+
+
+def test_retry_respects_retry_after_header():
+    calls = []
+
+    def handler(req):
+        calls.append(req)
+        if len(calls) == 1:
+            return httpx.Response(503, headers={"retry-after": "5"})
+        return httpx.Response(200, json={
+            "base": {"sha": "aaa", "ref": "main"},
+            "head": {"sha": "bbb"},
+            "title": "PR",
+            "body": "",
+            "draft": False,
+        })
+
+    p, sleeps = make_retry_provider(handler, attempts=3, backoff_base=1.0)
+    pr = p.get_pull_request(1)
+    assert pr.title == "PR"
+    assert len(calls) == 2
+    assert sleeps == [5.0]
+
+
+@pytest.mark.parametrize("status", [401, 403, 422])
+def test_no_retry_on_401_403_422(status):
+    calls = []
+
+    def handler(req):
+        calls.append(req)
+        return httpx.Response(status)
+
+    p, sleeps = make_retry_provider(handler, attempts=3, backoff_base=1.0)
+    with pytest.raises(httpx.HTTPStatusError):
+        p.get_pull_request(1)
+    assert len(calls) == 1
+    assert sleeps == []
+
+
+def test_retry_504_then_success():
+    calls = []
+
+    def handler(req):
+        calls.append(req)
+        if len(calls) == 1:
+            return httpx.Response(504)
+        return httpx.Response(200, json={
+            "base": {"sha": "aaa", "ref": "main"},
+            "head": {"sha": "bbb"},
+            "title": "PR",
+            "body": "",
+            "draft": False,
+        })
+
+    p, sleeps = make_retry_provider(handler, attempts=3, backoff_base=1.0)
+    pr = p.get_pull_request(1)
+    assert pr.title == "PR"
+    assert len(calls) == 2
+    assert sleeps == [1.0]

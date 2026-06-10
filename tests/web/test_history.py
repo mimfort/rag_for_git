@@ -92,7 +92,8 @@ def test_record_run_fail_soft_on_exception():
     """record_run() возвращает None при любом исключении в соединении."""
     history = ReviewHistory("postgresql://reviewer:reviewer@localhost:5433/reviewer")
 
-    with patch("psycopg.connect", side_effect=RuntimeError("тестовая ошибка")):
+    with patch("reviewer.web.history.ConnectionPool") as mock_pool:
+        mock_pool.side_effect = RuntimeError("тестовая ошибка")
         result = history.record_run(_sample_run(), _sample_findings())
 
     assert result is None
@@ -109,7 +110,8 @@ def test_get_trace_fail_soft_on_exception():
     """get_trace() возвращает [] при любом исключении — fail-soft."""
     history = ReviewHistory("postgresql://reviewer:reviewer@localhost:5433/reviewer")
 
-    with patch("psycopg.connect", side_effect=RuntimeError("тестовая ошибка")):
+    with patch("reviewer.web.history.ConnectionPool") as mock_pool:
+        mock_pool.side_effect = RuntimeError("тестовая ошибка")
         result = history.get_trace(1)
 
     assert result == []

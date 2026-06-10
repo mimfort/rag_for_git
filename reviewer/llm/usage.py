@@ -92,6 +92,12 @@ class UsageLog:
                 for stage, c in self._stages.items()
             }
 
+    @property
+    def total_tokens(self) -> int:
+        """Суммарное количество input + output токенов по всем этапам."""
+        with self._lock:
+            return sum(c.input_tokens + c.output_tokens for c in self._stages.values())
+
     def report(self) -> str:
         """Вернуть многострочную сводку по этапам на русском языке.
 

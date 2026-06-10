@@ -408,3 +408,33 @@ def test_clean_summary_has_no_error_or_skipped_sections():
     summary, _ = vcs.published
     assert "Не проанализировано" not in summary
     assert "Пропущено по лимиту файлов" not in summary
+
+
+def test_assemble_sorts_findings_by_severity_then_confidence():
+    """При превышении max_comments высокий severity вытесняет low даже при меньшей уверенности;
+    при равном severity побеждает большая уверенность."""
+    vcs = FakeVCS()
+    deps = Deps(
+        vcs=vcs, retriever=None, graph=None,
+        policy=ReviewPolicy(max_comments=2),
+        analyzer=None, verifier=None,
+        pr_number=1, head_sha="s", overlay_ref="pr:1",
+        changed_paths=["a.py"],
+        patches={"a.py": "@@ -1,2 +1,2 @@\n x\n+y\n"},
+    )
+    # medium имеет наибольшую уверенность, но должен уступить high/critical
+    f_medium = Finding("correctness", "medium", "a.py", 2, "RIGHT", "med", None, 0.95)
+    f_high_low = Finding("correctness", "high", "a.py", 2, "RIGHT", "high-low", None, 0.5)
+    f_high_high = Finding("correctness", "high", "a.py", 2, "RIGHT", "high-high", None, 0.8)
+    f_critical = Finding("correctness", "critical", "a.py", 2, "RIGHT", "crit", None, 0.2)
+    node = make_assemble_node(deps)
+    result = node({
+        "verified": [f_medium, f_high_low, f_high_high, f_critical],
+        "failed_units": [],
+    })
+    comments = result["inline_comments"]
+    assert len(comments) == 2
+    assert "crit" in comments[0].body
+    assert "high-high" in comments[1].body
+    # medium и оставшийся high не попали в inline из-за капа
+    assert "med" not in comments[0].body and "med" not in comments[1].body

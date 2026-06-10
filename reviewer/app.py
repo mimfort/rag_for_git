@@ -25,7 +25,11 @@ def _voyage_client(settings: Settings):
     return voyageai.Client(api_key=settings.voyage_api_key or None)
 
 def build_components(settings: Settings, connect: bool = True) -> Components:
-    store = ChunkStore(settings.pg_dsn)
+    store = ChunkStore(
+        settings.pg_dsn,
+        min_size=settings.pg_pool_min_size,
+        max_size=settings.pg_pool_max_size,
+    )
     vclient = _voyage_client(settings)
     embedder = VoyageEmbedder(client=vclient, model=settings.embedding_model,
                               dim=settings.embedding_dim,
@@ -33,6 +37,7 @@ def build_components(settings: Settings, connect: bool = True) -> Components:
     reranker = VoyageReranker(client=vclient, model=settings.rerank_model)
     graph = GraphStore(settings.neo4j_uri, settings.neo4j_user, settings.neo4j_password) \
         if connect else None
-    retriever = Retriever(store, graph, embedder, reranker)
+    retriever = Retriever(store, graph, embedder, reranker,
+                          max_context_chars=settings.max_tool_result_chars)
     llm = OpenRouterProvider(settings)
     return Components(settings, store, graph, embedder, reranker, retriever, llm)

@@ -1,31 +1,70 @@
 """FastAPI-роутер для API истории ревью.
 
-Монтируется в ``app.py`` через ``make_router(history)``.
+Монтируется в ``app.py`` через ``make_router(history, settings)``.
 """
 from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import JSONResponse
+from fastapi.security import HTTPBasic, HTTPBasicCredentials
 
+from reviewer.config.settings import Settings
 from reviewer.web.history import ReviewHistory
 
 log = logging.getLogger(__name__)
 
 
-def make_router(history: ReviewHistory) -> APIRouter:
+def _make_auth_dependency(settings: Settings):
+    """Создать зависимость FastAPI для HTTP Basic Auth.
+
+    Если учётные данные не заданы — возвращает пустую зависимость,
+    которая пропускает все запросы.
+    """
+    if not settings.web_admin_user or not settings.web_admin_password:
+        return lambda: None
+
+    security = HTTPBasic(auto_error=False)
+
+    def _require_auth(
+        credentials: HTTPBasicCredentials | None = Depends(security),
+    ) -> HTTPBasicCredentials | None:
+        if credentials is None:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Требуется аутентификация",
+                headers={"WWW-Authenticate": "Basic"},
+            )
+        if (
+            credentials.username != settings.web_admin_user
+            or credentials.password != settings.web_admin_password
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Неверные учётные данные",
+                headers={"WWW-Authenticate": "Basic"},
+            )
+        return credentials
+
+    return _require_auth
+
+
+def make_router(history: ReviewHistory, settings: Settings | None = None) -> APIRouter:
     """Создать APIRouter с эндпоинтами наблюдаемости.
 
     Args:
         history: экземпляр ReviewHistory (зависимость через замыкание).
+        settings: экземпляр Settings; если заданы web_admin_user/web_admin_password,
+                  все эндпоинты защищаются HTTP Basic Auth.
 
     Routes:
         GET /api/runs            — список прогонов с пагинацией.
         GET /api/runs/{run_id}   — прогон + находки (404 если не найден).
         GET /api/stats           — агрегированная статистика.
     """
-    router = APIRouter()
+    auth_dep = _make_auth_dependency(settings or Settings())
+    router = APIRouter(dependencies=[Depends(auth_dep)])
 
     @router.get("/api/runs")
     def list_runs(

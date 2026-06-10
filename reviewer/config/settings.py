@@ -1,4 +1,12 @@
+from typing import Literal
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+SeverityLevel = Literal["low", "medium", "high", "critical"]
+SuggestionsMode = Literal["apply", "text"]
+GraphBackend = Literal["auto", "scip", "treesitter"]
+ProviderSort = Literal["price", "throughput", "latency"]
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
@@ -9,7 +17,7 @@ class Settings(BaseSettings):
     openrouter_models_fallback: str = ""
     openrouter_max_price_prompt: float | None = None
     openrouter_max_price_completion: float | None = None
-    openrouter_provider_sort: str = "price"   # price|throughput|latency
+    openrouter_provider_sort: ProviderSort = "price"   # price|throughput|latency
     openrouter_provider_order: str = ""
     openrouter_provider_only: str = ""
     openrouter_provider_ignore: str = ""
@@ -22,11 +30,11 @@ class Settings(BaseSettings):
     openrouter_prompt_cache: bool = True  # cache_control-блоки для Anthropic-моделей (prompt caching)
     # review tuning (дефолты; per-repo .review.yml может переопределить)
     review_max_tool_iterations: int = 12          # потолок tool-вызовов агента на файл
-    review_severity_threshold: str = "medium"     # low|medium|high|critical — ниже отбрасываем
+    review_severity_threshold: SeverityLevel = "medium"     # low|medium|high|critical — ниже отбрасываем
     review_min_confidence: float = 0.5            # отбрасывать findings с confidence ниже
     review_max_comments: int = 25                 # кап inline-комментариев на ревью
     review_categories: str = ""                    # CSV вайтлист категорий; пусто = все
-    review_suggestions: str = "apply"             # apply = applyable ```suggestion; text = только текстом включены
+    review_suggestions: SuggestionsMode = "apply"             # apply = applyable ```suggestion; text = только текстом включены
     review_agentic_verify: bool = True            # агентная поштучная верификация находок
     review_synthesis: bool = True                 # кросс-файловый узел synthesize
     review_verify_min_severity: str = "high"      # порог severity для агентной проверки
@@ -34,6 +42,11 @@ class Settings(BaseSettings):
     review_verdict_log: str = ""                  # путь к JSONL-логу вердиктов/публикаций; пусто = выключено
     review_max_parallel_files: int = 4            # кап параллельных analyze (LangGraph max_concurrency)
     review_max_files: int = 50                    # кап файлов PR на ревью; остальные — в сводку как пропущенные
+    review_bundle_max_files: int = 50             # кап файлов в PR-bundle для анализатора
+    review_bundle_max_lines: int = 1500           # кап строк сигнатур в PR-bundle
+    verify_oneshot_threshold: int = 10            # при >N findings verify принудительно переходит в oneshot
+    max_verify_tokens: int = 0                    # общий бюджет токенов на verify; 0 = без ограничения
+    max_tool_result_chars: int = 8000             # максимальная длина результата tool-вызова в промпт
     review_skip_drafts: bool = True               # не ревьюить draft-PR
     review_history: bool = True                   # сохранять историю прогонов в Postgres
     review_trace: bool = True                     # захватывать пошаговый трейс прогона
@@ -45,12 +58,19 @@ class Settings(BaseSettings):
     rerank_model: str = "rerank-2.5"
     # stores
     pg_dsn: str = "postgresql://reviewer:reviewer@localhost:5433/reviewer"
+    pg_pool_min_size: int = 1
+    pg_pool_max_size: int = 4
     neo4j_uri: str = "neo4j://localhost:7687"
     neo4j_user: str = "neo4j"
     neo4j_password: str = "reviewerpass"
-    graph_backend: str = "auto"   # auto|scip|treesitter
+    graph_backend: GraphBackend = "auto"   # auto|scip|treesitter
     # github
     github_token: str = ""
+    github_retry_attempts: int = 3
+    github_retry_backoff_base: float = 1.0
+    # web admin basic auth (опционально; если не заданы — доступ без аутентификации)
+    web_admin_user: str = ""
+    web_admin_password: str = ""
 
     @staticmethod
     def _csv(value: str) -> list[str]:

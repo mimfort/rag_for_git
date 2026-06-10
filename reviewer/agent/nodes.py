@@ -2,18 +2,21 @@ from __future__ import annotations
 import logging
 from langgraph.types import Send
 
-from reviewer.agent.dedup import dedup_findings
+from reviewer.agent.dedup import _SEVERITY_RANK, dedup_findings
 from reviewer.agent.state import ReviewState, ReviewUnit, Deps
 from reviewer.vcs.base import InlineComment
 from reviewer.vcs.diff import commentable_lines
 
 _log = logging.getLogger(__name__)
 
+
 def plan_node(state: ReviewState):
     return {}
 
+
 def fan_out(state: ReviewState):
     return [Send("analyze", {"unit": u}) for u in state["review_units"]]
+
 
 def make_analyze_node(deps: Deps):
     def analyze(payload: dict):
@@ -26,6 +29,7 @@ def make_analyze_node(deps: Deps):
         return {"findings": found, "failed_units": []}
     return analyze
 
+
 def make_verify_node(deps: Deps):
     def verify(state: ReviewState):
         # Gate первым: не тратим LLM-вызовы верификации на находки,
@@ -34,16 +38,27 @@ def make_verify_node(deps: Deps):
         # Dedup до verify: analyze идёт параллельно по файлам и может порождать дубли
         # (особенно на скопированном коде) — не платим за верификацию дублей.
         kept = dedup_findings(kept)
-        kept = deps.verifier.verify(kept, deps)
+        try:
+            kept = deps.verifier.verify(kept, deps)
+        except Exception as e:
+            _log.warning("verify: %s", e, exc_info=True)
+            # Fail-open: при сбое верификатора пропускаем находки как есть.
+            return {
+                "verified": kept,
+                "failed_units": [f"verify: {type(e).__name__}: {e}"],
+            }
         return {"verified": kept}
     return verify
+
 
 def _range_in_diff(right: set[int], start: int, end: int) -> bool:
     """Все строки [start..end] должны быть в RIGHT-строках диффа (иначе GitHub 422/промах)."""
     return start <= end and all(ln in right for ln in range(start, end + 1))
 
+
 def _overlaps(used: list[tuple[int, int]], start: int, end: int) -> bool:
     return any(not (end < s or start > e) for (s, e) in used)
+
 
 def _can_apply(f, right: set[int], used: list[tuple[int, int]], mode: str) -> bool:
     """applyable suggestion разрешён только если: режим apply, есть точная замена,
@@ -54,6 +69,7 @@ def _can_apply(f, right: set[int], used: list[tuple[int, int]], mode: str) -> bo
             and _range_in_diff(right, f.fix_start, f.fix_end)
             and not _overlaps(used, f.fix_start, f.fix_end))
 
+
 def make_assemble_node(deps: Deps):
     def _log_published(f, inline: bool) -> None:
         """Логировать факт публикации находки, если VerdictLog подключён."""
@@ -62,12 +78,25 @@ def make_assemble_node(deps: Deps):
             v.log_published(f, inline=inline)
 
     def assemble(state: ReviewState):
-        existing = deps.vcs.list_existing_fingerprints(deps.pr_number)
+        # Список уже опубликованных fingerprint'ов — не блокирует публикацию при сбое.
+        new_failed: list[str] = []
+        try:
+            existing = deps.vcs.list_existing_fingerprints(deps.pr_number)
+        except Exception as e:
+            _log.warning("list_existing_fingerprints: %s", e, exc_info=True)
+            existing = set()
+            new_failed.append(f"existing fingerprints: {type(e).__name__}: {e}")
+
         commentable = {p: commentable_lines(deps.patches.get(p)) for p in deps.changed_paths}
         used: dict[str, list[tuple[int, int]]] = {}
         inline: list[InlineComment] = []
         summary_lines: list[str] = ["## Авто-ревью\n"]
-        ranked = sorted(state["verified"], key=lambda f: (-f.confidence,))
+        # Составной ранг: сначала severity (critical > high > medium > low),
+        # при равном severity — большая уверенность идёт раньше.
+        ranked = sorted(
+            state["verified"],
+            key=lambda f: (-_SEVERITY_RANK.get(f.severity, 0), -f.confidence),
+        )
         for f in ranked:
             if len(inline) >= deps.policy.max_comments:
                 break
@@ -102,10 +131,12 @@ def make_assemble_node(deps: Deps):
                 summary_lines.append(f"- `{f.file}:{f.line}` {body}")
                 _log_published(f, inline=False)
         if inline:
-            summary_lines.insert(1, f"Выставлено inline-замечаний на строки диффа: {len(inline)}.\n")
+            summary_lines.insert(
+                1, f"Выставлено inline-замечаний на строки диффа: {len(inline)}.\n"
+            )
         if len(summary_lines) == 1:
             summary_lines.append("Замечаний не найдено.")
-        failed = state.get("failed_units", [])
+        failed = list(state.get("failed_units", [])) + new_failed
         if failed:
             summary_lines.append("\n### Не проанализировано (ошибки)")
             for entry in failed:
@@ -118,14 +149,23 @@ def make_assemble_node(deps: Deps):
                 summary_lines.append(f"- {p}")
             if len(skipped) > 20:
                 summary_lines.append(f"- … и ещё {len(skipped) - 20}")
-        return {"inline_comments": inline, "summary": "\n".join(summary_lines)}
+        return {"inline_comments": inline, "summary": "\n".join(summary_lines),
+                "failed_units": new_failed}
     return assemble
+
 
 def make_publish_node(deps: Deps):
     def publish(state: ReviewState):
-        deps.vcs.publish_review(deps.pr_number, deps.head_sha,
-                                state["summary"], state["inline_comments"])
-        return {}
+        try:
+            deps.vcs.publish_review(deps.pr_number, deps.head_sha,
+                                    state["summary"], state["inline_comments"])
+        except Exception as e:
+            _log.error("Не удалось опубликовать ревью: %s", e, exc_info=True)
+            return {
+                "published": False,
+                "failed_units": [f"publish: {type(e).__name__}: {e}"],
+            }
+        return {"published": True}
     return publish
 
 

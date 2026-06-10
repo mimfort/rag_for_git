@@ -1,4 +1,4 @@
-from reviewer.retrieval.retriever import Retriever
+from reviewer.retrieval.retriever import ContextPack, Retriever
 from reviewer.index.store import Retrieved
 
 
@@ -173,3 +173,34 @@ def test_retrieve_calls_rerank_when_more_candidates_than_top_k():
                       overlay_ref="pr:1", changed_paths=[], top_k=2)
     assert reranker.calls == 1
     assert len(pack.items) == 2
+
+
+# ---------------------------------------------------------------------------
+# ContextPack truncation
+# ---------------------------------------------------------------------------
+
+
+def test_context_pack_truncates_by_chars():
+    """as_context обрезает по max_chars и добавляет маркер."""
+    items = [R("a.py#f", "alpha"), R("b.py#g", "beta")]
+    pack = ContextPack(items=items, max_chars=20)
+    ctx = pack.as_context()
+    assert "[...truncated]" in ctx
+    assert len(ctx) <= 40
+
+
+def test_context_pack_truncates_by_tokens():
+    """as_context обрезает примерно по max_tokens (1 токен ≈ 4 символа)."""
+    items = [R("a.py#f", "alpha"), R("b.py#g", "beta")]
+    pack = ContextPack(items=items, max_tokens=2)
+    ctx = pack.as_context()
+    assert "[...truncated]" in ctx
+
+
+def test_context_pack_no_truncation_when_unlimited():
+    """Без лимитов текст возвращается полностью."""
+    items = [R("a.py#f", "alpha"), R("b.py#g", "beta")]
+    pack = ContextPack(items=items)
+    ctx = pack.as_context()
+    assert "alpha" in ctx and "beta" in ctx
+    assert "[...truncated]" not in ctx

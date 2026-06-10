@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import threading
+from collections import OrderedDict
+
 from reviewer.index._retry import with_voyage_retry
 
 # Максимальный размер кэша query-эмбеддингов.
@@ -18,10 +21,11 @@ class VoyageEmbedder:
         self.model = model
         self.dim = dim
         self.batch_size = batch_size
-        # Кэш query-эмбеддингов: text -> vector. FIFO-вытеснение при переполнении.
+        # Потокобезопасный LRU-кэш для query-эмбеддингов.
         # Документы не кэшируем — там дедуп по content_hash уже есть на уровне store.
-        self._query_cache: dict[str, list[float]] = {}
+        self._query_cache: OrderedDict[str, list[float]] = OrderedDict()
         self._cache_size = cache_size
+        self._lock = threading.Lock()
 
     def _embed(self, texts: list[str], input_type: str) -> list[list[float]]:
         out: list[list[float]] = []
@@ -38,14 +42,13 @@ class VoyageEmbedder:
         return self._embed(texts, "document")
 
     def embed_query(self, text: str) -> list[float]:
-        """Вернуть эмбеддинг запроса, используя кэш для повторных обращений."""
-        if text in self._query_cache:
-            return self._query_cache[text]
-        vec = self._embed([text], "query")[0]
-        # FIFO-вытеснение: удаляем самую старую запись при переполнении.
-        # dict в Python 3.7+ хранит порядок вставки, поэтому первый ключ — самый старый.
-        if len(self._query_cache) >= self._cache_size:
-            oldest = next(iter(self._query_cache))
-            del self._query_cache[oldest]
-        self._query_cache[text] = vec
-        return vec
+        """Вернуть эмбеддинг запроса, используя потокобезопасный LRU-кэш."""
+        with self._lock:
+            if text in self._query_cache:
+                self._query_cache.move_to_end(text)
+                return self._query_cache[text]
+            vec = self._embed([text], "query")[0]
+            if len(self._query_cache) >= self._cache_size:
+                self._query_cache.popitem(last=False)
+            self._query_cache[text] = vec
+            return vec

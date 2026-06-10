@@ -29,9 +29,21 @@ def test_build_overlay_chunks_changed_files_into_pr_ref(monkeypatch):
     store, emb = FakeStore(), FakeEmb()
     build_overlay(store, emb, pr_number=7,
                   changed_files=list(files),
-                  read_head=lambda p: files.get(p))
+                  head_sources=files)
     assert all(r.ref == "pr:7" for r in store.rows)
     assert any(r.symbol_fqn == "f" for r in store.rows)
+
+
+def test_build_overlay_skips_missing_or_empty_sources():
+    """Файлы без содержимого в head_sources не попадают в overlay."""
+    store, emb = FakeStore(), FakeEmb()
+    build_overlay(
+        store, emb, pr_number=3,
+        changed_files=["present.py", "absent.py", "empty.py"],
+        head_sources={"present.py": "def ok(): pass\n", "empty.py": ""},
+    )
+    assert all(r.path == "present.py" for r in store.rows)
+    assert any(r.symbol_fqn == "ok" for r in store.rows)
 
 
 # --- update_base: гигиена removed_files ---

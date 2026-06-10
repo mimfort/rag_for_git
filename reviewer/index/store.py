@@ -1,9 +1,10 @@
 from __future__ import annotations
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 import re
-import psycopg
 from pgvector.psycopg import register_vector, Vector
+from psycopg_pool import ConnectionPool
 
 _BM25_STRIP = re.compile(r"[^\w\s]")
 
@@ -41,18 +42,53 @@ class Retrieved:
 
 
 class ChunkStore:
-    def __init__(self, dsn: str):
-        self.dsn = dsn
+    """Хранилище чанков кода в Postgres с pgvector + bm25.
 
-    def init_schema(self) -> None:
-        with psycopg.connect(self.dsn) as conn:
-            conn.execute(_SCHEMA)
-            conn.commit()
+    Использует пул соединений :class:`psycopg_pool.ConnectionPool`;
+    инициализация пула откладывается до первого запроса (lazy).
+    Для каждого нового соединения автоматически вызывается
+    ``register_vector(conn)``, без этого pgvector-типы в пуле не работают.
+    """
+
+    def __init__(self, dsn: str, *, min_size: int = 1, max_size: int = 4) -> None:
+        self.dsn = dsn
+        self._min_size = min_size
+        self._max_size = max_size
+        self._pool: ConnectionPool | None = None
+        self._init_lock = threading.Lock()
+
+    def _ensure_pool(self) -> ConnectionPool:
+        """Создать и открыть пул при первом обращении (thread-safe)."""
+        if self._pool is None:
+            with self._init_lock:
+                if self._pool is None:
+                    self._pool = ConnectionPool(
+                        self.dsn,
+                        min_size=self._min_size,
+                        max_size=self._max_size,
+                        open=False,
+                        configure=lambda conn: register_vector(conn),
+                    )
+                    self._pool.open()
+        return self._pool
 
     def _connect(self):
-        conn = psycopg.connect(self.dsn)
-        register_vector(conn)
-        return conn
+        """Вернуть контекстный менеджер соединения из пула.
+
+        Совместим с существующими вызовами ``with store._connect() as conn:``.
+        """
+        return self._ensure_pool().connection()
+
+    def close(self) -> None:
+        """Закрыть пул соединений, если он был создан."""
+        if self._pool is not None:
+            self._pool.close()
+            self._pool = None
+
+    def init_schema(self) -> None:
+        with self._connect() as conn:
+            conn.execute(_SCHEMA)
+            conn.commit()
 
     def clear(self) -> None:
         with self._connect() as conn:

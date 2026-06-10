@@ -11,6 +11,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from reviewer.config.settings import Settings
 from reviewer.web.api import make_router
 
 _DIST_INDEX = (
@@ -173,6 +174,16 @@ class FakeHistory:
 def client() -> TestClient:
     app = FastAPI()
     router = make_router(FakeHistory())
+    app.include_router(router)
+    return TestClient(app)
+
+
+@pytest.fixture
+def client_with_auth() -> TestClient:
+    """TestClient с включённой Basic Auth."""
+    app = FastAPI()
+    settings = Settings(web_admin_user="admin", web_admin_password="secret")
+    router = make_router(FakeHistory(), settings)
     app.include_router(router)
     return TestClient(app)
 
@@ -372,3 +383,57 @@ def test_get_trace_empty_for_unknown_run(client):
     assert resp.status_code == 200
     data = resp.json()
     assert data["steps"] == []
+
+
+# ---------------------------------------------------------------------------
+# Тесты Basic Auth
+# ---------------------------------------------------------------------------
+
+def test_auth_disabled_by_default(client):
+    """Без заданных учётных данных API доступен без аутентификации."""
+    resp = client.get("/api/runs")
+    assert resp.status_code == 200
+
+
+def test_auth_enabled_no_credentials_returns_401(client_with_auth):
+    """При включённой auth запрос без credentials возвращает 401."""
+    resp = client_with_auth.get("/api/runs")
+    assert resp.status_code == 401
+    assert "WWW-Authenticate" in resp.headers
+    assert "Basic" in resp.headers["WWW-Authenticate"]
+
+
+def test_auth_enabled_wrong_credentials_returns_401(client_with_auth):
+    """Неверные учётные данные возвращают 401."""
+    resp = client_with_auth.get(
+        "/api/runs",
+        auth=("admin", "wrong"),
+    )
+    assert resp.status_code == 401
+
+
+def test_auth_enabled_correct_credentials_returns_200(client_with_auth):
+    """Корректные учётные данные пропускают запрос."""
+    resp = client_with_auth.get(
+        "/api/runs",
+        auth=("admin", "secret"),
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "runs" in data
+
+
+def test_auth_enabled_applies_to_all_endpoints(client_with_auth):
+    """Все /api/* эндпоинты защищены auth."""
+    endpoints = [
+        "/api/runs",
+        "/api/runs/1",
+        "/api/runs/1/trace",
+        "/api/stats",
+    ]
+    for endpoint in endpoints:
+        resp_no_auth = client_with_auth.get(endpoint)
+        assert resp_no_auth.status_code == 401, f"{endpoint} должен требовать auth"
+
+        resp_auth = client_with_auth.get(endpoint, auth=("admin", "secret"))
+        assert resp_auth.status_code == 200, f"{endpoint} должен быть доступен с auth"

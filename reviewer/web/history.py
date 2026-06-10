@@ -7,10 +7,11 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 from decimal import Decimal
 from pathlib import Path
 
-import psycopg
+from psycopg_pool import ConnectionPool
 
 log = logging.getLogger(__name__)
 
@@ -18,10 +19,42 @@ _SCHEMA = Path(__file__).with_name("schema.sql").read_text()
 
 
 class ReviewHistory:
-    """Персистирует историю прогонов ревью и предоставляет API для её чтения."""
+    """Персистирует историю прогонов ревью и предоставляет API для её чтения.
 
-    def __init__(self, pg_dsn: str) -> None:
+    Использует пул соединений :class:`psycopg_pool.ConnectionPool`;
+    пул создаётся лениво при первом запросе.
+    """
+
+    def __init__(self, pg_dsn: str, *, min_size: int = 1, max_size: int = 4) -> None:
         self.pg_dsn = pg_dsn
+        self._min_size = min_size
+        self._max_size = max_size
+        self._pool: ConnectionPool | None = None
+        self._init_lock = threading.Lock()
+
+    def _ensure_pool(self) -> ConnectionPool:
+        """Создать и открыть пул при первом обращении (thread-safe)."""
+        if self._pool is None:
+            with self._init_lock:
+                if self._pool is None:
+                    self._pool = ConnectionPool(
+                        self.pg_dsn,
+                        min_size=self._min_size,
+                        max_size=self._max_size,
+                        open=False,
+                    )
+                    self._pool.open()
+        return self._pool
+
+    def _connect(self):
+        """Вернуть контекстный менеджер соединения из пула."""
+        return self._ensure_pool().connection()
+
+    def close(self) -> None:
+        """Закрыть пул соединений, если он был создан."""
+        if self._pool is not None:
+            self._pool.close()
+            self._pool = None
 
     # ------------------------------------------------------------------
     # Инициализация схемы
@@ -29,7 +62,7 @@ class ReviewHistory:
 
     def init_schema(self) -> None:
         """Создать таблицы review_runs и review_findings, если их нет."""
-        with psycopg.connect(self.pg_dsn) as conn:
+        with self._connect() as conn:
             conn.execute(_SCHEMA)
             conn.commit()
 
@@ -93,7 +126,7 @@ class ReviewHistory:
             if "usage" in run_row and not isinstance(run_row["usage"], str):
                 run_row["usage"] = json.dumps(run_row["usage"])
 
-            with psycopg.connect(self.pg_dsn) as conn:
+            with self._connect() as conn:
                 row = conn.execute(run_sql, run_row).fetchone()
                 run_id: int = row[0]
                 if findings:
@@ -169,7 +202,7 @@ class ReviewHistory:
         ORDER BY created_at DESC
         LIMIT %(limit)s OFFSET %(offset)s
         """
-        with psycopg.connect(self.pg_dsn) as conn:
+        with self._connect() as conn:
             with conn.cursor() as cur:
                 cur.execute(sql, params)
                 cols = [d.name for d in cur.description]
@@ -193,7 +226,7 @@ class ReviewHistory:
                is_real, published, inline, fingerprint, message
         FROM review_findings WHERE run_id = %(run_id)s ORDER BY id
         """
-        with psycopg.connect(self.pg_dsn) as conn:
+        with self._connect() as conn:
             with conn.cursor() as cur:
                 cur.execute(run_sql, {"id": run_id})
                 run_cols = [d.name for d in cur.description]
@@ -225,7 +258,7 @@ class ReviewHistory:
             WHERE run_id = %(run_id)s
             ORDER BY seq
             """
-            with psycopg.connect(self.pg_dsn) as conn:
+            with self._connect() as conn:
                 with conn.cursor() as cur:
                     cur.execute(sql, {"run_id": run_id})
                     cols = [d.name for d in cur.description]
@@ -252,7 +285,7 @@ class ReviewHistory:
                 "findings_by_severity": [{"severity": str, "count": int}, ...],
             }
         """
-        with psycopg.connect(self.pg_dsn) as conn:
+        with self._connect() as conn:
             # Суммарные показатели
             agg = conn.execute("""
                 SELECT

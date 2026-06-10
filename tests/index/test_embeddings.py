@@ -1,4 +1,7 @@
+import threading
+
 from reviewer.index.embeddings import VoyageEmbedder
+
 
 class FakeResp:
     def __init__(self, embs): self.embeddings = embs
@@ -52,3 +55,27 @@ def test_embed_query_cache_fifo_eviction():
     assert len(fake.calls) == calls_before
     emb.embed_query("first")    # "first" уже не в кэше → новый вызов
     assert len(fake.calls) == calls_before + 1
+
+
+def test_embed_query_cache_is_thread_safe_for_same_text():
+    """Параллельные вызовы embed_query с одинаковым текстом порождают ровно один вызов клиента."""
+    fake = FakeClient()
+    emb = VoyageEmbedder(client=fake, model="voyage-code-3", dim=8, cache_size=4)
+
+    results: list[list[float]] = []
+    lock = threading.Lock()
+
+    def call() -> None:
+        vec = emb.embed_query("shared query")
+        with lock:
+            results.append(vec)
+
+    threads = [threading.Thread(target=call) for _ in range(10)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert len(fake.calls) == 1
+    assert len(results) == 10
+    assert all(v == results[0] for v in results)

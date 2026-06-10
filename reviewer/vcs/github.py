@@ -1,20 +1,94 @@
 from __future__ import annotations
-import base64, re
+import base64
+import re
+import time
+
 import httpx
 
 from reviewer.vcs.base import PullRequest, ChangedFile, InlineComment
 
 _FP = re.compile(r"<!-- ai-review:([0-9a-f]+) -->")
+_RETRY_CODES = {429, 502, 503, 504}
+
+
+class _RetryTransport:
+    """Обёртка над httpx-транспортом с retry по статусам 429/502/503/504."""
+
+    def __init__(
+        self,
+        wrapped,
+        *,
+        attempts: int = 3,
+        backoff_base: float = 1.0,
+        max_wait: float = 8.0,
+        _sleep=time.sleep,
+    ):
+        self._wrapped = wrapped
+        self._attempts = attempts
+        self._backoff_base = backoff_base
+        self._max_wait = max_wait
+        self._sleep = _sleep
+
+    def handle_request(self, request: httpx.Request) -> httpx.Response:
+        response: httpx.Response | None = None
+        for attempt in range(self._attempts):
+            response = self._wrapped.handle_request(request)
+            if response.status_code not in _RETRY_CODES:
+                return response
+            if attempt < self._attempts - 1:
+                retry_after = response.headers.get("retry-after")
+                if retry_after:
+                    try:
+                        wait = float(retry_after)
+                    except ValueError:
+                        wait = self._backoff_base * (2 ** attempt)
+                else:
+                    wait = self._backoff_base * (2 ** attempt)
+                self._sleep(min(wait, self._max_wait))
+        # Исчерпаны попытки — возвращаем последний ответ (raise_for_status сделает своё дело)
+        assert response is not None
+        return response
+
+    def close(self) -> None:
+        self._wrapped.close()
+
+    def __enter__(self):
+        self._wrapped.__enter__()
+        return self
+
+    def __exit__(self, *args):
+        return self._wrapped.__exit__(*args)
+
 
 class GitHubProvider:
-    def __init__(self, owner: str, repo: str, token: str, client: httpx.Client | None = None):
+    def __init__(
+        self,
+        owner: str,
+        repo: str,
+        token: str,
+        client: httpx.Client | None = None,
+        *,
+        retry_attempts: int = 3,
+        retry_backoff_base: float = 1.0,
+    ):
         self.owner, self.repo = owner, repo
-        self._c = client or httpx.Client(
-            base_url="https://api.github.com",
-            headers={"Authorization": f"Bearer {token}",
-                     "X-GitHub-Api-Version": "2022-11-28",
-                     "Accept": "application/vnd.github+json"},
-            timeout=30)
+        if client is None:
+            transport = _RetryTransport(
+                httpx.HTTPTransport(),
+                attempts=retry_attempts,
+                backoff_base=retry_backoff_base,
+            )
+            client = httpx.Client(
+                base_url="https://api.github.com",
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "X-GitHub-Api-Version": "2022-11-28",
+                    "Accept": "application/vnd.github+json",
+                },
+                timeout=30,
+                transport=transport,
+            )
+        self._c = client
 
     def close(self) -> None:
         self._c.close()
@@ -24,16 +98,23 @@ class GitHubProvider:
 
     def get_pull_request(self, number: int) -> PullRequest:
         d = self._c.get(f"{self._base()}/pulls/{number}").raise_for_status().json()
-        return PullRequest(number=number, base_sha=d["base"]["sha"],
-                           head_sha=d["head"]["sha"], base_ref=d["base"]["ref"],
-                           title=d.get("title", ""), body=d.get("body") or "",
-                           draft=bool(d.get("draft", False)))
+        return PullRequest(
+            number=number,
+            base_sha=d["base"]["sha"],
+            head_sha=d["head"]["sha"],
+            base_ref=d["base"]["ref"],
+            title=d.get("title", ""),
+            body=d.get("body") or "",
+            draft=bool(d.get("draft", False)),
+        )
 
     def get_changed_files(self, number: int) -> list[ChangedFile]:
         files, page = [], 1
         while True:
-            r = self._c.get(f"{self._base()}/pulls/{number}/files",
-                            params={"per_page": 100, "page": page}).raise_for_status()
+            r = self._c.get(
+                f"{self._base()}/pulls/{number}/files",
+                params={"per_page": 100, "page": page},
+            ).raise_for_status()
             batch = r.json()
             files += [ChangedFile(f["filename"], f["status"], f.get("patch")) for f in batch]
             if len(batch) < 100:
@@ -51,8 +132,10 @@ class GitHubProvider:
     def list_existing_fingerprints(self, number: int) -> set[str]:
         fps, page = set(), 1
         while True:
-            r = self._c.get(f"{self._base()}/pulls/{number}/comments",
-                            params={"per_page": 100, "page": page}).raise_for_status()
+            r = self._c.get(
+                f"{self._base()}/pulls/{number}/comments",
+                params={"per_page": 100, "page": page},
+            ).raise_for_status()
             batch = r.json()
             for cm in batch:
                 fps.update(_FP.findall(cm.get("body", "")))
@@ -74,8 +157,13 @@ class GitHubProvider:
         files = r.json().get("files", [])
         return [ChangedFile(f["filename"], f["status"], f.get("patch")) for f in files]
 
-    def publish_review(self, number: int, head_sha: str, summary: str,
-                       comments: list[InlineComment]) -> None:
+    def publish_review(
+        self,
+        number: int,
+        head_sha: str,
+        summary: str,
+        comments: list[InlineComment],
+    ) -> None:
         payload_comments = []
         for c in comments:
             item = {"path": c.path, "line": c.line, "side": c.side, "body": c.body}
@@ -83,7 +171,12 @@ class GitHubProvider:
                 item["start_line"] = c.start_line
                 item["start_side"] = c.start_side or c.side
             payload_comments.append(item)
-        self._c.post(f"{self._base()}/pulls/{number}/reviews",
-                     json={"commit_id": head_sha, "body": summary,
-                           "event": "COMMENT", "comments": payload_comments}
-                     ).raise_for_status()
+        self._c.post(
+            f"{self._base()}/pulls/{number}/reviews",
+            json={
+                "commit_id": head_sha,
+                "body": summary,
+                "event": "COMMENT",
+                "comments": payload_comments,
+            },
+        ).raise_for_status()

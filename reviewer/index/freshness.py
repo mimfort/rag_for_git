@@ -4,12 +4,14 @@ from collections.abc import Callable
 from reviewer.index.chunker import chunk_python
 from reviewer.index.store import ChunkRow
 
+
 def _rows_for_file(path: str, source: str, ref: str) -> list[ChunkRow]:
     chunks = chunk_python(path, source.encode("utf-8"))
     return [ChunkRow(ref=ref, content_hash=c.content_hash, path=c.path,
                      lang=c.lang, symbol_fqn=c.symbol_fqn, kind=c.kind,
                      start_line=c.start_line, end_line=c.end_line,
                      text=c.text, embedding=[]) for c in chunks]
+
 
 def _embed_and_upsert(store, embedder, rows: list[ChunkRow]) -> None:
     if not rows:
@@ -19,17 +21,23 @@ def _embed_and_upsert(store, embedder, rows: list[ChunkRow]) -> None:
         r.embedding = v
     store.upsert(rows)
 
+
 def build_overlay(store, embedder, pr_number: int, changed_files: list[str],
-                  read_head: Callable[[str], str | None]) -> None:
-    """Чанкует изменённые файлы PR head в ref='pr:<n>'. Дедуп по content_hash."""
+                  head_sources: dict[str, str]) -> None:
+    """Чанкует изменённые файлы PR head в ref='pr:<n>'. Дедуп по content_hash.
+
+    Аргументы:
+        head_sources: словарь path → содержимое head-версии файла.
+                      Файлы без содержимого или не-.py пропускаются.
+    """
     ref = f"pr:{pr_number}"
     seen = store.existing_hashes(ref)
     batch: list[ChunkRow] = []
     for path in changed_files:
         if not path.endswith(".py"):
             continue
-        src = read_head(path)
-        if src is None:
+        src = head_sources.get(path)
+        if not src:
             continue
         for row in _rows_for_file(path, src, ref):
             if row.content_hash not in seen:

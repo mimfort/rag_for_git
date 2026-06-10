@@ -219,6 +219,24 @@ def _signature_changes(patches: dict[str, str | None]) -> str:
     return "\n".join(blocks)
 
 
+def _paths_with_signature_changes(patches: dict[str, str | None]) -> set[str]:
+    """Множество путей, в патчах которых есть изменения сигнатур."""
+    out: set[str] = set()
+    for path, patch in (patches or {}).items():
+        if not patch:
+            continue
+        for line in patch.splitlines():
+            if not line or line[0] not in "+-":
+                continue
+            if line.startswith("---") or line.startswith("+++"):
+                continue
+            body = line[1:].lstrip()
+            if body.startswith(("def ", "class ", "async def ")):
+                out.add(path)
+                break
+    return out
+
+
 _BUNDLE_LINE_CAP = 1500     # суммарный кап строк диффов в PR-bundle
 
 
@@ -231,14 +249,26 @@ def _pr_bundle_static(deps, changed_paths: list[str]) -> str:
     if sig_changes:
         parts.append("Изменённые сигнатуры в PR:\n" + sig_changes)
     sources = getattr(deps, "sources", None) or {}
+    settings = getattr(deps, "settings", None)
+    max_sig_lines = (
+        getattr(settings, "review_bundle_max_lines", 1500) if settings else 1500
+    )
+    sig_change_paths = _paths_with_signature_changes(patches)
+    ordered_paths = sorted(changed_paths, key=lambda p: (p not in sig_change_paths, p))
     sig_maps: list[str] = []
-    for path in changed_paths:
+    used = sig_changes.count("\n") + 1 if sig_changes else 0
+    for path in ordered_paths:
         src = sources.get(path)
         if not src:
             continue
         sigs = _module_signatures(path, src)
-        if sigs:
-            sig_maps.append(f"{path}:\n{sigs}")
+        if not sigs:
+            continue
+        sig_lines = sigs.count("\n") + 1
+        if used + sig_lines > max_sig_lines:
+            break
+        used += sig_lines
+        sig_maps.append(f"{path}:\n{sigs}")
     if sig_maps:
         parts.append("Структура изменённых модулей:\n" + "\n\n".join(sig_maps))
     return "\n\n".join(parts)
@@ -248,25 +278,34 @@ def _pr_bundle(deps, changed_paths: list[str], current_path: str | None = None) 
     """Компактный обзор PR для предзагрузки в промпт: диффы изменённых файлов
     (кроме current_path), изменённые сигнатуры и карты сигнатур модулей.
 
-    Диффы режутся по суммарному капу строк; остаток помечается (даже если в кап не
-    влез ни один файл). Path-независимая часть кэшируется в deps.tool_cache. Цель — чтобы
-    агент не дёргал get_changed_file_diff/read_file по чужим файлам (тулы — как fallback)."""
+    Диффы режутся по числу файлов и суммарному капу строк;
+    остаток помечается (даже если в кап не влез ни один файл).
+    При превышении лимитов приоритет отдаётся файлам с изменёнными сигнатурами.
+    Path-независимая часть кэшируется в deps.tool_cache."""
     patches = getattr(deps, "patches", None) or {}
+    settings = getattr(deps, "settings", None)
+    max_files = (
+        getattr(settings, "review_bundle_max_files", 50) if settings else 50
+    )
+    sig_change_paths = _paths_with_signature_changes(patches)
+    ordered = sorted(changed_paths, key=lambda p: (p not in sig_change_paths, p))
     parts: list[str] = []
 
     diff_blocks: list[str] = []
     used = 0
+    used_files = 0
     omitted = 0
-    for path in changed_paths:
+    for path in ordered:
         if path == current_path:
             continue
         patch = patches.get(path)
         if not patch:
             continue
         plines = patch.splitlines()
-        if used + len(plines) > _BUNDLE_LINE_CAP:
+        if used_files >= max_files or used + len(plines) > _BUNDLE_LINE_CAP:
             omitted += 1
             continue
+        used_files += 1
         used += len(plines)
         diff_blocks.append(f"--- {path} ---\n{patch}")
     if diff_blocks:
@@ -281,10 +320,10 @@ def _pr_bundle(deps, changed_paths: list[str], current_path: str | None = None) 
     if cache is not None:
         key = ("__pr_bundle_static__",)
         if key not in cache:
-            cache[key] = _pr_bundle_static(deps, changed_paths)
+            cache[key] = _pr_bundle_static(deps, ordered)
         static = cache[key]
     else:
-        static = _pr_bundle_static(deps, changed_paths)
+        static = _pr_bundle_static(deps, ordered)
     if static:
         parts.append(static)
 
@@ -295,6 +334,7 @@ def _run_tool_loop(
     messages: list, llm, tools_by_name: dict, budget,
     usage=None, stage: str = "",
     trace=None, unit: str = "",
+    max_tool_result_chars: int = 8000,
 ) -> list:
     """Гоняет tool-loop до отсутствия tool_calls или исчерпания бюджета.
     Мутирует и возвращает messages (добавляет AI- и ToolMessage). При BudgetExceeded —
@@ -319,7 +359,10 @@ def _run_tool_loop(
                     result = f"(ошибка инструмента {call['name']}: {e})"
                 if trace is not None:
                     trace.record_tool_call(stage, unit, call["name"], call["args"], result)
-                messages.append(ToolMessage(str(result), tool_call_id=call["id"]))
+                result_text = str(result)
+                if max_tool_result_chars > 0 and len(result_text) > max_tool_result_chars:
+                    result_text = result_text[:max_tool_result_chars] + "\n[...truncated]"
+                messages.append(ToolMessage(result_text, tool_call_id=call["id"]))
     except BudgetExceeded:
         pass
     return messages
@@ -416,22 +459,60 @@ class _Verdict(BaseModel):
 class _VerdictBatch(BaseModel):
     verdicts: list[_Verdict] = Field(default_factory=list)
 
-class LLMAnalyzer:
-    """Tool-loop + структурированный вывод findings для одного файла."""
-    def __init__(self, llm_provider, max_iterations: int, prompt_cache: bool = False):
+
+class _LLMPhase:
+    """Базовый класс для LLM-фаз агента (analyze/verify/synthesize).
+
+    Хранит общие параметры и предоставляет фабрику ToolContext из Deps.
+    Подклассы переопределяют только промпт + парсинг ответа."""
+
+    def __init__(
+        self,
+        llm_provider,
+        *,
+        prompt_cache: bool = False,
+        max_tool_result_chars: int = 8000,
+    ):
         self.provider = llm_provider
-        self.max_iterations = max_iterations
         self.prompt_cache = prompt_cache
+        self.max_tool_result_chars = max_tool_result_chars
+
+    def _make_tool_context(self, deps: Deps, changed_node_ids: list[str] | None = None) -> ToolContext:
+        return ToolContext(
+            retriever=deps.retriever,
+            graph=deps.graph,
+            overlay_ref=deps.overlay_ref,
+            changed_paths=deps.changed_paths,
+            changed_node_ids=changed_node_ids or [],
+            read_file_fn=(
+                (lambda p: deps.vcs.get_file_at_ref(p, deps.head_sha))
+                if deps.vcs else None
+            ),
+            patches=deps.patches,
+            store=getattr(deps.retriever, "store", None),
+            cache=getattr(deps, "tool_cache", None),
+        )
+
+    def _run_loop(self, messages, llm, tools_by_name, budget, deps, *,
+                  stage: str, unit: str = ""):
+        return _run_tool_loop(
+            messages, llm, tools_by_name, budget,
+            usage=deps.usage, stage=stage,
+            trace=getattr(deps, "trace", None), unit=unit,
+            max_tool_result_chars=self.max_tool_result_chars,
+        )
+
+
+class LLMAnalyzer(_LLMPhase):
+    """Tool-loop + структурированный вывод findings для одного файла."""
+    def __init__(self, llm_provider, max_iterations: int, prompt_cache: bool = False,
+                 max_tool_result_chars: int = 8000):
+        super().__init__(llm_provider, prompt_cache=prompt_cache,
+                         max_tool_result_chars=max_tool_result_chars)
+        self.max_iterations = max_iterations
 
     def analyze(self, unit: ReviewUnit, deps: Deps) -> list[Finding]:
-        ctx = ToolContext(
-            retriever=deps.retriever, graph=deps.graph,
-            overlay_ref=deps.overlay_ref, changed_paths=deps.changed_paths,
-            changed_node_ids=unit.node_ids,
-            read_file_fn=((lambda p: deps.vcs.get_file_at_ref(p, deps.head_sha))
-                          if deps.vcs else None),
-            patches=deps.patches, store=getattr(deps.retriever, "store", None),
-            cache=getattr(deps, "tool_cache", None))
+        ctx = self._make_tool_context(deps, changed_node_ids=unit.node_ids)
         tools = make_tools(ctx)
         llm = self.provider.chat_model_with_tools(tools)
         tools_by_name = {t.name: t for t in tools}
@@ -459,9 +540,8 @@ class LLMAnalyzer:
         ]
         if _trace is not None:
             _trace.record_prompt("analyze", unit.path, human)
-        _run_tool_loop(messages, llm, tools_by_name, budget,
-                       usage=deps.usage, stage="analyze",
-                       trace=_trace, unit=unit.path)
+        self._run_loop(messages, llm, tools_by_name, budget, deps,
+                       stage="analyze", unit=unit.path)
         # Пробуем достать JSON из последнего AI-ответа без доп. вызова
         data = _last_ai_json(messages)
         if "findings" in data:
@@ -484,25 +564,56 @@ class LLMAnalyzer:
             parsed = _Findings()
         return _to_findings(parsed.findings, default_file=unit.path)
 
-class LLMVerifier:
+class LLMVerifier(_LLMPhase):
     """Верификатор находок. agentic=True — поштучная проверка с инструментами;
     agentic=False — прежний one-shot список (обратносовместимо)."""
     def __init__(self, llm_provider, agentic: bool = False,
                  max_iterations: int = 3, min_severity: str = "medium",
-                 model: str | None = None, prompt_cache: bool = False):
-        self.provider = llm_provider
+                 model: str | None = None, prompt_cache: bool = False,
+                 oneshot_threshold: int = 10, max_verify_tokens: int = 0,
+                 max_tool_result_chars: int = 8000):
+        super().__init__(llm_provider, prompt_cache=prompt_cache,
+                         max_tool_result_chars=max_tool_result_chars)
         self.agentic = agentic
         self.max_iterations = max_iterations
         self.min_severity = min_severity
         self.model = model
-        self.prompt_cache = prompt_cache
+        self.oneshot_threshold = oneshot_threshold
+        self.max_verify_tokens = max_verify_tokens
 
     def verify(self, findings: list[Finding], deps: Deps) -> list[Finding]:
         if not findings:
             return []
+        if self._budget_exceeded(findings, deps):
+            _log.warning(
+                "verify: превышен бюджет токенов (%s), пропускаем верификацию",
+                self.max_verify_tokens,
+            )
+            policy = getattr(deps, "policy", None)
+            if policy is None:
+                return list(findings)
+            return [f for f in findings if policy.gate(f)]
+        if len(findings) > self.oneshot_threshold:
+            return self._verify_oneshot(findings, deps)
         if not self.agentic:
             return self._verify_oneshot(findings, deps)
         return [f for f in findings if self._verify_one(f, deps)]
+
+    def _estimate_verify_tokens(self, findings: list[Finding]) -> int:
+        """Грубая оценка токенов для verify-промпта (1 токен ≈ 4 символа)."""
+        listing = "\n".join(
+            f"{i}. [{f.category}/{f.severity}] {f.file}:{f.line} {f.message}"
+            for i, f in enumerate(findings))
+        prompt = VERIFY_SYSTEM + "\n" + listing + "\n\n" + _VERDICT_SCHEMA
+        return len(prompt) // 4
+
+    def _budget_exceeded(self, findings: list[Finding], deps: Deps) -> bool:
+        if self.max_verify_tokens <= 0:
+            return False
+        usage = getattr(deps, "usage", None)
+        current = usage.total_tokens if usage is not None else 0
+        estimated = self._estimate_verify_tokens(findings)
+        return current + estimated > self.max_verify_tokens
 
     def _needs_check(self, f: Finding) -> bool:
         sev_ok = (_SEVERITY_ORDER.get(f.severity, 1)
@@ -514,14 +625,7 @@ class LLMVerifier:
     def _verify_one(self, f: Finding, deps: Deps) -> bool:
         if not self._needs_check(f):
             return True   # дёшево пропускаем (не теряем находку)
-        ctx = ToolContext(
-            retriever=deps.retriever, graph=deps.graph,
-            overlay_ref=deps.overlay_ref, changed_paths=deps.changed_paths,
-            changed_node_ids=[],
-            read_file_fn=((lambda p: deps.vcs.get_file_at_ref(p, deps.head_sha))
-                          if deps.vcs else None),
-            patches=deps.patches, store=getattr(deps.retriever, "store", None),
-            cache=getattr(deps, "tool_cache", None))
+        ctx = self._make_tool_context(deps)
         tools = make_tools(ctx)
         llm = self.provider.chat_model_with_tools(tools, model=self.model)
         tools_by_name = {t.name: t for t in tools}
@@ -548,9 +652,8 @@ class LLMVerifier:
         ]
         if _trace is not None:
             _trace.record_prompt("verify", _verify_unit, human)
-        _run_tool_loop(messages, llm, tools_by_name, budget,
-                       usage=deps.usage, stage="verify",
-                       trace=_trace, unit=_verify_unit)
+        self._run_loop(messages, llm, tools_by_name, budget, deps,
+                       stage="verify", unit=_verify_unit)
         # Пробуем достать JSON из последнего AI-ответа без доп. вызова
         data = _last_ai_json(messages)
         if "is_real" in data:
@@ -602,26 +705,20 @@ class LLMVerifier:
         return [f for i, f in enumerate(findings) if verdict_by_idx.get(i, True)]
 
 
-class LLMSynthesizer:
+class LLMSynthesizer(_LLMPhase):
     """Кросс-файловый проход по всем находкам PR: добавляет кросс-файловые проблемы,
     дедуплицирует. Tool-enabled. Fail-open: при неразборе/пустом ответе — возвращает вход."""
 
-    def __init__(self, llm_provider, max_iterations: int = 6, prompt_cache: bool = False):
-        self.provider = llm_provider
+    def __init__(self, llm_provider, max_iterations: int = 6, prompt_cache: bool = False,
+                 max_tool_result_chars: int = 8000):
+        super().__init__(llm_provider, prompt_cache=prompt_cache,
+                         max_tool_result_chars=max_tool_result_chars)
         self.max_iterations = max_iterations
-        self.prompt_cache = prompt_cache
 
     def synthesize(self, findings: list[Finding], deps: Deps) -> list[Finding]:
         if not findings:
             return findings
-        ctx = ToolContext(
-            retriever=deps.retriever, graph=deps.graph,
-            overlay_ref=deps.overlay_ref, changed_paths=deps.changed_paths,
-            changed_node_ids=[],
-            read_file_fn=((lambda p: deps.vcs.get_file_at_ref(p, deps.head_sha))
-                          if deps.vcs else None),
-            patches=deps.patches, store=getattr(deps.retriever, "store", None),
-            cache=getattr(deps, "tool_cache", None))
+        ctx = self._make_tool_context(deps)
         tools = make_tools(ctx)
         llm = self.provider.chat_model_with_tools(tools)
         tools_by_name = {t.name: t for t in tools}
@@ -647,9 +744,8 @@ class LLMSynthesizer:
         ]
         if _trace is not None:
             _trace.record_prompt("synthesize", "(синтез)", human)
-        _run_tool_loop(messages, llm, tools_by_name, budget,
-                       usage=deps.usage, stage="synthesize",
-                       trace=_trace, unit="(синтез)")
+        self._run_loop(messages, llm, tools_by_name, budget, deps,
+                       stage="synthesize", unit="(синтез)")
         # Пробуем достать JSON из последнего AI-ответа без доп. вызова
         data = _last_ai_json(messages)
         valid_inline = "keep" in data or "add" in data

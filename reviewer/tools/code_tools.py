@@ -2,22 +2,24 @@ from __future__ import annotations
 import functools
 import inspect
 import json
+from collections.abc import Callable
 from dataclasses import dataclass, field
+from typing import Any
 from langchain_core.tools import StructuredTool
 
 _DUP_STUB = "(повтор: результат уже показан выше)"
 
 @dataclass
 class ToolContext:
-    retriever: object
-    graph: object
+    retriever: Any
+    graph: Any
     overlay_ref: str
     changed_paths: list[str]
     changed_node_ids: list[str] = field(default_factory=list)
-    read_file_fn: object = None            # Callable[[str], str | None] — head-версия файла
+    read_file_fn: Callable[[str], str | None] | None = None
     patches: dict = field(default_factory=dict)
-    store: object = None                   # индекс-стор для get_definition
-    cache: dict | None = None              # run-level кэш результатов тулов (общий на прогон)
+    store: Any = None
+    cache: dict | None = None
 
 def _memoize(fn, ctx_sig, seen, cache):
     """Оборачивает tool-функцию: run-level кэш результатов (cache) + дедуп-заглушка

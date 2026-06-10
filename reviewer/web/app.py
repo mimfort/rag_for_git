@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import logging
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
@@ -37,11 +38,24 @@ def create_app(settings: Settings) -> FastAPI:
     - Монтирует API-роутер (/api/*).
     - Монтирует собранный SPA на / (если dist существует) или отдаёт заглушку.
     - Настраивает CORS для dev-сервера Vite (:5173).
+    - При завершении работы закрывает пул соединений к Postgres.
     """
+    history = ReviewHistory(
+        settings.pg_dsn,
+        min_size=settings.pg_pool_min_size,
+        max_size=settings.pg_pool_max_size,
+    )
+
+    @asynccontextmanager
+    async def _lifespan(app: FastAPI):
+        yield
+        history.close()
+
     app = FastAPI(
         title="Reviewer — наблюдаемость агента",
         description="История прогонов ревью, стоимость и находки.",
         version="0.1.0",
+        lifespan=_lifespan,
     )
 
     # CORS: разрешаем dev-сервер Vite
@@ -54,7 +68,6 @@ def create_app(settings: Settings) -> FastAPI:
     )
 
     # История прогонов
-    history = ReviewHistory(settings.pg_dsn)
     try:
         history.init_schema()
     except Exception as exc:
@@ -66,7 +79,7 @@ def create_app(settings: Settings) -> FastAPI:
         )
 
     # API-роутер
-    app.include_router(make_router(history))
+    app.include_router(make_router(history, settings))
 
     # Статика / SPA
     if _FRONTEND_DIST.is_dir():

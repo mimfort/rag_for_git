@@ -230,3 +230,33 @@ def test_thread_safety():
     # 4 потока × 50 вызовов × 10 токенов = 2000 входных токенов
     assert f"{4 * n} вызовов" in report
     assert str(4 * n * 10) in report   # input_tokens
+
+
+def test_total_tokens_sums_input_and_output():
+    log = UsageLog()
+    log.add("analyze", _msg(100, 10))
+    log.add("verify", _msg(50, 5))
+    assert log.total_tokens == 165   # (100+10) + (50+5)
+
+
+def test_total_tokens_empty_when_no_calls():
+    log = UsageLog()
+    assert log.total_tokens == 0
+
+
+def test_total_tokens_thread_safe():
+    import threading
+    log = UsageLog()
+    n = 30
+
+    def worker():
+        for _ in range(n):
+            log.add("analyze", _msg(10, 1))
+
+    threads = [threading.Thread(target=worker) for _ in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert log.total_tokens == 4 * n * 11   # 4 потока × 30 × (10+1)

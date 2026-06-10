@@ -3,6 +3,8 @@ from dataclasses import dataclass, field
 from fnmatch import fnmatch
 import yaml
 
+from reviewer.config.settings import SeverityLevel
+
 _SEV = {"low": 0, "medium": 1, "high": 2, "critical": 3}
 
 
@@ -10,7 +12,7 @@ _SEV = {"low": 0, "medium": 1, "high": 2, "critical": 3}
 class ReviewPolicy:
     categories: dict[str, bool] = field(default_factory=dict)   # явный on/off (форма .review.yml)
     enabled_only: list[str] = field(default_factory=list)        # вайтлист (форма env); пусто = без вайтлиста
-    severity_threshold: str = "low"
+    severity_threshold: SeverityLevel = "low"
     ignore: list[str] = field(default_factory=list)
     max_comments: int = 25
     min_confidence: float = 0.0
@@ -20,9 +22,12 @@ class ReviewPolicy:
         if not text:
             return cls()
         data = yaml.safe_load(text) or {}
+        sev = data.get("severity_threshold", "low")
+        if sev not in _SEV:
+            sev = "low"
         return cls(
             categories=data.get("categories", {}),
-            severity_threshold=data.get("severity_threshold", "low"),
+            severity_threshold=sev,
             ignore=(data.get("paths") or {}).get("ignore", []),
             max_comments=data.get("max_comments", 25),
             min_confidence=data.get("min_confidence", 0.0),
@@ -49,7 +54,9 @@ class ReviewPolicy:
             policy.categories = data["categories"] or {}
             policy.enabled_only = []   # явная форма .yml отменяет env-вайтлист
         if "severity_threshold" in data:
-            policy.severity_threshold = data["severity_threshold"]
+            sev = data["severity_threshold"]
+            if sev in _SEV:
+                policy.severity_threshold = sev
         if "max_comments" in data:
             policy.max_comments = data["max_comments"]
         if "min_confidence" in data:
@@ -67,7 +74,9 @@ class ReviewPolicy:
     def gate(self, finding) -> bool:
         if not self.category_enabled(finding.category):
             return False
-        if _SEV.get(finding.severity, 0) < _SEV.get(self.severity_threshold, 0):
+        sev_f = _SEV.get(finding.severity)
+        sev_t = _SEV.get(self.severity_threshold)
+        if sev_f is None or sev_t is None or sev_f < sev_t:
             return False
         if finding.confidence < self.min_confidence:
             return False

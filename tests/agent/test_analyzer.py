@@ -1,11 +1,14 @@
-from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from reviewer.agent.analyzer import (
     LLMAnalyzer, LLMVerifier, LLMSynthesizer,
     _pr_context, _to_findings, _FindingModel, _window,
-    _file_context, _signature_changes, _pr_bundle,
+    _file_context, _signature_changes, _pr_bundle, _pr_bundle_static,
+    _run_tool_loop,
 )
 from reviewer.agent.state import ReviewUnit, Deps
+from reviewer.config.settings import Settings
+from reviewer.llm.budget import BudgetTracker
 from reviewer.vcs.base import Finding
 
 
@@ -416,8 +419,9 @@ def test_prompt_cache_false_system_is_string():
 class FakeUsageLog:
     """Фейковый UsageLog: записывает все вызовы add()."""
 
-    def __init__(self):
+    def __init__(self, total_tokens: int = 0):
         self.calls: list[tuple[str, object]] = []
+        self._total_tokens = total_tokens
 
     def add(self, stage: str, message) -> None:
         self.calls.append((stage, message))
@@ -428,6 +432,10 @@ class FakeUsageLog:
 
     def stages(self):
         return [c[0] for c in self.calls]
+
+    @property
+    def total_tokens(self) -> int:
+        return self._total_tokens
 
 
 def test_usage_add_called_on_each_llm_call_analyze():
@@ -934,3 +942,256 @@ def test_analyze_prompt_includes_other_file_diffs_bundle():
     assert "Диффы других изменённых файлов PR" in human
     assert "--- b.py ---" in human and "+newbie" in human
     assert "--- a.py ---" not in human               # текущий файл не дублируется в bundle
+
+
+# ---------------------------------------------------------------------------
+# Verify budget + oneshot threshold (Task 2.4)
+# ---------------------------------------------------------------------------
+
+
+def test_verify_oneshot_threshold_forces_oneshot():
+    """При >N findings agentic игнорируется и используется oneshot."""
+    prov = FakeProvider(
+        [],
+        '{"verdicts":[{"index":0,"is_real":false},{"index":1,"is_real":true}]}',
+    )
+    v = LLMVerifier(
+        prov, agentic=True, max_iterations=2, min_severity="low",
+        oneshot_threshold=1,
+    )
+    out = v.verify([_finding(msg="a"), _finding(msg="b")], _deps())
+    assert [f.message for f in out] == ["b"]
+    # _verify_oneshot использует chat_model, а не chat_model_with_tools
+    assert prov.chat_model_calls == 1
+    assert prov.chat_model_with_tools_calls == 0
+
+
+def test_verify_threshold_default_10_agentic_for_10():
+    """Дефолт threshold=10: ровно 10 findings ещё можно agentic."""
+    inline = '{"is_real": true}'
+    prov = FakeProvider([AIMessage(content=inline)], "SHOULD NOT BE CALLED")
+    v = LLMVerifier(prov, agentic=True, max_iterations=2, min_severity="low")
+    findings = [_finding(severity="high", msg=f"bug{i}") for i in range(10)]
+    out = v.verify(findings, _deps())
+    assert len(out) == 10
+    # chat_model_with_tools должен был вызываться 10 раз
+    assert prov.chat_model_with_tools_calls == 10
+
+
+def test_verify_threshold_default_10_oneshot_for_11():
+    """Дефолт threshold=10: 11 findings переключают в oneshot."""
+    verdicts = (
+        '{"verdicts":['
+        + ",".join(f'{{"index":{i},"is_real":true}}' for i in range(11))
+        + ']}'
+    )
+    prov = FakeProvider([], verdicts)
+    v = LLMVerifier(prov, agentic=True, max_iterations=2, min_severity="low")
+    findings = [_finding(severity="high", msg=f"bug{i}") for i in range(11)]
+    out = v.verify(findings, _deps())
+    assert len(out) == 11
+    # oneshot использует chat_model
+    assert prov.chat_model_calls == 1
+    assert prov.chat_model_with_tools_calls == 0
+
+
+def test_verify_budget_exceeded_skips_verify():
+    """При превышении бюджета токенов verify пропускается (fail-open)."""
+    class BoomProvider:
+        def chat_model_with_tools(self, tools, model=None):
+            raise AssertionError("не должно вызываться")
+        def chat_model(self, model=None):
+            raise AssertionError("не должно вызываться")
+
+    v = LLMVerifier(
+        BoomProvider(), agentic=True, max_iterations=2, min_severity="low",
+        max_verify_tokens=1,
+    )
+    usage = FakeUsageLog(total_tokens=1000)
+    deps = _deps(usage=usage)
+    out = v.verify([_finding(severity="high")], deps)
+    assert len(out) == 1
+
+
+def test_verify_budget_exceeded_gates_findings():
+    """При превышении бюджета findings фильтруются через policy gate."""
+    class FakePolicy:
+        def gate(self, f):
+            return f.severity == "high"
+
+    class BoomProvider:
+        def chat_model_with_tools(self, tools, model=None):
+            raise AssertionError("не должно вызываться")
+        def chat_model(self, model=None):
+            raise AssertionError("не должно вызываться")
+
+    v = LLMVerifier(
+        BoomProvider(), agentic=True, max_iterations=2, min_severity="low",
+        max_verify_tokens=1,
+    )
+    usage = FakeUsageLog(total_tokens=1000)
+    deps = _deps(usage=usage, policy=FakePolicy())
+    out = v.verify(
+        [_finding(severity="high"), _finding(severity="low")], deps,
+    )
+    assert len(out) == 1
+    assert out[0].severity == "high"
+
+
+def test_verify_budget_ok_allows_agentic():
+    """При достаточном бюджете agentic работает как обычно."""
+    inline = '{"is_real": false}'
+    prov = FakeProvider([AIMessage(content=inline)], "SHOULD NOT BE CALLED")
+    v = LLMVerifier(
+        prov, agentic=True, max_iterations=2, min_severity="low",
+        max_verify_tokens=100000,
+    )
+    out = v.verify([_finding(severity="high")], _deps())
+    assert out == []
+
+
+def test_verify_budget_ok_allows_oneshot():
+    """При достаточном бюджете oneshot работает как обычно."""
+    prov = FakeProvider([], '{"verdicts":[{"index":0,"is_real":true}]}')
+    v = LLMVerifier(
+        prov, agentic=False, max_verify_tokens=100000,
+    )
+    out = v.verify([_finding(severity="high")], _deps())
+    assert len(out) == 1
+
+
+def test_verify_budget_zero_means_unlimited():
+    """max_verify_tokens=0 означает отсутствие ограничения."""
+    inline = '{"is_real": false}'
+    prov = FakeProvider([AIMessage(content=inline)], "SHOULD NOT BE CALLED")
+    v = LLMVerifier(
+        prov, agentic=True, max_iterations=2, min_severity="low",
+        max_verify_tokens=0,
+    )
+    # Даже при огромном usage total_tokens verify должен выполниться
+    usage = FakeUsageLog(total_tokens=1_000_000)
+    deps = _deps(usage=usage)
+    out = v.verify([_finding(severity="high")], deps)
+    assert out == []
+
+
+# ---------------------------------------------------------------------------
+# PR-bundle limits and prioritization (Task 2.3)
+# ---------------------------------------------------------------------------
+
+
+def test_pr_bundle_caps_files_and_prioritizes_signature_changes():
+    """При превышении review_bundle_max_files остаются файлы с изменёнными сигнатурами."""
+    patches = {
+        "a.py": "@@ -1 +1 @@\n-x\n+y",
+        "b.py": "@@ -1 +1 @@\n+def foo():",
+        "c.py": "@@ -1 +1 @@\n-z\n+w",
+    }
+    sources = {p: "def foo():\n    pass" for p in patches}
+    deps = _deps(
+        changed_paths=list(patches),
+        patches=patches,
+        sources=sources,
+        settings=Settings(review_bundle_max_files=1),
+    )
+    out = _pr_bundle(deps, list(patches))
+    assert "--- b.py ---" in out
+    assert "--- a.py ---" not in out
+    assert "--- c.py ---" not in out
+    assert "опущены" in out
+
+
+def test_pr_bundle_caps_signature_lines():
+    """При превышении review_bundle_max_lines карты сигнатур обрезаются,
+    приоритет отдаётся файлам с изменёнными сигнатурами."""
+    src_a = "\n".join(f"def func_{i}():\n    pass" for i in range(5))
+    src_b = "def small():\n    pass"
+    patches = {
+        "a.py": "@@ -1 +1 @@\n-x\n+y",
+        "b.py": "@@ -1 +1 @@\n+def bar():",
+    }
+    sources = {"a.py": src_a, "b.py": src_b}
+    deps = _deps(
+        changed_paths=["a.py", "b.py"],
+        patches=patches,
+        sources=sources,
+        settings=Settings(review_bundle_max_lines=5),
+    )
+    static = _pr_bundle_static(deps, ["a.py", "b.py"])
+    assert "Структура изменённых модулей:" in static
+    maps_part = static.split("Структура изменённых модулей:")[1]
+    assert "b.py:" in maps_part
+    assert "a.py:" not in maps_part
+
+
+def test_pr_bundle_defaults_when_no_settings():
+    """Без settings используются дефолтные лимиты — все файлы помещаются."""
+    patches = {
+        "a.py": "@@ -1 +1 @@\n-x\n+y",
+        "b.py": "@@ -1 +1 @@\n+def foo():",
+    }
+    sources = {p: "def foo():\n    pass" for p in patches}
+    deps = _deps(changed_paths=list(patches), patches=patches, sources=sources)
+    out = _pr_bundle(deps, list(patches))
+    assert "--- a.py ---" in out
+    assert "--- b.py ---" in out
+
+
+# ---------------------------------------------------------------------------
+# Truncation tool results
+# ---------------------------------------------------------------------------
+
+class _LongTool:
+    def invoke(self, args):
+        return "x" * 10000
+
+
+class _FakeToolLLM:
+    def __init__(self):
+        self._called = False
+
+    def invoke(self, messages):
+        if not self._called:
+            self._called = True
+            return AIMessage(
+                content="",
+                tool_calls=[
+                    {"name": "long_tool", "args": {}, "id": "t1", "type": "tool_call"}
+                ],
+            )
+        return AIMessage(content="done")
+
+
+def test_run_tool_loop_truncates_long_result():
+    """Результат tool-вызова обрезается до max_tool_result_chars с маркером."""
+    messages = []
+    budget = BudgetTracker(max_iterations=3)
+    _run_tool_loop(
+        messages,
+        _FakeToolLLM(),
+        {"long_tool": _LongTool()},
+        budget,
+        max_tool_result_chars=100,
+    )
+    tool_msgs = [m for m in messages if isinstance(m, ToolMessage)]
+    assert len(tool_msgs) == 1
+    content = tool_msgs[0].content
+    assert len(content) <= 120
+    assert "[...truncated]" in content
+
+
+def test_run_tool_loop_does_not_truncate_when_under_limit():
+    """Короткий результат не обрезается."""
+    messages = []
+    budget = BudgetTracker(max_iterations=3)
+    _run_tool_loop(
+        messages,
+        _FakeToolLLM(),
+        {"long_tool": _LongTool()},
+        budget,
+        max_tool_result_chars=20000,
+    )
+    tool_msgs = [m for m in messages if isinstance(m, ToolMessage)]
+    assert len(tool_msgs) == 1
+    assert "[...truncated]" not in tool_msgs[0].content
+    assert len(tool_msgs[0].content) == 10000
