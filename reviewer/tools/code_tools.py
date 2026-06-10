@@ -1,6 +1,11 @@
 from __future__ import annotations
+import functools
+import inspect
+import json
 from dataclasses import dataclass, field
 from langchain_core.tools import StructuredTool
+
+_DUP_STUB = "(повтор: результат уже показан выше)"
 
 @dataclass
 class ToolContext:
@@ -12,6 +17,37 @@ class ToolContext:
     read_file_fn: object = None            # Callable[[str], str | None] — head-версия файла
     patches: dict = field(default_factory=dict)
     store: object = None                   # индекс-стор для get_definition
+    cache: dict | None = None              # run-level кэш результатов тулов (общий на прогон)
+
+def _memoize(fn, ctx_sig, seen, cache):
+    """Оборачивает tool-функцию: run-level кэш результатов (cache) + дедуп-заглушка
+    повторов в пределах юнита (seen). Ключ = (имя, нормализованные args, ctx_sig).
+    functools.wraps сохраняет имя/докстринг/сигнатуру -> StructuredTool строит ту же схему."""
+    sig = inspect.signature(fn)
+
+    def _key(args, kwargs):
+        bound = sig.bind(*args, **kwargs)
+        bound.apply_defaults()
+        return (fn.__name__,
+                json.dumps(bound.arguments, sort_keys=True, ensure_ascii=False, default=str),
+                ctx_sig)
+
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        key = _key(args, kwargs)
+        if key in seen:
+            return _DUP_STUB
+        if cache is not None and key in cache:
+            result = cache[key]
+        else:
+            result = fn(*args, **kwargs)
+            if cache is not None:
+                cache[key] = result
+        seen.add(key)
+        return result
+
+    return wrapper
+
 
 def make_tools(ctx: ToolContext) -> list[StructuredTool]:
     def search_code(query: str) -> str:
@@ -78,11 +114,8 @@ def make_tools(ctx: ToolContext) -> list[StructuredTool]:
         patch = (ctx.patches or {}).get(path)
         return patch or "(файл не входит в изменения PR)"
 
-    return [
-        StructuredTool.from_function(search_code),
-        StructuredTool.from_function(get_related_symbols),
-        StructuredTool.from_function(read_file),
-        StructuredTool.from_function(get_definition),
-        StructuredTool.from_function(find_callers),
-        StructuredTool.from_function(get_changed_file_diff),
-    ]
+    seen: set = set()
+    ctx_sig = tuple(sorted(ctx.changed_node_ids or []))
+    raw = [search_code, get_related_symbols, read_file,
+           get_definition, find_callers, get_changed_file_diff]
+    return [StructuredTool.from_function(_memoize(fn, ctx_sig, seen, ctx.cache)) for fn in raw]

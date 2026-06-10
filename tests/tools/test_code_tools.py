@@ -94,3 +94,74 @@ def test_read_file_start_beyond_eof():
     tools = {t.name: t for t in make_tools(_rich_ctx())}   # файл a.py = 3 строки
     out = tools["read_file"].invoke({"path": "a.py", "start": 50})
     assert "нет строки 50" in out
+
+
+class CountingRetriever:
+    """Считает вызовы retrieve — для проверки, что кэш экономит обращения к источнику."""
+    def __init__(self):
+        self.calls = 0
+    def retrieve(self, **kw):
+        from reviewer.retrieval.retriever import ContextPack
+        from reviewer.index.store import Retrieved
+        self.calls += 1
+        return ContextPack([Retrieved("a.py#f", "a.py", "f", "function", 1, 2, "def f(): ...", 1.0)])
+
+
+def test_within_unit_duplicate_returns_stub():
+    """Повтор того же (tool, args) в пределах юнита -> заглушка, источник дёрнут один раз."""
+    ret = CountingRetriever()
+    ctx = ToolContext(retriever=ret, graph=FakeGraph(),
+                      overlay_ref="pr:1", changed_paths=["a.py"], changed_node_ids=[])
+    tools = {t.name: t for t in make_tools(ctx)}
+    out1 = tools["search_code"].invoke({"query": "q"})
+    out2 = tools["search_code"].invoke({"query": "q"})
+    assert "a.py#f" in out1
+    assert out2 == "(повтор: результат уже показан выше)"
+    assert ret.calls == 1
+
+
+def test_run_cache_shared_across_units_same_node_ids():
+    """Общий run-level кэш: второй юнит (новый make_tools) с тем же changed_node_ids
+    берёт результат из кэша, не дёргая источник."""
+    ret = CountingRetriever()
+    cache: dict = {}
+    ctx1 = ToolContext(retriever=ret, graph=FakeGraph(), overlay_ref="pr:1",
+                       changed_paths=["a.py"], changed_node_ids=[], cache=cache)
+    ctx2 = ToolContext(retriever=ret, graph=FakeGraph(), overlay_ref="pr:1",
+                       changed_paths=["a.py"], changed_node_ids=[], cache=cache)
+    t1 = {t.name: t for t in make_tools(ctx1)}
+    t2 = {t.name: t for t in make_tools(ctx2)}
+    t1["search_code"].invoke({"query": "q"})
+    out = t2["search_code"].invoke({"query": "q"})
+    assert "a.py#f" in out
+    assert ret.calls == 1
+
+
+def test_run_cache_respects_changed_node_ids():
+    """Корректность: разные changed_node_ids -> разный ключ -> источник дёргается дважды."""
+    ret = CountingRetriever()
+    cache: dict = {}
+    ctx1 = ToolContext(retriever=ret, graph=FakeGraph(), overlay_ref="pr:1",
+                       changed_paths=["a.py"], changed_node_ids=["a.py#f"], cache=cache)
+    ctx2 = ToolContext(retriever=ret, graph=FakeGraph(), overlay_ref="pr:1",
+                       changed_paths=["a.py"], changed_node_ids=["b.py#g"], cache=cache)
+    t1 = {t.name: t for t in make_tools(ctx1)}
+    t2 = {t.name: t for t in make_tools(ctx2)}
+    t1["search_code"].invoke({"query": "q"})
+    t2["search_code"].invoke({"query": "q"})
+    assert ret.calls == 2
+
+
+def test_cache_normalizes_read_file_defaults():
+    """read_file(path) и read_file(path, 1, 400) дают один ключ (apply_defaults) -> повтор = заглушка."""
+    calls = {"n": 0}
+    def rf(p):
+        calls["n"] += 1
+        return "l1\nl2\nl3"
+    ctx = ToolContext(retriever=FakeRetriever(), graph=FakeGraph(), overlay_ref="pr:1",
+                      changed_paths=["a.py"], changed_node_ids=[],
+                      read_file_fn=rf, cache={})
+    tools = {t.name: t for t in make_tools(ctx)}
+    tools["read_file"].invoke({"path": "a.py"})
+    tools["read_file"].invoke({"path": "a.py", "start": 1, "end": 400})
+    assert calls["n"] == 1
