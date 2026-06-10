@@ -94,6 +94,7 @@ reviewer serve                             # веб-админка наблюд�
 - **Индекс single-repo**: нет namespace по репозиторию — один инстанс (одна БД) на один репозиторий. Несколько репо требуют отдельных деплоев с разными `PG_DSN`/`NEO4J_URI`.
 - **`reviewer check`** проверяет готовность окружения (ключи, Postgres, Neo4j, GitHub) без трат квот Voyage/OpenRouter. **`--dry-run`** для `reviewer review` прогоняет полный анализ без публикации в GitHub.
 - **Overlay удаляется автоматически** (`c.store.delete_ref("pr:N")` в `finally`-блоке CLI) — после ревью эфемерный ref не остаётся в Postgres.
+- **Наблюдаемость (`reviewer/web/`)**: каждый `reviewer review` пишет в Postgres итоги прогона (`review_runs`/`review_findings`, гейт `REVIEW_HISTORY`) и пошаговый трейс агента (`review_steps`, гейт `REVIEW_TRACE`) — обе записи **fail-soft**. Трейс собирается в `_run_tool_loop` через `TraceLog` (рядом с `UsageLog`): prompt/llm_call/tool_call. Веб-админка (FastAPI `reviewer serve` или сервис `web` в docker-compose) читает **ту же** БД, что пишет хостовый `reviewer review`. Стоимость берётся из реального `usage.cost` OpenRouter (`extra_body usage.include=true`).
 - **verify может работать на отдельной дешёвой модели** (`OPENROUTER_MODEL_VERIFY`); prompt caching включён по умолчанию (`OPENROUTER_PROMPT_CACHE=true`) и передаётся через `cache_control` во все три этапа (analyze/verify/synthesize) — экономит input-токены на длинных tool-loop'ах.
 
 ## Соглашения
