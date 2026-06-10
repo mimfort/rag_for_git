@@ -166,6 +166,7 @@ def review(slug: str, pr: int, dry_run: bool) -> None:
     from reviewer.policy.policy import ReviewPolicy
     from reviewer.index.chunker import chunk_python
     from reviewer.llm.usage import UsageLog
+    from reviewer.llm.trace import TraceLog
     # JSONL-лог решений ревью для анализа ложных срабатываний; выключен по умолчанию
     from reviewer.llm.verdicts import VerdictLog
 
@@ -277,6 +278,7 @@ def review(slug: str, pr: int, dry_run: bool) -> None:
         sources = {u.path: u.new_source for u in units}
 
         usage = UsageLog()
+        trace = TraceLog() if s.review_trace else None
         verdicts = VerdictLog(s.review_verdict_log, pr=pr) if s.review_verdict_log else None
 
         policy = ReviewPolicy.load(s, vcs.get_file_at_ref(".review.yml", prq.base_ref))
@@ -319,6 +321,7 @@ def review(slug: str, pr: int, dry_run: bool) -> None:
             synthesizer=synthesizer,
             sources=sources,
             usage=usage,
+            trace=trace,
             verdicts=verdicts,
             skipped_paths=skipped_paths,
         )
@@ -409,7 +412,8 @@ def review(slug: str, pr: int, dry_run: bool) -> None:
                     for f in state["verified"]
                 ]
 
-                ReviewHistory(s.pg_dsn).record_run(run_dict, findings_list)
+                steps = trace.snapshot() if (s.review_trace and trace is not None) else None
+                ReviewHistory(s.pg_dsn).record_run(run_dict, findings_list, steps=steps)
             except Exception as _exc:
                 log.warning("Не удалось сохранить историю прогона: %s", _exc)
 

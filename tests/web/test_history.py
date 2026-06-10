@@ -98,6 +98,23 @@ def test_record_run_fail_soft_on_exception():
     assert result is None
 
 
+def test_get_trace_fail_soft_on_bad_dsn():
+    """get_trace() возвращает [] при недоступной БД — не бросает исключение."""
+    history = ReviewHistory("postgresql://bad:bad@localhost:1/nonexistent")
+    result = history.get_trace(1)
+    assert result == []
+
+
+def test_get_trace_fail_soft_on_exception():
+    """get_trace() возвращает [] при любом исключении — fail-soft."""
+    history = ReviewHistory("postgresql://reviewer:reviewer@localhost:5433/reviewer")
+
+    with patch("psycopg.connect", side_effect=RuntimeError("тестовая ошибка")):
+        result = history.get_trace(1)
+
+    assert result == []
+
+
 # ---------------------------------------------------------------------------
 # Integration: запись и чтение прогона
 # ---------------------------------------------------------------------------
@@ -191,3 +208,111 @@ def test_stats_returns_expected_shape():
     assert data["total_runs"] >= 1
     assert isinstance(data["cost_over_time"], list)
     assert isinstance(data["findings_by_category"], list)
+
+
+# ---------------------------------------------------------------------------
+# Integration: запись и чтение трейса (review_steps)
+# ---------------------------------------------------------------------------
+
+def _sample_steps() -> list[dict]:
+    """Список шагов трейса в формате TraceLog.snapshot()."""
+    return [
+        {
+            "seq": 1,
+            "stage": "analyze",
+            "unit": "reviewer/app.py",
+            "kind": "prompt",
+            "name": None,
+            "text": "Текст промпта",
+            "tool_calls": None,
+            "tokens": 0,
+            "cost": 0.0,
+        },
+        {
+            "seq": 2,
+            "stage": "analyze",
+            "unit": "reviewer/app.py",
+            "kind": "llm_call",
+            "name": None,
+            "text": "Рассуждение модели",
+            "tool_calls": [{"name": "search_code", "args": {"query": "def connect"}}],
+            "tokens": 250,
+            "cost": 0.005,
+        },
+        {
+            "seq": 3,
+            "stage": "analyze",
+            "unit": "reviewer/app.py",
+            "kind": "tool_call",
+            "name": "search_code",
+            "text": "Результат поиска",
+            "tool_calls": [{"name": "search_code", "args": {"query": "def connect"}}],
+            "tokens": 0,
+            "cost": 0.0,
+        },
+    ]
+
+
+@pytest.mark.integration
+def test_record_run_with_steps_and_get_trace():
+    """Записать прогон с шагами трейса и прочитать их через get_trace()."""
+    from reviewer.config.settings import Settings
+    pg_dsn = Settings().pg_dsn
+
+    history = ReviewHistory(pg_dsn)
+    history.init_schema()
+
+    run_id = history.record_run(_sample_run(), _sample_findings(), steps=_sample_steps())
+    assert run_id is not None
+
+    trace = history.get_trace(run_id)
+    assert isinstance(trace, list)
+    assert len(trace) == 3
+
+    # Шаги должны быть упорядочены по seq
+    seqs = [s["seq"] for s in trace]
+    assert seqs == sorted(seqs)
+
+    # Проверяем поля первого шага
+    s0 = trace[0]
+    assert s0["stage"] == "analyze"
+    assert s0["unit"] == "reviewer/app.py"
+    assert s0["kind"] == "prompt"
+    assert s0["text"] == "Текст промпта"
+    assert s0["tokens"] == 0
+
+    # Проверяем шаг с llm_call — tool_calls должен вернуться как список
+    s1 = trace[1]
+    assert s1["kind"] == "llm_call"
+    assert s1["tool_calls"] is not None
+    assert isinstance(s1["tool_calls"], list)
+    assert s1["tool_calls"][0]["name"] == "search_code"
+
+
+@pytest.mark.integration
+def test_get_trace_empty_for_run_without_steps():
+    """get_trace() возвращает [] для прогона без шагов."""
+    from reviewer.config.settings import Settings
+    pg_dsn = Settings().pg_dsn
+
+    history = ReviewHistory(pg_dsn)
+    history.init_schema()
+
+    run_id = history.record_run(_sample_run(), [], steps=None)
+    assert run_id is not None
+
+    trace = history.get_trace(run_id)
+    assert trace == []
+
+
+@pytest.mark.integration
+def test_get_trace_unknown_run_id():
+    """get_trace() возвращает [] для несуществующего run_id."""
+    from reviewer.config.settings import Settings
+    pg_dsn = Settings().pg_dsn
+
+    history = ReviewHistory(pg_dsn)
+    history.init_schema()
+
+    trace = history.get_trace(999_999_998)
+    assert trace == []

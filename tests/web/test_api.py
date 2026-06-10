@@ -79,6 +79,38 @@ _FAKE_STATS = {
 }
 
 
+_FAKE_TRACE_STEPS = [
+    {
+        "id": 1,
+        "run_id": 1,
+        "seq": 1,
+        "stage": "analyze",
+        "unit": "reviewer/app.py",
+        "kind": "prompt",
+        "name": None,
+        "text": "Текст промпта",
+        "tool_calls": None,
+        "tokens": 0,
+        "cost": 0.0,
+        "created_at": _NOW,
+    },
+    {
+        "id": 2,
+        "run_id": 1,
+        "seq": 2,
+        "stage": "analyze",
+        "unit": "reviewer/app.py",
+        "kind": "llm_call",
+        "name": None,
+        "text": "Рассуждение модели",
+        "tool_calls": [{"name": "search_code", "args": {"query": "def connect"}}],
+        "tokens": 250,
+        "cost": 0.005,
+        "created_at": _NOW,
+    },
+]
+
+
 class FakeHistory:
     """Фейковый ReviewHistory для тестов без БД."""
 
@@ -100,6 +132,11 @@ class FakeHistory:
         if run_id == 1:
             return _FAKE_RUN_WITH_FINDINGS
         return None
+
+    def get_trace(self, run_id: int) -> list[dict]:
+        if run_id == 1:
+            return _FAKE_TRACE_STEPS
+        return []
 
     def stats(self, days: int = 30) -> dict:
         return _FAKE_STATS
@@ -258,3 +295,57 @@ def test_get_stats_days_validation(client):
 
     resp = client.get("/api/stats", params={"days": 366})
     assert resp.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# Тесты /api/runs/{id}/trace
+# ---------------------------------------------------------------------------
+
+def test_get_trace_200(client):
+    """GET /api/runs/1/trace возвращает 200 и список шагов."""
+    resp = client.get("/api/runs/1/trace")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "steps" in data
+    assert isinstance(data["steps"], list)
+    assert len(data["steps"]) == 2
+
+
+def test_get_trace_step_fields(client):
+    """Каждый шаг трейса содержит обязательные поля."""
+    resp = client.get("/api/runs/1/trace")
+    steps = resp.json()["steps"]
+    s = steps[0]
+    for key in ("seq", "stage", "unit", "kind", "name", "text", "tool_calls", "tokens", "cost"):
+        assert key in s, f"Отсутствует поле шага: {key}"
+
+
+def test_get_trace_step_values(client):
+    """Значения полей первого шага совпадают с фейковыми данными."""
+    resp = client.get("/api/runs/1/trace")
+    s = resp.json()["steps"][0]
+    assert s["stage"] == "analyze"
+    assert s["unit"] == "reviewer/app.py"
+    assert s["kind"] == "prompt"
+    assert s["text"] == "Текст промпта"
+    assert s["tokens"] == 0
+    assert s["tool_calls"] is None
+
+
+def test_get_trace_llm_call_has_tool_calls(client):
+    """Шаг llm_call содержит непустой tool_calls."""
+    resp = client.get("/api/runs/1/trace")
+    steps = resp.json()["steps"]
+    llm_steps = [s for s in steps if s["kind"] == "llm_call"]
+    assert len(llm_steps) >= 1
+    s = llm_steps[0]
+    assert s["tool_calls"] is not None
+    assert s["tool_calls"][0]["name"] == "search_code"
+
+
+def test_get_trace_empty_for_unknown_run(client):
+    """GET /api/runs/999/trace возвращает пустой список шагов (не 404)."""
+    resp = client.get("/api/runs/999/trace")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["steps"] == []

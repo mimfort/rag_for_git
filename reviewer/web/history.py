@@ -37,12 +37,16 @@ class ReviewHistory:
     # Запись прогона
     # ------------------------------------------------------------------
 
-    def record_run(self, run: dict, findings: list[dict]) -> int | None:
-        """Вставить прогон и его находки одной транзакцией.
+    def record_run(
+        self, run: dict, findings: list[dict], steps: list[dict] | None = None
+    ) -> int | None:
+        """Вставить прогон, его находки и (опционально) шаги трейса одной транзакцией.
 
         Args:
             run:      словарь с полями, соответствующими колонкам review_runs.
             findings: список словарей (поля review_findings, без run_id).
+            steps:    список шагов трейса из TraceLog.snapshot() (без run_id).
+                      Если None или пустой — шаги не вставляются.
 
         Returns:
             id вставленной записи или None при сбое (fail-soft).
@@ -76,6 +80,14 @@ class ReviewHistory:
                 %(is_real)s, %(published)s, %(inline)s, %(fingerprint)s, %(message)s
             )
             """
+            step_sql = """
+            INSERT INTO review_steps (
+                run_id, stage, unit, seq, kind, name, text, tool_calls, tokens, cost
+            ) VALUES (
+                %(run_id)s, %(stage)s, %(unit)s, %(seq)s, %(kind)s, %(name)s,
+                %(text)s, %(tool_calls)s, %(tokens)s, %(cost)s
+            )
+            """
             # usage должен быть jsonb-совместимой строкой
             run_row = dict(run)
             if "usage" in run_row and not isinstance(run_row["usage"], str):
@@ -88,6 +100,27 @@ class ReviewHistory:
                     rows = [{**f, "run_id": run_id} for f in findings]
                     with conn.cursor() as cur:
                         cur.executemany(finding_sql, rows)
+                if steps:
+                    step_rows = []
+                    for s in steps:
+                        tool_calls_val = s.get("tool_calls")
+                        step_rows.append({
+                            "run_id": run_id,
+                            "stage": s.get("stage", ""),
+                            "unit": s.get("unit", ""),
+                            "seq": s.get("seq", 0),
+                            "kind": s.get("kind", ""),
+                            "name": s.get("name"),
+                            "text": s.get("text"),
+                            "tool_calls": (
+                                json.dumps(tool_calls_val, ensure_ascii=False)
+                                if tool_calls_val is not None else None
+                            ),
+                            "tokens": s.get("tokens", 0),
+                            "cost": s.get("cost", 0.0),
+                        })
+                    with conn.cursor() as cur:
+                        cur.executemany(step_sql, step_rows)
                 conn.commit()
             return run_id
         except Exception as exc:  # noqa: BLE001
@@ -173,6 +206,34 @@ class ReviewHistory:
                 f_cols = [d.name for d in cur.description]
                 result["findings"] = [_row_to_dict(f_cols, r) for r in cur.fetchall()]
         return result
+
+    def get_trace(self, run_id: int) -> list[dict]:
+        """Вернуть шаги трейса прогона, упорядоченные по seq.
+
+        Args:
+            run_id: идентификатор прогона.
+
+        Returns:
+            Список словарей с полями шага или пустой список, если шагов нет
+            (прогон без трейса, неизвестный run_id, или ошибка БД — fail-soft).
+        """
+        try:
+            sql = """
+            SELECT id, run_id, stage, unit, seq, kind, name, text, tool_calls, tokens, cost,
+                   created_at
+            FROM review_steps
+            WHERE run_id = %(run_id)s
+            ORDER BY seq
+            """
+            with psycopg.connect(self.pg_dsn) as conn:
+                with conn.cursor() as cur:
+                    cur.execute(sql, {"run_id": run_id})
+                    cols = [d.name for d in cur.description]
+                    rows = cur.fetchall()
+            return [_row_to_dict(cols, r) for r in rows]
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Не удалось получить трейс прогона %s: %s", run_id, exc)
+            return []
 
     def stats(self, days: int = 30) -> dict:
         """Агрегированная статистика за последние ``days`` дней.

@@ -222,6 +222,7 @@ def _signature_changes(patches: dict[str, str | None]) -> str:
 def _run_tool_loop(
     messages: list, llm, tools_by_name: dict, budget,
     usage=None, stage: str = "",
+    trace=None, unit: str = "",
 ) -> list:
     """Гоняет tool-loop до отсутствия tool_calls или исчерпания бюджета.
     Мутирует и возвращает messages (добавляет AI- и ToolMessage). При BudgetExceeded —
@@ -232,6 +233,8 @@ def _run_tool_loop(
             ai = with_llm_retry(lambda: llm.invoke(messages))
             if usage is not None:
                 usage.add(stage, ai)
+            if trace is not None:
+                trace.record_llm_call(stage, unit, ai)
             messages.append(ai)
             if not ai.tool_calls:
                 break
@@ -242,6 +245,8 @@ def _run_tool_loop(
                               else f"(неизвестный инструмент: {call['name']})")
                 except Exception as e:
                     result = f"(ошибка инструмента {call['name']}: {e})"
+                if trace is not None:
+                    trace.record_tool_call(stage, unit, call["name"], call["args"], result)
                 messages.append(ToolMessage(str(result), tool_call_id=call["id"]))
     except BudgetExceeded:
         pass
@@ -371,12 +376,16 @@ class LLMAnalyzer:
                           f"fix указывай только для показанных строк):\n{ctx_text}\n\n")
         human += f"Изменения (дифф):\n{unit.changed_text}"
         human += f"\n\nКогда закончишь работу с инструментами, верни итог в формате:\n{_FINDINGS_SCHEMA}"
+        _trace = getattr(deps, "trace", None)
         messages = [
             SystemMessage(_cacheable(ANALYZE_SYSTEM, self.prompt_cache)),
             HumanMessage(_cacheable(human, self.prompt_cache)),
         ]
+        if _trace is not None:
+            _trace.record_prompt("analyze", unit.path, human)
         _run_tool_loop(messages, llm, tools_by_name, budget,
-                       usage=deps.usage, stage="analyze")
+                       usage=deps.usage, stage="analyze",
+                       trace=_trace, unit=unit.path)
         # Пробуем достать JSON из последнего AI-ответа без доп. вызова
         data = _last_ai_json(messages)
         if "findings" in data:
@@ -390,6 +399,8 @@ class LLMAnalyzer:
         resp = with_llm_retry(lambda: self.provider.chat_model().invoke(_fallback_msgs))
         if deps.usage is not None:
             deps.usage.add("analyze", resp)
+        if _trace is not None:
+            _trace.record_llm_call("analyze", unit.path, resp)
         data = _extract_json(_text_of(resp))
         try:
             parsed = _Findings(**data)
@@ -452,12 +463,17 @@ class LLMVerifier:
         human += ("Проверь по реальному коду через инструменты (read_file, find_callers, "
                   "get_definition), затем верни вердикт.")
         human += f"\n\nКогда закончишь работу с инструментами, верни итог в формате:\n{_VERDICT_ONE_SCHEMA}"
+        _trace = getattr(deps, "trace", None)
+        _verify_unit = f"{f.file}:{f.line}"
         messages = [
             SystemMessage(_cacheable(VERIFY_SYSTEM, self.prompt_cache)),
             HumanMessage(_cacheable(human, self.prompt_cache)),
         ]
+        if _trace is not None:
+            _trace.record_prompt("verify", _verify_unit, human)
         _run_tool_loop(messages, llm, tools_by_name, budget,
-                       usage=deps.usage, stage="verify")
+                       usage=deps.usage, stage="verify",
+                       trace=_trace, unit=_verify_unit)
         # Пробуем достать JSON из последнего AI-ответа без доп. вызова
         data = _last_ai_json(messages)
         if "is_real" in data:
@@ -468,6 +484,8 @@ class LLMVerifier:
             lambda: self.provider.chat_model(model=self.model).invoke(_fallback_msgs))
         if deps.usage is not None:
             deps.usage.add("verify", resp)
+        if _trace is not None:
+            _trace.record_llm_call("verify", _verify_unit, resp)
         data = _extract_json(_text_of(resp))
         if "is_real" not in data:
             return self._verdict(f, True, deps)   # fail-open: не разобрали -> оставляем
@@ -489,6 +507,9 @@ class LLMVerifier:
             lambda: self.provider.chat_model(model=self.model).invoke(_oneshot_msgs))
         if deps.usage is not None:
             deps.usage.add("verify", resp)
+        _trace = getattr(deps, "trace", None)
+        if _trace is not None:
+            _trace.record_llm_call("verify", "(oneshot)", resp)
         data = _extract_json(_text_of(resp))
         if "verdicts" not in data:
             return findings
@@ -539,12 +560,16 @@ class LLMSynthesizer:
         human += (f"Текущие находки по всему PR:\n{listing}\n\n"
                   "Проверь кросс-файловую согласованность инструментами и верни итоговый список.")
         human += f"\n\nКогда закончишь работу с инструментами, верни итог в формате:\n{_SYNTH_SCHEMA}"
+        _trace = getattr(deps, "trace", None)
         messages = [
             SystemMessage(_cacheable(SYNTHESIZE_SYSTEM, self.prompt_cache)),
             HumanMessage(_cacheable(human, self.prompt_cache)),
         ]
+        if _trace is not None:
+            _trace.record_prompt("synthesize", "(синтез)", human)
         _run_tool_loop(messages, llm, tools_by_name, budget,
-                       usage=deps.usage, stage="synthesize")
+                       usage=deps.usage, stage="synthesize",
+                       trace=_trace, unit="(синтез)")
         # Пробуем достать JSON из последнего AI-ответа без доп. вызова
         data = _last_ai_json(messages)
         valid_inline = "keep" in data or "add" in data
@@ -568,6 +593,8 @@ class LLMSynthesizer:
         resp = with_llm_retry(lambda: self.provider.chat_model().invoke(_fallback_msgs))
         if deps.usage is not None:
             deps.usage.add("synthesize", resp)
+        if _trace is not None:
+            _trace.record_llm_call("synthesize", "(синтез)", resp)
         data = _extract_json(_text_of(resp))
         try:
             decision = _SynthDecision(**data)

@@ -49,3 +49,21 @@ CREATE TABLE IF NOT EXISTS review_findings (
 );
 
 CREATE INDEX IF NOT EXISTS review_findings_run_id ON review_findings (run_id);
+
+CREATE TABLE IF NOT EXISTS review_steps (
+    id          BIGSERIAL    PRIMARY KEY,
+    run_id      BIGINT       NOT NULL
+                    REFERENCES review_runs (id) ON DELETE CASCADE,
+    stage       TEXT         NOT NULL,   -- analyze | verify | synthesize
+    unit        TEXT         NOT NULL,   -- путь файла или "(синтез)"
+    seq         INT          NOT NULL,   -- порядковый номер шага внутри прогона
+    kind        TEXT         NOT NULL,   -- prompt | llm_call | tool_call
+    name        TEXT,                    -- имя инструмента (для tool_call и llm_call)
+    text        TEXT,                    -- текст ответа/результата (обрезан)
+    tool_calls  JSONB,                   -- [{name, args}] для llm_call; [{name, args}] для tool_call
+    tokens      INT          NOT NULL DEFAULT 0,
+    cost        NUMERIC(12, 6) NOT NULL DEFAULT 0,
+    created_at  TIMESTAMPTZ  NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS review_steps_run_id_seq ON review_steps (run_id, seq);

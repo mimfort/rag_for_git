@@ -33,6 +33,7 @@ class Deps:
     synthesizer: object = None        # LLMSynthesizer (Task 6); None = узел выключен
     sources: dict[str, str] | None = None   # path -> новая версия файла (контекст для верификатора)
     usage: object = None                    # UsageLog | None — учёт токенов прогона
+    trace: object = None                    # TraceLog | None — пошаговый трейс прогона
     verdicts: object = None                 # VerdictLog | None — JSONL-лог вердиктов/публикаций
     skipped_paths: list[str] | None = None  # файлы сверх review_max_files (попадут в сводку)
 
