@@ -3,7 +3,7 @@ from langchain_core.messages import AIMessage, HumanMessage
 from reviewer.agent.analyzer import (
     LLMAnalyzer, LLMVerifier, LLMSynthesizer,
     _pr_context, _to_findings, _FindingModel, _window,
-    _file_context, _signature_changes,
+    _file_context, _signature_changes, _pr_bundle,
 )
 from reviewer.agent.state import ReviewUnit, Deps
 from reviewer.vcs.base import Finding
@@ -862,3 +862,65 @@ def test_analyze_shares_tool_cache_across_units():
     LLMAnalyzer(FakeProvider([tool_call, final_json], "FB"), max_iterations=10).analyze(
         ReviewUnit("b.py", [], "code"), deps)
     assert ret.calls == 1
+
+
+# ---------------------------------------------------------------------------
+# _pr_bundle — предзагрузка диффов чужих файлов + сигнатур в промпт
+# ---------------------------------------------------------------------------
+
+
+def _combine_human(messages):
+    """Склеить текст всех HumanMessage (учитывая cacheable-блоки списком)."""
+    out = []
+    for msg in messages:
+        if isinstance(msg, HumanMessage):
+            c = msg.content
+            out.append("".join(p.get("text", "") for p in c if isinstance(p, dict))
+                       if isinstance(c, list) else str(c))
+    return "\n".join(out)
+
+
+def test_pr_bundle_excludes_current_and_includes_signatures():
+    patches = {"a.py": "@@ -1 +1 @@\n-def f(x):\n+def f(x, y):",
+               "b.py": "@@ -1 +1 @@\n+z = 1"}
+    sources = {"a.py": "def f(x, y):\n    return x"}
+    deps = _deps(changed_paths=["a.py", "b.py"], patches=patches, sources=sources)
+    out = _pr_bundle(deps, ["a.py", "b.py"], current_path="a.py")
+    assert "--- b.py ---" in out
+    assert "--- a.py ---" not in out                 # текущий файл исключён
+    assert "Изменённые сигнатуры в PR" in out
+    assert "+ def f(x, y):" in out
+    assert "Структура изменённых модулей" in out     # из sources a.py
+
+
+def test_pr_bundle_caps_total_diff_lines():
+    big_patch = "\n".join(f"+line{i}" for i in range(1, 1001))   # 1000 строк
+    patches = {f"f{k}.py": big_patch for k in range(5)}          # 5 файлов × 1000
+    deps = _deps(changed_paths=list(patches), patches=patches)
+    out = _pr_bundle(deps, list(patches))
+    assert "опущены" in out                          # часть файлов не влезла в кап
+
+
+def test_analyze_prompt_includes_other_file_diffs_bundle():
+    captured: list = []
+
+    class CaptureLLM:
+        def invoke(self, messages):
+            captured.extend(messages)
+            return AIMessage(content='{"findings":[]}')
+        def bind_tools(self, tools):
+            return self
+
+    class CapProvider:
+        def chat_model_with_tools(self, tools, model=None):
+            return CaptureLLM()
+        def chat_model(self, model=None):
+            return FinalLLM("FB")
+
+    deps = _deps(changed_paths=["a.py", "b.py"],
+                 patches={"a.py": "@@ -1 +1 @@\n+a", "b.py": "@@ -1 +1 @@\n-old\n+newbie"})
+    LLMAnalyzer(CapProvider(), max_iterations=2).analyze(ReviewUnit("a.py", [], "code"), deps)
+    human = _combine_human(captured)
+    assert "Диффы других изменённых файлов PR" in human
+    assert "--- b.py ---" in human and "+newbie" in human
+    assert "--- a.py ---" not in human               # текущий файл не дублируется в bundle
