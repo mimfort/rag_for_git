@@ -222,12 +222,35 @@ def _signature_changes(patches: dict[str, str | None]) -> str:
 _BUNDLE_LINE_CAP = 1500     # суммарный кап строк диффов в PR-bundle
 
 
+def _pr_bundle_static(deps, changed_paths: list[str]) -> str:
+    """Path-независимая часть PR-bundle: изменённые сигнатуры + карты сигнатур модулей.
+    Одинакова для всех файлов прогона -> считается один раз и кэшируется в deps.tool_cache."""
+    parts: list[str] = []
+    patches = getattr(deps, "patches", None) or {}
+    sig_changes = _signature_changes(patches)
+    if sig_changes:
+        parts.append("Изменённые сигнатуры в PR:\n" + sig_changes)
+    sources = getattr(deps, "sources", None) or {}
+    sig_maps: list[str] = []
+    for path in changed_paths:
+        src = sources.get(path)
+        if not src:
+            continue
+        sigs = _module_signatures(path, src)
+        if sigs:
+            sig_maps.append(f"{path}:\n{sigs}")
+    if sig_maps:
+        parts.append("Структура изменённых модулей:\n" + "\n\n".join(sig_maps))
+    return "\n\n".join(parts)
+
+
 def _pr_bundle(deps, changed_paths: list[str], current_path: str | None = None) -> str:
     """Компактный обзор PR для предзагрузки в промпт: диффы изменённых файлов
     (кроме current_path), изменённые сигнатуры и карты сигнатур модулей.
 
-    Диффы режутся по суммарному капу строк; остаток помечается. Цель — чтобы агент
-    не дёргал get_changed_file_diff/read_file по чужим файлам (тулы остаются как fallback)."""
+    Диффы режутся по суммарному капу строк; остаток помечается (даже если в кап не
+    влез ни один файл). Path-независимая часть кэшируется в deps.tool_cache. Цель — чтобы
+    агент не дёргал get_changed_file_diff/read_file по чужим файлам (тулы — как fallback)."""
     patches = getattr(deps, "patches", None) or {}
     parts: list[str] = []
 
@@ -249,27 +272,21 @@ def _pr_bundle(deps, changed_paths: list[str], current_path: str | None = None) 
     if diff_blocks:
         head = ("Диффы других изменённых файлов PR:" if current_path
                 else "Диффы изменённых файлов PR:")
-        block = head + "\n" + "\n\n".join(diff_blocks)
-        if omitted:
-            block += (f"\n(ещё {omitted} файлов опущены — "
-                      "используй get_changed_file_diff при необходимости)")
-        parts.append(block)
+        parts.append(head + "\n" + "\n\n".join(diff_blocks))
+    if omitted:
+        parts.append(f"(ещё {omitted} файлов опущены — "
+                     "используй get_changed_file_diff при необходимости)")
 
-    sig_changes = _signature_changes(patches)
-    if sig_changes:
-        parts.append("Изменённые сигнатуры в PR:\n" + sig_changes)
-
-    sources = getattr(deps, "sources", None) or {}
-    sig_maps: list[str] = []
-    for path in changed_paths:
-        src = sources.get(path)
-        if not src:
-            continue
-        sigs = _module_signatures(path, src)
-        if sigs:
-            sig_maps.append(f"{path}:\n{sigs}")
-    if sig_maps:
-        parts.append("Структура изменённых модулей:\n" + "\n\n".join(sig_maps))
+    cache = getattr(deps, "tool_cache", None)
+    if cache is not None:
+        key = ("__pr_bundle_static__",)
+        if key not in cache:
+            cache[key] = _pr_bundle_static(deps, changed_paths)
+        static = cache[key]
+    else:
+        static = _pr_bundle_static(deps, changed_paths)
+    if static:
+        parts.append(static)
 
     return "\n\n".join(parts)
 
@@ -617,7 +634,7 @@ class LLMSynthesizer:
         bundle = _pr_bundle(deps, deps.changed_paths)
         if bundle:
             human += bundle + "\n\n"
-        if _signature_changes(getattr(deps, "patches", None) or {}):
+        if "Изменённые сигнатуры в PR" in bundle:
             human += ("Проверь согласованность изменённых сигнатур с их вызовами "
                       "через find_callers.\n\n")
         human += (f"Текущие находки по всему PR:\n{listing}\n\n"

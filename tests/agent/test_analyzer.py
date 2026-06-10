@@ -901,6 +901,16 @@ def test_pr_bundle_caps_total_diff_lines():
     assert "опущены" in out                          # часть файлов не влезла в кап
 
 
+def test_pr_bundle_omitted_hint_when_all_diffs_exceed_cap():
+    """Если ни один дифф не влез в кап — diff-секции нет, но подсказка про get_changed_file_diff есть."""
+    huge = "\n".join(f"+l{i}" for i in range(1, 2001))   # 2000 строк > кап
+    patches = {"a.py": huge, "b.py": huge}
+    deps = _deps(changed_paths=["a.py", "b.py"], patches=patches)
+    out = _pr_bundle(deps, ["a.py", "b.py"])
+    assert "--- a.py ---" not in out and "--- b.py ---" not in out
+    assert "опущены" in out
+
+
 def test_analyze_prompt_includes_other_file_diffs_bundle():
     captured: list = []
 
