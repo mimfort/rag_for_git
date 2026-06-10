@@ -36,6 +36,7 @@ class Deps:
     trace: object = None                    # TraceLog | None — пошаговый трейс прогона
     verdicts: object = None                 # VerdictLog | None — JSONL-лог вердиктов/публикаций
     skipped_paths: list[str] | None = None  # файлы сверх review_max_files (попадут в сводку)
+    tool_cache: dict | None = None          # run-level кэш результатов тулов (мемоизация)
 
 class UnitAnalyzer(Protocol):
     def analyze(self, unit: ReviewUnit, deps: "Deps") -> list[Finding]: ...

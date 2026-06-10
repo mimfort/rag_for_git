@@ -832,3 +832,29 @@ def test_verdict_oneshot_logs_all_with_source_oneshot():
     assert len(vlog.verdicts) == 2
     assert all(src == "oneshot" for _, _, src in vlog.verdicts)
     assert vlog.verdicts[0][1] is True and vlog.verdicts[1][1] is False
+
+
+class CountingRetrieverA:
+    """Считает retrieve — проверка, что deps.tool_cache доходит до ToolContext."""
+    def __init__(self):
+        self.calls = 0
+    def retrieve(self, **kw):
+        from reviewer.retrieval.retriever import ContextPack
+        from reviewer.index.store import Retrieved
+        self.calls += 1
+        return ContextPack([Retrieved("a.py#f", "a.py", "f", "function", 1, 2, "x", 1.0)])
+
+
+def test_analyze_shares_tool_cache_across_units():
+    """Два analyze с общим deps.tool_cache не пересчитывают одинаковый search_code
+    (одинаковые changed_node_ids=[] у обоих юнитов)."""
+    tool_call = AIMessage(content="", tool_calls=[
+        {"name": "search_code", "args": {"query": "q"}, "id": "t1", "type": "tool_call"}])
+    final_json = AIMessage(content='{"findings":[]}')
+    ret = CountingRetrieverA()
+    deps = _deps(retriever=ret, tool_cache={})
+    LLMAnalyzer(FakeProvider([tool_call, final_json], "FB"), max_iterations=10).analyze(
+        ReviewUnit("a.py", [], "code"), deps)
+    LLMAnalyzer(FakeProvider([tool_call, final_json], "FB"), max_iterations=10).analyze(
+        ReviewUnit("b.py", [], "code"), deps)
+    assert ret.calls == 1

@@ -314,6 +314,7 @@ def review(slug: str, pr: int, dry_run: bool) -> None:
             overlay_ref=f"pr:{pr}",
             changed_paths=changed,
             patches={f.path: f.patch for f in files},
+            tool_cache={},
             suggestions_mode=s.review_suggestions,
             pr_title=prq.title,
             pr_body=prq.body,

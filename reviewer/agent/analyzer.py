@@ -358,7 +358,8 @@ class LLMAnalyzer:
             changed_node_ids=unit.node_ids,
             read_file_fn=((lambda p: deps.vcs.get_file_at_ref(p, deps.head_sha))
                           if deps.vcs else None),
-            patches=deps.patches, store=getattr(deps.retriever, "store", None))
+            patches=deps.patches, store=getattr(deps.retriever, "store", None),
+            cache=getattr(deps, "tool_cache", None))
         tools = make_tools(ctx)
         llm = self.provider.chat_model_with_tools(tools)
         tools_by_name = {t.name: t for t in tools}
@@ -444,7 +445,8 @@ class LLMVerifier:
             changed_node_ids=[],
             read_file_fn=((lambda p: deps.vcs.get_file_at_ref(p, deps.head_sha))
                           if deps.vcs else None),
-            patches=deps.patches, store=getattr(deps.retriever, "store", None))
+            patches=deps.patches, store=getattr(deps.retriever, "store", None),
+            cache=getattr(deps, "tool_cache", None))
         tools = make_tools(ctx)
         llm = self.provider.chat_model_with_tools(tools, model=self.model)
         tools_by_name = {t.name: t for t in tools}
@@ -543,7 +545,8 @@ class LLMSynthesizer:
             changed_node_ids=[],
             read_file_fn=((lambda p: deps.vcs.get_file_at_ref(p, deps.head_sha))
                           if deps.vcs else None),
-            patches=deps.patches, store=getattr(deps.retriever, "store", None))
+            patches=deps.patches, store=getattr(deps.retriever, "store", None),
+            cache=getattr(deps, "tool_cache", None))
         tools = make_tools(ctx)
         llm = self.provider.chat_model_with_tools(tools)
         tools_by_name = {t.name: t for t in tools}
