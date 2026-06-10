@@ -2,6 +2,9 @@ import { useState, useEffect } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { fetchRun, type RunDetail as RunDetailType, type Finding, type UsageStage } from '../api'
 import { fmtCost, fmtDatetime, fmtDuration, shortSha } from '../utils'
+import TraceView from './TraceView'
+
+// ─── Badges & mini-components ────────────────────────────────────────────────
 
 function StatusBadge({ status }: { status: RunDetailType['status'] }) {
   if (status === 'ok')         return <span className="badge badge-ok">ok</span>
@@ -20,7 +23,10 @@ function SeverityBadge({ sev }: { sev: string }) {
 
 function ConfidenceBar({ value }: { value: number }) {
   const pct = Math.round(value * 100)
-  const color = pct >= 80 ? 'var(--green)' : pct >= 50 ? 'var(--amber)' : 'var(--gray)'
+  const color =
+    pct >= 80 ? 'var(--ok)' :
+    pct >= 50 ? 'var(--amber)' :
+    'var(--text-muted)'
   return (
     <div className="confidence-bar-wrap">
       <div className="confidence-bar">
@@ -31,6 +37,8 @@ function ConfidenceBar({ value }: { value: number }) {
   )
 }
 
+// ─── Usage Table ─────────────────────────────────────────────────────────────
+
 const STAGE_LABELS: Record<string, string> = {
   analyze:    'Анализ',
   verify:     'Верификация',
@@ -39,7 +47,8 @@ const STAGE_LABELS: Record<string, string> = {
 
 function UsageTable({ usage, totalCost }: { usage: Record<string, UsageStage>; totalCost: number }) {
   const stages = Object.entries(usage)
-  if (stages.length === 0) return <div className="text-muted" style={{ padding: '14px 18px', fontSize: 13 }}>Нет данных</div>
+  if (stages.length === 0)
+    return <div style={{ padding: '14px 20px', fontSize: 13, color: 'var(--text-secondary)' }}>Нет данных</div>
 
   const totals = stages.reduce(
     (acc, [, s]) => ({
@@ -77,7 +86,7 @@ function UsageTable({ usage, totalCost }: { usage: Record<string, UsageStage>; t
               <td className="td-mono" style={{ color: 'var(--text-secondary)' }}>
                 {s.output_tokens.toLocaleString('ru-RU')}
               </td>
-              <td className="td-mono" style={{ color: 'var(--blue)' }}>
+              <td className="td-mono" style={{ color: 'var(--indigo)' }}>
                 {s.cache_read_tokens.toLocaleString('ru-RU')}
               </td>
               <td className="td-mono" style={{ color: 'var(--amber)' }}>
@@ -99,11 +108,13 @@ function UsageTable({ usage, totalCost }: { usage: Record<string, UsageStage>; t
   )
 }
 
+// ─── Findings Table ──────────────────────────────────────────────────────────
+
 function FindingsTable({ findings }: { findings: Finding[] }) {
   if (findings.length === 0) {
     return (
       <div className="state-center" style={{ padding: '32px 24px' }}>
-        <div className="state-icon" style={{ fontSize: 24 }}>○</div>
+        <div className="state-icon" style={{ fontSize: 22 }}>○</div>
         <div className="state-msg">Нет находок</div>
       </div>
     )
@@ -126,24 +137,27 @@ function FindingsTable({ findings }: { findings: Finding[] }) {
         <tbody>
           {findings.map(f => (
             <tr key={f.id}>
-              <td className="td-mono" style={{ color: 'var(--blue)', fontSize: 11 }}>
-                {f.file}{f.line != null && <span style={{ color: 'var(--text-muted)' }}>:{f.line}</span>}
+              <td className="td-mono" style={{ color: 'var(--indigo)', fontSize: 11 }}>
+                {f.file}
+                {f.line != null && <span style={{ color: 'var(--text-muted)' }}>:{f.line}</span>}
               </td>
               <td>
-                <span className="mono" style={{ fontSize: 12 }}>{f.category}</span>
+                <span className="mono" style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+                  {f.category}
+                </span>
               </td>
               <td><SeverityBadge sev={f.severity} /></td>
               <td><ConfidenceBar value={f.confidence} /></td>
               <td>
                 {f.is_real
-                  ? <span style={{ color: 'var(--green)', fontFamily: 'var(--font-mono)', fontSize: 12 }}>реальная</span>
-                  : <span style={{ color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', fontSize: 12 }}>отклонена</span>
+                  ? <span style={{ color: 'var(--ok)', fontFamily: 'JetBrains Mono, monospace', fontSize: 11 }}>реальная</span>
+                  : <span style={{ color: 'var(--text-muted)', fontFamily: 'JetBrains Mono, monospace', fontSize: 11 }}>отклонена</span>
                 }
               </td>
               <td>
                 {f.inline
-                  ? <span style={{ color: 'var(--amber)', fontFamily: 'var(--font-mono)', fontSize: 11 }}>inline</span>
-                  : <span style={{ color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', fontSize: 11 }}>сводка</span>
+                  ? <span style={{ color: 'var(--amber)', fontFamily: 'JetBrains Mono, monospace', fontSize: 11 }}>inline</span>
+                  : <span style={{ color: 'var(--text-muted)', fontFamily: 'JetBrains Mono, monospace', fontSize: 11 }}>сводка</span>
                 }
               </td>
               <td style={{ maxWidth: 320, fontSize: 12, color: 'var(--text-secondary)' }}>
@@ -157,11 +171,49 @@ function FindingsTable({ findings }: { findings: Finding[] }) {
   )
 }
 
+// ─── Overview Tab ────────────────────────────────────────────────────────────
+
+function OverviewTab({ run }: { run: RunDetailType }) {
+  return (
+    <>
+      {run.error_text && (
+        <div className="error-block">
+          <div className="error-block-title">Текст ошибки</div>
+          {run.error_text}
+        </div>
+      )}
+
+      <div className="section-card anim-1">
+        <div className="section-card-header">
+          <div className="section-title" style={{ margin: 0, border: 0, padding: 0 }}>
+            Использование токенов по этапам
+          </div>
+        </div>
+        <UsageTable usage={run.usage} totalCost={run.total_cost} />
+      </div>
+
+      <div className="section-card anim-2">
+        <div className="section-card-header">
+          <div className="section-title" style={{ margin: 0, border: 0, padding: 0 }}>
+            Находки ({run.findings.length})
+          </div>
+        </div>
+        <FindingsTable findings={run.findings} />
+      </div>
+    </>
+  )
+}
+
+// ─── Main RunDetail ──────────────────────────────────────────────────────────
+
+type TabId = 'overview' | 'trace'
+
 export default function RunDetail() {
-  const { id } = useParams<{ id: string }>()
-  const [run, setRun] = useState<RunDetailType | null>(null)
+  const { id }    = useParams<{ id: string }>()
+  const [run,     setRun]     = useState<RunDetailType | null>(null)
   const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
+  const [error,   setError]   = useState<string | null>(null)
+  const [tab,     setTab]     = useState<TabId>('overview')
 
   useEffect(() => {
     if (!id) return
@@ -187,7 +239,7 @@ export default function RunDetail() {
       <div>
         <Link to="/runs" className="back-link">← Прогоны</Link>
         <div className="state-center">
-          <div className="state-icon">!</div>
+          <div className="state-icon">⚠</div>
           <div className="state-msg">Ошибка</div>
           <div className="state-detail">{error}</div>
         </div>
@@ -203,11 +255,11 @@ export default function RunDetail() {
     <div>
       <Link to="/runs" className="back-link">← Прогоны</Link>
 
-      {/* Шапка прогона */}
+      {/* Header */}
       <div className="detail-header">
         <div className="detail-title-row">
           <a href={ghUrl} target="_blank" rel="noopener noreferrer" className="detail-pr-link">
-            {run.repo}#{run.pr_number}
+            {run.repo}<span style={{ color: 'var(--text-muted)' }}>#{run.pr_number}</span>
           </a>
           <StatusBadge status={run.status} />
           {run.dry_run && <span className="badge badge-dry">dry-run</span>}
@@ -220,11 +272,11 @@ export default function RunDetail() {
           </div>
           <div className="detail-meta-item">
             <span className="meta-label">Base SHA</span>
-            <span className="meta-value">{shortSha(run.base_sha)}</span>
+            <span className="meta-value" style={{ color: 'var(--indigo)' }}>{shortSha(run.base_sha)}</span>
           </div>
           <div className="detail-meta-item">
             <span className="meta-label">Head SHA</span>
-            <span className="meta-value">{shortSha(run.head_sha)}</span>
+            <span className="meta-value" style={{ color: 'var(--teal)' }}>{shortSha(run.head_sha)}</span>
           </div>
           <div className="detail-meta-item">
             <span className="meta-label">Модель (анализ)</span>
@@ -245,20 +297,19 @@ export default function RunDetail() {
             <span className="meta-value">
               {run.files_reviewed} обработано
               {run.files_skipped > 0 && `, ${run.files_skipped} пропущено`}
-              {run.files_failed > 0 && `, ${run.files_failed} с ошибкой`}
+              {run.files_failed  > 0 && `, ${run.files_failed} с ошибкой`}
             </span>
           </div>
           <div className="detail-meta-item">
             <span className="meta-label">Находки</span>
             <span className="meta-value">
-              {run.findings_kept} из {run.findings_analyzed} (отсев: {run.verify_rejected})
+              {run.findings_kept} из {run.findings_analyzed}
+              <span style={{ color: 'var(--text-muted)' }}> (отсев: {run.verify_rejected})</span>
             </span>
           </div>
           <div className="detail-meta-item">
             <span className="meta-label">Комментарии</span>
-            <span className="meta-value">
-              {run.comments_inline} inline, {run.comments_summary} в сводке
-            </span>
+            <span className="meta-value">{run.comments_inline} inline, {run.comments_summary} в сводке</span>
           </div>
           <div className="detail-meta-item">
             <span className="meta-label">Итого $</span>
@@ -269,32 +320,25 @@ export default function RunDetail() {
         </div>
       </div>
 
-      {/* Ошибка */}
-      {run.error_text && (
-        <div className="error-block">
-          <div className="error-block-title">Текст ошибки</div>
-          {run.error_text}
+      {/* Tabs */}
+      <div className="tabs-container">
+        <div className="tabs-header">
+          <button
+            className={`tab-btn${tab === 'overview' ? ' active' : ''}`}
+            onClick={() => setTab('overview')}
+          >
+            Обзор
+          </button>
+          <button
+            className={`tab-btn${tab === 'trace' ? ' active' : ''}`}
+            onClick={() => setTab('trace')}
+          >
+            Трейс
+          </button>
         </div>
-      )}
 
-      {/* Использование токенов */}
-      <div className="section-card">
-        <div className="section-card-header">
-          <div className="section-title" style={{ margin: 0, border: 0, padding: 0 }}>
-            Использование токенов по этапам
-          </div>
-        </div>
-        <UsageTable usage={run.usage} totalCost={run.total_cost} />
-      </div>
-
-      {/* Находки */}
-      <div className="section-card">
-        <div className="section-card-header">
-          <div className="section-title" style={{ margin: 0, border: 0, padding: 0 }}>
-            Находки ({run.findings.length})
-          </div>
-        </div>
-        <FindingsTable findings={run.findings} />
+        {tab === 'overview' && <OverviewTab run={run} />}
+        {tab === 'trace'    && <TraceView runId={run.id} />}
       </div>
     </div>
   )

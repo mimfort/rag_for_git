@@ -123,3 +123,31 @@ export async function fetchRun(id: number): Promise<RunDetail> {
 export async function fetchStats(days: number): Promise<Stats> {
   return apiFetch<Stats>(`/api/stats?days=${days}`)
 }
+
+// ─── Trace API ────────────────────────────────────────────────────────────────
+
+export interface ToolCallEntry {
+  name: string
+  args: Record<string, unknown>
+}
+
+export interface TraceStep {
+  seq: number
+  stage: string
+  unit: string
+  kind: 'prompt' | 'llm_call' | 'tool_call'
+  name: string | null
+  text: string | null
+  tool_calls: ToolCallEntry[] | null
+  tokens: number | null
+  cost: number | null
+  created_at: string
+}
+
+export interface TraceResponse {
+  steps: TraceStep[]
+}
+
+export async function getTrace(id: number): Promise<TraceResponse> {
+  return apiFetch<TraceResponse>(`/api/runs/${id}/trace`)
+}

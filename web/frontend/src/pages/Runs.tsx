@@ -14,10 +14,10 @@ function StatusBadge({ status }: { status: Run['status'] }) {
 
 export default function Runs() {
   const navigate = useNavigate()
-  const [runs, setRuns] = useState<Run[]>([])
+  const [runs,    setRuns]    = useState<Run[]>([])
   const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
-  const [offset, setOffset] = useState(0)
+  const [error,   setError]   = useState<string | null>(null)
+  const [offset,  setOffset]  = useState(0)
   const [hasMore, setHasMore] = useState(false)
 
   const [filterRepo,   setFilterRepo]   = useState('')
@@ -45,17 +45,8 @@ export default function Runs() {
     load(0)
   }, [load])
 
-  const goNext = () => {
-    const next = offset + LIMIT
-    setOffset(next)
-    load(next)
-  }
-
-  const goPrev = () => {
-    const prev = Math.max(0, offset - LIMIT)
-    setOffset(prev)
-    load(prev)
-  }
+  const goNext = () => { const next = offset + LIMIT; setOffset(next); load(next) }
+  const goPrev = () => { const prev = Math.max(0, offset - LIMIT); setOffset(prev); load(prev) }
 
   return (
     <div>
@@ -93,7 +84,7 @@ export default function Runs() {
           </div>
         ) : error ? (
           <div className="state-center">
-            <div className="state-icon">!</div>
+            <div className="state-icon">⚠</div>
             <div className="state-msg">Ошибка загрузки</div>
             <div className="state-detail">{error}</div>
           </div>
@@ -125,36 +116,35 @@ export default function Runs() {
                     className="clickable"
                     onClick={() => navigate(`/runs/${run.id}`)}
                   >
-                    <td className="td-mono" style={{ color: 'var(--text-secondary)', fontSize: 11 }}>
+                    <td className="td-mono" style={{ color: 'var(--text-muted)', fontSize: 11 }}>
                       {fmtDatetime(run.created_at)}
                     </td>
                     <td>
-                      <span className="mono" style={{ color: 'var(--blue)', fontSize: 12 }}>
-                        {run.repo}<span style={{ color: 'var(--text-muted)' }}>#{run.pr_number}</span>
-                      </span>
-                      {run.dry_run && (
-                        <span className="badge badge-dry" style={{ marginLeft: 6 }}>dry-run</span>
-                      )}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <span className="mono" style={{ fontSize: 12 }}>
+                          <span style={{ color: 'var(--indigo)' }}>{run.repo}</span>
+                          <span style={{ color: 'var(--text-muted)' }}>#{run.pr_number}</span>
+                        </span>
+                        {run.dry_run && <span className="badge badge-dry">dry-run</span>}
+                      </div>
                     </td>
                     <td>
-                      <span className="mono" style={{ fontSize: 11, color: 'var(--text-secondary)' }}>
-                        {run.model.length > 30 ? run.model.slice(0, 28) + '…' : run.model}
+                      <span className="mono" style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                        {run.model.length > 28 ? run.model.slice(0, 26) + '…' : run.model}
                       </span>
                     </td>
                     <td><StatusBadge status={run.status} /></td>
                     <td className="td-mono">
-                      <span style={{ color: 'var(--green)' }}>{run.files_reviewed}</span>
-                      <span style={{ color: 'var(--text-muted)' }}>
-                        {run.files_skipped > 0 && ` +${run.files_skipped}ск`}
-                        {run.files_failed > 0 && ` ${run.files_failed}ош`}
-                      </span>
+                      <span style={{ color: 'var(--ok)' }}>{run.files_reviewed}</span>
+                      {run.files_skipped > 0 && <span style={{ color: 'var(--text-muted)' }}> +{run.files_skipped}ск</span>}
+                      {run.files_failed  > 0 && <span style={{ color: 'var(--sev-high)' }}> {run.files_failed}ош</span>}
                     </td>
                     <td className="td-mono">
                       <span style={{ color: 'var(--amber)' }}>{run.findings_kept}</span>
                       <span style={{ color: 'var(--text-muted)' }}>/{run.findings_analyzed}</span>
                     </td>
-                    <td className="td-mono" style={{ color: 'var(--text-secondary)' }}>
-                      {run.comments_inline}i / {run.comments_summary}с
+                    <td className="td-mono" style={{ color: 'var(--text-muted)' }}>
+                      {run.comments_inline}i&nbsp;/&nbsp;{run.comments_summary}с
                     </td>
                     <td className="td-mono" style={{ color: 'var(--text-secondary)' }}>
                       {fmtDuration(run.duration_ms)}
@@ -173,12 +163,8 @@ export default function Runs() {
           <span className="pagination-info">
             {runs.length > 0 ? `${offset + 1}–${offset + runs.length}` : '0'} записей
           </span>
-          <button className="btn" onClick={goPrev} disabled={offset === 0}>
-            ← Назад
-          </button>
-          <button className="btn" onClick={goNext} disabled={!hasMore}>
-            Вперёд →
-          </button>
+          <button className="btn" onClick={goPrev} disabled={offset === 0}>← Назад</button>
+          <button className="btn" onClick={goNext} disabled={!hasMore}>Вперёд →</button>
         </div>
       </div>
     </div>
