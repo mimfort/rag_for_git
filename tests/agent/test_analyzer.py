@@ -1218,3 +1218,33 @@ def test_estimate_verify_tokens_agentic_scales_with_findings():
 
     v_oneshot = LLMVerifier(object(), agentic=False, oneshot_threshold=100)
     assert v._estimate_verify_tokens(five) > v_oneshot._estimate_verify_tokens(five)
+
+
+# ---------------------------------------------------------------------------
+# Task A1: тесты _resolve_line
+# ---------------------------------------------------------------------------
+
+def test_resolve_line_unique_exact_match():
+    from reviewer.agent.analyzer import _resolve_line
+    source = "def a():\n    x = 1\n    return compute(x)\n"
+    assert _resolve_line("return compute(x)", source) == 3
+    assert _resolve_line("    return compute(x)", source) == 3   # ведущие пробелы игнорируются
+
+
+def test_resolve_line_ambiguous_returns_none():
+    from reviewer.agent.analyzer import _resolve_line
+    source = "x = 1\nx = 1\n"
+    assert _resolve_line("x = 1", source) is None   # 2 совпадения -> не угадываем
+
+
+def test_resolve_line_substring_fallback_unique():
+    from reviewer.agent.analyzer import _resolve_line
+    source = "alpha\n    result = compute(x) + 1\nbeta\n"
+    assert _resolve_line("compute(x)", source) == 2   # уникальная подстрока
+
+
+def test_resolve_line_empty_inputs():
+    from reviewer.agent.analyzer import _resolve_line
+    assert _resolve_line(None, "x = 1") is None
+    assert _resolve_line("x = 1", None) is None
+    assert _resolve_line("   ", "x = 1") is None

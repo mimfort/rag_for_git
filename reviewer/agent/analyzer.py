@@ -94,6 +94,29 @@ def _window(source: str, line: int, radius: int = 25) -> str:
     return "\n".join(f"{i + 1}|{ln}" for i, ln in enumerate(lines[start:end], start))
 
 
+def _resolve_line(quote: str | None, source: str | None) -> int | None:
+    """Настоящий 1-based номер строки, текст которой совпадает с quote.
+
+    Модель часто путает номер строки (особенно для символа из другого модуля),
+    но цитирует код верно. Сопоставляем по содержимому, игнорируя ведущие/хвостовые
+    пробелы. Возвращаем номер ТОЛЬКО при единственном совпадении (иначе None —
+    не привязываем к чужой строке). Фолбэк — уникальная подстрока."""
+    if not quote or not source:
+        return None
+    needle = quote.strip()
+    if not needle:
+        return None
+    lines = source.splitlines()
+    exact = [i for i, ln in enumerate(lines, 1) if ln.strip() == needle]
+    if len(exact) == 1:
+        return exact[0]
+    if not exact:
+        sub = [i for i, ln in enumerate(lines, 1) if needle in ln]
+        if len(sub) == 1:
+            return sub[0]
+    return None
+
+
 _FILE_FULL_LIMIT = 400      # ≤ этого числа строк показываем файл целиком
 _WINDOWS_LINE_CAP = 1500    # суммарный кап строк во всех окнах
 
