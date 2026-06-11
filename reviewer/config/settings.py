@@ -44,7 +44,8 @@ class Settings(BaseSettings):
     review_max_files: int = 50                    # кап файлов PR на ревью; остальные — в сводку как пропущенные
     review_bundle_max_files: int = 50             # кап файлов в PR-bundle для анализатора
     review_bundle_max_lines: int = 1500           # кап строк сигнатур в PR-bundle
-    verify_oneshot_threshold: int = 10            # при >N findings verify принудительно переходит в oneshot
+    review_bundle_graph_adjacent: bool = True     # в PR-bundle класть диффы только графово-смежных файлов (+ изменённые сигнатуры)
+    verify_oneshot_threshold: int = 30            # жёсткий потолок: выше — verify уходит в oneshot (защита от десятков вызовов)
     max_verify_tokens: int = 0                    # общий бюджет токенов на verify; 0 = без ограничения
     max_tool_result_chars: int = 8000             # максимальная длина результата tool-вызова в промпт
     review_skip_drafts: bool = True               # не ревьюить draft-PR

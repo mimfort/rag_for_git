@@ -26,7 +26,8 @@ _SYNTH_SCHEMA = (
     'Верни СТРОГО один JSON-объект без пояснений и markdown:\n'
     '{"keep": [<индексы исходных находок, которые оставить, как в списке выше>], '
     '"add": [{"file": "<путь>", "category": "correctness|security|performance|style", '
-    '"severity": "low|medium|high|critical", "line": <int|null>, "message": "...", '
+    '"severity": "low|medium|high|critical", "line": <int|null>, '
+    '"code_quote": "<дословная строка кода проблемы из указанного файла>", "message": "...", '
     '"suggestion": "... или null", "confidence": 0.0}]}\n'
     'keep — индексы исходных находок, которые остаются (исключи дубли/неверные, не переписывай их). '
     'add — ТОЛЬКО новые кросс-файловые проблемы, не входящие в исходный список '
@@ -39,6 +40,8 @@ _FINDINGS_SCHEMA = (
     '{"findings": [{"category": "correctness|security|performance|style", '
     '"severity": "low|medium|high|critical", '
     '"line": <номер строки в НОВОЙ версии файла или null>, '
+    '"code_quote": "<точная строка кода, к которой относится проблема — '
+    'скопируй её ДОСЛОВНО из показанной новой версии файла>", '
     '"message": "...", "suggestion": "... или null", '
     '"fix": {"start_line": <int>, "end_line": <int>, '
     '"replacement": "<точный новый код для строк start_line..end_line НОВОЙ версии, '
@@ -92,6 +95,29 @@ def _window(source: str, line: int, radius: int = 25) -> str:
     start = max(0, idx - radius)
     end = min(len(lines), idx + radius + 1)
     return "\n".join(f"{i + 1}|{ln}" for i, ln in enumerate(lines[start:end], start))
+
+
+def _resolve_line(quote: str | None, source: str | None) -> int | None:
+    """Настоящий 1-based номер строки, текст которой совпадает с quote.
+
+    Модель часто путает номер строки (особенно для символа из другого модуля),
+    но цитирует код верно. Сопоставляем по содержимому, игнорируя ведущие/хвостовые
+    пробелы. Возвращаем номер ТОЛЬКО при единственном совпадении (иначе None —
+    не привязываем к чужой строке). Фолбэк — уникальная подстрока."""
+    if not quote or not source:
+        return None
+    needle = quote.strip()
+    if not needle:
+        return None
+    lines = source.splitlines()
+    exact = [i for i, ln in enumerate(lines, 1) if ln.strip() == needle]
+    if len(exact) == 1:
+        return exact[0]
+    if not exact:
+        sub = [i for i, ln in enumerate(lines, 1) if needle in ln]
+        if len(sub) == 1:
+            return sub[0]
+    return None
 
 
 _FILE_FULL_LIMIT = 400      # ≤ этого числа строк показываем файл целиком
@@ -274,13 +300,18 @@ def _pr_bundle_static(deps, changed_paths: list[str]) -> str:
     return "\n\n".join(parts)
 
 
-def _pr_bundle(deps, changed_paths: list[str], current_path: str | None = None) -> str:
+def _pr_bundle(deps, changed_paths: list[str], current_path: str | None = None,
+               current_node_ids: list[str] | None = None) -> str:
     """Компактный обзор PR для предзагрузки в промпт: диффы изменённых файлов
     (кроме current_path), изменённые сигнатуры и карты сигнатур модулей.
 
     Диффы режутся по числу файлов и суммарному капу строк;
     остаток помечается (даже если в кап не влез ни один файл).
     При превышении лимитов приоритет отдаётся файлам с изменёнными сигнатурами.
+    Если задан current_node_ids и включён флаг review_bundle_graph_adjacent —
+    в диффы включаются только файлы, графово смежные с текущим (callers/callees),
+    а также файлы с изменёнными сигнатурами. Фолбэк (нет графа / нет node_ids /
+    synthesize без current_path) — прежнее поведение (все файлы).
     Path-независимая часть кэшируется в deps.tool_cache."""
     patches = getattr(deps, "patches", None) or {}
     settings = getattr(deps, "settings", None)
@@ -291,11 +322,29 @@ def _pr_bundle(deps, changed_paths: list[str], current_path: str | None = None) 
     ordered = sorted(changed_paths, key=lambda p: (p not in sig_change_paths, p))
     parts: list[str] = []
 
+    # Графово-смежный bundle: diff-блоки только связанных с текущим файлом модулей
+    # (+ файлы с изменёнными сигнатурами). Срезает раздувание входа на больших PR.
+    # ВНИМАНИЕ: фильтруем ТОЛЬКО diff_ordered; ordered (полный) идёт в _pr_bundle_static,
+    # который кэшируется межфайлово под общим ключом — сужать его нельзя.
+    diff_ordered = ordered
+    graph = getattr(deps, "graph", None)
+    adjacent_only = (getattr(settings, "review_bundle_graph_adjacent", True)
+                     if settings else True)
+    if adjacent_only and graph is not None and current_node_ids and current_path:
+        try:
+            related = graph.expand(list(current_node_ids), hops=2)
+            adj = {nid.split("#", 1)[0] for nid in related}
+        except Exception:
+            adj = None
+        if adj is not None:
+            keep = adj | sig_change_paths | {current_path}
+            diff_ordered = [p for p in ordered if p in keep]
+
     diff_blocks: list[str] = []
     used = 0
     used_files = 0
     omitted = 0
-    for path in ordered:
+    for path in diff_ordered:
         if path == current_path:
             continue
         patch = patches.get(path)
@@ -320,7 +369,7 @@ def _pr_bundle(deps, changed_paths: list[str], current_path: str | None = None) 
     if cache is not None:
         key = ("__pr_bundle_static__",)
         if key not in cache:
-            cache[key] = _pr_bundle_static(deps, ordered)
+            cache[key] = _pr_bundle_static(deps, ordered)   # ВАЖНО: ordered полный!
         static = cache[key]
     else:
         static = _pr_bundle_static(deps, ordered)
@@ -408,6 +457,7 @@ class _FindingModel(BaseModel):
     file: str | None = None
     severity: str = Field(description="low|medium|high|critical")
     line: int | None = None
+    code_quote: str | None = None
     message: str
     suggestion: str | None = None
     fix: _Fix | None = None
@@ -420,17 +470,24 @@ class _SynthDecision(BaseModel):
     keep: list[int] = Field(default_factory=list)
     add: list[_FindingModel] = Field(default_factory=list)
 
-def _to_findings(models, default_file: str | None) -> list[Finding]:
+def _to_findings(models, default_file: str | None,
+                 sources: dict[str, str] | None = None) -> list[Finding]:
     """Преобразовать распарсенные модели в Finding. file берётся из модели либо default.
 
     Если default_file=None (синтез) и модель не указала file — находку пропускаем:
-    кросс-файловую находку без файла нельзя достоверно локализовать, а приписывать
-    её к случайному файлу — источник ложных file:line в сводке."""
+    кросс-файловую находку без файла нельзя достоверно локализовать.
+    Если передан sources и модель дала code_quote — номер строки грунтуем по реальному
+    коду (модель часто путает номера); иначе оставляем line как есть."""
     out: list[Finding] = []
     for f in models:
         file = f.file or default_file
         if not file:
             continue
+        line = f.line
+        if sources is not None:
+            resolved = _resolve_line(getattr(f, "code_quote", None), sources.get(file))
+            if resolved is not None:
+                line = resolved
         fs = f.fix.start_line if f.fix else None
         fe = f.fix.end_line if f.fix else None
         rp = f.fix.replacement if f.fix else None
@@ -439,7 +496,7 @@ def _to_findings(models, default_file: str | None) -> list[Finding]:
         out.append(Finding(
             category=f.category,
             severity=(f.severity if f.severity in _VALID_SEVERITY else "medium"),
-            file=file, line=f.line, side="RIGHT", message=f.message,
+            file=file, line=line, side="RIGHT", message=f.message,
             suggestion=f.suggestion, confidence=f.confidence,
             fix_start=fs, fix_end=fe, replacement=rp))
     return out
@@ -527,7 +584,8 @@ class LLMAnalyzer(_LLMPhase):
         ctx_text = _file_context(unit)
         pr_ctx = _pr_context(deps, deps.changed_paths)
         human = (pr_ctx + "\n\n") if pr_ctx else ""
-        bundle = _pr_bundle(deps, deps.changed_paths, current_path=unit.path)
+        bundle = _pr_bundle(deps, deps.changed_paths, current_path=unit.path,
+                            current_node_ids=unit.node_ids)
         if bundle:
             human += bundle + "\n\n"
         human += f"Файл: {unit.path}\n"
@@ -554,7 +612,8 @@ class LLMAnalyzer(_LLMPhase):
         if "findings" in data:
             try:
                 parsed = _Findings(**data)
-                return _to_findings(parsed.findings, default_file=unit.path)
+                return _to_findings(parsed.findings, default_file=unit.path,
+                                    sources=deps.sources)
             except Exception:
                 pass
         # Fallback: отдельный invoke со схемой
@@ -569,7 +628,7 @@ class LLMAnalyzer(_LLMPhase):
             parsed = _Findings(**data)
         except Exception:
             parsed = _Findings()
-        return _to_findings(parsed.findings, default_file=unit.path)
+        return _to_findings(parsed.findings, default_file=unit.path, sources=deps.sources)
 
 class LLMVerifier(_LLMPhase):
     """Верификатор находок. agentic=True — поштучная проверка с инструментами;
@@ -600,9 +659,7 @@ class LLMVerifier(_LLMPhase):
             if policy is None:
                 return list(findings)
             return [f for f in findings if policy.gate(f)]
-        if len(findings) > self.oneshot_threshold:
-            return self._verify_oneshot(findings, deps)
-        if not self.agentic:
+        if self._use_oneshot(findings):
             return self._verify_oneshot(findings, deps)
         return [f for f in findings if self._verify_one(f, deps)]
 
@@ -625,6 +682,17 @@ class LLMVerifier(_LLMPhase):
             + len(_VERDICT_ONE_SCHEMA)
             for f in findings if self._needs_check(f))
         return per_finding // 4
+
+    def _use_oneshot(self, findings: list[Finding]) -> bool:
+        """Решение: oneshot (один общий промпт) vs agentic (поштучно).
+
+        Агентный путь — основной. Oneshot выбираем только как fallback:
+        не-agentic режим либо находок больше жёсткого потолка oneshot_threshold
+        (защита от десятков LLM-вызовов на патологически больших PR).
+        Бюджет токенов проверяется отдельно в _budget_exceeded."""
+        if not self.agentic:
+            return True
+        return len(findings) > self.oneshot_threshold
 
     def _budget_exceeded(self, findings: list[Finding], deps: Deps) -> bool:
         if self.max_verify_tokens <= 0:
@@ -773,7 +841,7 @@ class LLMSynthesizer(_LLMPhase):
                 decision = _SynthDecision(**data)
                 n = len(findings)
                 kept = [findings[i] for i in decision.keep if 0 <= i < n]
-                added = _to_findings(decision.add, default_file=None)
+                added = _to_findings(decision.add, default_file=None, sources=deps.sources)
                 if decision.add:
                     missing = sum(1 for m in decision.add if not m.file)
                     if missing:
@@ -797,7 +865,7 @@ class LLMSynthesizer(_LLMPhase):
             return findings   # fail-open: не разобрали -> исходные как есть
         n = len(findings)
         kept = [findings[i] for i in decision.keep if 0 <= i < n]
-        added = _to_findings(decision.add, default_file=None)
+        added = _to_findings(decision.add, default_file=None, sources=deps.sources)
         if decision.add:
             missing = sum(1 for m in decision.add if not m.file)
             if missing:

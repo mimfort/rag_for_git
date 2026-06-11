@@ -45,7 +45,13 @@ def test_review_verdict_log_reads_from_env(monkeypatch):
 
 def test_verify_oneshot_threshold_default():
     s = Settings(_env_file=None)
-    assert s.verify_oneshot_threshold == 10
+    assert s.verify_oneshot_threshold == 30
+
+
+def test_verify_oneshot_threshold_default_is_hard_cap():
+    from reviewer.config.settings import Settings
+    s = Settings()
+    assert s.verify_oneshot_threshold >= 30   # порог стал жёстким потолком, не «10»
 
 
 def test_max_verify_tokens_default():
@@ -78,3 +84,8 @@ def test_review_bundle_max_lines_default():
 def test_max_tool_result_chars_default():
     s = Settings(_env_file=None)
     assert s.max_tool_result_chars == 8000
+
+
+def test_bundle_graph_adjacent_default_true():
+    from reviewer.config.settings import Settings
+    assert Settings().review_bundle_graph_adjacent is True

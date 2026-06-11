@@ -1218,3 +1218,212 @@ def test_estimate_verify_tokens_agentic_scales_with_findings():
 
     v_oneshot = LLMVerifier(object(), agentic=False, oneshot_threshold=100)
     assert v._estimate_verify_tokens(five) > v_oneshot._estimate_verify_tokens(five)
+
+
+# ---------------------------------------------------------------------------
+# Task A1: тесты _resolve_line
+# ---------------------------------------------------------------------------
+
+def test_resolve_line_unique_exact_match():
+    from reviewer.agent.analyzer import _resolve_line
+    source = "def a():\n    x = 1\n    return compute(x)\n"
+    assert _resolve_line("return compute(x)", source) == 3
+    assert _resolve_line("    return compute(x)", source) == 3   # ведущие пробелы игнорируются
+
+
+def test_resolve_line_ambiguous_returns_none():
+    from reviewer.agent.analyzer import _resolve_line
+    source = "x = 1\nx = 1\n"
+    assert _resolve_line("x = 1", source) is None   # 2 совпадения -> не угадываем
+
+
+def test_resolve_line_substring_fallback_unique():
+    from reviewer.agent.analyzer import _resolve_line
+    source = "alpha\n    result = compute(x) + 1\nbeta\n"
+    assert _resolve_line("compute(x)", source) == 2   # уникальная подстрока
+
+
+def test_resolve_line_empty_inputs():
+    from reviewer.agent.analyzer import _resolve_line
+    assert _resolve_line(None, "x = 1") is None
+    assert _resolve_line("x = 1", None) is None
+    assert _resolve_line("   ", "x = 1") is None
+
+
+# ---------------------------------------------------------------------------
+# Task A2: тесты code_quote + грунтовка в _to_findings
+# ---------------------------------------------------------------------------
+
+def test_to_findings_grounds_line_from_code_quote():
+    from reviewer.agent.analyzer import _to_findings, _FindingModel
+    source = "def a():\n    x = 1\n    return compute(x)\n"
+    models = [_FindingModel(category="correctness", severity="high", message="m",
+                            file="a.py", line=999, code_quote="return compute(x)")]
+    out = _to_findings(models, default_file="a.py", sources={"a.py": source})
+    assert out[0].line == 3   # реальный номер вместо выдуманного 999
+
+
+def test_to_findings_keeps_model_line_when_quote_absent():
+    from reviewer.agent.analyzer import _to_findings, _FindingModel
+    models = [_FindingModel(category="correctness", severity="high", message="m",
+                            file="a.py", line=7)]
+    out = _to_findings(models, default_file="a.py", sources={"a.py": "x\ny\n"})
+    assert out[0].line == 7   # нет code_quote -> номер модели не трогаем
+
+
+def test_to_findings_grounding_is_optional_without_sources():
+    from reviewer.agent.analyzer import _to_findings, _FindingModel
+    models = [_FindingModel(category="correctness", severity="high", message="m",
+                            file="a.py", line=42, code_quote="whatever")]
+    out = _to_findings(models, default_file="a.py")   # sources не передан
+    assert out[0].line == 42   # обратная совместимость
+
+
+# ---------------------------------------------------------------------------
+# Task A3: тест прокидывания sources через analyze
+# ---------------------------------------------------------------------------
+
+def test_analyze_grounds_line_via_code_quote(monkeypatch):
+    from reviewer.agent.analyzer import LLMAnalyzer
+    src = "def a():\n    x = 1\n    return compute(x)\n"
+    unit = ReviewUnit("a.py", ["a.py#a"], "@@ -1,3 +1,3 @@", new_source=src)
+    out_json = ('{"findings": [{"category":"correctness","severity":"high",'
+                '"line":999,"code_quote":"return compute(x)","message":"bug"}]}')
+    prov = FakeProvider([AIMessage(content=out_json)], "SHOULD NOT BE CALLED")
+    deps = _deps()
+    deps.sources = {"a.py": src}
+    a = LLMAnalyzer(prov, max_iterations=2)
+    out = a.analyze(unit, deps)
+    assert len(out) == 1
+    assert out[0].line == 3   # грунтовка сработала, а не 999
+
+
+# ---------------------------------------------------------------------------
+# Task A4: тест наличия code_quote в схемах
+# ---------------------------------------------------------------------------
+
+def test_findings_schema_mentions_code_quote():
+    from reviewer.agent.analyzer import _FINDINGS_SCHEMA, _SYNTH_SCHEMA
+    assert "code_quote" in _FINDINGS_SCHEMA
+    assert "code_quote" in _SYNTH_SCHEMA
+
+
+def test_to_findings_grounds_line_when_model_gave_null():
+    from reviewer.agent.analyzer import _to_findings, _FindingModel
+    source = "def a():\n    x = 1\n    return compute(x)\n"
+    models = [_FindingModel(category="correctness", severity="high", message="m",
+                            file="a.py", line=None, code_quote="return compute(x)")]
+    out = _to_findings(models, default_file="a.py", sources={"a.py": source})
+    assert out[0].line == 3   # грунтовка по цитате дала номер там где модель отдала null
+
+
+# ---------------------------------------------------------------------------
+# Task B1: метод _use_oneshot
+# ---------------------------------------------------------------------------
+
+
+def test_verify_decision_agentic_for_normal_count():
+    """11 находок (> старого порога 10) при agentic -> поштучный путь, не oneshot."""
+    v = LLMVerifier(object(), agentic=True, oneshot_threshold=30, min_severity="high")
+    findings = [_F(i) for i in range(11)]
+    assert v._use_oneshot(findings) is False
+
+
+def test_verify_decision_oneshot_above_hard_cap():
+    """Выше жёсткого потолка -> oneshot (защита от десятков LLM-вызовов)."""
+    v = LLMVerifier(object(), agentic=True, oneshot_threshold=5, min_severity="low")
+    findings = [_F(i) for i in range(11)]
+    assert v._use_oneshot(findings) is True
+
+
+def test_verify_decision_oneshot_when_not_agentic():
+    v = LLMVerifier(object(), agentic=False, oneshot_threshold=30)
+    assert v._use_oneshot([_F(1)]) is True
+
+
+# ---------------------------------------------------------------------------
+# Part C: графово-смежный PR-bundle (Task C2)
+# ---------------------------------------------------------------------------
+
+
+def test_pr_bundle_graph_adjacent_filters_diffs():
+    from types import SimpleNamespace
+    from reviewer.agent.analyzer import _pr_bundle
+
+    class _G:
+        def expand(self, ids, hops=2):
+            return {"b.py#f"}   # current связан только с b.py
+
+    deps = SimpleNamespace(
+        patches={"a.py": "@@ -1 +1 @@\n-x\n+y", "b.py": "@@ -1 +1 @@\n-p\n+q",
+                 "c.py": "@@ -1 +1 @@\n-m\n+n"},
+        sources={}, tool_cache={}, graph=_G(),
+        settings=SimpleNamespace(review_bundle_max_files=50, review_bundle_max_lines=1500,
+                                 review_bundle_graph_adjacent=True),
+    )
+    bundle = _pr_bundle(deps, ["a.py", "b.py", "c.py"],
+                        current_path="a.py", current_node_ids=["a.py#f"])
+    assert "--- b.py ---" in bundle
+    assert "--- c.py ---" not in bundle
+
+
+def test_pr_bundle_fallback_includes_all_without_graph():
+    from types import SimpleNamespace
+    from reviewer.agent.analyzer import _pr_bundle
+    deps = SimpleNamespace(
+        patches={"a.py": "@@ -1 +1 @@\n-x\n+y", "b.py": "@@ -1 +1 @@\n-p\n+q",
+                 "c.py": "@@ -1 +1 @@\n-m\n+n"},
+        sources={}, tool_cache={}, graph=None,
+        settings=SimpleNamespace(review_bundle_max_files=50, review_bundle_max_lines=1500,
+                                 review_bundle_graph_adjacent=True),
+    )
+    bundle = _pr_bundle(deps, ["a.py", "b.py", "c.py"],
+                        current_path="a.py", current_node_ids=["a.py#f"])
+    assert "--- b.py ---" in bundle and "--- c.py ---" in bundle
+
+
+def test_pr_bundle_graph_expand_exception_falls_back_to_all():
+    from types import SimpleNamespace
+    from reviewer.agent.analyzer import _pr_bundle
+
+    class _Boom:
+        def expand(self, ids, hops=2):
+            raise RuntimeError("graph down")
+
+    deps = SimpleNamespace(
+        patches={"a.py": "@@ -1 +1 @@\n-x\n+y", "b.py": "@@ -1 +1 @@\n-p\n+q",
+                 "c.py": "@@ -1 +1 @@\n-m\n+n"},
+        sources={}, tool_cache={}, graph=_Boom(),
+        settings=SimpleNamespace(review_bundle_max_files=50, review_bundle_max_lines=1500,
+                                 review_bundle_graph_adjacent=True),
+    )
+    bundle = _pr_bundle(deps, ["a.py", "b.py", "c.py"],
+                        current_path="a.py", current_node_ids=["a.py#f"])
+    assert "--- b.py ---" in bundle and "--- c.py ---" in bundle   # сбой графа -> все файлы
+
+
+def test_pr_bundle_keeps_signature_changed_file_when_not_adjacent():
+    from types import SimpleNamespace
+    from reviewer.agent.analyzer import _pr_bundle
+
+    class _Empty:
+        def expand(self, ids, hops=2):
+            return set()   # текущий файл ни с чем не связан графово
+
+    deps = SimpleNamespace(
+        patches={"a.py": "@@ -1 +1 @@\n-x\n+y",
+                 "b.py": "@@ -1 +1 @@\n+def foo():",   # изменение сигнатуры
+                 "c.py": "@@ -1 +1 @@\n-m\n+n"},
+        sources={}, tool_cache={}, graph=_Empty(),
+        settings=SimpleNamespace(review_bundle_max_files=50, review_bundle_max_lines=1500,
+                                 review_bundle_graph_adjacent=True),
+    )
+    bundle = _pr_bundle(deps, ["a.py", "b.py", "c.py"],
+                        current_path="a.py", current_node_ids=["a.py#f"])
+    assert "--- b.py ---" in bundle      # файл с изменённой сигнатурой остаётся (impact)
+    assert "--- c.py ---" not in bundle  # несмежный без сигнатур отсекается
+
+
+def test_analyze_system_has_search_budget_rule():
+    from reviewer.agent.prompts import ANALYZE_SYSTEM
+    assert "прицельно" in ANALYZE_SYSTEM
