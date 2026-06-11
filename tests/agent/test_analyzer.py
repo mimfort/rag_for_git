@@ -1296,3 +1296,13 @@ def test_analyze_grounds_line_via_code_quote(monkeypatch):
     out = a.analyze(unit, deps)
     assert len(out) == 1
     assert out[0].line == 3   # грунтовка сработала, а не 999
+
+
+# ---------------------------------------------------------------------------
+# Task A4: тест наличия code_quote в схемах
+# ---------------------------------------------------------------------------
+
+def test_findings_schema_mentions_code_quote():
+    from reviewer.agent.analyzer import _FINDINGS_SCHEMA, _SYNTH_SCHEMA
+    assert "code_quote" in _FINDINGS_SCHEMA
+    assert "code_quote" in _SYNTH_SCHEMA
