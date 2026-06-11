@@ -84,3 +84,8 @@ def test_review_bundle_max_lines_default():
 def test_max_tool_result_chars_default():
     s = Settings(_env_file=None)
     assert s.max_tool_result_chars == 8000
+
+
+def test_bundle_graph_adjacent_default_true():
+    from reviewer.config.settings import Settings
+    assert Settings().review_bundle_graph_adjacent is True
