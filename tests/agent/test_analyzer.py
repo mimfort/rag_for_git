@@ -1380,3 +1380,45 @@ def test_pr_bundle_fallback_includes_all_without_graph():
     bundle = _pr_bundle(deps, ["a.py", "b.py", "c.py"],
                         current_path="a.py", current_node_ids=["a.py#f"])
     assert "--- b.py ---" in bundle and "--- c.py ---" in bundle
+
+
+def test_pr_bundle_graph_expand_exception_falls_back_to_all():
+    from types import SimpleNamespace
+    from reviewer.agent.analyzer import _pr_bundle
+
+    class _Boom:
+        def expand(self, ids, hops=2):
+            raise RuntimeError("graph down")
+
+    deps = SimpleNamespace(
+        patches={"a.py": "@@ -1 +1 @@\n-x\n+y", "b.py": "@@ -1 +1 @@\n-p\n+q",
+                 "c.py": "@@ -1 +1 @@\n-m\n+n"},
+        sources={}, tool_cache={}, graph=_Boom(),
+        settings=SimpleNamespace(review_bundle_max_files=50, review_bundle_max_lines=1500,
+                                 review_bundle_graph_adjacent=True),
+    )
+    bundle = _pr_bundle(deps, ["a.py", "b.py", "c.py"],
+                        current_path="a.py", current_node_ids=["a.py#f"])
+    assert "--- b.py ---" in bundle and "--- c.py ---" in bundle   # сбой графа -> все файлы
+
+
+def test_pr_bundle_keeps_signature_changed_file_when_not_adjacent():
+    from types import SimpleNamespace
+    from reviewer.agent.analyzer import _pr_bundle
+
+    class _Empty:
+        def expand(self, ids, hops=2):
+            return set()   # текущий файл ни с чем не связан графово
+
+    deps = SimpleNamespace(
+        patches={"a.py": "@@ -1 +1 @@\n-x\n+y",
+                 "b.py": "@@ -1 +1 @@\n+def foo():",   # изменение сигнатуры
+                 "c.py": "@@ -1 +1 @@\n-m\n+n"},
+        sources={}, tool_cache={}, graph=_Empty(),
+        settings=SimpleNamespace(review_bundle_max_files=50, review_bundle_max_lines=1500,
+                                 review_bundle_graph_adjacent=True),
+    )
+    bundle = _pr_bundle(deps, ["a.py", "b.py", "c.py"],
+                        current_path="a.py", current_node_ids=["a.py#f"])
+    assert "--- b.py ---" in bundle      # файл с изменённой сигнатурой остаётся (impact)
+    assert "--- c.py ---" not in bundle  # несмежный без сигнатур отсекается
