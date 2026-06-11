@@ -635,9 +635,7 @@ class LLMVerifier(_LLMPhase):
             if policy is None:
                 return list(findings)
             return [f for f in findings if policy.gate(f)]
-        if len(findings) > self.oneshot_threshold:
-            return self._verify_oneshot(findings, deps)
-        if not self.agentic:
+        if self._use_oneshot(findings):
             return self._verify_oneshot(findings, deps)
         return [f for f in findings if self._verify_one(f, deps)]
 
@@ -660,6 +658,17 @@ class LLMVerifier(_LLMPhase):
             + len(_VERDICT_ONE_SCHEMA)
             for f in findings if self._needs_check(f))
         return per_finding // 4
+
+    def _use_oneshot(self, findings: list[Finding]) -> bool:
+        """Решение: oneshot (один общий промпт) vs agentic (поштучно).
+
+        Агентный путь — основной. Oneshot выбираем только как fallback:
+        не-agentic режим либо находок больше жёсткого потолка oneshot_threshold
+        (защита от десятков LLM-вызовов на патологически больших PR).
+        Бюджет токенов проверяется отдельно в _budget_exceeded."""
+        if not self.agentic:
+            return True
+        return len(findings) > self.oneshot_threshold
 
     def _budget_exceeded(self, findings: list[Finding], deps: Deps) -> bool:
         if self.max_verify_tokens <= 0:

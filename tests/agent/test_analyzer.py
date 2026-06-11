@@ -1315,3 +1315,27 @@ def test_to_findings_grounds_line_when_model_gave_null():
                             file="a.py", line=None, code_quote="return compute(x)")]
     out = _to_findings(models, default_file="a.py", sources={"a.py": source})
     assert out[0].line == 3   # грунтовка по цитате дала номер там где модель отдала null
+
+
+# ---------------------------------------------------------------------------
+# Task B1: метод _use_oneshot
+# ---------------------------------------------------------------------------
+
+
+def test_verify_decision_agentic_for_normal_count():
+    """11 находок (> старого порога 10) при agentic -> поштучный путь, не oneshot."""
+    v = LLMVerifier(object(), agentic=True, oneshot_threshold=30, min_severity="high")
+    findings = [_F(i) for i in range(11)]
+    assert v._use_oneshot(findings) is False
+
+
+def test_verify_decision_oneshot_above_hard_cap():
+    """Выше жёсткого потолка -> oneshot (защита от десятков LLM-вызовов)."""
+    v = LLMVerifier(object(), agentic=True, oneshot_threshold=5, min_severity="low")
+    findings = [_F(i) for i in range(11)]
+    assert v._use_oneshot(findings) is True
+
+
+def test_verify_decision_oneshot_when_not_agentic():
+    v = LLMVerifier(object(), agentic=False, oneshot_threshold=30)
+    assert v._use_oneshot([_F(1)]) is True
