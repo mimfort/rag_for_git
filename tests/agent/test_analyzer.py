@@ -1306,3 +1306,12 @@ def test_findings_schema_mentions_code_quote():
     from reviewer.agent.analyzer import _FINDINGS_SCHEMA, _SYNTH_SCHEMA
     assert "code_quote" in _FINDINGS_SCHEMA
     assert "code_quote" in _SYNTH_SCHEMA
+
+
+def test_to_findings_grounds_line_when_model_gave_null():
+    from reviewer.agent.analyzer import _to_findings, _FindingModel
+    source = "def a():\n    x = 1\n    return compute(x)\n"
+    models = [_FindingModel(category="correctness", severity="high", message="m",
+                            file="a.py", line=None, code_quote="return compute(x)")]
+    out = _to_findings(models, default_file="a.py", sources={"a.py": source})
+    assert out[0].line == 3   # грунтовка по цитате дала номер там где модель отдала null
