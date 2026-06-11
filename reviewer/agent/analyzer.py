@@ -431,6 +431,7 @@ class _FindingModel(BaseModel):
     file: str | None = None
     severity: str = Field(description="low|medium|high|critical")
     line: int | None = None
+    code_quote: str | None = None
     message: str
     suggestion: str | None = None
     fix: _Fix | None = None
@@ -443,17 +444,24 @@ class _SynthDecision(BaseModel):
     keep: list[int] = Field(default_factory=list)
     add: list[_FindingModel] = Field(default_factory=list)
 
-def _to_findings(models, default_file: str | None) -> list[Finding]:
+def _to_findings(models, default_file: str | None,
+                 sources: dict[str, str] | None = None) -> list[Finding]:
     """Преобразовать распарсенные модели в Finding. file берётся из модели либо default.
 
     Если default_file=None (синтез) и модель не указала file — находку пропускаем:
-    кросс-файловую находку без файла нельзя достоверно локализовать, а приписывать
-    её к случайному файлу — источник ложных file:line в сводке."""
+    кросс-файловую находку без файла нельзя достоверно локализовать.
+    Если передан sources и модель дала code_quote — номер строки грунтуем по реальному
+    коду (модель часто путает номера); иначе оставляем line как есть."""
     out: list[Finding] = []
     for f in models:
         file = f.file or default_file
         if not file:
             continue
+        line = f.line
+        if sources is not None:
+            resolved = _resolve_line(getattr(f, "code_quote", None), sources.get(file))
+            if resolved is not None:
+                line = resolved
         fs = f.fix.start_line if f.fix else None
         fe = f.fix.end_line if f.fix else None
         rp = f.fix.replacement if f.fix else None
@@ -462,7 +470,7 @@ def _to_findings(models, default_file: str | None) -> list[Finding]:
         out.append(Finding(
             category=f.category,
             severity=(f.severity if f.severity in _VALID_SEVERITY else "medium"),
-            file=file, line=f.line, side="RIGHT", message=f.message,
+            file=file, line=line, side="RIGHT", message=f.message,
             suggestion=f.suggestion, confidence=f.confidence,
             fix_start=fs, fix_end=fe, replacement=rp))
     return out

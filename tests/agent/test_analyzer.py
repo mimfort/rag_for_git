@@ -1248,3 +1248,32 @@ def test_resolve_line_empty_inputs():
     assert _resolve_line(None, "x = 1") is None
     assert _resolve_line("x = 1", None) is None
     assert _resolve_line("   ", "x = 1") is None
+
+
+# ---------------------------------------------------------------------------
+# Task A2: тесты code_quote + грунтовка в _to_findings
+# ---------------------------------------------------------------------------
+
+def test_to_findings_grounds_line_from_code_quote():
+    from reviewer.agent.analyzer import _to_findings, _FindingModel
+    source = "def a():\n    x = 1\n    return compute(x)\n"
+    models = [_FindingModel(category="correctness", severity="high", message="m",
+                            file="a.py", line=999, code_quote="return compute(x)")]
+    out = _to_findings(models, default_file="a.py", sources={"a.py": source})
+    assert out[0].line == 3   # реальный номер вместо выдуманного 999
+
+
+def test_to_findings_keeps_model_line_when_quote_absent():
+    from reviewer.agent.analyzer import _to_findings, _FindingModel
+    models = [_FindingModel(category="correctness", severity="high", message="m",
+                            file="a.py", line=7)]
+    out = _to_findings(models, default_file="a.py", sources={"a.py": "x\ny\n"})
+    assert out[0].line == 7   # нет code_quote -> номер модели не трогаем
+
+
+def test_to_findings_grounding_is_optional_without_sources():
+    from reviewer.agent.analyzer import _to_findings, _FindingModel
+    models = [_FindingModel(category="correctness", severity="high", message="m",
+                            file="a.py", line=42, code_quote="whatever")]
+    out = _to_findings(models, default_file="a.py")   # sources не передан
+    assert out[0].line == 42   # обратная совместимость
