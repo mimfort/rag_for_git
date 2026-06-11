@@ -300,13 +300,18 @@ def _pr_bundle_static(deps, changed_paths: list[str]) -> str:
     return "\n\n".join(parts)
 
 
-def _pr_bundle(deps, changed_paths: list[str], current_path: str | None = None) -> str:
+def _pr_bundle(deps, changed_paths: list[str], current_path: str | None = None,
+               current_node_ids: list[str] | None = None) -> str:
     """Компактный обзор PR для предзагрузки в промпт: диффы изменённых файлов
     (кроме current_path), изменённые сигнатуры и карты сигнатур модулей.
 
     Диффы режутся по числу файлов и суммарному капу строк;
     остаток помечается (даже если в кап не влез ни один файл).
     При превышении лимитов приоритет отдаётся файлам с изменёнными сигнатурами.
+    Если задан current_node_ids и включён флаг review_bundle_graph_adjacent —
+    в диффы включаются только файлы, графово смежные с текущим (callers/callees),
+    а также файлы с изменёнными сигнатурами. Фолбэк (нет графа / нет node_ids /
+    synthesize без current_path) — прежнее поведение (все файлы).
     Path-независимая часть кэшируется в deps.tool_cache."""
     patches = getattr(deps, "patches", None) or {}
     settings = getattr(deps, "settings", None)
@@ -317,11 +322,29 @@ def _pr_bundle(deps, changed_paths: list[str], current_path: str | None = None) 
     ordered = sorted(changed_paths, key=lambda p: (p not in sig_change_paths, p))
     parts: list[str] = []
 
+    # Графово-смежный bundle: diff-блоки только связанных с текущим файлом модулей
+    # (+ файлы с изменёнными сигнатурами). Срезает раздувание входа на больших PR.
+    # ВНИМАНИЕ: фильтруем ТОЛЬКО diff_ordered; ordered (полный) идёт в _pr_bundle_static,
+    # который кэшируется межфайлово под общим ключом — сужать его нельзя.
+    diff_ordered = ordered
+    graph = getattr(deps, "graph", None)
+    adjacent_only = (getattr(settings, "review_bundle_graph_adjacent", True)
+                     if settings else True)
+    if adjacent_only and graph is not None and current_node_ids and current_path:
+        try:
+            related = graph.expand(list(current_node_ids), hops=2)
+            adj = {nid.split("#", 1)[0] for nid in related}
+        except Exception:
+            adj = None
+        if adj is not None:
+            keep = adj | sig_change_paths | {current_path}
+            diff_ordered = [p for p in ordered if p in keep]
+
     diff_blocks: list[str] = []
     used = 0
     used_files = 0
     omitted = 0
-    for path in ordered:
+    for path in diff_ordered:
         if path == current_path:
             continue
         patch = patches.get(path)
@@ -346,7 +369,7 @@ def _pr_bundle(deps, changed_paths: list[str], current_path: str | None = None) 
     if cache is not None:
         key = ("__pr_bundle_static__",)
         if key not in cache:
-            cache[key] = _pr_bundle_static(deps, ordered)
+            cache[key] = _pr_bundle_static(deps, ordered)   # ВАЖНО: ordered полный!
         static = cache[key]
     else:
         static = _pr_bundle_static(deps, ordered)
@@ -561,7 +584,8 @@ class LLMAnalyzer(_LLMPhase):
         ctx_text = _file_context(unit)
         pr_ctx = _pr_context(deps, deps.changed_paths)
         human = (pr_ctx + "\n\n") if pr_ctx else ""
-        bundle = _pr_bundle(deps, deps.changed_paths, current_path=unit.path)
+        bundle = _pr_bundle(deps, deps.changed_paths, current_path=unit.path,
+                            current_node_ids=unit.node_ids)
         if bundle:
             human += bundle + "\n\n"
         human += f"Файл: {unit.path}\n"

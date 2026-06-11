@@ -1339,3 +1339,44 @@ def test_verify_decision_oneshot_above_hard_cap():
 def test_verify_decision_oneshot_when_not_agentic():
     v = LLMVerifier(object(), agentic=False, oneshot_threshold=30)
     assert v._use_oneshot([_F(1)]) is True
+
+
+# ---------------------------------------------------------------------------
+# Part C: графово-смежный PR-bundle (Task C2)
+# ---------------------------------------------------------------------------
+
+
+def test_pr_bundle_graph_adjacent_filters_diffs():
+    from types import SimpleNamespace
+    from reviewer.agent.analyzer import _pr_bundle
+
+    class _G:
+        def expand(self, ids, hops=2):
+            return {"b.py#f"}   # current связан только с b.py
+
+    deps = SimpleNamespace(
+        patches={"a.py": "@@ -1 +1 @@\n-x\n+y", "b.py": "@@ -1 +1 @@\n-p\n+q",
+                 "c.py": "@@ -1 +1 @@\n-m\n+n"},
+        sources={}, tool_cache={}, graph=_G(),
+        settings=SimpleNamespace(review_bundle_max_files=50, review_bundle_max_lines=1500,
+                                 review_bundle_graph_adjacent=True),
+    )
+    bundle = _pr_bundle(deps, ["a.py", "b.py", "c.py"],
+                        current_path="a.py", current_node_ids=["a.py#f"])
+    assert "--- b.py ---" in bundle
+    assert "--- c.py ---" not in bundle
+
+
+def test_pr_bundle_fallback_includes_all_without_graph():
+    from types import SimpleNamespace
+    from reviewer.agent.analyzer import _pr_bundle
+    deps = SimpleNamespace(
+        patches={"a.py": "@@ -1 +1 @@\n-x\n+y", "b.py": "@@ -1 +1 @@\n-p\n+q",
+                 "c.py": "@@ -1 +1 @@\n-m\n+n"},
+        sources={}, tool_cache={}, graph=None,
+        settings=SimpleNamespace(review_bundle_max_files=50, review_bundle_max_lines=1500,
+                                 review_bundle_graph_adjacent=True),
+    )
+    bundle = _pr_bundle(deps, ["a.py", "b.py", "c.py"],
+                        current_path="a.py", current_node_ids=["a.py#f"])
+    assert "--- b.py ---" in bundle and "--- c.py ---" in bundle
