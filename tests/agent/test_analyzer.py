@@ -1277,3 +1277,22 @@ def test_to_findings_grounding_is_optional_without_sources():
                             file="a.py", line=42, code_quote="whatever")]
     out = _to_findings(models, default_file="a.py")   # sources не передан
     assert out[0].line == 42   # обратная совместимость
+
+
+# ---------------------------------------------------------------------------
+# Task A3: тест прокидывания sources через analyze
+# ---------------------------------------------------------------------------
+
+def test_analyze_grounds_line_via_code_quote(monkeypatch):
+    from reviewer.agent.analyzer import LLMAnalyzer
+    src = "def a():\n    x = 1\n    return compute(x)\n"
+    unit = ReviewUnit("a.py", ["a.py#a"], "@@ -1,3 +1,3 @@", new_source=src)
+    out_json = ('{"findings": [{"category":"correctness","severity":"high",'
+                '"line":999,"code_quote":"return compute(x)","message":"bug"}]}')
+    prov = FakeProvider([AIMessage(content=out_json)], "SHOULD NOT BE CALLED")
+    deps = _deps()
+    deps.sources = {"a.py": src}
+    a = LLMAnalyzer(prov, max_iterations=2)
+    out = a.analyze(unit, deps)
+    assert len(out) == 1
+    assert out[0].line == 3   # грунтовка сработала, а не 999

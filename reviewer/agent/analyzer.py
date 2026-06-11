@@ -585,7 +585,8 @@ class LLMAnalyzer(_LLMPhase):
         if "findings" in data:
             try:
                 parsed = _Findings(**data)
-                return _to_findings(parsed.findings, default_file=unit.path)
+                return _to_findings(parsed.findings, default_file=unit.path,
+                                    sources=deps.sources)
             except Exception:
                 pass
         # Fallback: отдельный invoke со схемой
@@ -600,7 +601,7 @@ class LLMAnalyzer(_LLMPhase):
             parsed = _Findings(**data)
         except Exception:
             parsed = _Findings()
-        return _to_findings(parsed.findings, default_file=unit.path)
+        return _to_findings(parsed.findings, default_file=unit.path, sources=deps.sources)
 
 class LLMVerifier(_LLMPhase):
     """Верификатор находок. agentic=True — поштучная проверка с инструментами;
@@ -804,7 +805,7 @@ class LLMSynthesizer(_LLMPhase):
                 decision = _SynthDecision(**data)
                 n = len(findings)
                 kept = [findings[i] for i in decision.keep if 0 <= i < n]
-                added = _to_findings(decision.add, default_file=None)
+                added = _to_findings(decision.add, default_file=None, sources=deps.sources)
                 if decision.add:
                     missing = sum(1 for m in decision.add if not m.file)
                     if missing:
@@ -828,7 +829,7 @@ class LLMSynthesizer(_LLMPhase):
             return findings   # fail-open: не разобрали -> исходные как есть
         n = len(findings)
         kept = [findings[i] for i in decision.keep if 0 <= i < n]
-        added = _to_findings(decision.add, default_file=None)
+        added = _to_findings(decision.add, default_file=None, sources=deps.sources)
         if decision.add:
             missing = sum(1 for m in decision.add if not m.file)
             if missing:
