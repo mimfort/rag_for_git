@@ -1422,3 +1422,8 @@ def test_pr_bundle_keeps_signature_changed_file_when_not_adjacent():
                         current_path="a.py", current_node_ids=["a.py#f"])
     assert "--- b.py ---" in bundle      # файл с изменённой сигнатурой остаётся (impact)
     assert "--- c.py ---" not in bundle  # несмежный без сигнатур отсекается
+
+
+def test_analyze_system_has_search_budget_rule():
+    from reviewer.agent.prompts import ANALYZE_SYSTEM
+    assert "прицельно" in ANALYZE_SYSTEM
