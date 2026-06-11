@@ -189,6 +189,29 @@ def test_no_retry_on_401_403_422(status):
     assert sleeps == []
 
 
+def test_retry_after_negative_is_clamped_to_zero():
+    """Отрицательный Retry-After не уводит sleep в минус (time.sleep(<0) → ValueError)."""
+    calls = []
+
+    def handler(req):
+        calls.append(req)
+        if len(calls) == 1:
+            return httpx.Response(503, headers={"retry-after": "-5"})
+        return httpx.Response(200, json={
+            "base": {"sha": "aaa", "ref": "main"},
+            "head": {"sha": "bbb"},
+            "title": "PR",
+            "body": "",
+            "draft": False,
+        })
+
+    p, sleeps = make_retry_provider(handler, attempts=3, backoff_base=1.0)
+    pr = p.get_pull_request(1)
+    assert pr.title == "PR"
+    assert all(s >= 0 for s in sleeps)
+    assert sleeps == [0.0]
+
+
 def test_retry_504_then_success():
     calls = []
 

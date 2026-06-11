@@ -88,6 +88,23 @@ def make_assemble_node(deps: Deps):
             new_failed.append(f"existing fingerprints: {type(e).__name__}: {e}")
 
         commentable = {p: commentable_lines(deps.patches.get(p)) for p in deps.changed_paths}
+
+        def _sane_line(fnd):
+            """Реальная строка находки или None, если модель её выдумала.
+
+            Валидируем по факту: файл должен быть среди изменённых в PR, а номер
+            строки — существовать в новой версии файла. Иначе inline-гейт и сводка
+            показали бы несуществующую строку (модели иногда галлюцинируют file:line,
+            напр. для класса из другого модуля)."""
+            if fnd.line is None:
+                return None
+            if fnd.file not in commentable:
+                return None
+            src = (deps.sources or {}).get(fnd.file)
+            if src is not None and not (1 <= fnd.line <= len(src.splitlines())):
+                return None
+            return fnd.line
+
         used: dict[str, list[tuple[int, int]]] = {}
         inline: list[InlineComment] = []
         summary_lines: list[str] = ["## Авто-ревью\n"]
@@ -100,6 +117,7 @@ def make_assemble_node(deps: Deps):
         for f in ranked:
             if len(inline) >= deps.policy.max_comments:
                 break
+            f.line = _sane_line(f)   # выкидываем выдуманные моделью номера строк
             fp = f.fingerprint()
             if fp in existing:
                 # дубликат прошлого прогона — не логируем
@@ -128,7 +146,8 @@ def make_assemble_node(deps: Deps):
                 inline.append(InlineComment(f.file, f.line, f.side, body))
                 _log_published(f, inline=True)
             else:
-                summary_lines.append(f"- `{f.file}:{f.line}` {body}")
+                loc = f"{f.file}:{f.line}" if f.line is not None else f.file
+                summary_lines.append(f"- `{loc}` {body}")
                 _log_published(f, inline=False)
         if inline:
             summary_lines.insert(

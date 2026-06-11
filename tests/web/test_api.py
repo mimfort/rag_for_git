@@ -412,6 +412,15 @@ def test_auth_enabled_wrong_credentials_returns_401(client_with_auth):
     assert resp.status_code == 401
 
 
+def test_auth_enabled_wrong_username_returns_401(client_with_auth):
+    """Неверный логин (но верный пароль) тоже отклоняется — проверяются оба поля."""
+    resp = client_with_auth.get(
+        "/api/runs",
+        auth=("wrong", "secret"),
+    )
+    assert resp.status_code == 401
+
+
 def test_auth_enabled_correct_credentials_returns_200(client_with_auth):
     """Корректные учётные данные пропускают запрос."""
     resp = client_with_auth.get(

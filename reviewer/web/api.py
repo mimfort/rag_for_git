@@ -4,6 +4,7 @@
 """
 from __future__ import annotations
 
+import hmac
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -36,10 +37,17 @@ def _make_auth_dependency(settings: Settings):
                 detail="Требуется аутентификация",
                 headers={"WWW-Authenticate": "Basic"},
             )
-        if (
-            credentials.username != settings.web_admin_user
-            or credentials.password != settings.web_admin_password
-        ):
+        # constant-time сравнение обоих полей: обычный != short-circuit'ит на первом
+        # несовпадении и протекает по таймингу — даёт подбор логина/пароля.
+        user_ok = hmac.compare_digest(
+            credentials.username.encode("utf-8"),
+            settings.web_admin_user.encode("utf-8"),
+        )
+        pass_ok = hmac.compare_digest(
+            credentials.password.encode("utf-8"),
+            settings.web_admin_password.encode("utf-8"),
+        )
+        if not (user_ok and pass_ok):
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Неверные учётные данные",

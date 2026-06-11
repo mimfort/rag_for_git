@@ -390,3 +390,65 @@ def test_draft_skip_records_history(
     mock_history.record_run.assert_called_once()
     run_dict = mock_history.record_run.call_args[0][0]
     assert run_dict["status"] == "draft_skip"
+
+
+# ---------------------------------------------------------------------------
+# Тесты: внешний vcs_provider (eval) не трогает прод base-индекс
+# ---------------------------------------------------------------------------
+
+@patch("reviewer.services.review_service.update_base")
+@patch("reviewer.services.review_service.build_graph")
+@patch("reviewer.services.review_service.chunk_python", side_effect=_fake_chunk)
+@patch("reviewer.services.review_service.build_overlay")
+def test_custom_vcs_provider_does_not_touch_base_index(
+    _mock_overlay: MagicMock,
+    _mock_chunk: MagicMock,
+    mock_graph_build: MagicMock,
+    mock_update_base: MagicMock,
+    settings: Settings,
+    components: MagicMock,
+) -> None:
+    """eval-прогон (передан внешний vcs_provider) не синхронизирует и не затирает
+    base-индекс: снапшот с base_sha='base' не должен подменять прод-SHA/чанки."""
+    components.store.get_index_meta.return_value = "realsha999"   # есть прод-индекс
+    vcs = _vcs_with_files([_changed("a.py")])
+    vcs.get_pull_request.return_value = PullRequest(
+        number=1, base_sha="base", head_sha="head", base_ref="main",
+        title="Eval", body="", draft=False,
+    )
+    mock_graph_build.return_value = _graph_return(summary="OK")
+
+    service = ReviewService(settings, components)
+    service.run_review("owner", "repo", 1, dry_run=True, vcs_provider=vcs)
+
+    mock_update_base.assert_not_called()
+    components.store.set_index_meta.assert_not_called()
+
+
+@patch("reviewer.services.review_service.ReviewHistory")
+@patch("reviewer.services.review_service.build_graph")
+@patch("reviewer.services.review_service.chunk_python", side_effect=_fake_chunk)
+@patch("reviewer.services.review_service.build_overlay")
+def test_owned_history_reset_after_run(
+    _mock_overlay: MagicMock,
+    _mock_chunk: MagicMock,
+    mock_graph_build: MagicMock,
+    mock_history_cls: MagicMock,
+    settings: Settings,
+    components: MagicMock,
+) -> None:
+    """Сервис, владеющий history, после прогона сбрасывает кэш (_history=None) —
+    иначе повторный run_review вернул бы уже закрытый пул и тихо терял историю."""
+    settings.review_history = True
+    mock_history = MagicMock()
+    mock_history_cls.return_value = mock_history
+
+    vcs = _vcs_with_files([_changed("a.py")])
+    mock_graph_build.return_value = _graph_return(summary="OK", published=True)
+
+    service = ReviewService(settings, components)
+    with patch.object(service, "_create_vcs_provider", return_value=vcs):
+        service.run_review("owner", "repo", 1, dry_run=False)
+
+    mock_history.close.assert_called_once()
+    assert service._history is None

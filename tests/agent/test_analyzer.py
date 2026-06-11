@@ -1195,3 +1195,26 @@ def test_run_tool_loop_does_not_truncate_when_under_limit():
     assert len(tool_msgs) == 1
     assert "[...truncated]" not in tool_msgs[0].content
     assert len(tool_msgs[0].content) == 10000
+
+
+def test_synthesize_drops_add_finding_without_file():
+    """add-находка без поля file отбрасывается, а не приписывается к findings[0].file
+    (иначе кросс-файловая находка получает ложный file:line)."""
+    final = ('{"keep": [0], "add": [{"category":"correctness","severity":"high",'
+             '"line":42,"message":"fileless cross-file"}]}')
+    prov = FakeProvider([AIMessage(content="done")], final)
+    s = LLMSynthesizer(prov, max_iterations=2)
+    out = s.synthesize([_finding(severity="high", msg="orig")], _deps())
+    assert [f.message for f in out] == ["orig"]
+
+
+def test_estimate_verify_tokens_agentic_scales_with_findings():
+    """agentic-оценка растёт с числом проверяемых находок и выше oneshot для тех же
+    находок — раньше всегда моделировался один oneshot-промпт (систематический недоучёт)."""
+    v = LLMVerifier(object(), agentic=True, oneshot_threshold=100, min_severity="low")
+    five = [_F(i) for i in range(5)]
+    ten = [_F(i) for i in range(10)]
+    assert v._estimate_verify_tokens(ten) > v._estimate_verify_tokens(five)
+
+    v_oneshot = LLMVerifier(object(), agentic=False, oneshot_threshold=100)
+    assert v._estimate_verify_tokens(five) > v_oneshot._estimate_verify_tokens(five)

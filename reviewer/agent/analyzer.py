@@ -420,10 +420,17 @@ class _SynthDecision(BaseModel):
     keep: list[int] = Field(default_factory=list)
     add: list[_FindingModel] = Field(default_factory=list)
 
-def _to_findings(models, default_file: str) -> list[Finding]:
-    """Преобразовать распарсенные модели в Finding. file берётся из модели либо default."""
+def _to_findings(models, default_file: str | None) -> list[Finding]:
+    """Преобразовать распарсенные модели в Finding. file берётся из модели либо default.
+
+    Если default_file=None (синтез) и модель не указала file — находку пропускаем:
+    кросс-файловую находку без файла нельзя достоверно локализовать, а приписывать
+    её к случайному файлу — источник ложных file:line в сводке."""
     out: list[Finding] = []
     for f in models:
+        file = f.file or default_file
+        if not file:
+            continue
         fs = f.fix.start_line if f.fix else None
         fe = f.fix.end_line if f.fix else None
         rp = f.fix.replacement if f.fix else None
@@ -432,7 +439,7 @@ def _to_findings(models, default_file: str) -> list[Finding]:
         out.append(Finding(
             category=f.category,
             severity=(f.severity if f.severity in _VALID_SEVERITY else "medium"),
-            file=(f.file or default_file), line=f.line, side="RIGHT", message=f.message,
+            file=file, line=f.line, side="RIGHT", message=f.message,
             suggestion=f.suggestion, confidence=f.confidence,
             fix_start=fs, fix_end=fe, replacement=rp))
     return out
@@ -600,12 +607,24 @@ class LLMVerifier(_LLMPhase):
         return [f for f in findings if self._verify_one(f, deps)]
 
     def _estimate_verify_tokens(self, findings: list[Finding]) -> int:
-        """Грубая оценка токенов для verify-промпта (1 токен ≈ 4 символа)."""
-        listing = "\n".join(
-            f"{i}. [{f.category}/{f.severity}] {f.file}:{f.line} {f.message}"
-            for i, f in enumerate(findings))
-        prompt = VERIFY_SYSTEM + "\n" + listing + "\n\n" + _VERDICT_SCHEMA
-        return len(prompt) // 4
+        """Грубая оценка токенов verify-промпта (1 токен ≈ 4 символа).
+
+        Зависит от ветки, которую выберет verify(): общий oneshot-промпт либо
+        agentic — отдельный промпт (со своим системным префиксом) на каждую
+        проверяемую находку. Раньше всегда оценивался oneshot, из-за чего в
+        agentic-режиме бюджет систематически недооценивался (N промптов вместо 1)."""
+        oneshot = len(findings) > self.oneshot_threshold or not self.agentic
+        if oneshot:
+            listing = "\n".join(
+                f"{i}. [{f.category}/{f.severity}] {f.file}:{f.line} {f.message}"
+                for i, f in enumerate(findings))
+            prompt = VERIFY_SYSTEM + "\n" + listing + "\n\n" + _VERDICT_SCHEMA
+            return len(prompt) // 4
+        per_finding = sum(
+            len(VERIFY_SYSTEM) + len(f.message or "") + len(f.file or "")
+            + len(_VERDICT_ONE_SCHEMA)
+            for f in findings if self._needs_check(f))
+        return per_finding // 4
 
     def _budget_exceeded(self, findings: list[Finding], deps: Deps) -> bool:
         if self.max_verify_tokens <= 0:
@@ -754,12 +773,12 @@ class LLMSynthesizer(_LLMPhase):
                 decision = _SynthDecision(**data)
                 n = len(findings)
                 kept = [findings[i] for i in decision.keep if 0 <= i < n]
-                added = _to_findings(decision.add, default_file=findings[0].file)
+                added = _to_findings(decision.add, default_file=None)
                 if decision.add:
                     missing = sum(1 for m in decision.add if not m.file)
                     if missing:
-                        _log.warning("synthesize: %d add-находок без поля file — отнесены к %s",
-                                     missing, findings[0].file)
+                        _log.warning("synthesize: %d add-находок без поля file — пропущены "
+                                     "(нельзя локализовать)", missing)
                 result = kept + added
                 return result or findings   # пусто -> не теряем вход (fail-open)
             except Exception:
@@ -778,11 +797,11 @@ class LLMSynthesizer(_LLMPhase):
             return findings   # fail-open: не разобрали -> исходные как есть
         n = len(findings)
         kept = [findings[i] for i in decision.keep if 0 <= i < n]
-        added = _to_findings(decision.add, default_file=findings[0].file)
+        added = _to_findings(decision.add, default_file=None)
         if decision.add:
             missing = sum(1 for m in decision.add if not m.file)
             if missing:
-                _log.warning("synthesize: %d add-находок без поля file — отнесены к %s",
-                             missing, findings[0].file)
+                _log.warning("synthesize: %d add-находок без поля file — пропущены "
+                             "(нельзя локализовать)", missing)
         result = kept + added
         return result or findings   # пусто -> не теряем вход (fail-open)

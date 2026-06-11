@@ -163,7 +163,10 @@ class ReviewService:
             # Свежесть base-индекса: подтягиваем чанки файлов, изменённых после
             # последней индексации (граф кода обновляется только на reviewer index).
             indexed = self.components.store.get_index_meta("base")
-            if indexed and indexed != prq.base_sha:
+            # base-sync только для реального GitHub-ревью: при внешнем vcs_provider
+            # (eval-снапшоты) синхронизация и set_index_meta затёрли бы прод-индекс
+            # данными снапшота (у снапшота base_sha="base", не настоящий SHA ветки).
+            if vcs_provider is None and indexed and indexed != prq.base_sha:
                 try:
                     diff_files = vcs.compare_files(indexed, prq.base_sha)
                     update_base(
@@ -369,6 +372,10 @@ class ReviewService:
             # store и graph НЕ закрываем — caller (CLI/eval) управляет их жизненным циклом
             if history is not None and self._history_owned:
                 history.close()
+                # Сбрасываем кэш: пул закрыт. Повторный run_review на том же
+                # экземпляре должен пересоздать ReviewHistory, а не вернуть закрытый
+                # (иначе record_run второго и последующих PR тихо падает).
+                self._history = None
             if vcs_provider is None:
                 vcs.close()
 

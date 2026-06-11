@@ -138,7 +138,10 @@ class SnapshotProvider:
         pass
 
     def compare_files(self, base_sha: str, head_sha: str) -> list[ChangedFile]:
-        return self.get_changed_files(0)
+        # Eval не синхронизирует base-индекс (снапшот не относится к реальной ветке).
+        # ReviewService и так пропускает base-sync для внешнего vcs_provider — это
+        # вторая линия защиты от загрязнения прод-индекса before-снапшотами.
+        return []
 
     def close(self) -> None:
         pass

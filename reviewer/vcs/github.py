@@ -44,7 +44,9 @@ class _RetryTransport:
                         wait = self._backoff_base * (2 ** attempt)
                 else:
                     wait = self._backoff_base * (2 ** attempt)
-                self._sleep(min(wait, self._max_wait))
+                # max(0, …): невалидный/отрицательный Retry-After (напр. "-1")
+                # не должен уводить sleep в минус — time.sleep(<0) бросает ValueError.
+                self._sleep(max(0.0, min(wait, self._max_wait)))
         # Исчерпаны попытки — возвращаем последний ответ (raise_for_status сделает своё дело)
         assert response is not None
         return response
