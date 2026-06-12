@@ -12,4 +12,8 @@ MCP-сервер запускается из `.venv` репозитория с `
 локальный marketplace). Скиллы: `/rag-reviewer:review-pr`,
 `/rag-reviewer:performance-review`, `/rag-reviewer:maintainability-review`.
 
-Headless: claude --plugin-dir . -p "/rag-reviewer:review-pr owner/repo#123 --dry-run" --permission-mode bypassPermissions
+Headless:
+
+```bash
+claude --plugin-dir . -p "/rag-reviewer:review-pr owner/repo#123 --dry-run" --permission-mode bypassPermissions
+```
