@@ -40,11 +40,15 @@ of posting.
    - performance: follow the methodology of `../performance-review/SKILL.md`
      (Goal, Method, Severity sections);
    - maintainability: follow `../maintainability-review/SKILL.md`.
+   Give each: the diffs of all units (path + patch), the repo/pr identifiers so
+   they can call the reviewer MCP tools, and the target output language.
    Both must return the same findings JSON schema (category `performance` /
    `maintainability`).
 
 4. **Verify.** Collect all findings into one numbered list. Dispatch one subagent
-   with `references/verify-prompt.md`, the findings list and the diffs. It returns
+   with `references/verify-prompt.md`, the findings list, the diffs, and the
+   repo/pr identifiers so the subagent can call the reviewer MCP tools
+   (`read_file`, `search_code`, `find_callers`, `get_definition`). It returns
    `{"verdicts": [{"index": N, "is_real": true|false}]}`. Drop findings with
    `is_real=false`. If the verifier fails or returns malformed output, KEEP all
    findings (recall-safe).
