@@ -196,3 +196,29 @@ def test_prepare_review_repeated_does_not_close_external_vcs(
     vcs2.close.assert_not_called()
     # Сессия всё ещё существует
     assert ("o/r", 7) in svc._sessions
+
+
+@patch("reviewer.services.review_service.chunk_python", side_effect=_fake_chunk)
+@patch("reviewer.services.review_service.build_overlay")
+def test_prepare_review_repeated_closes_old_internal_vcs(
+    _mock_overlay: MagicMock,
+    _mock_chunk: MagicMock,
+) -> None:
+    """Повторный prepare_review для того же PR БЕЗ vcs_factory (внутренний vcs)
+    fail-soft закрывает провайдер СТАРОЙ сессии — иначе утечка httpx-клиента
+    в долгоживущем сервере. Новый провайдер остаётся открытым в новой сессии."""
+    settings = _settings()
+    components = _components()
+    vcs1 = _fake_vcs()
+    vcs2 = _fake_vcs()
+
+    svc = MCPReviewService(settings, components, vcs_factory=None)
+    with patch.object(
+        svc._review_service, "_create_vcs_provider", side_effect=[vcs1, vcs2],
+    ):
+        svc.prepare_review("o/r", 7)
+        svc.prepare_review("o/r", 7)
+
+    vcs1.close.assert_called_once()
+    vcs2.close.assert_not_called()
+    assert ("o/r", 7) in svc._sessions

@@ -39,17 +39,28 @@ class MCPReviewService:
     def prepare_review(self, repo: str, pr: int) -> dict:
         """Подготовить ревью PR: получить юниты, policy, patches; сохранить сессию.
 
-        При повторном вызове для того же (repo, pr) сессия перезаписывается.
-        Внутренне созданный VCS (без vcs_factory) при перезаписи не закрывается —
-        жизненный цикл VCS управляется вызывающим кодом через vcs_factory или
-        finalize-методом (Task 6).
+        При повторном вызове для того же (repo, pr) сессия перезаписывается;
+        внутренне созданный VCS старой сессии (без vcs_factory) при этом
+        fail-soft закрывается — иначе httpx-клиент утёк бы в долгоживущем
+        сервере. Внешний VCS (через vcs_factory) закрывает вызывающий.
         """
         owner, name = repo.split("/", 1)
+        old = self._sessions.get((repo, pr))
         vcs = self._vcs_factory(owner, name) if self._vcs_factory else None
         prepared = self._review_service.prepare(owner, name, pr, vcs_provider=vcs)
         ctx = self._tool_context(prepared)
         tools = {t.name: t for t in make_tools(ctx)}
         self._sessions[(repo, pr)] = _Session(prepared, tools)
+        # Старую сессию прибираем ПОСЛЕ успешного prepare: при сбое подготовки
+        # она остаётся рабочей. Закрываем только внутренне созданный провайдер.
+        if old is not None and self._vcs_factory is None:
+            try:
+                old.prepared.vcs.close()
+            except Exception:
+                log.warning(
+                    "Не удалось закрыть VCS-провайдер старой сессии %s#%s",
+                    repo, pr, exc_info=True,
+                )
         return self._prepared_payload(prepared)
 
     def _tool_context(self, prepared: PreparedReview) -> ToolContext:
