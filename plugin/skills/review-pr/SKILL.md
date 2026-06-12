@@ -20,13 +20,25 @@ of posting.
    - `pr`: `{number, title, body, base_sha, head_sha, base_ref, draft}`
    - `policy`: `{severity_threshold, min_confidence, max_comments, categories, ignore, output_language}`
    - `units`: list of `{path, patch, commentable_right, commentable_left}`
+   - `task_board`: `{type, mcp, key_pattern}` or null — task board config from `.review.yml`
+   - `task_keys`: `{primary, others}` or null — task keys extracted from the PR by the server
    - `skipped_paths`, `skip_drafts`, `suggestions_mode`
 
    If `pr.draft` is true and `skip_drafts` is true, stop and tell the user.
    Note `policy.output_language` — ALL finding messages, suggestions and the summary
    MUST be written in that language.
 
-2. **Analyze (fan-out).** For each unit in `units`, dispatch a subagent (Task tool,
+2. **Task context (optional).** Only if `task_board` is non-null. Resolve the task key: an
+   explicit key in `$ARGUMENTS` wins; otherwise use `task_keys.primary`. If no key is available,
+   skip this step and note in the summary that no task key was found.
+   With a key, read the task using the playbook for `task_board.type`
+   (`references/task-context-yougile.md` or `references/task-context-jira.md`): call the board MCP
+   server named by `task_board.mcp` and build a `TaskBrief`
+   `{key, title, description, criteria[], status, url, links[]}`.
+   If the board MCP is not connected, the tool errors, or the task is not found: skip the
+   requirements dimension and note the reason in the summary — NEVER abort the review.
+
+3. **Analyze (fan-out).** For each unit in `units`, dispatch a subagent (Task tool,
    run independent subagents in parallel; batch units if there are more than ~10) with:
    - the contents of `references/analyze-prompt.md` (read it once, include verbatim);
    - the unit's `path` and `patch`, the PR `title`/`body`;
@@ -36,16 +48,19 @@ of posting.
    - the target output language.
    Each subagent returns a JSON object `{"findings": [...]}` (schema in the prompt).
 
-3. **Dimensions (parallel with step 2).** Dispatch two whole-diff subagents:
+4. **Dimensions (parallel with step 3).** Dispatch whole-diff subagents:
    - performance: follow the methodology of `../performance-review/SKILL.md`
      (Goal, Method, Severity sections);
-   - maintainability: follow `../maintainability-review/SKILL.md`.
-   Give each: the diffs of all units (path + patch), the repo/pr identifiers so
-   they can call the reviewer MCP tools, and the target output language.
-   Both must return the same findings JSON schema (category `performance` /
-   `maintainability`).
+   - maintainability: follow `../maintainability-review/SKILL.md`;
+   - requirements (ONLY if a `TaskBrief` was built in step 2): dispatch one subagent with
+     `references/requirements-prompt.md`, the diffs of all units (path + patch), the `TaskBrief`,
+     the repo/pr identifiers (so it can call the reviewer MCP tools), and the target output
+     language. It returns the same findings JSON schema with category `requirements`.
+   Give the performance/maintainability subagents: the diffs of all units (path + patch), the
+   repo/pr identifiers so they can call the reviewer MCP tools, and the target output language.
+   They must return the same findings JSON schema (category `performance` / `maintainability`).
 
-4. **Verify.** Collect all findings into one numbered list. Dispatch one subagent
+5. **Verify.** Collect all findings into one numbered list. Dispatch one subagent
    with `references/verify-prompt.md`, the findings list, the diffs, and the
    repo/pr identifiers so the subagent can call the reviewer MCP tools
    (`read_file`, `search_code`, `find_callers`, `get_definition`). It returns
@@ -53,8 +68,10 @@ of posting.
    `is_real=false`. If the verifier fails or returns malformed output, KEEP all
    findings (recall-safe).
 
-5. **Publish.** Compose a short review summary (2-5 sentences, in
+6. **Publish.** Compose a short review summary (2-5 sentences, in
    `policy.output_language`): what the PR does, overall assessment, key risks.
+   If a task was read, state whether the PR meets the task's requirements; if the task context was
+   requested but unavailable (no key, board MCP not connected, task not found), say so briefly.
    Mention files that were not analyzed: failed subagents and `skipped_paths`
    from the prepare payload. Call `publish_review(repo, pr, summary, findings,
    dry_run)`. Report to the user: posted/dry-run, inline count, and the report
