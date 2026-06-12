@@ -23,6 +23,7 @@ from reviewer.index.chunker import chunk_python
 from reviewer.index.freshness import build_overlay, update_base
 from reviewer.web.history import ReviewHistory
 from reviewer.agent.state import ReviewUnit
+from reviewer.services.task_keys import extract_task_keys
 
 log = logging.getLogger(__name__)
 
@@ -63,6 +64,8 @@ class PreparedReview:
     overlay_ref: str                     # "pr:<n>"
     vcs: VCSProvider
     changed_status: dict[str, str]       # path -> статус файла (modified/added/removed)
+    task_board: dict | None = None       # конфиг доски из policy (прокидывается в payload)
+    task_keys: dict | None = None        # {"primary", "others"} или None, если task_board выкл.
 
 
 class ReviewService:
@@ -212,6 +215,18 @@ class ReviewService:
                 vcs.get_file_at_ref(".review.yml", prq.base_ref),
             )
 
+            task_board = policy.task_board
+            task_keys = (
+                extract_task_keys(
+                    task_board.get("key_pattern"),
+                    prq.title,
+                    prq.body,
+                    prq.head_ref,
+                )
+                if task_board
+                else None
+            )
+
             changed_status = {f.path: f.status for f in files}
 
             return PreparedReview(
@@ -226,6 +241,8 @@ class ReviewService:
                 overlay_ref=f"pr:{pr_number}",
                 vcs=vcs,
                 changed_status=changed_status,
+                task_board=task_board,
+                task_keys=task_keys,
             )
         except Exception:
             # При сбое подготовки чистим возможный недостроенный overlay pr:N —
