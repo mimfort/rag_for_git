@@ -98,15 +98,6 @@ def _window(source: str, line: int, radius: int = 25) -> str:
     return "\n".join(f"{i + 1}|{ln}" for i, ln in enumerate(lines[start:end], start))
 
 
-def _resolve_line(quote: str | None, source: str | None) -> int | None:
-    """Настоящий 1-based номер строки по цитате кода (или None при неудаче).
-
-    Тонкая обёртка над :func:`~reviewer.agent.assemble.ground_line` с исходной
-    сигнатурой (quote, source) → int|None, сохранённой для обратной совместимости.
-    """
-    return ground_line(source, quote, None)
-
-
 _FILE_FULL_LIMIT = 400      # ≤ этого числа строк показываем файл целиком
 _WINDOWS_LINE_CAP = 1500    # суммарный кап строк во всех окнах
 

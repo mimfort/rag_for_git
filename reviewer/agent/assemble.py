@@ -8,14 +8,11 @@ LangGraph, так и для MCP-тула ``publish_review``.
 """
 from __future__ import annotations
 
-import logging
 from dataclasses import dataclass, field
 
 from reviewer.agent.dedup import _SEVERITY_RANK
 from reviewer.vcs.base import Finding, InlineComment
 from reviewer.vcs.diff import commentable_lines
-
-_log = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -97,13 +94,49 @@ class AssembledReview:
     inline_comments: list[InlineComment]
     summary: str                      # markdown-сводка (всегда с заголовком «## Авто-ревью»)
     skipped_existing: int = 0         # отфильтровано по fingerprint
-    moved_to_summary: int = 0
-    capped: int = 0
+    moved_to_summary: int = 0         # в сводке, т.к. inline невозможен (строка вне диффа/файла)
+    capped: int = 0                   # в сводке только из-за капа max_comments
     findings_rows: list[dict] = field(default_factory=list)
     """Строки для review_findings: file, line, category, severity, confidence,
     fingerprint, message, is_real, published, inline.
     Включает все обработанные находки (is_real=True); отфильтрованные по fingerprint —
     с inline=False, published=False."""
+
+
+# ---------------------------------------------------------------------------
+# Форматирование комментария и строки истории
+# ---------------------------------------------------------------------------
+
+def _loc(f: Finding) -> str:
+    """Локация для сводки: ``file:line`` или просто ``file``, если строка неизвестна."""
+    return f"{f.file}:{f.line}" if f.line is not None else f.file
+
+
+def _format_body(f: Finding, fp: str, *, suggestion_block: str = "") -> str:
+    """Тело комментария: заголовок [категория/severity], текст, опциональный
+    suggestion-блок и скрытый fingerprint-маркер для идемпотентности."""
+    body = f"**[{f.category}/{f.severity}]** {f.message}"
+    if f.suggestion:
+        body += f"\n\n💡 _Предложение:_ {f.suggestion}"
+    body += suggestion_block
+    body += f"\n<!-- ai-review:{fp} -->"
+    return body
+
+
+def _row(f: Finding, fp: str, *, published: bool, inline: bool) -> dict:
+    """Строка для таблицы review_findings (формат _record_history в review_service)."""
+    return {
+        "file": f.file,
+        "line": f.line,
+        "category": f.category,
+        "severity": f.severity,
+        "confidence": f.confidence,
+        "fingerprint": fp,
+        "message": (f.message or "")[:500],
+        "is_real": True,
+        "published": published,
+        "inline": inline,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -160,6 +193,12 @@ def assemble_review(
        - Останавливаемся при достижении ``max_comments`` inline-замечаний;
          оставшиеся уходят в сводку.
 
+    .. warning::
+       Функция МУТИРУЕТ входные находки: ``f.line`` перезаписывается результатом
+       ``_sane_line`` (галлюцинированные координаты обнуляются). Вызывающий может
+       пересчитывать ``f.fingerprint()`` после вызова — он совпадёт с fingerprint
+       в ``findings_rows`` и в маркерах комментариев.
+
     Parameters
     ----------
     verified:
@@ -208,106 +247,45 @@ def assemble_review(
         if fp in existing_fps:
             # Дубликат прошлого прогона — не логируем, добавляем в findings_rows как неопубликованный.
             skipped_existing += 1
-            findings_rows.append({
-                "file": f.file,
-                "line": f.line,
-                "category": f.category,
-                "severity": f.severity,
-                "confidence": f.confidence,
-                "fingerprint": fp,
-                "message": (f.message or "")[:500],
-                "is_real": True,
-                "published": False,
-                "inline": False,
-            })
-            continue
-
-        if len(inline) >= max_comments:
-            # Кап достигнут — оставшееся уходит в сводку.
-            loc = f"{f.file}:{f.line}" if f.line is not None else f.file
-            body = f"**[{f.category}/{f.severity}]** {f.message}"
-            if f.suggestion:
-                body += f"\n\n💡 _Предложение:_ {f.suggestion}"
-            body += f"\n<!-- ai-review:{fp} -->"
-            summary_lines.append(f"- `{loc}` {body}")
-            capped += 1
-            findings_rows.append({
-                "file": f.file,
-                "line": f.line,
-                "category": f.category,
-                "severity": f.severity,
-                "confidence": f.confidence,
-                "fingerprint": fp,
-                "message": (f.message or "")[:500],
-                "is_real": True,
-                "published": True,
-                "inline": False,
-            })
+            findings_rows.append(_row(f, fp, published=False, inline=False))
             continue
 
         allowed = commentable.get(f.file, {"RIGHT": set(), "LEFT": set()})
+
+        if len(inline) >= max_comments:
+            # Кап достигнут — излишек уходит в сводку.
+            summary_lines.append(f"- `{_loc(f)}` {_format_body(f, fp)}")
+            if f.line is not None and f.line in allowed.get(f.side, set()):
+                capped += 1            # в сводке только из-за капа
+            else:
+                moved_to_summary += 1  # ушла бы в сводку и без капа
+            findings_rows.append(_row(f, fp, published=True, inline=False))
+            continue
+
         right = allowed.get("RIGHT", set())
-        body = f"**[{f.category}/{f.severity}]** {f.message}"
-        if f.suggestion:
-            body += f"\n\n💡 _Предложение:_ {f.suggestion}"
 
         # 1) applyable ```suggestion — только при безопасных инвариантах
         if _can_apply(f, right, used.get(f.file, []), suggestions_mode):
             repl = f.replacement.rstrip("\n")
-            body += f"\n\n```suggestion\n{repl}\n```"
-            body += f"\n<!-- ai-review:{fp} -->"
+            body = _format_body(f, fp, suggestion_block=f"\n\n```suggestion\n{repl}\n```")
             used.setdefault(f.file, []).append((f.fix_start, f.fix_end))
             if f.fix_start < f.fix_end:   # многострочный диапазон
                 inline.append(InlineComment(f.file, f.fix_end, "RIGHT", body,
                                             start_line=f.fix_start, start_side="RIGHT"))
             else:                          # одна строка
                 inline.append(InlineComment(f.file, f.fix_end, "RIGHT", body))
-            findings_rows.append({
-                "file": f.file,
-                "line": f.line,
-                "category": f.category,
-                "severity": f.severity,
-                "confidence": f.confidence,
-                "fingerprint": fp,
-                "message": (f.message or "")[:500],
-                "is_real": True,
-                "published": True,
-                "inline": True,
-            })
+            findings_rows.append(_row(f, fp, published=True, inline=True))
             continue
 
         # 2) Обычный inline (текстовый совет) на строке диффа, иначе — в сводку.
-        body += f"\n<!-- ai-review:{fp} -->"
+        body = _format_body(f, fp)
         if f.line is not None and f.line in allowed.get(f.side, set()):
             inline.append(InlineComment(f.file, f.line, f.side, body))
-            findings_rows.append({
-                "file": f.file,
-                "line": f.line,
-                "category": f.category,
-                "severity": f.severity,
-                "confidence": f.confidence,
-                "fingerprint": fp,
-                "message": (f.message or "")[:500],
-                "is_real": True,
-                "published": True,
-                "inline": True,
-            })
+            findings_rows.append(_row(f, fp, published=True, inline=True))
         else:
-            loc = f"{f.file}:{f.line}" if f.line is not None else f.file
-            summary_lines.append(f"- `{loc}` {body}")
+            summary_lines.append(f"- `{_loc(f)}` {body}")
             moved_to_summary += 1
-            findings_rows.append({
-                "file": f.file,
-                "line": f.line,
-                "category": f.category,
-                "severity": f.severity,
-                "confidence": f.confidence,
-                "fingerprint": fp,
-                "message": (f.message or "")[:500],
-                "is_real": True,
-                "published": True,
-                "inline": False,
-            })
+            findings_rows.append(_row(f, fp, published=True, inline=False))
 
     if inline:
         summary_lines.insert(

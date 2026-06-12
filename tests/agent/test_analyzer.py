@@ -1221,33 +1221,34 @@ def test_estimate_verify_tokens_agentic_scales_with_findings():
 
 
 # ---------------------------------------------------------------------------
-# Task A1: тесты _resolve_line
+# Task A1: тесты грунтовки строки по цитате (ground_line, бывш. _resolve_line)
 # ---------------------------------------------------------------------------
 
-def test_resolve_line_unique_exact_match():
-    from reviewer.agent.analyzer import _resolve_line
+def test_ground_line_unique_exact_match():
+    from reviewer.agent.assemble import ground_line
     source = "def a():\n    x = 1\n    return compute(x)\n"
-    assert _resolve_line("return compute(x)", source) == 3
-    assert _resolve_line("    return compute(x)", source) == 3   # ведущие пробелы игнорируются
+    assert ground_line(source, "return compute(x)", None) == 3
+    # ведущие пробелы игнорируются
+    assert ground_line(source, "    return compute(x)", None) == 3
 
 
-def test_resolve_line_ambiguous_returns_none():
-    from reviewer.agent.analyzer import _resolve_line
+def test_ground_line_ambiguous_returns_fallback():
+    from reviewer.agent.assemble import ground_line
     source = "x = 1\nx = 1\n"
-    assert _resolve_line("x = 1", source) is None   # 2 совпадения -> не угадываем
+    assert ground_line(source, "x = 1", None) is None   # 2 совпадения -> не угадываем
 
 
-def test_resolve_line_substring_fallback_unique():
-    from reviewer.agent.analyzer import _resolve_line
+def test_ground_line_substring_fallback_unique():
+    from reviewer.agent.assemble import ground_line
     source = "alpha\n    result = compute(x) + 1\nbeta\n"
-    assert _resolve_line("compute(x)", source) == 2   # уникальная подстрока
+    assert ground_line(source, "compute(x)", None) == 2   # уникальная подстрока
 
 
-def test_resolve_line_empty_inputs():
-    from reviewer.agent.analyzer import _resolve_line
-    assert _resolve_line(None, "x = 1") is None
-    assert _resolve_line("x = 1", None) is None
-    assert _resolve_line("   ", "x = 1") is None
+def test_ground_line_empty_inputs():
+    from reviewer.agent.assemble import ground_line
+    assert ground_line("x = 1", None, None) is None
+    assert ground_line(None, "x = 1", None) is None
+    assert ground_line("x = 1", "   ", None) is None
 
 
 # ---------------------------------------------------------------------------

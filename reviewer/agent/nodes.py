@@ -75,6 +75,8 @@ def make_assemble_node(deps: Deps):
         # Подхватываем VerdictLog, если подключён: логируем inline vs summary по findings_rows.
         v = getattr(deps, "verdicts", None)
         if v:
+            # Контракт assemble_review: она мутирует f.line входных находок, поэтому
+            # f.fingerprint() здесь — пост-мутации и совпадает с row["fingerprint"].
             fp_to_finding = {f.fingerprint(): f for f in state["verified"]}
             for row in result.findings_rows:
                 if not row.get("published"):
