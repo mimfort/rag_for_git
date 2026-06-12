@@ -1,6 +1,6 @@
 """Сервисный слой MCP-сервера: prepare/search/publish поверх Components.
 
-Состояние сессии (PreparedReview + инструменты) живёт в процессе сервера
+Состояние сессии (PreparedReview + ToolContext) живёт в процессе сервера
 между вызовами prepare_review и publish_review одного PR.
 """
 import logging
@@ -119,7 +119,10 @@ class MCPReviewService:
         return self._invoke_tool(repo, pr, "get_related_symbols", {"node_id": node_id})
 
     def read_file(self, repo: str, pr: int, path: str, start: int = 1, end: int = 400) -> str:
-        """Точный исходник файла на head-ревизии PR, строки [start..end]."""
+        """Точный исходник файла на head-ревизии PR, строки [start..end].
+
+        Дефолты start/end синхронизированы с code_tools.read_file.
+        """
         return self._invoke_tool(repo, pr, "read_file", {"path": path, "start": start, "end": end})
 
     def get_definition(self, repo: str, pr: int, symbol: str) -> str:

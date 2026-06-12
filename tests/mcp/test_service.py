@@ -278,3 +278,6 @@ def test_search_code_repeated_call_returns_result_not_stub(
     assert result1 == result2, (
         f"Ожидали одинаковые результаты, получили:\n  result1={result1!r}\n  result2={result2!r}"
     )
+    # Реальный cache-hit: источник дёрнут ровно один раз (prepare_review retriever
+    # не трогает) — без этого ассерта регрессия «кэш живёт сессию» не ловится
+    assert svc.components.retriever.retrieve.call_count == 1
