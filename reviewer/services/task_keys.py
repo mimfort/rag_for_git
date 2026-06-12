@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import re
+from typing import TypedDict
 
 log = logging.getLogger(__name__)
 
@@ -15,12 +16,17 @@ log = logging.getLogger(__name__)
 DEFAULT_KEY_PATTERN = r"[A-Z]+-\d+"
 
 
+class TaskKeys(TypedDict):
+    primary: str | None
+    others: list[str]
+
+
 def extract_task_keys(
     pattern: str | None,
     title: str | None,
     body: str | None,
     branch: str | None,
-) -> dict:
+) -> TaskKeys:
     """Извлечь ключи задачи.
 
     Прецеденция источников: ``title`` → ``body`` → ``branch``. ``primary`` —
