@@ -205,7 +205,7 @@ git commit -m "refactor(services): извлечён ReviewService.prepare() -> P
 
 ```python
 from reviewer.agent.assemble import AssembledReview, assemble_review, ground_line
-from reviewer.llm.base import Finding
+from reviewer.vcs.base import Finding
 
 PATCH = "@@ -1,3 +1,4 @@\n line\n+x = 1\n line2\n line3"
 
@@ -268,8 +268,7 @@ Expected: FAIL (`ModuleNotFoundError: reviewer.agent.assemble`)
 """Сборка итогового ревью из верифицированных находок (без I/O)."""
 from dataclasses import dataclass, field
 
-from reviewer.llm.base import Finding
-from reviewer.vcs.base import InlineComment
+from reviewer.vcs.base import Finding, InlineComment
 from reviewer.vcs.diff import commentable_lines
 
 
@@ -701,7 +700,7 @@ def _finding_from_dict(d: dict) -> Finding:
 (см. `reviewer/web/history.py:73–161`; как `_record_history` в `review_service.py`,
 но `usage`/`total_cost`/`steps` → `None`, `model="claude-code"`; findings-строки —
 из `asm.findings_rows`). Импорты: `from reviewer.agent.assemble import assemble_review, ground_line`,
-`from reviewer.agent.dedup import dedup_findings`, `from reviewer.llm.base import Finding`.
+`from reviewer.agent.dedup import dedup_findings`, `from reviewer.vcs.base import Finding`.
 
 - [ ] **Step 4: Прогнать**
 
@@ -1229,8 +1228,9 @@ git rm reviewer/llm/openrouter.py reviewer/llm/budget.py \
 
 `reviewer/llm/trace.py`, `usage.py`, `verdicts.py`: проверить потребителей —
 `grep -rn "trace\|UsageLog\|verdicts" reviewer/ --include="*.py" | grep -v test` —
-удалить те, что использовались только analyzer/review_service.run_review;
-`reviewer/llm/base.py` оставить (там `Finding`).
+удалить те, что использовались только analyzer/review_service.run_review.
+`Finding` живёт в `reviewer/vcs/base.py` и остаётся; `reviewer/llm/base.py`
+(протокол `LLMProvider`) удалить, если grep не покажет других потребителей.
 
 - [ ] **Step 2: Почистить использующий код**
 
