@@ -106,7 +106,7 @@ def make_router(history: ReviewHistory, settings: Settings | None = None) -> API
         """Пошаговый трейс прогона, упорядоченный по seq.
 
         Загружается по требованию (отдельно от /api/runs/{run_id}, т.к. трейс крупный).
-        Возвращает пустой список для прогонов без трейса (старые прогоны / REVIEW_TRACE=false).
+        Возвращает пустой список для прогонов без трейса (старые прогоны).
         """
         try:
             steps = history.get_trace(run_id)

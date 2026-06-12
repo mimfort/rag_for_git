@@ -12,7 +12,6 @@ from reviewer.graph.backend import build_code_graph
 from reviewer.graph.store import GraphStore
 from reviewer.index.freshness import update_base
 from reviewer.index.store import ChunkStore
-from reviewer.services.review_service import ReviewService
 
 log = logging.getLogger(__name__)
 
@@ -29,7 +28,6 @@ def check() -> None:
 
     # 1. Ключи
     for label, val in (
-        ("OPENROUTER_API_KEY", s.openrouter_api_key),
         ("VOYAGE_API_KEY", s.voyage_api_key),
         ("GITHUB_TOKEN", s.github_token),
     ):
@@ -175,61 +173,3 @@ def serve(host: str, port: int) -> None:
     app = create_app(s)
     click.echo(f"Запуск веб-сервера на http://{host}:{port} ...")
     uvicorn.run(app, host=host, port=port)
-
-
-@cli.command()
-@click.argument("slug")
-@click.argument("pr", type=int)
-@click.option("--dry-run", is_flag=True,
-              help="Посчитать ревью и вывести в консоль, не публикуя")
-def review(slug: str, pr: int, dry_run: bool) -> None:
-    """Отревьюить PR на GitHub и запостить inline+сводку."""
-    s = Settings()
-    # Fail-fast: проверяем ключи до любых сетевых вызовов,
-    # перечисляем все отсутствующие
-    missing = [
-        name for name, val in (
-            ("OPENROUTER_API_KEY", s.openrouter_api_key),
-            ("VOYAGE_API_KEY", s.voyage_api_key),
-            ("GITHUB_TOKEN", s.github_token),
-        ) if not val
-    ]
-    if missing:
-        raise click.ClickException(
-            "Не задан " + ", ".join(missing) + " (.env)")
-
-    c = build_components(s)
-    try:
-        owner, repo_name = slug.split("/")
-        service = ReviewService(s, c)
-        result = service.run_review(owner, repo_name, pr, dry_run=dry_run)
-
-        if result.is_draft_skip:
-            click.echo("PR — драфт, ревью пропущено (REVIEW_SKIP_DRAFTS=true).")
-            return
-
-        if result.skipped_paths:
-            click.echo(
-                f"Внимание: файлов в PR больше лимита (review_max_files="
-                f"{s.review_max_files}); пропущено {len(result.skipped_paths)}."
-            )
-
-        if dry_run:
-            click.echo(result.state["summary"])
-            for ic in result.state["inline_comments"]:
-                click.echo(f"\n{ic.path}:{ic.line}\n{ic.body[:200]}")
-            click.echo("\nDry-run: ревью НЕ опубликовано.")
-        elif result.published_flag is False:
-            click.echo("Не удалось опубликовать ревью.")
-            for entry in result.publish_failed:
-                click.echo(f"  - {entry}")
-        else:
-            click.echo("Ревью опубликовано.")
-
-        rep = result.usage.report()
-        if rep:
-            click.echo(rep)
-    finally:
-        c.store.close()
-        if c.graph:
-            c.graph.close()

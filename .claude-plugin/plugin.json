@@ -1,0 +1,7 @@
+{
+  "name": "rag-reviewer",
+  "version": "0.1.0",
+  "description": "Agentic PR review: hybrid RAG + code graph via MCP, review skills for Claude Code",
+  "skills": "./plugin/skills/",
+  "mcpServers": "./plugin/.mcp.json"
+}

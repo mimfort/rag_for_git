@@ -1,7 +1,6 @@
 """Unit-тесты CLI через CliRunner с моком build_components.
 
 Проверяем:
-- review вызывает ReviewService.run_review с правильными аргументами;
 - index выполняет шаги индексации (init_schema, update_base, build_code_graph);
 - check возвращает корректные exit-коды.
 """
@@ -102,7 +101,6 @@ def fake_components() -> MagicMock:
     c.embedder = MagicMock()
     c.retriever = MagicMock()
     c.reranker = MagicMock()
-    c.llm_provider = MagicMock()
     return c
 
 
@@ -110,7 +108,6 @@ def fake_components() -> MagicMock:
 def fake_settings() -> MagicMock:
     """Фейковые настройки со всеми необходимыми ключами."""
     s = MagicMock()
-    s.openrouter_api_key = "test-or"
     s.voyage_api_key = "test-voyage"
     s.github_token = "test-gh"
     s.pg_dsn = "postgresql://test"
@@ -122,168 +119,7 @@ def fake_settings() -> MagicMock:
     s.review_max_files = 50
     s.review_history = False
     s.graph_backend = "auto"
-    s.review_trace = False
-    s.review_verdict_log = ""
     return s
-
-
-# ---------------------------------------------------------------------------
-# review
-# ---------------------------------------------------------------------------
-
-
-@patch("reviewer.entrypoints.cli.ReviewService")
-@patch("reviewer.entrypoints.cli.build_components")
-@patch("reviewer.entrypoints.cli.Settings")
-def test_review_invokes_service_with_correct_args(
-    mock_settings_cls,
-    mock_build,
-    mock_service_cls,
-    runner,
-    fake_components,
-    fake_settings,
-):
-    """Команда review вызывает ReviewService.run_review с правильными аргументами."""
-    mock_settings_cls.return_value = fake_settings
-    mock_build.return_value = fake_components
-
-    mock_result = MagicMock()
-    mock_result.is_draft_skip = False
-    mock_result.skipped_paths = None
-    mock_result.published_flag = True
-    mock_result.publish_failed = []
-    mock_result.state = {"summary": "OK", "inline_comments": []}
-    mock_result.usage.report.return_value = ""
-
-    mock_service = MagicMock()
-    mock_service.run_review.return_value = mock_result
-    mock_service_cls.return_value = mock_service
-
-    result = runner.invoke(cli, ["review", "owner/repo", "42"])
-
-    assert result.exit_code == 0
-    mock_service_cls.assert_called_once_with(fake_settings, fake_components)
-    mock_service.run_review.assert_called_once_with("owner", "repo", 42, dry_run=False)
-
-
-@patch("reviewer.entrypoints.cli.ReviewService")
-@patch("reviewer.entrypoints.cli.build_components")
-@patch("reviewer.entrypoints.cli.Settings")
-def test_review_dry_run_flag(
-    mock_settings_cls,
-    mock_build,
-    mock_service_cls,
-    runner,
-    fake_components,
-    fake_settings,
-):
-    """Флаг --dry-run передаётся в ReviewService.run_review."""
-    mock_settings_cls.return_value = fake_settings
-    mock_build.return_value = fake_components
-
-    mock_result = MagicMock()
-    mock_result.is_draft_skip = False
-    mock_result.skipped_paths = None
-    mock_result.published_flag = None
-    mock_result.publish_failed = []
-    mock_result.state = {"summary": "dry", "inline_comments": []}
-    mock_result.usage.report.return_value = ""
-
-    mock_service = MagicMock()
-    mock_service.run_review.return_value = mock_result
-    mock_service_cls.return_value = mock_service
-
-    result = runner.invoke(cli, ["review", "--dry-run", "owner/repo", "42"])
-
-    assert result.exit_code == 0
-    mock_service.run_review.assert_called_once_with("owner", "repo", 42, dry_run=True)
-    assert "Dry-run" in result.output
-
-
-@patch("reviewer.entrypoints.cli.ReviewService")
-@patch("reviewer.entrypoints.cli.build_components")
-@patch("reviewer.entrypoints.cli.Settings")
-def test_review_draft_skip_message(
-    mock_settings_cls,
-    mock_build,
-    mock_service_cls,
-    runner,
-    fake_components,
-    fake_settings,
-):
-    """При draft_skip CLI выводит соответствующее сообщение."""
-    mock_settings_cls.return_value = fake_settings
-    mock_build.return_value = fake_components
-
-    mock_result = MagicMock()
-    mock_result.is_draft_skip = True
-    mock_result.usage.report.return_value = ""
-
-    mock_service = MagicMock()
-    mock_service.run_review.return_value = mock_result
-    mock_service_cls.return_value = mock_service
-
-    result = runner.invoke(cli, ["review", "owner/repo", "42"])
-
-    assert result.exit_code == 0
-    assert "драфт" in result.output.lower()
-
-
-@patch("reviewer.entrypoints.cli.ReviewService")
-@patch("reviewer.entrypoints.cli.build_components")
-@patch("reviewer.entrypoints.cli.Settings")
-def test_review_publish_failure_message(
-    mock_settings_cls,
-    mock_build,
-    mock_service_cls,
-    runner,
-    fake_components,
-    fake_settings,
-):
-    """При published_flag=False CLI выводит ошибки публикации."""
-    mock_settings_cls.return_value = fake_settings
-    mock_build.return_value = fake_components
-
-    mock_result = MagicMock()
-    mock_result.is_draft_skip = False
-    mock_result.skipped_paths = None
-    mock_result.published_flag = False
-    mock_result.publish_failed = ["publish: NetworkError"]
-    mock_result.state = {"summary": "err", "inline_comments": []}
-    mock_result.usage.report.return_value = ""
-
-    mock_service = MagicMock()
-    mock_service.run_review.return_value = mock_result
-    mock_service_cls.return_value = mock_service
-
-    result = runner.invoke(cli, ["review", "owner/repo", "42"])
-
-    assert result.exit_code == 0
-    assert "Не удалось опубликовать" in result.output
-    assert "NetworkError" in result.output
-
-
-@patch("reviewer.entrypoints.cli.build_components")
-@patch("reviewer.entrypoints.cli.Settings")
-def test_review_missing_api_keys(
-    mock_settings_cls,
-    mock_build,
-    runner,
-    fake_settings,
-):
-    """При отсутствии ключей review падает до вызова build_components."""
-    fake_settings.openrouter_api_key = ""
-    fake_settings.voyage_api_key = ""
-    fake_settings.github_token = ""
-    mock_settings_cls.return_value = fake_settings
-
-    result = runner.invoke(cli, ["review", "owner/repo", "42"])
-
-    assert result.exit_code != 0
-    assert "OPENROUTER_API_KEY" in result.output
-    assert "VOYAGE_API_KEY" in result.output
-    assert "GITHUB_TOKEN" in result.output
-    mock_build.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -357,7 +193,6 @@ def test_check_all_ok(
 ):
     """Все проверки проходят — exit-код 0."""
     s = MagicMock()
-    s.openrouter_api_key = "key"
     s.voyage_api_key = "key"
     s.github_token = "key"
     s.pg_dsn = "pg://test"
@@ -395,7 +230,6 @@ def test_check_all_ok(
 def test_check_fails_on_missing_keys(mock_settings_cls, runner):
     """При отсутствии ключей check возвращает exit-код 1."""
     s = MagicMock()
-    s.openrouter_api_key = ""
     s.voyage_api_key = ""
     s.github_token = ""
     s.pg_dsn = "pg://test"
@@ -407,7 +241,7 @@ def test_check_fails_on_missing_keys(mock_settings_cls, runner):
     result = runner.invoke(cli, ["check"])
 
     assert result.exit_code == 1
-    assert "OPENROUTER_API_KEY" in result.output
+    assert "VOYAGE_API_KEY" in result.output
 
 
 @patch("reviewer.entrypoints.cli.GraphStore")
@@ -418,7 +252,6 @@ def test_check_fails_on_postgres_error(
 ):
     """Ошибка подключения к Postgres даёт exit-код 1."""
     s = MagicMock()
-    s.openrouter_api_key = "key"
     s.voyage_api_key = "key"
     s.github_token = "key"
     s.pg_dsn = "pg://test"
@@ -446,7 +279,6 @@ def test_check_fails_on_neo4j_error(
 ):
     """Ошибка подключения к Neo4j даёт exit-код 1."""
     s = MagicMock()
-    s.openrouter_api_key = "key"
     s.voyage_api_key = "key"
     s.github_token = "key"
     s.pg_dsn = "pg://test"
@@ -479,7 +311,6 @@ def test_check_fails_on_github_api_error(
 ):
     """HTTP-ошибка GitHub API даёт exit-код 1."""
     s = MagicMock()
-    s.openrouter_api_key = "key"
     s.voyage_api_key = "key"
     s.github_token = "key"
     s.pg_dsn = "pg://test"

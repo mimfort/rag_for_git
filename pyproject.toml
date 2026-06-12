@@ -12,12 +12,11 @@ dependencies = [
     "pgvector>=0.3.6",
     "neo4j>=6.2,<7",
     "httpx>=0.27",
-    "langchain-openai>=1.2,<2",
     "langchain-core>=1.4,<2",
-    "langgraph>=1.2,<2",
     "pyyaml>=6.0",
     "click>=8.1",
     "protobuf>=5.27",
+    "mcp>=1.9,<2",
 ]
 
 [project.optional-dependencies]
@@ -34,6 +33,7 @@ web = [
 
 [project.scripts]
 reviewer = "reviewer.entrypoints.cli:cli"
+reviewer-mcp = "reviewer.entrypoints.mcp_server:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

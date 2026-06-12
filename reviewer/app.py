@@ -7,7 +7,6 @@ from reviewer.index.embeddings import VoyageEmbedder
 from reviewer.index.reranker import VoyageReranker
 from reviewer.graph.store import GraphStore
 from reviewer.retrieval.retriever import Retriever
-from reviewer.llm.openrouter import OpenRouterProvider
 
 @dataclass
 class Components:
@@ -17,7 +16,6 @@ class Components:
     embedder: VoyageEmbedder
     reranker: VoyageReranker
     retriever: Retriever
-    llm_provider: OpenRouterProvider
 
 def _voyage_client(settings: Settings):
     import voyageai
@@ -39,5 +37,4 @@ def build_components(settings: Settings, connect: bool = True) -> Components:
         if connect else None
     retriever = Retriever(store, graph, embedder, reranker,
                           max_context_chars=settings.max_tool_result_chars)
-    llm = OpenRouterProvider(settings)
-    return Components(settings, store, graph, embedder, reranker, retriever, llm)
+    return Components(settings, store, graph, embedder, reranker, retriever)
