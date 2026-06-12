@@ -20,26 +20,68 @@ from reviewer.vcs.diff import commentable_lines
 log = logging.getLogger(__name__)
 
 
-def _finding_from_dict(d: dict) -> Finding:
+_VALID_SEVERITIES = frozenset({"low", "medium", "high", "critical"})
+
+
+def _coerce_int(value) -> int | None:
+    """int-коэрция LLM-значения: int("42") → 42, None/мусор → None."""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _finding_from_dict(d) -> Finding | None:
     """Собрать Finding из словаря в схеме analyze-промпта.
 
-    Схема: ``category, severity, file, line, code_quote, message, suggestion,
-    fix{start_line,end_line,replacement}, confidence`` (+опц. ``side``).
-    ``code_quote`` тут не используется (нужен только для грунтовки строки).
+    Вход приходит от модели — кривые словари штатны, коэрция самодостаточная
+    (НЕ зависит от _FindingModel в analyzer). Схема: ``category, severity, file,
+    line, code_quote, message, suggestion, fix{start_line,end_line,replacement},
+    confidence`` (+опц. ``side``). ``code_quote`` тут не используется (нужен
+    только для грунтовки строки).
+
+    Гарантии коэрции:
+
+    - не-dict или dict без ``file`` → None (вызывающий считает invalid);
+    - ``line``: int-коэрция, мусор → None;
+    - ``confidence``: float-коэрция, None/мусор → 0.5;
+    - ``severity`` вне {low,medium,high,critical} → "medium";
+    - ``side`` вне {RIGHT,LEFT} → "RIGHT";
+    - ``fix``: int-коэрция start/end; при мусоре (или нестроковом replacement)
+      fix отбрасывается целиком.
     """
-    fix = d.get("fix") or {}
+    if not isinstance(d, dict) or not d.get("file"):
+        return None
+    severity = d.get("severity")
+    if severity not in _VALID_SEVERITIES:
+        severity = "medium"
+    side = d.get("side")
+    if side not in ("RIGHT", "LEFT"):
+        side = "RIGHT"
+    try:
+        confidence = float(d.get("confidence"))
+    except (TypeError, ValueError):
+        confidence = 0.5
+    fix = d.get("fix")
+    fix_start = fix_end = replacement = None
+    if isinstance(fix, dict):
+        fix_start = _coerce_int(fix.get("start_line"))
+        fix_end = _coerce_int(fix.get("end_line"))
+        replacement = fix.get("replacement")
+        if fix_start is None or fix_end is None or not isinstance(replacement, str):
+            fix_start = fix_end = replacement = None
     return Finding(
-        category=d.get("category", "correctness"),
-        severity=d.get("severity", "medium"),
-        file=d["file"],
-        line=d.get("line"),
-        side=d.get("side", "RIGHT"),
-        message=d.get("message", ""),
+        category=str(d.get("category") or "correctness"),
+        severity=severity,
+        file=str(d["file"]),
+        line=_coerce_int(d.get("line")),
+        side=side,
+        message=str(d.get("message") or ""),
         suggestion=d.get("suggestion"),
-        confidence=float(d.get("confidence", 0.5)),
-        fix_start=fix.get("start_line"),
-        fix_end=fix.get("end_line"),
-        replacement=fix.get("replacement"),
+        confidence=confidence,
+        fix_start=fix_start,
+        fix_end=fix_end,
+        replacement=replacement,
     )
 
 
@@ -174,25 +216,38 @@ class MCPReviewService:
         """Детерминированный хвост ревью: gate → grounding → dedup → assemble →
         публикация → история → очистка overlay/сессии.
 
-        ``findings`` — словари в схеме analyze-промпта. Сессия (repo, pr) должна
-        быть подготовлена ``prepare_review``. Overlay и сессия очищаются ВСЕГДА
-        (даже при сбое VCS-публикации) — см. ``_cleanup``.
+        ``findings`` — словари в схеме analyze-промпта (вход от LLM). Кривые
+        словари не валят publish: запись без ``file`` пропускается (счётчик
+        ``invalid`` в отчёте), остальные поля коэрцируются с дефолтами — см.
+        :func:`_finding_from_dict`. Сессия (repo, pr) должна быть подготовлена
+        ``prepare_review``. Overlay и сессия очищаются ВСЕГДА (даже при сбое
+        VCS-публикации) — см. ``_cleanup``.
 
         Args:
             summary: сводка от модели; к ней добавляется markdown-отчёт assemble.
             dry_run: не публиковать в VCS, только собрать отчёт.
 
         Returns:
-            Отчёт со счётчиками (posted/dropped_by_gate/deduped/...) и inline.
+            Отчёт со счётчиками (posted/invalid/dropped_by_gate/deduped/
+            already_posted/moved_to_summary/capped) и inline.
         """
         s = self._session(repo, pr)
         p = s.prepared
 
-        # 1) Грунтуем строку каждой находки по дословной цитате (анти-галлюцинация).
+        # 1) Коэрция LLM-входа (кривой dict без file → скип) и грунтовка строки
+        # по дословной цитате (анти-галлюцинация).
         parsed: list[Finding] = []
+        invalid = 0
         for d in findings:
             f = _finding_from_dict(d)
-            f.line = ground_line(p.sources.get(f.file), d.get("code_quote"), f.line)
+            if f is None:
+                invalid += 1
+                log.warning("publish_review: пропущена некорректная находка: %r", d)
+                continue
+            quote = d.get("code_quote")
+            if not isinstance(quote, str):
+                quote = None
+            f.line = ground_line(p.sources.get(f.file), quote, f.line)
             parsed.append(f)
 
         # 2) Gate (категория/severity/confidence/пути) + dedup.
@@ -226,7 +281,8 @@ class MCPReviewService:
                 p.vcs.publish_review(pr, p.prq.head_sha, full_summary, asm.inline_comments)
                 posted = True
             except Exception as e:
-                error = str(e)
+                log.error("Не удалось опубликовать ревью", exc_info=True)
+                error = f"{type(e).__name__}: {e}"
 
         # 6) История (fail-soft) и очистка overlay/сессии (ВСЕГДА).
         run_id = self._record_history(
@@ -244,10 +300,12 @@ class MCPReviewService:
                 {"path": c.path, "line": c.line, "side": c.side, "body": c.body}
                 for c in asm.inline_comments
             ],
+            "invalid": invalid,
             "dropped_by_gate": len(parsed) - len(kept),
             "deduped": len(kept) - len(deduped),
             "already_posted": asm.skipped_existing,
             "moved_to_summary": asm.moved_to_summary,
+            "capped": asm.capped,
         }
 
     def _record_history(
@@ -267,15 +325,20 @@ class MCPReviewService:
 
         Гейтится ``settings.review_history``. Любая ошибка истории не валит
         publish — возвращаем None. Стоимость/usage недоступны на этом этапе
-        (LLM-вызовы прошли вне сервиса), пишем None.
+        (LLM-вызовы прошли вне сервиса), пишем None. При сбое публикации
+        (status=error) находки записываются с published=False — как в
+        review_service._record_history.
         """
-        history = self._review_service._ensure_history()
-        if history is None:
-            return None
         try:
+            history = self._review_service._ensure_history()
+            if history is None:
+                return None
             now = datetime.now(timezone.utc)
             status = "error" if (error and not dry_run) else "ok"
             comments_inline = len(asm.inline_comments)
+            # Паритет со старым пайплайном: analyzed — по уникальным fingerprint
+            # (parsed уже грунтован, но ещё без _sane_line из assemble — допустимо).
+            findings_analyzed = len({f.fingerprint() for f in parsed})
             run = {
                 "repo": repo,
                 "pr_number": pr,
@@ -291,16 +354,20 @@ class MCPReviewService:
                 "files_reviewed": len(p.units),
                 "files_skipped": len(p.skipped_paths or []),
                 "files_failed": 0,
-                "findings_analyzed": len(parsed),
+                "findings_analyzed": findings_analyzed,
                 "findings_kept": len(deduped),
-                "verify_rejected": max(0, len(parsed) - len(deduped)),
+                "verify_rejected": max(0, findings_analyzed - len(deduped)),
                 "comments_inline": comments_inline,
                 "comments_summary": max(0, len(asm.findings_rows) - comments_inline),
                 "usage": None,
                 "total_cost": None,
                 "error_text": error or None,
             }
-            return history.record_run(run, asm.findings_rows, steps=None)
+            rows = (
+                [dict(r, published=False) for r in asm.findings_rows]
+                if status == "error" else asm.findings_rows
+            )
+            return history.record_run(run, rows, steps=None)
         except Exception:
             log.warning("Не удалось сохранить историю прогона", exc_info=True)
             return None

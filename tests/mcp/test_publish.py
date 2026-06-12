@@ -13,7 +13,7 @@ from unittest.mock import MagicMock, patch
 
 from reviewer.config.settings import Settings
 from reviewer.mcp.service import MCPReviewService
-from reviewer.vcs.base import PullRequest
+from reviewer.vcs.base import Finding, PullRequest
 
 # Исходник a.py: строка `x = 1` стоит на строке 2.
 SOURCE_A = "y = 0\nx = 1\n"
@@ -85,9 +85,15 @@ class _FakeChangedFile:
 class _FakeVCS:
     """Фейковый VCS: записывает publish_review в .published, считает close."""
 
-    def __init__(self, number: int, fails: bool = False) -> None:
+    def __init__(
+        self,
+        number: int,
+        fails: bool = False,
+        existing_fps: set[str] | None = None,
+    ) -> None:
         self._number = number
         self._fails = fails
+        self._existing_fps = existing_fps or set()
         self.published: list[dict] = []
         self.close_calls = 0
 
@@ -103,7 +109,7 @@ class _FakeVCS:
         return None  # .review.yml и прочее отсутствуют
 
     def list_existing_fingerprints(self, number: int) -> set[str]:
-        return set()
+        return set(self._existing_fps)
 
     def publish_review(self, number, head_sha, summary, comments) -> None:
         if self._fails:
@@ -144,7 +150,9 @@ def _fake_chunk(path, source):
 
 
 def _make_mcp_service_with_publish(
-    number: int = 7, vcs_fails: bool = False,
+    number: int = 7,
+    vcs_fails: bool = False,
+    existing_fps: set[str] | None = None,
 ) -> tuple[MCPReviewService, _FakeVCS, _FakeHistory]:
     """Фабрика MCPReviewService с фейковыми компонентами + history.
 
@@ -153,7 +161,7 @@ def _make_mcp_service_with_publish(
     """
     settings = _settings()
     components = _components()
-    vcs = _FakeVCS(number=number, fails=vcs_fails)
+    vcs = _FakeVCS(number=number, fails=vcs_fails, existing_fps=existing_fps)
     history = _FakeHistory()
     svc = MCPReviewService(settings, components, vcs_factory=lambda o, r: vcs)
     # Подменяем хранилище истории на фейк (review_history=True → _ensure_history
@@ -190,6 +198,14 @@ def test_publish_dry_run_does_not_post_but_reports(_ov, _ch) -> None:
     report = svc.publish_review("o/r", 7, summary="s", findings=[RAW], dry_run=True)
     assert report["posted"] is False and vcs.published == []
     assert report["inline"][0]["line"] == 2
+    assert report["capped"] == 0
+    # История пишется и в dry_run — с фактическими счётчиками
+    run = history.runs[0]
+    assert run["dry_run"] is True
+    assert run["model"] == "claude-code"
+    assert run["findings_analyzed"] == 1
+    assert run["findings_kept"] == 1
+    assert run["status"] == "ok"
 
 
 @patch("reviewer.services.review_service.chunk_python", side_effect=_fake_chunk)
@@ -208,11 +224,18 @@ def test_publish_gates_low_severity_and_grounds_line(_ov, _ch) -> None:
 @patch("reviewer.services.review_service.chunk_python", side_effect=_fake_chunk)
 @patch("reviewer.services.review_service.build_overlay")
 def test_publish_cleans_overlay_even_on_vcs_error(_ov, _ch) -> None:
-    svc, vcs, _ = _make_mcp_service_with_publish(vcs_fails=True)
+    svc, vcs, history = _make_mcp_service_with_publish(vcs_fails=True)
     svc.prepare_review("o/r", 7)
     report = svc.publish_review("o/r", 7, summary="s", findings=[RAW])
     assert report["posted"] is False and report["error"]
-    assert "pr:7" in svc.components.store.deleted_refs
+    # prepare сам чистит overlay один раз (self-healing) + cleanup после publish
+    assert svc.components.store.deleted_refs.count("pr:7") == 2
+    # История: status=error, непустой error_text, находки помечены published=False
+    run = history.runs[0]
+    assert run["status"] == "error"
+    assert run["error_text"]
+    assert history.findings[0], "ожидали записанные находки"
+    assert all(row["published"] is False for row in history.findings[0])
 
 
 @patch("reviewer.services.review_service.chunk_python", side_effect=_fake_chunk)
@@ -259,3 +282,69 @@ def test_publish_history_failsoft(_ov, _ch) -> None:
     report = svc.publish_review("o/r", 7, summary="s", findings=[RAW])
     assert report["posted"] is True
     assert report["run_id"] is None
+
+
+@patch("reviewer.services.review_service.chunk_python", side_effect=_fake_chunk)
+@patch("reviewer.services.review_service.build_overlay")
+def test_publish_coerces_malformed_llm_findings(_ov, _ch) -> None:
+    """Кривые dict'ы от LLM не валят publish: без file — скип (invalid),
+    line="42" — int-коэрция (+грунтовка), confidence=None → 0.5,
+    severity="urgent" → "medium". Валидные публикуются."""
+    svc, vcs, _ = _make_mcp_service_with_publish()
+    svc.prepare_review("o/r", 7)
+    pack = [
+        {"category": "correctness", "severity": "high",
+         "message": "no file", "confidence": 0.9},          # без file → invalid
+        dict(RAW, line="42", message="bug A"),               # int-коэрция строки
+        dict(RAW, confidence=None, message="bug B"),         # None → 0.5 (порог 0.5 проходит)
+        dict(RAW, severity="urgent", message="bug C"),       # вне enum → medium
+    ]
+    report = svc.publish_review("o/r", 7, summary="s", findings=pack)
+    assert report["posted"] is True
+    assert report["invalid"] == 1
+    assert report["dropped_by_gate"] == 0
+    assert len(report["inline"]) == 3
+    assert all(c["line"] == 2 for c in report["inline"])     # все загрунтованы по цитате
+
+
+@patch("reviewer.services.review_service.chunk_python", side_effect=_fake_chunk)
+@patch("reviewer.services.review_service.build_overlay")
+def test_publish_skips_already_posted_fingerprints(_ov, _ch) -> None:
+    """Идемпотентность: fingerprint прошлого прогона → inline отфильтрован."""
+    fp = Finding(
+        category="correctness", severity="high", file="a.py", line=2,
+        side="RIGHT", message="bug here", suggestion=None, confidence=0.9,
+    ).fingerprint()
+    svc, vcs, _ = _make_mcp_service_with_publish(existing_fps={fp})
+    svc.prepare_review("o/r", 7)
+    report = svc.publish_review("o/r", 7, summary="s", findings=[RAW], dry_run=True)
+    assert report["already_posted"] == 1
+    assert report["inline"] == []
+
+
+@patch("reviewer.services.review_service.chunk_python", side_effect=_fake_chunk)
+@patch("reviewer.services.review_service.build_overlay")
+def test_publish_empty_findings_posts_summary(_ov, _ch) -> None:
+    """Пустой список находок: ревью публикуется со сводкой «Замечаний не найдено»."""
+    svc, vcs, _ = _make_mcp_service_with_publish()
+    svc.prepare_review("o/r", 7)
+    report = svc.publish_review("o/r", 7, summary="s", findings=[])
+    assert report["posted"] is True
+    assert report["inline"] == []
+    assert "Замечаний не найдено" in report["summary"]
+    assert "Замечаний не найдено" in vcs.published[0]["summary"]
+
+
+@patch("reviewer.services.review_service.chunk_python", side_effect=_fake_chunk)
+@patch("reviewer.services.review_service.build_overlay")
+def test_publish_dedups_near_identical_findings(_ov, _ch) -> None:
+    """Две одинаковые находки схлопываются в одну: deduped=1, один inline."""
+    svc, vcs, history = _make_mcp_service_with_publish()
+    svc.prepare_review("o/r", 7)
+    report = svc.publish_review("o/r", 7, summary="s",
+                                findings=[RAW, dict(RAW)], dry_run=True)
+    assert report["deduped"] == 1
+    assert len(report["inline"]) == 1
+    # findings_analyzed — по уникальным fingerprint (точный дубль не раздувает счётчик)
+    assert history.runs[0]["findings_analyzed"] == 1
+    assert history.runs[0]["findings_kept"] == 1
