@@ -5,6 +5,7 @@ import re
 from pydantic import BaseModel, Field
 from langchain_core.messages import AIMessage, SystemMessage, HumanMessage, ToolMessage
 
+from reviewer.agent.assemble import ground_line
 from reviewer.agent.state import ReviewUnit, Deps
 from reviewer.agent.prompts import ANALYZE_SYSTEM, VERIFY_SYSTEM, SYNTHESIZE_SYSTEM
 from reviewer.tools.code_tools import make_tools, ToolContext
@@ -98,26 +99,12 @@ def _window(source: str, line: int, radius: int = 25) -> str:
 
 
 def _resolve_line(quote: str | None, source: str | None) -> int | None:
-    """Настоящий 1-based номер строки, текст которой совпадает с quote.
+    """Настоящий 1-based номер строки по цитате кода (или None при неудаче).
 
-    Модель часто путает номер строки (особенно для символа из другого модуля),
-    но цитирует код верно. Сопоставляем по содержимому, игнорируя ведущие/хвостовые
-    пробелы. Возвращаем номер ТОЛЬКО при единственном совпадении (иначе None —
-    не привязываем к чужой строке). Фолбэк — уникальная подстрока."""
-    if not quote or not source:
-        return None
-    needle = quote.strip()
-    if not needle:
-        return None
-    lines = source.splitlines()
-    exact = [i for i, ln in enumerate(lines, 1) if ln.strip() == needle]
-    if len(exact) == 1:
-        return exact[0]
-    if not exact:
-        sub = [i for i, ln in enumerate(lines, 1) if needle in ln]
-        if len(sub) == 1:
-            return sub[0]
-    return None
+    Тонкая обёртка над :func:`~reviewer.agent.assemble.ground_line` с исходной
+    сигнатурой (quote, source) → int|None, сохранённой для обратной совместимости.
+    """
+    return ground_line(source, quote, None)
 
 
 _FILE_FULL_LIMIT = 400      # ≤ этого числа строк показываем файл целиком
@@ -485,9 +472,7 @@ def _to_findings(models, default_file: str | None,
             continue
         line = f.line
         if sources is not None:
-            resolved = _resolve_line(getattr(f, "code_quote", None), sources.get(file))
-            if resolved is not None:
-                line = resolved
+            line = ground_line(sources.get(file), getattr(f, "code_quote", None), line)
         fs = f.fix.start_line if f.fix else None
         fe = f.fix.end_line if f.fix else None
         rp = f.fix.replacement if f.fix else None

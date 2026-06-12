@@ -2,10 +2,9 @@ from __future__ import annotations
 import logging
 from langgraph.types import Send
 
-from reviewer.agent.dedup import _SEVERITY_RANK, dedup_findings
+from reviewer.agent.assemble import assemble_review
+from reviewer.agent.dedup import dedup_findings
 from reviewer.agent.state import ReviewState, ReviewUnit, Deps
-from reviewer.vcs.base import InlineComment
-from reviewer.vcs.diff import commentable_lines
 
 _log = logging.getLogger(__name__)
 
@@ -51,32 +50,7 @@ def make_verify_node(deps: Deps):
     return verify
 
 
-def _range_in_diff(right: set[int], start: int, end: int) -> bool:
-    """Все строки [start..end] должны быть в RIGHT-строках диффа (иначе GitHub 422/промах)."""
-    return start <= end and all(ln in right for ln in range(start, end + 1))
-
-
-def _overlaps(used: list[tuple[int, int]], start: int, end: int) -> bool:
-    return any(not (end < s or start > e) for (s, e) in used)
-
-
-def _can_apply(f, right: set[int], used: list[tuple[int, int]], mode: str) -> bool:
-    """applyable suggestion разрешён только если: режим apply, есть точная замена,
-    весь диапазон в диффе (RIGHT) и не пересекается с уже выставленными правками."""
-    return (mode == "apply"
-            and f.replacement is not None
-            and f.fix_start is not None and f.fix_end is not None
-            and _range_in_diff(right, f.fix_start, f.fix_end)
-            and not _overlaps(used, f.fix_start, f.fix_end))
-
-
 def make_assemble_node(deps: Deps):
-    def _log_published(f, inline: bool) -> None:
-        """Логировать факт публикации находки, если VerdictLog подключён."""
-        v = getattr(deps, "verdicts", None)
-        if v:
-            v.log_published(f, inline=inline)
-
     def assemble(state: ReviewState):
         # Список уже опубликованных fingerprint'ов — не блокирует публикацию при сбое.
         new_failed: list[str] = []
@@ -87,74 +61,28 @@ def make_assemble_node(deps: Deps):
             existing = set()
             new_failed.append(f"existing fingerprints: {type(e).__name__}: {e}")
 
-        commentable = {p: commentable_lines(deps.patches.get(p)) for p in deps.changed_paths}
-
-        def _sane_line(fnd):
-            """Реальная строка находки или None, если модель её выдумала.
-
-            Валидируем по факту: файл должен быть среди изменённых в PR, а номер
-            строки — существовать в новой версии файла. Иначе inline-гейт и сводка
-            показали бы несуществующую строку (модели иногда галлюцинируют file:line,
-            напр. для класса из другого модуля)."""
-            if fnd.line is None:
-                return None
-            if fnd.file not in commentable:
-                return None
-            src = (deps.sources or {}).get(fnd.file)
-            if src is not None and not (1 <= fnd.line <= len(src.splitlines())):
-                return None
-            return fnd.line
-
-        used: dict[str, list[tuple[int, int]]] = {}
-        inline: list[InlineComment] = []
-        summary_lines: list[str] = ["## Авто-ревью\n"]
-        # Составной ранг: сначала severity (critical > high > medium > low),
-        # при равном severity — большая уверенность идёт раньше.
-        ranked = sorted(
+        result = assemble_review(
             state["verified"],
-            key=lambda f: (-_SEVERITY_RANK.get(f.severity, 0), -f.confidence),
+            patches=deps.patches,
+            sources=deps.sources or {},
+            existing_fps=existing,
+            max_comments=deps.policy.max_comments,
+            suggestions_mode=deps.suggestions_mode,
         )
-        for f in ranked:
-            if len(inline) >= deps.policy.max_comments:
-                break
-            f.line = _sane_line(f)   # выкидываем выдуманные моделью номера строк
-            fp = f.fingerprint()
-            if fp in existing:
-                # дубликат прошлого прогона — не логируем
-                continue
-            allowed = commentable.get(f.file, {"RIGHT": set(), "LEFT": set()})
-            right = allowed.get("RIGHT", set())
-            body = f"**[{f.category}/{f.severity}]** {f.message}"
-            if f.suggestion:
-                body += f"\n\n💡 _Предложение:_ {f.suggestion}"
-            # 1) applyable ```suggestion — только при безопасных инвариантах
-            if _can_apply(f, right, used.get(f.file, []), deps.suggestions_mode):
-                repl = f.replacement.rstrip("\n")
-                body += f"\n\n```suggestion\n{repl}\n```"
-                body += f"\n<!-- ai-review:{fp} -->"
-                used.setdefault(f.file, []).append((f.fix_start, f.fix_end))
-                if f.fix_start < f.fix_end:   # многострочный диапазон
-                    inline.append(InlineComment(f.file, f.fix_end, "RIGHT", body,
-                                                start_line=f.fix_start, start_side="RIGHT"))
-                else:                          # одна строка
-                    inline.append(InlineComment(f.file, f.fix_end, "RIGHT", body))
-                _log_published(f, inline=True)
-                continue
-            # 2) обычный inline (текстовый совет) на строке диффа, иначе — в сводку
-            body += f"\n<!-- ai-review:{fp} -->"
-            if f.line is not None and f.line in allowed.get(f.side, set()):
-                inline.append(InlineComment(f.file, f.line, f.side, body))
-                _log_published(f, inline=True)
-            else:
-                loc = f"{f.file}:{f.line}" if f.line is not None else f.file
-                summary_lines.append(f"- `{loc}` {body}")
-                _log_published(f, inline=False)
-        if inline:
-            summary_lines.insert(
-                1, f"Выставлено inline-замечаний на строки диффа: {len(inline)}.\n"
-            )
-        if len(summary_lines) == 1:
-            summary_lines.append("Замечаний не найдено.")
+
+        # Подхватываем VerdictLog, если подключён: логируем inline vs summary по findings_rows.
+        v = getattr(deps, "verdicts", None)
+        if v:
+            fp_to_finding = {f.fingerprint(): f for f in state["verified"]}
+            for row in result.findings_rows:
+                if not row.get("published"):
+                    continue
+                finding = fp_to_finding.get(row["fingerprint"])
+                if finding is not None:
+                    v.log_published(finding, inline=row["inline"])
+
+        # Добавляем в сводку ошибки прогона и пропущенные файлы.
+        summary_lines = result.summary.split("\n")
         failed = list(state.get("failed_units", [])) + new_failed
         if failed:
             summary_lines.append("\n### Не проанализировано (ошибки)")
@@ -168,8 +96,12 @@ def make_assemble_node(deps: Deps):
                 summary_lines.append(f"- {p}")
             if len(skipped) > 20:
                 summary_lines.append(f"- … и ещё {len(skipped) - 20}")
-        return {"inline_comments": inline, "summary": "\n".join(summary_lines),
-                "failed_units": new_failed}
+
+        return {
+            "inline_comments": result.inline_comments,
+            "summary": "\n".join(summary_lines),
+            "failed_units": new_failed,
+        }
     return assemble
 
 
