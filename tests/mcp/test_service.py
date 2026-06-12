@@ -323,3 +323,45 @@ def test_search_code_repeated_call_returns_result_not_stub(
     # Реальный cache-hit: источник дёрнут ровно один раз (prepare_review retriever
     # не трогает) — без этого ассерта регрессия «кэш живёт сессию» не ловится
     assert svc.components.retriever.retrieve.call_count == 1
+
+
+@patch("reviewer.services.review_service.chunk_python", side_effect=_fake_chunk)
+@patch("reviewer.services.review_service.build_overlay")
+def test_prepare_review_payload_includes_task_context(
+    _mock_overlay: MagicMock,
+    _mock_chunk: MagicMock,
+) -> None:
+    """payload содержит task_board и извлечённые task_keys."""
+    settings = _settings()
+    components = _components()
+    vcs = _fake_vcs(number=7)
+    vcs.get_pull_request.return_value = PullRequest(
+        number=7, base_sha="base123", head_sha="head456", base_ref="main",
+        title="SAI-515: add logout", body="", draft=False, head_ref="feature/SAI-515",
+    )
+
+    def _read(path: str, ref: str) -> str:
+        if path == ".review.yml":
+            return "task_board: {type: yougile, mcp: yougile}"
+        return "def foo(): pass"
+    vcs.get_file_at_ref.side_effect = _read
+
+    svc = MCPReviewService(settings, components, vcs_factory=lambda o, r: vcs)
+    out = svc.prepare_review("o/r", 7)
+
+    assert out["task_board"] == {"type": "yougile", "mcp": "yougile"}
+    assert out["task_keys"] == {"primary": "SAI-515", "others": []}
+
+
+@patch("reviewer.services.review_service.chunk_python", side_effect=_fake_chunk)
+@patch("reviewer.services.review_service.build_overlay")
+def test_prepare_review_payload_task_context_null_when_unconfigured(
+    _mock_overlay: MagicMock,
+    _mock_chunk: MagicMock,
+) -> None:
+    """Без task_board оба поля payload — null."""
+    svc = _make_mcp_service()
+    out = svc.prepare_review("o/r", 7)
+
+    assert out["task_board"] is None
+    assert out["task_keys"] is None

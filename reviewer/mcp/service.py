@@ -437,6 +437,8 @@ class MCPReviewService:
                 "output_language": p.policy.output_language,
             },
             "units": units,
+            "task_board": p.task_board,
+            "task_keys": p.task_keys,
             "skipped_paths": p.skipped_paths,
             "skip_drafts": self.settings.review_skip_drafts,
             "suggestions_mode": self._suggestions_mode(),
