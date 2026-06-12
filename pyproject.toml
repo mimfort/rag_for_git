@@ -35,6 +35,7 @@ web = [
 
 [project.scripts]
 reviewer = "reviewer.entrypoints.cli:cli"
+reviewer-mcp = "reviewer.entrypoints.mcp_server:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
