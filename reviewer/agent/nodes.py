@@ -63,7 +63,9 @@ def make_assemble_node(deps: Deps):
 
         result = assemble_review(
             state["verified"],
-            patches=deps.patches,
+            # Только выбранные для ревью файлы (changed_paths): deps.patches содержит
+            # ВСЕ файлы PR (не-py, removed, сверх лимита) — inline на них недопустим.
+            patches={p: deps.patches.get(p) for p in deps.changed_paths},
             sources=deps.sources or {},
             existing_fps=existing,
             max_comments=deps.policy.max_comments,

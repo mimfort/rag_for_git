@@ -95,7 +95,7 @@ class AssembledReview:
     """Результат функции :func:`assemble_review`."""
 
     inline_comments: list[InlineComment]
-    summary: str                      # markdown-секция «прочие находки» ('' если пусто)
+    summary: str                      # markdown-сводка (всегда с заголовком «## Авто-ревью»)
     skipped_existing: int = 0         # отфильтровано по fingerprint
     moved_to_summary: int = 0
     capped: int = 0
@@ -150,9 +150,9 @@ def assemble_review(
        — убывающий confidence.
     3. Для каждой находки:
 
-       - Пропускаем, если fingerprint уже есть в ``existing_fps``.
        - Грунтуем ``f.line`` через ``_sane_line`` (выбрасываем галлюцинированные
-         координаты).
+         координаты), затем считаем fingerprint.
+       - Пропускаем, если fingerprint уже есть в ``existing_fps``.
        - Если ``_can_apply`` — формируем ```suggestion```-блок (многострочный →
          start_line/start_side), отмечаем диапазон как использованный.
        - Иначе, если строка в диффе — обычный inline текстовый комментарий.
@@ -200,6 +200,9 @@ def assemble_review(
     )
 
     for f in ranked:
+        # Грунтуем номер строки ДО fingerprint: fp включает line и должен совпадать
+        # с маркером в теле комментария и с записью в review_findings.
+        f.line = _sane_line(f, commentable, sources)
         fp = f.fingerprint()
 
         if fp in existing_fps:
@@ -218,9 +221,6 @@ def assemble_review(
                 "inline": False,
             })
             continue
-
-        # Грунтуем номер строки — выкидываем выдуманные моделью координаты.
-        f.line = _sane_line(f, commentable, sources)
 
         if len(inline) >= max_comments:
             # Кап достигнут — оставшееся уходит в сводку.

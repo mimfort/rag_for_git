@@ -1,5 +1,5 @@
 from reviewer.agent.assemble import assemble_review, ground_line
-from reviewer.llm.base import Finding
+from reviewer.vcs.base import Finding
 
 PATCH = "@@ -1,3 +1,4 @@\n line\n+x = 1\n line2\n line3"
 
