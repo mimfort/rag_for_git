@@ -248,6 +248,52 @@ def test_search_tools_delegate_to_make_tools(
 
 @patch("reviewer.services.review_service.chunk_python", side_effect=_fake_chunk)
 @patch("reviewer.services.review_service.build_overlay")
+def test_prepare_review_payload_contains_enabled_only(
+    _mock_overlay: MagicMock,
+    _mock_chunk: MagicMock,
+) -> None:
+    """При непустом policy.enabled_only payload prepare_review содержит его в policy."""
+    from reviewer.policy.policy import ReviewPolicy
+
+    svc = _make_mcp_service()
+    # Подменяем политику: задаём непустой enabled_only вайтлист
+    original_from_settings = ReviewPolicy.from_settings
+
+    def patched_from_settings(settings):
+        p = original_from_settings(settings)
+        p.enabled_only = ["correctness", "security"]
+        return p
+
+    with patch(
+        "reviewer.services.review_service.ReviewPolicy",
+        wraps=ReviewPolicy,
+    ) as mock_policy_cls:
+        mock_policy_cls.from_settings.side_effect = patched_from_settings
+        mock_policy_cls.from_yaml.side_effect = ReviewPolicy.from_yaml
+        out = svc.prepare_review("o/r", 7)
+
+    # enabled_only должен присутствовать в payload policy
+    assert "enabled_only" in out["policy"], (
+        "payload prepare_review должен содержать policy.enabled_only"
+    )
+
+
+@patch("reviewer.services.review_service.chunk_python", side_effect=_fake_chunk)
+@patch("reviewer.services.review_service.build_overlay")
+def test_prepare_review_payload_enabled_only_default_empty(
+    _mock_overlay: MagicMock,
+    _mock_chunk: MagicMock,
+) -> None:
+    """По умолчанию policy.enabled_only — пустой список (без вайтлиста)."""
+    svc = _make_mcp_service()
+    out = svc.prepare_review("o/r", 7)
+    assert out["policy"]["enabled_only"] == [], (
+        "enabled_only по умолчанию должен быть пустым списком"
+    )
+
+
+@patch("reviewer.services.review_service.chunk_python", side_effect=_fake_chunk)
+@patch("reviewer.services.review_service.build_overlay")
 def test_search_code_repeated_call_returns_result_not_stub(
     _mock_overlay: MagicMock,
     _mock_chunk: MagicMock,

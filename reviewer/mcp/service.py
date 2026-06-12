@@ -134,8 +134,11 @@ class MCPReviewService:
         prepared = self._review_service.prepare(owner, name, pr, vcs_provider=vcs)
         ctx = self._tool_context(prepared)
         self._sessions[(repo, pr)] = _Session(prepared, ctx)
-        # Старую сессию прибираем ПОСЛЕ успешного prepare: при сбое подготовки
-        # она остаётся рабочей. Закрываем только внутренне созданный провайдер.
+        # Старую сессию прибираем ПОСЛЕ успешного prepare: при сбое повторной
+        # подготовки старая сессия остаётся в _sessions, но её overlay уже удалён
+        # self-healing'ом в начале prepare — последующие tool-вызовы по ней
+        # вернут только base-данные (без overlay PR).
+        # Закрываем только внутренне созданный провайдер.
         if old is not None and self._vcs_factory is None:
             try:
                 old.prepared.vcs.close()
@@ -289,8 +292,10 @@ class MCPReviewService:
                 error = f"{type(e).__name__}: {e}"
 
         # 6) История (fail-soft) и очистка overlay/сессии (ВСЕГДА).
+        dropped_by_gate = len(parsed) - len(kept)
         run_id = self._record_history(
-            repo, pr, p, parsed, deduped, asm, dry_run=dry_run, posted=posted, error=error,
+            repo, pr, p, parsed, deduped, asm,
+            dropped_by_gate=dropped_by_gate, dry_run=dry_run, posted=posted, error=error,
         )
         self._cleanup(repo, pr)
 
@@ -305,7 +310,7 @@ class MCPReviewService:
                 for c in asm.inline_comments
             ],
             "invalid": invalid,
-            "dropped_by_gate": len(parsed) - len(kept),
+            "dropped_by_gate": dropped_by_gate,
             "deduped": len(kept) - len(deduped),
             "already_posted": asm.skipped_existing,
             "moved_to_summary": asm.moved_to_summary,
@@ -321,6 +326,7 @@ class MCPReviewService:
         deduped: list[Finding],
         asm: AssembledReview,
         *,
+        dropped_by_gate: int,
         dry_run: bool,
         posted: bool,
         error: str,
@@ -360,9 +366,15 @@ class MCPReviewService:
                 "files_failed": 0,
                 "findings_analyzed": findings_analyzed,
                 "findings_kept": len(deduped),
-                "verify_rejected": max(0, findings_analyzed - len(deduped)),
+                # verify_rejected = отсев политикой-gate (в новом пути verify
+                # живёт в скилле, до publish доходят уже отфильтрованные находки).
+                "verify_rejected": dropped_by_gate,
                 "comments_inline": comments_inline,
-                "comments_summary": max(0, len(asm.findings_rows) - comments_inline),
+                # Считаем только реально опубликованные не-inline строки
+                # (findings_rows включает skipped_existing с published=False).
+                "comments_summary": sum(
+                    1 for r in asm.findings_rows if r["published"] and not r["inline"]
+                ),
                 "usage": None,
                 "total_cost": None,
                 "error_text": error or None,
@@ -420,6 +432,7 @@ class MCPReviewService:
                 "min_confidence": p.policy.min_confidence,
                 "max_comments": p.policy.max_comments,
                 "categories": p.policy.categories,
+                "enabled_only": p.policy.enabled_only,
                 "ignore": p.policy.ignore,
                 "output_language": p.policy.output_language,
             },

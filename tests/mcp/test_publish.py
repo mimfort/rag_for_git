@@ -348,6 +348,33 @@ def test_publish_dedups_near_identical_findings(_ov, _ch) -> None:
 
 @patch("reviewer.services.review_service.chunk_python", side_effect=_fake_chunk)
 @patch("reviewer.services.review_service.build_overlay")
+def test_publish_skipped_existing_not_counted_in_comments_summary(_ov, _ch) -> None:
+    """skipped_existing (повторная находка с тем же fingerprint) НЕ учитывается
+    в comments_summary — она published=False, не является summary-комментарием."""
+    fp = Finding(
+        category="correctness", severity="high", file="a.py", line=2,
+        side="RIGHT", message="bug here", suggestion=None, confidence=0.9,
+    ).fingerprint()
+    # Передаём две находки: одна — уже опубликована (existing_fps), другая новая
+    # и попадёт в summary (line=None → не в дифф).
+    summary_raw = dict(RAW, line=None, code_quote=None, message="summary finding")
+    svc, vcs, history = _make_mcp_service_with_publish(existing_fps={fp})
+    svc.prepare_review("o/r", 7)
+    report = svc.publish_review(
+        "o/r", 7, summary="s", findings=[RAW, summary_raw], dry_run=True,
+    )
+    # RAW пропущена (already_posted), summary_raw уходит в summary
+    assert report["already_posted"] == 1
+    # comments_summary должен быть 1 (только summary_raw, без skipped_existing)
+    run = history.runs[0]
+    assert run["comments_summary"] == 1, (
+        f"comments_summary должен быть 1 (только реально опубликованная), "
+        f"получили {run['comments_summary']}"
+    )
+
+
+@patch("reviewer.services.review_service.chunk_python", side_effect=_fake_chunk)
+@patch("reviewer.services.review_service.build_overlay")
 def test_publish_coerces_unhashable_severity_and_nonstringsuggestion(_ov, _ch) -> None:
     """Unhashable severity (список) → "medium"; не-строковый suggestion → None.
 
