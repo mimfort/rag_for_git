@@ -253,9 +253,19 @@ class ReviewService:
                 changed_status=changed_status,
             )
         except Exception:
-            # При сбое подготовки закрываем провайдер, созданный самим prepare;
-            # переданный снаружи закрывает вызывающий. Без этого httpx-клиент
-            # GitHubProvider утёк бы (критично для долгоживущего MCP-сервера).
+            # При сбое подготовки чистим возможный недостроенный overlay pr:N —
+            # у MCP-сервера не будет finally-страховки run_review; для run_review
+            # повторное удаление в finally идемпотентно.
+            try:
+                self.components.store.delete_ref(f"pr:{pr_number}")
+            except Exception:
+                log.warning(
+                    "Не удалось очистить overlay pr:%s после сбоя prepare",
+                    pr_number, exc_info=True,
+                )
+            # Закрываем провайдер, созданный самим prepare; переданный снаружи
+            # закрывает вызывающий. Без этого httpx-клиент GitHubProvider утёк бы
+            # (критично для долгоживущего MCP-сервера).
             if vcs_provider is None:
                 try:
                     vcs.close()

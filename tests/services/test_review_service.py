@@ -536,6 +536,25 @@ def test_prepare_closes_internal_vcs_on_failure(
             service.prepare("owner", "repo", 1)   # vcs_provider не передан
 
     vcs.close.assert_called_once()
+    # overlay вычищен и при сбое: self-healing в начале + cleanup в except
+    assert components.store.delete_ref.call_args_list == [
+        call("pr:1"), call("pr:1"),
+    ]
+
+
+def test_prepare_failure_keeps_original_error_when_close_fails(
+    settings: Settings, components: MagicMock,
+) -> None:
+    """Сбой самого vcs.close() fail-soft: наружу выходит ИСХОДНОЕ исключение
+    подготовки, а не ошибка закрытия провайдера."""
+    vcs = _vcs_with_files([_changed("a.py")])
+    vcs.get_changed_files.side_effect = RuntimeError("api down")
+    vcs.close.side_effect = RuntimeError("close failed")
+
+    service = ReviewService(settings, components)
+    with patch.object(service, "_create_vcs_provider", return_value=vcs):
+        with pytest.raises(RuntimeError, match="api down"):
+            service.prepare("owner", "repo", 1)
 
 
 def test_prepare_does_not_close_external_vcs_on_failure(
