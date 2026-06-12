@@ -60,3 +60,25 @@ def test_output_language_default_and_yaml_override():
 
     p2 = ReviewPolicy.from_yaml("output_language: en")
     assert p2.output_language == "en"
+
+
+def test_task_board_parsed_from_yaml():
+    p = ReviewPolicy.from_yaml("task_board: {type: yougile, mcp: yougile}")
+    assert p.task_board == {"type": "yougile", "mcp": "yougile"}
+
+
+def test_task_board_none_when_absent():
+    p = ReviewPolicy.from_yaml("severity_threshold: low")
+    assert p.task_board is None
+
+
+def test_load_applies_task_board_from_yaml():
+    s = Settings(_env_file=None)
+    p = ReviewPolicy.load(s, "task_board: {type: jira, mcp: atlassian}")
+    assert p.task_board == {"type": "jira", "mcp": "atlassian"}
+
+
+def test_load_task_board_none_without_yaml():
+    s = Settings(_env_file=None)
+    p = ReviewPolicy.load(s, None)
+    assert p.task_board is None
