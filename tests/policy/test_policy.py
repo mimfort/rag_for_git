@@ -47,3 +47,11 @@ def test_load_env_defaults_then_yaml_override():
     assert p2.severity_threshold == "high"
     assert p2.max_comments == 5
     assert p2.min_confidence == 0.8
+
+
+def test_output_language_default_and_yaml_override():
+    p = ReviewPolicy.from_yaml("severity_threshold: medium")
+    assert p.output_language == "ru"
+
+    p2 = ReviewPolicy.from_yaml("output_language: en")
+    assert p2.output_language == "en"

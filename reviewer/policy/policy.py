@@ -16,6 +16,7 @@ class ReviewPolicy:
     ignore: list[str] = field(default_factory=list)
     max_comments: int = 25
     min_confidence: float = 0.0
+    output_language: str = "ru"                                  # язык текста находок в публикуемом ревью
 
     @classmethod
     def from_yaml(cls, text: str | None) -> "ReviewPolicy":
@@ -31,6 +32,7 @@ class ReviewPolicy:
             ignore=(data.get("paths") or {}).get("ignore", []),
             max_comments=data.get("max_comments", 25),
             min_confidence=data.get("min_confidence", 0.0),
+            output_language=str(data.get("output_language", "ru")),
         )
 
     @classmethod
@@ -41,6 +43,7 @@ class ReviewPolicy:
             severity_threshold=settings.review_severity_threshold,
             max_comments=settings.review_max_comments,
             min_confidence=settings.review_min_confidence,
+            output_language=settings.review_output_language,
         )
 
     @classmethod
@@ -64,6 +67,8 @@ class ReviewPolicy:
         ignore = (data.get("paths") or {}).get("ignore")
         if ignore is not None:
             policy.ignore = ignore
+        if "output_language" in data:
+            policy.output_language = str(data["output_language"])
         return policy
 
     def category_enabled(self, category: str) -> bool:

@@ -48,6 +48,7 @@ class Settings(BaseSettings):
     verify_oneshot_threshold: int = 30            # жёсткий потолок: выше — verify уходит в oneshot (защита от десятков вызовов)
     max_verify_tokens: int = 0                    # общий бюджет токенов на verify; 0 = без ограничения
     max_tool_result_chars: int = 8000             # максимальная длина результата tool-вызова в промпт
+    review_output_language: str = "ru"            # язык текста находок в публикуемом ревью
     review_skip_drafts: bool = True               # не ревьюить draft-PR
     review_history: bool = True                   # сохранять историю прогонов в Postgres
     review_trace: bool = True                     # захватывать пошаговый трейс прогона
