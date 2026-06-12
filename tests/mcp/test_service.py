@@ -39,8 +39,14 @@ def _components() -> MagicMock:
     c = MagicMock()
     c.store = MagicMock()
     c.embedder = MagicMock()
+    # retriever.retrieve().as_context() должен возвращать str — иначе isinstance-проверки
+    # в тестах инструментов поиска провалятся (MagicMock не str)
     c.retriever = MagicMock()
+    c.retriever.retrieve.return_value.as_context.return_value = "(результат поиска)"
     c.graph = MagicMock()
+    c.graph.expand.return_value = set()
+    c.graph.callers.return_value = set()
+    c.graph.find_symbol.return_value = []
     c.llm_provider = MagicMock()
     return c
 
@@ -221,3 +227,54 @@ def test_prepare_review_repeated_closes_old_internal_vcs(
     vcs1.close.assert_called_once()
     vcs2.close.assert_not_called()
     assert ("o/r", 7) in svc._sessions
+
+
+# ---------------------------------------------------------------------------
+# Тест Task 5: делегаты инструментов поиска (паритет с tool-loop агента)
+# ---------------------------------------------------------------------------
+
+@patch("reviewer.services.review_service.chunk_python", side_effect=_fake_chunk)
+@patch("reviewer.services.review_service.build_overlay")
+def test_search_tools_delegate_to_make_tools(
+    _mock_overlay: MagicMock,
+    _mock_chunk: MagicMock,
+) -> None:
+    """Все шесть инструментов поиска возвращают str после prepare_review."""
+    svc = _make_mcp_service()
+    svc.prepare_review("o/r", 7)
+    assert isinstance(svc.search_code("o/r", 7, "token check"), str)
+    assert isinstance(svc.get_related_symbols("o/r", 7, "a.py#f"), str)
+    assert isinstance(svc.read_file("o/r", 7, "a.py", 1, 10), str)
+    assert isinstance(svc.get_definition("o/r", 7, "f"), str)
+    assert isinstance(svc.find_callers("o/r", 7, "a.py#f"), str)
+    assert isinstance(svc.get_changed_file_diff("o/r", 7, "a.py"), str)
+
+
+@patch("reviewer.services.review_service.chunk_python", side_effect=_fake_chunk)
+@patch("reviewer.services.review_service.build_overlay")
+def test_search_code_repeated_call_returns_result_not_stub(
+    _mock_overlay: MagicMock,
+    _mock_chunk: MagicMock,
+) -> None:
+    """Два одинаковых вызова search_code подряд: второй возвращает результат,
+    а не заглушку '(повтор: результат уже показан выше)'.
+
+    Это проверяет, что seen-дедуп сбрасывается между вызовами (_invoke_tool
+    пересоздаёт make_tools каждый раз), а ctx.cache отдаёт реальный результат.
+    """
+    from reviewer.tools.code_tools import _DUP_STUB
+
+    svc = _make_mcp_service()
+    svc.prepare_review("o/r", 7)
+
+    result1 = svc.search_code("o/r", 7, "token check")
+    result2 = svc.search_code("o/r", 7, "token check")
+
+    # Второй вызов НЕ должен быть заглушкой
+    assert result2 != _DUP_STUB, (
+        "Второй вызов search_code вернул заглушку seen-дедупа вместо результата"
+    )
+    # Оба вызова возвращают одинаковый результат (из cache)
+    assert result1 == result2, (
+        f"Ожидали одинаковые результаты, получили:\n  result1={result1!r}\n  result2={result2!r}"
+    )

@@ -7,8 +7,6 @@ import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from langchain_core.tools import StructuredTool
-
 from reviewer.app import Components
 from reviewer.config.settings import Settings
 from reviewer.services.review_service import PreparedReview, ReviewService
@@ -22,8 +20,11 @@ log = logging.getLogger(__name__)
 @dataclass
 class _Session:
     prepared: PreparedReview
-    # имя инструмента -> StructuredTool (реюз memoization из make_tools)
-    tools: dict[str, StructuredTool]
+    # Храним ctx, а не готовые tools: make_tools(ctx) пересоздаётся на каждый
+    # _invoke_tool-вызов, чтобы seen-дедуп (set внутри make_tools) сбрасывался
+    # пер-вызов. Повторный одинаковый вызов отдаёт реальный результат из
+    # ctx.cache (пер-сессия), а не заглушку «повтор: результат уже показан выше».
+    ctx: ToolContext
 
 
 class MCPReviewService:
@@ -60,8 +61,7 @@ class MCPReviewService:
         vcs = self._vcs_factory(owner, name) if self._vcs_factory else None
         prepared = self._review_service.prepare(owner, name, pr, vcs_provider=vcs)
         ctx = self._tool_context(prepared)
-        tools = {t.name: t for t in make_tools(ctx)}
-        self._sessions[(repo, pr)] = _Session(prepared, tools)
+        self._sessions[(repo, pr)] = _Session(prepared, ctx)
         # Старую сессию прибираем ПОСЛЕ успешного prepare: при сбое подготовки
         # она остаётся рабочей. Закрываем только внутренне созданный провайдер.
         if old is not None and self._vcs_factory is None:
@@ -100,10 +100,39 @@ class MCPReviewService:
             )
         return s
 
+    def _invoke_tool(self, repo: str, pr: int, name: str, args: dict) -> str:
+        """Вызов инструмента с per-вызов пересозданием make_tools.
+
+        seen-дедуп сбрасывается на каждый вызов (повтор отдаёт результат из
+        ctx.cache, а не заглушку «повтор»); сам кэш живёт всю сессию.
+        """
+        s = self._session(repo, pr)
+        tools = {t.name: t for t in make_tools(s.ctx)}
+        return tools[name].invoke(args)
+
     def search_code(self, repo: str, pr: int, query: str) -> str:
         """Семантико-лексический поиск кода по индексу PR."""
-        s = self._session(repo, pr)
-        return s.tools["search_code"].invoke({"query": query})
+        return self._invoke_tool(repo, pr, "search_code", {"query": query})
+
+    def get_related_symbols(self, repo: str, pr: int, node_id: str) -> str:
+        """Связанные символы (вызовы/реализации/тесты) для node_id вида 'path#fqn'."""
+        return self._invoke_tool(repo, pr, "get_related_symbols", {"node_id": node_id})
+
+    def read_file(self, repo: str, pr: int, path: str, start: int = 1, end: int = 400) -> str:
+        """Точный исходник файла на head-ревизии PR, строки [start..end]."""
+        return self._invoke_tool(repo, pr, "read_file", {"path": path, "start": start, "end": end})
+
+    def get_definition(self, repo: str, pr: int, symbol: str) -> str:
+        """Где определён символ + его исходный код."""
+        return self._invoke_tool(repo, pr, "get_definition", {"symbol": symbol})
+
+    def find_callers(self, repo: str, pr: int, node_id: str) -> str:
+        """Кто вызывает символ node_id ('path#fqn') — направленный CALLS (impact-анализ)."""
+        return self._invoke_tool(repo, pr, "find_callers", {"node_id": node_id})
+
+    def get_changed_file_diff(self, repo: str, pr: int, path: str) -> str:
+        """Дифф другого изменённого файла этого PR."""
+        return self._invoke_tool(repo, pr, "get_changed_file_diff", {"path": path})
 
     def _prepared_payload(self, p: PreparedReview) -> dict:
         """Сериализовать PreparedReview в dict для передачи MCP-клиенту."""
