@@ -4,12 +4,16 @@
 между вызовами prepare_review и publish_review одного PR.
 """
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
+
+from langchain_core.tools import StructuredTool
 
 from reviewer.app import Components
 from reviewer.config.settings import Settings
 from reviewer.services.review_service import PreparedReview, ReviewService
 from reviewer.tools.code_tools import ToolContext, make_tools
+from reviewer.vcs.base import VCSProvider
 from reviewer.vcs.diff import commentable_lines
 
 log = logging.getLogger(__name__)
@@ -18,17 +22,23 @@ log = logging.getLogger(__name__)
 @dataclass
 class _Session:
     prepared: PreparedReview
-    tools: dict  # имя инструмента -> StructuredTool (реюз memoization из make_tools)
+    # имя инструмента -> StructuredTool (реюз memoization из make_tools)
+    tools: dict[str, StructuredTool]
 
 
 class MCPReviewService:
-    """Сервисный слой MCP-сервера: управляет сессиями PR и делегирует инструменты."""
+    """Сервисный слой MCP-сервера: управляет сессиями PR и делегирует инструменты.
+
+    Не потокобезопасен; рассчитан на последовательное исполнение sync-тулов
+    FastMCP (sync-функции исполняются в event loop без конкуренции).
+    При переводе тулов на async/to_thread потребуется защита _sessions.
+    """
 
     def __init__(
         self,
         settings: Settings,
         components: Components,
-        vcs_factory=None,
+        vcs_factory: Callable[[str, str], VCSProvider] | None = None,
     ) -> None:
         self.settings = settings
         self.components = components
@@ -42,7 +52,8 @@ class MCPReviewService:
         При повторном вызове для того же (repo, pr) сессия перезаписывается;
         внутренне созданный VCS старой сессии (без vcs_factory) при этом
         fail-soft закрывается — иначе httpx-клиент утёк бы в долгоживущем
-        сервере. Внешний VCS (через vcs_factory) закрывает вызывающий.
+        сервере. Жизненным циклом factory-созданных провайдеров владеет
+        фабрика (vcs_factory test-only).
         """
         owner, name = repo.split("/", 1)
         old = self._sessions.get((repo, pr))

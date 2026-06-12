@@ -7,6 +7,8 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from reviewer.config.settings import Settings
 from reviewer.mcp.service import MCPReviewService
 from reviewer.vcs.base import (
@@ -153,11 +155,8 @@ def test_prepare_review_payload_fields(
 def test_search_without_prepare_raises_clear_error() -> None:
     """search_code без prepare_review бросает ValueError с упоминанием prepare_review."""
     svc = _make_mcp_service()
-    try:
+    with pytest.raises(ValueError, match="prepare_review"):
         svc.search_code("o/r", 7, "query")
-        assert False, "ожидали ошибку"
-    except ValueError as e:
-        assert "prepare_review" in str(e)
 
 
 # ---------------------------------------------------------------------------
