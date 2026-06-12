@@ -6,15 +6,41 @@
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime, timezone
 
+from reviewer.agent.assemble import AssembledReview, assemble_review, ground_line
+from reviewer.agent.dedup import dedup_findings
 from reviewer.app import Components
 from reviewer.config.settings import Settings
 from reviewer.services.review_service import PreparedReview, ReviewService
 from reviewer.tools.code_tools import ToolContext, make_tools
-from reviewer.vcs.base import VCSProvider
+from reviewer.vcs.base import Finding, VCSProvider
 from reviewer.vcs.diff import commentable_lines
 
 log = logging.getLogger(__name__)
+
+
+def _finding_from_dict(d: dict) -> Finding:
+    """Собрать Finding из словаря в схеме analyze-промпта.
+
+    Схема: ``category, severity, file, line, code_quote, message, suggestion,
+    fix{start_line,end_line,replacement}, confidence`` (+опц. ``side``).
+    ``code_quote`` тут не используется (нужен только для грунтовки строки).
+    """
+    fix = d.get("fix") or {}
+    return Finding(
+        category=d.get("category", "correctness"),
+        severity=d.get("severity", "medium"),
+        file=d["file"],
+        line=d.get("line"),
+        side=d.get("side", "RIGHT"),
+        message=d.get("message", ""),
+        suggestion=d.get("suggestion"),
+        confidence=float(d.get("confidence", 0.5)),
+        fix_start=fix.get("start_line"),
+        fix_end=fix.get("end_line"),
+        replacement=fix.get("replacement"),
+    )
 
 
 @dataclass
@@ -136,6 +162,166 @@ class MCPReviewService:
     def get_changed_file_diff(self, repo: str, pr: int, path: str) -> str:
         """Дифф другого изменённого файла этого PR."""
         return self._invoke_tool(repo, pr, "get_changed_file_diff", {"path": path})
+
+    def publish_review(
+        self,
+        repo: str,
+        pr: int,
+        summary: str,
+        findings: list[dict],
+        dry_run: bool = False,
+    ) -> dict:
+        """Детерминированный хвост ревью: gate → grounding → dedup → assemble →
+        публикация → история → очистка overlay/сессии.
+
+        ``findings`` — словари в схеме analyze-промпта. Сессия (repo, pr) должна
+        быть подготовлена ``prepare_review``. Overlay и сессия очищаются ВСЕГДА
+        (даже при сбое VCS-публикации) — см. ``_cleanup``.
+
+        Args:
+            summary: сводка от модели; к ней добавляется markdown-отчёт assemble.
+            dry_run: не публиковать в VCS, только собрать отчёт.
+
+        Returns:
+            Отчёт со счётчиками (posted/dropped_by_gate/deduped/...) и inline.
+        """
+        s = self._session(repo, pr)
+        p = s.prepared
+
+        # 1) Грунтуем строку каждой находки по дословной цитате (анти-галлюцинация).
+        parsed: list[Finding] = []
+        for d in findings:
+            f = _finding_from_dict(d)
+            f.line = ground_line(p.sources.get(f.file), d.get("code_quote"), f.line)
+            parsed.append(f)
+
+        # 2) Gate (категория/severity/confidence/пути) + dedup.
+        kept = [f for f in parsed if p.policy.gate(f)]
+        deduped = dedup_findings(kept)
+
+        # 3) Существующие fingerprint'ы — для идемпотентности (fail-soft).
+        try:
+            existing = p.vcs.list_existing_fingerprints(pr)
+        except Exception:
+            log.warning("Не удалось получить существующие fingerprint", exc_info=True)
+            existing = set()
+
+        # 4) Сборка inline + markdown-сводки. assemble_review МУТИРУЕТ f.line —
+        # после вызова f.fingerprint() согласован с findings_rows. patches
+        # фильтруем по changed_paths (как в nodes.py).
+        asm = assemble_review(
+            deduped,
+            patches={x: p.patches.get(x) for x in p.changed_paths},
+            sources=p.sources,
+            existing_fps=existing,
+            max_comments=p.policy.max_comments,
+            suggestions_mode=self._suggestions_mode(),
+        )
+        full_summary = summary + ("\n\n" + asm.summary if asm.summary else "")
+
+        # 5) Публикация (если не dry_run).
+        error, posted = "", False
+        if not dry_run:
+            try:
+                p.vcs.publish_review(pr, p.prq.head_sha, full_summary, asm.inline_comments)
+                posted = True
+            except Exception as e:
+                error = str(e)
+
+        # 6) История (fail-soft) и очистка overlay/сессии (ВСЕГДА).
+        run_id = self._record_history(
+            repo, pr, p, parsed, deduped, asm, dry_run=dry_run, posted=posted, error=error,
+        )
+        self._cleanup(repo, pr)
+
+        return {
+            "posted": posted,
+            "dry_run": dry_run,
+            "error": error,
+            "run_id": run_id,
+            "summary": full_summary,
+            "inline": [
+                {"path": c.path, "line": c.line, "side": c.side, "body": c.body}
+                for c in asm.inline_comments
+            ],
+            "dropped_by_gate": len(parsed) - len(kept),
+            "deduped": len(kept) - len(deduped),
+            "already_posted": asm.skipped_existing,
+            "moved_to_summary": asm.moved_to_summary,
+        }
+
+    def _record_history(
+        self,
+        repo: str,
+        pr: int,
+        p: PreparedReview,
+        parsed: list[Finding],
+        deduped: list[Finding],
+        asm: AssembledReview,
+        *,
+        dry_run: bool,
+        posted: bool,
+        error: str,
+    ) -> int | None:
+        """Записать прогон в историю (fail-soft).
+
+        Гейтится ``settings.review_history``. Любая ошибка истории не валит
+        publish — возвращаем None. Стоимость/usage недоступны на этом этапе
+        (LLM-вызовы прошли вне сервиса), пишем None.
+        """
+        history = self._review_service._ensure_history()
+        if history is None:
+            return None
+        try:
+            now = datetime.now(timezone.utc)
+            status = "error" if (error and not dry_run) else "ok"
+            comments_inline = len(asm.inline_comments)
+            run = {
+                "repo": repo,
+                "pr_number": pr,
+                "base_sha": p.prq.base_sha,
+                "head_sha": p.prq.head_sha,
+                "model": "claude-code",
+                "model_verify": None,
+                "dry_run": dry_run,
+                "started_at": now,
+                "finished_at": now,
+                "duration_ms": 0,
+                "status": status,
+                "files_reviewed": len(p.units),
+                "files_skipped": len(p.skipped_paths or []),
+                "files_failed": 0,
+                "findings_analyzed": len(parsed),
+                "findings_kept": len(deduped),
+                "verify_rejected": max(0, len(parsed) - len(deduped)),
+                "comments_inline": comments_inline,
+                "comments_summary": max(0, len(asm.findings_rows) - comments_inline),
+                "usage": None,
+                "total_cost": None,
+                "error_text": error or None,
+            }
+            return history.record_run(run, asm.findings_rows, steps=None)
+        except Exception:
+            log.warning("Не удалось сохранить историю прогона", exc_info=True)
+            return None
+
+    def _cleanup(self, repo: str, pr: int) -> None:
+        """Закрыть сессию (repo, pr) и удалить эфемерный overlay pr:N (fail-soft).
+
+        Внутренне созданный VCS-провайдер (vcs_factory is None) закрываем сами —
+        иначе утечка httpx-клиента в долгоживущем сервере. factory-провайдером
+        владеет фабрика, его не трогаем.
+        """
+        sess = self._sessions.pop((repo, pr), None)
+        if sess is not None and self._vcs_factory is None:
+            try:
+                sess.prepared.vcs.close()   # внутренний провайдер — наш, закрываем
+            except Exception:
+                log.warning("Не удалось закрыть VCS-провайдер", exc_info=True)
+        try:
+            self.components.store.delete_ref(f"pr:{pr}")
+        except Exception:
+            log.warning("Не удалось очистить overlay pr:%s", pr, exc_info=True)
 
     def _prepared_payload(self, p: PreparedReview) -> dict:
         """Сериализовать PreparedReview в dict для передачи MCP-клиенту."""
