@@ -10,6 +10,7 @@ class PullRequest:
     title: str
     body: str
     draft: bool = False
+    head_ref: str | None = None   # имя head-ветки PR; источник ключа задачи (None если недоступно)
 
 @dataclass
 class ChangedFile:

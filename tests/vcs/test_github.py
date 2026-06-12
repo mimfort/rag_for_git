@@ -232,3 +232,31 @@ def test_retry_504_then_success():
     assert pr.title == "PR"
     assert len(calls) == 2
     assert sleeps == [1.0]
+
+
+def test_get_pull_request_populates_head_ref():
+    def handler(req):
+        if req.url.path.endswith("/pulls/9"):
+            return httpx.Response(200, json={
+                "base": {"sha": "ccc", "ref": "main"},
+                "head": {"sha": "ddd", "ref": "feature/SAI-515-logout"},
+                "title": "PR", "body": "", "draft": False,
+            })
+        return httpx.Response(404)
+    p = make_provider(handler)
+    pr = p.get_pull_request(9)
+    assert pr.head_ref == "feature/SAI-515-logout"
+
+
+def test_get_pull_request_head_ref_none_when_absent():
+    def handler(req):
+        if req.url.path.endswith("/pulls/10"):
+            return httpx.Response(200, json={
+                "base": {"sha": "ccc", "ref": "main"},
+                "head": {"sha": "ddd"},
+                "title": "PR", "body": "", "draft": False,
+            })
+        return httpx.Response(404)
+    p = make_provider(handler)
+    pr = p.get_pull_request(10)
+    assert pr.head_ref is None
