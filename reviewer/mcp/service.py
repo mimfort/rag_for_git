@@ -430,5 +430,5 @@ class MCPReviewService:
         }
 
     def _suggestions_mode(self) -> str:
-        """Режим предложений (apply/text) — то же значение, что кладётся в Deps.suggestions_mode."""
+        """Режим предложений (apply/text) — передаётся в assemble_review для сборки suggestion-блоков."""
         return self.settings.review_suggestions

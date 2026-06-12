@@ -1,8 +1,8 @@
 # rag_for_git
 
-Агент автоматического ревью pull/merge request'ов на основе **RAG + графа кода + LLM**.
+Агент автоматического ревью pull/merge request'ов на основе **RAG + графа кода + Claude Code**.
 
-На событие «появился/обновился PR» агент берёт дифф, собирает релевантный контекст **по всему репозиторию** (гибридный поиск + граф связей кода), прогоняет его через LLM из OpenRouter с инструментами (agentic RAG), отсеивает ложные срабатывания и постит результат обратно в GitHub: **inline-комментарии на строки диффа + сводку**.
+На событие «появился/обновился PR» агент берёт дифф, собирает релевантный контекст **по всему репозиторию** (гибридный поиск + граф связей кода), прогоняет его через Claude Code-скилл с инструментами поиска (agentic RAG), отсеивает ложные срабатывания и постит результат обратно в GitHub: **inline-комментарии на строки диффа + сводку**.
 
 > Статус: рабочий v1. Целевой язык анализа — **Python**. VCS — **GitHub** (за интерфейсом `VCSProvider`, под GitLab/др. заложена абстракция). Проверено вживую: ловит реальные баги, видит влияние на вызывающий код и существующие тесты.
 
@@ -130,7 +130,7 @@
 
 ## Быстрый старт
 
-Нужны: Python 3.11–3.13, Docker, ключи Voyage и OpenRouter, GitHub-токен.
+Нужны: Python 3.11–3.13, Docker, ключ Voyage, GitHub-токен, Claude Code с плагином.
 
 ```bash
 # 1. зависимости и инфраструктура
@@ -139,17 +139,18 @@ python -m venv .venv && .venv/bin/pip install -e ".[dev]"
 docker compose up -d                 # Postgres/ParadeDB (:5433) + Neo4j (:7687) + web-админка (:8000)
 
 # 2. конфиг
-cp .env.example .env                 # заполнить OPENROUTER_API_KEY, VOYAGE_API_KEY, GITHUB_TOKEN
+cp .env.example .env                 # заполнить VOYAGE_API_KEY, GITHUB_TOKEN
 ```
 
 Где взять ключи:
 - **Voyage** (`VOYAGE_API_KEY`): https://dashboard.voyageai.com/ — есть 200M бесплатных токенов; чтобы снять лимит 3 RPM / 10K TPM, привяжите карту (списания идут только сверх бесплатного пула; auto-recharge можно держать выключенным).
-- **OpenRouter** (`OPENROUTER_API_KEY`): https://openrouter.ai/ — выберите любую модель в `OPENROUTER_MODEL`.
 - **GitHub** (`GITHUB_TOKEN`): PAT с правами *Pull requests: Read and write* + *Contents: Read* (fine-grained) или scope `repo` (classic). Быстрый вариант для своих репо: `gh auth token`.
 
-## Использование (CLI)
+## Использование
 
-После `pip install -e .` доступна команда `reviewer`:
+После `pip install -e .` доступны команды `reviewer` (CLI) и `reviewer-mcp` (MCP-сервер для плагина).
+
+### CLI
 
 ```bash
 # Проиндексировать базу целевой ветки локального клона (вектора + граф).
@@ -158,20 +159,31 @@ reviewer index /path/to/repo --ref main
 
 # Диагностический гибрид-поиск по базе (проверить, что индекс работает).
 reviewer search "token verification"
-
-# Отревьюить PR на GitHub и запостить inline-комментарии + сводку.
-reviewer review owner/repo 123
 ```
 
-Типичный сценарий для другого репозитория:
+### Ревью через Claude Code-плагин
+
+Ревью запускается через скилл `/rag-reviewer:review-pr` в Claude Code:
+
+```bash
+# 1. Убедиться, что MCP-сервер добавлен в Claude Code-настройки
+#    (reviewer-mcp / plugin/ как корень плагина)
+
+# 2. Открыть репозиторий в Claude Code и вызвать скилл:
+/rag-reviewer:review-pr owner/repo#42
+```
+
+Плагин (`plugin/`) вызывает `prepare_review` (через MCP), затем запускает subagents с инструментами поиска `search_code`, `get_related_symbols`, `read_file` и т.д., наконец `publish_review` (через MCP) постит результат в GitHub.
+
+Типичный сценарий:
 
 ```bash
 git clone https://github.com/ORG/REPO /tmp/REPO
 reviewer index /tmp/REPO --ref main        # построить базу+граф
-reviewer review ORG/REPO 42                 # ревью PR #42
+# в Claude Code: /rag-reviewer:review-pr ORG/REPO#42   # ревью PR #42
 ```
 
-> `review` работает и без предварительного `index` — тогда контекст ограничен диффом и overlay (RAG/граф «тонкие»). Для полноценного анализа влияния на весь репозиторий запустите `index` по целевой ветке.
+> Ревью работает и без предварительного `index` — тогда контекст ограничен диффом и overlay (RAG/граф «тонкие»). Для полноценного анализа влияния на весь репозиторий запустите `index` по целевой ветке.
 
 ## Эксплуатация
 

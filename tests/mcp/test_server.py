@@ -23,12 +23,8 @@ from reviewer.vcs.base import ChangedFile, PullRequest
 def _settings() -> Settings:
     s = Settings()
     s.review_history = False
-    s.review_trace = False
-    s.review_verdict_log = ""
-    s.review_synthesis = False
     s.review_skip_drafts = True
     s.review_max_files = 50
-    s.openrouter_api_key = "test"
     s.voyage_api_key = "test"
     s.github_token = "test"
     return s

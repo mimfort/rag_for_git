@@ -3,8 +3,8 @@
 Функция :func:`assemble_review` инкапсулирует всю логику превращения списка
 :class:`~reviewer.vcs.base.Finding` в inline-комментарии и markdown-сводку:
 ранжирование по severity/confidence, fingerprint-дедупликация, кап max_comments,
-разнесение inline/summary. Не содержит сетевых вызовов — пригодна как для узла
-LangGraph, так и для MCP-тула ``publish_review``.
+разнесение inline/summary. Не содержит сетевых вызовов — используется MCP-тулом
+``publish_review``.
 """
 from __future__ import annotations
 

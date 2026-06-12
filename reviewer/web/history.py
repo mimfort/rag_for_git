@@ -78,7 +78,7 @@ class ReviewHistory:
         Args:
             run:      словарь с полями, соответствующими колонкам review_runs.
             findings: список словарей (поля review_findings, без run_id).
-            steps:    список шагов трейса из TraceLog.snapshot() (без run_id).
+            steps:    список шагов трейса (формат строк review_steps, без run_id).
                       Если None или пустой — шаги не вставляются.
 
         Returns:

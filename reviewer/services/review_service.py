@@ -1,37 +1,28 @@
-"""Оркестрация полного прогона ревью PR.
+"""Оркестрация подготовки ревью PR.
 
-Выделен из CLI (фаза 3.1) — сервис инкапсулирует:
+Выделен из CLI — сервис инкапсулирует:
 - получение PR и diff,
 - синхронизацию индекса (overlay),
-- кап ``max_files``,
-- запуск LangGraph,
-- запись истории,
-- cleanup.
+- кап ``max_files``.
 
+Запуск analyze-этапа выполняется снаружи (Claude Code-скилл через MCP).
 CLI остаётся тонкой обёрткой: парсит аргументы и вызывает
-``ReviewService(...).run_review(...)``.
+``ReviewService(...).prepare(...)``.
 """
 from __future__ import annotations
 
 import logging
-import re
 from dataclasses import dataclass
-from datetime import datetime, timezone
 
 from reviewer.app import Components
 from reviewer.config.settings import Settings
 from reviewer.vcs.base import ChangedFile, PullRequest, VCSProvider
 from reviewer.vcs.github import GitHubProvider
-from reviewer.agent.graph import build_graph
-from reviewer.agent.state import Deps, ReviewUnit
-from reviewer.agent.analyzer import LLMAnalyzer, LLMVerifier, LLMSynthesizer
 from reviewer.policy.policy import ReviewPolicy
 from reviewer.index.chunker import chunk_python
 from reviewer.index.freshness import build_overlay, update_base
-from reviewer.llm.usage import UsageLog
-from reviewer.llm.trace import TraceLog
-from reviewer.llm.verdicts import VerdictLog
 from reviewer.web.history import ReviewHistory
+from reviewer.agent.state import ReviewUnit
 
 log = logging.getLogger(__name__)
 
@@ -74,24 +65,8 @@ class PreparedReview:
     changed_status: dict[str, str]       # path -> статус файла (modified/added/removed)
 
 
-@dataclass
-class ReviewResult:
-    """Результат прогона ревью."""
-
-    state: dict
-    usage: UsageLog
-    started_at: datetime
-    finished_at: datetime
-    duration_ms: int
-    skipped_paths: list[str] | None
-    published_flag: bool | None
-    publish_failed: list[str]
-    dry_run: bool
-    is_draft_skip: bool = False
-
-
 class ReviewService:
-    """Сервис полного прогона ревью PR."""
+    """Сервис подготовки ревью PR."""
 
     def __init__(
         self,
@@ -136,8 +111,8 @@ class ReviewService:
     ) -> PreparedReview:
         """Подготовка ревью: PR → синк base → отбор файлов → overlay → policy → юниты.
 
-        Переиспользуется ``run_review`` и MCP-сервером: возвращает всё, что нужно
-        для analyze-этапа и последующей публикации, без запуска LLM-графа.
+        Переиспользуется MCP-сервером: возвращает всё, что нужно
+        для analyze-этапа и последующей публикации, без запуска LLM.
 
         Args:
             vcs_provider: опциональный кастомный VCS-провайдер (например,
@@ -226,7 +201,7 @@ class ReviewService:
                 p for p in all_py_paths if p not in set(selected_paths)
             ]
 
-            # sources нужны верификатору для проверки наличия символов
+            # sources нужны для проверки наличия символов
             sources = {u.path: u.new_source for u in units}
 
             # changed_node_ids — объединение node_id всех юнитов (для graph-expansion)
@@ -254,8 +229,7 @@ class ReviewService:
             )
         except Exception:
             # При сбое подготовки чистим возможный недостроенный overlay pr:N —
-            # у MCP-сервера не будет finally-страховки run_review; для run_review
-            # повторное удаление в finally идемпотентно.
+            # у MCP-сервера не будет finally-страховки; повторное удаление идемпотентно.
             try:
                 self.components.store.delete_ref(f"pr:{pr_number}")
             except Exception:
@@ -275,351 +249,3 @@ class ReviewService:
                         exc_info=True,
                     )
             raise
-
-    def run_review(
-        self,
-        owner: str,
-        repo: str,
-        pr_number: int,
-        dry_run: bool = False,
-        vcs_provider: VCSProvider | None = None,
-    ) -> ReviewResult:
-        """Выполнить полный прогон ревью для PR.
-
-        Args:
-            vcs_provider: опциональный кастомный VCS-провайдер (например,
-                для прогона на локальных снапшотах в eval).
-
-        Returns:
-            ReviewResult с финальным состоянием графа и метаданными прогона.
-        """
-        history = self._ensure_history()
-        slug = f"{owner}/{repo}"
-
-        # vcs нужен finally-блоку для cleanup. Источник истины — prepared.vcs
-        # (prepare сам создаёт провайдер при vcs_provider=None). При сбое самого
-        # prepare() внутренне созданный провайдер закрывает prepare — здесь vcs
-        # останется None и finally его не тронет. ВАЖНО: в prepare передаём
-        # ИСХОДНЫЙ vcs_provider (None для прод-ревью), иначе сломается base-sync
-        # (он гейтится vcs_provider is None).
-        vcs: VCSProvider | None = vcs_provider
-
-        try:
-            prepared = self.prepare(owner, repo, pr_number, vcs_provider=vcs_provider)
-            vcs = prepared.vcs
-            prq = prepared.prq
-
-            # Драфт-PR пропускаем; записываем в историю со статусом draft_skip.
-            # Проверка после prepare() (осознанное решение: лишняя подготовка для
-            # драфта допустима — поведение для пользователя не меняется).
-            if prq.draft and self.settings.review_skip_drafts:
-                self._record_draft_skip(history, slug, prq, pr_number, dry_run)
-                return ReviewResult(
-                    state={
-                        "review_units": [],
-                        "findings": [],
-                        "failed_units": [],
-                        "verified": [],
-                        "summary": "PR — драфт, ревью пропущено.",
-                        "inline_comments": [],
-                        "published": None,
-                    },
-                    usage=UsageLog(),
-                    started_at=datetime.now(timezone.utc),
-                    finished_at=datetime.now(timezone.utc),
-                    duration_ms=0,
-                    skipped_paths=None,
-                    published_flag=None,
-                    publish_failed=[],
-                    dry_run=dry_run,
-                    is_draft_skip=True,
-                )
-
-            units = prepared.units
-            changed = prepared.changed_paths
-            policy = prepared.policy
-            sources = prepared.sources
-            # Внутреннее представление пропущенных: None при пустом списке.
-            skipped_paths = prepared.skipped_paths or None
-
-            usage = UsageLog()
-            trace = TraceLog() if self.settings.review_trace else None
-            verdicts = (
-                VerdictLog(self.settings.review_verdict_log, pr=pr_number)
-                if self.settings.review_verdict_log
-                else None
-            )
-
-            changed_status = prepared.changed_status
-
-            # Кросс-файловый синтез имеет смысл только при ≥2 файлах в PR
-            synthesizer = (
-                LLMSynthesizer(
-                    self.components.llm_provider,
-                    prompt_cache=self.settings.openrouter_prompt_cache,
-                    max_tool_result_chars=self.settings.max_tool_result_chars,
-                )
-                if self.settings.review_synthesis and len(changed) >= 2
-                else None
-            )
-
-            deps = Deps(
-                vcs=vcs,
-                retriever=self.components.retriever,
-                graph=self.components.graph,
-                policy=policy,
-                analyzer=LLMAnalyzer(
-                    self.components.llm_provider,
-                    self.settings.review_max_tool_iterations,
-                    prompt_cache=self.settings.openrouter_prompt_cache,
-                    max_tool_result_chars=self.settings.max_tool_result_chars,
-                ),
-                verifier=LLMVerifier(
-                    self.components.llm_provider,
-                    agentic=self.settings.review_agentic_verify,
-                    max_iterations=self.settings.review_verify_max_iterations,
-                    min_severity=self.settings.review_verify_min_severity,
-                    model=(self.settings.openrouter_model_verify or None),
-                    prompt_cache=self.settings.openrouter_prompt_cache,
-                    oneshot_threshold=self.settings.verify_oneshot_threshold,
-                    max_verify_tokens=self.settings.max_verify_tokens,
-                    max_tool_result_chars=self.settings.max_tool_result_chars,
-                ),
-                pr_number=pr_number,
-                head_sha=prq.head_sha,
-                overlay_ref=prepared.overlay_ref,
-                changed_paths=changed,
-                patches=prepared.patches,
-                tool_cache={},
-                settings=self.settings,
-                suggestions_mode=self.settings.review_suggestions,
-                pr_title=prq.title,
-                pr_body=prq.body,
-                changed_status=changed_status,
-                synthesizer=synthesizer,
-                sources=sources,
-                usage=usage,
-                trace=trace,
-                verdicts=verdicts,
-                skipped_paths=skipped_paths,
-            )
-
-            started_at = datetime.now(timezone.utc)
-            state = build_graph(deps, publish=not dry_run).invoke(
-                {
-                    "review_units": units,
-                    "findings": [],
-                    "failed_units": [],
-                    "verified": [],
-                    "summary": "",
-                    "inline_comments": [],
-                },
-                config={"max_concurrency": self.settings.review_max_parallel_files},
-            )
-            finished_at = datetime.now(timezone.utc)
-            duration_ms = int(
-                (finished_at - started_at).total_seconds() * 1000
-            )
-
-            publish_failed = [
-                entry for entry in state.get("failed_units", [])
-                if entry.startswith("publish:")
-            ]
-            published_flag = state.get("published")
-
-            # --- запись истории прогона (fail-soft) ---
-            if self.settings.review_history and history is not None:
-                try:
-                    self._record_history(
-                        history=history,
-                        slug=slug,
-                        pr_number=pr_number,
-                        prq=prq,
-                        dry_run=dry_run,
-                        started_at=started_at,
-                        finished_at=finished_at,
-                        duration_ms=duration_ms,
-                        units=units,
-                        state=state,
-                        usage=usage,
-                        trace=trace,
-                        skipped_paths=skipped_paths,
-                        published_flag=published_flag,
-                        publish_failed=publish_failed,
-                    )
-                except Exception as _exc:
-                    log.warning(
-                        "Не удалось сохранить историю прогона: %s", _exc,
-                    )
-
-            return ReviewResult(
-                state=state,
-                usage=usage,
-                started_at=started_at,
-                finished_at=finished_at,
-                duration_ms=duration_ms,
-                skipped_paths=skipped_paths,
-                published_flag=published_flag,
-                publish_failed=publish_failed,
-                dry_run=dry_run,
-            )
-
-        finally:
-            # Удаляем эфемерный overlay pr:N — он не нужен после завершения ревью
-            try:
-                self.components.store.delete_ref(f"pr:{pr_number}")
-            except Exception:
-                log.warning(
-                    "Не удалось очистить overlay pr:%s", pr_number, exc_info=True,
-                )
-            # store и graph НЕ закрываем — caller (CLI/eval) управляет их жизненным циклом
-            if history is not None and self._history_owned:
-                history.close()
-                # Сбрасываем кэш: пул закрыт. Повторный run_review на том же
-                # экземпляре должен пересоздать ReviewHistory, а не вернуть закрытый
-                # (иначе record_run второго и последующих PR тихо падает).
-                self._history = None
-            # vcs закрываем только если создали его сами (vcs_provider не передан)
-            # и prepare успел его создать (vcs не None).
-            if vcs_provider is None and vcs is not None:
-                vcs.close()
-
-    def _record_draft_skip(
-        self,
-        history: ReviewHistory | None,
-        slug: str,
-        prq: PullRequest,
-        pr_number: int,
-        dry_run: bool,
-    ) -> None:
-        """Записать draft_skip в историю (fail-soft)."""
-        if history is None:
-            return
-        try:
-            _now = datetime.now(timezone.utc)
-            _run = {
-                "repo": slug,
-                "pr_number": pr_number,
-                "base_sha": prq.base_sha,
-                "head_sha": prq.head_sha,
-                "model": self.settings.openrouter_model,
-                "model_verify": self.settings.openrouter_model_verify or None,
-                "dry_run": dry_run,
-                "started_at": _now,
-                "finished_at": _now,
-                "duration_ms": 0,
-                "status": "draft_skip",
-                "files_reviewed": 0,
-                "files_skipped": 0,
-                "files_failed": 0,
-                "findings_analyzed": 0,
-                "findings_kept": 0,
-                "verify_rejected": 0,
-                "comments_inline": 0,
-                "comments_summary": 0,
-                "usage": {},
-                "total_cost": 0.0,
-                "error_text": None,
-            }
-            history.record_run(_run, [])
-        except Exception as _exc:
-            log.warning(
-                "Не удалось сохранить draft_skip в историю: %s", _exc,
-            )
-
-    def _record_history(  # noqa: PLR0913
-        self,
-        *,
-        history: ReviewHistory,
-        slug: str,
-        pr_number: int,
-        prq: PullRequest,
-        dry_run: bool,
-        started_at: datetime,
-        finished_at: datetime,
-        duration_ms: int,
-        units: list[ReviewUnit],
-        state: dict,
-        usage: UsageLog,
-        trace: TraceLog | None,
-        skipped_paths: list[str] | None,
-        published_flag: bool | None,
-        publish_failed: list[str],
-    ) -> None:
-        """Сформировать и записать полный прогон в историю."""
-        usage_snap = usage.snapshot()
-        total_cost = sum(
-            v.get("cost", 0.0) for v in usage_snap.values()
-        )
-
-        # fingerprint-сет опубликованных inline-комментариев
-        inline_fps: set[str] = set()
-        for ic in state["inline_comments"]:
-            m = re.search(
-                r"<!--\s*ai-review:([0-9a-f]+)\s*-->", ic.body,
-            )
-            if m:
-                inline_fps.add(m.group(1))
-
-        analyzed_fps = {f.fingerprint() for f in state["findings"]}
-        findings_analyzed = len(analyzed_fps)
-        findings_kept = len(state["verified"])
-        verify_rejected = max(0, findings_analyzed - findings_kept)
-        comments_inline = len(state["inline_comments"])
-        comments_summary = max(0, findings_kept - comments_inline)
-
-        status = "error" if (published_flag is False and not dry_run) else "ok"
-        error_text = (
-            publish_failed[0]
-            if (status == "error" and publish_failed)
-            else None
-        )
-
-        run_dict = {
-            "repo": slug,
-            "pr_number": pr_number,
-            "base_sha": prq.base_sha,
-            "head_sha": prq.head_sha,
-            "model": self.settings.openrouter_model,
-            "model_verify": self.settings.openrouter_model_verify or None,
-            "dry_run": dry_run,
-            "started_at": started_at,
-            "finished_at": finished_at,
-            "duration_ms": duration_ms,
-            "status": status,
-            "files_reviewed": len(units),
-            "files_skipped": len(skipped_paths or []),
-            "files_failed": len(state.get("failed_units", [])),
-            "findings_analyzed": findings_analyzed,
-            "findings_kept": findings_kept,
-            "verify_rejected": verify_rejected,
-            "comments_inline": comments_inline,
-            "comments_summary": comments_summary,
-            "usage": usage_snap,
-            "total_cost": round(total_cost, 6),
-            "error_text": error_text,
-        }
-
-        findings_published = False if status == "error" else True
-        findings_list = [
-            {
-                "file": f.file,
-                "line": f.line,
-                "category": f.category,
-                "severity": f.severity,
-                "confidence": f.confidence,
-                "message": (f.message or "")[:500],
-                "fingerprint": f.fingerprint(),
-                "is_real": True,
-                "published": findings_published,
-                "inline": f.fingerprint() in inline_fps,
-            }
-            for f in state["verified"]
-        ]
-
-        steps = (
-            trace.snapshot()
-            if (self.settings.review_trace and trace is not None)
-            else None
-        )
-        history.record_run(run_dict, findings_list, steps=steps)
