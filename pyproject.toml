@@ -18,6 +18,7 @@ dependencies = [
     "pyyaml>=6.0",
     "click>=8.1",
     "protobuf>=5.27",
+    "mcp>=1.9,<2",
 ]
 
 [project.optional-dependencies]
