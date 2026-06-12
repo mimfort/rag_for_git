@@ -41,12 +41,17 @@ def test_load_env_defaults_then_yaml_override():
     assert p.severity_threshold == "medium"
     assert p.min_confidence == 0.5
     assert p.max_comments == 25
+    assert p.output_language == "ru"   # env-дефолт, YAML отсутствует
     assert p.gate(F("correctness", "high", confidence=0.4)) is False   # ниже env-порога confidence
 
     p2 = ReviewPolicy.load(s, "severity_threshold: high\nmax_comments: 5\nmin_confidence: 0.8")
     assert p2.severity_threshold == "high"
     assert p2.max_comments == 5
     assert p2.min_confidence == 0.8
+    assert p2.output_language == "ru"   # YAML без ключа не трогает env-дефолт
+
+    p3 = ReviewPolicy.load(s, "output_language: en")
+    assert p3.output_language == "en"   # YAML переопределяет env-дефолт
 
 
 def test_output_language_default_and_yaml_override():
