@@ -348,3 +348,29 @@ def test_publish_dedups_near_identical_findings(_ov, _ch) -> None:
     # findings_analyzed — по уникальным fingerprint (точный дубль не раздувает счётчик)
     assert history.runs[0]["findings_analyzed"] == 1
     assert history.runs[0]["findings_kept"] == 1
+
+
+@patch("reviewer.services.review_service.chunk_python", side_effect=_fake_chunk)
+@patch("reviewer.services.review_service.build_overlay")
+def test_publish_coerces_unhashable_severity_and_nonstringsuggestion(_ov, _ch) -> None:
+    """Unhashable severity (список) → "medium"; не-строковый suggestion → None.
+
+    Проверяет фикс: frozenset-membership на списке давал TypeError,
+    repr suggestion в теле комментария устранён коэрцией в str | None.
+    """
+    svc, vcs, _ = _make_mcp_service_with_publish()
+    svc.prepare_review("o/r", 7)
+    pack = [
+        dict(RAW, severity=["high"], message="unhashable severity"),    # список → medium
+        dict(RAW, suggestion=42, message="non-string suggestion"),       # int → None
+    ]
+    report = svc.publish_review("o/r", 7, summary="s", findings=pack, dry_run=True)
+    # Оба прошли гейт (medium >= threshold=medium) и опубликовались
+    assert report["invalid"] == 0
+    assert report["dropped_by_gate"] == 0
+    assert len(report["inline"]) == 2
+    # suggestion=42 должен превратиться в None (не "42" или repr)
+    inline_bodies = [c["body"] for c in report["inline"]]
+    assert not any("42" in b and "suggestion" in b.lower() for b in inline_bodies), (
+        "suggestion=42 не должен попадать в тело комментария как repr/str"
+    )

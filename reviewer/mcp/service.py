@@ -53,7 +53,7 @@ def _finding_from_dict(d) -> Finding | None:
     if not isinstance(d, dict) or not d.get("file"):
         return None
     severity = d.get("severity")
-    if severity not in _VALID_SEVERITIES:
+    if not isinstance(severity, str) or severity not in _VALID_SEVERITIES:
         severity = "medium"
     side = d.get("side")
     if side not in ("RIGHT", "LEFT"):
@@ -70,6 +70,9 @@ def _finding_from_dict(d) -> Finding | None:
         replacement = fix.get("replacement")
         if fix_start is None or fix_end is None or not isinstance(replacement, str):
             fix_start = fix_end = replacement = None
+    suggestion = d.get("suggestion")
+    if not isinstance(suggestion, str):
+        suggestion = None
     return Finding(
         category=str(d.get("category") or "correctness"),
         severity=severity,
@@ -77,7 +80,7 @@ def _finding_from_dict(d) -> Finding | None:
         line=_coerce_int(d.get("line")),
         side=side,
         message=str(d.get("message") or ""),
-        suggestion=d.get("suggestion"),
+        suggestion=suggestion,
         confidence=confidence,
         fix_start=fix_start,
         fix_end=fix_end,
