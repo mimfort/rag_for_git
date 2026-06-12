@@ -149,108 +149,122 @@ class ReviewService:
 
         vcs = vcs_provider or self._create_vcs_provider(owner, repo)
 
-        prq = vcs.get_pull_request(pr_number)
+        try:
+            prq = vcs.get_pull_request(pr_number)
 
-        files = vcs.get_changed_files(pr_number)
+            files = vcs.get_changed_files(pr_number)
 
-        # Свежесть base-индекса: подтягиваем чанки файлов, изменённых после
-        # последней индексации (граф кода обновляется только на reviewer index).
-        indexed = self.components.store.get_index_meta("base")
-        # base-sync только для реального GitHub-ревью: при внешнем vcs_provider
-        # (eval-снапшоты) синхронизация и set_index_meta затёрли бы прод-индекс
-        # данными снапшота (у снапшота base_sha="base", не настоящий SHA ветки).
-        if vcs_provider is None and indexed and indexed != prq.base_sha:
-            try:
-                diff_files = vcs.compare_files(indexed, prq.base_sha)
-                update_base(
-                    self.components.store,
-                    self.components.embedder,
-                    "",
-                    prq.base_ref,
-                    [f.path for f in diff_files if f.status != "removed"],
-                    read=lambda p: vcs.get_file_at_ref(p, prq.base_sha),
-                    removed_files=[f.path for f in diff_files if f.status == "removed"],
+            # Свежесть base-индекса: подтягиваем чанки файлов, изменённых после
+            # последней индексации (граф кода обновляется только на reviewer index).
+            indexed = self.components.store.get_index_meta("base")
+            # base-sync только для реального GitHub-ревью: при внешнем vcs_provider
+            # (eval-снапшоты) синхронизация и set_index_meta затёрли бы прод-индекс
+            # данными снапшота (у снапшота base_sha="base", не настоящий SHA ветки).
+            if vcs_provider is None and indexed and indexed != prq.base_sha:
+                try:
+                    diff_files = vcs.compare_files(indexed, prq.base_sha)
+                    update_base(
+                        self.components.store,
+                        self.components.embedder,
+                        "",
+                        prq.base_ref,
+                        [f.path for f in diff_files if f.status != "removed"],
+                        read=lambda p: vcs.get_file_at_ref(p, prq.base_sha),
+                        removed_files=[f.path for f in diff_files if f.status == "removed"],
+                    )
+                    self.components.store.set_index_meta("base", prq.base_sha)
+                    log.info(
+                        "Base-индекс синхронизирован: %d файлов (%s..%s)",
+                        len(diff_files), indexed[:7], prq.base_sha[:7],
+                    )
+                except Exception as e:
+                    log.warning("Не удалось синхронизировать base-индекс: %s", e)
+            elif not indexed:
+                log.warning(
+                    "SHA base-индекса неизвестен (выполните reviewer index) "
+                    "— индекс может быть устаревшим.",
                 )
-                self.components.store.set_index_meta("base", prq.base_sha)
-                log.info(
-                    "Base-индекс синхронизирован: %d файлов (%s..%s)",
-                    len(diff_files), indexed[:7], prq.base_sha[:7],
-                )
-            except Exception as e:
-                log.warning("Не удалось синхронизировать base-индекс: %s", e)
-        elif not indexed:
-            log.warning(
-                "SHA base-индекса неизвестен (выполните reviewer index) "
-                "— индекс может быть устаревшим.",
+
+            selected_files = _select_changed_files(
+                files, self.settings.review_max_files,
+            )
+            selected_paths = [f.path for f in selected_files]
+            changed = selected_paths
+
+            # Загружаем head-версии выбранных файлов один раз и переиспользуем
+            # для overlay и для построения review-юнитов.
+            head_sources: dict[str, str] = {}
+            for f in selected_files:
+                src = vcs.get_file_at_ref(f.path, prq.head_sha)
+                if src:
+                    head_sources[f.path] = src
+
+            build_overlay(
+                self.components.store,
+                self.components.embedder,
+                pr_number,
+                changed,
+                head_sources=head_sources,
             )
 
-        selected_files = _select_changed_files(
-            files, self.settings.review_max_files,
-        )
-        selected_paths = [f.path for f in selected_files]
-        changed = selected_paths
+            units: list[ReviewUnit] = []
+            for f in selected_files:
+                src = head_sources.get(f.path)
+                if not src:
+                    continue
+                node_ids = [ch.node_id for ch in chunk_python(f.path, src.encode())]
+                units.append(
+                    ReviewUnit(f.path, node_ids, f.patch or "", new_source=src)
+                )
 
-        # Загружаем head-версии выбранных файлов один раз и переиспользуем
-        # для overlay и для построения review-юнитов.
-        head_sources: dict[str, str] = {}
-        for f in selected_files:
-            src = vcs.get_file_at_ref(f.path, prq.head_sha)
-            if src:
-                head_sources[f.path] = src
+            # Файлы вне лимита попадают в сводку как пропущенные
+            all_py_paths = [
+                f.path for f in files
+                if f.path.endswith(".py") and f.status != "removed"
+            ]
+            skipped_paths = [
+                p for p in all_py_paths if p not in set(selected_paths)
+            ]
 
-        build_overlay(
-            self.components.store,
-            self.components.embedder,
-            pr_number,
-            changed,
-            head_sources=head_sources,
-        )
+            # sources нужны верификатору для проверки наличия символов
+            sources = {u.path: u.new_source for u in units}
 
-        units: list[ReviewUnit] = []
-        for f in selected_files:
-            src = head_sources.get(f.path)
-            if not src:
-                continue
-            node_ids = [ch.node_id for ch in chunk_python(f.path, src.encode())]
-            units.append(
-                ReviewUnit(f.path, node_ids, f.patch or "", new_source=src)
+            # changed_node_ids — объединение node_id всех юнитов (для graph-expansion)
+            changed_node_ids = [nid for u in units for nid in u.node_ids]
+
+            policy = ReviewPolicy.load(
+                self.settings,
+                vcs.get_file_at_ref(".review.yml", prq.base_ref),
             )
 
-        # Файлы вне лимита попадают в сводку как пропущенные
-        all_py_paths = [
-            f.path for f in files
-            if f.path.endswith(".py") and f.status != "removed"
-        ]
-        skipped_paths = [
-            p for p in all_py_paths if p not in set(selected_paths)
-        ]
+            changed_status = {f.path: f.status for f in files}
 
-        # sources нужны верификатору для проверки наличия символов
-        sources = {u.path: u.new_source for u in units}
-
-        # changed_node_ids — объединение node_id всех юнитов (для graph-expansion)
-        changed_node_ids = [nid for u in units for nid in u.node_ids]
-
-        policy = ReviewPolicy.load(
-            self.settings,
-            vcs.get_file_at_ref(".review.yml", prq.base_ref),
-        )
-
-        changed_status = {f.path: f.status for f in files}
-
-        return PreparedReview(
-            prq=prq,
-            units=units,
-            policy=policy,
-            patches={f.path: f.patch for f in files},
-            sources=sources,
-            changed_paths=changed,
-            changed_node_ids=changed_node_ids,
-            skipped_paths=skipped_paths,
-            overlay_ref=f"pr:{pr_number}",
-            vcs=vcs,
-            changed_status=changed_status,
-        )
+            return PreparedReview(
+                prq=prq,
+                units=units,
+                policy=policy,
+                patches={f.path: f.patch for f in files},
+                sources=sources,
+                changed_paths=changed,
+                changed_node_ids=changed_node_ids,
+                skipped_paths=skipped_paths,
+                overlay_ref=f"pr:{pr_number}",
+                vcs=vcs,
+                changed_status=changed_status,
+            )
+        except Exception:
+            # При сбое подготовки закрываем провайдер, созданный самим prepare;
+            # переданный снаружи закрывает вызывающий. Без этого httpx-клиент
+            # GitHubProvider утёк бы (критично для долгоживущего MCP-сервера).
+            if vcs_provider is None:
+                try:
+                    vcs.close()
+                except Exception:
+                    log.warning(
+                        "Не удалось закрыть VCS-провайдер после сбоя prepare",
+                        exc_info=True,
+                    )
+            raise
 
     def run_review(
         self,
@@ -273,10 +287,11 @@ class ReviewService:
         slug = f"{owner}/{repo}"
 
         # vcs нужен finally-блоку для cleanup. Источник истины — prepared.vcs
-        # (prepare сам создаёт провайдер при vcs_provider=None); храним отдельную
-        # ссылку, чтобы закрыть провайдер даже если prepare() упадёт после его
-        # создания. ВАЖНО: в prepare передаём ИСХОДНЫЙ vcs_provider (None для
-        # прод-ревью), иначе сломается base-sync (он гейтится vcs_provider is None).
+        # (prepare сам создаёт провайдер при vcs_provider=None). При сбое самого
+        # prepare() внутренне созданный провайдер закрывает prepare — здесь vcs
+        # останется None и finally его не тронет. ВАЖНО: в prepare передаём
+        # ИСХОДНЫЙ vcs_provider (None для прод-ревью), иначе сломается base-sync
+        # (он гейтится vcs_provider is None).
         vcs: VCSProvider | None = vcs_provider
 
         try:

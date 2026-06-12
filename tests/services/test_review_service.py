@@ -520,3 +520,34 @@ def test_prepare_runs_base_sync_for_real_review(
 
     mock_update_base.assert_called_once()
     components.store.set_index_meta.assert_called_once_with("base", "base123")
+
+
+def test_prepare_closes_internal_vcs_on_failure(
+    settings: Settings, components: MagicMock,
+) -> None:
+    """При сбое prepare() внутренне созданный VCS-провайдер закрывается —
+    иначе httpx-клиент утёк бы (критично для долгоживущего MCP-сервера)."""
+    vcs = _vcs_with_files([_changed("a.py")])
+    vcs.get_changed_files.side_effect = RuntimeError("api down")
+
+    service = ReviewService(settings, components)
+    with patch.object(service, "_create_vcs_provider", return_value=vcs):
+        with pytest.raises(RuntimeError, match="api down"):
+            service.prepare("owner", "repo", 1)   # vcs_provider не передан
+
+    vcs.close.assert_called_once()
+
+
+def test_prepare_does_not_close_external_vcs_on_failure(
+    settings: Settings, components: MagicMock,
+) -> None:
+    """Переданный снаружи vcs_provider при сбое prepare() НЕ закрывается —
+    его жизненным циклом управляет вызывающий."""
+    vcs = _vcs_with_files([_changed("a.py")])
+    vcs.get_changed_files.side_effect = RuntimeError("api down")
+
+    service = ReviewService(settings, components)
+    with pytest.raises(RuntimeError, match="api down"):
+        service.prepare("owner", "repo", 1, vcs_provider=vcs)
+
+    vcs.close.assert_not_called()
