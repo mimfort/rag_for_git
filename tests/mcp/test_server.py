@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -117,8 +118,6 @@ def test_prepare_review_callable_via_mcp(_ov, _ch) -> None:
     call_tool возвращает list[ContentBlock] (TextContent с JSON-сериализованным dict).
     Из первого элемента извлекаем text и проверяем ключевые поля.
     """
-    import json
-
     from reviewer.entrypoints.mcp_server import create_server
 
     server = create_server(_make_mcp_service())
@@ -131,6 +130,33 @@ def test_prepare_review_callable_via_mcp(_ov, _ch) -> None:
     data = json.loads(first.text)
     assert "units" in data
     assert data["pr"]["number"] == 7
+
+
+@patch("reviewer.services.review_service.chunk_python", side_effect=_fake_chunk)
+@patch("reviewer.services.review_service.build_overlay")
+def test_publish_review_dry_run_callable_via_mcp(_ov, _ch) -> None:
+    """Smoke: publish_review через MCP-слой — pydantic-валидация findings
+    (list[dict]) и сериализация dict-отчёта в TextContent."""
+    from reviewer.entrypoints.mcp_server import create_server
+
+    server = create_server(_make_mcp_service())
+    asyncio.run(server.call_tool("prepare_review", {"repo": "o/r", "pr": 7}))
+    finding = {
+        "category": "correctness", "severity": "high", "file": "a.py",
+        "line": 1, "code_quote": None, "message": "bug", "suggestion": None,
+        "fix": None, "confidence": 0.9,
+    }
+    result = asyncio.run(server.call_tool(
+        "publish_review",
+        {"repo": "o/r", "pr": 7, "summary": "s",
+         "findings": [finding], "dry_run": True},
+    ))
+
+    assert result, "ожидали непустой результат"
+    data = json.loads(result[0].text)
+    assert data["dry_run"] is True
+    assert data["posted"] is False
+    assert "inline" in data
 
 
 def test_search_code_without_prepare_reports_error() -> None:

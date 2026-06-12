@@ -5,6 +5,7 @@
 stdout для JSON-RPC-фреймов, любая запись туда ломает сессию.
 """
 import logging
+import sys
 
 from mcp.server.fastmcp import FastMCP
 
@@ -25,7 +26,7 @@ def create_server(service: MCPReviewService) -> FastMCP:
     def prepare_review(repo: str, pr: int) -> dict:
         """Prepare a PR review session: sync base index, build overlay, load policy.
         Returns PR metadata, policy and review units (path, patch, commentable lines).
-        Call this first, before any other tool."""
+        repo like "owner/name". Call this first, before any other tool."""
         return service.prepare_review(repo, pr)
 
     @mcp.tool()
@@ -40,7 +41,8 @@ def create_server(service: MCPReviewService) -> FastMCP:
 
     @mcp.tool()
     def read_file(repo: str, pr: int, path: str, start: int = 1, end: int = 400) -> str:
-        """Read exact source lines of a file at the PR head revision."""
+        """Read exact source lines of a file at the PR head revision.
+        start/end are 1-based inclusive line numbers."""
         return service.read_file(repo, pr, path, start, end)
 
     @mcp.tool()
@@ -69,6 +71,9 @@ def create_server(service: MCPReviewService) -> FastMCP:
         """Deterministic publish tail: policy gate, line grounding, dedup,
         inline/summary split, suggestion invariants, fingerprint idempotency,
         comment cap, GitHub review post, history record, overlay cleanup.
+        Each finding: {category, severity(low|medium|high|critical), file, line,
+        side(RIGHT|LEFT), code_quote, message, suggestion,
+        fix:{start_line,end_line,replacement}|null, confidence:0..1}.
         With dry_run=true nothing is posted; the full report is returned."""
         return service.publish_review(repo, pr, summary, findings, dry_run)
 
@@ -82,9 +87,20 @@ def main() -> None:
     from reviewer.app import build_components
     from reviewer.config.settings import Settings
 
-    settings = Settings()
-    components = build_components(settings)
-    create_server(MCPReviewService(settings, components)).run()  # stdio
+    try:
+        settings = Settings()
+        components = build_components(settings)
+        server = create_server(MCPReviewService(settings, components))
+    except Exception as e:
+        # Одна ясная строка в stderr без сырого traceback (детали — в debug-логе).
+        log.debug("Сбой инициализации reviewer-mcp", exc_info=True)
+        print(
+            f"reviewer-mcp: ошибка инициализации компонентов: {type(e).__name__}: {e} "
+            "— проверьте .env и `reviewer check`",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    server.run()  # stdio
 
 
 if __name__ == "__main__":

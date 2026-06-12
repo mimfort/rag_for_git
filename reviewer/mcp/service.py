@@ -47,6 +47,7 @@ def _finding_from_dict(d) -> Finding | None:
     - ``confidence``: float-коэрция, None/мусор → 0.5;
     - ``severity`` вне {low,medium,high,critical} → "medium";
     - ``side`` вне {RIGHT,LEFT} → "RIGHT";
+    - ``suggestion``: не-строка → None (не попадает в тело комментария как repr);
     - ``fix``: int-коэрция start/end; при мусоре (или нестроковом replacement)
       fix отбрасывается целиком.
     """
