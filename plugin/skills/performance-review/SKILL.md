@@ -16,7 +16,7 @@ Standalone: ask the user which diff to review if the scope is not clear:
   `master`, `develop`, `trunk`);
 - commit, branch comparison, file list, or PR-like scope — review exactly that.
 
-Do not default to either option unless the user already made the scope clear. If the
+Do not pick a scope yourself unless the user already made it clear. If the
 resulting diff is empty, stop and say there is nothing to review.
 
 Inside `/review-pr`: the orchestrator provides the diffs of all units (path + patch)
@@ -58,6 +58,8 @@ Prioritize findings such as:
 - `low`: worthwhile optimization or preventive note, not a blocker.
 
 ## Output
+
+Return only actionable findings.
 
 Return ONLY the findings JSON used by the review pipeline, with
 `"category": "performance"`:

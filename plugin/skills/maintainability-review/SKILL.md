@@ -1,5 +1,5 @@
 ---
-description: Review code changes only for maintainability risks: unnecessary complexity, poor readability, duplication, weak separation of concerns, and misalignment with repository conventions. Use when the user explicitly asks for maintainability review, code quality review, complexity review, readability review, or how to simplify changed code without changing behavior.
+description: "Review code changes only for maintainability risks: unnecessary complexity, poor readability, duplication, weak separation of concerns, and misalignment with repository conventions. Use when the user explicitly asks for maintainability review, code quality review, clean code review, complexity review, readability review, simplification review, or how to simplify changed code without changing behavior."
 ---
 
 # Maintainability Review
@@ -16,7 +16,7 @@ Standalone: ask the user which diff to review if the scope is not clear:
   `master`, `develop`, `trunk`);
 - commit, branch comparison, file list, or PR-like scope — review exactly that.
 
-Do not default to either option unless the user already made the scope clear. If the
+Do not pick a scope yourself unless the user already made it clear. If the
 resulting diff is empty, stop and say there is nothing to review.
 
 Inside `/review-pr`: the orchestrator provides the diffs of all units (path + patch)
@@ -110,6 +110,8 @@ Do not raise findings for:
   opportunity.
 
 ## Output
+
+Return only actionable findings.
 
 Return ONLY the findings JSON used by the review pipeline, with
 `"category": "maintainability"`:
