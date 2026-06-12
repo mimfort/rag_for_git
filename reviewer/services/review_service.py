@@ -65,7 +65,7 @@ class PreparedReview:
     vcs: VCSProvider
     changed_status: dict[str, str]       # path -> статус файла (modified/added/removed)
     task_board: dict | None = None       # конфиг доски из policy (прокидывается в payload)
-    task_keys: dict | None = None        # {"primary", "others"} или None, если task_board выкл.
+    task_keys: dict | None = None        # {"primary": str|None, "others": [...]}; None только когда task_board выкл.
 
 
 class ReviewService:
