@@ -332,7 +332,8 @@ max_comments: 25
 task_board:
   type: yougile          # yougile | jira — выбирает плейбук скилла
   mcp: yougile           # имя подключённого MCP-сервера доски (тулы зовутся mcp__<mcp>__*)
-  key_pattern: "[A-Z]+-\\d+"   # опц.; дефолт такой же (подходит Yougile SAI-515 и Jira PROJ-123)
+  key_pattern: "[A-Z]+-\\d+"   # опц.; дефолт такой же (подходит Yougile PRI-34/ID-34 и Jira PROJ-123)
+  # url_template: "https://yougile.com/...{id}"  # опц.; ссылка на задачу в сводке ({id}/{key})
 ```
 
 **Контекст задачи (фаза 2).** Если задан `task_board` и в PR (title/body/ветка) найден ключ

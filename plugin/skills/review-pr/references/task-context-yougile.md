@@ -2,23 +2,57 @@
 
 Use this when `task_board.type == "yougile"`.
 
-Goal: read the task identified by the resolved key and build a `TaskBrief`.
+Goal: read the task identified by the resolved key and build a `TaskBrief`. Build it best-effort —
+omit or empty any field you cannot resolve. A partial brief is fine; a wrong one is not.
 
-1. The board MCP server is the one named by `task_board.mcp` (e.g. `yougile`). Its tools are
-   exposed as `mcp__<task_board.mcp>__<tool>`.
-2. Fetch the task: call `mcp__<task_board.mcp>__get_task` with the resolved key. Yougile accepts
-   the human code form such as `SAI-515`.
-3. Build the `TaskBrief` from the response (best-effort — omit/empty any field the response lacks):
-   - `key`         ← the resolved key
-   - `title`       ← task title
-   - `description` ← task description text (requirements usually live here)
-   - `criteria[]`  ← checklist / subtask titles, if the task has them; else `[]`
-   - `status`      ← column / status name
-   - `url`         ← task link
-   - `links[]`     ← related tasks, if available; else `[]`
-4. Optional: `mcp__<task_board.mcp>__get_task_chat` / `..._get_task_messages` add discussion
-   context — use ONLY if the description is too thin to judge requirements. Not required.
+Tools are exposed as `mcp__<task_board.mcp>__<tool>`, where `<task_board.mcp>` is the server named
+in config (e.g. `yougile`). The steps below use that prefix implicitly.
 
-Failure handling: if the board MCP server is not connected, the tool errors, or the task is not
-found, do NOT build a `TaskBrief` — skip the requirements dimension and note the reason in the
-summary. Never abort the review.
+## 1. Fetch the task
+
+Call `get_task` with the resolved key. Yougile resolves three `id` forms, so the key from the PR
+works directly:
+
+- the task UUID;
+- the project code `idTaskProject` — e.g. `PRI-34` (per-project counter);
+- the company code `idTaskCommon` — e.g. `ID-34` (company-wide counter).
+
+The default `key_pattern` (`[A-Z]+-\d+`) matches both code forms, so a PR may reference either.
+If `get_task` errors or returns nothing, treat the task as not found (see Failure handling).
+
+## 2. Map the response to TaskBrief
+
+`get_task` returns identifiers, not display names, for status and subtasks — resolve them. It does
+NOT return a task link:
+
+| TaskBrief field | Source in `get_task` response   | How to fill it |
+|---|---|---|
+| `key`         | the resolved key (`PRI-34` / `ID-34`) | use as-is |
+| `title`       | `title`                               | use as-is |
+| `description` | `description`                         | requirements usually live here |
+| `status`      | `columnId` — a UUID, NOT a name       | call `get_column` with that id → its `title`; on error omit |
+| `criteria[]`  | `subtasks[]` — UUIDs, NOT titles      | optional: `get_task` each id → its `title` (see note); else `[]` |
+| `url`         | absent from the response              | see URL note; default `null` |
+| `links[]`     | absent from the response              | `[]` |
+
+**Criteria note.** Each subtask is itself a task; resolving its title costs one `get_task` call
+per subtask. Do this only when `description` is thin on acceptance criteria. When criteria are
+written inline in `description` (a bulleted / checklist section), leave `criteria[]` as `[]` — the
+requirements prompt reads `description` anyway, so nothing is lost.
+
+**URL note.** The Yougile API does not expose a task link, so `url` is `null` by default. If config
+provides `task_board.url_template` (a string with `{id}` and/or `{key}` placeholders), substitute
+the task UUID / resolved key into it and use the result. A missing `url` only drops the hyperlink
+in the summary — the task is still named by `key` + `title`.
+
+## 3. Optional discussion context
+
+`get_task_chat` / `get_task_messages` add discussion context. Use ONLY when `description` is too
+thin to judge requirements. Not required.
+
+## Failure handling (fail-open)
+
+If the board MCP server is not connected, any tool errors, or the task is not found, do NOT build a
+`TaskBrief` — skip the requirements dimension and note the reason in the summary. A failure in a
+secondary step (e.g. `get_column` for status, or a subtask fetch) must NOT abort brief-building:
+keep the fields you already have and move on with a partial brief. Never abort the review.
