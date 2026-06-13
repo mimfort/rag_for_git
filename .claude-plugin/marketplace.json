@@ -9,7 +9,7 @@
   "plugins": [
     {
       "name": "rag-reviewer",
-      "source": "./",
+      "source": "./plugin",
       "description": "Agentic PR review: гибридный RAG + граф кода через MCP, скиллы review-pr/solve-task/sync-tasks"
     }
   ]

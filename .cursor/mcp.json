@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "reviewer": {
+      "command": "${workspaceFolder}/.venv/bin/python",
+      "args": ["-m", "reviewer.entrypoints.mcp_server"],
+      "cwd": "${workspaceFolder}"
+    }
+  }
+}

@@ -1,4 +1,5 @@
 ---
+name: sync-tasks
 description: Warm the task graph & vector store by indexing a board into the reviewer MCP server. Use when the user asks to sync/index tasks ("sync tasks", "index the board", "просиндексируй задачи") so search_tasks/get_task_context have a corpus. Requires a connected board MCP and the reviewer MCP server.
 ---
 

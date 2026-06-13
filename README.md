@@ -128,16 +128,28 @@ All other settings have defaults in `reviewer/config/settings.py` (documented in
 `DEFAULT_REPO` (optional) sets the default `owner/name` for single-repo deployments so you can omit
 `--repo` / the `repo` argument on the CLI and tools.
 
-### 2. Install the plugin into Claude Code
+### 2. Install the plugin
 
-Open Claude Code **from the repo root** and install the bundled plugin from its local marketplace:
+The plugin supports Claude Code, Codex CLI, Copilot CLI, and Cursor. The MCP server and skills
+are in this repo; keep the `.venv` + Docker stack running while using any of these environments.
+
+#### Claude Code (recommended)
+
+Install from GitHub — no local clone required for the plugin step:
+
+```text
+/plugin marketplace add mimfort/rag_for_git
+/plugin install rag-reviewer@rag-reviewer-marketplace
+```
+
+Or, if you already cloned the repo and are in its root:
 
 ```text
 /plugin marketplace add .
 /plugin install rag-reviewer@rag-reviewer-marketplace
 ```
 
-That wires everything straight into Claude Code — no manual MCP config. You get:
+You get:
 
 - **Skills:** `/rag-reviewer:review-pr`, `/rag-reviewer:solve-task`, `/rag-reviewer:sync-tasks`
   (plus `/rag-reviewer:maintainability-review` and `/rag-reviewer:performance-review`).
@@ -149,6 +161,31 @@ That wires everything straight into Claude Code — no manual MCP config. You ge
 > The server starts as `${CLAUDE_PROJECT_DIR}/.venv/bin/python -m reviewer.entrypoints.mcp_server`,
 > so keep Claude Code open at the repo root and keep step 1's `.venv` + Docker stack running —
 > otherwise the tools won't launch. Run `/plugin` to confirm `rag-reviewer` is installed and enabled.
+
+#### Codex CLI
+
+The `.codex-plugin/plugin.json` manifest and `.mcp.json` at the repo root are pre-configured.
+Codex picks them up automatically when you open the repo. No extra install step needed.
+
+The MCP command uses a relative path (`.venv/bin/python`), so run Codex from the repo root or
+pass `--cd /path/to/rag_for_git`.
+
+#### Copilot CLI
+
+The `.github-copilot/plugin.json` manifest is pre-configured. Copilot CLI picks it up from the
+repo root automatically. Same relative-path requirement as Codex above.
+
+#### Cursor
+
+The `.cursor/mcp.json` is pre-configured with `${workspaceFolder}` expansion. Open the repo
+as a workspace in Cursor — the reviewer MCP server starts automatically.
+
+#### Gemini CLI
+
+Gemini CLI does not support path variable expansion. See `GEMINI.md` at the repo root for
+manual MCP server configuration instructions.
+
+---
 
 That's it. Build the base index (recommended — see [CLI](#cli)) and review a PR (see
 [Plugin usage](#plugin-usage)).
