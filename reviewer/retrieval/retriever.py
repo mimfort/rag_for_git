@@ -33,39 +33,36 @@ class Retriever:
         self.embedder, self.reranker = embedder, reranker
         self.max_context_chars = max_context_chars
 
-    def retrieve(self, query, changed_node_ids, overlay_ref, changed_paths,
+    def retrieve(self, repo, query, changed_node_ids, overlay_ref, changed_paths,
                  top_k=15, candidates=50) -> ContextPack:
         qvec = self.embedder.embed_query(query)
         hits = self.store.hybrid_search(
-            query_text=query, query_embedding=qvec, overlay_ref=overlay_ref,
+            repo, query_text=query, query_embedding=qvec, overlay_ref=overlay_ref,
             changed_paths=changed_paths, top_k=candidates, candidates=candidates)
-        related_ids = self.graph.expand(changed_node_ids, hops=2)
-        related = self.store.fetch_nodes(list(related_ids), overlay_ref, changed_paths)
+        related_ids = self.graph.expand(repo, changed_node_ids, hops=2)
+        related = self.store.fetch_nodes(repo, list(related_ids), overlay_ref, changed_paths)
         hit_ids = {h.node_id for h in hits}
         graph_new = [it for it in related if it.node_id not in hit_ids]
         merged: dict[str, object] = {}
         for it in [*hits, *related]:
             merged.setdefault(it.node_id, it)
-        # rerank пропускаем, если совсем мало кандидатов, либо все они уже ранжированы RRF
-        # (graph-expansion ничего нового не добавил)
         if len(merged) <= 3 or (len(merged) <= top_k and not graph_new):
             return ContextPack(items=list(merged.values()),
                                max_chars=self.max_context_chars)
         ranked = self.reranker.rerank(query, list(merged.values()), top_k=top_k)
         return ContextPack(items=ranked, max_chars=self.max_context_chars)
 
-    def search_base(self, query, top_k=10, candidates=50) -> ContextPack:
+    def search_base(self, repo, query, top_k=10, candidates=50) -> ContextPack:
         """Гибрид-поиск по base-индексу без PR-сессии — для /solve-task.
 
         Зеркало :meth:`retrieve`, но base-only и сидинг графа от хитов:
         ``changed_paths=[]`` + несуществующий ``overlay_ref="__none__"`` → WHERE отбирает
         только base-строки. graph-expansion идёт от топ-хитов (а не от changed-файлов),
-        затем rerank. Граф и реранкер fail-soft: недоступны/ошибка → деградация до
-        чистого гибрида / RRF-порядка.
+        затем rerank. Граф и реранкер fail-soft.
         """
         qvec = self.embedder.embed_query(query)
         hits = self.store.hybrid_search(
-            query_text=query, query_embedding=qvec,
+            repo, query_text=query, query_embedding=qvec,
             overlay_ref="__none__", changed_paths=[],
             top_k=candidates, candidates=candidates)
         merged: dict[str, object] = {}
@@ -75,8 +72,8 @@ class Retriever:
         if self.graph is not None and hits:
             try:
                 seeds = [h.node_id for h in hits[:top_k]]
-                related_ids = self.graph.expand(seeds, hops=1)
-                related = self.store.fetch_nodes(list(related_ids), "__none__", [])
+                related_ids = self.graph.expand(repo, seeds, hops=1)
+                related = self.store.fetch_nodes(repo, list(related_ids), "__none__", [])
                 for it in related:
                     if it.node_id not in merged:
                         merged[it.node_id] = it
