@@ -150,6 +150,26 @@ You get:
 
 > Run `/plugin` to confirm `rag-reviewer` is installed and enabled.
 
+The plugin registers the MCP server globally — it starts automatically for **every** project you
+open once the plugin is enabled. If you work across multiple repositories and want the MCP tools
+without the full plugin, you can also add a `.mcp.json` to any project root:
+
+```json
+{
+  "mcpServers": {
+    "reviewer": {
+      "command": "uvx",
+      "args": ["--from", "rag-reviewer", "reviewer-mcp"]
+    }
+  }
+}
+```
+
+The MCP server reads `VOYAGE_API_KEY`, `GITHUB_TOKEN`, `PG_DSN`, and other settings from the
+environment. Set them globally in your shell profile (`~/.zshrc` / `~/.bashrc`) so they are
+available in every project — the server picks them up regardless of which directory Claude Code
+is opened from.
+
 #### Cursor
 
 `.cursor/mcp.json` at the repo root is pre-configured with `uvx`. Open any folder as a workspace

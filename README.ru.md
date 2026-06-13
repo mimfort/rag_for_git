@@ -167,19 +167,34 @@ cp .env.example .env                 # заполнить VOYAGE_API_KEY, GITHUB
 
 ### 2. Установка плагина в Claude Code
 
-Откройте Claude Code **из корня репозитория** и поставьте бандлённый плагин из его локального marketplace:
+Установить плагин из GitHub можно из любого проекта двумя командами:
 
 ```text
-/plugin marketplace add .
+/plugin marketplace add mimfort/rag_for_git
 /plugin install rag-reviewer@rag-reviewer-marketplace
 ```
 
-Это подключает всё прямо в Claude Code — без ручной настройки MCP. Вы получаете:
+Это подключает всё глобально — без ручной настройки MCP. Вы получаете:
 
 - **Скиллы:** `/rag-reviewer:review-pr`, `/rag-reviewer:solve-task`, `/rag-reviewer:sync-tasks` (а также `/rag-reviewer:maintainability-review` и `/rag-reviewer:performance-review`).
-- **MCP-сервер** `reviewer` (объявлен в `plugin/.mcp.json`) с тулами агента: `prepare_review`, `publish_review`, `search_code`, `get_related_symbols`, `read_file`, `get_definition`, `find_callers`, `get_changed_file_diff`, `index_task`, `search_tasks`, `get_task_context`, `search_codebase`.
+- **MCP-сервер** `reviewer` (запускается как `uvx --from rag-reviewer reviewer-mcp`) с тулами: `prepare_review`, `publish_review`, `search_code`, `get_related_symbols`, `read_file`, `get_definition`, `find_callers`, `get_changed_file_diff`, `index_task`, `search_tasks`, `get_task_context`, `search_codebase`.
 
-> Сервер стартует как `${CLAUDE_PROJECT_DIR}/.venv/bin/python -m reviewer.entrypoints.mcp_server`, поэтому держите Claude Code открытым в корне репо, а `.venv` и Docker-стек из шага 1 — поднятыми, иначе тулы не запустятся. Команда `/plugin` покажет, что `rag-reviewer` установлен и включён.
+Плагин регистрирует MCP-сервер **глобально** — он стартует автоматически в любом проекте, который вы открываете в Claude Code. Если нужен только MCP без полного плагина, добавьте `.mcp.json` в корень проекта:
+
+```json
+{
+  "mcpServers": {
+    "reviewer": {
+      "command": "uvx",
+      "args": ["--from", "rag-reviewer", "reviewer-mcp"]
+    }
+  }
+}
+```
+
+MCP-сервер читает `VOYAGE_API_KEY`, `GITHUB_TOKEN`, `PG_DSN` и другие настройки из окружения. Пропишите их глобально в профиле шелла (`~/.zshrc` / `~/.bashrc`) — сервер подхватит их независимо от того, из какой директории открыт Claude Code.
+
+> Команда `/plugin` покажет, что `rag-reviewer` установлен и включён.
 
 ## Использование
 
