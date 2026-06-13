@@ -3,7 +3,8 @@ CREATE EXTENSION IF NOT EXISTS vector;
 
 CREATE TABLE IF NOT EXISTS chunks (
     id           bigserial PRIMARY KEY,
-    ref          text    NOT NULL,        -- 'base' | 'pr:<number>'
+    repo         text    NOT NULL DEFAULT '',  -- 'owner/name' (в нижнем регистре)
+    ref          text    NOT NULL,             -- 'base' | 'pr:<number>'
     content_hash text    NOT NULL,
     path         text    NOT NULL,
     lang         text    NOT NULL,
@@ -12,26 +13,38 @@ CREATE TABLE IF NOT EXISTS chunks (
     start_line   int     NOT NULL,
     end_line     int     NOT NULL,
     text         text    NOT NULL,
-    embedding    vector(1024),
-    UNIQUE (ref, path, symbol_fqn)
+    embedding    vector(1024)
 );
-CREATE INDEX IF NOT EXISTS chunks_ref_path ON chunks (ref, path);
+-- Forward-only: добавить repo существующим деплоям до создания уникального ключа.
+ALTER TABLE chunks ADD COLUMN IF NOT EXISTS repo text NOT NULL DEFAULT '';
+-- Старый ключ без repo заменяем на repo-aware.
+ALTER TABLE chunks DROP CONSTRAINT IF EXISTS chunks_ref_path_symbol_fqn_key;
+ALTER TABLE chunks DROP CONSTRAINT IF EXISTS chunks_repo_ref_path_symbol_fqn_key;
+ALTER TABLE chunks ADD CONSTRAINT chunks_repo_ref_path_symbol_fqn_key
+    UNIQUE (repo, ref, path, symbol_fqn);
+
+DROP INDEX IF EXISTS chunks_ref_path;
+CREATE INDEX IF NOT EXISTS chunks_repo_ref_path ON chunks (repo, ref, path);
 CREATE INDEX IF NOT EXISTS chunks_hash ON chunks (content_hash);
 
--- BM25 (pg_search): один индекс, key_field первым
+-- BM25 (pg_search): repo в stored-полях для фильтра по repo внутри CTE.
+DROP INDEX IF EXISTS chunks_bm25;
 CREATE INDEX IF NOT EXISTS chunks_bm25 ON chunks
-USING bm25 (id, text, path, ref) WITH (key_field='id');
+USING bm25 (id, text, path, ref, repo) WITH (key_field='id');
 
 -- ANN (pgvector HNSW, косинус)
 CREATE INDEX IF NOT EXISTS chunks_hnsw ON chunks
 USING hnsw (embedding vector_cosine_ops) WITH (m = 16, ef_construction = 64);
 
--- Метаданные индексирования: SHA последней индексации по ref
+-- Метаданные индексирования: SHA последней индексации по (repo, ref).
 CREATE TABLE IF NOT EXISTS index_meta (
-    ref        TEXT        PRIMARY KEY,
+    repo       TEXT        NOT NULL DEFAULT '',
+    ref        TEXT        NOT NULL,
     sha        TEXT        NOT NULL,
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (repo, ref)
 );
+ALTER TABLE index_meta ADD COLUMN IF NOT EXISTS repo text NOT NULL DEFAULT '';
 
 -- Задачи доски (фаза 3): эмбеддинги (pgvector) + BM25 (pg_search) для search_tasks.
 -- Отдельно от chunks — у задач нет path/symbol/lines и base/overlay-freshness.

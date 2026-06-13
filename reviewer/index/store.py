@@ -17,6 +17,7 @@ _SCHEMA = Path(__file__).with_name("schema.sql").read_text()
 
 @dataclass
 class ChunkRow:
+    repo: str
     ref: str
     content_hash: str
     path: str
