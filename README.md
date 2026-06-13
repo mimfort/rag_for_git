@@ -100,52 +100,42 @@ For a deeper, code-verified walkthrough of every module and the data flow, see
 
 ## Installation
 
-Installation has two parts: a **backend** (Postgres + Neo4j + the Python package the MCP server runs)
-and the **Claude Code plugin** (skills + MCP tools). Both live in one place — open the `rag_for_git`
-repo as your project in Claude Code; its root is the `${CLAUDE_PROJECT_DIR}` the plugin resolves paths
-against.
+The MCP server is published on PyPI as [`rag-reviewer`](https://pypi.org/project/rag-reviewer/)
+and launched via `uvx` — no clone of this repo required to use the plugin.
 
-Requirements: Python 3.11–3.13, Docker, a Voyage API key, a GitHub token, Claude Code.
+Requirements: Python 3.11–3.13, Docker, `uv` (`pip install uv`), a Voyage API key, a GitHub token.
 
-### 1. Backend + infrastructure
+### 1. Infrastructure
 
-The MCP server is launched from `.venv`, so this must be in place before the tools work:
+The reviewer needs Postgres/ParadeDB and Neo4j. The quickest way:
 
 ```bash
+# Clone only to get docker-compose.yml and .env.example, then run the stack:
 git clone https://github.com/mimfort/rag_for_git && cd rag_for_git
-python -m venv .venv && .venv/bin/pip install -e ".[dev]"
 docker compose up -d          # Postgres/ParadeDB (:5433) + Neo4j (:7687) + web admin (:8000)
 cp .env.example .env          # fill in VOYAGE_API_KEY and GITHUB_TOKEN
-.venv/bin/reviewer check      # ✓/✗ for keys, Postgres, Neo4j, GitHub (spends no Voyage quota)
+uvx --from rag-reviewer reviewer check   # ✓/✗ for keys, Postgres, Neo4j, GitHub
 ```
 
-- **Voyage** (`VOYAGE_API_KEY`): https://dashboard.voyageai.com/ — there is a free token pool; attach
-  a card to lift the 3 RPM / 10K TPM limit (you are charged only beyond the free pool).
+- **Voyage** (`VOYAGE_API_KEY`): https://dashboard.voyageai.com/ — free token pool; attach a card
+  to lift the 3 RPM / 10K TPM limit (charged only beyond the free pool).
 - **GitHub** (`GITHUB_TOKEN`): a PAT with *Pull requests: Read and write* + *Contents: Read*
   (fine-grained) or the `repo` scope (classic). Quick option: `gh auth token`.
 
 All other settings have defaults in `reviewer/config/settings.py` (documented in `.env.example`).
-`DEFAULT_REPO` (optional) sets the default `owner/name` for single-repo deployments so you can omit
-`--repo` / the `repo` argument on the CLI and tools.
+`DEFAULT_REPO` (optional) sets the default `owner/name` for single-repo deployments.
 
 ### 2. Install the plugin
 
-The plugin supports Claude Code, Codex CLI, Copilot CLI, and Cursor. The MCP server and skills
-are in this repo; keep the `.venv` + Docker stack running while using any of these environments.
+The MCP server starts via `uvx --from rag-reviewer reviewer-mcp` — no local clone of this repo
+needed. Keep the Docker stack (step 1) and the `.env` keys accessible.
 
 #### Claude Code (recommended)
 
-Install from GitHub — no local clone required for the plugin step:
+Install from GitHub — works from **any** project, not just this repo:
 
 ```text
 /plugin marketplace add mimfort/rag_for_git
-/plugin install rag-reviewer@rag-reviewer-marketplace
-```
-
-Or, if you already cloned the repo and are in its root:
-
-```text
-/plugin marketplace add .
 /plugin install rag-reviewer@rag-reviewer-marketplace
 ```
 
@@ -153,37 +143,29 @@ You get:
 
 - **Skills:** `/rag-reviewer:review-pr`, `/rag-reviewer:solve-task`, `/rag-reviewer:sync-tasks`
   (plus `/rag-reviewer:maintainability-review` and `/rag-reviewer:performance-review`).
-- **MCP server** `reviewer` (declared in `plugin/.mcp.json`) exposing the agent tools:
+- **MCP server** `reviewer` (runs as `uvx --from rag-reviewer reviewer-mcp`) exposing:
   `prepare_review`, `publish_review`, `search_code`, `get_related_symbols`, `read_file`,
   `get_definition`, `find_callers`, `get_changed_file_diff`, `index_task`, `search_tasks`,
   `get_task_context`, `search_codebase`.
 
-> The server starts as `${CLAUDE_PROJECT_DIR}/.venv/bin/python -m reviewer.entrypoints.mcp_server`,
-> so keep Claude Code open at the repo root and keep step 1's `.venv` + Docker stack running —
-> otherwise the tools won't launch. Run `/plugin` to confirm `rag-reviewer` is installed and enabled.
+> Run `/plugin` to confirm `rag-reviewer` is installed and enabled.
 
 #### Codex CLI
 
-The `.codex-plugin/plugin.json` manifest and `.mcp.json` at the repo root are pre-configured.
-Codex picks them up automatically when you open the repo. No extra install step needed.
-
-The MCP command uses a relative path (`.venv/bin/python`), so run Codex from the repo root or
-pass `--cd /path/to/rag_for_git`.
+`.codex-plugin/plugin.json` is pre-configured. Codex picks it up automatically from the repo root.
 
 #### Copilot CLI
 
-The `.github-copilot/plugin.json` manifest is pre-configured. Copilot CLI picks it up from the
-repo root automatically. Same relative-path requirement as Codex above.
+`.github-copilot/plugin.json` is pre-configured. Copilot CLI picks it up from the repo root.
 
 #### Cursor
 
-The `.cursor/mcp.json` is pre-configured with `${workspaceFolder}` expansion. Open the repo
-as a workspace in Cursor — the reviewer MCP server starts automatically.
+`.cursor/mcp.json` is pre-configured with `uvx`. Open the repo as a workspace — the reviewer MCP
+server starts automatically.
 
 #### Gemini CLI
 
-Gemini CLI does not support path variable expansion. See `GEMINI.md` at the repo root for
-manual MCP server configuration instructions.
+See `GEMINI.md` — configure `uvx --from rag-reviewer reviewer-mcp` in your `settings.json`.
 
 ---
 

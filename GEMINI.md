@@ -4,26 +4,23 @@ See `CLAUDE.md` for full project documentation (architecture, commands, invarian
 
 ## MCP server setup (Gemini CLI)
 
-Gemini CLI does not support path variables in MCP configs. Configure the reviewer MCP
-server in your `settings.json` with an absolute path to this repo's venv:
+Gemini CLI does not support path variable expansion. Use `uvx` so no absolute path is needed:
 
 ```json
 {
   "mcpServers": {
     "reviewer": {
-      "command": "/absolute/path/to/rag_for_git/.venv/bin/python",
-      "args": ["-m", "reviewer.entrypoints.mcp_server"],
-      "cwd": "/absolute/path/to/rag_for_git"
+      "command": "uvx",
+      "args": ["--from", "rag-reviewer", "reviewer-mcp"]
     }
   }
 }
 ```
 
-Replace `/absolute/path/to/rag_for_git` with the actual path on your machine (e.g.
-`~/PycharmProjects/rag_for_git` expanded). Run `pwd` in the repo root to get the path.
+Add this to your Gemini CLI `settings.json`. `uvx` downloads and runs the published
+`rag-reviewer` package from PyPI — no local clone required.
 
 ## Skills
 
-The plugin skills live in `plugin/skills/`. Gemini CLI has no built-in skill system —
-use the MCP tools directly (`prepare_review`, `publish_review`, etc.) or refer to the
-skill prompts in `plugin/skills/review-pr/SKILL.md` for the review workflow.
+Gemini CLI has no built-in skill system. Use the MCP tools directly (`prepare_review`,
+`publish_review`, etc.) or refer to `plugin/skills/review-pr/SKILL.md` for the review workflow.

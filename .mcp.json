@@ -1,9 +1,8 @@
 {
   "mcpServers": {
     "reviewer": {
-      "command": ".venv/bin/python",
-      "args": ["-m", "reviewer.entrypoints.mcp_server"],
-      "cwd": "."
+      "command": "uvx",
+      "args": ["--from", "rag-reviewer", "reviewer-mcp"]
     }
   }
 }
