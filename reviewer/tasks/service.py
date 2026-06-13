@@ -77,7 +77,7 @@ class TaskService:
             vec = self._embedder.embed_query(query)
             hits = self._store.search(query, vec, top_k=top_k)
         except Exception:
-            log.warning("search_tasks: сбой поиска", exc_info=True)
+            log.warning("search_tasks: сбой поиска по запросу %r", query, exc_info=True)
             return "(task search unavailable)"
         if not hits:
             return "(no similar tasks found)"
@@ -92,13 +92,13 @@ class TaskService:
         try:
             ctx = self._graph.task_context(key)
         except Exception:
-            log.warning("get_task_context: сбой обхода графа", exc_info=True)
+            log.warning("get_task_context: сбой обхода графа для %s", key, exc_info=True)
             return "(task graph unavailable)"
         if not ctx:
             return f"(no task '{key}' in task graph)"
         return _format_task_context(ctx, self._max_chars)
 
-    def link_review(self, task_key: str, pr: PRRef, touched_node_ids) -> None:
+    def link_review(self, task_key: str, pr: PRRef, touched_node_ids: list[str]) -> None:
         """Авто-линковка PR↔задача↔код (fail-soft; no-op без графа/ключа)."""
         if self._graph is None or not task_key:
             return

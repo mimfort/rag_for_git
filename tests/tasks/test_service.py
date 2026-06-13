@@ -106,6 +106,16 @@ def test_index_task_graph_error_is_warning_not_raise():
     assert any("graph:" in w for w in out["warnings"])
 
 
+def test_index_task_store_error_is_warning_not_raise():
+    class _BrokenStore(_FakeStore):
+        def existing_hash(self, key):
+            raise RuntimeError("pg down")
+    out = TaskService(_BrokenStore(), _FakeGraph(), _FakeEmbedder()).index_task(_brief())
+    assert out["embedded"] is False
+    assert any("store:" in w for w in out["warnings"])
+    # graph layer still runs despite the store failure
+
+
 def test_index_task_no_key():
     out = TaskService(_FakeStore(), _FakeGraph(), _FakeEmbedder()).index_task({"title": "x"})
     assert out["key"] is None
