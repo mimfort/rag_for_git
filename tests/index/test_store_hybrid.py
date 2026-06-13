@@ -154,7 +154,8 @@ def test_two_repo_isolation():
     store.init_schema()
     store.clear()
     d = s.embedding_dim
-    vec = [0.0] * d; vec[0] = 1.0
+    vec = [0.0] * d
+    vec[0] = 1.0
 
     # Один и тот же path#fqn под двумя репозиториями
     store.upsert([

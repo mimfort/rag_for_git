@@ -176,9 +176,15 @@ def test_cache_normalizes_read_file_defaults():
 def test_tools_thread_repo_to_graph_and_retriever():
     calls = {}
     class G:
-        def expand(self, repo, ids, hops=2): calls["expand_repo"] = repo; return set()
-        def callers(self, repo, ids): calls["callers_repo"] = repo; return set()
-        def find_symbol(self, repo, name): calls["find_repo"] = repo; return []
+        def expand(self, repo, ids, hops=2):
+            calls["expand_repo"] = repo
+            return set()
+        def callers(self, repo, ids):
+            calls["callers_repo"] = repo
+            return set()
+        def find_symbol(self, repo, name):
+            calls["find_repo"] = repo
+            return []
     class R:
         def retrieve(self, repo, query, changed_node_ids, overlay_ref, changed_paths, top_k=8):
             calls["retrieve_repo"] = repo
