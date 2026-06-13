@@ -155,7 +155,30 @@ class ReviewService:
                         removed_files=[f.path for f in diff_files if f.status == "removed"],
                     )
                     self.components.store.set_index_meta(repo, "base", prq.base_sha)
-                    # F2 (Task 15) добавит сюда инкрементальный патч графа.
+                    # F2: инкрементальный repo-aware патч графа (fail-soft).
+                    if self.components.graph is not None:
+                        try:
+                            from reviewer.services.graph_sync import patch_graph_incremental
+                            changed_py: dict[str, str] = {}
+                            for f in diff_files:
+                                if f.status == "removed" or not f.path.endswith(".py"):
+                                    continue
+                                src = vcs.get_file_at_ref(f.path, prq.base_sha)
+                                if src:
+                                    changed_py[f.path] = src
+                            removed_py = [
+                                f.path for f in diff_files
+                                if f.status == "removed" and f.path.endswith(".py")
+                            ]
+                            patch_graph_incremental(
+                                self.components.graph, repo,
+                                changed_sources=changed_py, removed_paths=removed_py)
+                            log.info("Граф досинхронизирован инкрементально: "
+                                     "%d изм., %d уд.", len(changed_py), len(removed_py))
+                        except Exception:
+                            log.warning("Инкрементальный патч графа не удался "
+                                        "(дрейф графа сохранится до reviewer index)",
+                                        exc_info=True)
                     log.info(
                         "Base-индекс синхронизирован: %d файлов (%s..%s)",
                         len(diff_files), indexed[:7], prq.base_sha[:7],
