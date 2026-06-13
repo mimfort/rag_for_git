@@ -57,6 +57,8 @@ brief to `superpowers:brainstorming` (which leads to writing-plans → subagent-
   brief from `search_tasks` + `search_codebase`.
 - Empty task corpus (no prior `/sync-tasks` or reviews) → `search_tasks` is empty; rely on the board
   (if a key) + `search_codebase`.
+- Postgres down → `search_codebase` / `search_tasks` return empty; build the brief from the board (if
+  a key) or the user's formulation alone; still hand off to brainstorming.
 - Never abort: with any gap, distill what you have, note the deficit in the brief, and still hand off
   to brainstorming.
 - Read-only on the board; this skill never writes to it.
