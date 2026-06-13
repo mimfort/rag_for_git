@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-marketplace.json",
+  "name": "rag-reviewer-marketplace",
+  "version": "0.1.0",
+  "description": "Локальный marketplace плагина rag-reviewer (RAG-ревью PR + /solve-task для Claude Code)",
+  "owner": {
+    "name": "mimfort"
+  },
+  "plugins": [
+    {
+      "name": "rag-reviewer",
+      "source": "./",
+      "description": "Agentic PR review: гибридный RAG + граф кода через MCP, скиллы review-pr/solve-task/sync-tasks"
+    }
+  ]
+}

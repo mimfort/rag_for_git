@@ -1,9 +1,9 @@
 {
   "mcpServers": {
     "reviewer": {
-      "command": "${CLAUDE_PLUGIN_ROOT}/.venv/bin/python",
+      "command": "${CLAUDE_PROJECT_DIR}/.venv/bin/python",
       "args": ["-m", "reviewer.entrypoints.mcp_server"],
-      "cwd": "${CLAUDE_PLUGIN_ROOT}"
+      "cwd": "${CLAUDE_PROJECT_DIR}"
     }
   }
 }
