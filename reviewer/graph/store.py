@@ -89,3 +89,31 @@ class GraphStore:
             "LIMIT 25",
             repo=repo, needle=name, suffix="#" + name, dotname="." + name)
         return [r["id"] for r in records]
+
+    def symbols_for_paths(self, repo: str, paths: list[str]) -> set[str]:
+        """node_id всех :Symbol репозитория, чьи пути в paths (id начинается с 'path#')."""
+        if not paths:
+            return set()
+        prefixes = [p + "#" for p in paths]
+        records, _, _ = self._driver.execute_query(
+            "MATCH (s:Symbol {repo: $repo}) "
+            "WHERE any(p IN $prefixes WHERE s.id STARTS WITH p) "
+            "RETURN s.id AS id",
+            repo=repo, prefixes=prefixes)
+        return {r["id"] for r in records}
+
+    def delete_symbols(self, repo: str, ids: list[str]) -> None:
+        """DETACH DELETE перечисленных символов (исчезнувшие/переименованные)."""
+        if not ids:
+            return
+        self._driver.execute_query(
+            "UNWIND $ids AS id MATCH (s:Symbol {repo: $repo, id: id}) DETACH DELETE s",
+            ids=list(ids), repo=repo)
+
+    def delete_outgoing_calls(self, repo: str, ids: list[str]) -> None:
+        """Снести только ИСХОДЯЩИЕ CALLS у символов (входящие сохраняются)."""
+        if not ids:
+            return
+        self._driver.execute_query(
+            "UNWIND $ids AS id MATCH (s:Symbol {repo: $repo, id: id})-[r:CALLS]->() DELETE r",
+            ids=list(ids), repo=repo)

@@ -75,3 +75,22 @@ def test_graph_isolates_by_repo(graph_store):
     assert graph_store.callers("a/x", ["m.py#foo"]) == {"m.py#bar"}
     assert graph_store.callers("b/y", ["m.py#foo"]) == set()
     assert graph_store.find_symbol("b/y", "bar") == []
+
+
+@pytest.mark.integration
+def test_incremental_methods_preserve_incoming_calls(graph_store):
+    graph_store.clear()
+    # unchanged caller u.py#caller -> a.py#foo ; a.py also has stale a.py#gone
+    graph_store.upsert_nodes("a/x", ["a.py#foo", "a.py#gone", "u.py#caller"])
+    graph_store.upsert_edges("a/x", [("u.py#caller", "CALLS", "a.py#foo"),
+                                     ("a.py#foo", "CALLS", "a.py#gone")])
+    # simulate incremental patch of a.py: new symbols {a.py#foo, a.py#bar}, gone removed
+    old = graph_store.symbols_for_paths("a/x", ["a.py"])
+    assert old == {"a.py#foo", "a.py#gone"}
+    graph_store.delete_symbols("a/x", list(old - {"a.py#foo", "a.py#bar"}))  # drop gone
+    graph_store.delete_outgoing_calls("a/x", ["a.py#foo", "a.py#bar"])
+    graph_store.upsert_nodes("a/x", ["a.py#foo", "a.py#bar"])
+    graph_store.upsert_edges("a/x", [("a.py#bar", "CALLS", "a.py#foo")])
+    # incoming edge from unchanged caller preserved; new internal caller added:
+    assert graph_store.callers("a/x", ["a.py#foo"]) == {"u.py#caller", "a.py#bar"}
+    assert graph_store.find_symbol("a/x", "gone") == []
