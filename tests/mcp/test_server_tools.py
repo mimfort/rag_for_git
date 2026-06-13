@@ -21,9 +21,17 @@ def test_task_tools_registered():
     assert {"index_task", "search_tasks", "get_task_context"} <= names
 
 
-def test_publish_review_tool_passes_task_key():
+def test_publish_review_tool_forwards_task_key():
+    import asyncio
+
     svc = _service()
-    create_server(svc)
-    # прямой вызов делегата (тул — тонкая обёртка): сигнатура несёт task_key
-    svc.publish_review("o/r", 7, "s", [], False, "ID-1")
-    svc.publish_review.assert_called_with("o/r", 7, "s", [], False, "ID-1")
+    # publish_review-тул сериализует dict-отчёт в TextContent — даём валидный return.
+    svc.publish_review.return_value = {"posted": True}
+    server = create_server(svc)
+    # Гоним реальную обёртку тула через FastMCP.call_tool, а не мок напрямую.
+    asyncio.run(server.call_tool(
+        "publish_review",
+        {"repo": "o/r", "pr": 7, "summary": "s", "findings": [],
+         "dry_run": False, "task_key": "ID-1"},
+    ))
+    svc.publish_review.assert_called_once_with("o/r", 7, "s", [], False, "ID-1")
