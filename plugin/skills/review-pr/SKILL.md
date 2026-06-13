@@ -34,7 +34,7 @@ of posting.
    With a key, read the task using the playbook for `task_board.type`
    (`references/task-context-yougile.md` or `references/task-context-jira.md`): call the board MCP
    server named by `task_board.mcp` and build a `TaskBrief`
-   `{key, title, description, criteria[], status, url, links[]}`.
+   `{key, aliases[], title, description, criteria[], status, url, links[]}`.
    If the board MCP is not connected, the tool errors, or the task is not found: skip the
    requirements dimension and note the reason in the summary — NEVER abort the review.
 
