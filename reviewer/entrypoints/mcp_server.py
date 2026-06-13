@@ -15,7 +15,7 @@ log = logging.getLogger(__name__)
 
 
 def create_server(service: MCPReviewService) -> FastMCP:
-    """Создать и вернуть сконфигурированный FastMCP-сервер с 8 тулами.
+    """Создать и вернуть сконфигурированный FastMCP-сервер с 11 тулами.
 
     Все тулы — обычные def (sync), а не async: сервис не потокобезопасен
     и рассчитан на последовательное исполнение sync-тулов FastMCP в event loop.
@@ -61,21 +61,43 @@ def create_server(service: MCPReviewService) -> FastMCP:
         return service.get_changed_file_diff(repo, pr, path)
 
     @mcp.tool()
+    def index_task(task: dict) -> dict:
+        """Index a normalized TaskBrief into the task graph + vector store.
+        task: {key, aliases[], title, description, criteria[], status, url, links[]}.
+        Idempotent: re-embeds only when the task text changed. Returns
+        {key, embedded, links_upserted, warnings}."""
+        return service.index_task(task)
+
+    @mcp.tool()
+    def search_tasks(query: str, top_k: int = 5) -> str:
+        """Find semantically similar tasks in the indexed task corpus."""
+        return service.search_tasks(query, top_k)
+
+    @mcp.tool()
+    def get_task_context(key: str) -> str:
+        """Graph context for a task (by key or alias): the task and its PRs,
+        linked tasks and their PRs, and the code those PRs touched."""
+        return service.get_task_context(key)
+
+    @mcp.tool()
     def publish_review(
         repo: str,
         pr: int,
         summary: str,
         findings: list[dict],
         dry_run: bool = False,
+        task_key: str | None = None,
     ) -> dict:
         """Deterministic publish tail: policy gate, line grounding, dedup,
         inline/summary split, suggestion invariants, fingerprint idempotency,
         comment cap, GitHub review post, history record, overlay cleanup.
+        When task_key is set and the review is really published, the PR is linked
+        to that task in the task graph (IMPLEMENTED_BY + TOUCHES changed code).
         Each finding: {category, severity(low|medium|high|critical), file, line,
         side(RIGHT|LEFT), code_quote, message, suggestion,
         fix:{start_line,end_line,replacement}|null, confidence:0..1}.
         With dry_run=true nothing is posted; the full report is returned."""
-        return service.publish_review(repo, pr, summary, findings, dry_run)
+        return service.publish_review(repo, pr, summary, findings, dry_run, task_key)
 
     return mcp
 
