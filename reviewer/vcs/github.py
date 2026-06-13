@@ -1,5 +1,6 @@
 from __future__ import annotations
 import base64
+import random
 import re
 import time
 
@@ -21,12 +22,14 @@ class _RetryTransport:
         attempts: int = 3,
         backoff_base: float = 1.0,
         max_wait: float = 8.0,
+        jitter: float = 1.0,
         _sleep=time.sleep,
     ):
         self._wrapped = wrapped
         self._attempts = attempts
         self._backoff_base = backoff_base
         self._max_wait = max_wait
+        self._jitter = jitter
         self._sleep = _sleep
 
     def handle_request(self, request: httpx.Request) -> httpx.Response:
@@ -44,9 +47,11 @@ class _RetryTransport:
                         wait = self._backoff_base * (2 ** attempt)
                 else:
                     wait = self._backoff_base * (2 ** attempt)
+                # jitter разводит синхронные ретраи (как в with_voyage_retry, PRI-35)
+                wait = min(wait, self._max_wait) + random.uniform(0, self._jitter)
                 # max(0, …): невалидный/отрицательный Retry-After (напр. "-1")
                 # не должен уводить sleep в минус — time.sleep(<0) бросает ValueError.
-                self._sleep(max(0.0, min(wait, self._max_wait)))
+                self._sleep(max(0.0, wait))
         # Исчерпаны попытки — возвращаем последний ответ (raise_for_status сделает своё дело)
         assert response is not None
         return response
