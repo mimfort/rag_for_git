@@ -47,8 +47,9 @@ written inline in `description` (a bulleted / checklist section), leave `criteri
 requirements prompt reads `description` anyway, so nothing is lost.
 
 **URL note.** The Yougile API does not expose a task link directly, so `url` comes from
-`task_board.url_template`. The web URL fragment uses the **project code** (`PRI-N`), e.g.
-`https://<host>/team/<teamId>/#PRI-4` — substitute the `idTaskProject` value, not `idTaskCommon`.
+`task_board.url_template` (use a `{code}` placeholder for the web-facing code). The web URL fragment
+uses the **project code** (`PRI-N`), e.g. `https://<host>/team/<teamId>/#PRI-4` — substitute the
+`idTaskProject` value (`PRI-N`) for `{code}`, NOT the canonical `idTaskCommon`/`ID-N`.
 A missing `url` only drops the hyperlink in the summary — the task is still named by `key` + `title`.
 
 ## 3. Optional discussion context
