@@ -75,7 +75,7 @@
 | Индекс (RAG) | `reviewer/index/` | чанкинг (tree-sitter), эмбеддинги (Voyage), хранилище (pgvector+BM25), свежесть |
 | Граф кода | `reviewer/graph/` | построение рёбер `CALLS` + `IMPLEMENTS` (SCIP-бэкенд) или только `CALLS` (tree-sitter); оркестрация в `backend.py`; хранение и обход в Neo4j |
 | Ретрив | `reviewer/retrieval/` | гибрид (RRF) + graph-expansion + Voyage rerank → контекст |
-| Инструменты | `reviewer/tools/` | `search_code`, `get_related_symbols`, `read_file`, `get_definition`, `find_callers`, `get_changed_file_diff` |
+| Инструменты | `reviewer/tools/` | `search_code`, `get_related_symbols`, `read_file`, `get_definition`, `find_callers`, `get_changed_file_diff`; `index_task` — индексирует задачу в граф и вектор; `search_tasks` — семантический поиск по задачам; `get_task_context` — граф/история задачи и связанных PR |
 | MCP-сервис | `reviewer/mcp/` | `MCPReviewService`: prepare/tool-вызовы/publish; управление сессиями PR |
 | Сервис | `reviewer/services/` | `ReviewService.prepare`: ingest PR, overlay, units |
 | Агент | `reviewer/agent/` | state (ReviewUnit) · assemble · dedup |
@@ -333,7 +333,8 @@ task_board:
   type: yougile          # yougile | jira — выбирает плейбук скилла
   mcp: yougile           # имя подключённого MCP-сервера доски (тулы зовутся mcp__<mcp>__*)
   key_pattern: "[A-Z]+-\\d+"   # опц.; дефолт такой же (подходит Yougile PRI-34/ID-34 и Jira PROJ-123)
-  # url_template: "https://yougile.com/...{id}"  # опц.; ссылка на задачу в сводке ({id}/{key})
+  # url_template: "https://ru.yougile.com/team/<teamId>/#{key}"  # опц.; ссылка на задачу в сводке
+  #   Yougile: в URL используется код проекта (PRI-N), не канонический ID-N → шаблон должен содержать {key}
 ```
 
 **Контекст задачи (фаза 2).** Если задан `task_board` и в PR (title/body/ветка) найден ключ
@@ -341,6 +342,15 @@ task_board:
 новая категория находок `requirements` (включена по умолчанию). Находки без конкретной строки
 диффа уходят в сводку. Доска не настроена, ключ не найден или MCP недоступен → ревью работает
 как обычно, без деградации.
+
+**Граф и RAG по задачам (фаза 3).** Прочитанная задача индексируется в граф (Neo4j: узлы
+`:Task`/`:PR`, рёбра `TASK_LINK`/`IMPLEMENTED_BY`/`TOUCHES`) и в векторный индекс (Postgres,
+таблица `tasks`) тулом `index_task`. При ревью агент видит связанные задачи и их PR/код через
+`get_task_context`, а похожие по смыслу — через `search_tasks`; при публикации PR
+автоматически линкуется к задаче. Скилл `/sync-tasks` прогревает корпус задач с доски (идемпотентно,
+с backoff под Voyage). Канонический ключ узла — сквозной код доски (Yougile `ID-N` / Jira key),
+прочие коды (Yougile `PRI-N`) хранятся как `aliases`, поэтому PR по любому коду резолвится в один
+узел. Neo4j/доска недоступны → контекст пуст с предупреждением, ревью продолжается.
 
 ## Структура проекта
 
