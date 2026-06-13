@@ -108,6 +108,7 @@ class GitHubProvider:
             title=d.get("title", ""),
             body=d.get("body") or "",
             draft=bool(d.get("draft", False)),
+            head_ref=d.get("head", {}).get("ref"),
         )
 
     def get_changed_files(self, number: int) -> list[ChangedFile]:

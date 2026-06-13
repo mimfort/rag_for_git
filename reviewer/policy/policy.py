@@ -17,6 +17,7 @@ class ReviewPolicy:
     max_comments: int = 25
     min_confidence: float = 0.0
     output_language: str = "ru"                                  # язык текста находок в публикуемом ревью
+    task_board: dict | None = None                               # конфиг доски задач из .review.yml (None = выкл.)
 
     @classmethod
     def from_yaml(cls, text: str | None) -> "ReviewPolicy":
@@ -33,6 +34,7 @@ class ReviewPolicy:
             max_comments=data.get("max_comments", 25),
             min_confidence=data.get("min_confidence", 0.0),
             output_language=str(data.get("output_language", "ru")),
+            task_board=data.get("task_board") or None,
         )
 
     @classmethod
@@ -69,6 +71,8 @@ class ReviewPolicy:
             policy.ignore = ignore
         if "output_language" in data:
             policy.output_language = str(data["output_language"])
+        if "task_board" in data:
+            policy.task_board = data["task_board"] or None
         return policy
 
     def category_enabled(self, category: str) -> bool:

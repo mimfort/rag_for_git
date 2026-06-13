@@ -60,3 +60,47 @@ def test_output_language_default_and_yaml_override():
 
     p2 = ReviewPolicy.from_yaml("output_language: en")
     assert p2.output_language == "en"
+
+
+def test_task_board_parsed_from_yaml():
+    p = ReviewPolicy.from_yaml("task_board: {type: yougile, mcp: yougile}")
+    assert p.task_board == {"type": "yougile", "mcp": "yougile"}
+
+
+def test_task_board_none_when_absent():
+    p = ReviewPolicy.from_yaml("severity_threshold: low")
+    assert p.task_board is None
+
+
+def test_load_applies_task_board_from_yaml():
+    s = Settings(_env_file=None)
+    p = ReviewPolicy.load(s, "task_board: {type: jira, mcp: atlassian}")
+    assert p.task_board == {"type": "jira", "mcp": "atlassian"}
+
+
+def test_load_task_board_none_without_yaml():
+    s = Settings(_env_file=None)
+    p = ReviewPolicy.load(s, None)
+    assert p.task_board is None
+
+
+def test_requirements_category_enabled_by_default():
+    p = ReviewPolicy.from_yaml(None)
+    assert p.gate(F("requirements", "medium")) is True
+
+
+def test_requirements_category_can_be_disabled_via_yaml():
+    p = ReviewPolicy.from_yaml("categories: {requirements: false}")
+    assert p.gate(F("requirements", "high")) is False
+
+
+def test_requirements_excluded_by_enabled_only_whitelist():
+    p = ReviewPolicy(enabled_only=["correctness"])
+    assert p.gate(F("requirements", "high")) is False
+
+
+def test_requirements_respects_severity_and_confidence():
+    p = ReviewPolicy(severity_threshold="medium", min_confidence=0.7)
+    assert p.gate(F("requirements", "high", confidence=0.9)) is True
+    assert p.gate(F("requirements", "low", confidence=0.9)) is False
+    assert p.gate(F("requirements", "high", confidence=0.5)) is False

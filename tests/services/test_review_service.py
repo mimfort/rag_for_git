@@ -228,3 +228,49 @@ def test_prepare_does_not_close_external_vcs_on_failure(
         service.prepare("owner", "repo", 1, vcs_provider=vcs)
 
     vcs.close.assert_not_called()
+
+
+@patch("reviewer.services.review_service.chunk_python", side_effect=_fake_chunk)
+@patch("reviewer.services.review_service.build_overlay")
+def test_prepare_extracts_task_keys_when_task_board_configured(
+    _mock_overlay: MagicMock,
+    _mock_chunk: MagicMock,
+    settings: Settings,
+    components: MagicMock,
+) -> None:
+    """При task_board в .review.yml prepare извлекает primary-ключ из title/branch."""
+    vcs = _vcs_with_files([_changed("a.py")])
+    vcs.get_pull_request.return_value = PullRequest(
+        number=3, base_sha="b", head_sha="h", base_ref="main",
+        title="SAI-515: add logout", body="", draft=False,
+        head_ref="feature/SAI-515",
+    )
+
+    def _read(path: str, ref: str) -> str:
+        if path == ".review.yml":
+            return "task_board: {type: yougile, mcp: yougile}"
+        return "def foo(): pass"
+    vcs.get_file_at_ref.side_effect = _read
+
+    service = ReviewService(settings, components)
+    prepared = service.prepare("o", "r", 3, vcs_provider=vcs)
+
+    assert prepared.task_board == {"type": "yougile", "mcp": "yougile"}
+    assert prepared.task_keys == {"primary": "SAI-515", "others": []}
+
+
+@patch("reviewer.services.review_service.chunk_python", side_effect=_fake_chunk)
+@patch("reviewer.services.review_service.build_overlay")
+def test_prepare_task_keys_none_without_task_board(
+    _mock_overlay: MagicMock,
+    _mock_chunk: MagicMock,
+    settings: Settings,
+    components: MagicMock,
+) -> None:
+    """Без task_board контекст задачи неактивен: оба поля None."""
+    vcs = _vcs_with_files([_changed("a.py")])
+    service = ReviewService(settings, components)
+    prepared = service.prepare("o", "r", 1, vcs_provider=vcs)
+
+    assert prepared.task_board is None
+    assert prepared.task_keys is None

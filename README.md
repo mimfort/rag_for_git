@@ -321,12 +321,26 @@ PR удаляет «лишнюю», на первый взгляд, провер
 **Политика per-repo.** Файл `.review.yml` в **целевой ветке** репозитория переопределяет env-дефолты (PR не может ослабить собственное ревью):
 
 ```yaml
-categories: { correctness: true, security: true, performance: true, style: false }
+categories: { correctness: true, security: true, performance: true, style: false, requirements: true }
 severity_threshold: medium
 min_confidence: 0.5
 paths: { ignore: ["**/migrations/**", "vendor/**"] }
 max_comments: 25
+
+# Контекст задачи (опц.): читать задачу с доски и проверять соответствие требованиям.
+# Доску (MCP) подключает пользователь на стороне сессии Claude Code; плагин её не бандлит.
+task_board:
+  type: yougile          # yougile | jira — выбирает плейбук скилла
+  mcp: yougile           # имя подключённого MCP-сервера доски (тулы зовутся mcp__<mcp>__*)
+  key_pattern: "[A-Z]+-\\d+"   # опц.; дефолт такой же (подходит Yougile PRI-34/ID-34 и Jira PROJ-123)
+  # url_template: "https://yougile.com/...{id}"  # опц.; ссылка на задачу в сводке ({id}/{key})
 ```
+
+**Контекст задачи (фаза 2).** Если задан `task_board` и в PR (title/body/ветка) найден ключ
+по `key_pattern`, скилл читает задачу с доски через её MCP и запускает проверку соответствия —
+новая категория находок `requirements` (включена по умолчанию). Находки без конкретной строки
+диффа уходят в сводку. Доска не настроена, ключ не найден или MCP недоступен → ревью работает
+как обычно, без деградации.
 
 ## Структура проекта
 
