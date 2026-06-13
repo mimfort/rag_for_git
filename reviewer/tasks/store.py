@@ -17,7 +17,7 @@ def _bm25_query(text: str) -> str:
     return cleaned or "____nomatch____"
 
 
-def build_task_text(title: str, description: str, criteria: list[str] | None) -> str:
+def build_task_text(title: str | None, description: str | None, criteria: list[str] | None) -> str:
     """Текст задачи для эмбеддинга и BM25: заголовок + описание + критерии."""
     parts = [title or "", description or ""]
     if criteria:
