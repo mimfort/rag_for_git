@@ -143,21 +143,43 @@
 
 ## Быстрый старт
 
-Нужны: Python 3.11–3.13, Docker, ключ Voyage, GitHub-токен, Claude Code с плагином.
+Установка из двух частей: **backend** (Postgres + Neo4j + Python-пакет, который запускает MCP-сервер) и **плагин Claude Code** (скиллы + MCP-тулы). Обе части живут в одном месте — откройте репозиторий `rag_for_git` как проект в Claude Code; его корень и есть `${CLAUDE_PROJECT_DIR}`, относительно которого плагин резолвит пути.
+
+Нужны: Python 3.11–3.13, Docker, ключ Voyage, GitHub-токен, Claude Code.
+
+### 1. Backend и инфраструктура
+
+MCP-сервер запускается из `.venv`, поэтому это должно быть готово до того, как заработают тулы:
 
 ```bash
-# 1. зависимости и инфраструктура
 git clone https://github.com/mimfort/rag_for_git && cd rag_for_git
 python -m venv .venv && .venv/bin/pip install -e ".[dev]"
 docker compose up -d                 # Postgres/ParadeDB (:5433) + Neo4j (:7687) + web-админка (:8000)
-
-# 2. конфиг
 cp .env.example .env                 # заполнить VOYAGE_API_KEY, GITHUB_TOKEN
+.venv/bin/reviewer check             # ✓/✗ по ключам, Postgres, Neo4j, GitHub (квоту Voyage не тратит)
 ```
 
 Где взять ключи:
 - **Voyage** (`VOYAGE_API_KEY`): https://dashboard.voyageai.com/ — есть 200M бесплатных токенов; чтобы снять лимит 3 RPM / 10K TPM, привяжите карту (списания идут только сверх бесплатного пула; auto-recharge можно держать выключенным).
 - **GitHub** (`GITHUB_TOKEN`): PAT с правами *Pull requests: Read and write* + *Contents: Read* (fine-grained) или scope `repo` (classic). Быстрый вариант для своих репо: `gh auth token`.
+
+`DEFAULT_REPO` (опц.) задаёт дефолтный `owner/name` для одно-репных деплоев — тогда `--repo` / аргумент `repo` у CLI и тулов можно не указывать.
+
+### 2. Установка плагина в Claude Code
+
+Откройте Claude Code **из корня репозитория** и поставьте бандлённый плагин из его локального marketplace:
+
+```text
+/plugin marketplace add .
+/plugin install rag-reviewer@rag-reviewer-marketplace
+```
+
+Это подключает всё прямо в Claude Code — без ручной настройки MCP. Вы получаете:
+
+- **Скиллы:** `/rag-reviewer:review-pr`, `/rag-reviewer:solve-task`, `/rag-reviewer:sync-tasks` (а также `/rag-reviewer:maintainability-review` и `/rag-reviewer:performance-review`).
+- **MCP-сервер** `reviewer` (объявлен в `plugin/.mcp.json`) с тулами агента: `prepare_review`, `publish_review`, `search_code`, `get_related_symbols`, `read_file`, `get_definition`, `find_callers`, `get_changed_file_diff`, `index_task`, `search_tasks`, `get_task_context`, `search_codebase`.
+
+> Сервер стартует как `${CLAUDE_PROJECT_DIR}/.venv/bin/python -m reviewer.entrypoints.mcp_server`, поэтому держите Claude Code открытым в корне репо, а `.venv` и Docker-стек из шага 1 — поднятыми, иначе тулы не запустятся. Команда `/plugin` покажет, что `rag-reviewer` установлен и включён.
 
 ## Использование
 
@@ -178,17 +200,13 @@ reviewer search "token verification"
 
 ### Ревью через Claude Code-плагин
 
-Ревью запускается через скилл `/rag-reviewer:review-pr` в Claude Code:
+С установленным плагином (см. [Быстрый старт](#быстрый-старт)) и Claude Code, открытым в корне репо, вызовите скилл:
 
-```bash
-# 1. Убедиться, что MCP-сервер добавлен в Claude Code-настройки
-#    (reviewer-mcp / plugin/ как корень плагина)
-
-# 2. Открыть репозиторий в Claude Code и вызвать скилл:
+```text
 /rag-reviewer:review-pr owner/repo#42
 ```
 
-Плагин (`plugin/`) вызывает `prepare_review` (через MCP), затем запускает subagents с инструментами поиска `search_code`, `get_related_symbols`, `read_file` и т.д., наконец `publish_review` (через MCP) постит результат в GitHub.
+Плагин вызывает `prepare_review` (через MCP), затем запускает subagents с инструментами поиска `search_code`, `get_related_symbols`, `read_file` и т.д., наконец `publish_review` (через MCP) постит результат в GitHub.
 
 Типичный сценарий:
 

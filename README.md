@@ -100,31 +100,58 @@ For a deeper, code-verified walkthrough of every module and the data flow, see
 
 ## Installation
 
-Requirements: Python 3.11–3.13, Docker, a Voyage API key, a GitHub token, and Claude Code with the
-plugin.
+Installation has two parts: a **backend** (Postgres + Neo4j + the Python package the MCP server runs)
+and the **Claude Code plugin** (skills + MCP tools). Both live in one place — open the `rag_for_git`
+repo as your project in Claude Code; its root is the `${CLAUDE_PROJECT_DIR}` the plugin resolves paths
+against.
+
+Requirements: Python 3.11–3.13, Docker, a Voyage API key, a GitHub token, Claude Code.
+
+### 1. Backend + infrastructure
+
+The MCP server is launched from `.venv`, so this must be in place before the tools work:
 
 ```bash
-# 1. dependencies + infrastructure
 git clone https://github.com/mimfort/rag_for_git && cd rag_for_git
 python -m venv .venv && .venv/bin/pip install -e ".[dev]"
-docker compose up -d          # Postgres/ParadeDB (:5433) + Neo4j (:7687) + observability web admin (:8000)
-
-# 2. config
+docker compose up -d          # Postgres/ParadeDB (:5433) + Neo4j (:7687) + web admin (:8000)
 cp .env.example .env          # fill in VOYAGE_API_KEY and GITHUB_TOKEN
+.venv/bin/reviewer check      # ✓/✗ for keys, Postgres, Neo4j, GitHub (spends no Voyage quota)
 ```
 
-Where to get the keys:
-
-- **Voyage** (`VOYAGE_API_KEY`): https://dashboard.voyageai.com/ — there is a free token pool; to
-  lift the 3 RPM / 10K TPM limit, attach a card (you are only charged beyond the free pool).
+- **Voyage** (`VOYAGE_API_KEY`): https://dashboard.voyageai.com/ — there is a free token pool; attach
+  a card to lift the 3 RPM / 10K TPM limit (you are charged only beyond the free pool).
 - **GitHub** (`GITHUB_TOKEN`): a PAT with *Pull requests: Read and write* + *Contents: Read*
-  (fine-grained) or the `repo` scope (classic). Quick option for your own repos: `gh auth token`.
+  (fine-grained) or the `repo` scope (classic). Quick option: `gh auth token`.
 
-All other settings have defaults in `reviewer/config/settings.py`; `.env` only needs the secrets
-plus any overrides. Key variables are documented with comments in `.env.example`.
+All other settings have defaults in `reviewer/config/settings.py` (documented in `.env.example`).
+`DEFAULT_REPO` (optional) sets the default `owner/name` for single-repo deployments so you can omit
+`--repo` / the `repo` argument on the CLI and tools.
 
-`DEFAULT_REPO` (optional) sets the default `owner/name` for `reviewer index` and `search_codebase`
-in single-repo deployments — omit `--repo` on the CLI and the tool will use it automatically.
+### 2. Install the plugin into Claude Code
+
+Open Claude Code **from the repo root** and install the bundled plugin from its local marketplace:
+
+```text
+/plugin marketplace add .
+/plugin install rag-reviewer@rag-reviewer-marketplace
+```
+
+That wires everything straight into Claude Code — no manual MCP config. You get:
+
+- **Skills:** `/rag-reviewer:review-pr`, `/rag-reviewer:solve-task`, `/rag-reviewer:sync-tasks`
+  (plus `/rag-reviewer:maintainability-review` and `/rag-reviewer:performance-review`).
+- **MCP server** `reviewer` (declared in `plugin/.mcp.json`) exposing the agent tools:
+  `prepare_review`, `publish_review`, `search_code`, `get_related_symbols`, `read_file`,
+  `get_definition`, `find_callers`, `get_changed_file_diff`, `index_task`, `search_tasks`,
+  `get_task_context`, `search_codebase`.
+
+> The server starts as `${CLAUDE_PROJECT_DIR}/.venv/bin/python -m reviewer.entrypoints.mcp_server`,
+> so keep Claude Code open at the repo root and keep step 1's `.venv` + Docker stack running —
+> otherwise the tools won't launch. Run `/plugin` to confirm `rag-reviewer` is installed and enabled.
+
+That's it. Build the base index (recommended — see [CLI](#cli)) and review a PR (see
+[Plugin usage](#plugin-usage)).
 
 ## CLI
 
@@ -158,16 +185,8 @@ Reviewing works even without a prior `index` — context is then limited to the 
 
 ## Plugin usage
 
-Reviews are launched as a Claude Code skill. Install the bundled plugin from the local marketplace
-in the repo root:
-
-```text
-/plugin marketplace add .
-/plugin install rag-reviewer@rag-reviewer-marketplace
-```
-
-Then, **with Claude Code launched from the repository root** (the MCP server path is resolved from
-`${CLAUDE_PROJECT_DIR}` in `plugin/.mcp.json`), call a skill:
+With the plugin installed (see [Installation](#installation)) and Claude Code open at the repo root,
+call a skill:
 
 ```text
 /rag-reviewer:review-pr owner/repo#42     # review a PR (prepare_review → subagents → publish_review)
