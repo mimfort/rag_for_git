@@ -15,7 +15,7 @@ log = logging.getLogger(__name__)
 
 
 def create_server(service: MCPReviewService) -> FastMCP:
-    """Создать и вернуть сконфигурированный FastMCP-сервер с 11 тулами.
+    """Создать и вернуть сконфигурированный FastMCP-сервер с 12 тулами.
 
     Все тулы — обычные def (sync), а не async: сервис не потокобезопасен
     и рассчитан на последовательное исполнение sync-тулов FastMCP в event loop.
@@ -78,6 +78,13 @@ def create_server(service: MCPReviewService) -> FastMCP:
         """Graph context for a task (by key or alias): the task and its PRs,
         linked tasks and their PRs, and the code those PRs touched."""
         return service.get_task_context(key)
+
+    @mcp.tool()
+    def search_codebase(query: str, top_k: int = 10) -> str:
+        """Hybrid semantic+lexical search over the repo's base code index (no PR session).
+        Use it (e.g. from /solve-task) to find relevant existing code by a free-text
+        formulation, when there is no PR to scope a session to."""
+        return service.search_codebase(query, top_k)
 
     @mcp.tool()
     def publish_review(

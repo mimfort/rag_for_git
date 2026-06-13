@@ -35,3 +35,13 @@ def test_publish_review_tool_forwards_task_key():
          "dry_run": False, "task_key": "ID-1"},
     ))
     svc.publish_review.assert_called_once_with("o/r", 7, "s", [], False, "ID-1")
+
+
+def test_search_codebase_tool_registered():
+    import asyncio
+
+    svc = _service()
+    svc.search_codebase.return_value = "code"
+    server = create_server(svc)
+    names = {t.name for t in asyncio.run(server.list_tools())}
+    assert "search_codebase" in names

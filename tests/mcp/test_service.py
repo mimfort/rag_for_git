@@ -466,3 +466,21 @@ def test_task_tool_delegates() -> None:
     assert svc.search_tasks("q", 3) == "list"
     assert svc.get_task_context("ID-1") == "ctx"
     svc.components.task_service.search_tasks.assert_called_once_with("q", 3)
+
+
+def test_search_codebase_delegates_to_retriever() -> None:
+    """search_codebase зовёт retriever.search_base и форматирует ContextPack."""
+    svc = _make_mcp_service()
+    svc.components.retriever.search_base.return_value.as_context.return_value = "auth.py#logout\nbody"
+    out = svc.search_codebase("logout", top_k=5)
+    assert "auth.py#logout" in out
+    svc.components.retriever.search_base.assert_called_once_with("logout", top_k=5)
+
+
+def test_search_codebase_empty_or_error_returns_note() -> None:
+    """Пустой результат или сбой → '(ничего не найдено)'."""
+    svc = _make_mcp_service()
+    svc.components.retriever.search_base.return_value.as_context.return_value = ""
+    assert svc.search_codebase("x") == "(ничего не найдено)"
+    svc.components.retriever.search_base.side_effect = RuntimeError("pg down")
+    assert svc.search_codebase("x") == "(ничего не найдено)"
