@@ -1,4 +1,5 @@
 from __future__ import annotations
+import random
 import time
 from collections.abc import Callable
 
@@ -15,9 +16,12 @@ def _is_rate_limit(e: Exception) -> bool:
     )
 
 
-def with_voyage_retry(fn: Callable, *, tries: int = 6, wait: float = 22.0, sleep=time.sleep):
+def with_voyage_retry(fn: Callable, *, tries: int = 6, wait: float = 22.0,
+                      jitter: float = 3.0, sleep=time.sleep):
     """Повторяет fn при rate-limit ошибках Voyage (free tier ~3 RPM).
-    Не-rate-limit ошибки пробрасываются сразу. `sleep` инъектируется для тестов."""
+    Не-rate-limit ошибки пробрасываются сразу. `sleep` инъектируется для тестов.
+    К интервалу добавляется случайный jitter (0..jitter), чтобы развести ретраи
+    параллельных воркеров во времени и не бить rate-limit синхронным фронтом."""
     last: Exception | None = None
     for _ in range(tries):
         try:
@@ -26,5 +30,5 @@ def with_voyage_retry(fn: Callable, *, tries: int = 6, wait: float = 22.0, sleep
             if not _is_rate_limit(e):
                 raise
             last = e
-            sleep(wait)
+            sleep(wait + random.uniform(0, jitter))
     raise last  # type: ignore[misc]
