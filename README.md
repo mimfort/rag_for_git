@@ -127,7 +127,9 @@ the default `owner/name` for single-repo deployments.
 
 ### 2. Install the plugin
 
-The MCP server starts automatically via `uvx --from rag-reviewer reviewer-mcp`.
+The MCP server starts automatically via `bash -lc "uvx --from rag-reviewer reviewer-mcp"`.
+The `bash -lc` wrapper loads your shell profile so `uvx` (installed in `~/.local/bin`) is
+visible even to GUI tools that don't inherit the full shell PATH.
 Works from **any** project opened in your AI coding assistant.
 
 #### Claude Code (recommended)

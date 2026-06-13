@@ -10,15 +10,15 @@ Gemini CLI does not support path variable expansion. Use `uvx` so no absolute pa
 {
   "mcpServers": {
     "reviewer": {
-      "command": "uvx",
-      "args": ["--from", "rag-reviewer", "reviewer-mcp"]
+      "command": "/bin/bash",
+      "args": ["-lc", "uvx --from rag-reviewer reviewer-mcp"]
     }
   }
 }
 ```
 
-Add this to your Gemini CLI `settings.json`. `uvx` downloads and runs the published
-`rag-reviewer` package from PyPI — no local clone required.
+Add this to your Gemini CLI `settings.json`. The `bash -lc` wrapper loads your shell profile
+so `uvx` (installed in `~/.local/bin`) is found even by GUI tools. No local clone required.
 
 ## Skills
 
