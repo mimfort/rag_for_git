@@ -328,9 +328,15 @@ def test_prepare_patches_graph_incrementally_on_drift(
     with patch.object(service, "_create_vcs_provider", return_value=vcs):
         service.prepare("owner", "repo", 1)
 
-    # Граф должен был получить хотя бы один вызов symbols_for_paths или upsert_nodes
-    assert fake_graph.symbols_calls or fake_graph.upsert_nodes_calls, (
-        "patch_graph_incremental не вызвал graph-методы при дрейфе SHA"
+    # Изменённый surface должен быть переустановлен: узлы переписаны, исходящие
+    # CALLS сброшены (входящие сохраняются). Конкретная проверка, а не "или".
+    assert fake_graph.upsert_nodes_calls, (
+        "patch_graph_incremental не вызвал upsert_nodes при дрейфе SHA"
+    )
+    repo_seen, ids = fake_graph.upsert_nodes_calls[0]
+    assert repo_seen == "owner/repo" and "b.py#baz" in ids
+    assert fake_graph.delete_outgoing_calls_log, (
+        "не сброшены исходящие CALLS изменённой поверхности"
     )
 
 

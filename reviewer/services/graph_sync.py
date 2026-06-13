@@ -13,7 +13,8 @@ def patch_graph_incremental(graph, repo: str, *, changed_sources: dict[str, str]
                             removed_paths: list[str]) -> None:
     """Обновить граф репозитория repo по изменённым/удалённым файлам.
 
-    changed_sources: {path: head-источник} только .py изменённых/добавленных файлов.
+    changed_sources: {path: источник целевой (base) версии} только .py изменённых/
+        добавленных файлов — граф досинхронизируется к base-ветке, как и вектора.
     removed_paths: пути удалённых из PR .py-файлов.
     """
     # Удалённые файлы — снести их символы целиком.
