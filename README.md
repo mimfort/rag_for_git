@@ -75,7 +75,7 @@
 | Индекс (RAG) | `reviewer/index/` | чанкинг (tree-sitter), эмбеддинги (Voyage), хранилище (pgvector+BM25), свежесть |
 | Граф кода | `reviewer/graph/` | построение рёбер `CALLS` + `IMPLEMENTS` (SCIP-бэкенд) или только `CALLS` (tree-sitter); оркестрация в `backend.py`; хранение и обход в Neo4j |
 | Ретрив | `reviewer/retrieval/` | гибрид (RRF) + graph-expansion + Voyage rerank → контекст |
-| Инструменты | `reviewer/tools/` | `search_code`, `get_related_symbols`, `read_file`, `get_definition`, `find_callers`, `get_changed_file_diff`; `index_task` — индексирует задачу в граф и вектор; `search_tasks` — семантический поиск по задачам; `get_task_context` — граф/история задачи и связанных PR |
+| Инструменты | `reviewer/tools/` | `search_code`, `get_related_symbols`, `read_file`, `get_definition`, `find_callers`, `get_changed_file_diff`; `index_task` — индексирует задачу в граф и вектор; `search_tasks` — семантический поиск по задачам; `get_task_context` — граф/история задачи и связанных PR; `search_codebase` — session-less гибрид-поиск по base-индексу (для /solve-task) |
 | MCP-сервис | `reviewer/mcp/` | `MCPReviewService`: prepare/tool-вызовы/publish; управление сессиями PR |
 | Сервис | `reviewer/services/` | `ReviewService.prepare`: ingest PR, overlay, units |
 | Агент | `reviewer/agent/` | state (ReviewUnit) · assemble · dedup |
@@ -351,6 +351,14 @@ task_board:
 с backoff под Voyage). Канонический ключ узла — сквозной код доски (Yougile `ID-N` / Jira key),
 прочие коды (Yougile `PRI-N`) хранятся как `aliases`, поэтому PR по любому коду резолвится в один
 узел. Neo4j/доска недоступны → контекст пуст с предупреждением, ревью продолжается.
+
+**Скилл `/solve-task` (фаза 4).** `/solve-task <ключ | свободный текст>` собирает контекст под
+задачу — читает задачу с доски (если есть ключ и подключена доска), тянет связанные и похожие
+задачи с их PR и кодом (`get_task_context`/`search_tasks`), ищет релевантный код по формулировке
+(`search_codebase` — session-less гибрид-поиск по base-индексу: BM25+ANN → graph-expansion →
+rerank), сводит **только релевантное** в структурированный бриф и передаёт его в штатный цикл
+разработки (`brainstorming` → план → реализация). Скилл дисциплинирует сбор контекста, не заменяя
+разработку; fail-open — без доски/графа работает по формулировке и коду.
 
 ## Структура проекта
 

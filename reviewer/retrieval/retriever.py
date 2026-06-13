@@ -1,5 +1,8 @@
 from __future__ import annotations
 from dataclasses import dataclass
+import logging
+
+log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -50,3 +53,42 @@ class Retriever:
                                max_chars=self.max_context_chars)
         ranked = self.reranker.rerank(query, list(merged.values()), top_k=top_k)
         return ContextPack(items=ranked, max_chars=self.max_context_chars)
+
+    def search_base(self, query, top_k=10, candidates=50) -> ContextPack:
+        """Гибрид-поиск по base-индексу без PR-сессии — для /solve-task.
+
+        Зеркало :meth:`retrieve`, но base-only и сидинг графа от хитов:
+        ``changed_paths=[]`` + несуществующий ``overlay_ref="__none__"`` → WHERE отбирает
+        только base-строки. graph-expansion идёт от топ-хитов (а не от changed-файлов),
+        затем rerank. Граф и реранкер fail-soft: недоступны/ошибка → деградация до
+        чистого гибрида / RRF-порядка.
+        """
+        qvec = self.embedder.embed_query(query)
+        hits = self.store.hybrid_search(
+            query_text=query, query_embedding=qvec,
+            overlay_ref="__none__", changed_paths=[],
+            top_k=candidates, candidates=candidates)
+        merged: dict[str, object] = {}
+        for h in hits:
+            merged.setdefault(h.node_id, h)
+        graph_new = False
+        if self.graph is not None and hits:
+            try:
+                seeds = [h.node_id for h in hits[:top_k]]
+                related_ids = self.graph.expand(seeds, hops=1)
+                related = self.store.fetch_nodes(list(related_ids), "__none__", [])
+                for it in related:
+                    if it.node_id not in merged:
+                        merged[it.node_id] = it
+                        graph_new = True
+            except Exception:
+                log.warning("search_base: graph-expansion недоступен", exc_info=True)
+        items = list(merged.values())
+        if self.reranker is None or len(items) <= 3 or (len(items) <= top_k and not graph_new):
+            return ContextPack(items=items[:top_k], max_chars=self.max_context_chars)
+        try:
+            items = self.reranker.rerank(query, items, top_k=top_k)
+        except Exception:
+            log.warning("search_base: rerank недоступен — RRF-порядок", exc_info=True)
+            items = items[:top_k]
+        return ContextPack(items=items, max_chars=self.max_context_chars)

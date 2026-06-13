@@ -225,6 +225,15 @@ class MCPReviewService:
         """Граф-контекст задачи: связанные задачи → их PR → затронутый код."""
         return self.components.task_service.get_task_context(key)
 
+    def search_codebase(self, query: str, top_k: int = 10) -> str:
+        """Гибрид-поиск по base-индексу репозитория (без PR-сессии) — для /solve-task."""
+        try:
+            pack = self.components.retriever.search_base(query, top_k=top_k)
+        except Exception:
+            log.warning("search_codebase: сбой поиска", exc_info=True)
+            return "(ничего не найдено)"
+        return pack.as_context() or "(ничего не найдено)"
+
     def publish_review(
         self,
         repo: str,
