@@ -119,6 +119,7 @@ def fake_settings() -> MagicMock:
     s.review_max_files = 50
     s.review_history = False
     s.graph_backend = "auto"
+    s.default_repo = "owner/default"
     return s
 
 
@@ -158,19 +159,130 @@ def test_index_command_runs_indexing_steps(
         "treesitter",
     )
 
-    result = runner.invoke(cli, ["index", "/repo", "--ref", "main"])
+    result = runner.invoke(cli, ["index", "/repo", "--ref", "main", "--repo", "a/x"])
 
-    assert result.exit_code == 0
+    assert result.exit_code == 0, result.output
     fake_components.store.init_schema.assert_called_once()
     mock_update_base.assert_called_once()
     fake_components.graph.init_schema.assert_called_once()
-    fake_components.graph.clear.assert_called_once()
-    fake_components.graph.upsert_nodes.assert_called_once_with(["a#foo", "b#bar"])
+    fake_components.graph.clear.assert_called_once_with("a/x")
+    fake_components.graph.upsert_nodes.assert_called_once_with("a/x", ["a#foo", "b#bar"])
     fake_components.graph.upsert_edges.assert_called_once_with(
-        [("a#foo", "CALLS", "b#bar")]
+        "a/x", [("a#foo", "CALLS", "b#bar")]
+    )
+    fake_components.store.set_index_meta.assert_called_once_with("a/x", "base", "abc1234")
+    fake_components.store.delete_paths_except.assert_called_once_with(
+        "a/x", "base", ["a.py", "b.py"]
     )
     fake_components.store.close.assert_called_once()
     fake_components.graph.close.assert_called_once()
+
+
+@patch("reviewer.entrypoints.cli.remote_url")
+@patch("reviewer.entrypoints.cli.build_components")
+@patch("reviewer.entrypoints.cli.Settings")
+def test_index_no_repo_no_remote_no_default_raises(
+    mock_settings_cls,
+    mock_build,
+    mock_remote_url,
+    runner,
+    fake_components,
+    fake_settings,
+):
+    """Если нет --repo, нет git remote и нет DEFAULT_REPO — ошибка с подсказкой."""
+    fake_settings.default_repo = None
+    mock_settings_cls.return_value = fake_settings
+    mock_build.return_value = fake_components
+    mock_remote_url.return_value = None
+
+    result = runner.invoke(cli, ["index", "/repo"])
+
+    assert result.exit_code != 0
+    assert "repo" in result.output.lower()
+
+
+@patch("reviewer.entrypoints.cli.build_code_graph")
+@patch("reviewer.entrypoints.cli.rev_parse")
+@patch("reviewer.entrypoints.cli.file_at_ref")
+@patch("reviewer.entrypoints.cli.list_python_files")
+@patch("reviewer.entrypoints.cli.update_base")
+@patch("reviewer.entrypoints.cli.remote_url")
+@patch("reviewer.entrypoints.cli.build_components")
+@patch("reviewer.entrypoints.cli.Settings")
+def test_index_derives_repo_from_git_remote(
+    mock_settings_cls,
+    mock_build,
+    mock_remote_url,
+    mock_update_base,
+    mock_list_files,
+    mock_file_at_ref,
+    mock_rev_parse,
+    mock_build_graph,
+    runner,
+    fake_components,
+    fake_settings,
+):
+    """Если не задан --repo, repo_id берётся из git remote."""
+    fake_settings.default_repo = None
+    mock_settings_cls.return_value = fake_settings
+    mock_build.return_value = fake_components
+    mock_remote_url.return_value = "https://github.com/owner/myrepo.git"
+    mock_list_files.return_value = []
+    mock_rev_parse.return_value = "aaa0000"
+    mock_file_at_ref.return_value = None
+    mock_build_graph.return_value = ([], [], "treesitter")
+
+    result = runner.invoke(cli, ["index", "/repo"])
+
+    assert result.exit_code == 0, result.output
+    assert "owner/myrepo" in result.output
+
+
+@patch("reviewer.entrypoints.cli.build_components")
+@patch("reviewer.entrypoints.cli.Settings")
+def test_search_command_with_repo_flag(
+    mock_settings_cls,
+    mock_build,
+    runner,
+    fake_components,
+    fake_settings,
+):
+    """Команда search с --repo owner/x передаёт repo_id в hybrid_search."""
+    mock_settings_cls.return_value = fake_settings
+    mock_build.return_value = fake_components
+    hit = MagicMock()
+    hit.score = 0.9
+    hit.node_id = "a#foo"
+    hit.path = "a.py"
+    hit.start_line = 1
+    fake_components.store.hybrid_search.return_value = [hit]
+
+    result = runner.invoke(cli, ["search", "some query", "--repo", "owner/x"])
+
+    assert result.exit_code == 0, result.output
+    fake_components.store.hybrid_search.assert_called_once()
+    call_args = fake_components.store.hybrid_search.call_args
+    assert call_args.args[0] == "owner/x"
+
+
+@patch("reviewer.entrypoints.cli.build_components")
+@patch("reviewer.entrypoints.cli.Settings")
+def test_search_command_no_repo_raises(
+    mock_settings_cls,
+    mock_build,
+    runner,
+    fake_components,
+    fake_settings,
+):
+    """Команда search без --repo и без DEFAULT_REPO завершается с ошибкой."""
+    fake_settings.default_repo = None
+    mock_settings_cls.return_value = fake_settings
+    mock_build.return_value = fake_components
+
+    result = runner.invoke(cli, ["search", "some query"])
+
+    assert result.exit_code != 0
+    assert "repo" in result.output.lower()
 
 
 # ---------------------------------------------------------------------------

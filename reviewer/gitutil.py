@@ -10,7 +10,7 @@ def _git(repo: str, *args: str) -> str:
 
 def changed_files(repo: str, base: str, head: str) -> list[str]:
     out = _git(repo, "diff", "--name-only", f"{base}..{head}")
-    return [l for l in out.splitlines() if l]
+    return [line for line in out.splitlines() if line]
 
 def file_at_ref(repo: str, path: str, ref: str) -> str | None:
     try:
@@ -20,11 +20,19 @@ def file_at_ref(repo: str, path: str, ref: str) -> str | None:
 
 def list_python_files(repo: str, ref: str) -> list[str]:
     out = _git(repo, "ls-tree", "-r", "--name-only", ref)
-    return [l for l in out.splitlines() if l.endswith(".py")]
+    return [line for line in out.splitlines() if line.endswith(".py")]
 
 def rev_parse(repo: str, ref: str) -> str:
     """Полный SHA коммита, на который указывает ref (`git rev-parse <ref>`)."""
     return _git(repo, "rev-parse", ref).strip()
+
+
+def remote_url(repo: str) -> str | None:
+    """URL remote 'origin' или None, если remote нет."""
+    try:
+        return _git(repo, "remote", "get-url", "origin").strip()
+    except subprocess.CalledProcessError:
+        return None
 
 
 def add_worktree(repo: str, ref: str) -> str:

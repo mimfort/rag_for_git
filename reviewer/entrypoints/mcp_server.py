@@ -80,11 +80,11 @@ def create_server(service: MCPReviewService) -> FastMCP:
         return service.get_task_context(key)
 
     @mcp.tool()
-    def search_codebase(query: str, top_k: int = 10) -> str:
-        """Hybrid semantic+lexical search over the repo's base code index (no PR session).
-        Use it (e.g. from /solve-task) to find relevant existing code by a free-text
-        formulation, when there is no PR to scope a session to."""
-        return service.search_codebase(query, top_k)
+    def search_codebase(repo: str, query: str, top_k: int = 10) -> str:
+        """Hybrid semantic+lexical search over a repo's base code index (no PR session).
+        repo is "owner/name" (or "" to use DEFAULT_REPO). Use it (e.g. from /solve-task)
+        to find relevant existing code by a free-text formulation."""
+        return service.search_codebase(repo, query, top_k)
 
     @mcp.tool()
     def publish_review(
