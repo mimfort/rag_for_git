@@ -32,3 +32,22 @@ CREATE TABLE IF NOT EXISTS index_meta (
     sha        TEXT        NOT NULL,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- Задачи доски (фаза 3): эмбеддинги (pgvector) + BM25 (pg_search) для search_tasks.
+-- Отдельно от chunks — у задач нет path/symbol/lines и base/overlay-freshness.
+CREATE TABLE IF NOT EXISTS tasks (
+    id           bigserial PRIMARY KEY,
+    key          text    NOT NULL UNIQUE,   -- канонический код задачи (ID-N / Jira key)
+    aliases      text[]  NOT NULL DEFAULT '{}',
+    title        text    NOT NULL,
+    description  text    NOT NULL DEFAULT '',
+    status       text,
+    url          text,
+    content_hash text    NOT NULL,          -- дедуп переэмбеда
+    text         text    NOT NULL,          -- эмбед/BM25-текст: title + description + criteria
+    embedding    vector(1024)
+);
+CREATE INDEX IF NOT EXISTS tasks_bm25 ON tasks
+USING bm25 (id, text, key) WITH (key_field='id');
+CREATE INDEX IF NOT EXISTS tasks_hnsw ON tasks
+USING hnsw (embedding vector_cosine_ops) WITH (m = 16, ef_construction = 64);

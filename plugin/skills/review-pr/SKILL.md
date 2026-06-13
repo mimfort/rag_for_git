@@ -34,9 +34,19 @@ of posting.
    With a key, read the task using the playbook for `task_board.type`
    (`references/task-context-yougile.md` or `references/task-context-jira.md`): call the board MCP
    server named by `task_board.mcp` and build a `TaskBrief`
-   `{key, title, description, criteria[], status, url, links[]}`.
+   `{key, aliases[], title, description, criteria[], status, url, links[]}`.
    If the board MCP is not connected, the tool errors, or the task is not found: skip the
    requirements dimension and note the reason in the summary — NEVER abort the review.
+
+   The `TaskBrief` schema is `{key, aliases[], title, description, criteria[], status, url, links[]}`
+   (phase 3 adds `aliases[]` and uses `links[]`; see the board playbook for how to fill them).
+   Once the `TaskBrief` is built, call `index_task(TaskBrief)` to persist it (idempotent — safe to
+   repeat). Then gather task context to sharpen the requirements check:
+   - `get_task_context(TaskBrief.key)` → linked tasks, their PRs, and the code those PRs touched;
+   - `search_tasks("<TaskBrief.title>. <first lines of description>")` → semantically similar tasks.
+   Keep ONLY the related/similar items that look relevant; you will pass them to the requirements
+   dimension in step 4. All of this is best-effort: if `index_task`/`get_task_context`/`search_tasks`
+   return a "(… unavailable)" note or error, continue — never abort the review.
 
 3. **Analyze (fan-out).** For each unit in `units`, dispatch a subagent (Task tool,
    run independent subagents in parallel; batch units if there are more than ~10) with:
@@ -54,8 +64,10 @@ of posting.
    - maintainability: follow `../maintainability-review/SKILL.md`;
    - requirements (ONLY if a `TaskBrief` was built in step 2): dispatch one subagent with
      `references/requirements-prompt.md`, the diffs of all units (path + patch), the `TaskBrief`,
-     the repo/pr identifiers (so it can call the reviewer MCP tools), and the target output
-     language. It returns the same findings JSON schema with category `requirements`.
+     plus the related/similar task context gathered in step 2 (linked tasks, their PRs, touched code,
+     similar tasks) as an optional "Related context" block, the repo/pr identifiers (so it can call
+     the reviewer MCP tools), and the target output language. It returns the same findings JSON
+     schema with category `requirements`.
    Give the performance/maintainability subagents: the diffs of all units (path + patch), the
    repo/pr identifiers so they can call the reviewer MCP tools, and the target output language.
    They must return the same findings JSON schema (category `performance` / `maintainability`).
@@ -73,10 +85,11 @@ of posting.
    If a task was read, state whether the PR meets the task's requirements; if the task context was
    requested but unavailable (no key, board MCP not connected, task not found), say so briefly.
    Mention files that were not analyzed: failed subagents and `skipped_paths`
-   from the prepare payload. Call `publish_review(repo, pr, summary, findings,
-   dry_run)`. Report to the user: posted/dry-run, inline count, and the report
-   counters (dropped_by_gate/deduped/invalid/already_posted/moved_to_summary/capped),
-   run_id.
+   from the prepare payload. Call `publish_review(repo, pr, summary, findings, dry_run, task_key)`
+   where `task_key` is the canonical `TaskBrief.key` if a task was read (else omit / null). When
+   published, this links the PR to the task in the graph for future reviews. Report to the user:
+   posted/dry-run, inline count, and the report counters
+   (dropped_by_gate/deduped/invalid/already_posted/moved_to_summary/capped), run_id.
 
 ## Failure handling
 

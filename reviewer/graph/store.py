@@ -10,6 +10,11 @@ class GraphStore:
         self._driver = GraphDatabase.driver(
             uri, auth=(user, password), notifications_min_severity="OFF")
 
+    @property
+    def driver(self):
+        """Neo4j-драйвер — для шаринга с TaskGraph (один коннект на инстанс)."""
+        return self._driver
+
     def close(self) -> None:
         self._driver.close()
 
@@ -17,6 +22,16 @@ class GraphStore:
         self._driver.execute_query(
             "CREATE CONSTRAINT sym_id IF NOT EXISTS "
             "FOR (s:Symbol) REQUIRE s.id IS UNIQUE")
+        # Граф задач (фаза 3): уникальность :Task(key) и :PR(id) + индекс на codes
+        # (резолв по любому коду в WHERE $k IN t.codes).
+        self._driver.execute_query(
+            "CREATE CONSTRAINT task_key IF NOT EXISTS "
+            "FOR (t:Task) REQUIRE t.key IS UNIQUE")
+        self._driver.execute_query(
+            "CREATE CONSTRAINT pr_id IF NOT EXISTS "
+            "FOR (p:PR) REQUIRE p.id IS UNIQUE")
+        self._driver.execute_query(
+            "CREATE INDEX task_codes IF NOT EXISTS FOR (t:Task) ON (t.codes)")
 
     def clear(self) -> None:
         self._driver.execute_query("MATCH (n) DETACH DELETE n")

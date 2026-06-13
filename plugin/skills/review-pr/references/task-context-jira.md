@@ -10,13 +10,15 @@ Goal: read the task identified by the resolved key and build a `TaskBrief`.
    (`getJiraIssue` / `jira_get_issue`, depending on the connected server).
 3. Build the `TaskBrief` from the issue (best-effort — omit/empty any field that is absent):
    - `key`         ← issue key
+   - `aliases`     ← `[]` (the Jira issue key is already the single canonical, globally-unique key).
    - `title`       ← summary
    - `description` ← description (rendered text)
    - `criteria[]`  ← Acceptance Criteria field if present; otherwise bullet items parsed from the
                      description; else `[]`
    - `status`      ← status name
    - `url`         ← issue browse URL
-   - `links[]`     ← issuelinks as `{type, key, title}`
+   - `links[]`     ← from `issuelinks` — one entry per linked issue as
+                     `{type:<link type, e.g. blocks/relates/duplicates>, key:<issue key>, title:<summary>}`.
 4. Optional: comments may add context — use only if needed.
 
 Failure handling: if the board MCP server is not connected, the tool errors, or the issue is not

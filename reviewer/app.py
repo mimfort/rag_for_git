@@ -7,6 +7,9 @@ from reviewer.index.embeddings import VoyageEmbedder
 from reviewer.index.reranker import VoyageReranker
 from reviewer.graph.store import GraphStore
 from reviewer.retrieval.retriever import Retriever
+from reviewer.tasks.store import TaskStore
+from reviewer.tasks.graph import TaskGraph
+from reviewer.tasks.service import TaskService
 
 @dataclass
 class Components:
@@ -16,6 +19,9 @@ class Components:
     embedder: VoyageEmbedder
     reranker: VoyageReranker
     retriever: Retriever
+    task_store: TaskStore
+    task_graph: TaskGraph | None
+    task_service: TaskService
 
 def _voyage_client(settings: Settings):
     import voyageai
@@ -37,4 +43,15 @@ def build_components(settings: Settings, connect: bool = True) -> Components:
         if connect else None
     retriever = Retriever(store, graph, embedder, reranker,
                           max_context_chars=settings.max_tool_result_chars)
-    return Components(settings, store, graph, embedder, reranker, retriever)
+    task_store = TaskStore(
+        settings.pg_dsn,
+        min_size=settings.pg_pool_min_size,
+        max_size=settings.pg_pool_max_size,
+    )
+    task_graph = TaskGraph(graph.driver) if graph is not None else None
+    task_service = TaskService(
+        task_store, task_graph, embedder,
+        max_chars=settings.max_tool_result_chars,
+    )
+    return Components(settings, store, graph, embedder, reranker, retriever,
+                      task_store, task_graph, task_service)

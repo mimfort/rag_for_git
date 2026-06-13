@@ -393,3 +393,76 @@ def test_prepare_review_payload_task_context_null_when_unconfigured(
 
     assert out["task_board"] is None
     assert out["task_keys"] is None
+
+
+# ---------------------------------------------------------------------------
+# Тесты Task 6: index_task/search_tasks/get_task_context + авто-линковка PR
+# ---------------------------------------------------------------------------
+
+@patch("reviewer.services.review_service.chunk_python", side_effect=_fake_chunk)
+@patch("reviewer.services.review_service.build_overlay")
+def test_publish_review_links_task_when_task_key(
+    _mock_overlay: MagicMock,
+    _mock_chunk: MagicMock,
+) -> None:
+    """publish_review с task_key линкует PR↔задача↔код через task_service.link_review."""
+    settings = _settings()
+    components = _components()
+    vcs = _fake_vcs(number=7)
+    vcs.list_existing_fingerprints.return_value = set()
+    svc = MCPReviewService(settings, components, vcs_factory=lambda o, r: vcs)
+    svc.prepare_review("o/r", 7)
+
+    svc.publish_review("o/r", 7, "summary", [], dry_run=False, task_key="ID-1")
+
+    components.task_service.link_review.assert_called_once()
+    args = components.task_service.link_review.call_args.args
+    assert args[0] == "ID-1"                       # canonical task key
+    pr_ref = args[1]
+    assert pr_ref.repo == "o/r" and pr_ref.number == 7 and pr_ref.sha == "head456"
+    assert pr_ref.url == "https://github.com/o/r/pull/7"
+    assert args[2] == ["a.py#foo"]                 # changed_node_ids from session
+
+
+@patch("reviewer.services.review_service.chunk_python", side_effect=_fake_chunk)
+@patch("reviewer.services.review_service.build_overlay")
+def test_publish_review_no_link_on_dry_run(
+    _mock_overlay: MagicMock,
+    _mock_chunk: MagicMock,
+) -> None:
+    settings = _settings()
+    components = _components()
+    vcs = _fake_vcs(number=7)
+    vcs.list_existing_fingerprints.return_value = set()
+    svc = MCPReviewService(settings, components, vcs_factory=lambda o, r: vcs)
+    svc.prepare_review("o/r", 7)
+    svc.publish_review("o/r", 7, "summary", [], dry_run=True, task_key="ID-1")
+    components.task_service.link_review.assert_not_called()
+
+
+@patch("reviewer.services.review_service.chunk_python", side_effect=_fake_chunk)
+@patch("reviewer.services.review_service.build_overlay")
+def test_publish_review_no_link_without_task_key(
+    _mock_overlay: MagicMock,
+    _mock_chunk: MagicMock,
+) -> None:
+    settings = _settings()
+    components = _components()
+    vcs = _fake_vcs(number=7)
+    vcs.list_existing_fingerprints.return_value = set()
+    svc = MCPReviewService(settings, components, vcs_factory=lambda o, r: vcs)
+    svc.prepare_review("o/r", 7)
+    svc.publish_review("o/r", 7, "summary", [], dry_run=False)
+    components.task_service.link_review.assert_not_called()
+
+
+def test_task_tool_delegates() -> None:
+    """index_task/search_tasks/get_task_context делегируют в task_service."""
+    svc = _make_mcp_service()
+    svc.components.task_service.index_task.return_value = {"key": "ID-1"}
+    svc.components.task_service.search_tasks.return_value = "list"
+    svc.components.task_service.get_task_context.return_value = "ctx"
+    assert svc.index_task({"key": "ID-1"}) == {"key": "ID-1"}
+    assert svc.search_tasks("q", 3) == "list"
+    assert svc.get_task_context("ID-1") == "ctx"
+    svc.components.task_service.search_tasks.assert_called_once_with("q", 3)
