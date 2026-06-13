@@ -91,18 +91,22 @@ class ChunkStore:
             conn.execute(_SCHEMA)
             conn.commit()
 
-    def clear(self) -> None:
+    def clear(self, repo: str | None = None) -> None:
+        """Удалить чанки репозитория (repo) или весь индекс (repo=None — для тестов)."""
         with self._connect() as conn:
-            conn.execute("TRUNCATE chunks RESTART IDENTITY")
+            if repo is None:
+                conn.execute("TRUNCATE chunks RESTART IDENTITY")
+            else:
+                conn.execute("DELETE FROM chunks WHERE repo = %s", (repo,))
             conn.commit()
 
     def upsert(self, rows: list[ChunkRow]) -> None:
         sql = """
-        INSERT INTO chunks (ref, content_hash, path, lang, symbol_fqn, kind,
+        INSERT INTO chunks (repo, ref, content_hash, path, lang, symbol_fqn, kind,
                             start_line, end_line, text, embedding)
-        VALUES (%(ref)s,%(content_hash)s,%(path)s,%(lang)s,%(symbol_fqn)s,%(kind)s,
+        VALUES (%(repo)s,%(ref)s,%(content_hash)s,%(path)s,%(lang)s,%(symbol_fqn)s,%(kind)s,
                 %(start_line)s,%(end_line)s,%(text)s,%(embedding)s)
-        ON CONFLICT (ref, path, symbol_fqn) DO UPDATE SET
+        ON CONFLICT (repo, ref, path, symbol_fqn) DO UPDATE SET
             content_hash=EXCLUDED.content_hash, kind=EXCLUDED.kind,
             start_line=EXCLUDED.start_line, end_line=EXCLUDED.end_line,
             text=EXCLUDED.text, embedding=EXCLUDED.embedding
@@ -112,20 +116,20 @@ class ChunkStore:
                 cur.executemany(sql, [r.__dict__ for r in rows])
             conn.commit()
 
-    def existing_hashes(self, ref: str) -> set[str]:
+    def existing_hashes(self, repo: str, ref: str) -> set[str]:
         with self._connect() as conn:
             rows = conn.execute(
-                "SELECT content_hash FROM chunks WHERE ref=%s", (ref,)
+                "SELECT content_hash FROM chunks WHERE repo=%s AND ref=%s", (repo, ref)
             ).fetchall()
         return {r[0] for r in rows}
 
-    def delete_ref(self, ref: str) -> None:
+    def delete_ref(self, repo: str, ref: str) -> None:
         """Удалить все чанки указанного ref (например, эфемерный overlay pr:N после ревью)."""
         with self._connect() as conn:
-            conn.execute("DELETE FROM chunks WHERE ref = %s", (ref,))
+            conn.execute("DELETE FROM chunks WHERE repo=%s AND ref=%s", (repo, ref))
             conn.commit()
 
-    def get_index_meta(self, ref: str) -> str | None:
+    def get_index_meta(self, repo: str, ref: str) -> str | None:
         """Вернуть SHA последней индексации для ref, или None если запись отсутствует.
 
         Отсутствие самой таблицы (индекс построен старой версией, init_schema не
@@ -134,26 +138,26 @@ class ChunkStore:
         try:
             with self._connect() as conn:
                 row = conn.execute(
-                    "SELECT sha FROM index_meta WHERE ref = %s", (ref,)
+                    "SELECT sha FROM index_meta WHERE repo=%s AND ref=%s", (repo, ref)
                 ).fetchone()
         except psycopg.errors.UndefinedTable:
             return None
         return row[0] if row else None
 
-    def set_index_meta(self, ref: str, sha: str) -> None:
+    def set_index_meta(self, repo: str, ref: str, sha: str) -> None:
         """Записать/обновить SHA индексации для ref (UPSERT, обновляет updated_at)."""
         with self._connect() as conn:
             conn.execute(
                 """
-                INSERT INTO index_meta (ref, sha, updated_at)
-                VALUES (%s, %s, now())
-                ON CONFLICT (ref) DO UPDATE SET sha = EXCLUDED.sha, updated_at = now()
+                INSERT INTO index_meta (repo, ref, sha, updated_at)
+                VALUES (%s, %s, %s, now())
+                ON CONFLICT (repo, ref) DO UPDATE SET sha = EXCLUDED.sha, updated_at = now()
                 """,
-                (ref, sha),
+                (repo, ref, sha),
             )
             conn.commit()
 
-    def delete_paths(self, ref: str, paths: list[str]) -> None:
+    def delete_paths(self, repo: str, ref: str, paths: list[str]) -> None:
         """Удалить чанки указанных путей для ref (гигиена: удалённые файлы из индекса).
 
         Пустой список — no-op.
@@ -162,32 +166,31 @@ class ChunkStore:
             return
         with self._connect() as conn:
             conn.execute(
-                "DELETE FROM chunks WHERE ref = %s AND path = ANY(%s)",
-                (ref, paths),
+                "DELETE FROM chunks WHERE repo=%s AND ref=%s AND path = ANY(%s)",
+                (repo, ref, paths),
             )
             conn.commit()
 
-    def delete_missing_symbols(self, ref: str, path: str, keep_fqns: list[str]) -> None:
+    def delete_missing_symbols(self, repo: str, ref: str, path: str, keep_fqns: list[str]) -> None:
         """Удалить из индекса символы path, отсутствующие в keep_fqns (гигиена: переименованные/удалённые символы).
 
         Пустой keep_fqns означает удалить все чанки указанного path.
         """
-        if keep_fqns:
-            with self._connect() as conn:
+        with self._connect() as conn:
+            if keep_fqns:
                 conn.execute(
-                    "DELETE FROM chunks WHERE ref = %s AND path = %s AND NOT (symbol_fqn = ANY(%s))",
-                    (ref, path, keep_fqns),
+                    "DELETE FROM chunks WHERE repo=%s AND ref=%s AND path=%s "
+                    "AND NOT (symbol_fqn = ANY(%s))",
+                    (repo, ref, path, keep_fqns),
                 )
-                conn.commit()
-        else:
-            with self._connect() as conn:
+            else:
                 conn.execute(
-                    "DELETE FROM chunks WHERE ref = %s AND path = %s",
-                    (ref, path),
+                    "DELETE FROM chunks WHERE repo=%s AND ref=%s AND path=%s",
+                    (repo, ref, path),
                 )
-                conn.commit()
+            conn.commit()
 
-    def delete_paths_except(self, ref: str, keep_paths: list[str]) -> None:
+    def delete_paths_except(self, repo: str, ref: str, keep_paths: list[str]) -> None:
         """Удалить из индекса все пути ref, кроме перечисленных в keep_paths (гигиена: файлы удалённые из репо).
 
         Пустой keep_paths — no-op (защита от случайного полного удаления индекса).
@@ -196,14 +199,15 @@ class ChunkStore:
             return
         with self._connect() as conn:
             conn.execute(
-                "DELETE FROM chunks WHERE ref = %s AND NOT (path = ANY(%s))",
-                (ref, keep_paths),
+                "DELETE FROM chunks WHERE repo=%s AND ref=%s AND NOT (path = ANY(%s))",
+                (repo, ref, keep_paths),
             )
             conn.commit()
 
-    def hybrid_search(self, query_text, query_embedding, overlay_ref,
+    def hybrid_search(self, repo, query_text, query_embedding, overlay_ref,
                       changed_paths, top_k=20, candidates=50) -> list[Retrieved]:
-        where = "((ref='base' AND NOT (path = ANY(%(changed)s))) OR ref=%(overlay)s)"
+        where = ("repo=%(repo)s AND "
+                 "((ref='base' AND NOT (path = ANY(%(changed)s))) OR ref=%(overlay)s)")
         sql = f"""
         WITH bm25 AS (
             SELECT id, RANK() OVER (ORDER BY pdb.score(id) DESC) AS rank
@@ -228,15 +232,16 @@ class ChunkStore:
         GROUP BY c.id, c.path, c.symbol_fqn, c.kind, c.start_line, c.end_line, c.text
         ORDER BY score DESC LIMIT %(k)s
         """
-        params = {"q": _bm25_query(query_text), "vec": Vector(query_embedding), "overlay": overlay_ref,
-                  "changed": changed_paths, "cand": candidates, "k": top_k}
+        params = {"repo": repo, "q": _bm25_query(query_text), "vec": Vector(query_embedding),
+                  "overlay": overlay_ref, "changed": changed_paths,
+                  "cand": candidates, "k": top_k}
         with self._connect() as conn:
             rows = conn.execute(sql, params).fetchall()
         return [Retrieved(node_id=f"{p}#{f}", path=p, symbol_fqn=f, kind=k,
                           start_line=sl, end_line=el, text=t, score=float(sc))
                 for (p, f, k, sl, el, t, sc) in rows]
 
-    def fetch_nodes(self, node_ids, overlay_ref, changed_paths):
+    def fetch_nodes(self, repo, node_ids, overlay_ref, changed_paths):
         if not node_ids:
             return []
         pairs = [nid.split("#", 1) for nid in node_ids if "#" in nid]
@@ -246,9 +251,10 @@ class ChunkStore:
         SELECT c.path, c.symbol_fqn, c.kind, c.start_line, c.end_line, c.text
         FROM chunks c JOIN unnest(%(paths)s::text[], %(fqns)s::text[]) AS q(p,f)
           ON c.path=q.p AND c.symbol_fqn=q.f
-        WHERE (c.ref='base' AND NOT (c.path = ANY(%(changed)s))) OR c.ref=%(overlay)s
+        WHERE c.repo=%(repo)s
+          AND ((c.ref='base' AND NOT (c.path = ANY(%(changed)s))) OR c.ref=%(overlay)s)
         """
-        params = {"paths": [p for p, _ in pairs], "fqns": [f for _, f in pairs],
+        params = {"repo": repo, "paths": [p for p, _ in pairs], "fqns": [f for _, f in pairs],
                   "changed": changed_paths, "overlay": overlay_ref}
         with self._connect() as conn:
             rows = conn.execute(sql, params).fetchall()
