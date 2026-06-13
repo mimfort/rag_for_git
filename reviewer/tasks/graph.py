@@ -38,7 +38,12 @@ class TaskGraph:
             key=key, codes=codes, title=title, status=status, url=url)
 
     def upsert_links(self, key: str, links: list[dict]) -> int:
-        """Рёбра TASK_LINK из явных board-links. Несуществующий сосед → стаб :Task."""
+        """Рёбра TASK_LINK из явных board-links. Несуществующий сосед → стаб :Task.
+
+        Предполагает, что узел :Task {key} уже существует (вызывающий сначала
+        делает upsert_task); иначе MATCH ничего не находит и рёбра не создаются
+        (тихий no-op).
+        """
         rows = [{"key": lk["key"], "title": lk.get("title") or "",
                  "type": lk.get("type") or "relates"}
                 for lk in links if lk.get("key")]
@@ -83,5 +88,16 @@ class TaskGraph:
         if not records:
             return {}
         r = records[0]
+        # Неориентированный паттерн (t)-[l:TASK_LINK]-(n) может вернуть одного и
+        # того же соседа дважды при взаимных рёбрах — дедуп по (key, type) с
+        # сохранением порядка первого появления.
+        linked = []
+        seen = set()
+        for n in r["linked"]:
+            sig = (n["key"], n.get("type"))
+            if sig in seen:
+                continue
+            seen.add(sig)
+            linked.append(n)
         return {"key": r["key"], "title": r["title"], "status": r["status"],
-                "url": r["url"], "prs": r["prs"], "linked": r["linked"]}
+                "url": r["url"], "prs": r["prs"], "linked": linked}

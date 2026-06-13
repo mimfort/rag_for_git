@@ -62,3 +62,19 @@ def test_task_context_parses_record():
 
 def test_task_context_empty_when_no_record():
     assert TaskGraph(_FakeDriver([])).task_context("ZZ-9") == {}
+
+
+def test_task_context_dedups_linked_by_key_and_type():
+    rec = {
+        "key": "ID-1", "title": "T", "status": "Open", "url": "u", "prs": [],
+        "linked": [
+            {"key": "ID-2", "title": "child", "status": None, "type": "subtask", "prs": []},
+            # дубль того же соседа (взаимное ребро) — схлопывается
+            {"key": "ID-2", "title": "child", "status": None, "type": "subtask", "prs": []},
+            # тот же key, но другой type — остаётся
+            {"key": "ID-2", "title": "child", "status": None, "type": "relates", "prs": []},
+        ],
+    }
+    ctx = TaskGraph(_FakeDriver([rec])).task_context("ID-1")
+    assert [(n["key"], n["type"]) for n in ctx["linked"]] == [
+        ("ID-2", "subtask"), ("ID-2", "relates")]

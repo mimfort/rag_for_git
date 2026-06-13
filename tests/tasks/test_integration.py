@@ -12,6 +12,7 @@ import pytest
 from reviewer.config.settings import Settings
 from reviewer.graph.store import GraphStore
 from reviewer.index.store import ChunkStore
+from reviewer.tasks.graph import PRRef, TaskGraph
 from reviewer.tasks.store import TaskRow, TaskStore, build_task_text, task_content_hash
 
 pytestmark = pytest.mark.integration
@@ -65,15 +66,12 @@ def graph():
     g = GraphStore(s.neo4j_uri, s.neo4j_user, s.neo4j_password)
     g.init_schema()
     g.clear()
-    from reviewer.tasks.graph import TaskGraph
     yield TaskGraph(g.driver)
     g.clear()
     g.close()
 
 
 def test_taskgraph_link_and_context(graph):
-    from reviewer.tasks.graph import PRRef
-
     graph.upsert_task("ID-1", ["PRI-1"], "Parent", "Open", "u1")
     graph.upsert_links("ID-1", [{"key": "ID-2", "title": "Child", "type": "subtask"}])
     pr = PRRef(repo="o/r", number=7, url="https://github.com/o/r/pull/7", sha="abc")
