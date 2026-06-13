@@ -127,12 +127,43 @@ the default `owner/name` for single-repo deployments.
 
 ### 2. Install the plugin
 
-The MCP server starts automatically via `bash -lc "uvx --from rag-reviewer reviewer-mcp"`.
-The `bash -lc` wrapper loads your shell profile so `uvx` (installed in `~/.local/bin`) is
-visible even to GUI tools that don't inherit the full shell PATH.
-Works from **any** project opened in your AI coding assistant.
+The MCP server is launched via `bash -lc "uvx --from rag-reviewer reviewer-mcp"`. The `bash -lc`
+wrapper loads your shell profile so `uvx` (typically in `~/.local/bin`) is visible to GUI tools
+that don't inherit the full shell PATH.
 
-#### Claude Code (recommended)
+#### Global MCP config (Mimo Code, OpenCode, Cursor, Trae, and most other tools)
+
+Many AI coding assistants (Mimo Code, OpenCode, Trae IDE, Cursor, etc.) read MCP servers from
+**`~/.factory/mcp.json`** — a shared global config. Add the reviewer once there and it appears
+in all of them automatically:
+
+```json
+{
+  "mcpServers": {
+    "reviewer": {
+      "type": "stdio",
+      "command": "/bin/bash",
+      "args": ["-lc", "uvx --from rag-reviewer reviewer-mcp"],
+      "disabled": false
+    }
+  }
+}
+```
+
+After adding, restart the tool — `reviewer` will appear alongside other MCP servers.
+
+Tool-specific overrides (if `~/.factory/mcp.json` is not supported):
+
+| Tool | Config file |
+|---|---|
+| Cursor | `.cursor/mcp.json` in the project root (pre-configured in this repo) |
+| VS Code | `~/Library/Application Support/Code/User/mcp.json` |
+| Trae IDE | `~/Library/Application Support/Trae/User/mcp.json` |
+| Gemini CLI | `~/.gemini/config/mcp_config.json` — see `GEMINI.md` |
+
+In all cases the entry is the same `command`/`args` as above.
+
+#### Claude Code
 
 Two commands, from any project:
 
@@ -145,37 +176,11 @@ You get:
 
 - **Skills:** `/rag-reviewer:review-pr`, `/rag-reviewer:solve-task`, `/rag-reviewer:sync-tasks`
   (plus `/rag-reviewer:maintainability-review` and `/rag-reviewer:performance-review`).
-- **MCP server** `reviewer` (runs as `uvx --from rag-reviewer reviewer-mcp`) exposing:
-  `prepare_review`, `publish_review`, `search_code`, `get_related_symbols`, `read_file`,
-  `get_definition`, `find_callers`, `get_changed_file_diff`, `index_task`, `search_tasks`,
-  `get_task_context`, `search_codebase`.
+- **MCP server** `reviewer` exposing: `prepare_review`, `publish_review`, `search_code`,
+  `get_related_symbols`, `read_file`, `get_definition`, `find_callers`, `get_changed_file_diff`,
+  `index_task`, `search_tasks`, `get_task_context`, `search_codebase`.
 
 > Run `/plugin` to confirm `rag-reviewer` is installed and enabled.
-
-The plugin registers the MCP server globally — it starts automatically for **every** project you
-open once the plugin is enabled. If you work across multiple repositories and want the MCP tools
-without the full plugin, you can also add a `.mcp.json` to any project root:
-
-```json
-{
-  "mcpServers": {
-    "reviewer": {
-      "command": "uvx",
-      "args": ["--from", "rag-reviewer", "reviewer-mcp"]
-    }
-  }
-}
-```
-
-The MCP server reads `VOYAGE_API_KEY`, `GITHUB_TOKEN`, `PG_DSN`, and other settings from the
-environment. Set them globally in your shell profile (`~/.zshrc` / `~/.bashrc`) so they are
-available in every project — the server picks them up regardless of which directory Claude Code
-is opened from.
-
-#### Cursor
-
-`.cursor/mcp.json` at the repo root is pre-configured with `uvx`. Open any folder as a workspace
-and the reviewer MCP server starts automatically.
 
 #### Codex CLI
 
@@ -184,10 +189,6 @@ and the reviewer MCP server starts automatically.
 #### Copilot CLI
 
 `.github-copilot/plugin.json` is pre-configured. Copilot CLI picks it up from the repo root.
-
-#### Gemini CLI
-
-See `GEMINI.md` — add `uvx --from rag-reviewer reviewer-mcp` to your `settings.json`.
 
 ---
 
