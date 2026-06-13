@@ -39,6 +39,9 @@ class Settings(BaseSettings):
     github_token: str = ""
     github_retry_attempts: int = 3
     github_retry_backoff_base: float = 1.0
+    # multi-repo: дефолтный repo для session-less тулов (search_codebase) и
+    # `reviewer index` без --repo; пусто = repo задаётся явно (мульти-репо-режим)
+    default_repo: str = ""
     # web admin basic auth (опционально; если не заданы — доступ без аутентификации)
     web_admin_user: str = ""
     web_admin_password: str = ""
