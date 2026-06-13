@@ -13,6 +13,7 @@ from reviewer.agent.dedup import dedup_findings
 from reviewer.app import Components
 from reviewer.config.settings import Settings
 from reviewer.services.review_service import PreparedReview, ReviewService
+from reviewer.tasks.graph import PRRef
 from reviewer.tools.code_tools import ToolContext, make_tools
 from reviewer.vcs.base import Finding, VCSProvider
 from reviewer.vcs.diff import commentable_lines
@@ -212,6 +213,18 @@ class MCPReviewService:
         """Дифф другого изменённого файла этого PR."""
         return self._invoke_tool(repo, pr, "get_changed_file_diff", {"path": path})
 
+    def index_task(self, task: dict) -> dict:
+        """Проиндексировать нормализованный TaskBrief: эмбеддинг + граф задачи."""
+        return self.components.task_service.index_task(task)
+
+    def search_tasks(self, query: str, top_k: int = 5) -> str:
+        """Похожие по смыслу задачи (гибрид-поиск по корпусу задач)."""
+        return self.components.task_service.search_tasks(query, top_k)
+
+    def get_task_context(self, key: str) -> str:
+        """Граф-контекст задачи: связанные задачи → их PR → затронутый код."""
+        return self.components.task_service.get_task_context(key)
+
     def publish_review(
         self,
         repo: str,
@@ -219,6 +232,7 @@ class MCPReviewService:
         summary: str,
         findings: list[dict],
         dry_run: bool = False,
+        task_key: str | None = None,
     ) -> dict:
         """Детерминированный хвост ревью: gate → grounding → dedup → assemble →
         публикация → история → очистка overlay/сессии.
@@ -230,9 +244,14 @@ class MCPReviewService:
         ``prepare_review``. Overlay и сессия очищаются ВСЕГДА (даже при сбое
         VCS-публикации) — см. ``_cleanup``.
 
+        При указании ``task_key`` и успешной публикации (не dry_run) автоматически
+        линкует PR↔задача↔код в граф задач через ``task_service.link_review``
+        (рёбра IMPLEMENTED_BY + TOUCHES затронутых символов).
+
         Args:
             summary: сводка от модели; к ней добавляется markdown-отчёт assemble.
             dry_run: не публиковать в VCS, только собрать отчёт.
+            task_key: канонический ключ задачи (например «ID-1») для авто-линковки.
 
         Returns:
             Отчёт со счётчиками (posted/invalid/dropped_by_gate/deduped/
@@ -290,6 +309,19 @@ class MCPReviewService:
             except Exception as e:
                 log.error("Не удалось опубликовать ревью", exc_info=True)
                 error = f"{type(e).__name__}: {e}"
+
+        # 5b) Авто-линковка PR↔задача↔код в граф задач (реальная публикация).
+        # Граф недоступен / сбой — fail-soft внутри link_review, ревью не падает.
+        if not dry_run and posted and task_key:
+            pr_ref = PRRef(
+                repo=repo,
+                number=pr,
+                url=f"https://github.com/{repo}/pull/{pr}",
+                sha=p.prq.head_sha,
+            )
+            self.components.task_service.link_review(
+                task_key, pr_ref, p.changed_node_ids,
+            )
 
         # 6) История (fail-soft) и очистка overlay/сессии (ВСЕГДА).
         dropped_by_gate = len(parsed) - len(kept)
