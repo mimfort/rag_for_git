@@ -45,6 +45,11 @@ CREATE TABLE IF NOT EXISTS index_meta (
     PRIMARY KEY (repo, ref)
 );
 ALTER TABLE index_meta ADD COLUMN IF NOT EXISTS repo text NOT NULL DEFAULT '';
+-- Forward-only: на уже существующей таблице PRIMARY KEY (ref) выше не применился
+-- (CREATE TABLE IF NOT EXISTS — no-op). Перевешиваем PK на (repo, ref), иначе
+-- ON CONFLICT (repo, ref) в set_index_meta падает на проапгрейженной БД.
+ALTER TABLE index_meta DROP CONSTRAINT IF EXISTS index_meta_pkey;
+ALTER TABLE index_meta ADD PRIMARY KEY (repo, ref);
 
 -- Задачи доски (фаза 3): эмбеддинги (pgvector) + BM25 (pg_search) для search_tasks.
 -- Отдельно от chunks — у задач нет path/symbol/lines и base/overlay-freshness.
