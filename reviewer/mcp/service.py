@@ -129,6 +129,8 @@ class MCPReviewService:
         сервере. Жизненным циклом factory-созданных провайдеров владеет
         фабрика (vcs_factory test-only).
         """
+        from reviewer.services.repo_id import normalize_repo
+        repo = normalize_repo(repo)
         owner, name = repo.split("/", 1)
         old = self._sessions.get((repo, pr))
         vcs = self._vcs_factory(owner, name) if self._vcs_factory else None
@@ -158,6 +160,7 @@ class MCPReviewService:
             overlay_ref=prepared.overlay_ref,
             changed_paths=prepared.changed_paths,
             changed_node_ids=prepared.changed_node_ids,
+            repo=prepared.repo,
             read_file_fn=(
                 (lambda p: prepared.vcs.get_file_at_ref(p, prepared.prq.head_sha))
                 if prepared.vcs else None
@@ -182,6 +185,8 @@ class MCPReviewService:
         seen-дедуп сбрасывается на каждый вызов (повтор отдаёт результат из
         ctx.cache, а не заглушку «повтор»); сам кэш живёт всю сессию.
         """
+        from reviewer.services.repo_id import normalize_repo
+        repo = normalize_repo(repo)
         s = self._session(repo, pr)
         tools = {t.name: t for t in make_tools(s.ctx)}
         return tools[name].invoke(args)
@@ -225,10 +230,18 @@ class MCPReviewService:
         """Граф-контекст задачи: связанные задачи → их PR → затронутый код."""
         return self.components.task_service.get_task_context(key)
 
-    def search_codebase(self, query: str, top_k: int = 10) -> str:
+    def search_codebase(self, repo: str, query: str, top_k: int = 10) -> str:
         """Гибрид-поиск по base-индексу репозитория (без PR-сессии) — для /solve-task."""
+        from reviewer.services.repo_id import normalize_repo
+        raw = repo or self.settings.default_repo
+        if not raw:
+            return "(repo не задан: передайте repo или задайте DEFAULT_REPO)"
         try:
-            pack = self.components.retriever.search_base(query, top_k=top_k)
+            repo = normalize_repo(raw)
+        except ValueError:
+            return f"(некорректный repo: {raw!r})"
+        try:
+            pack = self.components.retriever.search_base(repo, query, top_k=top_k)
         except Exception:
             log.warning("search_codebase: сбой поиска", exc_info=True)
             return "(ничего не найдено)"
@@ -266,6 +279,8 @@ class MCPReviewService:
             Отчёт со счётчиками (posted/invalid/dropped_by_gate/deduped/
             already_posted/moved_to_summary/capped) и inline.
         """
+        from reviewer.services.repo_id import normalize_repo
+        repo = normalize_repo(repo)
         s = self._session(repo, pr)
         p = s.prepared
 
@@ -443,9 +458,9 @@ class MCPReviewService:
             except Exception:
                 log.warning("Не удалось закрыть VCS-провайдер", exc_info=True)
         try:
-            self.components.store.delete_ref(f"pr:{pr}")
+            self.components.store.delete_ref(repo, f"pr:{pr}")
         except Exception:
-            log.warning("Не удалось очистить overlay pr:%s", pr, exc_info=True)
+            log.warning("Не удалось очистить overlay %s pr:%s", repo, pr, exc_info=True)
 
     def _prepared_payload(self, p: PreparedReview) -> dict:
         """Сериализовать PreparedReview в dict для передачи MCP-клиенту."""
@@ -459,6 +474,7 @@ class MCPReviewService:
                 "commentable_left": sorted(lines["LEFT"]),
             })
         return {
+            "repo": p.repo,
             "pr": {
                 "number": p.prq.number,
                 "title": p.prq.title,

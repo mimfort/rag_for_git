@@ -472,15 +472,34 @@ def test_search_codebase_delegates_to_retriever() -> None:
     """search_codebase зовёт retriever.search_base и форматирует ContextPack."""
     svc = _make_mcp_service()
     svc.components.retriever.search_base.return_value.as_context.return_value = "auth.py#logout\nbody"
-    out = svc.search_codebase("logout", top_k=5)
+    out = svc.search_codebase("a/b", "logout", top_k=5)
     assert "auth.py#logout" in out
-    svc.components.retriever.search_base.assert_called_once_with("logout", top_k=5)
+    svc.components.retriever.search_base.assert_called_once_with("a/b", "logout", top_k=5)
 
 
 def test_search_codebase_empty_or_error_returns_note() -> None:
     """Пустой результат или сбой → '(ничего не найдено)'."""
     svc = _make_mcp_service()
     svc.components.retriever.search_base.return_value.as_context.return_value = ""
-    assert svc.search_codebase("x") == "(ничего не найдено)"
+    assert svc.search_codebase("a/b", "x") == "(ничего не найдено)"
     svc.components.retriever.search_base.side_effect = RuntimeError("pg down")
-    assert svc.search_codebase("x") == "(ничего не найдено)"
+    assert svc.search_codebase("a/b", "x") == "(ничего не найдено)"
+
+
+def test_search_codebase_uses_explicit_repo() -> None:
+    """search_codebase передаёт явный repo в retriever.search_base."""
+    svc = _make_mcp_service()
+    svc.components.retriever.search_base.return_value.as_context.return_value = "result"
+    svc.search_codebase("a/x", "find foo")
+    call_args = svc.components.retriever.search_base.call_args
+    assert call_args.args[0] == "a/x"
+
+
+def test_search_codebase_falls_back_to_default_repo() -> None:
+    """При пустом repo берётся settings.default_repo."""
+    svc = _make_mcp_service()
+    svc.settings.default_repo = "d/efault"
+    svc.components.retriever.search_base.return_value.as_context.return_value = "result"
+    svc.search_codebase("", "find foo")
+    call_args = svc.components.retriever.search_base.call_args
+    assert call_args.args[0] == "d/efault"
