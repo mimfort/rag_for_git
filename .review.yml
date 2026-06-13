@@ -1,0 +1,12 @@
+# Политика ревью и конфиг доски задач.
+# Читается из base-ветки PR (PR не может ослабить собственное ревью).
+# Все ключи опциональны; заданные переопределяют env-дефолты (reviewer/config/settings.py).
+# Полный разбор политики — в README.md и reviewer/policy/policy.py.
+
+# Доска задач: включает обогащение ревью контекстом задачи (фаза 2/3)
+# и скилл /solve-task (фаза 4). Без этого блока система работает в board-less режиме.
+task_board:
+  type: yougile                       # тип доски → плейбук plugin/skills/review-pr/references/task-context-yougile.md
+  mcp: yougile                        # имя MCP-сервера доски → инструменты mcp__yougile__*
+  key_pattern: '[A-Z]+-\d+'           # как искать коды задач в title/body/ветке PR (напр. PRI-4, ID-4)
+  url_template: 'https://ru.yougile.com/team/686c049c8af8/#{code}'  # {code} = проектный код PRI-N
