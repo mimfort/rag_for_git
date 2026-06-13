@@ -47,11 +47,14 @@ search_codebase(query: str, top_k: int = 10) -> str
 ```
 
 - Репо-глобальный, без сессии (как `search_tasks`/`get_task_context` фазы 3).
-- Реализация: `embedder.embed_query(query)` → `store.hybrid_search` по **base-only**
-  (`changed_paths=[]`, несуществующий `overlay_ref`, напр. `"__none__"` — тогда условие
-  `(ref='base' AND path∉changed) OR ref=overlay` отбирает все base-строки) → форматирование
-  сниппетов (`node_id`/path/строки/текст), ограничено `max_tool_result_chars`.
-- Без graph-expansion (нет seed-узлов) — чистый гибрид BM25+ANN (тот же RRF, что `chunks`).
+- Реализация (зеркало `Retriever.retrieve`, но **base-only** и сидинг графа от хитов):
+  `embedder.embed_query(query)` → `store.hybrid_search` base-only (`changed_paths=[]`,
+  несуществующий `overlay_ref` `"__none__"` — условие `(ref='base' AND path∉changed) OR
+  ref=overlay` отбирает все base-строки) → **graph-expansion от топ-хитов** (seeds = верхние
+  `node_id` результата, НЕ changed-файлы; `hops=1`) → **rerank** (Voyage `rerank-2.5`) →
+  `ContextPack` (сниппеты `node_id`/path/строки/текст, ограничено `max_tool_result_chars`).
+- **Граф и реранкер — fail-soft** (как `retrieve`): Neo4j недоступен/ошибка → деградация до
+  чистого гибрида; реранкера нет / мало кандидатов / граф ничего не добавил → RRF-порядок.
 - Делегат `MCPReviewService.search_codebase` поверх `components.embedder`+`components.store`
   (или маленький метод-обёртка `Retriever.search_base` — план выберет).
 - Fail-soft: Postgres-проблема / пусто → `"(ничего не найдено)"` + warning.
@@ -110,8 +113,9 @@ search_codebase(query: str, top_k: int = 10) -> str
 ## Тестирование
 
 ### Unit (Python, фейки, без сети)
-- `search_codebase`/`Retriever.search_base` (если выделим): формирование запроса (base-only
-  WHERE, пустой `changed_paths`), форматирование результата, пусто/сбой → нота + warning.
+- `Retriever.search_base`: base-only запрос (пустой `changed_paths`, overlay `≠ base`),
+  graph-expansion сидится от топ-хитов, rerank применяется; fail-soft (Neo4j ↓ → чистый
+  гибрид; реранкера нет → RRF-порядок); пусто → пустой `ContextPack`.
 - `MCPReviewService.search_codebase` делегат; регистрация MCP-тула (как `search_tasks`/
   `test_server_tools.py`).
 

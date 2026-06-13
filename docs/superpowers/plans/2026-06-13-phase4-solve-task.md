@@ -4,7 +4,7 @@
 
 **Goal:** A `/solve-task` skill that gathers disciplined context for a task (board task + related/similar tasks + relevant code), distills a structured brief, and hands off to `superpowers:brainstorming`; plus one new session-less MCP tool `search_codebase` for code search without a PR session.
 
-**Architecture:** `search_codebase` is a thin session-less wrapper over the existing base index (`Retriever.search_base` → `store.hybrid_search` with `changed_paths=[]` + a non-matching overlay ref → base-only). The skill reuses phase-2 board playbooks and phase-3 task tools (`index_task`/`search_tasks`/`get_task_context`), and chains into the superpowers dev cycle rather than reimplementing it.
+**Architecture:** `search_codebase` is a session-less code search over the base index (`Retriever.search_base`) that mirrors `Retriever.retrieve`'s pipeline — hybrid BM25+ANN → graph-expansion seeded from the top hits → rerank — but base-only (`changed_paths=[]` + a non-matching overlay ref) and with graph/reranker fail-soft. The skill reuses phase-2 board playbooks and phase-3 task tools (`index_task`/`search_tasks`/`get_task_context`), and chains into the superpowers dev cycle rather than reimplementing it.
 
 **Tech Stack:** Python 3.11–3.13, Postgres/ParadeDB (pgvector + pg_search BM25, RRF), Voyage embeddings, FastMCP, Claude Code skills (English).
 
@@ -70,28 +70,37 @@ from reviewer.retrieval.retriever import ContextPack, Retriever
 
 
 class _Hit:
-    def __init__(self, node_id):
+    def __init__(self, node_id, score=1.0):
         self.node_id = node_id
-        self.path = node_id.split("#", 1)[0]
-        self.symbol_fqn = node_id.split("#", 1)[1]
+        self.path, self.symbol_fqn = node_id.split("#", 1)
         self.kind = "function"
         self.start_line = 1
         self.end_line = 2
         self.text = "body"
-        self.score = 1.0
+        self.score = score
 
 
 class _FakeStore:
-    def __init__(self):
-        self.calls = []
+    def __init__(self, hits, related=None):
+        self._hits = hits
+        self._related = related or []
+        self.search_calls = []
+        self.fetch_calls = []
 
     def hybrid_search(self, *, query_text, query_embedding, overlay_ref,
                       changed_paths, top_k, candidates):
-        self.calls.append({
-            "query_text": query_text, "overlay_ref": overlay_ref,
-            "changed_paths": changed_paths, "top_k": top_k, "candidates": candidates,
+        self.search_calls.append({
+            "overlay_ref": overlay_ref, "changed_paths": changed_paths,
+            "top_k": top_k, "candidates": candidates,
         })
-        return [_Hit("auth.py#logout")]
+        return self._hits
+
+    def fetch_nodes(self, node_ids, overlay_ref, changed_paths):
+        self.fetch_calls.append({
+            "node_ids": list(node_ids), "overlay_ref": overlay_ref,
+            "changed_paths": changed_paths,
+        })
+        return self._related
 
 
 class _FakeEmbedder:
@@ -104,29 +113,61 @@ class _FakeEmbedder:
 
 
 class _FakeGraph:
-    def expand(self, *a, **k):  # must NOT be called by search_base
-        raise AssertionError("search_base must not touch the graph")
+    def __init__(self, related_ids=(), raise_=False):
+        self._ids = set(related_ids)
+        self.expand_calls = []
+        self._raise = raise_
+
+    def expand(self, node_ids, hops=2):
+        self.expand_calls.append({"seeds": list(node_ids), "hops": hops})
+        if self._raise:
+            raise RuntimeError("neo4j down")
+        return set(self._ids)
 
 
-def test_search_base_queries_base_only_and_skips_graph():
-    store, emb = _FakeStore(), _FakeEmbedder()
-    r = Retriever(store, _FakeGraph(), emb, reranker=None, max_context_chars=8000)
-    pack = r.search_base("logout", top_k=7)
+class _FakeReranker:
+    def __init__(self):
+        self.calls = []
+
+    def rerank(self, query, items, top_k):
+        self.calls.append({"n": len(items), "top_k": top_k})
+        return list(items)[:top_k]
+
+
+def test_search_base_is_base_only_and_seeds_graph_from_hits():
+    hits = [_Hit("a.py#f1"), _Hit("b.py#f2"), _Hit("c.py#f3"), _Hit("d.py#f4")]
+    related = [_Hit("e.py#neighbor")]
+    store, graph, reranker, emb = _FakeStore(hits, related), _FakeGraph({"e.py#neighbor"}), _FakeReranker(), _FakeEmbedder()
+    r = Retriever(store, graph, emb, reranker, max_context_chars=8000)
+    pack = r.search_base("logout", top_k=3)
     assert isinstance(pack, ContextPack)
-    call = store.calls[0]
-    assert call["changed_paths"] == []          # base-only: no changed paths
-    assert call["overlay_ref"] != "base"        # a non-matching overlay ref
-    assert call["top_k"] == 7
-    assert emb.queries == ["logout"]            # query embedded once
-    ctx = pack.as_context()
-    assert "auth.py#logout" in ctx
+    # base-only hybrid search
+    assert store.search_calls[0]["changed_paths"] == []
+    assert store.search_calls[0]["overlay_ref"] != "base"
+    assert emb.queries == ["logout"]
+    # graph-expansion seeded from TOP hits (not changed files), neighbors fetched base-only
+    assert graph.expand_calls and graph.expand_calls[0]["seeds"][0] == "a.py#f1"
+    assert store.fetch_calls[0]["changed_paths"] == []
+    # rerank applied (candidates > top_k and graph added a new node)
+    assert reranker.calls and reranker.calls[0]["top_k"] == 3
+    assert "a.py#f1" in pack.as_context()
+
+
+def test_search_base_graph_down_falls_back_to_hybrid():
+    store = _FakeStore([_Hit("a.py#f1")])
+    r = Retriever(store, _FakeGraph(raise_=True), _FakeEmbedder(), _FakeReranker(), max_context_chars=8000)
+    assert "a.py#f1" in r.search_base("x").as_context()  # graph error swallowed
+
+
+def test_search_base_no_reranker_returns_rrf_order():
+    store = _FakeStore([_Hit("a.py#f1"), _Hit("b.py#f2")])
+    r = Retriever(store, graph=None, embedder=_FakeEmbedder(), reranker=None)
+    pack = r.search_base("x", top_k=5)
+    assert [it.node_id for it in pack.items] == ["a.py#f1", "b.py#f2"]
 
 
 def test_search_base_empty_returns_empty_pack():
-    class _EmptyStore(_FakeStore):
-        def hybrid_search(self, **k):
-            return []
-    r = Retriever(_EmptyStore(), _FakeGraph(), _FakeEmbedder(), reranker=None)
+    r = Retriever(_FakeStore([]), graph=None, embedder=_FakeEmbedder(), reranker=None)
     assert r.search_base("nothing").as_context() == ""
 ```
 
@@ -137,27 +178,60 @@ Expected: FAIL — `Retriever` has no attribute `search_base`.
 
 - [ ] **Step 3: Add `search_base` to `reviewer/retrieval/retriever.py`**
 
-Add this method to the `Retriever` class (after `retrieve`):
+First add a module logger at the top of the file (the file currently has no logging):
+```python
+import logging
+
+log = logging.getLogger(__name__)
+```
+(place after the existing `from __future__ import annotations` / `from dataclasses import dataclass` imports.)
+
+Then add this method to the `Retriever` class (after `retrieve`). It mirrors `retrieve`'s pipeline — hybrid → graph-expand → rerank — but is **base-only** and seeds graph-expansion from the **top hits** (no PR/changed files). Graph and reranker are **fail-soft**:
 ```python
     def search_base(self, query, top_k=10, candidates=50) -> ContextPack:
-        """Гибрид-поиск по base-индексу без PR-сессии и graph-expansion — для /solve-task.
+        """Гибрид-поиск по base-индексу без PR-сессии — для /solve-task.
 
-        ``changed_paths=[]`` + несуществующий ``overlay_ref`` → WHERE отбирает только
-        base-строки (``(ref='base' AND path∉[]) OR ref='__none__'``). Без графа и rerank:
-        у нас нет seed-узлов, нужен прямой гибрид BM25+ANN по стабильной базе.
+        Зеркало :meth:`retrieve`, но base-only и сидинг графа от хитов:
+        ``changed_paths=[]`` + несуществующий ``overlay_ref="__none__"`` → WHERE отбирает
+        только base-строки. graph-expansion идёт от топ-хитов (а не от changed-файлов),
+        затем rerank. Граф и реранкер fail-soft: недоступны/ошибка → деградация до
+        чистого гибрида / RRF-порядка.
         """
         qvec = self.embedder.embed_query(query)
         hits = self.store.hybrid_search(
             query_text=query, query_embedding=qvec,
             overlay_ref="__none__", changed_paths=[],
-            top_k=top_k, candidates=candidates)
-        return ContextPack(items=hits, max_chars=self.max_context_chars)
+            top_k=candidates, candidates=candidates)
+        merged: dict[str, object] = {}
+        for h in hits:
+            merged.setdefault(h.node_id, h)
+        graph_new = False
+        if self.graph is not None and hits:
+            try:
+                seeds = [h.node_id for h in hits[:top_k]]
+                related_ids = self.graph.expand(seeds, hops=1)
+                related = self.store.fetch_nodes(list(related_ids), "__none__", [])
+                for it in related:
+                    if it.node_id not in merged:
+                        merged[it.node_id] = it
+                        graph_new = True
+            except Exception:
+                log.warning("search_base: graph-expansion недоступен", exc_info=True)
+        items = list(merged.values())
+        if self.reranker is None or len(items) <= 3 or (len(items) <= top_k and not graph_new):
+            return ContextPack(items=items[:top_k], max_chars=self.max_context_chars)
+        try:
+            items = self.reranker.rerank(query, items, top_k=top_k)
+        except Exception:
+            log.warning("search_base: rerank недоступен — RRF-порядок", exc_info=True)
+            items = items[:top_k]
+        return ContextPack(items=items, max_chars=self.max_context_chars)
 ```
 
 - [ ] **Step 4: Run to verify it passes**
 
 Run: `.venv/bin/pytest tests/retrieval/test_search_base.py -q`
-Expected: PASS (2 tests).
+Expected: PASS (4 tests: base-only+graph-seed+rerank; graph-down fallback; no-reranker RRF order; empty).
 
 - [ ] **Step 5: Lint & commit**
 
