@@ -119,6 +119,26 @@ def test_custom_vcs_provider_does_not_touch_base_index(
 
 
 # ---------------------------------------------------------------------------
+# Тест: нормализация repo
+# ---------------------------------------------------------------------------
+
+@patch("reviewer.services.review_service.chunk_python", side_effect=_fake_chunk)
+@patch("reviewer.services.review_service.build_overlay")
+def test_prepare_sets_normalized_repo(
+    _mock_overlay: MagicMock,
+    _mock_chunk: MagicMock,
+    settings: Settings,
+    components: MagicMock,
+) -> None:
+    """prepare() вычисляет repo = normalize_repo(owner/name) и прокидывает в PreparedReview."""
+    vcs = _vcs_with_files([_changed("a.py")])
+    service = ReviewService(settings, components)
+    prepared = service.prepare("Owner", "Repo", 1, vcs_provider=vcs)
+
+    assert prepared.repo == "owner/repo"
+
+
+# ---------------------------------------------------------------------------
 # Тесты prepare()
 # ---------------------------------------------------------------------------
 
@@ -153,7 +173,7 @@ def test_prepare_returns_units_policy_and_overlay(
     assert prepared.changed_status == {"a.py": "modified"}
     assert prepared.vcs is vcs
     # self-healing: старый overlay удалён в начале prepare()
-    components.store.delete_ref.assert_called_once_with("pr:7")
+    components.store.delete_ref.assert_called_once_with("o/r", "pr:7")
 
 
 @patch("reviewer.services.review_service.update_base")
@@ -177,7 +197,7 @@ def test_prepare_runs_base_sync_for_real_review(
         service.prepare("owner", "repo", 1)   # vcs_provider не передан → прод-путь
 
     mock_update_base.assert_called_once()
-    components.store.set_index_meta.assert_called_once_with("base", "base123")
+    components.store.set_index_meta.assert_called_once_with("owner/repo", "base", "base123")
 
 
 def test_prepare_closes_internal_vcs_on_failure(
@@ -196,7 +216,7 @@ def test_prepare_closes_internal_vcs_on_failure(
     vcs.close.assert_called_once()
     # overlay вычищен и при сбое: self-healing в начале + cleanup в except
     assert components.store.delete_ref.call_args_list == [
-        call("pr:1"), call("pr:1"),
+        call("owner/repo", "pr:1"), call("owner/repo", "pr:1"),
     ]
 
 
