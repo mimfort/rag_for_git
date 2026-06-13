@@ -13,6 +13,7 @@ from reviewer.config.settings import Settings
 from reviewer.graph.store import GraphStore
 from reviewer.index.store import ChunkStore
 from reviewer.tasks.graph import PRRef, TaskGraph
+from reviewer.tasks.service import TaskService
 from reviewer.tasks.store import TaskRow, TaskStore, build_task_text, task_content_hash
 
 pytestmark = pytest.mark.integration
@@ -83,3 +84,26 @@ def test_taskgraph_link_and_context(graph):
     assert ctx["prs"][0]["id"] == "o/r#7"
     assert ctx["prs"][0]["touched"] == ["a.py#foo"]
     assert any(n["key"] == "ID-2" and n["type"] == "subtask" for n in ctx["linked"])
+
+
+def test_task_service_end_to_end(store, graph):
+    """index_task → search_tasks → link_review → get_task_context (PG+Neo4j, fake embed)."""
+    svc = TaskService(store, graph, _FakeEmbedder())
+
+    rep = svc.index_task({
+        "key": "ID-1", "aliases": ["PRI-1"], "title": "Add logout",
+        "description": "Clear the session on logout", "criteria": ["redirects to /login"],
+        "status": "Open", "url": "u",
+        "links": [{"key": "ID-2", "title": "Child", "type": "subtask"}],
+    })
+    assert rep["embedded"] is True and rep["links_upserted"] == 1 and rep["warnings"] == []
+
+    found = svc.search_tasks("logout session")
+    assert "ID-1" in found
+
+    pr = PRRef(repo="o/r", number=7, url="https://github.com/o/r/pull/7", sha="abc")
+    svc.link_review("ID-1", pr, ["auth.py#logout"])
+
+    ctx = svc.get_task_context("PRI-1")  # резолв по alias
+    assert "ID-1" in ctx and "o/r#7" in ctx and "auth.py#logout" in ctx
+    assert "ID-2" in ctx and "subtask" in ctx
