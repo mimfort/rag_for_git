@@ -33,7 +33,9 @@ class _FakeEmbedder:
 @pytest.fixture()
 def store():
     s = Settings()
-    ChunkStore(s.pg_dsn).init_schema()  # создаёт таблицу tasks (schema.sql)
+    cs = ChunkStore(s.pg_dsn)
+    cs.init_schema()  # создаёт таблицу tasks (schema.sql)
+    cs.close()
     st = TaskStore(s.pg_dsn)
     with st._connect() as conn:
         conn.execute("TRUNCATE tasks RESTART IDENTITY")

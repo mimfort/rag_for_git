@@ -68,6 +68,7 @@ class TaskStore:
         self._init_lock = threading.Lock()
 
     def _ensure_pool(self) -> ConnectionPool:
+        """Создать и открыть пул при первом обращении (thread-safe)."""
         if self._pool is None:
             with self._init_lock:
                 if self._pool is None:
@@ -79,6 +80,7 @@ class TaskStore:
         return self._pool
 
     def _connect(self):
+        """Вернуть контекстный менеджер соединения из пула."""
         return self._ensure_pool().connection()
 
     def close(self) -> None:
