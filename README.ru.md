@@ -38,32 +38,32 @@
 ## Архитектура: как связаны части
 
 ```
-                ┌──────────────────────────── reviewer (ядро-библиотека) ────────────────────────────┐
-                │                                                                                      │
-  GitHub PR ───▶│  VCSProvider (github.py)  ──дифф/файлы/патчи──▶  MCPReviewService                  │
-  (owner/repo#N)│        ▲  публикация inline+сводка                     │                              │
-                │        │                                               │ prepare_review               │
-                │        │                                               ▼                              │
-                │        │                         ┌──────────── retrieval/Retriever ───────────┐      │
-                │        │                         │  гибрид-поиск          graph-expansion        │      │
-                │        │                         │  ┌───────────────┐    ┌──────────────────┐    │      │
-                │        │                         │  │ Postgres       │    │ Neo4j            │    │      │
-                │        │                         │  │ (ParadeDB)     │    │ Symbol(path#fqn) │    │      │
-                │        │                         │  │ pgvector(HNSW) │    │ -[:CALLS]-> (граф)│    │      │
-                │        │                         │  │ + pg_search    │    │ (IMPLEMENTS: SCIP)│    │      │
-                │        │                         │  │   (BM25, RRF)  │    │ expand 1–2 хопа   │    │      │
-                │        │                         │  └──────▲────────┘    └─────────▲────────┘    │      │
-                │        │                         │         │ chunks (vector+text)  │ узлы/рёбра  │      │
-                │        │                         │         │                       │             │      │
-                │        │                         │      Voyage embed/rerank   tree-sitter граф   │      │
-                │        │                         └──────────────────┬──────────────────────────┘      │
-                │        │                                            ▼ ContextPack                       │
-                │        │                         Claude Code subagents (скилл /rag-reviewer:review-pr)  │
-                │        │                           инструменты: search_code, get_related_symbols,       │
-                │        │                           read_file, get_definition, find_callers,             │
-                │        │                           get_changed_file_diff                                │
-                │        └──────────────────── publish_review (gate/grounding/dedup/assemble) ◀─────────┘
-                └──────────────────────────────────────────────────────────────────────────────────────┘
+                ┌──────────────────────────── reviewer (ядро-библиотека) ────────────────────────────────┐
+                │                                                                                        │
+  GitHub PR ───▶│  VCSProvider (github.py)  ──дифф/файлы/патчи──▶  MCPReviewService                      │
+  (owner/repo#N)│        ▲  публикация inline+сводка                     │                               │
+                │        │                                               │ prepare_review                │
+                │        │                                               ▼                               │
+                │        │                         ┌──────────── retrieval/Retriever ─────────────┐      │
+                │        │                         │  гибрид-поиск          graph-expansion       │      │
+                │        │                         │  ┌────────────────┐   ┌───────────────────┐  │      │
+                │        │                         │  │ Postgres       │   │ Neo4j             │  │      │
+                │        │                         │  │ (ParadeDB)     │   │ Symbol(path#fqn)  │  │      │
+                │        │                         │  │ pgvector(HNSW) │   │ -[:CALLS]-> (граф)│  │      │
+                │        │                         │  │ + pg_search    │   │ (IMPLEMENTS: SCIP)│  │      │
+                │        │                         │  │   (BM25, RRF)  │   │ expand 1–2 хопа   │  │      │
+                │        │                         │  └──────▲─────────┘    └─────────▲────────┘  │      │
+                │        │                         │         │ chunks (vector+text)  │ узлы/рёбра │      │
+                │        │                         │         │                       │            │      │
+                │        │                         │      Voyage embed/rerank   tree-sitter граф  │      │
+                │        │                         └──────────────────┬───────────────────────────┘      │
+                │        │                                            ▼ ContextPack                      │
+                │        │                         Claude Code subagents (скилл /rag-reviewer:review-pr) │
+                │        │                           инструменты: search_code, get_related_symbols,      │
+                │        │                           read_file, get_definition, find_callers,            │
+                │        │                           get_changed_file_diff                               │
+                │        └──────────────────── publish_review (gate/grounding/dedup/assemble) ◀─────────┘│
+                └────────────────────────────────────────────────────────────────────────────────────────┘
 
   Хранилища поднимаются в Docker:  Postgres/ParadeDB (:5433)  ·  Neo4j (:7687)
   Внешние API:  Voyage (эмбеддинги voyage-code-3 + reranker rerank-2.5)
@@ -168,7 +168,9 @@ cp .env.example .env                 # заполнить VOYAGE_API_KEY, GITHUB
 ```bash
 # Проиндексировать базу целевой ветки локального клона (вектора + граф).
 # Делается один раз и обновляется инкрементально; даёт RAG/графу контекст всего репо.
-reviewer index /path/to/repo --ref main
+# --repo можно опустить, если origin-remote является GitHub (owner/name дерайвится автоматически)
+# или задан DEFAULT_REPO в .env.
+reviewer index /path/to/repo --ref main --repo owner/name
 
 # Диагностический гибрид-поиск по базе (проверить, что индекс работает).
 reviewer search "token verification"
@@ -192,7 +194,7 @@ reviewer search "token verification"
 
 ```bash
 git clone https://github.com/ORG/REPO /tmp/REPO
-reviewer index /tmp/REPO --ref main        # построить базу+граф
+reviewer index /tmp/REPO --ref main --repo ORG/REPO   # построить базу+граф
 # в Claude Code: /rag-reviewer:review-pr ORG/REPO#42   # ревью PR #42
 ```
 
@@ -248,7 +250,7 @@ API: `GET /api/runs` (список с фильтрами repo/status, пагин
 
 ### Свежесть base-индекса
 
-`reviewer index` фиксирует SHA проиндексированного ref в таблице `index_meta`. При каждом `prepare_review` сверяется этот SHA с `base_sha` PR: если есть расхождение — автоматически досинхронизирует чанки изменившихся файлов через GitHub compare API (без пересборки всего индекса). Граф кода (Neo4j) обновляется **только** при явном `reviewer index` — не при ревью.
+`reviewer index` фиксирует SHA проиндексированного ref в таблице `index_meta`. При каждом `prepare_review` сверяется этот SHA с `base_sha` PR: если есть расхождение — автоматически досинхронизирует чанки изменившихся файлов через GitHub compare API (без пересборки всего индекса). Граф кода (Neo4j) **также** инкрементально досинхронизируется в этом же шаге (tree-sitter, repo-scoped, входящие `CALLS`-рёбра из неизменённых вызывающих сохраняются, fail-soft). Полная точность графа (рёбра `IMPLEMENTS`, все `CALLS`) восстанавливается ручным `reviewer index` с SCIP.
 
 ### Капы и флаги
 
@@ -263,9 +265,15 @@ API: `GET /api/runs` (список с фильтрами repo/status, пагин
 - Транзиентные ошибки LLM (HTTP 429/5xx) ретраятся с экспоненциальным backoff.
 - Ошибка анализа одного файла не прерывает ревью — файл помечается как неудачный и попадает в сводку.
 
-### Ограничение: один репозиторий на инстанс
+### Несколько репозиториев (мульти-репо)
 
-Индекс не имеет namespace по репозиторию. Один деплой (одна БД Postgres + Neo4j) рассчитан на один репозиторий. Для нескольких репозиториев — отдельные инстансы с разными `PG_DSN` / `NEO4J_URI`.
+Один деплой (одна БД Postgres + Neo4j) обслуживает N репозиториев через `repo`-дискриминатор (`owner/name`): данные изолированы колонкой/свойством `repo` в Postgres (`chunks`, `index_meta`) и Neo4j (`:Symbol.repo`, составная уникальность `(repo, id)`). Каждое ревью выполняется в рамках своего репозитория — кросс-репо ретрив отсутствует.
+
+Для индексации: `reviewer index <path> --repo owner/name` (или `owner/name` дерайвится автоматически из git remote `origin`, если это GitHub; либо задаётся `DEFAULT_REPO` в `.env`).
+
+Граф задач (`:Task`) намеренно остаётся **глобальным** — одна задача может охватывать PR из нескольких микросервисных репозиториев.
+
+> **Миграция с single-repo.** Если у вас уже есть данные в индексе, выполните `reviewer index --repo owner/name` один раз (или задайте `DEFAULT_REPO`), чтобы проставить `repo`-дискриминатор.
 
 ## Пример ревью «от диффа до комментария»
 

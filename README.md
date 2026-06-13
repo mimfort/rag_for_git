@@ -123,6 +123,9 @@ Where to get the keys:
 All other settings have defaults in `reviewer/config/settings.py`; `.env` only needs the secrets
 plus any overrides. Key variables are documented with comments in `.env.example`.
 
+`DEFAULT_REPO` (optional) sets the default `owner/name` for `reviewer index` and `search_codebase`
+in single-repo deployments — omit `--repo` on the CLI and the tool will use it automatically.
+
 ## CLI
 
 After `pip install -e .` the `reviewer` (CLI) and `reviewer-mcp` (MCP server for the plugin)
@@ -135,9 +138,12 @@ reviewer check
 
 # Build/update the base index of the target branch from a local clone (vectors + graph).
 # Done once, then updated incrementally; gives RAG and the graph whole-repo context.
-reviewer index /path/to/repo --ref main
+# --repo may be omitted if the local clone's origin remote is GitHub (owner/name derived automatically)
+# or DEFAULT_REPO is set in .env.
+reviewer index /path/to/repo --ref main --repo owner/name
 
 # Diagnostic hybrid search over the base index (verify the index works).
+# Uses DEFAULT_REPO from .env, or pass --repo owner/name explicitly.
 reviewer search "token verification"
 
 # Observability web admin (run history, findings) on the host.
@@ -206,13 +212,17 @@ A factual list of what this does and does not do today.
 
 - **No automatic trigger.** A review is not started on PR open/update. It is a manual skill
   invocation inside Claude Code — there is no GitHub App / webhook / CI integration out of the box.
-- **No graph auto-reindex.** Vector chunks self-heal lazily: on `prepare_review` the base index's
-  recorded SHA is compared to the PR's `base_sha`, and chunks of changed files are re-synced via the
-  GitHub compare API. The **code graph (Neo4j) does not** — it drifts until you run `reviewer index`
-  manually. (Each `reviewer index` does a full graph rebuild — clear + upsert — so backends never mix.)
-- **Single-repo, not multi-tenant.** The index has no per-repository namespace; one deployment
-  (one Postgres + one Neo4j) serves one repository. Multiple repos require separate deployments with
-  distinct `PG_DSN` / `NEO4J_URI`.
+- **Graph auto-reindex is incremental, not full-precision.** On `prepare_review`, when the base
+  branch SHA drifts, the code graph is patched for the changed files (tree-sitter, repo-scoped) in
+  the same step that self-heals vector chunks — incoming `CALLS` edges from unchanged callers are
+  preserved. Not refreshed until the next manual `reviewer index`: `IMPLEMENTS` edges, outgoing
+  `CALLS` into unchanged files, and new incoming `CALLS` from unchanged callers. Full SCIP precision
+  is restored by `reviewer index`.
+- **Multi-repo via a `repo` discriminator.** One deployment hosts N repositories isolated by a
+  `repo` (`owner/name`) column/property across Postgres and Neo4j; each review is scoped to its PR's
+  repo (no cross-repo retrieval). Index a repo with `reviewer index <path> --repo owner/name` (or let
+  it derive `owner/name` from the git `origin` remote, or set `DEFAULT_REPO`). The task graph
+  (`:Task`) is intentionally global, so one task can span PRs across several microservice repos.
 - **Language scope: Python only.** The chunker (tree-sitter) and the SCIP backend (`scip-python`)
   are Python-specific. Other languages would go behind the same chunker/`GraphIndexer` interfaces.
 - **VCS scope: GitHub only.** Only GitHub implements `VCSProvider`; GitLab/Bitbucket are not
