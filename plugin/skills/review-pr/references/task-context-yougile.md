@@ -27,23 +27,29 @@ NOT return a task link:
 
 | TaskBrief field | Source in `get_task` response   | How to fill it |
 |---|---|---|
-| `key`         | the resolved key (`PRI-34` / `ID-34`) | use as-is |
+| `key`       | resolved `idTaskCommon` (`ID-N`, company-wide) | canonical — globally unique, stable |
+| `aliases`   | `[idTaskProject]` (`PRI-N`, per-project)       | other codes of the same task; lets a PR referencing either code resolve to one node |
 | `title`       | `title`                               | use as-is |
 | `description` | `description`                         | requirements usually live here |
 | `status`      | `columnId` — a UUID, NOT a name       | call `get_column` with that id → its `title`; on error omit |
 | `criteria[]`  | `subtasks[]` — UUIDs, NOT titles      | optional: `get_task` each id → its `title` (see note); else `[]` |
-| `url`         | absent from the response              | see URL note; default `null` |
-| `links[]`     | absent from the response              | `[]` |
+| `url`       | `task_board.url_template` with the **project code** | the web link fragment is the project code (`…/team/<teamId>/#PRI-4`), so substitute `PRI-N` (not `ID-N`); default `null` if no template |
+| `links[]`   | `subtasks[]` (UUIDs of child tasks)            | for each subtask UUID, `get_task` it → `{type:"subtask", key:<its idTaskCommon>, title}` (best-effort; a failed subtask fetch is skipped, not fatal) |
+
+**Canonical key note.** A PR may reference either code (`PRI-N` or `ID-N`); both resolve via
+`get_task`. Always set `key` to the company-wide `idTaskCommon` and put the project `idTaskProject`
+in `aliases` — `index_task` stores both as the node's `codes`, so the task is one node regardless of
+which code a PR used.
 
 **Criteria note.** Each subtask is itself a task; resolving its title costs one `get_task` call
 per subtask. Do this only when `description` is thin on acceptance criteria. When criteria are
 written inline in `description` (a bulleted / checklist section), leave `criteria[]` as `[]` — the
 requirements prompt reads `description` anyway, so nothing is lost.
 
-**URL note.** The Yougile API does not expose a task link, so `url` is `null` by default. If config
-provides `task_board.url_template` (a string with `{id}` and/or `{key}` placeholders), substitute
-the task UUID / resolved key into it and use the result. A missing `url` only drops the hyperlink
-in the summary — the task is still named by `key` + `title`.
+**URL note.** The Yougile API does not expose a task link directly, so `url` comes from
+`task_board.url_template`. The web URL fragment uses the **project code** (`PRI-N`), e.g.
+`https://<host>/team/<teamId>/#PRI-4` — substitute the `idTaskProject` value, not `idTaskCommon`.
+A missing `url` only drops the hyperlink in the summary — the task is still named by `key` + `title`.
 
 ## 3. Optional discussion context
 
