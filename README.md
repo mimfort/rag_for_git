@@ -1,324 +1,189 @@
 # rag_for_git
 
-Агент автоматического ревью pull/merge request'ов на основе **RAG + графа кода + Claude Code**.
+> 🇷🇺 Русская версия: [README.ru.md](README.ru.md)
 
-На событие «появился/обновился PR» агент берёт дифф, собирает релевантный контекст **по всему репозиторию** (гибридный поиск + граф связей кода), прогоняет его через Claude Code-скилл с инструментами поиска (agentic RAG), отсеивает ложные срабатывания и постит результат обратно в GitHub: **inline-комментарии на строки диффа + сводку**.
-
-> Статус: рабочий v1. Целевой язык анализа — **Python**. VCS — **GitHub** (за интерфейсом `VCSProvider`, под GitLab/др. заложена абстракция). Проверено вживую: ловит реальные баги, видит влияние на вызывающий код и существующие тесты.
+An agent that automatically reviews pull/merge requests using **RAG + a code graph + Claude Code**.
 
 ---
 
-## Содержание
-- [Зачем это и в чём идея](#зачем-это-и-в-чём-идея)
-- [Архитектура: как связаны части](#архитектура-как-связаны-части)
-- [Как работает ревью (поток данных)](#как-работает-ревью-поток-данных)
-- [Свежесть индекса на «живом» репозитории](#свежесть-индекса-на-живом-репозитории)
-- [Быстрый старт](#быстрый-старт)
-- [Использование (CLI)](#использование-cli)
-- [Эксплуатация](#эксплуатация)
-- [Пример ревью «от диффа до комментария»](#пример-ревью-от-диффа-до-комментария)
-- [Конфигурация](#конфигурация)
-- [Структура проекта](#структура-проекта)
-- [Тесты](#тесты)
-- [Ограничения и заметки](#ограничения-и-заметки)
+## What it is
 
----
+Plain linters catch syntax and style but miss **meaning and relationships**: a broken
+function contract, the impact of a change on its callers, a removed guard, a contradiction
+with an existing test. This agent gives an LLM **the same context a human reviewer has** —
+semantic + lexical retrieval over the whole repository, structural code-graph expansion, and
+an agentic tool loop — then posts the result back to GitHub as **inline comments on diff lines
+plus a summary**.
 
-## Зачем это и в чём идея
+A single PR review runs as three stages:
 
-Обычные линтеры ловят синтаксис и стиль, но не видят **смысла и связей**: сломанный контракт функции, влияние правки на вызывающих, удалённую проверку, противоречие существующему тесту. Идея агента — дать LLM **тот же контекст, что у живого ревьюера**:
+**`prepare_review` (MCP)** → **analyze (Claude subagents)** → **`publish_review` (MCP)**
 
-- **RAG** — найти по всему репозиторию похожий/связанный код семантически (вектора) и лексически (BM25);
-- **Граф кода** — структурно подтянуть вызывающих/вызываемых/реализации/тесты изменённого символа;
-- **LLM с инструментами** — рассуждать над диффом, дотягивая нужный код тулзами, и выносить замечания;
-- **Verify-проход** — отсеять галлюцинации, не теряя реальных багов.
+1. **prepare** — `GitHubProvider` pulls the PR (base/head SHA) and changed files; changed `.py`
+   files are chunked (tree-sitter) and embedded (Voyage) into an ephemeral overlay `ref="pr:N"`;
+   policy and per-file review units are assembled.
+2. **analyze** — the Claude Code skill fans out one subagent per file. Each reasons over the diff
+   in a tool loop, pulling in whatever code it needs: `search_code`, `get_related_symbols`,
+   `read_file`, `get_definition`, `find_callers`, `get_changed_file_diff`.
+3. **publish** — a deterministic tail: policy gate (category/severity/confidence/paths) → line
+   grounding by exact code quote (anti-hallucination) → dedup → assemble (inline vs summary,
+   suggestion invariants, fingerprint idempotency, comment cap) → post to GitHub → history record
+   → overlay/session cleanup.
 
-## Архитектура: как связаны части
+> Status: working v1. Target analysis language is **Python**; VCS is **GitHub** (behind a
+> `VCSProvider` interface). Proven live: it catches real bugs and sees the impact on calling code
+> and existing tests.
 
-```
-                ┌──────────────────────────── reviewer (ядро-библиотека) ────────────────────────────┐
-                │                                                                                      │
-  GitHub PR ───▶│  VCSProvider (github.py)  ──дифф/файлы/патчи──▶  MCPReviewService                  │
-  (owner/repo#N)│        ▲  публикация inline+сводка                     │                              │
-                │        │                                               │ prepare_review               │
-                │        │                                               ▼                              │
-                │        │                         ┌──────────── retrieval/Retriever ───────────┐      │
-                │        │                         │  гибрид-поиск          graph-expansion        │      │
-                │        │                         │  ┌───────────────┐    ┌──────────────────┐    │      │
-                │        │                         │  │ Postgres       │    │ Neo4j            │    │      │
-                │        │                         │  │ (ParadeDB)     │    │ Symbol(path#fqn) │    │      │
-                │        │                         │  │ pgvector(HNSW) │    │ -[:CALLS]-> (граф)│    │      │
-                │        │                         │  │ + pg_search    │    │ (IMPLEMENTS: SCIP)│    │      │
-                │        │                         │  │   (BM25, RRF)  │    │ expand 1–2 хопа   │    │      │
-                │        │                         │  └──────▲────────┘    └─────────▲────────┘    │      │
-                │        │                         │         │ chunks (vector+text)  │ узлы/рёбра  │      │
-                │        │                         │         │                       │             │      │
-                │        │                         │      Voyage embed/rerank   tree-sitter граф   │      │
-                │        │                         └──────────────────┬──────────────────────────┘      │
-                │        │                                            ▼ ContextPack                       │
-                │        │                         Claude Code subagents (скилл /rag-reviewer:review-pr)  │
-                │        │                           инструменты: search_code, get_related_symbols,       │
-                │        │                           read_file, get_definition, find_callers,             │
-                │        │                           get_changed_file_diff                                │
-                │        └──────────────────── publish_review (gate/grounding/dedup/assemble) ◀─────────┘
-                └──────────────────────────────────────────────────────────────────────────────────────┘
+## How it works / Architecture
 
-  Хранилища поднимаются в Docker:  Postgres/ParadeDB (:5433)  ·  Neo4j (:7687)
-  Внешние API:  Voyage (эмбеддинги voyage-code-3 + reranker rerank-2.5)
-```
+The core is the `reviewer/` library, assembled in `reviewer/app.py::build_components(settings)`
+from `Settings` (pydantic-settings, `.env`). Entry points are `reviewer/entrypoints/cli.py` (Click)
+and `reviewer/entrypoints/mcp_server.py` (FastMCP). Three pieces work together:
 
-Кратко, кто за что отвечает:
+- **RAG (hybrid retrieval).** Postgres/ParadeDB stores code chunks with `pgvector` (HNSW ANN) and
+  `pg_search` (BM25). A query embeds with Voyage, runs both ANN and BM25 search, and the result
+  lists are merged with **Reciprocal Rank Fusion (RRF)**, then reranked with Voyage `rerank-2.5`.
+- **Code graph (SCIP or tree-sitter, Neo4j).** Symbols and their relationships live in Neo4j.
+  The graph orchestrator (`graph/backend.py`) picks a backend via `GRAPH_BACKEND`
+  (`auto|scip|treesitter`): **SCIP** (`@sourcegraph/scip-python`) gives a precise, type-aware graph
+  with `CALLS` + `IMPLEMENTS` edges; **tree-sitter** is a fast fallback with `CALLS`-by-name only.
+  Retrieval expands the changed symbols 1–2 hops to surface callers/callees/implementations/tests.
+- **Claude Code plugin via MCP.** The `reviewer-mcp` server exposes `prepare_review`,
+  `publish_review`, and the agent tools. The Claude Code plugin (`plugin/`) drives the review: it
+  calls `prepare_review`, runs analysis subagents against those MCP tools, then calls
+  `publish_review`.
 
-| Часть | Модуль | Роль |
-|---|---|---|
-| VCS-провайдер | `reviewer/vcs/` | получить PR/дифф/файлы, запостить ревью; маппинг строк диффа; идемпотентность |
-| Индекс (RAG) | `reviewer/index/` | чанкинг (tree-sitter), эмбеддинги (Voyage), хранилище (pgvector+BM25), свежесть |
-| Граф кода | `reviewer/graph/` | построение рёбер `CALLS` + `IMPLEMENTS` (SCIP-бэкенд) или только `CALLS` (tree-sitter); оркестрация в `backend.py`; хранение и обход в Neo4j |
-| Ретрив | `reviewer/retrieval/` | гибрид (RRF) + graph-expansion + Voyage rerank → контекст |
-| Инструменты | `reviewer/tools/` | `search_code`, `get_related_symbols`, `read_file`, `get_definition`, `find_callers`, `get_changed_file_diff`; `index_task` — индексирует задачу в граф и вектор; `search_tasks` — семантический поиск по задачам; `get_task_context` — граф/история задачи и связанных PR; `search_codebase` — session-less гибрид-поиск по base-индексу (для /solve-task) |
-| MCP-сервис | `reviewer/mcp/` | `MCPReviewService`: prepare/tool-вызовы/publish; управление сессиями PR |
-| Сервис | `reviewer/services/` | `ReviewService.prepare`: ingest PR, overlay, units |
-| Агент | `reviewer/agent/` | state (ReviewUnit) · assemble · dedup |
-| LLM утилиты | `reviewer/llm/` | `_retry.py` (retry/backoff для Voyage) |
-| Политика | `reviewer/policy/` | гейтинг findings (категория/severity/confidence/пути) |
+**The single key linking RAG and the graph is `node_id = "path#fqn"`** (e.g.
+`rag/embedder.py#VoyageEmbedder.embed_query`). Both the chunk in Postgres and the node in Neo4j use
+it, so graph expansion and chunk retrieval are stitched together without any mapping table.
 
-**Единый ключ связи** между RAG и графом — `node_id = "path#fqn"` (напр. `rag/embedder.py#VoyageEmbedder.embed_query`). И чанк в Postgres, и узел в Neo4j используют его, поэтому graph-expansion и ретрив чанков «сшиваются» без дополнительной маппинг-таблицы.
+**Index freshness: a stable base + a PR overlay.** A full reindex of a large repo is expensive, so
+the index keeps a persistent base and layers PR changes on top:
 
-## Как работает ревью (поток данных)
-
-Ревью запускается скиллом `/rag-reviewer:review-pr` в Claude Code. Поток на один PR:
+- **`ref="base"`** — the persistent index of the target branch. Updated incrementally by
+  `reviewer index` (only changed files are chunked; only chunks with a new `content_hash` are
+  re-embedded).
+- **`ref="pr:N"`** — an ephemeral overlay of just the PR's changed files at its HEAD.
+- **On a query**: `retrieval = (base where path ∉ changed) ∪ overlay`. For changed files the agent
+  sees the **new** version; for everything else, the stable base.
 
 ```
-──────────────── prepare_review (MCP → MCPReviewService) ─────────────────────
-1. ingest      GitHub: PR (base_sha, head_sha, base_ref) + изменённые файлы с патчами
-                  │
-2. overlay     изменённые .py → чанкинг (tree-sitter) → эмбеддинг (Voyage) →
-               upsert в Postgres под ref="pr:N"  (content-hash дедуп)
-                  │
-3. plan        дифф → review-units (по файлу): {path, node_ids изменённых символов, patch}
-               → payload скиллу: юниты/политика/патчи
-                  │
-────────── analyze: Claude subagents (скилл /rag-reviewer:review-pr) ──────────
-4. analyze     Subagents в tool-loop по каждому файлу:
-                 • search_code(query)        → Retriever:
-                        embed_query (Voyage) → гибрид-поиск по (base \ changed ∪ overlay):
-                          pgvector ANN  +  pg_search BM25  → слияние RRF
-                        + graph.expand(изменённые символы) → Neo4j callers/callees (impl/тесты при наличии рёбер)
-                        + Voyage rerank → top-N  → ContextPack (код с цитатами path:line)
-                 • get_related_symbols(node) → связанные символы из графа
-                 • read_file, get_definition, find_callers, get_changed_file_diff
-               → findings (JSON): category, severity, line, message, suggestion, confidence
-                  │  (findings аккумулируются со всех файлов)
-                  │
-─────────── publish_review (MCP → MCPReviewService) ──────────────────────────
-5. gate        policy.gate: категория включена? severity ≥ порога? confidence ≥ порога?
-               путь не в ignore?
-                  │
-6. grounding   уточнение номера строки по дословной code_quote (анти-галлюцинация)
-               + dedup по fingerprint (схлопываем одинаковые находки)
-                  │
-7. assemble    findings → разделение:
-                 • строка попадает в дифф → inline-комментарий (RIGHT/LEFT)
-                 • иначе → пункт в сводку (с ссылкой file:line)
-               + кап max_comments + идемпотентность по фингерпринту (не дублировать на повторном push)
-                  │
-8. publish     GitHubProvider: один review = сводка + массив inline-комментариев
+                ┌─────────────────────────── reviewer (core library) ───────────────────────────┐
+                │                                                                                 │
+  GitHub PR ───▶│  VCSProvider (github.py)  ──diff/files/patches──▶  MCPReviewService             │
+  (owner/repo#N)│        ▲  publish inline + summary                       │ prepare_review        │
+                │        │                                                 ▼                       │
+                │        │                          ┌──────────── retrieval/Retriever ──────────┐ │
+                │        │                          │  hybrid search        graph expansion      │ │
+                │        │                          │  ┌──────────────┐   ┌───────────────────┐  │ │
+                │        │                          │  │ Postgres      │   │ Neo4j             │  │ │
+                │        │                          │  │ (ParadeDB)    │   │ Symbol(path#fqn)  │  │ │
+                │        │                          │  │ pgvector(HNSW)│   │ -[:CALLS]->        │  │ │
+                │        │                          │  │ + pg_search   │   │ (IMPLEMENTS: SCIP) │  │ │
+                │        │                          │  │   (BM25, RRF) │   │ expand 1–2 hops    │  │ │
+                │        │                          │  └──────┬───────┘   └─────────┬─────────┘  │ │
+                │        │                          │   Voyage embed/rerank   tree-sitter graph  │ │
+                │        │                          └─────────────────┬─────────────────────────┘ │
+                │        │                                            ▼ ContextPack                │
+                │        │                       Claude Code subagents (skill /rag-reviewer:review-pr)
+                │        │                         tools: search_code, get_related_symbols,        │
+                │        │                         read_file, get_definition, find_callers, …      │
+                │        └─────────────────── publish_review (gate/grounding/dedup/assemble) ◀─────┘
+                └─────────────────────────────────────────────────────────────────────────────────┘
+
+  Stores (Docker):  Postgres/ParadeDB (:5433)  ·  Neo4j (:7687)
+  External API:     Voyage (embeddings voyage-code-3 + reranker rerank-2.5)
 ```
 
-Ключевые свойства:
-- **agentic RAG** — ретрив только засеивает контекст; LLM сам дотягивает нужный код тулзами.
-- **graph + RAG вместе** — вектора находят «похожее по смыслу», граф добавляет «структурно связанное» (кто сломается), что эмбеддинги часто упускают.
-- **inline только на строках диффа** — GitHub разрешает комментарии лишь на изменённых/контекстных строках хунка; остальное уходит в сводку (инвариант зашит в `assemble`).
-- **идемпотентность** — каждый комментарий помечен скрытым фингерпринтом `<!-- ai-review:hash -->`; повторный прогон не плодит дубликаты.
+For a deeper, code-verified walkthrough of every module and the data flow, see
+[README.ru.md](README.ru.md) (Russian).
 
-## Свежесть индекса на «живом» репозитории
+## Installation
 
-Код меняется с каждым push'ем, а полный реиндекс большого репо дорог. Решение — **стабильная база + content-hash дедуп + overlay на PR**:
-
-- **`ref="base"`** — персистентный индекс целевой ветки. Обновляется инкрементально (`reviewer index`): чанкуются только изменённые файлы, эмбеддятся только чанки с новым `content_hash`.
-- **`ref="pr:N"`** — эфемерный overlay: только изменённые файлы PR на его HEAD.
-- **На запросе**: `retrieval = (base, где path ∉ изменённых) ∪ overlay`. То есть для изменённых файлов агент видит **новую** версию, для остального — стабильную базу. Это и есть условие «находить произвольный релевантный код по всему репо, но по актуальной версии».
-
-## Быстрый старт
-
-Нужны: Python 3.11–3.13, Docker, ключ Voyage, GitHub-токен, Claude Code с плагином.
+Requirements: Python 3.11–3.13, Docker, a Voyage API key, a GitHub token, and Claude Code with the
+plugin.
 
 ```bash
-# 1. зависимости и инфраструктура
+# 1. dependencies + infrastructure
 git clone https://github.com/mimfort/rag_for_git && cd rag_for_git
 python -m venv .venv && .venv/bin/pip install -e ".[dev]"
-docker compose up -d                 # Postgres/ParadeDB (:5433) + Neo4j (:7687) + web-админка (:8000)
+docker compose up -d          # Postgres/ParadeDB (:5433) + Neo4j (:7687) + observability web admin (:8000)
 
-# 2. конфиг
-cp .env.example .env                 # заполнить VOYAGE_API_KEY, GITHUB_TOKEN
+# 2. config
+cp .env.example .env          # fill in VOYAGE_API_KEY and GITHUB_TOKEN
 ```
 
-Где взять ключи:
-- **Voyage** (`VOYAGE_API_KEY`): https://dashboard.voyageai.com/ — есть 200M бесплатных токенов; чтобы снять лимит 3 RPM / 10K TPM, привяжите карту (списания идут только сверх бесплатного пула; auto-recharge можно держать выключенным).
-- **GitHub** (`GITHUB_TOKEN`): PAT с правами *Pull requests: Read and write* + *Contents: Read* (fine-grained) или scope `repo` (classic). Быстрый вариант для своих репо: `gh auth token`.
+Where to get the keys:
 
-## Использование
+- **Voyage** (`VOYAGE_API_KEY`): https://dashboard.voyageai.com/ — there is a free token pool; to
+  lift the 3 RPM / 10K TPM limit, attach a card (you are only charged beyond the free pool).
+- **GitHub** (`GITHUB_TOKEN`): a PAT with *Pull requests: Read and write* + *Contents: Read*
+  (fine-grained) or the `repo` scope (classic). Quick option for your own repos: `gh auth token`.
 
-После `pip install -e .` доступны команды `reviewer` (CLI) и `reviewer-mcp` (MCP-сервер для плагина).
+All other settings have defaults in `reviewer/config/settings.py`; `.env` only needs the secrets
+plus any overrides. Key variables are documented with comments in `.env.example`.
 
-### CLI
+## CLI
+
+After `pip install -e .` the `reviewer` (CLI) and `reviewer-mcp` (MCP server for the plugin)
+commands are available.
 
 ```bash
-# Проиндексировать базу целевой ветки локального клона (вектора + граф).
-# Делается один раз и обновляется инкрементально; даёт RAG/графу контекст всего репо.
+# Check environment readiness: keys, Postgres, Neo4j, GitHub. Prints ✓/✗ per item;
+# exits 1 on any problem. Spends no Voyage quota.
+reviewer check
+
+# Build/update the base index of the target branch from a local clone (vectors + graph).
+# Done once, then updated incrementally; gives RAG and the graph whole-repo context.
 reviewer index /path/to/repo --ref main
 
-# Диагностический гибрид-поиск по базе (проверить, что индекс работает).
+# Diagnostic hybrid search over the base index (verify the index works).
 reviewer search "token verification"
+
+# Observability web admin (run history, findings) on the host.
+reviewer serve                # http://127.0.0.1:8000  (options: --host / --port)
+
+# MCP server used by the Claude Code plugin (stdio transport).
+reviewer-mcp
 ```
 
-### Ревью через Claude Code-плагин
+Reviewing works even without a prior `index` — context is then limited to the diff and the overlay
+(RAG/graph are "thin"). For full whole-repo impact analysis, run `index` against the target branch.
 
-Ревью запускается через скилл `/rag-reviewer:review-pr` в Claude Code:
+## Plugin usage
 
-```bash
-# 1. Убедиться, что MCP-сервер добавлен в Claude Code-настройки
-#    (reviewer-mcp / plugin/ как корень плагина)
+Reviews are launched as a Claude Code skill. Install the bundled plugin from the local marketplace
+in the repo root:
 
-# 2. Открыть репозиторий в Claude Code и вызвать скилл:
-/rag-reviewer:review-pr owner/repo#42
+```text
+/plugin marketplace add .
+/plugin install rag-reviewer@rag-reviewer-marketplace
 ```
 
-Плагин (`plugin/`) вызывает `prepare_review` (через MCP), затем запускает subagents с инструментами поиска `search_code`, `get_related_symbols`, `read_file` и т.д., наконец `publish_review` (через MCP) постит результат в GitHub.
+Then, **with Claude Code launched from the repository root** (the MCP server path is resolved from
+`${CLAUDE_PROJECT_DIR}` in `plugin/.mcp.json`), call a skill:
 
-Типичный сценарий:
+```text
+/rag-reviewer:review-pr owner/repo#42     # review a PR (prepare_review → subagents → publish_review)
+/rag-reviewer:sync-tasks                  # warm the task graph & vector store from a connected board
+/rag-reviewer:solve-task <key | free text>  # gather disciplined context for a task, then hand off to dev
+```
+
+A typical end-to-end run:
 
 ```bash
 git clone https://github.com/ORG/REPO /tmp/REPO
-reviewer index /tmp/REPO --ref main        # построить базу+граф
-# в Claude Code: /rag-reviewer:review-pr ORG/REPO#42   # ревью PR #42
+reviewer index /tmp/REPO --ref main       # build base index + graph
+# in Claude Code (from the repo root):  /rag-reviewer:review-pr ORG/REPO#42
 ```
 
-> Ревью работает и без предварительного `index` — тогда контекст ограничен диффом и overlay (RAG/граф «тонкие»). Для полноценного анализа влияния на весь репозиторий запустите `index` по целевой ветке.
+For a dry run, pass `--dry-run` to the review skill — `publish_review` assembles the full report
+without posting to GitHub.
 
-## Эксплуатация
+### Per-repo policy
 
-### Диагностика и первый запуск
-
-```bash
-# Проверить готовность окружения: ключи, Postgres, Neo4j, GitHub.
-# Выводит ✓/✗ по каждому пункту; exit 1 при любой проблеме.
-reviewer check
-```
-
-Прогон без публикации: в скилле передайте `--dry-run` — `publish_review` соберёт отчёт, не постя в GitHub.
-
-### Веб-админка наблюдаемости
-
-Каждый `publish_review` записывает прогон в Postgres (таблицы `review_runs` / `review_findings`):
-репозиторий/PR, модель, тайминги, статус, находки с вердиктами и фактом публикации. Запись
-**fail-soft** (сбой лога не ломает ревью) и гейтится `REVIEW_HISTORY` (дефолт `true`). Стоимости
-в записи нет — LLM-вызовы идут по подписке Claude Code.
-
-Веб-админка (FastAPI + React/Vite SPA) показывает историю прогонов, агрегаты (% отсева gate,
-графики во времени, находки по категориям/severity) и детали каждого прогона — с drill-down по
-находкам.
-
-**Через Docker (без ручных шагов).** Сервис `web` в `docker-compose.yml` сам собирает фронт
-(multi-stage: node → python) и поднимает FastAPI, читая ту же БД, что пишет `publish_review`:
-
-```bash
-docker compose up -d                 # поднимает Postgres + Neo4j + web-админку
-# открыть http://127.0.0.1:8000
-```
-
-**На хосте (для разработки фронта).** Альтернатива без Docker:
-
-```bash
-pip install -e ".[web]"
-cd web/frontend && npm install && npm run build && cd -
-reviewer serve                       # http://127.0.0.1:8000 (опции: --host/--port)
-
-# hot-reload фронта (в отдельном терминале, при запущенном reviewer serve):
-cd web/frontend && npm run dev       # http://localhost:5173, /api проксируется на :8000
-```
-
-API: `GET /api/runs` (список с фильтрами repo/status, пагинация), `GET /api/runs/{id}`
-(прогон + находки), `GET /api/runs/{id}/trace` (пошаговый трейс), `GET /api/stats?days=N` (агрегаты).
-
-> Трейс пишется только для **новых** прогонов (инструментация forward-only) — у прогонов,
-> сделанных до включения фичи, вкладка «Трейс» покажет пустое состояние.
-
-### Свежесть base-индекса
-
-`reviewer index` фиксирует SHA проиндексированного ref в таблице `index_meta`. При каждом `prepare_review` сверяется этот SHA с `base_sha` PR: если есть расхождение — автоматически досинхронизирует чанки изменившихся файлов через GitHub compare API (без пересборки всего индекса). Граф кода (Neo4j) обновляется **только** при явном `reviewer index` — не при ревью.
-
-### Капы и флаги
-
-| Переменная | Дефолт | Назначение |
-|---|---|---|
-| `REVIEW_MAX_FILES` | 50 | максимум файлов .py на ревью; лишние — в сводку как пропущенные |
-| `REVIEW_SKIP_DRAFTS` | `true` | не ревьюить draft-PR |
-| `REVIEW_MAX_COMMENTS` | 25 | кап inline-комментариев на ревью |
-
-### Устойчивость к ошибкам
-
-- Транзиентные ошибки LLM (HTTP 429/5xx) ретраятся с экспоненциальным backoff.
-- Ошибка анализа одного файла не прерывает ревью — файл помечается как неудачный и попадает в сводку.
-
-### Ограничение: один репозиторий на инстанс
-
-Индекс не имеет namespace по репозиторию. Один деплой (одна БД Postgres + Neo4j) рассчитан на один репозиторий. Для нескольких репозиториев — отдельные инстансы с разными `PG_DSN` / `NEO4J_URI`.
-
-## Пример ревью «от диффа до комментария»
-
-PR удаляет «лишнюю», на первый взгляд, проверку в `rag/embedder.py`:
-
-```diff
-@@ def _embed(self, texts, input_type):
-         items = sorted(data["data"], key=lambda item: item["index"])
-         vectors = [item["embedding"] for item in items]
--
--        for i, vec in enumerate(vectors):
--            if len(vec) != self._dim:
--                raise RuntimeError(f"Эмбеддинг {i} ... ожидается {self._dim} ...")
-         return vectors
-```
-
-Дифф выглядит безобидно («упростить»). Агент:
-1. строит overlay из новой версии файла, ретривом и графом подтягивает связанный код (`_embed` вызывается из `embed_query`/`embed_documents`, те — из `Retriever.retrieve`, `ingest_file`, `_index_text`) и существующие тесты;
-2. LLM понимает, что удалён fail-fast контракт размерности;
-3. verify подтверждает, политика пропускает (severity=medium ≥ порога, confidence ≥ 0.5).
-
-Итоговый inline-комментарий на PR:
-
-> **[correctness/medium]** Удалена fail-fast проверка размерности эмбеддингов. Ломается тест `test_embed_dimension_mismatch_raises`. Векторы неверной размерности пройдут дальше в `Retriever.retrieve`, `ingest_file`, `_index_text`, где упадут позже с неинформативной ошибкой (или тихо деградируют при смене модели).
->
-> 💡 _Предложение:_ вернуть проверку `len(vec) != self._dim` перед `return vectors`.
-
-Обрати внимание: упоминание **конкретного существующего теста** и **вызывающих** — это результат RAG (поиск по базе) и графа (обход связей), а не только диффа.
-
-> Агент **только комментирует** — он никогда не меняет и не откатывает код сам. Предложения могут приходить как **applyable** GitHub-блоки `suggestion` (кнопка «Apply»), но безопасно: блок ставится только когда модель даёт точную замену конкретного непрерывного диапазона строк диффа (диапазон целиком в RIGHT-части, без пересечений; иначе — текстовый совет). Поведение задаётся `REVIEW_SUGGESTIONS` (`apply`/`text`).
-
-## Конфигурация
-
-Всё ключевое — через `.env` (см. `.env.example` с комментариями). Главное:
-
-| Переменная | Назначение |
-|---|---|
-| `VOYAGE_API_KEY` | ключ Voyage (эмбеддинги + ранжирование) |
-| `GITHUB_TOKEN` | токен GitHub (PAT: *Pull requests: RW* + *Contents: R*) |
-| `EMBEDDING_MODEL` / `EMBEDDING_DIM` | модель Voyage и размерность (= колонке `vector(N)`; смена ⇒ реиндекс) |
-| `RERANK_MODEL` | модель реранкера Voyage |
-| `REVIEW_SEVERITY_THRESHOLD` | мин. важность: `low/medium/high/critical` |
-| `REVIEW_MIN_CONFIDENCE` | отбрасывать findings ниже уверенности (0..1) |
-| `REVIEW_MAX_COMMENTS` | кап inline-комментариев |
-| `REVIEW_CATEGORIES` | CSV вайтлист категорий (пусто = все) |
-| `REVIEW_SUGGESTIONS` | `apply` = applyable `suggestion`-блоки (кнопка «Apply»), `text` = только текстовые советы |
-| `REVIEW_MAX_FILES` | кап файлов PR; лишние — в сводку как пропущенные |
-| `REVIEW_OUTPUT_LANGUAGE` | язык текста находок в публикуемом ревью (дефолт `ru`) |
-| `REVIEW_SKIP_DRAFTS` | `true` = не ревьюить draft-PR |
-| `REVIEW_HISTORY` | `true` = сохранять историю прогонов в Postgres |
-| `PG_DSN`, `NEO4J_URI/USER/PASSWORD`, `GITHUB_TOKEN` | подключения и доступ |
-
-Эфемерный overlay `pr:N` удаляется из Postgres автоматически по окончании `publish_review`.
-
-**Политика per-repo.** Файл `.review.yml` в **целевой ветке** репозитория переопределяет env-дефолты (PR не может ослабить собственное ревью):
+A `.review.yml` file in the **target (base) branch** overrides the env defaults (a PR cannot weaken
+its own review — see *Caveats*):
 
 ```yaml
 categories: { correctness: true, security: true, performance: true, style: false, requirements: true }
@@ -327,77 +192,82 @@ min_confidence: 0.5
 paths: { ignore: ["**/migrations/**", "vendor/**"] }
 max_comments: 25
 
-# Контекст задачи (опц.): читать задачу с доски и проверять соответствие требованиям.
-# Доску (MCP) подключает пользователь на стороне сессии Claude Code; плагин её не бандлит.
+# Optional task context: read the task from a board and check requirement compliance.
+# The board (MCP) is connected by the user on the Claude Code side; the plugin does not bundle it.
 task_board:
-  type: yougile          # yougile | jira — выбирает плейбук скилла
-  mcp: yougile           # имя подключённого MCP-сервера доски (тулы зовутся mcp__<mcp>__*)
-  key_pattern: "[A-Z]+-\\d+"   # опц.; дефолт такой же (подходит Yougile PRI-34/ID-34 и Jira PROJ-123)
-  # url_template: "https://ru.yougile.com/team/<teamId>/#{code}"  # опц.; ссылка на задачу в сводке
-  #   Yougile: {code} → код проекта PRI-N (он в URL-фрагменте «#PRI-4»); {key} = канонический ID-N, в URL не идёт
+  type: yougile          # yougile | jira — selects the skill playbook
+  mcp: yougile           # name of the connected board MCP server (tools are mcp__<mcp>__*)
+  key_pattern: "[A-Z]+-\\d+"   # optional; matches Yougile PRI-34/ID-34 and Jira PROJ-123
 ```
 
-**Контекст задачи (фаза 2).** Если задан `task_board` и в PR (title/body/ветка) найден ключ
-по `key_pattern`, скилл читает задачу с доски через её MCP и запускает проверку соответствия —
-новая категория находок `requirements` (включена по умолчанию). Находки без конкретной строки
-диффа уходят в сводку. Доска не настроена, ключ не найден или MCP недоступен → ревью работает
-как обычно, без деградации.
+## Known limitations & caveats
 
-**Граф и RAG по задачам (фаза 3).** Прочитанная задача индексируется в граф (Neo4j: узлы
-`:Task`/`:PR`, рёбра `TASK_LINK`/`IMPLEMENTED_BY`/`TOUCHES`) и в векторный индекс (Postgres,
-таблица `tasks`) тулом `index_task`. При ревью агент видит связанные задачи и их PR/код через
-`get_task_context`, а похожие по смыслу — через `search_tasks`; при публикации PR
-автоматически линкуется к задаче. Скилл `/sync-tasks` прогревает корпус задач с доски (идемпотентно,
-с backoff под Voyage). Канонический ключ узла — сквозной код доски (Yougile `ID-N` / Jira key),
-прочие коды (Yougile `PRI-N`) хранятся как `aliases`, поэтому PR по любому коду резолвится в один
-узел. Neo4j/доска недоступны → контекст пуст с предупреждением, ревью продолжается.
+A factual list of what this does and does not do today.
 
-**Скилл `/solve-task` (фаза 4).** `/solve-task <ключ | свободный текст>` собирает контекст под
-задачу — читает задачу с доски (если есть ключ и подключена доска), тянет связанные и похожие
-задачи с их PR и кодом (`get_task_context`/`search_tasks`), ищет релевантный код по формулировке
-(`search_codebase` — session-less гибрид-поиск по base-индексу: BM25+ANN → graph-expansion →
-rerank), сводит **только релевантное** в структурированный бриф и передаёт его в штатный цикл
-разработки (`brainstorming` → план → реализация). Скилл дисциплинирует сбор контекста, не заменяя
-разработку; fail-open — без доски/графа работает по формулировке и коду.
+- **No automatic trigger.** A review is not started on PR open/update. It is a manual skill
+  invocation inside Claude Code — there is no GitHub App / webhook / CI integration out of the box.
+- **No graph auto-reindex.** Vector chunks self-heal lazily: on `prepare_review` the base index's
+  recorded SHA is compared to the PR's `base_sha`, and chunks of changed files are re-synced via the
+  GitHub compare API. The **code graph (Neo4j) does not** — it drifts until you run `reviewer index`
+  manually. (Each `reviewer index` does a full graph rebuild — clear + upsert — so backends never mix.)
+- **Single-repo, not multi-tenant.** The index has no per-repository namespace; one deployment
+  (one Postgres + one Neo4j) serves one repository. Multiple repos require separate deployments with
+  distinct `PG_DSN` / `NEO4J_URI`.
+- **Language scope: Python only.** The chunker (tree-sitter) and the SCIP backend (`scip-python`)
+  are Python-specific. Other languages would go behind the same chunker/`GraphIndexer` interfaces.
+- **VCS scope: GitHub only.** Only GitHub implements `VCSProvider`; GitLab/Bitbucket are not
+  implemented (the abstraction exists, the providers do not).
+- **Graph backend trade-off.** A precise, type-aware graph (`CALLS` + `IMPLEMENTS` edges) requires
+  `scip-python` in `PATH`. Without it, the tree-sitter fallback gives `CALLS`-by-name only (no
+  `IMPLEMENTS`). Mode is chosen via `GRAPH_BACKEND=auto|scip|treesitter`; in `auto`, a SCIP failure
+  silently falls back to tree-sitter with a warning, while `scip` propagates the error.
+- **Review surface.** Inline comments are only possible on diff lines (the changed/context lines of a
+  hunk); everything else goes into the summary. An applyable `suggestion` block is emitted only under
+  safe invariants (`apply` mode, an exact replacement, the whole range inside the RIGHT side of the
+  diff, no overlap with other fixes); otherwise the advice is plain text.
+- **MCP session is in-process.** State between `prepare_review` and `publish_review` lives in the
+  running `reviewer-mcp` process (`_Session` in `MCPReviewService`). Both calls for one PR must hit
+  the **same** running server — a restart in between loses the session.
+- **Voyage free tier** = 3 RPM / 10K TPM; TPM is the main blocker — a full `reviewer index` of a
+  large repo throttles (there is retry/backoff with jitter). A single PR review (overlay + query
+  embeddings) fits within the limit.
+- **LLM cost.** A review fans out Claude subagents per file — that is real token cost, not free.
+- **Observability web admin auth is optional.** Basic auth is enabled only if `WEB_ADMIN_USER` /
+  `WEB_ADMIN_PASSWORD` are set; by default it is not hardened for public exposure (it binds to
+  loopback in `docker-compose.yml`).
+- **GitHub API caps.** The PR file list is paginated by 100; the compare API used to re-sync the base
+  index returns at most 300 files — very large diffs are truncated.
+- **`.review.yml` comes from the base branch** (by design — a PR cannot weaken its own review), not
+  from the PR head.
 
-## Структура проекта
+## Tests
+
+```bash
+.venv/bin/pytest -q                 # unit: fast, on fakes; never hit external APIs
+.venv/bin/pytest -m integration     # integration: needs running Postgres/Neo4j + a Voyage key
+```
+
+`pytest` excludes integration tests by default (`addopts = -m 'not integration'`). External services
+(GitHub, Voyage, Postgres, Neo4j) are isolated behind interfaces and mocked in unit tests; real calls
+happen only in integration/E2E.
+
+## Project layout
 
 ```
 reviewer/
-  config/      Settings (pydantic-settings): env → пороги ревью, хранилища
-  vcs/         VCSProvider + github.py (httpx) · diff.py (строки, доступные для inline)
+  config/      Settings (pydantic-settings): env → review thresholds, stores
+  vcs/         VCSProvider + github.py (httpx) · diff.py (lines available for inline)
   index/       chunker(tree-sitter) · embeddings(Voyage) · reranker · store(pgvector+pg_search/RRF) · freshness
-  graph/       builder(tree-sitter call-graph) · scip(точный парсер SCIP) · backend(оркестратор бэкенда) · store(Neo4j)
-  retrieval/   Retriever: гибрид + graph-expansion + rerank → ContextPack
-  llm/         _retry.py (retry/backoff для Voyage)
-  tools/       инструменты агента (search_code, get_related_symbols, read_file, get_definition, …)
+  graph/       builder(tree-sitter call-graph) · scip(SCIP parser) · backend(backend orchestrator) · store(Neo4j)
+  retrieval/   Retriever: hybrid + graph expansion + rerank → ContextPack
+  tools/       agent tools (search_code, get_related_symbols, read_file, get_definition, …)
   agent/       state (ReviewUnit) · assemble · dedup
-  mcp/         MCPReviewService: prepare/tool-вызовы/publish; MCP-сервер (server.py)
+  mcp/         MCPReviewService: prepare / tool calls / publish; session management
   services/    ReviewService.prepare: ingest PR, overlay, units
-  policy/      ReviewPolicy: env-дефолты + .review.yml + гейтинг
-  entrypoints/ cli.py (index / search / check / serve)
-  web/         FastAPI + React/Vite SPA — веб-админка наблюдаемости
-  app.py       сборка зависимостей из Settings
-plugin/        Claude Code-плагин (скилл /rag-reviewer:review-pr)
-docker-compose.yml   ParadeDB (pgvector+pg_search) + Neo4j + web-админка
+  policy/      ReviewPolicy: env defaults + .review.yml + gating
+  entrypoints/ cli.py (index / search / check / serve) · mcp_server.py (FastMCP)
+  web/         FastAPI + React/Vite SPA — observability web admin
+  app.py       dependency assembly from Settings
+plugin/        Claude Code plugin (skills /rag-reviewer:review-pr, solve-task, sync-tasks)
+docker-compose.yml   ParadeDB (pgvector+pg_search) + Neo4j + web admin
 ```
-
-## Тесты
-
-```bash
-.venv/bin/pytest -q                 # unit (быстрые, на фейках; внешние API не дёргают)
-.venv/bin/pytest -m integration     # integration: нужны поднятые Postgres/Neo4j + ключ Voyage
-```
-
-Внешние сервисы изолированы за интерфейсами и мокаются в unit-тестах; реальные вызовы — только в integration/E2E.
-
-## Ограничения и заметки
-
-- **v1 — только Python** (чанкер и граф). Другие языки — за тем же интерфейсом `GraphIndexer`/чанкера.
-- **Граф кода — два бэкенда** (настройка `GRAPH_BACKEND=auto|scip|treesitter`):
-  - **SCIP** (`@sourcegraph/scip-python`, npm): точный type-aware граф с рёбрами `CALLS` + `IMPLEMENTS`; требует `scip-python` в PATH; индексирует через временный git worktree.
-  - **tree-sitter** (fallback): быстрый, без внешних зависимостей, только `CALLS` по имени.
-  - Режим `auto` (по умолчанию): SCIP если найден, иначе tree-sitter; при ошибке SCIP — автооткат на tree-sitter с предупреждением.
-- **Voyage free tier** = 3 RPM / 10K TPM: полная индексация большого репо требует привязанной карты (бесплатные 200M токенов сохраняются) либо медленной инкрементальной индексации; в коде есть retry/backoff.
-- **VCS** — пока GitHub; GitLab/др. добавляются реализацией `VCSProvider`.
-- **Запуск** — пока CLI; webhook-сервис добавляется как точка входа (ядро уже библиотека).
