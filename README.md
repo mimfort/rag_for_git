@@ -101,19 +101,19 @@ For a deeper, code-verified walkthrough of every module and the data flow, see
 ## Installation
 
 The MCP server is published on PyPI as [`rag-reviewer`](https://pypi.org/project/rag-reviewer/)
-and launched via `uvx` — no clone of this repo required to use the plugin.
+and runs via `uvx` — **no clone of this repo required**.
 
-Requirements: Python 3.11–3.13, Docker, `uv` (`pip install uv`), a Voyage API key, a GitHub token.
+Requirements: Docker, `uv` (`pip install uv`), a Voyage API key, a GitHub token.
 
-### 1. Infrastructure
+### 1. Infrastructure (one-time)
 
-The reviewer needs Postgres/ParadeDB and Neo4j. The quickest way:
+The reviewer needs Postgres/ParadeDB and Neo4j. Grab the compose file and start the stack:
 
 ```bash
-# Clone only to get docker-compose.yml and .env.example, then run the stack:
-git clone https://github.com/mimfort/rag_for_git && cd rag_for_git
-docker compose up -d          # Postgres/ParadeDB (:5433) + Neo4j (:7687) + web admin (:8000)
+curl -O https://raw.githubusercontent.com/mimfort/rag_for_git/main/docker-compose.yml
+curl -O https://raw.githubusercontent.com/mimfort/rag_for_git/main/.env.example
 cp .env.example .env          # fill in VOYAGE_API_KEY and GITHUB_TOKEN
+docker compose up -d          # Postgres/ParadeDB (:5433) + Neo4j (:7687) + web admin (:8000)
 uvx --from rag-reviewer reviewer check   # ✓/✗ for keys, Postgres, Neo4j, GitHub
 ```
 
@@ -122,17 +122,17 @@ uvx --from rag-reviewer reviewer check   # ✓/✗ for keys, Postgres, Neo4j, Gi
 - **GitHub** (`GITHUB_TOKEN`): a PAT with *Pull requests: Read and write* + *Contents: Read*
   (fine-grained) or the `repo` scope (classic). Quick option: `gh auth token`.
 
-All other settings have defaults in `reviewer/config/settings.py` (documented in `.env.example`).
-`DEFAULT_REPO` (optional) sets the default `owner/name` for single-repo deployments.
+All other settings have defaults (documented in `.env.example`). `DEFAULT_REPO` (optional) sets
+the default `owner/name` for single-repo deployments.
 
 ### 2. Install the plugin
 
-The MCP server starts via `uvx --from rag-reviewer reviewer-mcp` — no local clone of this repo
-needed. Keep the Docker stack (step 1) and the `.env` keys accessible.
+The MCP server starts automatically via `uvx --from rag-reviewer reviewer-mcp`.
+Works from **any** project opened in your AI coding assistant.
 
 #### Claude Code (recommended)
 
-Install from GitHub — works from **any** project, not just this repo:
+Two commands, from any project:
 
 ```text
 /plugin marketplace add mimfort/rag_for_git
@@ -150,22 +150,22 @@ You get:
 
 > Run `/plugin` to confirm `rag-reviewer` is installed and enabled.
 
+#### Cursor
+
+`.cursor/mcp.json` at the repo root is pre-configured with `uvx`. Open any folder as a workspace
+and the reviewer MCP server starts automatically.
+
 #### Codex CLI
 
-`.codex-plugin/plugin.json` is pre-configured. Codex picks it up automatically from the repo root.
+`.codex-plugin/plugin.json` is pre-configured. Codex picks it up from the repo root automatically.
 
 #### Copilot CLI
 
 `.github-copilot/plugin.json` is pre-configured. Copilot CLI picks it up from the repo root.
 
-#### Cursor
-
-`.cursor/mcp.json` is pre-configured with `uvx`. Open the repo as a workspace — the reviewer MCP
-server starts automatically.
-
 #### Gemini CLI
 
-See `GEMINI.md` — configure `uvx --from rag-reviewer reviewer-mcp` in your `settings.json`.
+See `GEMINI.md` — add `uvx --from rag-reviewer reviewer-mcp` to your `settings.json`.
 
 ---
 
@@ -174,29 +174,28 @@ That's it. Build the base index (recommended — see [CLI](#cli)) and review a P
 
 ## CLI
 
-After `pip install -e .` the `reviewer` (CLI) and `reviewer-mcp` (MCP server for the plugin)
-commands are available.
+All CLI commands are available via `uvx --from rag-reviewer <command>`, or after
+`pip install rag-reviewer` / `pip install -e ".[dev]"` (for contributors) simply as `reviewer`.
 
 ```bash
 # Check environment readiness: keys, Postgres, Neo4j, GitHub. Prints ✓/✗ per item;
 # exits 1 on any problem. Spends no Voyage quota.
-reviewer check
+uvx --from rag-reviewer reviewer check
 
 # Build/update the base index of the target branch from a local clone (vectors + graph).
 # Done once, then updated incrementally; gives RAG and the graph whole-repo context.
 # --repo may be omitted if the local clone's origin remote is GitHub (owner/name derived automatically)
 # or DEFAULT_REPO is set in .env.
-reviewer index /path/to/repo --ref main --repo owner/name
+uvx --from rag-reviewer reviewer index /path/to/repo --ref main --repo owner/name
 
 # Diagnostic hybrid search over the base index (verify the index works).
-# Uses DEFAULT_REPO from .env, or pass --repo owner/name explicitly.
-reviewer search "token verification"
+uvx --from rag-reviewer reviewer search "token verification"
 
 # Observability web admin (run history, findings) on the host.
-reviewer serve                # http://127.0.0.1:8000  (options: --host / --port)
+uvx --from rag-reviewer reviewer serve   # http://127.0.0.1:8000  (options: --host / --port)
 
-# MCP server used by the Claude Code plugin (stdio transport).
-reviewer-mcp
+# MCP server (stdio transport) — started automatically by the plugin.
+uvx --from rag-reviewer reviewer-mcp
 ```
 
 Reviewing works even without a prior `index` — context is then limited to the diff and the overlay
