@@ -44,7 +44,7 @@ PR↔задача↔код сшиваются **автоматически на 
 | Вход `index_task` | Нормализованный `TaskBrief` (нормализует **скилл** по плейбуку; Python на доску не ходит — как в фазе 2). |
 | Хранение эмбеддингов задач | Отдельная таблица `tasks` (не code-`chunks`): у задач нет path/symbol/lines/overlay-freshness. Тот же RRF BM25+HNSW. |
 | Рёбра задача↔задача | Только из явных board-links (`TaskBrief.links[]`). Yougile: `parent`/`subtask` из `subtasks[]`. Семантика — query-time, не ребро. |
-| Эмбеддер задач | Существующий Voyage (`voyage-code-3`, dim 1024) + `rerank-2.5`. Новой модели не вводим. |
+| Эмбеддер задач | Существующий Voyage (`voyage-code-3`, dim 1024). `search_tasks` — чистый RRF без реранка (бережём Voyage TPM; реранк ~5 задач не стоит вызова). Новой модели не вводим. |
 | `:Task.url` | Заполняется из `task_board.url_template` (web-facing код — Yougile project code `PRI-N`). Дефолт `null`. |
 | Деградация | fail-open, как фазы 1/2: Neo4j/доска недоступны → пустой результат + warning, прогон не падает. |
 
@@ -163,8 +163,8 @@ CREATE INDEX tasks_hnsw ON tasks
     `:PR` + `IMPLEMENTED_BY` + `TOUCHES`.
   - `task_context(key) -> dict` — обход: резолв узла по `codes` → сама задача и её
     `IMPLEMENTED_BY` PR + `TASK_LINK`-соседи и их PR → `TOUCHES` код-узлы.
-- **`tasks/service.py` — `TaskService`** (оркестрация поверх store + graph + embedder +
-  reranker): методы `index_task`, `search_tasks`, `get_task_context`, `link_review`.
+- **`tasks/service.py` — `TaskService`** (оркестрация поверх store + graph + embedder):
+  методы `index_task`, `search_tasks`, `get_task_context`, `link_review`.
   MCP-слой делегирует сюда.
 
 **Проводка.** `Components` (`reviewer/app.py`) получает `task_store`, `task_graph`,
