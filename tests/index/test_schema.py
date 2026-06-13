@@ -37,9 +37,9 @@ def test_index_meta_get_none_before_set():
     store = ChunkStore(s.pg_dsn)
     store.init_schema()
     with psycopg.connect(s.pg_dsn) as conn:
-        conn.execute("DELETE FROM index_meta WHERE ref = 'test-ref-unit'")
+        conn.execute("DELETE FROM index_meta WHERE repo = 't/x' AND ref = 'test-ref-unit'")
         conn.commit()
-    assert store.get_index_meta("test-ref-unit") is None
+    assert store.get_index_meta("t/x", "test-ref-unit") is None
 
 
 @pytest.mark.integration
@@ -49,10 +49,10 @@ def test_index_meta_set_then_get():
     store = ChunkStore(s.pg_dsn)
     store.init_schema()
     with psycopg.connect(s.pg_dsn) as conn:
-        conn.execute("DELETE FROM index_meta WHERE ref = 'test-ref-unit'")
+        conn.execute("DELETE FROM index_meta WHERE repo = 't/x' AND ref = 'test-ref-unit'")
         conn.commit()
-    store.set_index_meta("test-ref-unit", "abc123")
-    assert store.get_index_meta("test-ref-unit") == "abc123"
+    store.set_index_meta("t/x", "test-ref-unit", "abc123")
+    assert store.get_index_meta("t/x", "test-ref-unit") == "abc123"
 
 
 @pytest.mark.integration
@@ -62,8 +62,8 @@ def test_index_meta_upsert_updates_sha():
     store = ChunkStore(s.pg_dsn)
     store.init_schema()
     with psycopg.connect(s.pg_dsn) as conn:
-        conn.execute("DELETE FROM index_meta WHERE ref = 'test-ref-unit'")
+        conn.execute("DELETE FROM index_meta WHERE repo = 't/x' AND ref = 'test-ref-unit'")
         conn.commit()
-    store.set_index_meta("test-ref-unit", "first-sha")
-    store.set_index_meta("test-ref-unit", "second-sha")
-    assert store.get_index_meta("test-ref-unit") == "second-sha"
+    store.set_index_meta("t/x", "test-ref-unit", "first-sha")
+    store.set_index_meta("t/x", "test-ref-unit", "second-sha")
+    assert store.get_index_meta("t/x", "test-ref-unit") == "second-sha"

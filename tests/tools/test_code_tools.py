@@ -1,44 +1,47 @@
 from reviewer.tools.code_tools import make_tools, ToolContext
 
 class FakeRetriever:
-    def retrieve(self, **kw):
+    def retrieve(self, repo, **kw):
         from reviewer.retrieval.retriever import ContextPack
         from reviewer.index.store import Retrieved
         return ContextPack([Retrieved("a.py#f","a.py","f","function",1,2,"def f(): ...",1.0)])
 class FakeGraph:
-    def expand(self, ids, hops=2): return {"b.py#g"}
+    def expand(self, repo, ids, hops=2): return {"b.py#g"}
 
 def test_search_code_tool_returns_context_text():
     ctx = ToolContext(retriever=FakeRetriever(), graph=FakeGraph(),
-                      overlay_ref="pr:1", changed_paths=["a.py"], changed_node_ids=[])
+                      overlay_ref="pr:1", changed_paths=["a.py"], changed_node_ids=[],
+                      repo="a/x")
     tools = {t.name: t for t in make_tools(ctx)}
     out = tools["search_code"].invoke({"query": "where is f"})
     assert "a.py#f" in out
 
 def test_get_callers_tool_uses_graph():
     ctx = ToolContext(retriever=FakeRetriever(), graph=FakeGraph(),
-                      overlay_ref="pr:1", changed_paths=[], changed_node_ids=[])
+                      overlay_ref="pr:1", changed_paths=[], changed_node_ids=[],
+                      repo="a/x")
     tools = {t.name: t for t in make_tools(ctx)}
     out = tools["get_related_symbols"].invoke({"node_id": "a.py#f"})
     assert "b.py#g" in out
 
 
 class FakeGraphRich:
-    def expand(self, ids, hops=2): return {"b.py#g"}
-    def callers(self, ids): return {"x.py#caller"}
-    def find_symbol(self, name): return ["a.py#f"]
+    def expand(self, repo, ids, hops=2): return {"b.py#g"}
+    def callers(self, repo, ids): return {"x.py#caller"}
+    def find_symbol(self, repo, name): return ["a.py#f"]
 
 class FakeStore:
-    def fetch_nodes(self, ids, overlay_ref, changed_paths):
+    def fetch_nodes(self, repo, ids, overlay_ref, changed_paths):
         from reviewer.index.store import Retrieved
         return [Retrieved("a.py#f", "a.py", "f", "function", 1, 2, "def f():\n    return 1", 0.0)]
 
 
 def _rich_ctx(**over):
     base = dict(retriever=FakeRetriever(), graph=FakeGraphRich(),
-                overlay_ref="pr:1", changed_paths=["a.py"], changed_node_ids=[],
-                read_file_fn=lambda p: "l1\nl2\nl3" if p == "a.py" else None,
-                patches={"a.py": "@@ -1 +1 @@\n-x\n+y"}, store=FakeStore())
+               overlay_ref="pr:1", changed_paths=["a.py"], changed_node_ids=[],
+               repo="a/x",
+               read_file_fn=lambda p: "l1\nl2\nl3" if p == "a.py" else None,
+               patches={"a.py": "@@ -1 +1 @@\n-x\n+y"}, store=FakeStore())
     base.update(over)
     return ToolContext(**base)
 
@@ -100,7 +103,7 @@ class CountingRetriever:
     """Считает вызовы retrieve — для проверки, что кэш экономит обращения к источнику."""
     def __init__(self):
         self.calls = 0
-    def retrieve(self, **kw):
+    def retrieve(self, repo, **kw):
         from reviewer.retrieval.retriever import ContextPack
         from reviewer.index.store import Retrieved
         self.calls += 1
@@ -111,7 +114,8 @@ def test_within_unit_duplicate_returns_stub():
     """Повтор того же (tool, args) в пределах юнита -> заглушка, источник дёрнут один раз."""
     ret = CountingRetriever()
     ctx = ToolContext(retriever=ret, graph=FakeGraph(),
-                      overlay_ref="pr:1", changed_paths=["a.py"], changed_node_ids=[])
+                      overlay_ref="pr:1", changed_paths=["a.py"], changed_node_ids=[],
+                      repo="a/x")
     tools = {t.name: t for t in make_tools(ctx)}
     out1 = tools["search_code"].invoke({"query": "q"})
     out2 = tools["search_code"].invoke({"query": "q"})
@@ -126,9 +130,9 @@ def test_run_cache_shared_across_units_same_node_ids():
     ret = CountingRetriever()
     cache: dict = {}
     ctx1 = ToolContext(retriever=ret, graph=FakeGraph(), overlay_ref="pr:1",
-                       changed_paths=["a.py"], changed_node_ids=[], cache=cache)
+                       changed_paths=["a.py"], changed_node_ids=[], cache=cache, repo="a/x")
     ctx2 = ToolContext(retriever=ret, graph=FakeGraph(), overlay_ref="pr:1",
-                       changed_paths=["a.py"], changed_node_ids=[], cache=cache)
+                       changed_paths=["a.py"], changed_node_ids=[], cache=cache, repo="a/x")
     t1 = {t.name: t for t in make_tools(ctx1)}
     t2 = {t.name: t for t in make_tools(ctx2)}
     t1["search_code"].invoke({"query": "q"})
@@ -142,9 +146,11 @@ def test_run_cache_respects_changed_node_ids():
     ret = CountingRetriever()
     cache: dict = {}
     ctx1 = ToolContext(retriever=ret, graph=FakeGraph(), overlay_ref="pr:1",
-                       changed_paths=["a.py"], changed_node_ids=["a.py#f"], cache=cache)
+                       changed_paths=["a.py"], changed_node_ids=["a.py#f"], cache=cache,
+                       repo="a/x")
     ctx2 = ToolContext(retriever=ret, graph=FakeGraph(), overlay_ref="pr:1",
-                       changed_paths=["a.py"], changed_node_ids=["b.py#g"], cache=cache)
+                       changed_paths=["a.py"], changed_node_ids=["b.py#g"], cache=cache,
+                       repo="a/x")
     t1 = {t.name: t for t in make_tools(ctx1)}
     t2 = {t.name: t for t in make_tools(ctx2)}
     t1["search_code"].invoke({"query": "q"})
@@ -160,8 +166,38 @@ def test_cache_normalizes_read_file_defaults():
         return "l1\nl2\nl3"
     ctx = ToolContext(retriever=FakeRetriever(), graph=FakeGraph(), overlay_ref="pr:1",
                       changed_paths=["a.py"], changed_node_ids=[],
-                      read_file_fn=rf, cache={})
+                      read_file_fn=rf, cache={}, repo="a/x")
     tools = {t.name: t for t in make_tools(ctx)}
     tools["read_file"].invoke({"path": "a.py"})
     tools["read_file"].invoke({"path": "a.py", "start": 1, "end": 400})
     assert calls["n"] == 1
+
+
+def test_tools_thread_repo_to_graph_and_retriever():
+    calls = {}
+    class G:
+        def expand(self, repo, ids, hops=2):
+            calls["expand_repo"] = repo
+            return set()
+        def callers(self, repo, ids):
+            calls["callers_repo"] = repo
+            return set()
+        def find_symbol(self, repo, name):
+            calls["find_repo"] = repo
+            return []
+    class R:
+        def retrieve(self, repo, query, changed_node_ids, overlay_ref, changed_paths, top_k=8):
+            calls["retrieve_repo"] = repo
+            class P:
+                def as_context(self): return "x"
+            return P()
+    ctx = ToolContext(retriever=R(), graph=G(), overlay_ref="pr:1", changed_paths=[],
+                      changed_node_ids=[], repo="a/x", cache={})
+    tools = {t.name: t for t in make_tools(ctx)}
+    tools["search_code"].invoke({"query": "q"})
+    tools["get_related_symbols"].invoke({"node_id": "m.py#foo"})
+    tools["find_callers"].invoke({"node_id": "m.py#foo"})
+    tools["get_definition"].invoke({"symbol": "foo"})
+    assert calls["retrieve_repo"] == "a/x"
+    assert calls["expand_repo"] == "a/x"
+    assert calls["callers_repo"] == "a/x"

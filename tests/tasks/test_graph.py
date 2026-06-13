@@ -1,4 +1,20 @@
+import pytest
+from reviewer.config.settings import Settings
+from reviewer.graph.store import GraphStore
 from reviewer.tasks.graph import PRRef, TaskGraph
+
+
+@pytest.fixture
+def graph_store():
+    s = Settings()
+    g = GraphStore(s.neo4j_uri, s.neo4j_user, s.neo4j_password)
+    yield g
+    g.close()
+
+
+@pytest.fixture
+def task_graph(graph_store):
+    return TaskGraph(graph_store.driver)
 
 
 class _FakeDriver:
@@ -78,3 +94,14 @@ def test_task_context_dedups_linked_by_key_and_type():
     ctx = TaskGraph(_FakeDriver([rec])).task_context("ID-1")
     assert [(n["key"], n["type"]) for n in ctx["linked"]] == [
         ("ID-2", "subtask"), ("ID-2", "relates")]
+
+
+@pytest.mark.integration
+def test_link_pr_scopes_touched_symbol_by_repo(task_graph, graph_store):
+    """TOUCHES создаёт :Symbol с repo=pr.repo — изоляция по репозиторию работает."""
+    graph_store.init_schema()
+    graph_store.clear()
+    pr = PRRef(repo="a/x", number=1, url="u", sha="s")
+    task_graph.link_pr("ID-1", pr, ["m.py#foo"])
+    assert graph_store.find_symbol("a/x", "foo") == ["m.py#foo"]
+    assert graph_store.find_symbol("b/y", "foo") == []

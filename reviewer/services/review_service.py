@@ -53,6 +53,7 @@ def _select_changed_files(
 class PreparedReview:
     """Подготовленный контекст ревью PR: всё, что нужно analyze-этапу и публикации."""
 
+    repo: str                              # канонический идентификатор "owner/name"
     prq: PullRequest
     units: list[ReviewUnit]
     policy: ReviewPolicy
@@ -108,7 +109,7 @@ class ReviewService:
     def prepare(
         self,
         owner: str,
-        repo: str,
+        name: str,
         pr_number: int,
         vcs_provider: VCSProvider | None = None,
     ) -> PreparedReview:
@@ -121,11 +122,14 @@ class ReviewService:
             vcs_provider: опциональный кастомный VCS-провайдер (например,
                 для прогона на локальных снапшотах в eval).
         """
+        from reviewer.services.repo_id import normalize_repo
+        repo = normalize_repo(f"{owner}/{name}")
+
         # Self-healing: удаляем возможный «висящий» overlay прошлого прогона,
         # чтобы build_overlay строил чистый эфемерный ref.
-        self.components.store.delete_ref(f"pr:{pr_number}")
+        self.components.store.delete_ref(repo, f"pr:{pr_number}")
 
-        vcs = vcs_provider or self._create_vcs_provider(owner, repo)
+        vcs = vcs_provider or self._create_vcs_provider(owner, name)
 
         try:
             prq = vcs.get_pull_request(pr_number)
@@ -134,7 +138,7 @@ class ReviewService:
 
             # Свежесть base-индекса: подтягиваем чанки файлов, изменённых после
             # последней индексации (граф кода обновляется только на reviewer index).
-            indexed = self.components.store.get_index_meta("base")
+            indexed = self.components.store.get_index_meta(repo, "base")
             # base-sync только для реального GitHub-ревью: при внешнем vcs_provider
             # (eval-снапшоты) синхронизация и set_index_meta затёрли бы прод-индекс
             # данными снапшота (у снапшота base_sha="base", не настоящий SHA ветки).
@@ -144,13 +148,37 @@ class ReviewService:
                     update_base(
                         self.components.store,
                         self.components.embedder,
-                        "",
+                        repo,
                         prq.base_ref,
                         [f.path for f in diff_files if f.status != "removed"],
                         read=lambda p: vcs.get_file_at_ref(p, prq.base_sha),
                         removed_files=[f.path for f in diff_files if f.status == "removed"],
                     )
-                    self.components.store.set_index_meta("base", prq.base_sha)
+                    self.components.store.set_index_meta(repo, "base", prq.base_sha)
+                    # F2: инкрементальный repo-aware патч графа (fail-soft).
+                    if self.components.graph is not None:
+                        try:
+                            from reviewer.services.graph_sync import patch_graph_incremental
+                            changed_py: dict[str, str] = {}
+                            for f in diff_files:
+                                if f.status == "removed" or not f.path.endswith(".py"):
+                                    continue
+                                src = vcs.get_file_at_ref(f.path, prq.base_sha)
+                                if src:
+                                    changed_py[f.path] = src
+                            removed_py = [
+                                f.path for f in diff_files
+                                if f.status == "removed" and f.path.endswith(".py")
+                            ]
+                            patch_graph_incremental(
+                                self.components.graph, repo,
+                                changed_sources=changed_py, removed_paths=removed_py)
+                            log.info("Граф досинхронизирован инкрементально: "
+                                     "%d изм., %d уд.", len(changed_py), len(removed_py))
+                        except Exception:
+                            log.warning("Инкрементальный патч графа не удался "
+                                        "(дрейф графа сохранится до reviewer index)",
+                                        exc_info=True)
                     log.info(
                         "Base-индекс синхронизирован: %d файлов (%s..%s)",
                         len(diff_files), indexed[:7], prq.base_sha[:7],
@@ -180,6 +208,7 @@ class ReviewService:
             build_overlay(
                 self.components.store,
                 self.components.embedder,
+                repo,
                 pr_number,
                 changed,
                 head_sources=head_sources,
@@ -230,6 +259,7 @@ class ReviewService:
             changed_status = {f.path: f.status for f in files}
 
             return PreparedReview(
+                repo=repo,
                 prq=prq,
                 units=units,
                 policy=policy,
@@ -248,7 +278,7 @@ class ReviewService:
             # При сбое подготовки чистим возможный недостроенный overlay pr:N —
             # у MCP-сервера не будет finally-страховки; повторное удаление идемпотентно.
             try:
-                self.components.store.delete_ref(f"pr:{pr_number}")
+                self.components.store.delete_ref(repo, f"pr:{pr_number}")
             except Exception:
                 log.warning(
                     "Не удалось очистить overlay pr:%s после сбоя prepare",

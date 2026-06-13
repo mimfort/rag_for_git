@@ -3,8 +3,8 @@ import pytest
 from reviewer.config.settings import Settings
 from reviewer.index.store import ChunkStore, ChunkRow
 
-def _row(ref, path, fqn, text, vec):
-    return ChunkRow(ref=ref, content_hash=fqn+ref, path=path, lang="python",
+def _row(ref, path, fqn, text, vec, repo="a/x"):
+    return ChunkRow(repo=repo, ref=ref, content_hash=fqn+ref+repo, path=path, lang="python",
                     symbol_fqn=fqn, kind="function", start_line=1, end_line=2,
                     text=text, embedding=vec)
 
@@ -21,7 +21,7 @@ def test_overlay_shadows_base_for_changed_paths():
         _row("pr:1", "a.py", "f_a", "def f_a(): return NEW_parse_token()", base_vec),
     ])
     res = store.hybrid_search(
-        query_text="parse token", query_embedding=base_vec,
+        "a/x", query_text="parse token", query_embedding=base_vec,
         overlay_ref="pr:1", changed_paths=["a.py"], top_k=5, candidates=20,
     )
     paths_texts = {(r.path, r.text) for r in res}
@@ -42,7 +42,7 @@ def test_delete_ref_removes_only_target_ref():
         _row("pr:42", "x.py", "f_x", "def f_x(): return 1", vec),
         _row("pr:42", "y.py", "f_y", "def f_y(): pass", vec),
     ])
-    store.delete_ref("pr:42")
+    store.delete_ref("a/x", "pr:42")
     with psycopg.connect(s.pg_dsn) as conn:
         remaining = conn.execute(
             "SELECT ref, path FROM chunks ORDER BY ref, path"
@@ -66,7 +66,7 @@ def test_delete_missing_symbols_removes_stale_only():
         _row("base", "other.py", "delta", "def delta(): pass", vec),
     ])
     # Оставляем только alpha и beta; gamma должна исчезнуть
-    store.delete_missing_symbols("base", "mod.py", ["alpha", "beta"])
+    store.delete_missing_symbols("a/x", "base", "mod.py", ["alpha", "beta"])
     with psycopg.connect(s.pg_dsn) as conn:
         remaining = {(r[0], r[1]) for r in conn.execute(
             "SELECT path, symbol_fqn FROM chunks WHERE ref='base' ORDER BY path, symbol_fqn"
@@ -91,7 +91,7 @@ def test_delete_missing_symbols_empty_keep_fqns_removes_all():
         _row("base", "mod.py", "beta", "def beta(): pass", vec),
         _row("base", "other.py", "delta", "def delta(): pass", vec),
     ])
-    store.delete_missing_symbols("base", "mod.py", [])
+    store.delete_missing_symbols("a/x", "base", "mod.py", [])
     with psycopg.connect(s.pg_dsn) as conn:
         remaining = {(r[0], r[1]) for r in conn.execute(
             "SELECT path, symbol_fqn FROM chunks WHERE ref='base'"
@@ -116,7 +116,7 @@ def test_delete_paths_except_removes_unlisted_paths():
         _row("base", "c.py", "fc", "def fc(): pass", vec),
         _row("pr:1", "a.py", "fa", "def fa(): pass", vec),
     ])
-    store.delete_paths_except("base", ["a.py", "b.py"])
+    store.delete_paths_except("a/x", "base", ["a.py", "b.py"])
     with psycopg.connect(s.pg_dsn) as conn:
         remaining = {(r[0], r[1]) for r in conn.execute(
             "SELECT ref, path FROM chunks ORDER BY ref, path"
@@ -140,7 +140,42 @@ def test_delete_paths_except_empty_keep_is_noop():
         _row("base", "a.py", "fa", "def fa(): pass", vec),
         _row("base", "b.py", "fb", "def fb(): pass", vec),
     ])
-    store.delete_paths_except("base", [])
+    store.delete_paths_except("a/x", "base", [])
     with psycopg.connect(s.pg_dsn) as conn:
         count = conn.execute("SELECT count(*) FROM chunks WHERE ref='base'").fetchone()[0]
     assert count == 2
+
+
+@pytest.mark.integration
+def test_two_repo_isolation():
+    """hybrid_search фильтрует по repo: результаты одного репо не попадают в другое."""
+    s = Settings()
+    store = ChunkStore(s.pg_dsn)
+    store.init_schema()
+    store.clear()
+    d = s.embedding_dim
+    vec = [0.0] * d
+    vec[0] = 1.0
+
+    # Один и тот же path#fqn под двумя репозиториями
+    store.upsert([
+        _row("base", "mod.py", "func", "def func(): return repo_ax()", vec, repo="a/x"),
+        _row("base", "mod.py", "func", "def func(): return repo_by()", vec, repo="b/y"),
+    ])
+
+    res_ax = store.hybrid_search(
+        "a/x", query_text="repo_ax", query_embedding=vec,
+        overlay_ref="pr:0", changed_paths=[], top_k=10, candidates=20,
+    )
+    res_by = store.hybrid_search(
+        "b/y", query_text="repo_by", query_embedding=vec,
+        overlay_ref="pr:0", changed_paths=[], top_k=10, candidates=20,
+    )
+
+    texts_ax = {r.text for r in res_ax}
+    texts_by = {r.text for r in res_by}
+
+    assert any("repo_ax" in t for t in texts_ax), "a/x должен вернуть свои чанки"
+    assert not any("repo_by" in t for t in texts_ax), "a/x не должен видеть чанки b/y"
+    assert any("repo_by" in t for t in texts_by), "b/y должен вернуть свои чанки"
+    assert not any("repo_ax" in t for t in texts_by), "b/y не должен видеть чанки a/x"

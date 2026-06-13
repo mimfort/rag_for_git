@@ -59,7 +59,7 @@ class TaskGraph:
         return len(rows)
 
     def link_pr(self, task_key: str, pr: PRRef, touched_node_ids: list[str]) -> None:
-        """(:Task)-[:IMPLEMENTED_BY]->(:PR)-[:TOUCHES]->(:Symbol). Стаб :Task/:Symbol при отсутствии."""
+        """(:Task)-[:IMPLEMENTED_BY]->(:PR)-[:TOUCHES]->(:Symbol). Symbol скоупится по pr.repo."""
         self._driver.execute_query(
             "MERGE (t:Task {key: $key}) ON CREATE SET t.codes=[$key] "
             "MERGE (p:PR {id: $pid}) "
@@ -67,7 +67,7 @@ class TaskGraph:
             "MERGE (t)-[:IMPLEMENTED_BY]->(p) "
             "WITH p "
             "UNWIND $touched AS nid "
-            "MERGE (s:Symbol {id: nid}) "
+            "MERGE (s:Symbol {repo: $repo, id: nid}) "
             "MERGE (p)-[:TOUCHES]->(s)",
             key=task_key, pid=pr.id, repo=pr.repo, number=pr.number,
             url=pr.url, sha=pr.sha, touched=list(touched_node_ids or []))

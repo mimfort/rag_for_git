@@ -47,7 +47,7 @@ def _components() -> MagicMock:
     c = MagicMock()
     c.store = MagicMock()
     c.store.deleted_refs = []
-    c.store.delete_ref.side_effect = lambda ref: c.store.deleted_refs.append(ref)
+    c.store.delete_ref.side_effect = lambda repo, ref: c.store.deleted_refs.append(ref)
     c.embedder = MagicMock()
     c.retriever = MagicMock()
     c.retriever.retrieve.return_value.as_context.return_value = "(результат поиска)"

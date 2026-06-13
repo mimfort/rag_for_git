@@ -19,9 +19,12 @@ class GraphStore:
         self._driver.close()
 
     def init_schema(self) -> None:
+        # Старый одно-property constraint снимаем — id больше не глобально уникален.
+        self._driver.execute_query("DROP CONSTRAINT sym_id IF EXISTS")
+        # Композитная уникальность (repo, id) — property-uniqueness, есть в Neo4j 5 Community.
         self._driver.execute_query(
-            "CREATE CONSTRAINT sym_id IF NOT EXISTS "
-            "FOR (s:Symbol) REQUIRE s.id IS UNIQUE")
+            "CREATE CONSTRAINT sym_repo_id IF NOT EXISTS "
+            "FOR (s:Symbol) REQUIRE (s.repo, s.id) IS UNIQUE")
         # Граф задач (фаза 3): уникальность :Task(key) и :PR(id) + индекс на codes
         # (резолв по любому коду в WHERE $k IN t.codes).
         self._driver.execute_query(
@@ -33,50 +36,84 @@ class GraphStore:
         self._driver.execute_query(
             "CREATE INDEX task_codes IF NOT EXISTS FOR (t:Task) ON (t.codes)")
 
-    def clear(self) -> None:
-        self._driver.execute_query("MATCH (n) DETACH DELETE n")
+    def clear(self, repo: str | None = None) -> None:
+        """Удалить узлы/рёбра репозитория (repo) или весь граф (repo=None — тесты)."""
+        if repo is None:
+            self._driver.execute_query("MATCH (n) DETACH DELETE n")
+        else:
+            self._driver.execute_query(
+                "MATCH (s:Symbol {repo: $repo}) DETACH DELETE s", repo=repo)
 
-    def upsert_nodes(self, node_ids: list[str]) -> None:
+    def upsert_nodes(self, repo: str, node_ids: list[str]) -> None:
         self._driver.execute_query(
-            "UNWIND $ids AS id MERGE (:Symbol {id: id})",
-            ids=list(node_ids))
+            "UNWIND $ids AS id MERGE (:Symbol {repo: $repo, id: id})",
+            ids=list(node_ids), repo=repo)
 
-    def upsert_edges(self, edges: list[tuple[str, str, str]]) -> None:
+    def upsert_edges(self, repo: str, edges: list[tuple[str, str, str]]) -> None:
         by_rel: dict[str, list[dict]] = {}
         for src, rel, dst in edges:
             by_rel.setdefault(rel, []).append({"src": src, "dst": dst})
         for rel, rows in by_rel.items():
             self._driver.execute_query(
                 f"UNWIND $rows AS r "
-                f"MATCH (a:Symbol {{id: r.src}}) MATCH (b:Symbol {{id: r.dst}}) "
+                f"MATCH (a:Symbol {{repo: $repo, id: r.src}}) "
+                f"MATCH (b:Symbol {{repo: $repo, id: r.dst}}) "
                 f"MERGE (a)-[:{rel}]->(b)",
-                rows=rows)
+                rows=rows, repo=repo)
 
-    def expand(self, node_ids: list[str], hops: int = 2) -> set[str]:
+    def expand(self, repo: str, node_ids: list[str], hops: int = 2) -> set[str]:
         records, _, _ = self._driver.execute_query(
-            f"UNWIND $ids AS sid MATCH (s:Symbol {{id: sid}}) "
-            f"MATCH (s)-[:CALLS|IMPLEMENTS|TESTED_BY*1..{hops}]-(n:Symbol) "
+            f"UNWIND $ids AS sid MATCH (s:Symbol {{repo: $repo, id: sid}}) "
+            f"MATCH (s)-[:CALLS|IMPLEMENTS|TESTED_BY*1..{hops}]-(n:Symbol {{repo: $repo}}) "
             f"RETURN DISTINCT n.id AS id",
-            ids=list(node_ids))
+            ids=list(node_ids), repo=repo)
         return {r["id"] for r in records}
 
-    def callers(self, node_ids: list[str]) -> set[str]:
+    def callers(self, repo: str, node_ids: list[str]) -> set[str]:
         """Кто вызывает данные символы — направленные входящие CALLS."""
         records, _, _ = self._driver.execute_query(
-            "UNWIND $ids AS sid MATCH (c:Symbol)-[:CALLS]->(s:Symbol {id: sid}) "
+            "UNWIND $ids AS sid "
+            "MATCH (c:Symbol {repo: $repo})-[:CALLS]->(s:Symbol {repo: $repo, id: sid}) "
             "RETURN DISTINCT c.id AS id",
-            ids=list(node_ids))
+            ids=list(node_ids), repo=repo)
         return {r["id"] for r in records}
 
-    def find_symbol(self, name: str) -> list[str]:
-        """Резолв имени символа в node_id ('path#fqn'). Точное имя (#name / .name)
-        приоритетнее подстроки — порядок задаётся в Cypher ДО LIMIT, чтобы точные
-        совпадения не вытеснялись на частых коротких именах. Возврат — до 25 id."""
+    def find_symbol(self, repo: str, name: str) -> list[str]:
+        """Резолв имени символа в node_id ('path#fqn') в пределах repo. Точное имя
+        (#name / .name) приоритетнее подстроки. Возврат — до 25 id."""
         records, _, _ = self._driver.execute_query(
-            "MATCH (s:Symbol) WHERE s.id CONTAINS $needle "
+            "MATCH (s:Symbol {repo: $repo}) WHERE s.id CONTAINS $needle "
             "RETURN s.id AS id "
             "ORDER BY (CASE WHEN s.id ENDS WITH $suffix OR s.id ENDS WITH $dotname "
             "THEN 0 ELSE 1 END), s.id "
             "LIMIT 25",
-            needle=name, suffix="#" + name, dotname="." + name)
+            repo=repo, needle=name, suffix="#" + name, dotname="." + name)
         return [r["id"] for r in records]
+
+    def symbols_for_paths(self, repo: str, paths: list[str]) -> set[str]:
+        """node_id всех :Symbol репозитория, чьи пути в paths (id начинается с 'path#')."""
+        if not paths:
+            return set()
+        prefixes = [p + "#" for p in paths]
+        records, _, _ = self._driver.execute_query(
+            "MATCH (s:Symbol {repo: $repo}) "
+            "WHERE any(p IN $prefixes WHERE s.id STARTS WITH p) "
+            "RETURN s.id AS id",
+            repo=repo, prefixes=prefixes)
+        return {r["id"] for r in records}
+
+    def delete_symbols(self, repo: str, ids: list[str]) -> None:
+        """DETACH DELETE перечисленных символов (исчезнувшие/переименованные)."""
+        if not ids:
+            return
+        self._driver.execute_query(
+            "UNWIND $ids AS id MATCH (s:Symbol {repo: $repo, id: id}) DETACH DELETE s",
+            ids=list(ids), repo=repo)
+
+    def delete_outgoing_calls(self, repo: str, ids: list[str]) -> None:
+        """Снести только ИСХОДЯЩИЕ CALLS у символов (входящие сохраняются)."""
+        if not ids:
+            return
+        self._driver.execute_query(
+            "UNWIND $ids AS id MATCH (s:Symbol {repo: $repo, id: id})-[r:CALLS]->() DELETE r",
+            ids=list(ids), repo=repo)

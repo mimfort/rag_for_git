@@ -45,3 +45,16 @@ def test_search_codebase_tool_registered():
     server = create_server(svc)
     names = {t.name for t in asyncio.run(server.list_tools())}
     assert "search_codebase" in names
+
+
+def test_search_codebase_tool_forwards_repo():
+    import asyncio
+
+    svc = _service()
+    svc.search_codebase.return_value = "code"
+    server = create_server(svc)
+    asyncio.run(server.call_tool(
+        "search_codebase",
+        {"repo": "owner/name", "query": "token verification", "top_k": 5},
+    ))
+    svc.search_codebase.assert_called_once_with("owner/name", "token verification", 5)

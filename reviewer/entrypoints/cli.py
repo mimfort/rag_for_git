@@ -7,13 +7,28 @@ import httpx
 
 from reviewer.config.settings import Settings
 from reviewer.app import build_components
-from reviewer.gitutil import file_at_ref, list_python_files, rev_parse
+from reviewer.gitutil import file_at_ref, list_python_files, rev_parse, remote_url
 from reviewer.graph.backend import build_code_graph
 from reviewer.graph.store import GraphStore
 from reviewer.index.freshness import update_base
 from reviewer.index.store import ChunkStore
 
 log = logging.getLogger(__name__)
+
+
+def _resolve_repo(repo_opt: str | None, path: str, settings) -> str:
+    """Резолв repo-тега: --repo → git remote → DEFAULT_REPO → ошибка."""
+    from reviewer.services.repo_id import normalize_repo, derive_repo_from_remote
+    if repo_opt:
+        return normalize_repo(repo_opt)
+    derived = derive_repo_from_remote(remote_url(path) or "")
+    if derived:
+        return derived
+    if settings.default_repo:
+        return normalize_repo(settings.default_repo)
+    raise click.ClickException(
+        "Не удалось определить repo: укажите --repo owner/name "
+        "(или задайте DEFAULT_REPO в .env)")
 
 
 @click.group()
@@ -107,20 +122,21 @@ def check() -> None:
 @cli.command()
 @click.argument("repo")
 @click.option("--ref", default="HEAD")
-def index(repo: str, ref: str) -> None:
+@click.option("--repo", "repo_tag", default=None,
+              help="owner/name тег индекса; по умолчанию из git remote origin")
+def index(repo: str, ref: str, repo_tag: str | None) -> None:
     """Построить/обновить base-индекс целевой ветки из локального репо."""
     s = Settings()
     c = build_components(s)
+    repo_id = _resolve_repo(repo_tag, repo, s)
     try:
         c.store.init_schema()
         files = list_python_files(repo, ref)
-        update_base(c.store, c.embedder, repo, ref, files,
+        update_base(c.store, c.embedder, repo_id, ref, files,
                     read=lambda p: file_at_ref(repo, p, ref))
-        # Чистим чанки файлов, которых больше нет в ветке (гигиена base-индекса)
-        c.store.delete_paths_except("base", files)
-        # Запоминаем SHA проиндексированного ref — нужен для синхронизации на review
+        c.store.delete_paths_except(repo_id, "base", files)
         sha = rev_parse(repo, ref)
-        c.store.set_index_meta("base", sha)
+        c.store.set_index_meta(repo_id, "base", sha)
         # --- граф кода ---
         src_by_path = {p: file_at_ref(repo, p, ref) for p in files}
         src_by_path = {p: v for p, v in src_by_path.items() if v is not None}
@@ -128,11 +144,11 @@ def index(repo: str, ref: str) -> None:
             repo, ref, files, src_by_path, s.graph_backend,
         )
         c.graph.init_schema()
-        c.graph.clear()   # полный rebuild: не смешивать рёбра разных бэкендов
-        c.graph.upsert_nodes(list(gnodes))
-        c.graph.upsert_edges(gedges)
+        c.graph.clear(repo_id)   # rebuild только этого репо
+        c.graph.upsert_nodes(repo_id, list(gnodes))
+        c.graph.upsert_edges(repo_id, gedges)
         click.echo(
-            f"Проиндексировано файлов: {len(files)} @ {sha[:7]}; "
+            f"Проиндексировано [{repo_id}] файлов: {len(files)} @ {sha[:7]}; "
             f"граф [{backend}]: узлов {len(gnodes)}, рёбер {len(gedges)}"
         )
     finally:
@@ -143,14 +159,19 @@ def index(repo: str, ref: str) -> None:
 
 @cli.command()
 @click.argument("query")
-def search(query: str) -> None:
+@click.option("--repo", "repo_tag", default=None, help="owner/name; по умолчанию DEFAULT_REPO")
+def search(query: str, repo_tag: str | None) -> None:
     """Гибридный поиск по base-индексу (диагностика)."""
+    from reviewer.services.repo_id import normalize_repo
     s = Settings()
+    repo_id = normalize_repo(repo_tag or s.default_repo) if (repo_tag or s.default_repo) else None
+    if repo_id is None:
+        raise click.ClickException("Укажите --repo owner/name (или DEFAULT_REPO в .env)")
     c = build_components(s)
     try:
         qvec = c.embedder.embed_query(query)
         hits = c.store.hybrid_search(
-            query_text=query, query_embedding=qvec,
+            repo_id, query_text=query, query_embedding=qvec,
             overlay_ref="", changed_paths=[], top_k=10,
         )
         for h in hits:

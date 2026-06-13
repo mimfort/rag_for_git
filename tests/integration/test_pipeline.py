@@ -15,10 +15,10 @@ def test_index_then_hybrid_retrieve_finds_relevant_symbol(tmp_path):
     c = build_components(s, connect=False); c.store.init_schema(); c.store.clear()
     from reviewer.gitutil import list_python_files, file_at_ref
     files = list_python_files(str(tmp_path), "HEAD")
-    update_base(c.store, c.embedder, str(tmp_path), "HEAD", files,
+    update_base(c.store, c.embedder, "t/x", "HEAD", files,
                 read=lambda p: file_at_ref(str(tmp_path), p, "HEAD"))
     qvec = c.embedder.embed_query("token verification")
-    hits = c.store.hybrid_search(query_text="token verification",
+    hits = c.store.hybrid_search("t/x", query_text="token verification",
                                  query_embedding=qvec, overlay_ref="",
                                  changed_paths=[], top_k=5)
     assert any(h.symbol_fqn == "verify_token" for h in hits)

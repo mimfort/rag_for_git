@@ -1,5 +1,5 @@
 import subprocess, pathlib
-from reviewer.gitutil import changed_files, file_at_ref
+from reviewer.gitutil import changed_files, file_at_ref, remote_url
 
 def _run(*a, cwd): subprocess.run(a, cwd=cwd, check=True, capture_output=True)
 
@@ -15,3 +15,13 @@ def test_changed_files_and_file_at_ref(tmp_path):
     _run("git","add","-A", cwd=r); _run("git","commit","-qm","c2", cwd=r)
     assert set(changed_files(str(r), base, "HEAD")) == {"a.py", "b.py"}
     assert file_at_ref(str(r), "a.py", base) == "x=1\n"
+
+
+def test_remote_url_returns_origin(tmp_path):
+    repo = tmp_path / "r"
+    repo.mkdir()
+    subprocess.run(["git", "-C", str(repo), "init"], check=True, capture_output=True)
+    assert remote_url(str(repo)) is None
+    subprocess.run(["git", "-C", str(repo), "remote", "add", "origin",
+                    "https://github.com/owner/name.git"], check=True, capture_output=True)
+    assert "github.com" in (remote_url(str(repo)) or "")

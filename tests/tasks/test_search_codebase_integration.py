@@ -39,15 +39,15 @@ def test_search_codebase_finds_base_chunk():
     emb = _FakeEmbedder()
     text = f"def logout(session):\n    session.clear()  # {_MARKER}"
     try:
-        store.delete_paths("base", [_TEST_PATH])  # гигиена от прошлых прогонов
+        store.delete_paths("t/x", "base", [_TEST_PATH])  # гигиена от прошлых прогонов
         store.upsert([ChunkRow(
-            ref="base", content_hash="h_solve", path=_TEST_PATH, lang="python",
+            repo="t/x", ref="base", content_hash="h_solve", path=_TEST_PATH, lang="python",
             symbol_fqn="logout", kind="function", start_line=1, end_line=2,
             text=text, embedding=emb.embed_documents([text])[0])])
 
         r = Retriever(store, graph=None, embedder=emb, reranker=None, max_context_chars=8000)
-        ctx = r.search_base(_MARKER, top_k=5).as_context()
+        ctx = r.search_base("t/x", _MARKER, top_k=5).as_context()
         assert f"{_TEST_PATH}#logout" in ctx
     finally:
-        store.delete_paths("base", [_TEST_PATH])
+        store.delete_paths("t/x", "base", [_TEST_PATH])
         store.close()
