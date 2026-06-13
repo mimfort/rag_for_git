@@ -95,6 +95,18 @@ def test_search_base_no_reranker_returns_rrf_order():
     assert [it.node_id for it in pack.items] == ["a.py#f1", "b.py#f2"]
 
 
+def test_search_base_reranks_when_many_hits_and_graph_adds_nothing():
+    # реранкер есть, хитов > top_k, граф ничего не добавил (graph_new=False) → реранк всё равно идёт
+    hits = [_Hit(f"f{i}.py#fn") for i in range(6)]
+    store = _FakeStore(hits)            # related=[] → graph ничего не добавит
+    graph = _FakeGraph()                # expand → пустое множество
+    reranker = _FakeReranker()
+    r = Retriever(store, graph, _FakeEmbedder(), reranker, max_context_chars=8000)
+    pack = r.search_base("x", top_k=3)
+    assert reranker.calls and reranker.calls[0]["top_k"] == 3
+    assert len(pack.items) == 3
+
+
 def test_search_base_empty_returns_empty_pack():
     r = Retriever(_FakeStore([]), graph=None, embedder=_FakeEmbedder(), reranker=None)
     assert r.search_base("nothing").as_context() == ""
