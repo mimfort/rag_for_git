@@ -165,14 +165,15 @@ def test_index_command_runs_indexing_steps(
     fake_components.store.init_schema.assert_called_once()
     mock_update_base.assert_called_once()
     fake_components.graph.init_schema.assert_called_once()
-    fake_components.graph.clear.assert_called_once_with("a/x")
-    fake_components.graph.upsert_nodes.assert_called_once_with("a/x", ["a#foo", "b#bar"])
+    fake_components.graph.clear.assert_called_once_with("a/x", branch="main")
+    fake_components.graph.upsert_nodes.assert_called_once_with("a/x", ["a#foo", "b#bar"],
+                                                                branch="main")
     fake_components.graph.upsert_edges.assert_called_once_with(
-        "a/x", [("a#foo", "CALLS", "b#bar")]
+        "a/x", [("a#foo", "CALLS", "b#bar")], branch="main"
     )
-    fake_components.store.set_index_meta.assert_called_once_with("a/x", "base", "abc1234")
+    fake_components.store.set_index_meta.assert_called_once_with("a/x", "base:main", "abc1234")
     fake_components.store.delete_paths_except.assert_called_once_with(
-        "a/x", "base", ["a.py", "b.py"]
+        "a/x", "base:main", ["a.py", "b.py"]
     )
     fake_components.store.close.assert_called_once()
     fake_components.graph.close.assert_called_once()

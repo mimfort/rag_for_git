@@ -59,7 +59,13 @@ class TaskGraph:
         return len(rows)
 
     def link_pr(self, task_key: str, pr: PRRef, touched_node_ids: list[str]) -> None:
-        """(:Task)-[:IMPLEMENTED_BY]->(:PR)-[:TOUCHES]->(:Symbol). Symbol скоупится по pr.repo."""
+        """(:Task)-[:IMPLEMENTED_BY]->(:PR)-[:TOUCHES]->(:Symbol). Symbol скоупится по pr.repo.
+
+        Граф задач branch-agnostic: TOUCHES-символ создаётся под дефолтной веткой
+        (sentinel ``branch=''`` — тот же дефолт, что у ``find_symbol``/``base_ref('')``).
+        Это корреляционный маркер «PR затронул node_id», сшиваемый с код-графом по
+        строке node_id, а не привязка к конкретной ветке кода.
+        """
         self._driver.execute_query(
             "MERGE (t:Task {key: $key}) ON CREATE SET t.codes=[$key] "
             "MERGE (p:PR {id: $pid}) "
@@ -67,7 +73,7 @@ class TaskGraph:
             "MERGE (t)-[:IMPLEMENTED_BY]->(p) "
             "WITH p "
             "UNWIND $touched AS nid "
-            "MERGE (s:Symbol {repo: $repo, id: nid}) "
+            "MERGE (s:Symbol {repo: $repo, branch: '', id: nid}) "
             "MERGE (p)-[:TOUCHES]->(s)",
             key=task_key, pid=pr.id, repo=pr.repo, number=pr.number,
             url=pr.url, sha=pr.sha, touched=list(touched_node_ids or []))

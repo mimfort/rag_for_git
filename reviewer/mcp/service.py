@@ -12,7 +12,11 @@ from reviewer.agent.assemble import AssembledReview, assemble_review, ground_lin
 from reviewer.agent.dedup import dedup_findings
 from reviewer.app import Components
 from reviewer.config.settings import Settings
-from reviewer.services.review_service import PreparedReview, ReviewService
+from reviewer.services.review_service import (
+    BranchNotTrackedError,
+    PreparedReview,
+    ReviewService,
+)
 from reviewer.tasks.graph import PRRef
 from reviewer.tools.code_tools import ToolContext, make_tools
 from reviewer.vcs.base import Finding, VCSProvider
@@ -134,7 +138,13 @@ class MCPReviewService:
         owner, name = repo.split("/", 1)
         old = self._sessions.get((repo, pr))
         vcs = self._vcs_factory(owner, name) if self._vcs_factory else None
-        prepared = self._review_service.prepare(owner, name, pr, vcs_provider=vcs)
+        try:
+            prepared = self._review_service.prepare(owner, name, pr, vcs_provider=vcs)
+        except BranchNotTrackedError as e:
+            log.info("Ревью %s#%s пропущено: ветка '%s' не отслеживается",
+                     repo, pr, e.branch)
+            return {"status": "skipped",
+                    "reason": f"branch '{e.branch}' not tracked (REVIEW_BRANCHES)"}
         ctx = self._tool_context(prepared)
         self._sessions[(repo, pr)] = _Session(prepared, ctx)
         # Старую сессию прибираем ПОСЛЕ успешного prepare: при сбое повторной
@@ -161,6 +171,7 @@ class MCPReviewService:
             changed_paths=prepared.changed_paths,
             changed_node_ids=prepared.changed_node_ids,
             repo=prepared.repo,
+            branch=prepared.branch,
             read_file_fn=(
                 (lambda p: prepared.vcs.get_file_at_ref(p, prepared.prq.head_sha))
                 if prepared.vcs else None
@@ -230,8 +241,13 @@ class MCPReviewService:
         """Граф-контекст задачи: связанные задачи → их PR → затронутый код."""
         return self.components.task_service.get_task_context(key)
 
-    def search_codebase(self, repo: str, query: str, top_k: int = 10) -> str:
-        """Гибрид-поиск по base-индексу репозитория (без PR-сессии) — для /solve-task."""
+    def search_codebase(self, repo: str, query: str, top_k: int = 10,
+                        branch: str | None = None) -> str:
+        """Гибрид-поиск по base-индексу репозитория (без PR-сессии) — для /solve-task.
+
+        branch — отслеживаемая ветка (allowlist REVIEW_BRANCHES); по умолчанию
+        первичная. Поиск идёт по индексу указанной ветки (base:<branch>).
+        """
         from reviewer.services.repo_id import normalize_repo
         raw = repo or self.settings.default_repo
         if not raw:
@@ -240,8 +256,13 @@ class MCPReviewService:
             repo = normalize_repo(raw)
         except ValueError:
             return f"(некорректный repo: {raw!r})"
+        if branch and branch not in self.settings.review_branches_list():
+            return (f"(ветка {branch!r} не в REVIEW_BRANCHES "
+                    f"({self.settings.review_branches_list()}))")
+        resolved = branch or self.settings.primary_branch()
         try:
-            pack = self.components.retriever.search_base(repo, query, top_k=top_k)
+            pack = self.components.retriever.search_base(
+                repo, query, top_k=top_k, branch=resolved)
         except Exception:
             log.warning("search_codebase: сбой поиска", exc_info=True)
             return "(ничего не найдено)"

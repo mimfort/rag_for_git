@@ -2,6 +2,7 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from reviewer.index.chunker import chunk_python
+from reviewer.index.refs import base_ref
 from reviewer.index.store import ChunkRow
 
 
@@ -13,12 +14,19 @@ def _rows_for_file(repo: str, path: str, source: str, ref: str) -> list[ChunkRow
                      text=c.text, embedding=[]) for c in chunks]
 
 
-def _embed_and_upsert(store, embedder, rows: list[ChunkRow]) -> None:
+def _embed_and_upsert(store, embedder, repo: str, rows: list[ChunkRow]) -> None:
     if not rows:
         return
-    vecs = embedder.embed_documents([r.text for r in rows])
-    for r, v in zip(rows, vecs):
-        r.embedding = v
+    # cross-branch reuse: готовые векторы из других ветвей того же репо по content_hash
+    cached = store.find_embeddings_by_hashes(repo, [r.content_hash for r in rows])
+    to_embed = [r for r in rows if r.content_hash not in cached]
+    if to_embed:
+        vecs = embedder.embed_documents([r.text for r in to_embed])
+        for r, v in zip(to_embed, vecs):
+            r.embedding = v
+    for r in rows:
+        if r.content_hash in cached:
+            r.embedding = cached[r.content_hash]
     store.upsert(rows)
 
 
@@ -43,22 +51,23 @@ def build_overlay(store, embedder, repo: str, pr_number: int, changed_files: lis
             if row.content_hash not in seen:
                 seen.add(row.content_hash)
                 batch.append(row)
-    _embed_and_upsert(store, embedder, batch)
+    _embed_and_upsert(store, embedder, repo, batch)
 
 
 def update_base(store, embedder, repo: str, target_ref: str,
                 changed_files: list[str],
                 read: Callable[[str], str | None],
                 removed_files: list[str] | tuple[str, ...] = ()) -> None:
-    """Инкрементально обновляет (repo, ref='base') по изменённым файлам целевой ветки.
+    """Инкрементально обновляет (repo, ref='base:<target_ref>') по изменённым файлам.
 
     removed_files — пути файлов, удалённых из репо; их чанки вычищаются из индекса.
     Для каждого обработанного файла удаляются символы, исчезнувшие из новой версии.
     """
+    ref = base_ref(target_ref)
     py_removed = [p for p in removed_files if p.endswith(".py")]
-    store.delete_paths(repo, "base", py_removed)
+    store.delete_paths(repo, ref, py_removed)
 
-    seen = store.existing_hashes(repo, "base")
+    seen = store.existing_hashes(repo, ref)
     batch: list[ChunkRow] = []
     for path in changed_files:
         if not path.endswith(".py"):
@@ -66,13 +75,13 @@ def update_base(store, embedder, repo: str, target_ref: str,
         src = read(path)
         if src is None:
             # Файл недоступен/удалён — вычищаем его чанки из индекса
-            store.delete_paths(repo, "base", [path])
+            store.delete_paths(repo, ref, [path])
             continue
-        rows = _rows_for_file(repo, path, src, "base")
+        rows = _rows_for_file(repo, path, src, ref)
         # Удаляем символы, исчезнувшие из новой версии файла
-        store.delete_missing_symbols(repo, "base", path, [r.symbol_fqn for r in rows])
+        store.delete_missing_symbols(repo, ref, path, [r.symbol_fqn for r in rows])
         for row in rows:
             if row.content_hash not in seen:
                 seen.add(row.content_hash)
                 batch.append(row)
-    _embed_and_upsert(store, embedder, batch)
+    _embed_and_upsert(store, embedder, repo, batch)

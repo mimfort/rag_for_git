@@ -2,6 +2,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 import logging
 
+from reviewer.index.refs import base_ref
+
 log = logging.getLogger(__name__)
 
 
@@ -34,13 +36,16 @@ class Retriever:
         self.max_context_chars = max_context_chars
 
     def retrieve(self, repo, query, changed_node_ids, overlay_ref, changed_paths,
-                 top_k=15, candidates=50) -> ContextPack:
+                 top_k=15, candidates=50, *, branch="") -> ContextPack:
+        bref = base_ref(branch)
         qvec = self.embedder.embed_query(query)
         hits = self.store.hybrid_search(
             repo, query_text=query, query_embedding=qvec, overlay_ref=overlay_ref,
-            changed_paths=changed_paths, top_k=candidates, candidates=candidates)
-        related_ids = self.graph.expand(repo, changed_node_ids, hops=2)
-        related = self.store.fetch_nodes(repo, list(related_ids), overlay_ref, changed_paths)
+            changed_paths=changed_paths, top_k=candidates, candidates=candidates,
+            base_ref=bref)
+        related_ids = self.graph.expand(repo, changed_node_ids, hops=2, branch=branch)
+        related = self.store.fetch_nodes(repo, list(related_ids), overlay_ref,
+                                         changed_paths, base_ref=bref)
         hit_ids = {h.node_id for h in hits}
         graph_new = [it for it in related if it.node_id not in hit_ids]
         merged: dict[str, object] = {}
@@ -52,19 +57,20 @@ class Retriever:
         ranked = self.reranker.rerank(query, list(merged.values()), top_k=top_k)
         return ContextPack(items=ranked, max_chars=self.max_context_chars)
 
-    def search_base(self, repo, query, top_k=10, candidates=50) -> ContextPack:
-        """Гибрид-поиск по base-индексу без PR-сессии — для /solve-task.
+    def search_base(self, repo, query, top_k=10, candidates=50, *, branch="") -> ContextPack:
+        """Гибрид-поиск по base-индексу ветки без PR-сессии — для /solve-task.
 
         Зеркало :meth:`retrieve`, но base-only и сидинг графа от хитов:
         ``changed_paths=[]`` + несуществующий ``overlay_ref="__none__"`` → WHERE отбирает
         только base-строки. graph-expansion идёт от топ-хитов (а не от changed-файлов),
         затем rerank. Граф и реранкер fail-soft.
         """
+        bref = base_ref(branch)
         qvec = self.embedder.embed_query(query)
         hits = self.store.hybrid_search(
             repo, query_text=query, query_embedding=qvec,
             overlay_ref="__none__", changed_paths=[],
-            top_k=candidates, candidates=candidates)
+            top_k=candidates, candidates=candidates, base_ref=bref)
         merged: dict[str, object] = {}
         for h in hits:
             merged.setdefault(h.node_id, h)
@@ -72,8 +78,9 @@ class Retriever:
         if self.graph is not None and hits:
             try:
                 seeds = [h.node_id for h in hits[:top_k]]
-                related_ids = self.graph.expand(repo, seeds, hops=1)
-                related = self.store.fetch_nodes(repo, list(related_ids), "__none__", [])
+                related_ids = self.graph.expand(repo, seeds, hops=1, branch=branch)
+                related = self.store.fetch_nodes(repo, list(related_ids), "__none__", [],
+                                                 base_ref=bref)
                 for it in related:
                     if it.node_id not in merged:
                         merged[it.node_id] = it

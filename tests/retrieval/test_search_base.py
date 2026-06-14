@@ -20,14 +20,14 @@ class _FakeStore:
         self.fetch_calls = []
 
     def hybrid_search(self, repo, *, query_text, query_embedding, overlay_ref,
-                      changed_paths, top_k, candidates):
+                      changed_paths, top_k, candidates, base_ref="base"):
         self.search_calls.append({
             "repo": repo, "overlay_ref": overlay_ref, "changed_paths": changed_paths,
             "top_k": top_k, "candidates": candidates,
         })
         return self._hits
 
-    def fetch_nodes(self, repo, node_ids, overlay_ref, changed_paths):
+    def fetch_nodes(self, repo, node_ids, overlay_ref, changed_paths, *, base_ref="base"):
         self.fetch_calls.append({
             "repo": repo, "node_ids": list(node_ids), "overlay_ref": overlay_ref,
             "changed_paths": changed_paths,
@@ -50,7 +50,7 @@ class _FakeGraph:
         self.expand_calls = []
         self._raise = raise_
 
-    def expand(self, repo, node_ids, hops=2):
+    def expand(self, repo, node_ids, hops=2, *, branch=""):
         self.expand_calls.append({"repo": repo, "seeds": list(node_ids), "hops": hops})
         if self._raise:
             raise RuntimeError("neo4j down")

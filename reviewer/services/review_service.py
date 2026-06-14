@@ -28,6 +28,14 @@ from reviewer.services.task_keys import extract_task_keys
 log = logging.getLogger(__name__)
 
 
+class BranchNotTrackedError(Exception):
+    """Целевая ветка PR не в REVIEW_BRANCHES — ревью пропускается."""
+
+    def __init__(self, branch: str) -> None:
+        super().__init__(f"ветка '{branch}' не отслеживается (REVIEW_BRANCHES)")
+        self.branch = branch
+
+
 def _hunk_count(patch: str | None) -> int:
     """Число hunks в unified diff; 0 если patch отсутствует."""
     if not patch:
@@ -54,6 +62,7 @@ class PreparedReview:
     """Подготовленный контекст ревью PR: всё, что нужно analyze-этапу и публикации."""
 
     repo: str                              # канонический идентификатор "owner/name"
+    branch: str                            # целевая ветка PR (ключ base-индекса)
     prq: PullRequest
     units: list[ReviewUnit]
     policy: ReviewPolicy
@@ -134,11 +143,19 @@ class ReviewService:
         try:
             prq = vcs.get_pull_request(pr_number)
 
+            # Маршрутизация: PR в неотслеживаемую ветку пропускаем ДО дорогих
+            # шагов (overlay/эмбеддинги ещё не строились — очистка идемпотентна).
+            branch = prq.base_ref
+            if branch not in self.settings.review_branches_list():
+                raise BranchNotTrackedError(branch)
+
+            from reviewer.index.refs import base_ref as _base_ref
+
             files = vcs.get_changed_files(pr_number)
 
             # Свежесть base-индекса: подтягиваем чанки файлов, изменённых после
             # последней индексации (граф кода обновляется только на reviewer index).
-            indexed = self.components.store.get_index_meta(repo, "base")
+            indexed = self.components.store.get_index_meta(repo, _base_ref(branch))
             # base-sync только для реального GitHub-ревью: при внешнем vcs_provider
             # (eval-снапшоты) синхронизация и set_index_meta затёрли бы прод-индекс
             # данными снапшота (у снапшота base_sha="base", не настоящий SHA ветки).
@@ -154,7 +171,7 @@ class ReviewService:
                         read=lambda p: vcs.get_file_at_ref(p, prq.base_sha),
                         removed_files=[f.path for f in diff_files if f.status == "removed"],
                     )
-                    self.components.store.set_index_meta(repo, "base", prq.base_sha)
+                    self.components.store.set_index_meta(repo, _base_ref(branch), prq.base_sha)
                     # F2: инкрементальный repo-aware патч графа (fail-soft).
                     if self.components.graph is not None:
                         try:
@@ -171,7 +188,7 @@ class ReviewService:
                                 if f.status == "removed" and f.path.endswith(".py")
                             ]
                             patch_graph_incremental(
-                                self.components.graph, repo,
+                                self.components.graph, repo, branch=branch,
                                 changed_sources=changed_py, removed_paths=removed_py)
                             log.info("Граф досинхронизирован инкрементально: "
                                      "%d изм., %d уд.", len(changed_py), len(removed_py))
@@ -260,6 +277,7 @@ class ReviewService:
 
             return PreparedReview(
                 repo=repo,
+                branch=branch,
                 prq=prq,
                 units=units,
                 policy=policy,

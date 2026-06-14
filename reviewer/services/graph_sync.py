@@ -9,9 +9,10 @@ from __future__ import annotations
 from reviewer.graph.builder import build_graph_from_files
 
 
-def patch_graph_incremental(graph, repo: str, *, changed_sources: dict[str, str],
+def patch_graph_incremental(graph, repo: str, *, branch: str = "",
+                            changed_sources: dict[str, str],
                             removed_paths: list[str]) -> None:
-    """Обновить граф репозитория repo по изменённым/удалённым файлам.
+    """Обновить граф (repo, branch) по изменённым/удалённым файлам.
 
     changed_sources: {path: источник целевой (base) версии} только .py изменённых/
         добавленных файлов — граф досинхронизируется к base-ветке, как и вектора.
@@ -19,8 +20,8 @@ def patch_graph_incremental(graph, repo: str, *, changed_sources: dict[str, str]
     """
     # Удалённые файлы — снести их символы целиком.
     if removed_paths:
-        gone = graph.symbols_for_paths(repo, removed_paths)
-        graph.delete_symbols(repo, list(gone))
+        gone = graph.symbols_for_paths(repo, removed_paths, branch=branch)
+        graph.delete_symbols(repo, list(gone), branch=branch)
 
     if not changed_sources:
         return
@@ -29,12 +30,12 @@ def patch_graph_incremental(graph, repo: str, *, changed_sources: dict[str, str]
     changed_paths = list(changed_sources)
 
     # Снести символы изменённых путей, исчезнувшие из новой версии.
-    old = graph.symbols_for_paths(repo, changed_paths)
+    old = graph.symbols_for_paths(repo, changed_paths, branch=branch)
     stale = old - nodes
-    graph.delete_symbols(repo, list(stale))
+    graph.delete_symbols(repo, list(stale), branch=branch)
 
     # Снести только исходящие CALLS изменённой поверхности (входящие сохраняем),
     # затем переустановить узлы и свежие исходящие рёбра.
-    graph.delete_outgoing_calls(repo, list(nodes))
-    graph.upsert_nodes(repo, list(nodes))
-    graph.upsert_edges(repo, edges)
+    graph.delete_outgoing_calls(repo, list(nodes), branch=branch)
+    graph.upsert_nodes(repo, list(nodes), branch=branch)
+    graph.upsert_edges(repo, edges, branch=branch)

@@ -37,6 +37,13 @@ brief to `superpowers:brainstorming` (which leads to writing-plans → subagent-
    - `search_codebase("<task description>")` → relevant existing code (files/symbols to touch or
      mimic).
 
+   **Branch selection for `search_codebase`.** Before calling `search_codebase`, determine the
+   current git branch of the project: `git branch --show-current`. If it is in `REVIEW_BRANCHES`
+   (the tracked branches list), pass it as the `branch` parameter — the search will use that
+   branch's index. If the user explicitly stated which branch to work from, use that branch instead.
+   Otherwise, omit `branch` entirely and the server will use the primary branch (the first entry in
+   `REVIEW_BRANCHES`).
+
 4. **Distill the solution brief.** Write a structured markdown brief. Apply a strict relevance
    filter: include an item ONLY if it directly informs the implementation; drop the rest and note how
    many were dropped. Sections:

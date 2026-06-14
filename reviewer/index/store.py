@@ -123,6 +123,23 @@ class ChunkStore:
             ).fetchall()
         return {r[0] for r in rows}
 
+    def find_embeddings_by_hashes(self, repo: str, hashes: list[str]) -> dict[str, list[float]]:
+        """Готовые векторы по content_hash из любого ref репо (cross-branch reuse).
+
+        Эмбеддинг детерминирован по тексту чанка (content_hash = sha256 текста) при
+        фиксированной модели — переиспользуем вектор вместо повторного вызова Voyage.
+        """
+        if not hashes:
+            return {}
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT DISTINCT ON (content_hash) content_hash, embedding "
+                "FROM chunks WHERE repo=%s AND content_hash = ANY(%s) AND embedding IS NOT NULL "
+                "ORDER BY content_hash",
+                (repo, list(hashes)),
+            ).fetchall()
+        return {h: list(v) for h, v in rows}
+
     def delete_ref(self, repo: str, ref: str) -> None:
         """Удалить все чанки указанного ref (например, эфемерный overlay pr:N после ревью)."""
         with self._connect() as conn:
@@ -156,6 +173,47 @@ class ChunkStore:
                 (repo, ref, sha),
             )
             conn.commit()
+
+    def migrate_legacy_base(self, primary: str) -> int:
+        """Перенести legacy ref='base' → 'base:<primary>' в chunks и index_meta.
+
+        Конфликт-устойчиво и идемпотентно: если ветка base:<primary> уже была
+        проиндексирована (есть копия по уникальному ключу (repo, ref, path,
+        symbol_fqn)), legacy-строка не перетирает её, а удаляется. Повторный вызов —
+        no-op (legacy 'base' уже отсутствует). Без переэмбеддинга — векторы
+        сохраняются. Выполнять один раз после апгрейда.
+        Возвращает число фактически перенесённых chunks (без учёта удалённых дублей).
+        """
+        target = f"base:{primary}"
+        with self._connect() as conn:
+            # Шаг 1: перенести только те legacy-строки, для которых в target нет копии.
+            cur = conn.execute(
+                """
+                UPDATE chunks SET ref=%s
+                WHERE ref='base'
+                  AND NOT EXISTS (
+                      SELECT 1 FROM chunks c2
+                      WHERE c2.repo=chunks.repo AND c2.ref=%s
+                        AND c2.path=chunks.path AND c2.symbol_fqn=chunks.symbol_fqn
+                  )
+                """,
+                (target, target),
+            )
+            n = cur.rowcount  # фактически перенесённые чанки
+            # Шаг 2: остаток legacy ('base'), у которого target-копия уже была — удалить.
+            conn.execute("DELETE FROM chunks WHERE ref='base'")
+            # index_meta: если целевая запись уже есть — просто удаляем legacy-запись.
+            conn.execute(
+                """
+                INSERT INTO index_meta (repo, ref, sha, updated_at)
+                SELECT repo, %s, sha, now() FROM index_meta WHERE ref='base'
+                ON CONFLICT (repo, ref) DO NOTHING
+                """,
+                (target,),
+            )
+            conn.execute("DELETE FROM index_meta WHERE ref='base'")
+            conn.commit()
+        return n
 
     def delete_paths(self, repo: str, ref: str, paths: list[str]) -> None:
         """Удалить чанки указанных путей для ref (гигиена: удалённые файлы из индекса).
@@ -205,9 +263,9 @@ class ChunkStore:
             conn.commit()
 
     def hybrid_search(self, repo, query_text, query_embedding, overlay_ref,
-                      changed_paths, top_k=20, candidates=50) -> list[Retrieved]:
+                      changed_paths, top_k=20, candidates=50, *, base_ref="base") -> list[Retrieved]:
         where = ("repo=%(repo)s AND "
-                 "((ref='base' AND NOT (path = ANY(%(changed)s))) OR ref=%(overlay)s)")
+                 "((ref=%(base)s AND NOT (path = ANY(%(changed)s))) OR ref=%(overlay)s)")
         sql = f"""
         WITH bm25 AS (
             SELECT id, RANK() OVER (ORDER BY pdb.score(id) DESC) AS rank
@@ -234,14 +292,14 @@ class ChunkStore:
         """
         params = {"repo": repo, "q": _bm25_query(query_text), "vec": Vector(query_embedding),
                   "overlay": overlay_ref, "changed": changed_paths,
-                  "cand": candidates, "k": top_k}
+                  "cand": candidates, "k": top_k, "base": base_ref}
         with self._connect() as conn:
             rows = conn.execute(sql, params).fetchall()
         return [Retrieved(node_id=f"{p}#{f}", path=p, symbol_fqn=f, kind=k,
                           start_line=sl, end_line=el, text=t, score=float(sc))
                 for (p, f, k, sl, el, t, sc) in rows]
 
-    def fetch_nodes(self, repo, node_ids, overlay_ref, changed_paths):
+    def fetch_nodes(self, repo, node_ids, overlay_ref, changed_paths, *, base_ref="base"):
         if not node_ids:
             return []
         pairs = [nid.split("#", 1) for nid in node_ids if "#" in nid]
@@ -252,10 +310,10 @@ class ChunkStore:
         FROM chunks c JOIN unnest(%(paths)s::text[], %(fqns)s::text[]) AS q(p,f)
           ON c.path=q.p AND c.symbol_fqn=q.f
         WHERE c.repo=%(repo)s
-          AND ((c.ref='base' AND NOT (c.path = ANY(%(changed)s))) OR c.ref=%(overlay)s)
+          AND ((c.ref=%(base)s AND NOT (c.path = ANY(%(changed)s))) OR c.ref=%(overlay)s)
         """
         params = {"repo": repo, "paths": [p for p, _ in pairs], "fqns": [f for _, f in pairs],
-                  "changed": changed_paths, "overlay": overlay_ref}
+                  "changed": changed_paths, "overlay": overlay_ref, "base": base_ref}
         with self._connect() as conn:
             rows = conn.execute(sql, params).fetchall()
         return [Retrieved(node_id=f"{p}#{f}", path=p, symbol_fqn=f, kind=k,

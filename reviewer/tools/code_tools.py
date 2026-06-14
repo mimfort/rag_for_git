@@ -7,6 +7,8 @@ from dataclasses import dataclass, field
 from typing import Any
 from langchain_core.tools import StructuredTool
 
+from reviewer.index.refs import base_ref
+
 _DUP_STUB = "(повтор: результат уже показан выше)"
 
 @dataclass
@@ -17,6 +19,7 @@ class ToolContext:
     changed_paths: list[str]
     changed_node_ids: list[str] = field(default_factory=list)
     repo: str = ""
+    branch: str = ""
     read_file_fn: Callable[[str], str | None] | None = None
     patches: dict = field(default_factory=dict)
     store: Any = None
@@ -57,12 +60,13 @@ def make_tools(ctx: ToolContext) -> list[StructuredTool]:
         """Семантико-лексический поиск релевантного кода по всему репозиторию."""
         pack = ctx.retriever.retrieve(
             ctx.repo, query=query, changed_node_ids=ctx.changed_node_ids,
-            overlay_ref=ctx.overlay_ref, changed_paths=ctx.changed_paths, top_k=8)
+            overlay_ref=ctx.overlay_ref, changed_paths=ctx.changed_paths, top_k=8,
+            branch=ctx.branch)
         return pack.as_context() or "(ничего не найдено)"
 
     def get_related_symbols(node_id: str) -> str:
         """Связанные символы (вызовы/реализации/тесты) для node_id вида 'path#fqn'."""
-        related = ctx.graph.expand(ctx.repo, [node_id], hops=2)
+        related = ctx.graph.expand(ctx.repo, [node_id], hops=2, branch=ctx.branch)
         return "\n".join(sorted(related)) or "(нет связей)"
 
     def read_file(path: str, start: int = 1, end: int = 400) -> str:
@@ -93,23 +97,25 @@ def make_tools(ctx: ToolContext) -> list[StructuredTool]:
         Фолбэк на семантический поиск, если граф не нашёл совпадений или стор недоступен."""
         ids: list[str] = []
         if ctx.graph is not None and hasattr(ctx.graph, "find_symbol"):
-            ids = ctx.graph.find_symbol(ctx.repo, symbol)
+            ids = ctx.graph.find_symbol(ctx.repo, symbol, branch=ctx.branch)
         if ids and ctx.store is not None:
-            nodes = ctx.store.fetch_nodes(ctx.repo, ids[:3], ctx.overlay_ref, ctx.changed_paths)
+            nodes = ctx.store.fetch_nodes(ctx.repo, ids[:3], ctx.overlay_ref,
+                                          ctx.changed_paths, base_ref=base_ref(ctx.branch))
             if nodes:
                 return "\n\n".join(
                     f"// {n.node_id} ({n.path}:{n.start_line}-{n.end_line})\n{n.text}"
                     for n in nodes)
         pack = ctx.retriever.retrieve(
             ctx.repo, query=symbol, changed_node_ids=ctx.changed_node_ids,
-            overlay_ref=ctx.overlay_ref, changed_paths=ctx.changed_paths, top_k=3)
+            overlay_ref=ctx.overlay_ref, changed_paths=ctx.changed_paths, top_k=3,
+            branch=ctx.branch)
         return pack.as_context() or "(определение не найдено)"
 
     def find_callers(node_id: str) -> str:
         """Кто вызывает символ node_id ('path#fqn') — направленный CALLS (impact-анализ)."""
         if ctx.graph is None or not hasattr(ctx.graph, "callers"):
             return "(граф недоступен)"
-        found = ctx.graph.callers(ctx.repo, [node_id])
+        found = ctx.graph.callers(ctx.repo, [node_id], branch=ctx.branch)
         return "\n".join(sorted(found)) or "(вызовов не найдено)"
 
     def get_changed_file_diff(path: str) -> str:
@@ -118,7 +124,8 @@ def make_tools(ctx: ToolContext) -> list[StructuredTool]:
         return patch or "(файл не входит в изменения PR)"
 
     seen: set = set()
-    ctx_sig = (ctx.repo, ctx.overlay_ref, tuple(sorted(ctx.changed_paths or [])),
+    ctx_sig = (ctx.repo, ctx.branch, ctx.overlay_ref,
+               tuple(sorted(ctx.changed_paths or [])),
                tuple(sorted(ctx.changed_node_ids or [])))
     raw = [search_code, get_related_symbols, read_file,
            get_definition, find_callers, get_changed_file_diff]
