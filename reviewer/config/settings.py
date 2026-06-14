@@ -1,3 +1,5 @@
+import os
+from pathlib import Path
 from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -7,8 +9,33 @@ SuggestionsMode = Literal["apply", "text"]
 GraphBackend = Literal["auto", "scip", "treesitter"]
 
 
+def _resolve_env_file() -> str:
+    """Найти .env независимо от рабочей директории процесса.
+
+    MCP-клиенты (Claude Code, Cursor, Mimo и пр.) запускают `reviewer-mcp` с
+    произвольным CWD, поэтому относительный `.env` подхватывается ненадёжно.
+    Резолвим из стабильных мест по приоритету:
+      1. $REVIEWER_ENV_FILE — явный путь (escape hatch);
+      2. $XDG_CONFIG_HOME/rag-reviewer/.env (по умолчанию ~/.config/...) — канон;
+      3. ./.env — удобство при запуске из корня репозитория (dev).
+    Переменные реального окружения всё равно имеют приоритет над файлом
+    (дефолт pydantic-settings), так что ключи можно передавать и через блок
+    `env` в конфиге MCP-клиента.
+    """
+    xdg = os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")
+    candidates = (
+        os.environ.get("REVIEWER_ENV_FILE"),
+        os.path.join(xdg, "rag-reviewer", ".env"),
+        ".env",
+    )
+    for path in candidates:
+        if path and Path(path).is_file():
+            return path
+    return ".env"
+
+
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(env_file=_resolve_env_file(), extra="ignore")
 
     # review tuning (дефолты; per-repo .review.yml может переопределить)
     review_severity_threshold: SeverityLevel = "medium"     # low|medium|high|critical — ниже отбрасываем

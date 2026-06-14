@@ -6,7 +6,10 @@
 (`reviewer index /path/to/repo --ref main`).
 
 MCP-сервер запускается из `.venv` репозитория с `cwd` в корне плагина —
-`.env` подхватывается оттуда (диагностика при сбое старта: `reviewer check`).
+`./.env` подхватывается оттуда. Если сервер стартует из другого каталога,
+`.env` резолвится из фиксированного места: `$REVIEWER_ENV_FILE` →
+`~/.config/rag-reviewer/.env` → `./.env` (диагностика при сбое старта:
+`reviewer check`).
 
 Подключение: `claude --plugin-dir /path/to/rag_for_git` (или установка через
 локальный marketplace). Скиллы: `/rag-reviewer:review-pr`,

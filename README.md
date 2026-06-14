@@ -141,11 +141,25 @@ The reviewer needs Postgres/ParadeDB and Neo4j. Grab the compose file and start 
 
 ```bash
 curl -O https://raw.githubusercontent.com/mimfort/rag_for_git/main/docker-compose.yml
-curl -O https://raw.githubusercontent.com/mimfort/rag_for_git/main/.env.example
-cp .env.example .env          # fill in VOYAGE_API_KEY and GITHUB_TOKEN
 docker compose up -d          # Postgres/ParadeDB (:5433) + Neo4j (:7687) + web admin (:8000)
+
+# Keys for the reviewer. Put them where the MCP server finds them regardless of
+# which folder your editor launches it from (see "Where keys are read from" below):
+mkdir -p ~/.config/rag-reviewer
+curl -fsSL https://raw.githubusercontent.com/mimfort/rag_for_git/main/.env.example \
+  -o ~/.config/rag-reviewer/.env       # then edit it: fill in VOYAGE_API_KEY and GITHUB_TOKEN
+
 uvx --from rag-reviewer reviewer check   # ✓/✗ for keys, Postgres, Neo4j, GitHub
 ```
+
+> **Where keys are read from.** The reviewer resolves its `.env` from a fixed
+> location, **not** the current working directory — MCP clients launch the server
+> with an arbitrary CWD, so a project-local `.env` is unreliable. Lookup order:
+> `$REVIEWER_ENV_FILE` → `$XDG_CONFIG_HOME/rag-reviewer/.env` (default
+> `~/.config/rag-reviewer/.env`) → `./.env` (handy when running from a repo clone).
+> Real environment variables always win over the file, so you can instead pass keys
+> via an `"env": { "VOYAGE_API_KEY": "…", "GITHUB_TOKEN": "…" }` block in your MCP
+> client config — works in every client.
 
 - **Voyage** (`VOYAGE_API_KEY`): https://dashboard.voyageai.com/ — free token pool; attach a card
   to lift the 3 RPM / 10K TPM limit (charged only beyond the free pool).

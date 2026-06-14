@@ -24,6 +24,24 @@ Add to `~/.config/mimocode/mimocode.json` (create if it doesn't exist):
 
 Restart Mimo Code. The `reviewer` MCP server will appear in the tools list.
 
+## Keys (.env)
+
+The reviewer needs `VOYAGE_API_KEY` and `GITHUB_TOKEN`. Mimo launches the MCP
+server with an arbitrary working directory, so a project-local `.env` is **not**
+reliably found. Put the file in the fixed config location instead:
+
+```bash
+mkdir -p ~/.config/rag-reviewer
+curl -fsSL https://raw.githubusercontent.com/mimfort/rag_for_git/main/.env.example \
+  -o ~/.config/rag-reviewer/.env       # then edit it: fill in VOYAGE_API_KEY and GITHUB_TOKEN
+uvx --from rag-reviewer reviewer check  # ✓/✗ for keys, Postgres, Neo4j, GitHub
+```
+
+Lookup order: `$REVIEWER_ENV_FILE` → `$XDG_CONFIG_HOME/rag-reviewer/.env`
+(default `~/.config/rag-reviewer/.env`) → `./.env`. Alternatively pass keys via an
+`"env"` block in the `reviewer` MCP entry above — real environment variables take
+priority over the file.
+
 ## Project-level install
 
 Copy `.mimocode/mimocode.json` from this repo into your target project. The config is
