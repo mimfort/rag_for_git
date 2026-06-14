@@ -36,6 +36,12 @@ class GraphStore:
         self._driver.execute_query(
             "CREATE INDEX task_codes IF NOT EXISTS FOR (t:Task) ON (t.codes)")
 
+    def migrate_legacy_branch(self, primary: str) -> None:
+        """Проставить branch=<primary> символам без ветки (legacy-узлы). Идемпотентно."""
+        self._driver.execute_query(
+            "MATCH (s:Symbol) WHERE s.branch IS NULL SET s.branch = $primary",
+            primary=primary)
+
     def clear(self, repo: str | None = None, *, branch: str | None = None) -> None:
         """Удалить узлы/рёбра: весь граф (repo=None), репо целиком (branch=None),
         или только одну ветку репо (branch задан)."""

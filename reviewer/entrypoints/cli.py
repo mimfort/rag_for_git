@@ -165,6 +165,25 @@ def index(repo: str, ref: str | None, branch_opt: str | None, repo_tag: str | No
             c.graph.close()
 
 
+@cli.command("migrate-branches")
+def migrate_branches() -> None:
+    """Один раз после апгрейда: перенести legacy base-индекс на первичную ветку."""
+    s = Settings()
+    c = build_components(s)
+    primary = s.primary_branch()
+    try:
+        c.store.init_schema()
+        n = c.store.migrate_legacy_base(primary)
+        if c.graph is not None:
+            c.graph.init_schema()
+            c.graph.migrate_legacy_branch(primary)
+        click.echo(f"Миграция завершена: {n} чанков → base:{primary}; граф → branch={primary}")
+    finally:
+        c.store.close()
+        if c.graph:
+            c.graph.close()
+
+
 @cli.command()
 @click.argument("query")
 @click.option("--repo", "repo_tag", default=None, help="owner/name; по умолчанию DEFAULT_REPO")
