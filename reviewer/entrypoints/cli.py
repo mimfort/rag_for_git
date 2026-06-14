@@ -1,5 +1,6 @@
 from __future__ import annotations
 import logging
+import platform as _platform
 import shutil as _shutil
 
 import click
@@ -238,17 +239,20 @@ def serve(host: str, port: int) -> None:
 @click.option("--path", "path_opt", default=None, help="переопределить путь к конфигу клиента")
 @click.option("--pin", default=None, help="закрепить версию (напр. 0.1.2); по умолчанию @latest")
 @click.option("--no-latest", is_flag=True, help="без @latest (брать из кэша uvx)")
+@click.option("--no-skills", is_flag=True, help="не ставить скилы (только MCP-сервер)")
 @click.option("--dry-run", is_flag=True, help="показать, что будет записано, без записи на диск")
 def install(client: str | None, all_clients: bool, list_clients: bool,
-            path_opt: str | None, pin: str | None, no_latest: bool, dry_run: bool) -> None:
-    """Прописать MCP-сервер reviewer в конфиг AI-CLI/IDE (кроссплатформенно)."""
+            path_opt: str | None, pin: str | None, no_latest: bool,
+            no_skills: bool, dry_run: bool) -> None:
+    """Прописать MCP-сервер reviewer (и скилы) в конфиг AI-CLI/IDE (кроссплатформенно)."""
     from reviewer import install as inst
 
     if list_clients:
         click.echo("Поддерживаемые клиенты (reviewer install <client>):")
         for c in inst.CLIENTS.values():
             tag = f" [{c.scope}]" if c.scope != "user" else ""
-            click.echo(f"  {c.key:<15} {c.label}{tag}")
+            skills = " +скилы" if c.skills_fn else ""
+            click.echo(f"  {c.key:<15} {c.label}{tag}{skills}")
         return
 
     version = "" if no_latest else (pin or "latest")
@@ -269,11 +273,34 @@ def install(client: str | None, all_clients: bool, list_clients: bool,
         raise click.ClickException(
             "Укажите клиент (reviewer install <client>), либо --all / --list.")
 
+    tar_cache: list[bytes] = []  # тарбол скилов качаем один раз на все цели
+
+    def _ensure_skills(c) -> None:
+        if no_skills or c.skills_fn is None:
+            return
+        if not tar_cache:
+            click.echo("  скилы: скачиваю с GitHub…")
+            try:
+                tar_cache.append(inst.fetch_skills_bytes())
+            except Exception as exc:  # noqa: BLE001 — fail-soft, MCP уже прописан
+                click.echo(f"  скилы: пропуск (не скачать тарбол: {exc})")
+                tar_cache.append(b"")
+                return
+        if not tar_cache[0]:
+            return
+        try:
+            dest, names = inst.install_skills(c, tar_bytes=tar_cache[0])
+            click.echo(f"  скилы: {len(names)} шт. → {dest}")
+        except Exception as exc:  # noqa: BLE001
+            click.echo(f"  скилы: пропуск ({exc})")
+
     for c in targets:
         plan = inst.build_plan(c, version=version, path_override=path_opt)
         if dry_run:
             click.echo(f"# {c.label} → {plan.path}")
             click.echo(plan.content)
+            if c.skills_fn and not no_skills:
+                click.echo(f"# {c.label} скилы → {c.skills_fn(_platform.system())}")
             continue
         backup = inst.apply_plan(plan)
         if plan.already and c.dialect == "codex":
@@ -289,6 +316,7 @@ def install(client: str | None, all_clients: bool, list_clients: bool,
             click.echo(f"  бэкап: {backup}")
         if c.note:
             click.echo(f"  прим.: {c.note}")
+        _ensure_skills(c)
 
     if not dry_run:
         click.echo("Готово. Перезапустите клиент. Ключи: reviewer init && reviewer check.")
@@ -335,3 +363,55 @@ def update() -> None:
     # 2) чистим кэш — следующий `uvx --from rag-reviewer@latest` возьмёт свежую сборку
     subprocess.run([uv, "cache", "clean", "rag-reviewer"])
     click.echo("Готово. Перезапустите MCP-сервер в редакторе/CLI, чтобы применить новую версию.")
+
+
+@cli.command("install-skills")
+@click.argument("client", required=False)
+@click.option("--all", "all_clients", is_flag=True,
+              help="поставить во все обнаруженные клиенты со скилами")
+@click.option("--list", "list_clients", is_flag=True,
+              help="показать клиенты с поддержкой файловых скилов")
+@click.option("--path", "path_opt", default=None,
+              help="переопределить каталог скилов")
+def install_skills(client: str | None, all_clients: bool,
+                   list_clients: bool, path_opt: str | None) -> None:
+    """Установить скилы (review-pr, solve-task и др.) в каталог клиента."""
+    from pathlib import Path
+    from reviewer import install as inst
+
+    capable = [c for c in inst.CLIENTS.values() if c.skills_fn]
+    if list_clients:
+        click.echo("Клиенты с файловыми скилами:")
+        for c in capable:
+            click.echo(f"  {c.key:<15} {c.label} → {c.skills_fn(_platform.system())}")
+        click.echo("Прочие клиенты подхватывают скилы из плагина "
+                   "(/plugin marketplace add mimfort/rag_for_git).")
+        return
+
+    if all_clients:
+        targets = [c for c in inst.detect_installed() if c.skills_fn]
+        if not targets:
+            raise click.ClickException(
+                "Не обнаружено клиентов со скилами. Укажите явно или см. --list.")
+    elif client:
+        key = client.lower()
+        if key not in inst.CLIENTS:
+            raise click.ClickException(
+                f"Неизвестный клиент {client!r}. Список: reviewer install-skills --list")
+        c = inst.CLIENTS[key]
+        if c.skills_fn is None:
+            raise click.ClickException(
+                f"{c.label}: файловые скилы не поддерживаются (используйте плагин).")
+        targets = [c]
+    else:
+        raise click.ClickException(
+            "Укажите клиент (reviewer install-skills <client>), либо --all / --list.")
+
+    click.echo("Скачиваю скилы с GitHub…")
+    tar = inst.fetch_skills_bytes()
+    for c in targets:
+        dest = Path(path_opt).expanduser() if path_opt else c.skills_fn(_platform.system())
+        names = inst.extract_skills(tar, dest)
+        click.echo(f"✓ {c.label}: {len(names)} скилов → {dest}")
+        if c.note:
+            click.echo(f"  прим.: {c.note}")

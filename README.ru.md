@@ -187,9 +187,10 @@ docker compose up -d          # Postgres/ParadeDB (:5433) + Neo4j (:7687) + web-
 uvx --from rag-reviewer reviewer init
 #    заполните VOYAGE_API_KEY и GITHUB_TOKEN в этом файле
 
-# 3) Прописать MCP-сервер в ваш редактор/CLI
-uvx --from rag-reviewer reviewer install --all   # автодетект установленных клиентов
+# 3) Прописать MCP-сервер (и скиллы) в ваш редактор/CLI
+uvx --from rag-reviewer reviewer install --all   # автодетект клиентов + установка скиллов
 #    или конкретный: reviewer install cursor|vscode|claude-code|windsurf|gemini|antigravity|mimo|opencode|kimi|trae|codex
+#    скиллы ставятся в клиенты, которые их поддерживают (Gemini/Mimo/Kimi); --no-skills чтобы пропустить
 
 # 4) Проверить
 uvx --from rag-reviewer reviewer check
@@ -322,24 +323,22 @@ args = ["-lc", "uvx --from rag-reviewer@latest reviewer-mcp"]
 дают полный рабочий процесс ревью одной командой. Без них можно вызывать MCP-тулы напрямую,
 но скиллы оборачивают их в управляемый сценарий.
 
-Скачать и установить в глобальную папку скиллов каждого инструмента — клонировать репозиторий не нужно:
+**`reviewer install` уже ставит их** для клиентов с файловыми скиллами (Gemini, Mimo, Kimi).
+Чтобы (пере)установить только скиллы или выбрать конкретного клиента:
 
 ```bash
-# Скачать один раз
-curl -sL https://github.com/mimfort/rag_for_git/archive/refs/heads/main.tar.gz -o /tmp/rag-reviewer.tgz
+uvx --from rag-reviewer reviewer install-skills --all     # все обнаруженные клиенты со скиллами
+uvx --from rag-reviewer reviewer install-skills gemini    # конкретный
+uvx --from rag-reviewer reviewer install-skills --list    # показать цели и каталоги
+```
 
-# Gemini CLI
+Команда скачивает скиллы с GitHub (без клона репо) и распаковывает в глобальную папку скиллов
+каждого клиента (с защитой от path traversal). Ручной аналог:
+
+```bash
+curl -sL https://github.com/mimfort/rag_for_git/archive/refs/heads/main.tar.gz -o /tmp/rag-reviewer.tgz
 mkdir -p ~/.gemini/skills
 tar xz -C ~/.gemini/skills --strip-components=3 -f /tmp/rag-reviewer.tgz 'rag_for_git-main/plugin/skills'
-
-# Mimo Code
-mkdir -p ~/.config/mimocode/skills
-tar xz -C ~/.config/mimocode/skills --strip-components=3 -f /tmp/rag-reviewer.tgz 'rag_for_git-main/plugin/skills'
-
-# Kimi Code  (также добавить extra_skill_dirs = ["~/.kimi-code/skills"] в ~/.kimi-code/config.toml)
-mkdir -p ~/.kimi-code/skills
-tar xz -C ~/.kimi-code/skills --strip-components=3 -f /tmp/rag-reviewer.tgz 'rag_for_git-main/plugin/skills'
-
 rm /tmp/rag-reviewer.tgz
 ```
 
@@ -363,13 +362,18 @@ rm /tmp/rag-reviewer.tgz
 # Флаги: --path FILE (другое расположение), --force (перезаписать существующий).
 reviewer init
 
-# Прописать MCP-сервер в установленные AI-клиенты (кроссплатформенно).
+# Прописать MCP-сервер (и скиллы) в установленные AI-клиенты (кроссплатформенно).
 # --all автодетектирует установленных клиентов; или укажи конкретный:
 # cursor, claude-desktop, claude-code, vscode, windsurf, gemini, antigravity,
 # mimo, opencode, kimi, trae, codex.
-# Флаги: --list, --dry-run, --path FILE, --pin VERSION, --no-latest.
+# Скиллы ставятся в клиенты, которые их поддерживают (Gemini/Mimo/Kimi); --no-skills чтобы пропустить.
+# Флаги: --list, --dry-run, --path FILE, --pin VERSION, --no-latest, --no-skills.
 reviewer install --all
 reviewer install cursor
+
+# Установить только скиллы в глобальную папку клиента (Gemini/Mimo/Kimi).
+# --all автодетект; --list показать цели и каталоги; --path переопределить каталог.
+reviewer install-skills --all
 
 # Проверить готовность окружения: ключи, Postgres, Neo4j, GitHub.
 # Выводит ✓/✗ по каждому пункту; exit 1 при любой проблеме. Квоту Voyage не тратит.

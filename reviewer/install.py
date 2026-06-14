@@ -23,6 +23,14 @@ from typing import Callable
 PACKAGE = "rag-reviewer"
 SERVER_NAME = "reviewer"
 
+# Скилы лежат в репозитории (plugin/skills) и в wheel не пакуются — тянем их
+# тарболом с GitHub (кроссплатформенно, без клона).
+SKILLS_TARBALL = "https://github.com/mimfort/rag_for_git/archive/refs/heads/main.tar.gz"
+SKILL_NAMES = (
+    "review-pr", "solve-task", "sync-codebase",
+    "sync-tasks", "performance-review", "maintainability-review",
+)
+
 # Шаблон .env (встроен, чтобы `reviewer init` работал из published-wheel без
 # упаковки файла). Все остальные переменные имеют дефолты в settings.py.
 ENV_TEMPLATE = """\
@@ -124,6 +132,8 @@ class Client:
     path_fn: Callable[[str], Path]
     scope: str = "user"  # user | project
     note: str = ""
+    # каталог глобальных скилов клиента (None — файловые скилы не поддерживаются)
+    skills_fn: Callable[[str], Path] | None = None
 
 
 CLIENTS: dict[str, Client] = {
@@ -139,15 +149,20 @@ CLIENTS: dict[str, Client] = {
         Client("windsurf", "Windsurf", "mcpServers",
                lambda s: _home() / ".codeium" / "windsurf" / "mcp_config.json"),
         Client("gemini", "Gemini CLI", "mcpServers",
-               lambda s: _home() / ".gemini" / "settings.json"),
+               lambda s: _home() / ".gemini" / "settings.json",
+               skills_fn=lambda s: _home() / ".gemini" / "skills"),
         Client("antigravity", "Antigravity", "mcpServers",
                lambda s: _home() / ".gemini" / "antigravity" / "mcp_config.json"),
         Client("mimo", "Mimo Code", "mimo",
-               lambda s: _home() / ".config" / "mimocode" / "mimocode.json"),
+               lambda s: _home() / ".config" / "mimocode" / "mimocode.json",
+               skills_fn=lambda s: _home() / ".config" / "mimocode" / "skills"),
         Client("opencode", "OpenCode", "opencode",
                lambda s: _home() / ".config" / "opencode" / "opencode.json"),
         Client("kimi", "Kimi Code", "mcpServers",
-               lambda s: _home() / ".kimi-code" / "mcp.json"),
+               lambda s: _home() / ".kimi-code" / "mcp.json",
+               skills_fn=lambda s: _home() / ".kimi-code" / "skills",
+               note="для скилов добавьте extra_skill_dirs=[\"~/.kimi-code/skills\"] "
+                    "в ~/.kimi-code/config.toml"),
         Client("trae", "Trae IDE", "mcpServers", _trae_path),
         Client("codex", "Codex CLI", "codex",
                lambda s: _home() / ".codex" / "config.toml"),
@@ -257,3 +272,67 @@ def detect_installed(system: str | None = None) -> list[Client]:
         if client.path_fn(system).parent.exists():
             found.append(client)
     return found
+
+
+# --------------------------------------------------------------------------- #
+# скилы
+# --------------------------------------------------------------------------- #
+def fetch_skills_bytes(url: str = SKILLS_TARBALL) -> bytes:
+    """Скачать тарбол репозитория (httpx уже в зависимостях; кроссплатформенно)."""
+    import httpx
+
+    resp = httpx.get(url, follow_redirects=True, timeout=60)
+    resp.raise_for_status()
+    return resp.content
+
+
+def extract_skills(tar_bytes: bytes, dest: Path) -> list[str]:
+    """Распаковать plugin/skills/* из тарбола в каталог dest. Вернуть имена скилов.
+
+    Защита от path traversal: целевые пути обязаны лежать внутри dest.
+    """
+    import io
+    import tarfile
+
+    dest = dest.resolve()
+    names: set[str] = set()
+    with tarfile.open(fileobj=io.BytesIO(tar_bytes), mode="r:gz") as tf:
+        for m in tf.getmembers():
+            if not m.isfile():
+                continue
+            parts = m.name.split("/")
+            if "plugin" not in parts:
+                continue
+            i = parts.index("plugin")
+            if parts[i:i + 2] != ["plugin", "skills"] or len(parts) <= i + 2:
+                continue
+            rel = "/".join(parts[i + 2:])          # <skill>/<...>
+            target = (dest / rel).resolve()
+            if not str(target).startswith(str(dest) + os.sep):
+                continue                           # выходит за dest — пропускаем
+            fobj = tf.extractfile(m)
+            if fobj is None:
+                continue
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(fobj.read())
+            names.add(parts[i + 2])
+    return sorted(names)
+
+
+def install_skills(
+    client: Client,
+    *,
+    system: str | None = None,
+    tar_bytes: bytes | None = None,
+) -> tuple[Path, list[str]]:
+    """Установить скилы в каталог клиента. Возвращает (каталог, имена скилов).
+
+    tar_bytes можно передать заранее скачанным (чтобы не качать на каждый клиент).
+    """
+    system = system or platform.system()
+    if client.skills_fn is None:
+        raise ValueError(f"{client.label}: файловые скилы не поддерживаются")
+    dest = client.skills_fn(system)
+    data = tar_bytes if tar_bytes is not None else fetch_skills_bytes()
+    names = extract_skills(data, dest)
+    return dest, names

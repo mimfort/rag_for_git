@@ -139,3 +139,64 @@ def test_detect_installed(monkeypatch, tmp_path):
     found = {c.key for c in inst.detect_installed("Linux")}
     assert "cursor" in found
     assert "windsurf" not in found
+
+
+# --------------------------------------------------------------------------- #
+# скилы
+# --------------------------------------------------------------------------- #
+def _make_tarball(members: dict[str, bytes]) -> bytes:
+    """Собрать .tar.gz в памяти: {имя_в_архиве: содержимое}."""
+    import io
+    import tarfile
+
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tf:
+        for name, data in members.items():
+            info = tarfile.TarInfo(name)
+            info.size = len(data)
+            tf.addfile(info, io.BytesIO(data))
+    return buf.getvalue()
+
+
+def test_extract_skills_basic(tmp_path):
+    tar = _make_tarball({
+        "rag_for_git-main/plugin/skills/review-pr/SKILL.md": b"# review",
+        "rag_for_git-main/plugin/skills/solve-task/SKILL.md": b"# solve",
+        "rag_for_git-main/plugin/skills/solve-task/refs/x.md": b"ref",
+        "rag_for_git-main/README.md": b"ignored",                 # вне skills — пропуск
+    })
+    names = inst.extract_skills(tar, tmp_path / "skills")
+    assert names == ["review-pr", "solve-task"]
+    assert (tmp_path / "skills" / "review-pr" / "SKILL.md").read_text() == "# review"
+    assert (tmp_path / "skills" / "solve-task" / "refs" / "x.md").read_text() == "ref"
+    assert not (tmp_path / "skills" / "README.md").exists()
+
+
+def test_extract_skills_path_traversal_guard(tmp_path):
+    tar = _make_tarball({
+        "x/plugin/skills/../../../evil.md": b"pwned",
+        "x/plugin/skills/ok/SKILL.md": b"ok",
+    })
+    names = inst.extract_skills(tar, tmp_path / "skills")
+    assert names == ["ok"]
+    assert not (tmp_path / "evil.md").exists()
+
+
+def test_install_skills_uses_client_dir(monkeypatch, tmp_path):
+    monkeypatch.setattr(inst, "_home", lambda: tmp_path)
+    tar = _make_tarball({"r/plugin/skills/review-pr/SKILL.md": b"# r"})
+    dest, names = inst.install_skills(inst.CLIENTS["mimo"], system="Linux", tar_bytes=tar)
+    assert names == ["review-pr"]
+    assert dest == tmp_path / ".config" / "mimocode" / "skills"
+    assert (dest / "review-pr" / "SKILL.md").exists()
+
+
+def test_install_skills_unsupported_client(tmp_path):
+    tar = _make_tarball({"r/plugin/skills/review-pr/SKILL.md": b"# r"})
+    with pytest.raises(ValueError):
+        inst.install_skills(inst.CLIENTS["cursor"], tar_bytes=tar)
+
+
+def test_skills_capable_clients_have_dirs():
+    capable = {c.key for c in inst.CLIENTS.values() if c.skills_fn}
+    assert capable == {"gemini", "mimo", "kimi"}

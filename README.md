@@ -150,9 +150,10 @@ docker compose up -d          # Postgres/ParadeDB (:5433) + Neo4j (:7687) + web 
 uvx --from rag-reviewer reviewer init
 #    then edit ~/.config/rag-reviewer/.env: fill in VOYAGE_API_KEY and GITHUB_TOKEN
 
-# 3) Register the MCP server in your editor/CLI
-uvx --from rag-reviewer reviewer install --all   # auto-detect installed clients
+# 3) Register the MCP server (and skills) in your editor/CLI
+uvx --from rag-reviewer reviewer install --all   # auto-detect installed clients + install skills
 #    or a specific one: reviewer install cursor|vscode|claude-code|windsurf|gemini|antigravity|mimo|opencode|kimi|trae|codex
+#    skills go to clients that support them (Gemini/Mimo/Kimi); add --no-skills to skip
 
 # 4) Verify
 uvx --from rag-reviewer reviewer check
@@ -299,24 +300,22 @@ Skills (`reviewer_review-pr`, `reviewer_solve-task`, `reviewer_sync-codebase`, `
 let you invoke the full review workflow with a single command. Without them you can still call MCP
 tools directly, but the skills wrap them into a guided flow.
 
-Download and install into each tool's global skills directory — no repo clone needed:
+**`reviewer install` already installs them** for clients that support file-based skills (Gemini,
+Mimo, Kimi). To (re)install just the skills — or pick a specific client — use:
 
 ```bash
-# Download once
-curl -sL https://github.com/mimfort/rag_for_git/archive/refs/heads/main.tar.gz -o /tmp/rag-reviewer.tgz
+uvx --from rag-reviewer reviewer install-skills --all     # all detected skills-capable clients
+uvx --from rag-reviewer reviewer install-skills gemini    # a specific one
+uvx --from rag-reviewer reviewer install-skills --list    # show targets + directories
+```
 
-# Gemini CLI
+It downloads the skills from GitHub (no repo clone) and unpacks them into each client's global
+skills directory, with a path-traversal guard. Manual fallback (equivalent):
+
+```bash
+curl -sL https://github.com/mimfort/rag_for_git/archive/refs/heads/main.tar.gz -o /tmp/rag-reviewer.tgz
 mkdir -p ~/.gemini/skills
 tar xz -C ~/.gemini/skills --strip-components=3 -f /tmp/rag-reviewer.tgz 'rag_for_git-main/plugin/skills'
-
-# Mimo Code
-mkdir -p ~/.config/mimocode/skills
-tar xz -C ~/.config/mimocode/skills --strip-components=3 -f /tmp/rag-reviewer.tgz 'rag_for_git-main/plugin/skills'
-
-# Kimi Code  (also add extra_skill_dirs = ["~/.kimi-code/skills"] to ~/.kimi-code/config.toml)
-mkdir -p ~/.kimi-code/skills
-tar xz -C ~/.kimi-code/skills --strip-components=3 -f /tmp/rag-reviewer.tgz 'rag_for_git-main/plugin/skills'
-
 rm /tmp/rag-reviewer.tgz
 ```
 
@@ -344,12 +343,17 @@ All CLI commands are available via `uvx --from rag-reviewer <command>`, or after
 # Flags: --path FILE (custom location), --force (overwrite existing).
 uvx --from rag-reviewer reviewer init
 
-# Register the MCP server in installed AI clients automatically (cross-platform).
+# Register the MCP server (and skills) in installed AI clients automatically (cross-platform).
 # --all auto-detects installed clients; or name one: cursor, claude-desktop, claude-code,
 # vscode, windsurf, gemini, antigravity, mimo, opencode, kimi, trae, codex.
-# Flags: --list, --dry-run, --path FILE, --pin VERSION, --no-latest.
+# Skills are installed for clients that support them (Gemini/Mimo/Kimi); --no-skills to skip.
+# Flags: --list, --dry-run, --path FILE, --pin VERSION, --no-latest, --no-skills.
 uvx --from rag-reviewer reviewer install --all
 uvx --from rag-reviewer reviewer install cursor
+
+# Install only the skills into a client's global skills directory (Gemini/Mimo/Kimi).
+# --all auto-detects; --list shows targets + directories; --path overrides the directory.
+uvx --from rag-reviewer reviewer install-skills --all
 
 # Check environment readiness: keys, Postgres, Neo4j, GitHub. Prints ✓/✗ per item;
 # exits 1 on any problem. Spends no Voyage quota.
