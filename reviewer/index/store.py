@@ -134,7 +134,8 @@ class ChunkStore:
         with self._connect() as conn:
             rows = conn.execute(
                 "SELECT DISTINCT ON (content_hash) content_hash, embedding "
-                "FROM chunks WHERE repo=%s AND content_hash = ANY(%s) AND embedding IS NOT NULL",
+                "FROM chunks WHERE repo=%s AND content_hash = ANY(%s) AND embedding IS NOT NULL "
+                "ORDER BY content_hash",
                 (repo, list(hashes)),
             ).fetchall()
         return {h: list(v) for h, v in rows}

@@ -153,5 +153,5 @@ def test_update_base_reuses_cached_embedding_across_branches():
     update_base(store, emb, repo="a/x", target_ref="master",
                 changed_files=["mod.py"], read=lambda p: src)
     # эмбеддер не звался (единственный чанк взят из кэша)
-    assert emb.calls == [] or all(t == [] for t in emb.calls)
+    assert emb.calls == []
     assert any(r.embedding == [9.0, 9.0, 9.0, 9.0] for r in store.rows)
