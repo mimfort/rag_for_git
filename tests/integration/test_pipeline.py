@@ -2,6 +2,7 @@ import pytest
 from reviewer.config.settings import Settings
 from reviewer.app import build_components
 from reviewer.index.freshness import update_base
+from reviewer.index.refs import base_ref
 
 @pytest.mark.integration
 def test_index_then_hybrid_retrieve_finds_relevant_symbol(tmp_path):
@@ -20,5 +21,5 @@ def test_index_then_hybrid_retrieve_finds_relevant_symbol(tmp_path):
     qvec = c.embedder.embed_query("token verification")
     hits = c.store.hybrid_search("t/x", query_text="token verification",
                                  query_embedding=qvec, overlay_ref="",
-                                 changed_paths=[], top_k=5)
+                                 changed_paths=[], top_k=5, base_ref=base_ref("HEAD"))
     assert any(h.symbol_fqn == "verify_token" for h in hits)
