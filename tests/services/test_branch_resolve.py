@@ -1,6 +1,9 @@
+from types import SimpleNamespace
+
 import pytest
 from reviewer.config.settings import Settings
-from reviewer.services.branch import resolve_branch
+from reviewer.services import branch as branch_mod
+from reviewer.services.branch import current_git_branch, resolve_branch
 
 
 def _settings(csv):
@@ -31,3 +34,27 @@ def test_falls_back_to_primary_when_current_untracked():
 def test_falls_back_to_primary_when_no_current():
     s = _settings("main,master")
     assert resolve_branch(None, None, s) == "main"
+
+
+def test_current_git_branch_returns_stripped_name(monkeypatch):
+    monkeypatch.setattr(
+        branch_mod.subprocess, "run",
+        lambda *a, **k: SimpleNamespace(stdout="feature/x\n"),
+    )
+    assert current_git_branch() == "feature/x"
+
+
+def test_current_git_branch_returns_none_on_oserror(monkeypatch):
+    def _boom(*a, **k):
+        raise OSError("git not found")
+
+    monkeypatch.setattr(branch_mod.subprocess, "run", _boom)
+    assert current_git_branch() is None
+
+
+def test_current_git_branch_returns_none_on_detached_head(monkeypatch):
+    monkeypatch.setattr(
+        branch_mod.subprocess, "run",
+        lambda *a, **k: SimpleNamespace(stdout="\n"),
+    )
+    assert current_git_branch() is None

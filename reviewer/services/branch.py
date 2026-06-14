@@ -6,9 +6,13 @@
 from __future__ import annotations
 
 import subprocess
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from reviewer.config.settings import Settings
 
 
-def resolve_branch(requested: str | None, current_git_branch: str | None, settings) -> str:
+def resolve_branch(requested: str | None, current: str | None, settings: Settings) -> str:
     allow = settings.review_branches_list()
     if requested:
         if requested not in allow:
@@ -16,8 +20,8 @@ def resolve_branch(requested: str | None, current_git_branch: str | None, settin
                 f"ветка {requested!r} не в REVIEW_BRANCHES ({allow})"
             )
         return requested
-    if current_git_branch and current_git_branch in allow:
-        return current_git_branch
+    if current and current in allow:
+        return current
     return settings.primary_branch()
 
 
@@ -28,7 +32,7 @@ def current_git_branch(path: str = ".") -> str | None:
             ["git", "-C", path, "branch", "--show-current"],
             capture_output=True, text=True, timeout=5,
         )
-    except Exception:
+    except (OSError, subprocess.TimeoutExpired):
         return None
     name = out.stdout.strip()
     return name or None
