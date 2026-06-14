@@ -19,9 +19,15 @@ Parse from $ARGUMENTS (all optional):
 
 ## Pipeline
 
-1. **Locate config.** The board MCP server name and type come from the repo's `.review.yml`
-   `task_board` block (the same one `review-pr` uses). If you do not have it, ask the user which
-   board MCP to use, or read `.review.yml` from the repo. Tools are `mcp__<task_board.mcp>__*`.
+1. **Locate config.** Resolve the board `task_board` block (`type`, `mcp`, `key_pattern`,
+   `url_template`) in this order:
+   1. the repo's `.review.yml` `task_board` block (the same one `review-pr` uses), if present;
+   2. otherwise the deploy-wide default — call `get_board_config()` (reviewer MCP); it returns
+      `{"task_board": {...} | null}` from the server's `TASK_BOARD_*` env. This is the normal case:
+      the board is configured once in the reviewer deploy, so **a per-repo `.review.yml` is NOT
+      required** just to sync tasks.
+   3. if both are absent (`null`), ask the user which board MCP to use.
+   The board's tools are `mcp__<task_board.mcp>__*`.
 
 2. **Iterate the board.** Follow `references/sync-tasks-<type>.md` (Yougile is the reference) to
    enumerate tasks. Apply `--board` / `--limit` if given.
@@ -40,6 +46,8 @@ Parse from $ARGUMENTS (all optional):
   large board simply runs slower — that is expected, not an error. Use `--limit` for a quick first
   pass.
 - A single task that fails to read or index must NOT stop the sync: log it and continue.
-- If the board MCP is not connected or the reviewer MCP server is unavailable, stop and tell the user
-  what to connect — do not partially guess.
+- If no `task_board` is configured anywhere (no `.review.yml` block AND `get_board_config()` →
+  `null`) or the board MCP is not connected, stop and tell the user what to connect — do not
+  partially guess. Mention the deploy-wide option: set `TASK_BOARD_*` in the reviewer `.env` once
+  instead of adding `.review.yml` to every repo.
 - Never write back to the board; this skill only reads it.

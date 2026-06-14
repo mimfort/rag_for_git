@@ -46,6 +46,7 @@ class ReviewPolicy:
             max_comments=settings.review_max_comments,
             min_confidence=settings.review_min_confidence,
             output_language=settings.review_output_language,
+            task_board=settings.task_board_default(),   # глобальный env-дефолт доски
         )
 
     @classmethod

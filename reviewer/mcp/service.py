@@ -241,6 +241,16 @@ class MCPReviewService:
         """Граф-контекст задачи: связанные задачи → их PR → затронутый код."""
         return self.components.task_service.get_task_context(key)
 
+    def board_config(self) -> dict:
+        """Глобальный (env) конфиг доски задач деплоя — для клиентских скилов.
+
+        Скилы sync-tasks/solve-task сначала читают per-repo .review.yml; если
+        там нет блока task_board, берут этот глобальный дефолт, чтобы не плодить
+        .review.yml в каждом репозитории. ``{"task_board": None}`` = доска в
+        деплое не настроена (задайте TASK_BOARD_* в .env reviewer-mcp).
+        """
+        return {"task_board": self.settings.task_board_default()}
+
     def search_codebase(self, repo: str, query: str, top_k: int = 10,
                         branch: str | None = None) -> str:
         """Гибрид-поиск по base-индексу репозитория (без PR-сессии) — для /solve-task.

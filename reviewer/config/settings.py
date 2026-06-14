@@ -73,6 +73,16 @@ class Settings(BaseSettings):
     # ветка-агностичных операций: CLI search / solve-task). PR в ветку вне списка
     # ревью пропускает. Пусто = ["main"].
     review_branches: str = "main"
+    # task board (доска задач) — ГЛОБАЛЬНЫЙ дефолт деплоя: подключение к доске
+    # одинаково для всех репозиториев одной команды/орга, поэтому задаётся один
+    # раз в env, а не дублируется в .review.yml каждого репо. Per-repo
+    # `.review.yml` task_board (из base-ветки) переопределяет это значение;
+    # пустой `task_board:` в .review.yml явно выключает доску для репо.
+    # Все четыре пусты = доска не настроена (task_board_default() → None).
+    task_board_type: str = ""          # yougile | jira | ...
+    task_board_mcp: str = ""           # имя MCP-сервера доски (инструменты mcp__<mcp>__*)
+    task_board_key_pattern: str = ""   # регэксп ключа задачи, напр. [A-Z]+-\d+
+    task_board_url_template: str = ""  # шаблон ссылки на задачу, напр. https://.../#{code}
     # web admin basic auth (опционально; если не заданы — доступ без аутентификации)
     web_admin_user: str = ""
     web_admin_password: str = ""
@@ -89,3 +99,20 @@ class Settings(BaseSettings):
 
     def primary_branch(self) -> str:
         return self.review_branches_list()[0]
+
+    def task_board_default(self) -> dict | None:
+        """Глобальный конфиг доски из env (фолбэк, когда в .review.yml нет task_board).
+
+        Возвращает dict в форме блока ``task_board`` из .review.yml (только
+        непустые ключи) или ``None``, если ничего не задано.
+        """
+        cfg = {}
+        if self.task_board_type:
+            cfg["type"] = self.task_board_type
+        if self.task_board_mcp:
+            cfg["mcp"] = self.task_board_mcp
+        if self.task_board_key_pattern:
+            cfg["key_pattern"] = self.task_board_key_pattern
+        if self.task_board_url_template:
+            cfg["url_template"] = self.task_board_url_template
+        return cfg or None

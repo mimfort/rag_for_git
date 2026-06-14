@@ -37,6 +37,26 @@ def test_publish_review_tool_forwards_task_key():
     svc.publish_review.assert_called_once_with("o/r", 7, "s", [], False, "ID-1")
 
 
+def test_get_board_config_tool_registered():
+    import asyncio
+
+    svc = _service()
+    svc.board_config.return_value = {"task_board": {"type": "yougile", "mcp": "yougile"}}
+    server = create_server(svc)
+    names = {t.name for t in asyncio.run(server.list_tools())}
+    assert "get_board_config" in names
+
+
+def test_get_board_config_tool_forwards_to_service():
+    import asyncio
+
+    svc = _service()
+    svc.board_config.return_value = {"task_board": {"type": "yougile", "mcp": "yougile"}}
+    server = create_server(svc)
+    asyncio.run(server.call_tool("get_board_config", {}))
+    svc.board_config.assert_called_once_with()
+
+
 def test_search_codebase_tool_registered():
     import asyncio
 
