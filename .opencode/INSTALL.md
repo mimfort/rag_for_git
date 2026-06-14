@@ -34,6 +34,8 @@ Open OpenCode and run:
 
 You should see `prepare_review`, `publish_review`, `search_code`, etc.
 
-## Usage
+## Skills
 
-See `plugin/skills/review-pr/SKILL.md` for the full review workflow.
+OpenCode uses a JS plugin system — file-based skills are not supported.
+Use the MCP tools directly (`prepare_review`, `publish_review`, etc.) or refer to
+`plugin/skills/review-pr/SKILL.md` for the review workflow steps.

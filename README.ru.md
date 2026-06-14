@@ -282,6 +282,42 @@ args = ["-lc", "uvx --from rag-reviewer reviewer-mcp"]
 
 > Команда `/plugin` покажет, что `rag-reviewer` установлен и включён.
 
+### 3. Глобальная установка скиллов (опционально)
+
+Скиллы (`review-pr`, `solve-task`, `sync-tasks`, `performance-review`, `maintainability-review`)
+дают полный рабочий процесс ревью одной командой. Без них можно вызывать MCP-тулы напрямую,
+но скиллы оборачивают их в управляемый сценарий.
+
+Скачать и установить в глобальную папку скиллов каждого инструмента — клонировать репозиторий не нужно:
+
+```bash
+# Скачать один раз
+curl -sL https://github.com/mimfort/rag_for_git/archive/refs/heads/main.tar.gz -o /tmp/rag-reviewer.tgz
+
+# Gemini CLI
+mkdir -p ~/.gemini/skills
+tar xz -C ~/.gemini/skills --strip-components=3 -f /tmp/rag-reviewer.tgz 'rag_for_git-main/plugin/skills'
+
+# Mimo Code
+mkdir -p ~/.config/mimocode/skills
+tar xz -C ~/.config/mimocode/skills --strip-components=3 -f /tmp/rag-reviewer.tgz 'rag_for_git-main/plugin/skills'
+
+# Kimi Code  (также добавить extra_skill_dirs = ["~/.kimi-code/skills"] в ~/.kimi-code/config.toml)
+mkdir -p ~/.kimi-code/skills
+tar xz -C ~/.kimi-code/skills --strip-components=3 -f /tmp/rag-reviewer.tgz 'rag_for_git-main/plugin/skills'
+
+rm /tmp/rag-reviewer.tgz
+```
+
+| Инструмент | Глобальная папка скиллов |
+|---|---|
+| Gemini CLI | `~/.gemini/skills/` |
+| Mimo Code | `~/.config/mimocode/skills/` |
+| Kimi Code | `~/.kimi-code/skills/` + `extra_skill_dirs` в `~/.kimi-code/config.toml` |
+| Claude Code | поставляется в плагине (шаг выше) |
+| Cursor | на уровне проекта через `.cursor-plugin/plugin.json` |
+| OpenCode | JS-плагины — файловые скиллы не поддерживаются |
+
 ## Использование
 
 После `pip install -e .` доступны команды `reviewer` (CLI) и `reviewer-mcp` (MCP-сервер для плагина).

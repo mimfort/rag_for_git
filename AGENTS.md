@@ -22,7 +22,17 @@ this project.
 
 ## Skills
 
-Use the `skill` tool to load review workflows:
+Codex CLI loads skills from `.codex-plugin/plugin.json` (project-level). To install globally —
+no repo clone needed:
+
+```bash
+curl -sL https://github.com/mimfort/rag_for_git/archive/refs/heads/main.tar.gz -o /tmp/rag-reviewer.tgz
+mkdir -p ~/.codex/skills
+tar xz -C ~/.codex/skills --strip-components=3 -f /tmp/rag-reviewer.tgz 'rag_for_git-main/plugin/skills'
+rm /tmp/rag-reviewer.tgz
+```
+
+Available skills:
 
 - `rag-reviewer:review-pr` — review a GitHub PR end-to-end
 - `rag-reviewer:solve-task` — solve a task from the board

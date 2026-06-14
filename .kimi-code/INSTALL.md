@@ -27,6 +27,28 @@ Restart Kimi Code. The `reviewer` MCP server will be available in all sessions.
 Copy `.kimi-code/mcp.json` from this repo into your target project. The config is
 already present here (see `mcp.json` in this directory).
 
+## Skills (optional)
+
+Kimi Code loads skills from directories listed in `extra_skill_dirs` in `~/.kimi-code/config.toml`.
+
+**Step 1** — add the skills directory to your config:
+
+```toml
+# ~/.kimi-code/config.toml
+extra_skill_dirs = ["~/.kimi-code/skills"]
+```
+
+**Step 2** — download the skills (no repo clone needed):
+
+```bash
+curl -sL https://github.com/mimfort/rag_for_git/archive/refs/heads/main.tar.gz -o /tmp/rag-reviewer.tgz
+mkdir -p ~/.kimi-code/skills
+tar xz -C ~/.kimi-code/skills --strip-components=3 -f /tmp/rag-reviewer.tgz 'rag_for_git-main/plugin/skills'
+rm /tmp/rag-reviewer.tgz
+```
+
+Skills installed: `review-pr`, `solve-task`, `sync-tasks`, `performance-review`, `maintainability-review`.
+
 ## Verify
 
 Open Kimi Code and run:

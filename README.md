@@ -243,6 +243,42 @@ You get:
 
 > Run `/plugin` to confirm `rag-reviewer` is installed and enabled.
 
+### 3. Install skills globally (optional)
+
+Skills (`review-pr`, `solve-task`, `sync-tasks`, `performance-review`, `maintainability-review`)
+let you invoke the full review workflow with a single command. Without them you can still call MCP
+tools directly, but the skills wrap them into a guided flow.
+
+Download and install into each tool's global skills directory — no repo clone needed:
+
+```bash
+# Download once
+curl -sL https://github.com/mimfort/rag_for_git/archive/refs/heads/main.tar.gz -o /tmp/rag-reviewer.tgz
+
+# Gemini CLI
+mkdir -p ~/.gemini/skills
+tar xz -C ~/.gemini/skills --strip-components=3 -f /tmp/rag-reviewer.tgz 'rag_for_git-main/plugin/skills'
+
+# Mimo Code
+mkdir -p ~/.config/mimocode/skills
+tar xz -C ~/.config/mimocode/skills --strip-components=3 -f /tmp/rag-reviewer.tgz 'rag_for_git-main/plugin/skills'
+
+# Kimi Code  (also add extra_skill_dirs = ["~/.kimi-code/skills"] to ~/.kimi-code/config.toml)
+mkdir -p ~/.kimi-code/skills
+tar xz -C ~/.kimi-code/skills --strip-components=3 -f /tmp/rag-reviewer.tgz 'rag_for_git-main/plugin/skills'
+
+rm /tmp/rag-reviewer.tgz
+```
+
+| Tool | Global skills directory |
+|---|---|
+| Gemini CLI | `~/.gemini/skills/` |
+| Mimo Code | `~/.config/mimocode/skills/` |
+| Kimi Code | `~/.kimi-code/skills/` + `extra_skill_dirs` in `~/.kimi-code/config.toml` |
+| Claude Code | bundled in the plugin (step above) |
+| Cursor | project-level via `.cursor-plugin/plugin.json` |
+| OpenCode | JS plugin system — file-based skills not supported |
+
 ---
 
 That's it. Build the base index (recommended — see [CLI](#cli)) and review a PR (see
