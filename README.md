@@ -235,7 +235,7 @@ Two commands, from any project:
 
 You get:
 
-- **Skills:** `/rag-reviewer:reviewer_review-pr`, `/rag-reviewer:reviewer_solve-task`, `/rag-reviewer:reviewer_sync-tasks`
+- **Skills:** `/rag-reviewer:reviewer_review-pr`, `/rag-reviewer:reviewer_solve-task`, `/rag-reviewer:reviewer_sync-codebase`, `/rag-reviewer:reviewer_sync-tasks`
   (plus `/rag-reviewer:reviewer_maintainability-review` and `/rag-reviewer:reviewer_performance-review`).
 - **MCP server** `reviewer` exposing: `prepare_review`, `publish_review`, `search_code`,
   `get_related_symbols`, `read_file`, `get_definition`, `find_callers`, `get_changed_file_diff`,
@@ -245,7 +245,7 @@ You get:
 
 ### 3. Install skills globally (optional)
 
-Skills (`reviewer_review-pr`, `reviewer_solve-task`, `reviewer_sync-tasks`, `reviewer_performance-review`, `reviewer_maintainability-review`)
+Skills (`reviewer_review-pr`, `reviewer_solve-task`, `reviewer_sync-codebase`, `reviewer_sync-tasks`, `reviewer_performance-review`, `reviewer_maintainability-review`)
 let you invoke the full review workflow with a single command. Without them you can still call MCP
 tools directly, but the skills wrap them into a guided flow.
 
@@ -320,6 +320,7 @@ call a skill:
 
 ```text
 /rag-reviewer:reviewer_review-pr owner/repo#42     # review a PR (prepare_review → subagents → publish_review)
+/rag-reviewer:reviewer_sync-codebase               # build/update vector store + code graph from local clone
 /rag-reviewer:reviewer_sync-tasks                  # warm the task graph & vector store from a connected board
 /rag-reviewer:reviewer_solve-task <key | free text>  # gather disciplined context for a task, then hand off to dev
 ```
@@ -427,6 +428,6 @@ reviewer/
   entrypoints/ cli.py (index / search / check / serve) · mcp_server.py (FastMCP)
   web/         FastAPI + React/Vite SPA — observability web admin
   app.py       dependency assembly from Settings
-plugin/        Claude Code plugin (skills /rag-reviewer:reviewer_review-pr, reviewer_solve-task, reviewer_sync-tasks)
+plugin/        Claude Code plugin (skills /rag-reviewer:reviewer_review-pr, reviewer_solve-task, reviewer_sync-codebase, reviewer_sync-tasks)
 docker-compose.yml   ParadeDB (pgvector+pg_search) + Neo4j + web admin
 ```

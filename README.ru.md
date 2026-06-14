@@ -274,7 +274,7 @@ args = ["-lc", "uvx --from rag-reviewer reviewer-mcp"]
 
 Вы получаете:
 
-- **Скиллы:** `/rag-reviewer:reviewer_review-pr`, `/rag-reviewer:reviewer_solve-task`, `/rag-reviewer:reviewer_sync-tasks`
+- **Скиллы:** `/rag-reviewer:reviewer_review-pr`, `/rag-reviewer:reviewer_solve-task`, `/rag-reviewer:reviewer_sync-codebase`, `/rag-reviewer:reviewer_sync-tasks`
   (а также `/rag-reviewer:reviewer_maintainability-review` и `/rag-reviewer:reviewer_performance-review`).
 - **MCP-сервер** `reviewer` с тулами: `prepare_review`, `publish_review`, `search_code`,
   `get_related_symbols`, `read_file`, `get_definition`, `find_callers`, `get_changed_file_diff`,
@@ -284,7 +284,7 @@ args = ["-lc", "uvx --from rag-reviewer reviewer-mcp"]
 
 ### 3. Глобальная установка скиллов (опционально)
 
-Скиллы (`reviewer_review-pr`, `reviewer_solve-task`, `reviewer_sync-tasks`, `reviewer_performance-review`, `reviewer_maintainability-review`)
+Скиллы (`reviewer_review-pr`, `reviewer_solve-task`, `reviewer_sync-codebase`, `reviewer_sync-tasks`, `reviewer_performance-review`, `reviewer_maintainability-review`)
 дают полный рабочий процесс ревью одной командой. Без них можно вызывать MCP-тулы напрямую,
 но скиллы оборачивают их в управляемый сценарий.
 
@@ -543,7 +543,7 @@ reviewer/
   entrypoints/ cli.py (index / search / check / serve)
   web/         FastAPI + React/Vite SPA — веб-админка наблюдаемости
   app.py       сборка зависимостей из Settings
-plugin/        Claude Code-плагин (скилл /rag-reviewer:reviewer_review-pr)
+plugin/        Claude Code-плагин (скиллы /rag-reviewer:reviewer_review-pr, reviewer_solve-task, reviewer_sync-codebase, reviewer_sync-tasks)
 docker-compose.yml   ParadeDB (pgvector+pg_search) + Neo4j + web-админка
 ```
 

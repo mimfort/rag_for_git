@@ -39,7 +39,7 @@ tar xz -C ~/.gemini/skills --strip-components=3 -f /tmp/rag-reviewer.tgz 'rag_fo
 rm /tmp/rag-reviewer.tgz
 ```
 
-Skills installed: `reviewer_review-pr`, `reviewer_solve-task`, `reviewer_sync-tasks`, `reviewer_performance-review`, `reviewer_maintainability-review`.
+Skills installed: `reviewer_review-pr`, `reviewer_solve-task`, `reviewer_sync-codebase`, `reviewer_sync-tasks`, `reviewer_performance-review`, `reviewer_maintainability-review`.
 
 Then use them: `use skill rag-reviewer:reviewer_review-pr`
 

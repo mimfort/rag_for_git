@@ -36,6 +36,7 @@ Available skills:
 
 - `rag-reviewer:reviewer_review-pr` — review a GitHub PR end-to-end
 - `rag-reviewer:reviewer_solve-task` — solve a task from the board
-- `rag-reviewer:reviewer_sync-tasks` — index tasks into the vector store
+- `rag-reviewer:reviewer_sync-codebase` — build/update the vector store + code graph from a local repo clone
+- `rag-reviewer:reviewer_sync-tasks` — index tasks into the vector store from a connected board
 - `rag-reviewer:reviewer_performance-review` — performance-focused PR review
 - `rag-reviewer:reviewer_maintainability-review` — maintainability-focused PR review
