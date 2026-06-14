@@ -167,19 +167,25 @@ def index(repo: str, ref: str | None, branch_opt: str | None, repo_tag: str | No
 @cli.command()
 @click.argument("query")
 @click.option("--repo", "repo_tag", default=None, help="owner/name; по умолчанию DEFAULT_REPO")
-def search(query: str, repo_tag: str | None) -> None:
-    """Гибридный поиск по base-индексу (диагностика)."""
+@click.option("--branch", "branch_opt", default=None,
+              help="ветка base-индекса; по умолчанию первичная (REVIEW_BRANCHES)")
+def search(query: str, repo_tag: str | None, branch_opt: str | None) -> None:
+    """Гибридный поиск по base-индексу ветки (диагностика)."""
     from reviewer.services.repo_id import normalize_repo
     s = Settings()
     repo_id = normalize_repo(repo_tag or s.default_repo) if (repo_tag or s.default_repo) else None
     if repo_id is None:
         raise click.ClickException("Укажите --repo owner/name (или DEFAULT_REPO в .env)")
+    if branch_opt and branch_opt not in s.review_branches_list():
+        raise click.ClickException(
+            f"Ветка {branch_opt!r} не в REVIEW_BRANCHES ({s.review_branches_list()})")
+    branch = branch_opt or s.primary_branch()
     c = build_components(s)
     try:
         qvec = c.embedder.embed_query(query)
         hits = c.store.hybrid_search(
             repo_id, query_text=query, query_embedding=qvec,
-            overlay_ref="", changed_paths=[], top_k=10,
+            overlay_ref="", changed_paths=[], top_k=10, base_ref=base_ref(branch),
         )
         for h in hits:
             click.echo(f"{h.score:.3f}  {h.node_id}  ({h.path}:{h.start_line})")
