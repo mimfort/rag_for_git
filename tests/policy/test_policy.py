@@ -84,6 +84,37 @@ def test_load_task_board_none_without_yaml():
     assert p.task_board is None
 
 
+def test_from_settings_task_board_from_env(monkeypatch):
+    monkeypatch.setenv("TASK_BOARD_TYPE", "yougile")
+    monkeypatch.setenv("TASK_BOARD_MCP", "yougile")
+    p = ReviewPolicy.from_settings(Settings(_env_file=None))
+    assert p.task_board == {"type": "yougile", "mcp": "yougile"}
+
+
+def test_load_task_board_from_env_default(monkeypatch):
+    # без .review.yml глобальный env-дефолт доски используется как fallback
+    monkeypatch.setenv("TASK_BOARD_TYPE", "yougile")
+    monkeypatch.setenv("TASK_BOARD_MCP", "yougile")
+    p = ReviewPolicy.load(Settings(_env_file=None), None)
+    assert p.task_board == {"type": "yougile", "mcp": "yougile"}
+
+
+def test_yaml_task_board_overrides_env_default(monkeypatch):
+    # per-repo .review.yml переопределяет глобальный env-дефолт
+    monkeypatch.setenv("TASK_BOARD_TYPE", "yougile")
+    monkeypatch.setenv("TASK_BOARD_MCP", "yougile")
+    p = ReviewPolicy.load(Settings(_env_file=None), "task_board: {type: jira, mcp: atlassian}")
+    assert p.task_board == {"type": "jira", "mcp": "atlassian"}
+
+
+def test_empty_yaml_task_board_disables_env_default(monkeypatch):
+    # явный пустой task_board в .review.yml выключает доску, несмотря на env-дефолт
+    monkeypatch.setenv("TASK_BOARD_TYPE", "yougile")
+    monkeypatch.setenv("TASK_BOARD_MCP", "yougile")
+    p = ReviewPolicy.load(Settings(_env_file=None), "task_board:")
+    assert p.task_board is None
+
+
 def test_requirements_category_enabled_by_default():
     p = ReviewPolicy.from_yaml(None)
     assert p.gate(F("requirements", "medium")) is True

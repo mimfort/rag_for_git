@@ -185,7 +185,10 @@ uvx --from rag-reviewer reviewer update
 All other settings have defaults (documented in `.env.example`). `DEFAULT_REPO` (optional) sets
 the default `owner/name` for single-repo deployments. `REVIEW_BRANCHES` (optional, CSV, default
 `main`) lists the branches to track — each gets its own isolated base index; PRs targeting a
-branch outside this list are silently skipped by `prepare_review`.
+branch outside this list are silently skipped by `prepare_review`. `TASK_BOARD_TYPE` /
+`TASK_BOARD_MCP` / `TASK_BOARD_KEY_PATTERN` / `TASK_BOARD_URL_TEMPLATE` (optional) configure the task
+board **once for the whole deployment**, so it need not be repeated in every repo's `.review.yml`
+(see *Per-repo policy* below).
 
 ### Manual setup (alternative)
 
@@ -432,6 +435,15 @@ task_board:
   mcp: yougile           # name of the connected board MCP server (tools are mcp__<mcp>__*)
   key_pattern: "[A-Z]+-\\d+"   # optional; matches Yougile PRI-34/ID-34 and Jira PROJ-123
 ```
+
+**The `task_board` block is a deploy-wide default, not a per-repo requirement.** A board connection
+is the same for every repo of one team, so configure it **once** in the reviewer `.env`
+(`TASK_BOARD_TYPE` / `TASK_BOARD_MCP` / `TASK_BOARD_KEY_PATTERN` / `TASK_BOARD_URL_TEMPLATE`) and
+every repo inherits it — no `.review.yml` needed just for the board. A `task_board` block in a repo's
+`.review.yml` **overrides** that default for that repo; an explicit empty `task_board:` **disables**
+the board for it. `review-pr` reads this through the policy; the client skills (`solve-task`,
+`sync-tasks`) read it via the `get_board_config` MCP tool as a fallback when the local `.review.yml`
+has no block.
 
 ## Known limitations & caveats
 

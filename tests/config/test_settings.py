@@ -16,3 +16,38 @@ def test_default_repo_from_env(monkeypatch):
     monkeypatch.setenv("DEFAULT_REPO", "owner/name")
     from reviewer.config.settings import Settings
     assert Settings(_env_file=None).default_repo == "owner/name"
+
+
+_TASK_BOARD_ENV = (
+    "TASK_BOARD_TYPE", "TASK_BOARD_MCP",
+    "TASK_BOARD_KEY_PATTERN", "TASK_BOARD_URL_TEMPLATE",
+)
+
+
+def test_task_board_default_none_when_unset(monkeypatch):
+    for k in _TASK_BOARD_ENV:
+        monkeypatch.delenv(k, raising=False)
+    assert Settings(_env_file=None).task_board_default() is None
+
+
+def test_task_board_default_from_env(monkeypatch):
+    monkeypatch.setenv("TASK_BOARD_TYPE", "yougile")
+    monkeypatch.setenv("TASK_BOARD_MCP", "yougile")
+    monkeypatch.setenv("TASK_BOARD_KEY_PATTERN", r"[A-Z]+-\d+")
+    monkeypatch.setenv("TASK_BOARD_URL_TEMPLATE", "https://ru.yougile.com/#{code}")
+    assert Settings(_env_file=None).task_board_default() == {
+        "type": "yougile",
+        "mcp": "yougile",
+        "key_pattern": r"[A-Z]+-\d+",
+        "url_template": "https://ru.yougile.com/#{code}",
+    }
+
+
+def test_task_board_default_partial(monkeypatch):
+    for k in _TASK_BOARD_ENV:
+        monkeypatch.delenv(k, raising=False)
+    monkeypatch.setenv("TASK_BOARD_TYPE", "yougile")
+    monkeypatch.setenv("TASK_BOARD_MCP", "yougile")
+    assert Settings(_env_file=None).task_board_default() == {
+        "type": "yougile", "mcp": "yougile",
+    }

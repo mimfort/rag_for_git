@@ -17,9 +17,12 @@ brief to `superpowers:brainstorming` (which leads to writing-plans → subagent-
 
 ## Pipeline
 
-1. **Config.** Read `.review.yml` from the repo. If it has a `task_board` block (`type`, `mcp`,
-   `key_pattern`), a board is configured and its tools are `mcp__<task_board.mcp>__*`. No block, or
-   the board MCP is not connected → board-less mode (continue without it).
+1. **Config.** Resolve the `task_board` block (`type`, `mcp`, `key_pattern`): first from the repo's
+   `.review.yml`, and if there is no block there, from the deploy-wide default via
+   `get_board_config()` (reviewer MCP) — so a per-repo `.review.yml` is not required when the board
+   is configured once in the reviewer deploy (`TASK_BOARD_*` env). If a board is resolved, its tools
+   are `mcp__<task_board.mcp>__*`. No block anywhere (`get_board_config()` → `null`), or the board MCP
+   is not connected → board-less mode (continue without it).
 
 2. **Identify the task.**
    - If `$ARGUMENTS` matches the board's `key_pattern` AND a board is configured/connected: read the
