@@ -9,12 +9,12 @@ def R(nid, text):
 
 class FakeStore:
     def hybrid_search(self, repo, **kw): return [R("a.py#f", "alpha"), R("b.py#g", "beta")]
-    def fetch_nodes(self, repo, node_ids, overlay_ref, changed_paths):
+    def fetch_nodes(self, repo, node_ids, overlay_ref, changed_paths, *, base_ref="base"):
         return [R("c.py#h", "gamma")] if "c.py#h" in node_ids else []
 
 
 class FakeGraph:
-    def expand(self, repo, ids, hops=2): return {"c.py#h"}
+    def expand(self, repo, ids, hops=2, *, branch=""): return {"c.py#h"}
 
 
 class FakeEmb:
@@ -36,32 +36,34 @@ class CountingReranker:
 class StoreOnlyHits:
     """Только hits, граф ничего нового не добавляет."""
     def hybrid_search(self, repo, **kw): return [R("a.py#f", "alpha"), R("b.py#g", "beta")]
-    def fetch_nodes(self, repo, node_ids, overlay_ref, changed_paths): return []
+    def fetch_nodes(self, repo, node_ids, overlay_ref, changed_paths, *, base_ref="base"):
+        return []
 
 
 class GraphEmpty:
     """Граф не расширяет — expand возвращает пустое множество."""
-    def expand(self, repo, ids, hops=2): return set()
+    def expand(self, repo, ids, hops=2, *, branch=""): return set()
 
 
 class StoreManyHits:
     """Много hits, чтобы len(merged) > top_k."""
     def hybrid_search(self, repo, **kw):
         return [R(f"x.py#f{i}", f"text{i}") for i in range(10)]
-    def fetch_nodes(self, repo, node_ids, overlay_ref, changed_paths): return []
+    def fetch_nodes(self, repo, node_ids, overlay_ref, changed_paths, *, base_ref="base"):
+        return []
 
 
 class StoreWithGraphNew:
     """Возвращает 3 hits; граф добавляет ещё один — итого 4 кандидата (> 3)."""
     def hybrid_search(self, repo, **kw):
         return [R("a.py#f", "alpha"), R("b.py#g", "beta"), R("c.py#h", "gamma")]
-    def fetch_nodes(self, repo, node_ids, overlay_ref, changed_paths):
+    def fetch_nodes(self, repo, node_ids, overlay_ref, changed_paths, *, base_ref="base"):
         return [R("d.py#i", "delta")] if "d.py#i" in node_ids else []
 
 
 class GraphNewOne:
     """Добавляет один узел, которого нет в hits."""
-    def expand(self, repo, ids, hops=2): return {"d.py#i"}
+    def expand(self, repo, ids, hops=2, *, branch=""): return {"d.py#i"}
 
 
 # ---------------------------------------------------------------------------
@@ -162,7 +164,7 @@ class StoreRecordingRepo:
         self.last_repo = repo
         return []
 
-    def fetch_nodes(self, repo, node_ids, overlay_ref, changed_paths):
+    def fetch_nodes(self, repo, node_ids, overlay_ref, changed_paths, *, base_ref="base"):
         return []
 
 
