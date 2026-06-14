@@ -123,6 +123,22 @@ class ChunkStore:
             ).fetchall()
         return {r[0] for r in rows}
 
+    def find_embeddings_by_hashes(self, repo: str, hashes: list[str]) -> dict[str, list[float]]:
+        """Готовые векторы по content_hash из любого ref репо (cross-branch reuse).
+
+        Эмбеддинг детерминирован по тексту чанка (content_hash = sha256 текста) при
+        фиксированной модели — переиспользуем вектор вместо повторного вызова Voyage.
+        """
+        if not hashes:
+            return {}
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT DISTINCT ON (content_hash) content_hash, embedding "
+                "FROM chunks WHERE repo=%s AND content_hash = ANY(%s) AND embedding IS NOT NULL",
+                (repo, list(hashes)),
+            ).fetchall()
+        return {h: list(v) for h, v in rows}
+
     def delete_ref(self, repo: str, ref: str) -> None:
         """Удалить все чанки указанного ref (например, эфемерный overlay pr:N после ревью)."""
         with self._connect() as conn:

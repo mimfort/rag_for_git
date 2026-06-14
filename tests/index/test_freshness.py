@@ -2,7 +2,12 @@ from reviewer.index.freshness import build_overlay, update_base
 
 
 class FakeEmb:
-    def embed_documents(self, texts): return [[0.0]*4 for _ in texts]
+    def __init__(self):
+        self.calls: list[list[str]] = []
+
+    def embed_documents(self, texts):
+        self.calls.append(list(texts))
+        return [[0.0]*4 for _ in texts]
 
 
 class FakeStore:
@@ -12,9 +17,13 @@ class FakeStore:
         self.rows: list = []
         self.deleted_paths: list[tuple[str, str, list[str]]] = []          # (repo, ref, paths)
         self.deleted_missing: list[tuple[str, str, str, list[str]]] = []   # (repo, ref, path, keep_fqns)
+        self.cached_embeddings: dict[str, list[float]] = {}                # content_hash -> vector
 
     def existing_hashes(self, repo, ref): return set()
     def upsert(self, rows): self.rows.extend(rows)
+
+    def find_embeddings_by_hashes(self, repo, hashes):
+        return {h: self.cached_embeddings[h] for h in hashes if h in self.cached_embeddings}
 
     def delete_paths(self, repo, ref, paths):
         if paths:
@@ -130,3 +139,19 @@ def test_update_base_non_py_files_not_processed():
     assert store.deleted_paths == []
     assert store.deleted_missing == []
     assert store.rows == []
+
+
+def test_update_base_reuses_cached_embedding_across_branches():
+    """Чанк с известным content_hash не переэмбеддится — вектор берётся из кэша."""
+    from reviewer.index.models import Chunk
+    src = "def alpha():\n    pass\n"
+    # вычисляем content_hash так же, как chunker
+    h = Chunk(path="mod.py", lang="python", symbol_fqn="alpha", kind="function",
+              start_line=1, end_line=2, text="def alpha():\n    pass").content_hash
+    store, emb = FakeStore(), FakeEmb()
+    store.cached_embeddings[h] = [9.0, 9.0, 9.0, 9.0]
+    update_base(store, emb, repo="a/x", target_ref="master",
+                changed_files=["mod.py"], read=lambda p: src)
+    # эмбеддер не звался (единственный чанк взят из кэша)
+    assert emb.calls == [] or all(t == [] for t in emb.calls)
+    assert any(r.embedding == [9.0, 9.0, 9.0, 9.0] for r in store.rows)

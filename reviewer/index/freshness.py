@@ -13,12 +13,19 @@ def _rows_for_file(repo: str, path: str, source: str, ref: str) -> list[ChunkRow
                      text=c.text, embedding=[]) for c in chunks]
 
 
-def _embed_and_upsert(store, embedder, rows: list[ChunkRow]) -> None:
+def _embed_and_upsert(store, embedder, repo: str, rows: list[ChunkRow]) -> None:
     if not rows:
         return
-    vecs = embedder.embed_documents([r.text for r in rows])
-    for r, v in zip(rows, vecs):
-        r.embedding = v
+    # cross-branch reuse: готовые векторы из других ветвей того же репо по content_hash
+    cached = store.find_embeddings_by_hashes(repo, [r.content_hash for r in rows])
+    to_embed = [r for r in rows if r.content_hash not in cached]
+    if to_embed:
+        vecs = embedder.embed_documents([r.text for r in to_embed])
+        for r, v in zip(to_embed, vecs):
+            r.embedding = v
+    for r in rows:
+        if r.content_hash in cached:
+            r.embedding = cached[r.content_hash]
     store.upsert(rows)
 
 
@@ -43,7 +50,7 @@ def build_overlay(store, embedder, repo: str, pr_number: int, changed_files: lis
             if row.content_hash not in seen:
                 seen.add(row.content_hash)
                 batch.append(row)
-    _embed_and_upsert(store, embedder, batch)
+    _embed_and_upsert(store, embedder, repo, batch)
 
 
 def update_base(store, embedder, repo: str, target_ref: str,
@@ -75,4 +82,4 @@ def update_base(store, embedder, repo: str, target_ref: str,
             if row.content_hash not in seen:
                 seen.add(row.content_hash)
                 batch.append(row)
-    _embed_and_upsert(store, embedder, batch)
+    _embed_and_upsert(store, embedder, repo, batch)
