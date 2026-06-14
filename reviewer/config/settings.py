@@ -42,6 +42,10 @@ class Settings(BaseSettings):
     # multi-repo: дефолтный repo для session-less тулов (search_codebase) и
     # `reviewer index` без --repo; пусто = repo задаётся явно (мульти-репо-режим)
     default_repo: str = ""
+    # multi-branch: отслеживаемые ветки (CSV); первая — первичная (дефолт для
+    # ветка-агностичных операций: CLI search / solve-task). PR в ветку вне списка
+    # ревью пропускает. Пусто = ["main"].
+    review_branches: str = "main"
     # web admin basic auth (опционально; если не заданы — доступ без аутентификации)
     web_admin_user: str = ""
     web_admin_password: str = ""
@@ -52,3 +56,9 @@ class Settings(BaseSettings):
 
     def review_categories_list(self) -> list[str]:
         return self._csv(self.review_categories)
+
+    def review_branches_list(self) -> list[str]:
+        return self._csv(self.review_branches) or ["main"]
+
+    def primary_branch(self) -> str:
+        return self.review_branches_list()[0]
