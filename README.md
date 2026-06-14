@@ -60,12 +60,18 @@ it, so graph expansion and chunk retrieval are stitched together without any map
 **Index freshness: a stable base + a PR overlay.** A full reindex of a large repo is expensive, so
 the index keeps a persistent base and layers PR changes on top:
 
-- **`ref="base"`** — the persistent index of the target branch. Updated incrementally by
-  `reviewer index` (only changed files are chunked; only chunks with a new `content_hash` are
-  re-embedded).
+- **`ref="base:<branch>"`** — the persistent index of a tracked branch (e.g. `"base:main"`,
+  `"base:master"`). Each tracked branch in `REVIEW_BRANCHES` has its own isolated index. Updated
+  incrementally by `reviewer index --ref <branch>` (only changed files are chunked; only chunks
+  with a new `content_hash` are re-embedded — embeddings are reused across branches by hash,
+  saving Voyage quota).
 - **`ref="pr:N"`** — an ephemeral overlay of just the PR's changed files at its HEAD.
-- **On a query**: `retrieval = (base where path ∉ changed) ∪ overlay`. For changed files the agent
-  sees the **new** version; for everything else, the stable base.
+- **On a query**: `retrieval = (base:<branch> where path ∉ changed) ∪ overlay`. For changed files
+  the agent sees the **new** version; for everything else, the stable base.
+- **Multi-branch.** A PR is reviewed against the index of its target branch (`base_ref` from the
+  PR). A PR targeting an untracked branch is skipped (`prepare_review` returns
+  `{"status":"skipped",...}`). The code graph (Neo4j `:Symbol`) is also branch-scoped via a
+  `branch` property, with unique constraint `(repo, branch, id)`.
 
 ```
                 ┌─────────────────────────── reviewer (core library) ───────────────────────────┐
@@ -147,7 +153,9 @@ uvx --from rag-reviewer reviewer check   # ✓/✗ for keys, Postgres, Neo4j, Gi
   (fine-grained) or the `repo` scope (classic). Quick option: `gh auth token`.
 
 All other settings have defaults (documented in `.env.example`). `DEFAULT_REPO` (optional) sets
-the default `owner/name` for single-repo deployments.
+the default `owner/name` for single-repo deployments. `REVIEW_BRANCHES` (optional, CSV, default
+`main`) lists the branches to track — each gets its own isolated base index; PRs targeting a
+branch outside this list are silently skipped by `prepare_review`.
 
 ### 2. Install the plugin
 
@@ -300,8 +308,16 @@ uvx --from rag-reviewer reviewer check
 # or DEFAULT_REPO is set in .env.
 uvx --from rag-reviewer reviewer index /path/to/repo --ref main --repo owner/name
 
+# Build the index for a second tracked branch (isolated index, same deployment).
+uvx --from rag-reviewer reviewer index /path/to/repo --ref master --repo owner/name
+
 # Diagnostic hybrid search over the base index (verify the index works).
+# --branch selects which tracked branch's index to search (default: primary branch).
 uvx --from rag-reviewer reviewer search "token verification"
+uvx --from rag-reviewer reviewer search "token verification" --branch master
+
+# One-time migration: rename legacy ref="base" → "base:<primary>" after upgrading to multi-branch.
+uvx --from rag-reviewer reviewer migrate-branches
 
 # Observability web admin (run history, findings) on the host.
 uvx --from rag-reviewer reviewer serve   # http://127.0.0.1:8000  (options: --host / --port)
@@ -329,7 +345,8 @@ A typical end-to-end run:
 
 ```bash
 git clone https://github.com/ORG/REPO /tmp/REPO
-reviewer index /tmp/REPO --ref main       # build base index + graph
+reviewer index /tmp/REPO --ref main       # build base index + graph for main
+reviewer index /tmp/REPO --ref master     # optionally index a second branch (REVIEW_BRANCHES=main,master)
 # in Claude Code (from the repo root):  /rag-reviewer:reviewer_review-pr ORG/REPO#42
 ```
 
@@ -373,6 +390,8 @@ A factual list of what this does and does not do today.
   repo (no cross-repo retrieval). Index a repo with `reviewer index <path> --repo owner/name` (or let
   it derive `owner/name` from the git `origin` remote, or set `DEFAULT_REPO`). The task graph
   (`:Task`) is intentionally global, so one task can span PRs across several microservice repos.
+  Within a repo, each tracked branch has its own isolated index (`ref="base:<branch>"` in Postgres;
+  `branch` property on Neo4j `:Symbol` nodes, unique constraint `(repo, branch, id)`).
 - **Language scope: Python only.** The chunker (tree-sitter) and the SCIP backend (`scip-python`)
   are Python-specific. Other languages would go behind the same chunker/`GraphIndexer` interfaces.
 - **VCS scope: GitHub only.** Only GitHub implements `VCSProvider`; GitLab/Bitbucket are not

@@ -30,10 +30,13 @@ cp .env.example .env        # .env gitignored, ключи только лока�
 .venv/bin/ruff check .        # line-length 100, target py311
 
 # CLI (после pip install -e .)
-reviewer check                             # проверить готовность окружения (ключи, Postgres, Neo4j, GitHub)
-reviewer index /path/to/repo --ref main   # построить/обновить base-индекс (вектора + граф) из локального клона
-reviewer search "token verification"       # диагностический гибрид-поиск по base-индексу
-reviewer serve                             # веб-админка наблюдаемости на хосте (история прогонов, находки)
+reviewer check                                    # проверить готовность окружения (ключи, Postgres, Neo4j, GitHub)
+reviewer index /path/to/repo --ref main          # построить/обновить base-индекс (вектора + граф) из локального клона
+reviewer index /path/to/repo --ref master        # индекс второй ветки (изолированный, тот же деплой)
+reviewer search "token verification"              # диагностический гибрид-поиск по base-индексу (первичная ветка)
+reviewer search "token verification" --branch master  # поиск по индексу конкретной ветки
+reviewer migrate-branches                         # одноразовая миграция legacy base → base:<primary> после апгрейда
+reviewer serve                                    # веб-админка наблюдаемости на хосте (история прогонов, находки)
 
 # MCP-сервер (для Claude Code-плагина)
 reviewer-mcp                               # запустить MCP-сервер (используется плагином)
@@ -81,7 +84,7 @@ MCP-сессия (PreparedReview + ToolContext) живёт в процессе `
 ### Ключевые инварианты
 
 - **`node_id = "path#fqn"`** — единый ключ связи RAG↔граф. И чанк в Postgres (`store.py`), и узел в Neo4j используют его, поэтому graph-expansion и ретрив чанков сшиваются без маппинг-таблицы.
-- **Свежесть индекса (base + overlay).** `ref="base"` — персистентный индекс целевой ветки (инкрементальный, дедуп по `content_hash`). `ref="pr:N"` — эфемерный overlay изменённых файлов PR. На запросе ретрив = `(base где path ∉ changed) ∪ overlay` — для изменённых файлов агент видит новую версию, для остального стабильную базу. Логика в `index/freshness.py` и `WHERE`-условиях `store.hybrid_search`/`fetch_nodes`.
+- **Свежесть индекса (base + overlay).** `ref="base:<branch>"` — персистентный индекс целевой ветки (инкрементальный, дедуп по `content_hash`). `ref="pr:N"` — эфемерный overlay изменённых файлов PR. На запросе ретрив = `(base:<branch> где path ∉ changed) ∪ overlay` — для изменённых файлов агент видит новую версию, для остального стабильную базу. Логика в `index/freshness.py` и `WHERE`-условиях `store.hybrid_search`/`fetch_nodes`.
 - **inline только на строках диффа.** GitHub разрешает комментарии лишь на изменённых/контекстных строках хунка; остальное уходит в сводку (зашито в `assemble`, см. `commentable_lines`).
 - **applyable `suggestion`-блок** ставится только при безопасных инвариантах (`_can_apply` в `assemble.py`): режим `apply`, точная замена, весь диапазон в RIGHT-части диффа, без пересечений. Иначе — текстовый совет.
 - **Идемпотентность** — каждый комментарий помечен скрытым фингерпринтом `<!-- ai-review:hash -->`; повторный прогон не плодит дубликаты.
@@ -96,7 +99,8 @@ MCP-сессия (PreparedReview + ToolContext) живёт в процессе `
 - **Voyage free tier = 3 RPM / 10K TPM.** TPM — главный блокер: полный `reviewer index` большого репо упирается в лимит и троттлится; есть retry/backoff (`index/_retry.py`). Ревью одного PR (overlay + query-эмбеддинги) в лимит укладывается.
 - **`.review.yml` берётся из целевой (base) ветки**, не из PR — PR не может ослабить собственное ревью.
 - **SHA base-индекса** хранится в таблице `index_meta` (пишется при `reviewer index`). При каждом `prepare_review` (MCP) SHA сравнивается с `base_sha` PR и при расхождении автоматически досинхронизируются чанки изменившихся файлов через GitHub compare API. Граф (Neo4j) **также** инкрементально досинхронизируется в этом шаге (tree-sitter, repo-scoped, входящие `CALLS`-рёбра сохраняются, fail-soft). Полная точность (рёбра `IMPLEMENTS` + все `CALLS`) восстанавливается ручным `reviewer index` с SCIP.
-- **Мульти-репо через `repo`-дискриминатор**: один деплой обслуживает N репозиториев через `repo` (`owner/name`) в Postgres (`chunks`/`index_meta`) и Neo4j (`:Symbol.repo`, составная уникальность `(repo, id)`). Индексация: `reviewer index --repo owner/name` (или derive из git remote `origin` / `DEFAULT_REPO`). Граф задач `:Task` глобален — задача может покрывать несколько микросервисных репозиториев. Каждое ревью изолировано в рамках своего репо (без кросс-репо ретрива).
+- **Мульти-бранч base-индекс.** Каждая отслеживаемая ветка (`REVIEW_BRANCHES`, CSV, первая — первичная) имеет изолированный base-индекс: в Postgres `ref="base:<branch>"` (overlay PR остаётся `pr:N`), в Neo4j `:Symbol{repo, branch, id}` (составная уникальность `(repo, branch, id)`). PR ревьюится против индекса своей целевой ветки (`prq.base_ref`); PR в ветку вне списка ревью **пропускает** (`prepare_review` → `{"status":"skipped",...}`). `reviewer index --ref <branch>` строит индекс ветки; `reviewer search --branch <branch>` ищет по нему. Эмбеддинги переиспользуются между ветками по `content_hash` (экономия Voyage). Ветка-агностичные операции (CLI search, solve-task) идут по первичной ветке или текущей git-ветке клона. Миграция legacy-данных: `reviewer migrate-branches` (один раз после апгрейда).
+- **Мульти-репо через `repo`-дискриминатор**: один деплой обслуживает N репозиториев через `repo` (`owner/name`) в Postgres (`chunks`/`index_meta`) и Neo4j (`:Symbol.repo`, составная уникальность `(repo, branch, id)`). Индексация: `reviewer index --repo owner/name` (или derive из git remote `origin` / `DEFAULT_REPO`). Граф задач `:Task` глобален — задача может покрывать несколько микросервисных репозиториев. Каждое ревью изолировано в рамках своего репо (без кросс-репо ретрива).
 - **`reviewer check`** проверяет готовность окружения (ключи, Postgres, Neo4j, GitHub) без трат квот Voyage.
 - **Overlay удаляется автоматически** (`store.delete_ref("pr:N")`) — после `publish_review` эфемерный ref не остаётся в Postgres. При сбое prepare также чистится (fail-soft).
 - **Наблюдаемость (`reviewer/web/`)**: каждый `publish_review` пишет в Postgres итоги прогона (`review_runs`/`review_findings`, гейт `REVIEW_HISTORY`) — fail-soft. Веб-админка (FastAPI `reviewer serve` или сервис `web` в docker-compose) читает **ту же** БД.
