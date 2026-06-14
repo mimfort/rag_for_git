@@ -12,6 +12,7 @@ env/
 .python-version
 
 # Tooling
+uv.lock
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
