@@ -10,9 +10,6 @@
   "license": "MIT",
   "keywords": ["code-review", "rag", "mcp", "pr-review", "graph"],
   "skills": "./plugin/skills/",
-  "sessionStart": {
-    "skill": "rag-reviewer:review-pr"
-  },
   "interface": {
     "displayName": "RAG Reviewer",
     "shortDescription": "RAG + code graph PR review pipeline",

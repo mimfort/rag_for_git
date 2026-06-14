@@ -143,56 +143,118 @@
 
 ## Быстрый старт
 
-Установка из двух частей: **backend** (Postgres + Neo4j + Python-пакет, который запускает MCP-сервер) и **плагин Claude Code** (скиллы + MCP-тулы). Обе части живут в одном месте — откройте репозиторий `rag_for_git` как проект в Claude Code; его корень и есть `${CLAUDE_PROJECT_DIR}`, относительно которого плагин резолвит пути.
+MCP-сервер опубликован на PyPI как [`rag-reviewer`](https://pypi.org/project/rag-reviewer/)
+и запускается через `uvx` — **клонировать этот репозиторий не нужно**.
 
-Нужны: Python 3.11–3.13, Docker, ключ Voyage, GitHub-токен, Claude Code.
+Нужны: Docker, `uv` (`pip install uv`), ключ Voyage, GitHub-токен.
 
-### 1. Backend и инфраструктура
-
-MCP-сервер запускается из `.venv`, поэтому это должно быть готово до того, как заработают тулы:
+### 1. Инфраструктура (один раз)
 
 ```bash
-git clone https://github.com/mimfort/rag_for_git && cd rag_for_git
-python -m venv .venv && .venv/bin/pip install -e ".[dev]"
-docker compose up -d                 # Postgres/ParadeDB (:5433) + Neo4j (:7687) + web-админка (:8000)
-cp .env.example .env                 # заполнить VOYAGE_API_KEY, GITHUB_TOKEN
-.venv/bin/reviewer check             # ✓/✗ по ключам, Postgres, Neo4j, GitHub (квоту Voyage не тратит)
+curl -O https://raw.githubusercontent.com/mimfort/rag_for_git/main/docker-compose.yml
+curl -O https://raw.githubusercontent.com/mimfort/rag_for_git/main/.env.example
+cp .env.example .env          # заполнить VOYAGE_API_KEY и GITHUB_TOKEN
+docker compose up -d          # Postgres/ParadeDB (:5433) + Neo4j (:7687) + web-админка (:8000)
+uvx --from rag-reviewer reviewer check   # ✓/✗ по ключам, Postgres, Neo4j, GitHub
 ```
 
 Где взять ключи:
-- **Voyage** (`VOYAGE_API_KEY`): https://dashboard.voyageai.com/ — есть 200M бесплатных токенов; чтобы снять лимит 3 RPM / 10K TPM, привяжите карту (списания идут только сверх бесплатного пула; auto-recharge можно держать выключенным).
-- **GitHub** (`GITHUB_TOKEN`): PAT с правами *Pull requests: Read and write* + *Contents: Read* (fine-grained) или scope `repo` (classic). Быстрый вариант для своих репо: `gh auth token`.
+- **Voyage** (`VOYAGE_API_KEY`): https://dashboard.voyageai.com/ — есть бесплатный пул; привяжите карту, чтобы снять лимит 3 RPM / 10K TPM.
+- **GitHub** (`GITHUB_TOKEN`): PAT с правами *Pull requests: Read and write* + *Contents: Read* (fine-grained) или scope `repo` (classic). Быстрый вариант: `gh auth token`.
 
-`DEFAULT_REPO` (опц.) задаёт дефолтный `owner/name` для одно-репных деплоев — тогда `--repo` / аргумент `repo` у CLI и тулов можно не указывать.
+`DEFAULT_REPO` (опц.) задаёт дефолтный `owner/name` — тогда `--repo` у CLI и тулов можно не указывать.
 
-### 2. Установка плагина в Claude Code
+### 2. Установка плагина
 
-Установить плагин из GitHub можно из любого проекта двумя командами:
+MCP-сервер запускается через `bash -lc "uvx --from rag-reviewer reviewer-mcp"`. Обёртка `bash -lc`
+загружает профиль шелла, чтобы `uvx` (в `~/.local/bin`) был виден GUI-инструментам, которые
+не наследуют полный PATH.
+
+У каждого AI-инструмента свой конфиг-файл:
+
+| Инструмент | Глобальный конфиг | Проектный конфиг | Инструкция |
+|---|---|---|---|
+| **Claude Code** | `/plugin marketplace add` (см. ниже) | `.claude-plugin/` ✓ | — |
+| **Cursor** | `~/.cursor/mcp.json` | `.cursor/mcp.json` ✓ | — |
+| **Mimo Code** | `~/.config/mimocode/mimocode.json` | `.mimocode/mimocode.json` ✓ | [INSTALL.md](.mimocode/INSTALL.md) |
+| **OpenCode** | `~/.config/opencode/opencode.json` | `.opencode/opencode.json` ✓ | [INSTALL.md](.opencode/INSTALL.md) |
+| **Kimi Code** | `~/.kimi-code/mcp.json` | `.kimi-code/mcp.json` ✓ | [INSTALL.md](.kimi-code/INSTALL.md) |
+| **Gemini CLI** | `~/.gemini/settings.json` | `.gemini/settings.json` ✓ | [GEMINI.md](GEMINI.md) |
+| **Codex CLI** | `~/.codex/config.toml` | `.codex-plugin/plugin.json` ✓ | [AGENTS.md](AGENTS.md) |
+| **Copilot CLI** | — | `.github-copilot/plugin.json` ✓ | — |
+| **Trae IDE** | `~/Library/Application Support/Trae/User/mcp.json` | — | — |
+| **VS Code** | `~/Library/Application Support/Code/User/mcp.json` | — | — |
+
+Файлы, помеченные ✓, уже есть в этом репозитории — если открыть `rag_for_git` как проект
+в соответствующем инструменте, MCP-сервер подключится автоматически. Для **глобальной установки**
+(работает из любого проекта) добавьте запись в глобальный конфиг-файл.
+
+Формат записи по типу инструмента:
+
+**Mimo Code** (`mimocode.json`):
+```json
+{
+  "$schema": "https://mimo.xiaomi.com//config.json",
+  "mcp": {
+    "reviewer": {
+      "type": "local",
+      "command": ["/bin/bash", "-lc", "uvx --from rag-reviewer reviewer-mcp"],
+      "enabled": true
+    }
+  }
+}
+```
+
+**OpenCode** (`opencode.json`):
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "reviewer": {
+      "type": "local",
+      "command": ["/bin/bash", "-lc", "uvx --from rag-reviewer reviewer-mcp"]
+    }
+  }
+}
+```
+
+**Kimi Code / Cursor / Gemini CLI / Trae / VS Code** (стандартный MCP JSON):
+```json
+{
+  "mcpServers": {
+    "reviewer": {
+      "command": "/bin/bash",
+      "args": ["-lc", "uvx --from rag-reviewer reviewer-mcp"]
+    }
+  }
+}
+```
+
+**Codex CLI** (`~/.codex/config.toml`):
+```toml
+[mcp_servers.reviewer]
+command = "/bin/bash"
+args = ["-lc", "uvx --from rag-reviewer reviewer-mcp"]
+```
+
+После добавления перезапустите инструмент — `reviewer` появится рядом с другими MCP-серверами.
+
+#### Claude Code
+
+Из любого проекта двумя командами:
 
 ```text
 /plugin marketplace add mimfort/rag_for_git
 /plugin install rag-reviewer@rag-reviewer-marketplace
 ```
 
-Это подключает всё глобально — без ручной настройки MCP. Вы получаете:
+Вы получаете:
 
-- **Скиллы:** `/rag-reviewer:review-pr`, `/rag-reviewer:solve-task`, `/rag-reviewer:sync-tasks` (а также `/rag-reviewer:maintainability-review` и `/rag-reviewer:performance-review`).
-- **MCP-сервер** `reviewer` (запускается как `uvx --from rag-reviewer reviewer-mcp`) с тулами: `prepare_review`, `publish_review`, `search_code`, `get_related_symbols`, `read_file`, `get_definition`, `find_callers`, `get_changed_file_diff`, `index_task`, `search_tasks`, `get_task_context`, `search_codebase`.
-
-Плагин регистрирует MCP-сервер **глобально** — он стартует автоматически в любом проекте, который вы открываете в Claude Code. Если нужен только MCP без полного плагина, добавьте `.mcp.json` в корень проекта:
-
-```json
-{
-  "mcpServers": {
-    "reviewer": {
-      "command": "uvx",
-      "args": ["--from", "rag-reviewer", "reviewer-mcp"]
-    }
-  }
-}
-```
-
-MCP-сервер читает `VOYAGE_API_KEY`, `GITHUB_TOKEN`, `PG_DSN` и другие настройки из окружения. Пропишите их глобально в профиле шелла (`~/.zshrc` / `~/.bashrc`) — сервер подхватит их независимо от того, из какой директории открыт Claude Code.
+- **Скиллы:** `/rag-reviewer:review-pr`, `/rag-reviewer:solve-task`, `/rag-reviewer:sync-tasks`
+  (а также `/rag-reviewer:maintainability-review` и `/rag-reviewer:performance-review`).
+- **MCP-сервер** `reviewer` с тулами: `prepare_review`, `publish_review`, `search_code`,
+  `get_related_symbols`, `read_file`, `get_definition`, `find_callers`, `get_changed_file_diff`,
+  `index_task`, `search_tasks`, `get_task_context`, `search_codebase`.
 
 > Команда `/plugin` покажет, что `rag-reviewer` установлен и включён.
 
