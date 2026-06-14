@@ -4,7 +4,16 @@ See `CLAUDE.md` for full project documentation (architecture, commands, invarian
 
 ## MCP server setup
 
-### Global config (recommended)
+### Quickest way
+
+```bash
+uvx --from rag-reviewer reviewer install gemini
+```
+
+This registers the MCP server in `~/.gemini/settings.json` automatically (cross-platform,
+uses the absolute path to `uvx` — no `bash -lc` wrapper needed).
+
+### Global config (manual alternative)
 
 Add to `~/.gemini/settings.json` under `"mcpServers"`:
 
@@ -13,14 +22,15 @@ Add to `~/.gemini/settings.json` under `"mcpServers"`:
   "mcpServers": {
     "reviewer": {
       "command": "/bin/bash",
-      "args": ["-lc", "uvx --from rag-reviewer reviewer-mcp"]
+      "args": ["-lc", "uvx --from rag-reviewer@latest reviewer-mcp"]
     }
   }
 }
 ```
 
 The `bash -lc` wrapper loads your shell profile so `uvx` (in `~/.local/bin`) is found
-by GUI tools that don't inherit the full shell PATH.
+by GUI tools that don't inherit the full shell PATH (macOS/Linux only; on Windows use
+`reviewer install gemini` or set `command` to `uvx` directly).
 
 ### Project-level config
 

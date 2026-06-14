@@ -228,3 +228,110 @@ def serve(host: str, port: int) -> None:
     app = create_app(s)
     click.echo(f"Запуск веб-сервера на http://{host}:{port} ...")
     uvicorn.run(app, host=host, port=port)
+
+
+@cli.command()
+@click.argument("client", required=False)
+@click.option("--all", "all_clients", is_flag=True,
+              help="прописать во все обнаруженные клиенты")
+@click.option("--list", "list_clients", is_flag=True, help="показать поддерживаемые клиенты")
+@click.option("--path", "path_opt", default=None, help="переопределить путь к конфигу клиента")
+@click.option("--pin", default=None, help="закрепить версию (напр. 0.1.2); по умолчанию @latest")
+@click.option("--no-latest", is_flag=True, help="без @latest (брать из кэша uvx)")
+@click.option("--dry-run", is_flag=True, help="показать, что будет записано, без записи на диск")
+def install(client: str | None, all_clients: bool, list_clients: bool,
+            path_opt: str | None, pin: str | None, no_latest: bool, dry_run: bool) -> None:
+    """Прописать MCP-сервер reviewer в конфиг AI-CLI/IDE (кроссплатформенно)."""
+    from reviewer import install as inst
+
+    if list_clients:
+        click.echo("Поддерживаемые клиенты (reviewer install <client>):")
+        for c in inst.CLIENTS.values():
+            tag = f" [{c.scope}]" if c.scope != "user" else ""
+            click.echo(f"  {c.key:<15} {c.label}{tag}")
+        return
+
+    version = "" if no_latest else (pin or "latest")
+    if all_clients:
+        targets = inst.detect_installed()
+        if not targets:
+            raise click.ClickException(
+                "Не обнаружено установленных клиентов. Укажите явно: reviewer install <client> "
+                "(список: reviewer install --list).")
+        path_opt = None  # --path несовместим с --all
+    elif client:
+        key = client.lower()
+        if key not in inst.CLIENTS:
+            raise click.ClickException(
+                f"Неизвестный клиент {client!r}. Список: reviewer install --list")
+        targets = [inst.CLIENTS[key]]
+    else:
+        raise click.ClickException(
+            "Укажите клиент (reviewer install <client>), либо --all / --list.")
+
+    for c in targets:
+        plan = inst.build_plan(c, version=version, path_override=path_opt)
+        if dry_run:
+            click.echo(f"# {c.label} → {plan.path}")
+            click.echo(plan.content)
+            continue
+        backup = inst.apply_plan(plan)
+        if plan.already and c.dialect == "codex":
+            status = "запись уже есть (TOML не трогаю — правьте вручную при необходимости)"
+        elif plan.already:
+            status = "обновлена запись"
+        elif plan.created:
+            status = "создан конфиг"
+        else:
+            status = "добавлена запись"
+        click.echo(f"✓ {c.label}: {status} → {plan.path}")
+        if backup:
+            click.echo(f"  бэкап: {backup}")
+        if c.note:
+            click.echo(f"  прим.: {c.note}")
+
+    if not dry_run:
+        click.echo("Готово. Перезапустите клиент. Ключи: reviewer init && reviewer check.")
+
+
+@cli.command()
+@click.option("--path", "path_opt", default=None,
+              help="куда писать .env (по умолчанию ~/.config/rag-reviewer/.env)")
+@click.option("--force", is_flag=True, help="перезаписать существующий файл")
+def init(path_opt: str | None, force: bool) -> None:
+    """Создать .env в стабильном месте (~/.config/rag-reviewer/.env)."""
+    from pathlib import Path
+    from reviewer import install as inst
+
+    dest = Path(path_opt).expanduser() if path_opt else inst.default_env_path()
+    if dest.exists() and not force:
+        click.echo(f"Файл уже существует: {dest}")
+        click.echo("Откройте его и заполните VOYAGE_API_KEY / GITHUB_TOKEN "
+                   "(перезапись: reviewer init --force).")
+        return
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_text(inst.ENV_TEMPLATE, encoding="utf-8")
+    click.echo(f"✓ Создан {dest}")
+    click.echo("Заполните VOYAGE_API_KEY и GITHUB_TOKEN, затем: reviewer check")
+
+
+@cli.command()
+def update() -> None:
+    """Обновить rag-reviewer до последней версии с PyPI."""
+    import subprocess
+    from importlib import metadata
+
+    uv = _shutil.which("uv")
+    if not uv:
+        raise click.ClickException(
+            "uv не найден в PATH. Установите uv: https://docs.astral.sh/uv/getting-started/")
+    try:
+        cur = metadata.version("rag-reviewer")
+    except Exception:
+        cur = "?"
+    click.echo(f"Текущая версия (в этом окружении): {cur}")
+    # 1) если ставили постоянным tool — апгрейд (на uvx-установке просто без эффекта)
+    subprocess.run([uv, "tool", "upgrade", "rag-reviewer"])
+    # 2) чистим кэш — следующий `uvx --from rag-reviewer@latest` возьмёт свежую сборку
+    subprocess.run([uv, "cache", "clean", "rag-reviewer"])
+    click.echo("Готово. Перезапустите MCP-сервер в редакторе/CLI, чтобы применить новую версию.")

@@ -4,14 +4,23 @@ See `CLAUDE.md` for full project documentation (architecture, commands, invarian
 
 ## MCP server setup
 
-### Global config (recommended)
+### Quickest way
+
+```bash
+uvx --from rag-reviewer reviewer install codex
+```
+
+This registers the MCP server in `~/.codex/config.toml` automatically (cross-platform,
+uses the absolute path to `uvx` — no `bash -lc` wrapper needed).
+
+### Global config (manual alternative)
 
 Add the reviewer MCP server to your Codex CLI config at `~/.codex/config.toml`:
 
 ```toml
 [mcp_servers.reviewer]
 command = "/bin/bash"
-args = ["-lc", "uvx --from rag-reviewer reviewer-mcp"]
+args = ["-lc", "uvx --from rag-reviewer@latest reviewer-mcp"]
 ```
 
 ### Project-level config

@@ -5,22 +5,31 @@
 - [Kimi Code](https://kimi.moonshot.cn) installed
 - [uv](https://docs.astral.sh/uv/getting-started/installation/) installed (`curl -LsSf https://astral.sh/uv/install.sh | sh`)
 
-## Quick install (global)
+## Быстрая установка (рекомендуется)
 
-Create `~/.kimi-code/mcp.json` (or add to it if it already exists):
+```bash
+uvx --from rag-reviewer reviewer install kimi
+```
+
+Пропишет MCP-сервер в `~/.kimi-code/mcp.json` автоматически (кроссплатформенно,
+подставляет абсолютный путь к `uvx` — обёртка `bash -lc` не нужна).
+
+## Ручная установка (альтернатива)
+
+Создайте `~/.kimi-code/mcp.json` (или добавьте в существующий):
 
 ```json
 {
   "mcpServers": {
     "reviewer": {
       "command": "/bin/bash",
-      "args": ["-lc", "uvx --from rag-reviewer reviewer-mcp"]
+      "args": ["-lc", "uvx --from rag-reviewer@latest reviewer-mcp"]
     }
   }
 }
 ```
 
-Restart Kimi Code. The `reviewer` MCP server will be available in all sessions.
+Перезапустите Kimi Code. MCP-сервер `reviewer` будет доступен во всех сессиях.
 
 ## Project-level install
 

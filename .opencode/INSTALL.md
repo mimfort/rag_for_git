@@ -5,22 +5,31 @@
 - [OpenCode](https://opencode.ai) installed
 - [uv](https://docs.astral.sh/uv/getting-started/installation/) installed (`curl -LsSf https://astral.sh/uv/install.sh | sh`)
 
-## Quick install (global)
+## Быстрая установка (рекомендуется)
 
-Add to `~/.config/opencode/opencode.json`:
+```bash
+uvx --from rag-reviewer reviewer install opencode
+```
+
+Пропишет MCP-сервер в `~/.config/opencode/opencode.json` автоматически (кроссплатформенно,
+подставляет абсолютный путь к `uvx` — обёртка `bash -lc` не нужна).
+
+## Ручная установка (альтернатива)
+
+Добавьте в `~/.config/opencode/opencode.json`:
 
 ```json
 {
   "mcp": {
     "reviewer": {
       "type": "local",
-      "command": ["/bin/bash", "-lc", "uvx --from rag-reviewer reviewer-mcp"]
+      "command": ["/bin/bash", "-lc", "uvx --from rag-reviewer@latest reviewer-mcp"]
     }
   }
 }
 ```
 
-Restart OpenCode. The `reviewer` MCP server will be available in all sessions.
+Перезапустите OpenCode. MCP-сервер `reviewer` будет доступен во всех сессиях.
 
 ## Project-level install
 

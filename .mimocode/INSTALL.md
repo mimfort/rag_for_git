@@ -5,9 +5,18 @@
 - [Mimo Code](https://mimo.xiaomi.com) installed
 - [uv](https://docs.astral.sh/uv/getting-started/installation/) installed (`curl -LsSf https://astral.sh/uv/install.sh | sh`)
 
-## Quick install (global)
+## Быстрая установка (рекомендуется)
 
-Add to `~/.config/mimocode/mimocode.json` (create if it doesn't exist):
+```bash
+uvx --from rag-reviewer reviewer install mimo
+```
+
+Пропишет MCP-сервер в `~/.config/mimocode/mimocode.json` автоматически (кроссплатформенно,
+подставляет абсолютный путь к `uvx` — обёртка `bash -lc` не нужна).
+
+## Ручная установка (альтернатива)
+
+Добавьте в `~/.config/mimocode/mimocode.json` (создайте файл, если его нет):
 
 ```json
 {
@@ -15,26 +24,25 @@ Add to `~/.config/mimocode/mimocode.json` (create if it doesn't exist):
   "mcp": {
     "reviewer": {
       "type": "local",
-      "command": ["/bin/bash", "-lc", "uvx --from rag-reviewer reviewer-mcp"],
+      "command": ["/bin/bash", "-lc", "uvx --from rag-reviewer@latest reviewer-mcp"],
       "enabled": true
     }
   }
 }
 ```
 
-Restart Mimo Code. The `reviewer` MCP server will appear in the tools list.
+Перезапустите Mimo Code. MCP-сервер `reviewer` появится в списке инструментов.
 
-## Keys (.env)
+## Ключи (.env)
 
-The reviewer needs `VOYAGE_API_KEY` and `GITHUB_TOKEN`. Mimo launches the MCP
-server with an arbitrary working directory, so a project-local `.env` is **not**
-reliably found. Put the file in the fixed config location instead:
+Reviewer требует `VOYAGE_API_KEY` и `GITHUB_TOKEN`. Mimo запускает MCP-сервер из
+произвольной директории, поэтому project-local `.env` **не гарантированно найдётся**.
+Используйте фиксированное расположение:
 
 ```bash
-mkdir -p ~/.config/rag-reviewer
-curl -fsSL https://raw.githubusercontent.com/mimfort/rag_for_git/main/.env.example \
-  -o ~/.config/rag-reviewer/.env       # then edit it: fill in VOYAGE_API_KEY and GITHUB_TOKEN
-uvx --from rag-reviewer reviewer check  # ✓/✗ for keys, Postgres, Neo4j, GitHub
+uvx --from rag-reviewer reviewer init   # создаёт ~/.config/rag-reviewer/.env из шаблона
+# заполните VOYAGE_API_KEY и GITHUB_TOKEN в ~/.config/rag-reviewer/.env
+uvx --from rag-reviewer reviewer check  # ✓/✗ по ключам, Postgres, Neo4j, GitHub
 ```
 
 Lookup order: `$REVIEWER_ENV_FILE` → `$XDG_CONFIG_HOME/rag-reviewer/.env`

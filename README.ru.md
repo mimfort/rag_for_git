@@ -149,16 +149,20 @@
 Настрой MCP-сервер rag-reviewer в этом AI-инструменте.
 
 Правила:
-- Для запуска сервера используй `uvx --from rag-reviewer reviewer-mcp` — не pip install, не клонирование репозитория.
-- Обёртка `bash -lc` обязательна, чтобы uvx находился GUI-инструментами: command="/bin/bash", args=["-lc", "uvx --from rag-reviewer reviewer-mcp"].
+- Для запуска сервера используй `uvx --from rag-reviewer@latest reviewer-mcp` — не pip install, не клонирование репозитория.
+- Обёртка `bash -lc` обязательна на macOS/Linux, чтобы uvx находился GUI-инструментами: command="/bin/bash", args=["-lc", "uvx --from rag-reviewer@latest reviewer-mcp"]. На Windows: command="uvx", args=["--from","rag-reviewer@latest","reviewer-mcp"].
 - Определи, в каком AI-инструменте ты работаешь, и запиши MCP-запись в нужный конфиг-файл:
-  - Claude Code / generic: .mcp.json в корне проекта ({"mcpServers":{"reviewer":{"command":"/bin/bash","args":["-lc","uvx --from rag-reviewer reviewer-mcp"]}}})
+  - Claude Code / generic: .mcp.json в корне проекта ({"mcpServers":{"reviewer":{"command":"/bin/bash","args":["-lc","uvx --from rag-reviewer@latest reviewer-mcp"]}}})
   - Cursor: ~/.cursor/mcp.json (тот же формат)
-  - Gemini CLI: ~/.gemini/settings.json ({"mcpServers":{"reviewer":{"command":"/bin/bash","args":["-lc","uvx --from rag-reviewer reviewer-mcp"]}}})
-  - Mimo Code: ~/.config/mimocode/mimocode.json ({"mcp":{"reviewer":{"type":"local","command":["/bin/bash","-lc","uvx --from rag-reviewer reviewer-mcp"],"enabled":true}}})
-  - OpenCode: ~/.config/opencode/opencode.json ({"mcp":{"reviewer":{"type":"local","command":["/bin/bash","-lc","uvx --from rag-reviewer reviewer-mcp"]}}})
-  - Kimi Code: ~/.kimi-code/mcp.json ({"mcpServers":{"reviewer":{"command":"/bin/bash","args":["-lc","uvx --from rag-reviewer reviewer-mcp"]}}})
-  - Codex CLI: ~/.codex/config.toml ([mcp_servers.reviewer] command="/bin/bash" args=["-lc","uvx --from rag-reviewer reviewer-mcp"])
+  - Gemini CLI: ~/.gemini/settings.json ({"mcpServers":{"reviewer":{"command":"/bin/bash","args":["-lc","uvx --from rag-reviewer@latest reviewer-mcp"]}}})
+  - Antigravity: ~/.gemini/antigravity/mcp_config.json (тот же формат mcpServers)
+  - Windsurf: ~/.codeium/windsurf/mcp_config.json (тот же формат mcpServers)
+  - Claude Desktop: ~/Library/Application Support/Claude/claude_desktop_config.json (macOS) или %APPDATA%\Claude\claude_desktop_config.json (Windows) — тот же формат mcpServers
+  - Mimo Code: ~/.config/mimocode/mimocode.json ({"mcp":{"reviewer":{"type":"local","command":["/bin/bash","-lc","uvx --from rag-reviewer@latest reviewer-mcp"],"enabled":true}}})
+  - OpenCode: ~/.config/opencode/opencode.json ({"mcp":{"reviewer":{"type":"local","command":["/bin/bash","-lc","uvx --from rag-reviewer@latest reviewer-mcp"]}}})
+  - Kimi Code: ~/.kimi-code/mcp.json ({"mcpServers":{"reviewer":{"command":"/bin/bash","args":["-lc","uvx --from rag-reviewer@latest reviewer-mcp"]}}})
+  - Codex CLI: ~/.codex/config.toml ([mcp_servers.reviewer] command="/bin/bash" args=["-lc","uvx --from rag-reviewer@latest reviewer-mcp"])
+  - VS Code: ~/Library/Application Support/Code/User/mcp.json — ключ "servers" (не "mcpServers"): {"servers":{"reviewer":{"command":"/bin/bash","args":["-lc","uvx --from rag-reviewer@latest reviewer-mcp"]}}}
 - После записи конфига выполни: uvx --from rag-reviewer reviewer check
 - Сообщи, в какой файл записал и прошла ли проверка.
 ```
@@ -172,15 +176,32 @@ MCP-сервер опубликован на PyPI как [`rag-reviewer`](https:
 
 Нужны: Docker, `uv` (`pip install uv`), ключ Voyage, GitHub-токен.
 
-### 1. Инфраструктура (один раз)
+### Быстрая установка (рекомендуется, все платформы)
 
 ```bash
+# 1) Инфраструктура
 curl -O https://raw.githubusercontent.com/mimfort/rag_for_git/main/docker-compose.yml
-curl -O https://raw.githubusercontent.com/mimfort/rag_for_git/main/.env.example
-cp .env.example .env          # заполнить VOYAGE_API_KEY и GITHUB_TOKEN
 docker compose up -d          # Postgres/ParadeDB (:5433) + Neo4j (:7687) + web-админка (:8000)
-uvx --from rag-reviewer reviewer check   # ✓/✗ по ключам, Postgres, Neo4j, GitHub
+
+# 2) Ключи — создаёт ~/.config/rag-reviewer/.env из шаблона
+uvx --from rag-reviewer reviewer init
+#    заполните VOYAGE_API_KEY и GITHUB_TOKEN в этом файле
+
+# 3) Прописать MCP-сервер в ваш редактор/CLI
+uvx --from rag-reviewer reviewer install --all   # автодетект установленных клиентов
+#    или конкретный: reviewer install cursor|vscode|claude-code|windsurf|gemini|antigravity|mimo|opencode|kimi|trae|codex
+
+# 4) Проверить
+uvx --from rag-reviewer reviewer check
+
+# Обновиться позже:
+uvx --from rag-reviewer reviewer update
 ```
+
+> **`reviewer install` кроссплатформенный** (Windows / macOS / Linux). Подставляет абсолютный
+> путь к `uvx` автоматически — обёртка `bash -lc` не нужна. Ручные JSON-конфиги ниже используют
+> `bash -lc` только для macOS/Linux; на Windows используйте `reviewer install` или указывайте
+> `"command": "uvx"` с `"args": ["--from", "rag-reviewer@latest", "reviewer-mcp"]` напрямую.
 
 Где взять ключи:
 - **Voyage** (`VOYAGE_API_KEY`): https://dashboard.voyageai.com/ — есть бесплатный пул; привяжите карту, чтобы снять лимит 3 RPM / 10K TPM.
@@ -188,11 +209,9 @@ uvx --from rag-reviewer reviewer check   # ✓/✗ по ключам, Postgres, 
 
 `DEFAULT_REPO` (опц.) задаёт дефолтный `owner/name` — тогда `--repo` у CLI и тулов можно не указывать.
 
-### 2. Установка плагина
+### 2. Ручная установка плагина (альтернатива)
 
-MCP-сервер запускается через `bash -lc "uvx --from rag-reviewer reviewer-mcp"`. Обёртка `bash -lc`
-загружает профиль шелла, чтобы `uvx` (в `~/.local/bin`) был виден GUI-инструментам, которые
-не наследуют полный PATH.
+Если вы предпочитаете прописать конфиг вручную, а не через `reviewer install`:
 
 У каждого AI-инструмента свой конфиг-файл:
 
@@ -200,6 +219,9 @@ MCP-сервер запускается через `bash -lc "uvx --from rag-rev
 |---|---|---|---|
 | **Claude Code** | `/plugin marketplace add` (см. ниже) | `.claude-plugin/` ✓ | — |
 | **Cursor** | `~/.cursor/mcp.json` | `.cursor/mcp.json` ✓ | — |
+| **Windsurf** | `~/.codeium/windsurf/mcp_config.json` | — | — |
+| **Claude Desktop** | macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`; Windows: `%APPDATA%\Claude\claude_desktop_config.json` | — | — |
+| **Antigravity** | `~/.gemini/antigravity/mcp_config.json` | — | — |
 | **Mimo Code** | `~/.config/mimocode/mimocode.json` | `.mimocode/mimocode.json` ✓ | [INSTALL.md](.mimocode/INSTALL.md) |
 | **OpenCode** | `~/.config/opencode/opencode.json` | `.opencode/opencode.json` ✓ | [INSTALL.md](.opencode/INSTALL.md) |
 | **Kimi Code** | `~/.kimi-code/mcp.json` | `.kimi-code/mcp.json` ✓ | [INSTALL.md](.kimi-code/INSTALL.md) |
@@ -207,13 +229,13 @@ MCP-сервер запускается через `bash -lc "uvx --from rag-rev
 | **Codex CLI** | `~/.codex/config.toml` | `.codex-plugin/plugin.json` ✓ | [AGENTS.md](AGENTS.md) |
 | **Copilot CLI** | — | `.github-copilot/plugin.json` ✓ | — |
 | **Trae IDE** | `~/Library/Application Support/Trae/User/mcp.json` | — | — |
-| **VS Code** | `~/Library/Application Support/Code/User/mcp.json` | — | — |
+| **VS Code** | `~/Library/Application Support/Code/User/mcp.json` (ключ: `servers`, не `mcpServers`) | — | — |
 
 Файлы, помеченные ✓, уже есть в этом репозитории — если открыть `rag_for_git` как проект
 в соответствующем инструменте, MCP-сервер подключится автоматически. Для **глобальной установки**
 (работает из любого проекта) добавьте запись в глобальный конфиг-файл.
 
-Формат записи по типу инструмента:
+Формат записи по типу инструмента (macOS/Linux — на Windows используйте `reviewer install`):
 
 **Mimo Code** (`mimocode.json`):
 ```json
@@ -222,7 +244,7 @@ MCP-сервер запускается через `bash -lc "uvx --from rag-rev
   "mcp": {
     "reviewer": {
       "type": "local",
-      "command": ["/bin/bash", "-lc", "uvx --from rag-reviewer reviewer-mcp"],
+      "command": ["/bin/bash", "-lc", "uvx --from rag-reviewer@latest reviewer-mcp"],
       "enabled": true
     }
   }
@@ -236,19 +258,31 @@ MCP-сервер запускается через `bash -lc "uvx --from rag-rev
   "mcp": {
     "reviewer": {
       "type": "local",
-      "command": ["/bin/bash", "-lc", "uvx --from rag-reviewer reviewer-mcp"]
+      "command": ["/bin/bash", "-lc", "uvx --from rag-reviewer@latest reviewer-mcp"]
     }
   }
 }
 ```
 
-**Kimi Code / Cursor / Gemini CLI / Trae / VS Code** (стандартный MCP JSON):
+**Kimi Code / Cursor / Gemini CLI / Trae / Claude Desktop / Windsurf / Antigravity** (стандартный MCP JSON):
 ```json
 {
   "mcpServers": {
     "reviewer": {
       "command": "/bin/bash",
-      "args": ["-lc", "uvx --from rag-reviewer reviewer-mcp"]
+      "args": ["-lc", "uvx --from rag-reviewer@latest reviewer-mcp"]
+    }
+  }
+}
+```
+
+**VS Code** (`mcp.json` — ключ `servers`, не `mcpServers`):
+```json
+{
+  "servers": {
+    "reviewer": {
+      "command": "/bin/bash",
+      "args": ["-lc", "uvx --from rag-reviewer@latest reviewer-mcp"]
     }
   }
 }
@@ -258,7 +292,7 @@ MCP-сервер запускается через `bash -lc "uvx --from rag-rev
 ```toml
 [mcp_servers.reviewer]
 command = "/bin/bash"
-args = ["-lc", "uvx --from rag-reviewer reviewer-mcp"]
+args = ["-lc", "uvx --from rag-reviewer@latest reviewer-mcp"]
 ```
 
 После добавления перезапустите инструмент — `reviewer` появится рядом с другими MCP-серверами.
@@ -325,6 +359,25 @@ rm /tmp/rag-reviewer.tgz
 ### CLI
 
 ```bash
+# Создать ~/.config/rag-reviewer/.env из шаблона (заполнить VOYAGE_API_KEY + GITHUB_TOKEN).
+# Флаги: --path FILE (другое расположение), --force (перезаписать существующий).
+reviewer init
+
+# Прописать MCP-сервер в установленные AI-клиенты (кроссплатформенно).
+# --all автодетектирует установленных клиентов; или укажи конкретный:
+# cursor, claude-desktop, claude-code, vscode, windsurf, gemini, antigravity,
+# mimo, opencode, kimi, trae, codex.
+# Флаги: --list, --dry-run, --path FILE, --pin VERSION, --no-latest.
+reviewer install --all
+reviewer install cursor
+
+# Проверить готовность окружения: ключи, Postgres, Neo4j, GitHub.
+# Выводит ✓/✗ по каждому пункту; exit 1 при любой проблеме. Квоту Voyage не тратит.
+reviewer check
+
+# Обновить rag-reviewer до последней версии с PyPI.
+reviewer update
+
 # Проиндексировать базу целевой ветки локального клона (вектора + граф).
 # Делается один раз и обновляется инкрементально; даёт RAG/графу контекст всего репо.
 # --repo можно опустить, если origin-remote является GitHub (owner/name дерайвится автоматически)

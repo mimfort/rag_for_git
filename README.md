@@ -112,16 +112,20 @@ Copy and paste into any AI coding assistant (Claude Code, Cursor, Gemini CLI, Mi
 Set up the rag-reviewer MCP server in this AI tool.
 
 Rules:
-- Use `uvx --from rag-reviewer reviewer-mcp` to run the server — do NOT pip install, do NOT clone the repo.
-- The `bash -lc` wrapper is required so uvx is found by GUI tools: command="/bin/bash", args=["-lc", "uvx --from rag-reviewer reviewer-mcp"].
+- Use `uvx --from rag-reviewer@latest reviewer-mcp` to run the server — do NOT pip install, do NOT clone the repo.
+- The `bash -lc` wrapper is required on macOS/Linux so uvx is found by GUI tools: command="/bin/bash", args=["-lc", "uvx --from rag-reviewer@latest reviewer-mcp"]. On Windows use command="uvx", args=["--from","rag-reviewer@latest","reviewer-mcp"].
 - Detect which AI tool you are running in, then write the MCP entry to the correct config file:
-  - Claude Code / generic: .mcp.json in project root ({"mcpServers":{"reviewer":{"command":"/bin/bash","args":["-lc","uvx --from rag-reviewer reviewer-mcp"]}}})
+  - Claude Code / generic: .mcp.json in project root ({"mcpServers":{"reviewer":{"command":"/bin/bash","args":["-lc","uvx --from rag-reviewer@latest reviewer-mcp"]}}})
   - Cursor: ~/.cursor/mcp.json (same format)
-  - Gemini CLI: ~/.gemini/settings.json ({"mcpServers":{"reviewer":{"command":"/bin/bash","args":["-lc","uvx --from rag-reviewer reviewer-mcp"]}}})
-  - Mimo Code: ~/.config/mimocode/mimocode.json ({"mcp":{"reviewer":{"type":"local","command":["/bin/bash","-lc","uvx --from rag-reviewer reviewer-mcp"],"enabled":true}}})
-  - OpenCode: ~/.config/opencode/opencode.json ({"mcp":{"reviewer":{"type":"local","command":["/bin/bash","-lc","uvx --from rag-reviewer reviewer-mcp"]}}})
-  - Kimi Code: ~/.kimi-code/mcp.json ({"mcpServers":{"reviewer":{"command":"/bin/bash","args":["-lc","uvx --from rag-reviewer reviewer-mcp"]}}})
-  - Codex CLI: ~/.codex/config.toml ([mcp_servers.reviewer] command="/bin/bash" args=["-lc","uvx --from rag-reviewer reviewer-mcp"])
+  - Gemini CLI: ~/.gemini/settings.json ({"mcpServers":{"reviewer":{"command":"/bin/bash","args":["-lc","uvx --from rag-reviewer@latest reviewer-mcp"]}}})
+  - Antigravity: ~/.gemini/antigravity/mcp_config.json (same mcpServers format)
+  - Windsurf: ~/.codeium/windsurf/mcp_config.json (same mcpServers format)
+  - Claude Desktop: ~/Library/Application Support/Claude/claude_desktop_config.json on macOS, %APPDATA%\Claude\claude_desktop_config.json on Windows (same mcpServers format)
+  - Mimo Code: ~/.config/mimocode/mimocode.json ({"mcp":{"reviewer":{"type":"local","command":["/bin/bash","-lc","uvx --from rag-reviewer@latest reviewer-mcp"],"enabled":true}}})
+  - OpenCode: ~/.config/opencode/opencode.json ({"mcp":{"reviewer":{"type":"local","command":["/bin/bash","-lc","uvx --from rag-reviewer@latest reviewer-mcp"]}}})
+  - Kimi Code: ~/.kimi-code/mcp.json ({"mcpServers":{"reviewer":{"command":"/bin/bash","args":["-lc","uvx --from rag-reviewer@latest reviewer-mcp"]}}})
+  - Codex CLI: ~/.codex/config.toml ([mcp_servers.reviewer] command="/bin/bash" args=["-lc","uvx --from rag-reviewer@latest reviewer-mcp"])
+  - VS Code: ~/Library/Application Support/Code/User/mcp.json (key is "servers" not "mcpServers": {"servers":{"reviewer":{"command":"/bin/bash","args":["-lc","uvx --from rag-reviewer@latest reviewer-mcp"]}}})
 - After writing the config, run: uvx --from rag-reviewer reviewer check
 - Report what config file was written and whether the check passed.
 ```
@@ -135,22 +139,33 @@ and runs via `uvx` — **no clone of this repo required**.
 
 Requirements: Docker, `uv` (`pip install uv`), a Voyage API key, a GitHub token.
 
-### 1. Infrastructure (one-time)
-
-The reviewer needs Postgres/ParadeDB and Neo4j. Grab the compose file and start the stack:
+### Quick setup (recommended, all platforms)
 
 ```bash
+# 1) Infrastructure
 curl -O https://raw.githubusercontent.com/mimfort/rag_for_git/main/docker-compose.yml
 docker compose up -d          # Postgres/ParadeDB (:5433) + Neo4j (:7687) + web admin (:8000)
 
-# Keys for the reviewer. Put them where the MCP server finds them regardless of
-# which folder your editor launches it from (see "Where keys are read from" below):
-mkdir -p ~/.config/rag-reviewer
-curl -fsSL https://raw.githubusercontent.com/mimfort/rag_for_git/main/.env.example \
-  -o ~/.config/rag-reviewer/.env       # then edit it: fill in VOYAGE_API_KEY and GITHUB_TOKEN
+# 2) Keys — creates ~/.config/rag-reviewer/.env from the template
+uvx --from rag-reviewer reviewer init
+#    then edit ~/.config/rag-reviewer/.env: fill in VOYAGE_API_KEY and GITHUB_TOKEN
 
-uvx --from rag-reviewer reviewer check   # ✓/✗ for keys, Postgres, Neo4j, GitHub
+# 3) Register the MCP server in your editor/CLI
+uvx --from rag-reviewer reviewer install --all   # auto-detect installed clients
+#    or a specific one: reviewer install cursor|vscode|claude-code|windsurf|gemini|antigravity|mimo|opencode|kimi|trae|codex
+
+# 4) Verify
+uvx --from rag-reviewer reviewer check
+
+# Update later:
+uvx --from rag-reviewer reviewer update
 ```
+
+> **`reviewer install` is cross-platform** (Windows / macOS / Linux). It injects the
+> absolute path to `uvx` automatically — no `bash -lc` wrapper needed. The manual
+> JSON configs below use `bash -lc` for macOS/Linux only; on Windows use
+> `reviewer install` or set `"command": "uvx"` with `"args": ["--from",
+> "rag-reviewer@latest", "reviewer-mcp"]` directly.
 
 > **Where keys are read from.** The reviewer resolves its `.env` from a fixed
 > location, **not** the current working directory — MCP clients launch the server
@@ -171,11 +186,9 @@ the default `owner/name` for single-repo deployments. `REVIEW_BRANCHES` (optiona
 `main`) lists the branches to track — each gets its own isolated base index; PRs targeting a
 branch outside this list are silently skipped by `prepare_review`.
 
-### 2. Install the plugin
+### Manual setup (alternative)
 
-The MCP server is launched via `bash -lc "uvx --from rag-reviewer reviewer-mcp"`. The `bash -lc`
-wrapper loads your shell profile so `uvx` (typically in `~/.local/bin`) is visible to GUI tools
-that don't inherit the full shell PATH.
+If you prefer to configure your client config by hand rather than using `reviewer install`:
 
 Each AI coding tool has its own config file. Pick yours:
 
@@ -183,6 +196,9 @@ Each AI coding tool has its own config file. Pick yours:
 |---|---|---|---|
 | **Claude Code** | `/plugin marketplace add` (see below) | `.claude-plugin/` ✓ | — |
 | **Cursor** | `~/.cursor/mcp.json` | `.cursor/mcp.json` ✓ | — |
+| **Windsurf** | `~/.codeium/windsurf/mcp_config.json` | — | — |
+| **Claude Desktop** | macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`; Windows: `%APPDATA%\Claude\claude_desktop_config.json` | — | — |
+| **Antigravity** | `~/.gemini/antigravity/mcp_config.json` | — | — |
 | **Mimo Code** | `~/.config/mimocode/mimocode.json` | `.mimocode/mimocode.json` ✓ | [INSTALL.md](.mimocode/INSTALL.md) |
 | **OpenCode** | `~/.config/opencode/opencode.json` | `.opencode/opencode.json` ✓ | [INSTALL.md](.opencode/INSTALL.md) |
 | **Kimi Code** | `~/.kimi-code/mcp.json` | `.kimi-code/mcp.json` ✓ | [INSTALL.md](.kimi-code/INSTALL.md) |
@@ -190,13 +206,13 @@ Each AI coding tool has its own config file. Pick yours:
 | **Codex CLI** | `~/.codex/config.toml` | `.codex-plugin/plugin.json` ✓ | [AGENTS.md](AGENTS.md) |
 | **Copilot CLI** | — | `.github-copilot/plugin.json` ✓ | — |
 | **Trae IDE** | `~/Library/Application Support/Trae/User/mcp.json` | — | — |
-| **VS Code** | `~/Library/Application Support/Code/User/mcp.json` | — | — |
+| **VS Code** | `~/Library/Application Support/Code/User/mcp.json` (key: `servers`, not `mcpServers`) | — | — |
 
 Files marked ✓ are already present in this repo — if you open rag_for_git as a project in
 that tool, the MCP server auto-connects. For a **global install** (works from any project),
 add the entry to the corresponding global config file.
 
-The MCP entry format by tool:
+The MCP entry format by tool (macOS/Linux — use `reviewer install` on Windows):
 
 **Mimo Code** (`mimocode.json`):
 ```json
@@ -205,7 +221,7 @@ The MCP entry format by tool:
   "mcp": {
     "reviewer": {
       "type": "local",
-      "command": ["/bin/bash", "-lc", "uvx --from rag-reviewer reviewer-mcp"],
+      "command": ["/bin/bash", "-lc", "uvx --from rag-reviewer@latest reviewer-mcp"],
       "enabled": true
     }
   }
@@ -219,19 +235,31 @@ The MCP entry format by tool:
   "mcp": {
     "reviewer": {
       "type": "local",
-      "command": ["/bin/bash", "-lc", "uvx --from rag-reviewer reviewer-mcp"]
+      "command": ["/bin/bash", "-lc", "uvx --from rag-reviewer@latest reviewer-mcp"]
     }
   }
 }
 ```
 
-**Kimi Code / Cursor / Gemini CLI / Codex CLI / Trae / VS Code** (standard MCP JSON):
+**Kimi Code / Cursor / Gemini CLI / Codex CLI / Trae / Claude Desktop / Windsurf / Antigravity** (standard `mcpServers` JSON):
 ```json
 {
   "mcpServers": {
     "reviewer": {
       "command": "/bin/bash",
-      "args": ["-lc", "uvx --from rag-reviewer reviewer-mcp"]
+      "args": ["-lc", "uvx --from rag-reviewer@latest reviewer-mcp"]
+    }
+  }
+}
+```
+
+**VS Code** (`mcp.json` — note: key is `servers`, not `mcpServers`):
+```json
+{
+  "servers": {
+    "reviewer": {
+      "command": "/bin/bash",
+      "args": ["-lc", "uvx --from rag-reviewer@latest reviewer-mcp"]
     }
   }
 }
@@ -241,7 +269,7 @@ The MCP entry format by tool:
 ```toml
 [mcp_servers.reviewer]
 command = "/bin/bash"
-args = ["-lc", "uvx --from rag-reviewer reviewer-mcp"]
+args = ["-lc", "uvx --from rag-reviewer@latest reviewer-mcp"]
 ```
 
 After adding, restart the tool — `reviewer` will appear alongside other MCP servers.
@@ -312,9 +340,23 @@ All CLI commands are available via `uvx --from rag-reviewer <command>`, or after
 `pip install rag-reviewer` / `pip install -e ".[dev]"` (for contributors) simply as `reviewer`.
 
 ```bash
+# Create ~/.config/rag-reviewer/.env from template (fill in VOYAGE_API_KEY + GITHUB_TOKEN).
+# Flags: --path FILE (custom location), --force (overwrite existing).
+uvx --from rag-reviewer reviewer init
+
+# Register the MCP server in installed AI clients automatically (cross-platform).
+# --all auto-detects installed clients; or name one: cursor, claude-desktop, claude-code,
+# vscode, windsurf, gemini, antigravity, mimo, opencode, kimi, trae, codex.
+# Flags: --list, --dry-run, --path FILE, --pin VERSION, --no-latest.
+uvx --from rag-reviewer reviewer install --all
+uvx --from rag-reviewer reviewer install cursor
+
 # Check environment readiness: keys, Postgres, Neo4j, GitHub. Prints ✓/✗ per item;
 # exits 1 on any problem. Spends no Voyage quota.
 uvx --from rag-reviewer reviewer check
+
+# Update rag-reviewer to the latest version from PyPI.
+uvx --from rag-reviewer reviewer update
 
 # Build/update the base index of the target branch from a local clone (vectors + graph).
 # Done once, then updated incrementally; gives RAG and the graph whole-repo context.
@@ -337,7 +379,7 @@ uvx --from rag-reviewer reviewer migrate-branches
 uvx --from rag-reviewer reviewer serve   # http://127.0.0.1:8000  (options: --host / --port)
 
 # MCP server (stdio transport) — started automatically by the plugin.
-uvx --from rag-reviewer reviewer-mcp
+uvx --from rag-reviewer@latest reviewer-mcp
 ```
 
 Reviewing works even without a prior `index` — context is then limited to the diff and the overlay
