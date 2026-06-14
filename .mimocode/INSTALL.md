@@ -41,7 +41,7 @@ tar xz -C ~/.config/mimocode/skills --strip-components=3 -f /tmp/rag-reviewer.tg
 rm /tmp/rag-reviewer.tgz
 ```
 
-Skills installed: `review-pr`, `solve-task`, `sync-tasks`, `performance-review`, `maintainability-review`.
+Skills installed: `reviewer_review-pr`, `solve-task`, `sync-tasks`, `performance-review`, `maintainability-review`.
 
 ## Verify
 

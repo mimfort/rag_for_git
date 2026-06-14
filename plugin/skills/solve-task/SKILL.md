@@ -1,6 +1,6 @@
 ---
-name: solve-task
-description: Gather disciplined context for solving a task, then hand off to development. Use when the user asks to solve/implement a task ("solve PRI-4", "/solve-task <key or description>", "реши задачу X"). Reads the task from a connected board (if a key + board), pulls related/similar tasks and relevant code, distills a brief, and enters brainstorming. Requires the reviewer MCP server (and optionally a board MCP).
+name: reviewer_solve-task
+description: Gather disciplined context for solving a task, then hand off to development. Use when the user asks to solve/implement a task ("solve PRI-4", "/reviewer_solve-task <key or description>", "реши задачу X"). Reads the task from a connected board (if a key + board), pulls related/similar tasks and relevant code, distills a brief, and enters brainstorming. Requires the reviewer MCP server (and optionally a board MCP).
 ---
 
 # Solve Task
@@ -56,7 +56,7 @@ brief to `superpowers:brainstorming` (which leads to writing-plans → subagent-
   `search_tasks` (if the corpus is warm) + `search_codebase` + the user's formulation; note the gap.
 - Neo4j down → `get_task_context` / `index_task` graph parts degrade (empty + warning); build the
   brief from `search_tasks` + `search_codebase`.
-- Empty task corpus (no prior `/sync-tasks` or reviews) → `search_tasks` is empty; rely on the board
+- Empty task corpus (no prior `/reviewer_sync-tasks` or reviews) → `search_tasks` is empty; rely on the board
   (if a key) + `search_codebase`.
 - Postgres down → `search_codebase` / `search_tasks` return empty; build the brief from the board (if
   a key) or the user's formulation alone; still hand off to brainstorming.

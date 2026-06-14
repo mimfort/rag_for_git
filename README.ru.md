@@ -58,7 +58,7 @@
                 │        │                         │      Voyage embed/rerank   tree-sitter граф  │      │
                 │        │                         └──────────────────┬───────────────────────────┘      │
                 │        │                                            ▼ ContextPack                      │
-                │        │                         Claude Code subagents (скилл /rag-reviewer:review-pr) │
+                │        │                         Claude Code subagents (скилл /rag-reviewer:reviewer_review-pr) │
                 │        │                           инструменты: search_code, get_related_symbols,      │
                 │        │                           read_file, get_definition, find_callers,            │
                 │        │                           get_changed_file_diff                               │
@@ -88,7 +88,7 @@
 
 ## Как работает ревью (поток данных)
 
-Ревью запускается скиллом `/rag-reviewer:review-pr` в Claude Code. Поток на один PR:
+Ревью запускается скиллом `/rag-reviewer:reviewer_review-pr` в Claude Code. Поток на один PR:
 
 ```
 ──────────────── prepare_review (MCP → MCPReviewService) ─────────────────────
@@ -100,7 +100,7 @@
 3. plan        дифф → review-units (по файлу): {path, node_ids изменённых символов, patch}
                → payload скиллу: юниты/политика/патчи
                   │
-────────── analyze: Claude subagents (скилл /rag-reviewer:review-pr) ──────────
+────────── analyze: Claude subagents (скилл /rag-reviewer:reviewer_review-pr) ──────────
 4. analyze     Subagents в tool-loop по каждому файлу:
                  • search_code(query)        → Retriever:
                         embed_query (Voyage) → гибрид-поиск по (base \ changed ∪ overlay):
@@ -274,8 +274,8 @@ args = ["-lc", "uvx --from rag-reviewer reviewer-mcp"]
 
 Вы получаете:
 
-- **Скиллы:** `/rag-reviewer:review-pr`, `/rag-reviewer:solve-task`, `/rag-reviewer:sync-tasks`
-  (а также `/rag-reviewer:maintainability-review` и `/rag-reviewer:performance-review`).
+- **Скиллы:** `/rag-reviewer:reviewer_review-pr`, `/rag-reviewer:reviewer_solve-task`, `/rag-reviewer:reviewer_sync-tasks`
+  (а также `/rag-reviewer:reviewer_maintainability-review` и `/rag-reviewer:reviewer_performance-review`).
 - **MCP-сервер** `reviewer` с тулами: `prepare_review`, `publish_review`, `search_code`,
   `get_related_symbols`, `read_file`, `get_definition`, `find_callers`, `get_changed_file_diff`,
   `index_task`, `search_tasks`, `get_task_context`, `search_codebase`.
@@ -284,7 +284,7 @@ args = ["-lc", "uvx --from rag-reviewer reviewer-mcp"]
 
 ### 3. Глобальная установка скиллов (опционально)
 
-Скиллы (`review-pr`, `solve-task`, `sync-tasks`, `performance-review`, `maintainability-review`)
+Скиллы (`reviewer_review-pr`, `reviewer_solve-task`, `reviewer_sync-tasks`, `reviewer_performance-review`, `reviewer_maintainability-review`)
 дают полный рабочий процесс ревью одной командой. Без них можно вызывать MCP-тулы напрямую,
 но скиллы оборачивают их в управляемый сценарий.
 
@@ -340,7 +340,7 @@ reviewer search "token verification"
 С установленным плагином (см. [Быстрый старт](#быстрый-старт)) и Claude Code, открытым в корне репо, вызовите скилл:
 
 ```text
-/rag-reviewer:review-pr owner/repo#42
+/rag-reviewer:reviewer_review-pr owner/repo#42
 ```
 
 Плагин вызывает `prepare_review` (через MCP), затем запускает subagents с инструментами поиска `search_code`, `get_related_symbols`, `read_file` и т.д., наконец `publish_review` (через MCP) постит результат в GitHub.
@@ -350,7 +350,7 @@ reviewer search "token verification"
 ```bash
 git clone https://github.com/ORG/REPO /tmp/REPO
 reviewer index /tmp/REPO --ref main --repo ORG/REPO   # построить базу+граф
-# в Claude Code: /rag-reviewer:review-pr ORG/REPO#42   # ревью PR #42
+# в Claude Code: /rag-reviewer:reviewer_review-pr ORG/REPO#42   # ревью PR #42
 ```
 
 > Ревью работает и без предварительного `index` — тогда контекст ограничен диффом и overlay (RAG/граф «тонкие»). Для полноценного анализа влияния на весь репозиторий запустите `index` по целевой ветке.
@@ -512,12 +512,12 @@ task_board:
 `:Task`/`:PR`, рёбра `TASK_LINK`/`IMPLEMENTED_BY`/`TOUCHES`) и в векторный индекс (Postgres,
 таблица `tasks`) тулом `index_task`. При ревью агент видит связанные задачи и их PR/код через
 `get_task_context`, а похожие по смыслу — через `search_tasks`; при публикации PR
-автоматически линкуется к задаче. Скилл `/sync-tasks` прогревает корпус задач с доски (идемпотентно,
+автоматически линкуется к задаче. Скилл `/reviewer_sync-tasks` прогревает корпус задач с доски (идемпотентно,
 с backoff под Voyage). Канонический ключ узла — сквозной код доски (Yougile `ID-N` / Jira key),
 прочие коды (Yougile `PRI-N`) хранятся как `aliases`, поэтому PR по любому коду резолвится в один
 узел. Neo4j/доска недоступны → контекст пуст с предупреждением, ревью продолжается.
 
-**Скилл `/solve-task` (фаза 4).** `/solve-task <ключ | свободный текст>` собирает контекст под
+**Скилл `/reviewer_solve-task` (фаза 4).** `/reviewer_solve-task <ключ | свободный текст>` собирает контекст под
 задачу — читает задачу с доски (если есть ключ и подключена доска), тянет связанные и похожие
 задачи с их PR и кодом (`get_task_context`/`search_tasks`), ищет релевантный код по формулировке
 (`search_codebase` — session-less гибрид-поиск по base-индексу: BM25+ANN → graph-expansion →
@@ -543,7 +543,7 @@ reviewer/
   entrypoints/ cli.py (index / search / check / serve)
   web/         FastAPI + React/Vite SPA — веб-админка наблюдаемости
   app.py       сборка зависимостей из Settings
-plugin/        Claude Code-плагин (скилл /rag-reviewer:review-pr)
+plugin/        Claude Code-плагин (скилл /rag-reviewer:reviewer_review-pr)
 docker-compose.yml   ParadeDB (pgvector+pg_search) + Neo4j + web-админка
 ```
 

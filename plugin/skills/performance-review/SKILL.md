@@ -1,5 +1,5 @@
 ---
-name: performance-review
+name: reviewer_performance-review
 description: Review code changes only for performance and efficiency risks (N+1 queries, repeated work, bad asymptotics, missing batching/caching, blocking I/O, memory growth). Use when the user explicitly asks for a performance review of a diff/PR.
 ---
 
@@ -20,7 +20,7 @@ Standalone: ask the user which diff to review if the scope is not clear:
 Do not pick a scope yourself unless the user already made it clear. If the
 resulting diff is empty, stop and say there is nothing to review.
 
-Inside `/review-pr`: the orchestrator provides the diffs of all units (path + patch)
+Inside `/reviewer_review-pr`: the orchestrator provides the diffs of all units (path + patch)
 — review those. Call the reviewer MCP tools as needed (`search_code`,
 `get_related_symbols`, `read_file`, `get_definition`, `find_callers`,
 `get_changed_file_diff`) to verify whether a path is truly performance-sensitive.
@@ -45,7 +45,7 @@ Prioritize findings such as:
 
 1. Read the diff first.
 2. Open only the nearby code needed to understand whether the changed path is
-   performance-sensitive. In `/review-pr` use the reviewer MCP tools: `read_file`,
+   performance-sensitive. In `/reviewer_review-pr` use the reviewer MCP tools: `read_file`,
    `search_code`, `find_callers`.
 3. Prefer concrete findings over vague perf speculation.
 4. If a concern depends on an assumption, state that assumption explicitly.

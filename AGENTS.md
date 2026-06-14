@@ -34,8 +34,8 @@ rm /tmp/rag-reviewer.tgz
 
 Available skills:
 
-- `rag-reviewer:review-pr` — review a GitHub PR end-to-end
-- `rag-reviewer:solve-task` — solve a task from the board
-- `rag-reviewer:sync-tasks` — index tasks into the vector store
-- `rag-reviewer:performance-review` — performance-focused PR review
-- `rag-reviewer:maintainability-review` — maintainability-focused PR review
+- `rag-reviewer:reviewer_review-pr` — review a GitHub PR end-to-end
+- `rag-reviewer:reviewer_solve-task` — solve a task from the board
+- `rag-reviewer:reviewer_sync-tasks` — index tasks into the vector store
+- `rag-reviewer:reviewer_performance-review` — performance-focused PR review
+- `rag-reviewer:reviewer_maintainability-review` — maintainability-focused PR review

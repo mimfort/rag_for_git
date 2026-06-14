@@ -85,7 +85,7 @@ the index keeps a persistent base and layers PR changes on top:
                 │        │                          │   Voyage embed/rerank   tree-sitter graph  │ │
                 │        │                          └─────────────────┬─────────────────────────┘ │
                 │        │                                            ▼ ContextPack                │
-                │        │                       Claude Code subagents (skill /rag-reviewer:review-pr)
+                │        │                       Claude Code subagents (skill /rag-reviewer:reviewer_review-pr)
                 │        │                         tools: search_code, get_related_symbols,        │
                 │        │                         read_file, get_definition, find_callers, …      │
                 │        └─────────────────── publish_review (gate/grounding/dedup/assemble) ◀─────┘
@@ -235,8 +235,8 @@ Two commands, from any project:
 
 You get:
 
-- **Skills:** `/rag-reviewer:review-pr`, `/rag-reviewer:solve-task`, `/rag-reviewer:sync-tasks`
-  (plus `/rag-reviewer:maintainability-review` and `/rag-reviewer:performance-review`).
+- **Skills:** `/rag-reviewer:reviewer_review-pr`, `/rag-reviewer:reviewer_solve-task`, `/rag-reviewer:reviewer_sync-tasks`
+  (plus `/rag-reviewer:reviewer_maintainability-review` and `/rag-reviewer:reviewer_performance-review`).
 - **MCP server** `reviewer` exposing: `prepare_review`, `publish_review`, `search_code`,
   `get_related_symbols`, `read_file`, `get_definition`, `find_callers`, `get_changed_file_diff`,
   `index_task`, `search_tasks`, `get_task_context`, `search_codebase`.
@@ -245,7 +245,7 @@ You get:
 
 ### 3. Install skills globally (optional)
 
-Skills (`review-pr`, `solve-task`, `sync-tasks`, `performance-review`, `maintainability-review`)
+Skills (`reviewer_review-pr`, `reviewer_solve-task`, `reviewer_sync-tasks`, `reviewer_performance-review`, `reviewer_maintainability-review`)
 let you invoke the full review workflow with a single command. Without them you can still call MCP
 tools directly, but the skills wrap them into a guided flow.
 
@@ -319,9 +319,9 @@ With the plugin installed (see [Installation](#installation)) and Claude Code op
 call a skill:
 
 ```text
-/rag-reviewer:review-pr owner/repo#42     # review a PR (prepare_review → subagents → publish_review)
-/rag-reviewer:sync-tasks                  # warm the task graph & vector store from a connected board
-/rag-reviewer:solve-task <key | free text>  # gather disciplined context for a task, then hand off to dev
+/rag-reviewer:reviewer_review-pr owner/repo#42     # review a PR (prepare_review → subagents → publish_review)
+/rag-reviewer:reviewer_sync-tasks                  # warm the task graph & vector store from a connected board
+/rag-reviewer:reviewer_solve-task <key | free text>  # gather disciplined context for a task, then hand off to dev
 ```
 
 A typical end-to-end run:
@@ -329,7 +329,7 @@ A typical end-to-end run:
 ```bash
 git clone https://github.com/ORG/REPO /tmp/REPO
 reviewer index /tmp/REPO --ref main       # build base index + graph
-# in Claude Code (from the repo root):  /rag-reviewer:review-pr ORG/REPO#42
+# in Claude Code (from the repo root):  /rag-reviewer:reviewer_review-pr ORG/REPO#42
 ```
 
 For a dry run, pass `--dry-run` to the review skill — `publish_review` assembles the full report
@@ -427,6 +427,6 @@ reviewer/
   entrypoints/ cli.py (index / search / check / serve) · mcp_server.py (FastMCP)
   web/         FastAPI + React/Vite SPA — observability web admin
   app.py       dependency assembly from Settings
-plugin/        Claude Code plugin (skills /rag-reviewer:review-pr, solve-task, sync-tasks)
+plugin/        Claude Code plugin (skills /rag-reviewer:reviewer_review-pr, reviewer_solve-task, reviewer_sync-tasks)
 docker-compose.yml   ParadeDB (pgvector+pg_search) + Neo4j + web admin
 ```

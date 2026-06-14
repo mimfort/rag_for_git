@@ -1,5 +1,5 @@
 ---
-name: maintainability-review
+name: reviewer_maintainability-review
 description: "Review code changes only for maintainability risks: unnecessary complexity, poor readability, duplication, weak separation of concerns, and misalignment with repository conventions. Use when the user explicitly asks for maintainability review, code quality review, clean code review, complexity review, readability review, simplification review, or how to simplify changed code without changing behavior."
 ---
 
@@ -20,7 +20,7 @@ Standalone: ask the user which diff to review if the scope is not clear:
 Do not pick a scope yourself unless the user already made it clear. If the
 resulting diff is empty, stop and say there is nothing to review.
 
-Inside `/review-pr`: the orchestrator provides the diffs of all units (path + patch)
+Inside `/reviewer_review-pr`: the orchestrator provides the diffs of all units (path + patch)
 — review those. Call the reviewer MCP tools as needed (`search_code`,
 `get_related_symbols`, `read_file`, `get_definition`, `find_callers`,
 `get_changed_file_diff`) to check repository context and verify findings.
@@ -56,7 +56,7 @@ governs the current workspace.
 
 Prefer this order:
 
-1. In `/review-pr`, read `CLAUDE.md` or `AGENTS.md` via `read_file`; in standalone,
+1. In `/reviewer_review-pr`, read `CLAUDE.md` or `AGENTS.md` via `read_file`; in standalone,
    read them from disk.
 2. Read the nearby implementation to understand existing patterns.
 3. Compare the change against the established local style before flagging it.

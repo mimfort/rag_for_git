@@ -40,7 +40,7 @@ reviewer-mcp                               # запустить MCP-сервер
 
 # Ревью через Claude Code-плагин:
 # 1. Открыть репозиторий как проект в Claude Code
-# 2. Использовать скилл /rag-reviewer:review-pr (из plugin/)
+# 2. Использовать скилл /rag-reviewer:reviewer_review-pr (из plugin/)
 #    Плагин вызывает prepare_review → analyze (Claude subagents) → publish_review
 
 # Проще: `docker compose up -d` поднимает админку как сервис web (:8000) — фронт собирается в образе.
@@ -53,7 +53,7 @@ reviewer-mcp                               # запустить MCP-сервер
 
 Ядро — библиотека `reviewer/`, собираемая в `reviewer/app.py::build_components(settings)` из `Settings` (pydantic-settings, `.env`). Точка входа — `reviewer/entrypoints/cli.py` (Click) и `reviewer/entrypoints/mcp_server.py` (FastMCP).
 
-Поток ревью: **prepare_review** (MCP) → **analyze** (Claude subagents через скилл `/rag-reviewer:review-pr`) → **publish_review** (MCP).
+Поток ревью: **prepare_review** (MCP) → **analyze** (Claude subagents через скилл `/rag-reviewer:reviewer_review-pr`) → **publish_review** (MCP).
 
 1. **prepare** — `ReviewService.prepare`: `GitHubProvider` тянет PR (base/head sha), изменённые `.py` чанкуются (tree-sitter) и эмбеддятся (Voyage) в `ref="pr:N"`. Возвращает `PreparedReview` с юнитами, policy, patches.
 2. **analyze** — Claude Code-скилл (fan-out на subagents): каждый файл ревьюится параллельно с инструментами `search_code`, `get_related_symbols`, `read_file`, `get_definition`, `find_callers`, `get_changed_file_diff` через MCP.
@@ -101,7 +101,7 @@ MCP-сессия (PreparedReview + ToolContext) живёт в процессе `
 - **Overlay удаляется автоматически** (`store.delete_ref("pr:N")`) — после `publish_review` эфемерный ref не остаётся в Postgres. При сбое prepare также чистится (fail-soft).
 - **Наблюдаемость (`reviewer/web/`)**: каждый `publish_review` пишет в Postgres итоги прогона (`review_runs`/`review_findings`, гейт `REVIEW_HISTORY`) — fail-soft. Веб-админка (FastAPI `reviewer serve` или сервис `web` в docker-compose) читает **ту же** БД.
 - **MCP-сессия живёт в процессе сервера** между `prepare_review` и `publish_review` одного PR: `_Session(prepared, ctx)` в `MCPReviewService._sessions`. При повторном `prepare_review` для того же (repo, pr) сессия перезаписывается, старый VCS-провайдер закрывается (fail-soft).
-- **Плагин** находится в `plugin/` в корне репозитория — это корень Claude Code-плагина для скилла `/rag-reviewer:review-pr`.
+- **Плагин** находится в `plugin/` в корне репозитория — это корень Claude Code-плагина для скилла `/rag-reviewer:reviewer_review-pr`.
 
 ## Соглашения
 
