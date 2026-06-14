@@ -179,3 +179,27 @@ def test_two_repo_isolation():
     assert not any("repo_by" in t for t in texts_ax), "a/x не должен видеть чанки b/y"
     assert any("repo_by" in t for t in texts_by), "b/y должен вернуть свои чанки"
     assert not any("repo_ax" in t for t in texts_by), "b/y не должен видеть чанки a/x"
+
+
+@pytest.mark.integration
+def test_two_branch_isolation():
+    """hybrid_search с разными base_ref изолирует ветки одного репо."""
+    s = Settings()
+    store = ChunkStore(s.pg_dsn)
+    store.init_schema()
+    store.clear()
+    d = s.embedding_dim
+    vec = [0.0] * d
+    vec[0] = 1.0
+    store.upsert([
+        _row("base:main", "mod.py", "func", "def func(): return on_main()", vec),
+        _row("base:master", "mod.py", "func", "def func(): return on_master()", vec),
+    ])
+    res_main = store.hybrid_search(
+        "a/x", query_text="func", query_embedding=vec,
+        overlay_ref="pr:0", changed_paths=[], top_k=10, candidates=20,
+        base_ref="base:main",
+    )
+    texts = {r.text for r in res_main}
+    assert any("on_main" in t for t in texts)
+    assert not any("on_master" in t for t in texts)

@@ -205,9 +205,9 @@ class ChunkStore:
             conn.commit()
 
     def hybrid_search(self, repo, query_text, query_embedding, overlay_ref,
-                      changed_paths, top_k=20, candidates=50) -> list[Retrieved]:
+                      changed_paths, top_k=20, candidates=50, *, base_ref="base") -> list[Retrieved]:
         where = ("repo=%(repo)s AND "
-                 "((ref='base' AND NOT (path = ANY(%(changed)s))) OR ref=%(overlay)s)")
+                 "((ref=%(base)s AND NOT (path = ANY(%(changed)s))) OR ref=%(overlay)s)")
         sql = f"""
         WITH bm25 AS (
             SELECT id, RANK() OVER (ORDER BY pdb.score(id) DESC) AS rank
@@ -234,14 +234,14 @@ class ChunkStore:
         """
         params = {"repo": repo, "q": _bm25_query(query_text), "vec": Vector(query_embedding),
                   "overlay": overlay_ref, "changed": changed_paths,
-                  "cand": candidates, "k": top_k}
+                  "cand": candidates, "k": top_k, "base": base_ref}
         with self._connect() as conn:
             rows = conn.execute(sql, params).fetchall()
         return [Retrieved(node_id=f"{p}#{f}", path=p, symbol_fqn=f, kind=k,
                           start_line=sl, end_line=el, text=t, score=float(sc))
                 for (p, f, k, sl, el, t, sc) in rows]
 
-    def fetch_nodes(self, repo, node_ids, overlay_ref, changed_paths):
+    def fetch_nodes(self, repo, node_ids, overlay_ref, changed_paths, *, base_ref="base"):
         if not node_ids:
             return []
         pairs = [nid.split("#", 1) for nid in node_ids if "#" in nid]
@@ -252,10 +252,10 @@ class ChunkStore:
         FROM chunks c JOIN unnest(%(paths)s::text[], %(fqns)s::text[]) AS q(p,f)
           ON c.path=q.p AND c.symbol_fqn=q.f
         WHERE c.repo=%(repo)s
-          AND ((c.ref='base' AND NOT (c.path = ANY(%(changed)s))) OR c.ref=%(overlay)s)
+          AND ((c.ref=%(base)s AND NOT (c.path = ANY(%(changed)s))) OR c.ref=%(overlay)s)
         """
         params = {"repo": repo, "paths": [p for p, _ in pairs], "fqns": [f for _, f in pairs],
-                  "changed": changed_paths, "overlay": overlay_ref}
+                  "changed": changed_paths, "overlay": overlay_ref, "base": base_ref}
         with self._connect() as conn:
             rows = conn.execute(sql, params).fetchall()
         return [Retrieved(node_id=f"{p}#{f}", path=p, symbol_fqn=f, kind=k,
