@@ -177,7 +177,8 @@ def migrate_branches() -> None:
         if c.graph is not None:
             c.graph.init_schema()
             c.graph.migrate_legacy_branch(primary)
-        click.echo(f"Миграция завершена: {n} чанков → base:{primary}; граф → branch={primary}")
+        graph_msg = f"; граф → branch={primary}" if c.graph is not None else " (граф: пропущен)"
+        click.echo(f"Миграция завершена: {n} чанков → base:{primary}{graph_msg}")
     finally:
         c.store.close()
         if c.graph:

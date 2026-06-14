@@ -177,15 +177,32 @@ class ChunkStore:
     def migrate_legacy_base(self, primary: str) -> int:
         """Перенести legacy ref='base' → 'base:<primary>' в chunks и index_meta.
 
-        Идемпотентно: повторный вызов — no-op (legacy 'base' уже отсутствует).
-        Без переэмбеддинга — векторы сохраняются. Выполнять один раз после апгрейда.
-        Если запись base:<primary> в index_meta уже существует, legacy 'base' удаляется.
+        Конфликт-устойчиво и идемпотентно: если ветка base:<primary> уже была
+        проиндексирована (есть копия по уникальному ключу (repo, ref, path,
+        symbol_fqn)), legacy-строка не перетирает её, а удаляется. Повторный вызов —
+        no-op (legacy 'base' уже отсутствует). Без переэмбеддинга — векторы
+        сохраняются. Выполнять один раз после апгрейда.
+        Возвращает число фактически перенесённых chunks (без учёта удалённых дублей).
         """
         target = f"base:{primary}"
         with self._connect() as conn:
-            cur = conn.execute("UPDATE chunks SET ref=%s WHERE ref='base'", (target,))
-            n = cur.rowcount
-            # Если целевая запись уже есть — просто удаляем устаревшую legacy-запись.
+            # Шаг 1: перенести только те legacy-строки, для которых в target нет копии.
+            cur = conn.execute(
+                """
+                UPDATE chunks SET ref=%s
+                WHERE ref='base'
+                  AND NOT EXISTS (
+                      SELECT 1 FROM chunks c2
+                      WHERE c2.repo=chunks.repo AND c2.ref=%s
+                        AND c2.path=chunks.path AND c2.symbol_fqn=chunks.symbol_fqn
+                  )
+                """,
+                (target, target),
+            )
+            n = cur.rowcount  # фактически перенесённые чанки
+            # Шаг 2: остаток legacy ('base'), у которого target-копия уже была — удалить.
+            conn.execute("DELETE FROM chunks WHERE ref='base'")
+            # index_meta: если целевая запись уже есть — просто удаляем legacy-запись.
             conn.execute(
                 """
                 INSERT INTO index_meta (repo, ref, sha, updated_at)
