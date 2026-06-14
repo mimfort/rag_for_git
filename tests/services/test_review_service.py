@@ -197,7 +197,7 @@ def test_prepare_runs_base_sync_for_real_review(
         service.prepare("owner", "repo", 1)   # vcs_provider не передан → прод-путь
 
     mock_update_base.assert_called_once()
-    components.store.set_index_meta.assert_called_once_with("owner/repo", "base", "base123")
+    components.store.set_index_meta.assert_called_once_with("owner/repo", "base:main", "base123")
 
 
 def test_prepare_closes_internal_vcs_on_failure(
@@ -370,7 +370,7 @@ def test_prepare_graph_patch_fail_soft_does_not_abort_prepare(
     assert prepared is not None
     # vector-sync всё же выполнился
     _mock_update_base.assert_called_once()
-    components.store.set_index_meta.assert_called_once_with("owner/repo", "base", "base123")
+    components.store.set_index_meta.assert_called_once_with("owner/repo", "base:main", "base123")
 
 
 @patch("reviewer.services.review_service.chunk_python", side_effect=_fake_chunk)
