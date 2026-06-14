@@ -174,6 +174,30 @@ class ChunkStore:
             )
             conn.commit()
 
+    def migrate_legacy_base(self, primary: str) -> int:
+        """Перенести legacy ref='base' → 'base:<primary>' в chunks и index_meta.
+
+        Идемпотентно: повторный вызов — no-op (legacy 'base' уже отсутствует).
+        Без переэмбеддинга — векторы сохраняются. Выполнять один раз после апгрейда.
+        Если запись base:<primary> в index_meta уже существует, legacy 'base' удаляется.
+        """
+        target = f"base:{primary}"
+        with self._connect() as conn:
+            cur = conn.execute("UPDATE chunks SET ref=%s WHERE ref='base'", (target,))
+            n = cur.rowcount
+            # Если целевая запись уже есть — просто удаляем устаревшую legacy-запись.
+            conn.execute(
+                """
+                INSERT INTO index_meta (repo, ref, sha, updated_at)
+                SELECT repo, %s, sha, now() FROM index_meta WHERE ref='base'
+                ON CONFLICT (repo, ref) DO NOTHING
+                """,
+                (target,),
+            )
+            conn.execute("DELETE FROM index_meta WHERE ref='base'")
+            conn.commit()
+        return n
+
     def delete_paths(self, repo: str, ref: str, paths: list[str]) -> None:
         """Удалить чанки указанных путей для ref (гигиена: удалённые файлы из индекса).
 
