@@ -141,6 +141,30 @@
 - **`ref="pr:N"`** — эфемерный overlay: только изменённые файлы PR на его HEAD.
 - **На запросе**: `retrieval = (base, где path ∉ изменённых) ∪ overlay`. То есть для изменённых файлов агент видит **новую** версию, для остального — стабильную базу. Это и есть условие «находить произвольный релевантный код по всему репо, но по актуальной версии».
 
+## Промт для быстрой установки
+
+Скопируйте и вставьте в любой AI-инструмент (Claude Code, Cursor, Gemini CLI, Mimo Code, OpenCode, Kimi Code, Codex, Copilot…):
+
+```
+Настрой MCP-сервер rag-reviewer в этом AI-инструменте.
+
+Правила:
+- Для запуска сервера используй `uvx --from rag-reviewer reviewer-mcp` — не pip install, не клонирование репозитория.
+- Обёртка `bash -lc` обязательна, чтобы uvx находился GUI-инструментами: command="/bin/bash", args=["-lc", "uvx --from rag-reviewer reviewer-mcp"].
+- Определи, в каком AI-инструменте ты работаешь, и запиши MCP-запись в нужный конфиг-файл:
+  - Claude Code / generic: .mcp.json в корне проекта ({"mcpServers":{"reviewer":{"command":"/bin/bash","args":["-lc","uvx --from rag-reviewer reviewer-mcp"]}}})
+  - Cursor: ~/.cursor/mcp.json (тот же формат)
+  - Gemini CLI: ~/.gemini/settings.json ({"mcpServers":{"reviewer":{"command":"/bin/bash","args":["-lc","uvx --from rag-reviewer reviewer-mcp"]}}})
+  - Mimo Code: ~/.config/mimocode/mimocode.json ({"mcp":{"reviewer":{"type":"local","command":["/bin/bash","-lc","uvx --from rag-reviewer reviewer-mcp"],"enabled":true}}})
+  - OpenCode: ~/.config/opencode/opencode.json ({"mcp":{"reviewer":{"type":"local","command":["/bin/bash","-lc","uvx --from rag-reviewer reviewer-mcp"]}}})
+  - Kimi Code: ~/.kimi-code/mcp.json ({"mcpServers":{"reviewer":{"command":"/bin/bash","args":["-lc","uvx --from rag-reviewer reviewer-mcp"]}}})
+  - Codex CLI: ~/.codex/config.toml ([mcp_servers.reviewer] command="/bin/bash" args=["-lc","uvx --from rag-reviewer reviewer-mcp"])
+- После записи конфига выполни: uvx --from rag-reviewer reviewer check
+- Сообщи, в какой файл записал и прошла ли проверка.
+```
+
+---
+
 ## Быстрый старт
 
 MCP-сервер опубликован на PyPI как [`rag-reviewer`](https://pypi.org/project/rag-reviewer/)

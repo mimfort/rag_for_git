@@ -98,6 +98,30 @@ the index keeps a persistent base and layers PR changes on top:
 For a deeper, code-verified walkthrough of every module and the data flow, see
 [README.ru.md](README.ru.md) (Russian).
 
+## One-click install prompt
+
+Copy and paste into any AI coding assistant (Claude Code, Cursor, Gemini CLI, Mimo Code, OpenCode, Kimi Code, Codex, Copilot…):
+
+```
+Set up the rag-reviewer MCP server in this AI tool.
+
+Rules:
+- Use `uvx --from rag-reviewer reviewer-mcp` to run the server — do NOT pip install, do NOT clone the repo.
+- The `bash -lc` wrapper is required so uvx is found by GUI tools: command="/bin/bash", args=["-lc", "uvx --from rag-reviewer reviewer-mcp"].
+- Detect which AI tool you are running in, then write the MCP entry to the correct config file:
+  - Claude Code / generic: .mcp.json in project root ({"mcpServers":{"reviewer":{"command":"/bin/bash","args":["-lc","uvx --from rag-reviewer reviewer-mcp"]}}})
+  - Cursor: ~/.cursor/mcp.json (same format)
+  - Gemini CLI: ~/.gemini/settings.json ({"mcpServers":{"reviewer":{"command":"/bin/bash","args":["-lc","uvx --from rag-reviewer reviewer-mcp"]}}})
+  - Mimo Code: ~/.config/mimocode/mimocode.json ({"mcp":{"reviewer":{"type":"local","command":["/bin/bash","-lc","uvx --from rag-reviewer reviewer-mcp"],"enabled":true}}})
+  - OpenCode: ~/.config/opencode/opencode.json ({"mcp":{"reviewer":{"type":"local","command":["/bin/bash","-lc","uvx --from rag-reviewer reviewer-mcp"]}}})
+  - Kimi Code: ~/.kimi-code/mcp.json ({"mcpServers":{"reviewer":{"command":"/bin/bash","args":["-lc","uvx --from rag-reviewer reviewer-mcp"]}}})
+  - Codex CLI: ~/.codex/config.toml ([mcp_servers.reviewer] command="/bin/bash" args=["-lc","uvx --from rag-reviewer reviewer-mcp"])
+- After writing the config, run: uvx --from rag-reviewer reviewer check
+- Report what config file was written and whether the check passed.
+```
+
+---
+
 ## Installation
 
 The MCP server is published on PyPI as [`rag-reviewer`](https://pypi.org/project/rag-reviewer/)
