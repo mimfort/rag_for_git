@@ -6,7 +6,7 @@ class FakeRetriever:
         from reviewer.index.store import Retrieved
         return ContextPack([Retrieved("a.py#f","a.py","f","function",1,2,"def f(): ...",1.0)])
 class FakeGraph:
-    def expand(self, repo, ids, hops=2): return {"b.py#g"}
+    def expand(self, repo, ids, hops=2, *, branch=""): return {"b.py#g"}
 
 def test_search_code_tool_returns_context_text():
     ctx = ToolContext(retriever=FakeRetriever(), graph=FakeGraph(),
@@ -26,12 +26,12 @@ def test_get_callers_tool_uses_graph():
 
 
 class FakeGraphRich:
-    def expand(self, repo, ids, hops=2): return {"b.py#g"}
-    def callers(self, repo, ids): return {"x.py#caller"}
-    def find_symbol(self, repo, name): return ["a.py#f"]
+    def expand(self, repo, ids, hops=2, *, branch=""): return {"b.py#g"}
+    def callers(self, repo, ids, *, branch=""): return {"x.py#caller"}
+    def find_symbol(self, repo, name, *, branch=""): return ["a.py#f"]
 
 class FakeStore:
-    def fetch_nodes(self, repo, ids, overlay_ref, changed_paths):
+    def fetch_nodes(self, repo, ids, overlay_ref, changed_paths, *, base_ref="base"):
         from reviewer.index.store import Retrieved
         return [Retrieved("a.py#f", "a.py", "f", "function", 1, 2, "def f():\n    return 1", 0.0)]
 
@@ -103,7 +103,8 @@ class CountingRetriever:
     """Считает вызовы retrieve — для проверки, что кэш экономит обращения к источнику."""
     def __init__(self):
         self.calls = 0
-    def retrieve(self, repo, **kw):
+    def retrieve(self, repo, query, changed_node_ids, overlay_ref, changed_paths,
+                 top_k=8, *, branch=""):
         from reviewer.retrieval.retriever import ContextPack
         from reviewer.index.store import Retrieved
         self.calls += 1
@@ -176,17 +177,18 @@ def test_cache_normalizes_read_file_defaults():
 def test_tools_thread_repo_to_graph_and_retriever():
     calls = {}
     class G:
-        def expand(self, repo, ids, hops=2):
+        def expand(self, repo, ids, hops=2, *, branch=""):
             calls["expand_repo"] = repo
             return set()
-        def callers(self, repo, ids):
+        def callers(self, repo, ids, *, branch=""):
             calls["callers_repo"] = repo
             return set()
-        def find_symbol(self, repo, name):
+        def find_symbol(self, repo, name, *, branch=""):
             calls["find_repo"] = repo
             return []
     class R:
-        def retrieve(self, repo, query, changed_node_ids, overlay_ref, changed_paths, top_k=8):
+        def retrieve(self, repo, query, changed_node_ids, overlay_ref, changed_paths,
+                     top_k=8, *, branch=""):
             calls["retrieve_repo"] = repo
             class P:
                 def as_context(self): return "x"
