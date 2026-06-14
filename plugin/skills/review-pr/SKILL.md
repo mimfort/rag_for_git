@@ -25,6 +25,10 @@ of posting.
    - `task_keys`: `{primary, others}` or null — task keys extracted from the PR by the server
    - `skipped_paths`, `skip_drafts`, `suggestions_mode`
 
+   If the payload has `status: "skipped"`, this is NOT an error but an expected skip
+   (the PR's target branch is not in `REVIEW_BRANCHES`). Tell the user the `reason`
+   value and stop: do not run analyze/publish, and do not treat it as a failure.
+
    If `pr.draft` is true and `skip_drafts` is true, stop and tell the user.
    Note `policy.output_language` — ALL finding messages, suggestions and the summary
    MUST be written in that language.
@@ -96,6 +100,8 @@ of posting.
 
 - A failed analyze subagent must not abort the run: continue with the other units
   and mention the skipped file in the summary.
+- A `prepare_review` payload with `status: "skipped"` is not a failure: report its
+  `reason` (target branch not tracked in `REVIEW_BRANCHES`) and stop without analyze/publish.
 - If `prepare_review` fails, surface its error text to the user as-is (it contains
   the remediation hint, e.g. "docker compose up -d").
 - Never post comments yourself via gh/git — only through `publish_review`.
