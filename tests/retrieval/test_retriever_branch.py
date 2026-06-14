@@ -54,3 +54,5 @@ def test_search_base_passes_branch():
     r = Retriever(store, graph, FakeEmb(), reranker=None)
     r.search_base("a/x", "q", branch="main")
     assert store.calls[0] == "base:main"
+    # search_base сидит граф от топ-хитов: hits непусты → expand вызван с веткой
+    assert graph.branches == ["main"]

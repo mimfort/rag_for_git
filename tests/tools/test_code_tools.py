@@ -159,6 +159,23 @@ def test_run_cache_respects_changed_node_ids():
     assert ret.calls == 2
 
 
+def test_run_cache_respects_branch():
+    """Корректность: одинаковый запрос, разные ветки -> разный ctx_sig -> источник дёргается дважды."""
+    ret = CountingRetriever()
+    cache: dict = {}
+    ctx1 = ToolContext(retriever=ret, graph=FakeGraph(), overlay_ref="pr:1",
+                       changed_paths=["a.py"], changed_node_ids=[], cache=cache,
+                       repo="a/x", branch="main")
+    ctx2 = ToolContext(retriever=ret, graph=FakeGraph(), overlay_ref="pr:1",
+                       changed_paths=["a.py"], changed_node_ids=[], cache=cache,
+                       repo="a/x", branch="feature/x")
+    t1 = {t.name: t for t in make_tools(ctx1)}
+    t2 = {t.name: t for t in make_tools(ctx2)}
+    t1["search_code"].invoke({"query": "q"})
+    t2["search_code"].invoke({"query": "q"})
+    assert ret.calls == 2
+
+
 def test_cache_normalizes_read_file_defaults():
     """read_file(path) и read_file(path, 1, 400) дают один ключ (apply_defaults) -> повтор = заглушка."""
     calls = {"n": 0}
