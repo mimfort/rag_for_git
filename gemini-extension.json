@@ -1,0 +1,6 @@
+{
+  "name": "rag-reviewer",
+  "description": "Agentic PR review: hybrid RAG + code graph via MCP",
+  "version": "0.1.0",
+  "contextFileName": "GEMINI.md"
+}

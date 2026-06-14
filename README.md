@@ -131,37 +131,74 @@ The MCP server is launched via `bash -lc "uvx --from rag-reviewer reviewer-mcp"`
 wrapper loads your shell profile so `uvx` (typically in `~/.local/bin`) is visible to GUI tools
 that don't inherit the full shell PATH.
 
-#### Global MCP config (Mimo Code, OpenCode, Cursor, Trae, and most other tools)
+Each AI coding tool has its own config file. Pick yours:
 
-Many AI coding assistants (Mimo Code, OpenCode, Trae IDE, Cursor, etc.) read MCP servers from
-**`~/.factory/mcp.json`** — a shared global config. Add the reviewer once there and it appears
-in all of them automatically:
+| Tool | Global config file | Project config | Install guide |
+|---|---|---|---|
+| **Claude Code** | `/plugin marketplace add` (see below) | `.claude-plugin/` ✓ | — |
+| **Cursor** | `~/.cursor/mcp.json` | `.cursor/mcp.json` ✓ | — |
+| **Mimo Code** | `~/.config/mimocode/mimocode.json` | `.mimocode/mimocode.json` ✓ | [INSTALL.md](.mimocode/INSTALL.md) |
+| **OpenCode** | `~/.config/opencode/opencode.json` | `.opencode/opencode.json` ✓ | [INSTALL.md](.opencode/INSTALL.md) |
+| **Kimi Code** | `~/.kimi-code/mcp.json` | `.kimi-code/mcp.json` ✓ | [INSTALL.md](.kimi-code/INSTALL.md) |
+| **Gemini CLI** | `~/.gemini/settings.json` | `.gemini/settings.json` ✓ | [GEMINI.md](GEMINI.md) |
+| **Codex CLI** | `~/.codex/config.toml` | `.codex-plugin/plugin.json` ✓ | [AGENTS.md](AGENTS.md) |
+| **Copilot CLI** | — | `.github-copilot/plugin.json` ✓ | — |
+| **Trae IDE** | `~/Library/Application Support/Trae/User/mcp.json` | — | — |
+| **VS Code** | `~/Library/Application Support/Code/User/mcp.json` | — | — |
 
+Files marked ✓ are already present in this repo — if you open rag_for_git as a project in
+that tool, the MCP server auto-connects. For a **global install** (works from any project),
+add the entry to the corresponding global config file.
+
+The MCP entry format by tool:
+
+**Mimo Code** (`mimocode.json`):
 ```json
 {
-  "mcpServers": {
+  "$schema": "https://mimo.xiaomi.com//config.json",
+  "mcp": {
     "reviewer": {
-      "type": "stdio",
-      "command": "/bin/bash",
-      "args": ["-lc", "uvx --from rag-reviewer reviewer-mcp"],
-      "disabled": false
+      "type": "local",
+      "command": ["/bin/bash", "-lc", "uvx --from rag-reviewer reviewer-mcp"],
+      "enabled": true
     }
   }
 }
 ```
 
+**OpenCode** (`opencode.json`):
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "reviewer": {
+      "type": "local",
+      "command": ["/bin/bash", "-lc", "uvx --from rag-reviewer reviewer-mcp"]
+    }
+  }
+}
+```
+
+**Kimi Code / Cursor / Gemini CLI / Codex CLI / Trae / VS Code** (standard MCP JSON):
+```json
+{
+  "mcpServers": {
+    "reviewer": {
+      "command": "/bin/bash",
+      "args": ["-lc", "uvx --from rag-reviewer reviewer-mcp"]
+    }
+  }
+}
+```
+
+**Codex CLI** (`~/.codex/config.toml`):
+```toml
+[mcp_servers.reviewer]
+command = "/bin/bash"
+args = ["-lc", "uvx --from rag-reviewer reviewer-mcp"]
+```
+
 After adding, restart the tool — `reviewer` will appear alongside other MCP servers.
-
-Tool-specific overrides (if `~/.factory/mcp.json` is not supported):
-
-| Tool | Config file |
-|---|---|
-| Cursor | `.cursor/mcp.json` in the project root (pre-configured in this repo) |
-| VS Code | `~/Library/Application Support/Code/User/mcp.json` |
-| Trae IDE | `~/Library/Application Support/Trae/User/mcp.json` |
-| Gemini CLI | `~/.gemini/config/mcp_config.json` — see `GEMINI.md` |
-
-In all cases the entry is the same `command`/`args` as above.
 
 #### Claude Code
 
@@ -181,14 +218,6 @@ You get:
   `index_task`, `search_tasks`, `get_task_context`, `search_codebase`.
 
 > Run `/plugin` to confirm `rag-reviewer` is installed and enabled.
-
-#### Codex CLI
-
-`.codex-plugin/plugin.json` is pre-configured. Codex picks it up from the repo root automatically.
-
-#### Copilot CLI
-
-`.github-copilot/plugin.json` is pre-configured. Copilot CLI picks it up from the repo root.
 
 ---
 

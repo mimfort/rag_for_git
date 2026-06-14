@@ -1,0 +1,10 @@
+{
+  "$schema": "https://mimo.xiaomi.com//config.json",
+  "mcp": {
+    "reviewer": {
+      "type": "local",
+      "command": ["/bin/bash", "-lc", "uvx --from rag-reviewer reviewer-mcp"],
+      "enabled": true
+    }
+  }
+}

@@ -6,29 +6,7 @@ See `CLAUDE.md` for full project documentation (architecture, commands, invarian
 
 ### Global config (recommended)
 
-Most AI coding tools (Mimo Code, OpenCode, Trae, Cursor, Gemini CLI) share
-**`~/.factory/mcp.json`** as a global MCP registry. Add the reviewer there once:
-
-```json
-{
-  "mcpServers": {
-    "reviewer": {
-      "type": "stdio",
-      "command": "/bin/bash",
-      "args": ["-lc", "uvx --from rag-reviewer reviewer-mcp"],
-      "disabled": false
-    }
-  }
-}
-```
-
-The `bash -lc` wrapper loads your shell profile so `uvx` (in `~/.local/bin`) is found
-by GUI tools that don't inherit the full shell PATH.
-
-### Gemini CLI specifically
-
-If Gemini CLI uses its own `~/.gemini/config/mcp_config.json` instead of the global config,
-add the same entry there:
+Add to `~/.gemini/settings.json` under `"mcpServers"`:
 
 ```json
 {
@@ -41,7 +19,29 @@ add the same entry there:
 }
 ```
 
+The `bash -lc` wrapper loads your shell profile so `uvx` (in `~/.local/bin`) is found
+by GUI tools that don't inherit the full shell PATH.
+
+### Project-level config
+
+`.gemini/settings.json` in this repo already contains the MCP entry — Gemini CLI
+picks it up automatically when you open this project.
+
 ## Skills
 
-Gemini CLI has no built-in skill system. Use the MCP tools directly (`prepare_review`,
-`publish_review`, etc.) or refer to `plugin/skills/review-pr/SKILL.md` for the review workflow.
+Gemini CLI discovers skills from `.gemini/skills/` (project) or `~/.gemini/skills/` (global).
+To expose rag-reviewer skills globally:
+
+```bash
+mkdir -p ~/.gemini/skills
+cp -r plugin/skills/* ~/.gemini/skills/
+```
+
+Then use them: `use skill rag-reviewer:review-pr`
+
+## Verify
+
+After restarting Gemini CLI, run:
+> "List available MCP tools"
+
+You should see `mcp_reviewer_prepare_review`, `mcp_reviewer_publish_review`, etc.
