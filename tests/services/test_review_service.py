@@ -305,20 +305,20 @@ def test_prepare_patches_graph_incrementally_on_drift(
             self.upsert_nodes_calls = []
             self.delete_outgoing_calls_log = []
 
-        def symbols_for_paths(self, repo, paths):
+        def symbols_for_paths(self, repo, paths, *, branch=""):
             self.symbols_calls.append((repo, list(paths)))
             return set()
 
-        def delete_symbols(self, repo, ids):
+        def delete_symbols(self, repo, ids, *, branch=""):
             pass
 
-        def delete_outgoing_calls(self, repo, ids):
+        def delete_outgoing_calls(self, repo, ids, *, branch=""):
             self.delete_outgoing_calls_log.append((repo, list(ids)))
 
-        def upsert_nodes(self, repo, ids):
+        def upsert_nodes(self, repo, ids, *, branch=""):
             self.upsert_nodes_calls.append((repo, list(ids)))
 
-        def upsert_edges(self, repo, edges):
+        def upsert_edges(self, repo, edges, *, branch=""):
             pass
 
     fake_graph = _FakeGraph()

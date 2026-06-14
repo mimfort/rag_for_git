@@ -15,23 +15,23 @@ class FakeGraph:
         self.upserted_nodes = []
         self.upserted_edges = []
 
-    def symbols_for_paths(self, repo, paths):
+    def symbols_for_paths(self, repo, paths, *, branch=""):
         prefixes = [p + "#" for p in paths]
         return {s for s in self.symbols.get(repo, set())
                 if any(s.startswith(p) for p in prefixes)}
 
-    def delete_symbols(self, repo, ids):
+    def delete_symbols(self, repo, ids, *, branch=""):
         self.deleted.append((repo, set(ids)))
         self.symbols.get(repo, set()).difference_update(ids)
 
-    def delete_outgoing_calls(self, repo, ids):
+    def delete_outgoing_calls(self, repo, ids, *, branch=""):
         self.deleted_calls.append((repo, set(ids)))
 
-    def upsert_nodes(self, repo, ids):
+    def upsert_nodes(self, repo, ids, *, branch=""):
         self.upserted_nodes.append((repo, set(ids)))
         self.symbols.setdefault(repo, set()).update(ids)
 
-    def upsert_edges(self, repo, edges):
+    def upsert_edges(self, repo, edges, *, branch=""):
         self.upserted_edges.append((repo, list(edges)))
 
 

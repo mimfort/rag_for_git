@@ -188,7 +188,7 @@ class ReviewService:
                                 if f.status == "removed" and f.path.endswith(".py")
                             ]
                             patch_graph_incremental(
-                                self.components.graph, repo,
+                                self.components.graph, repo, branch=branch,
                                 changed_sources=changed_py, removed_paths=removed_py)
                             log.info("Граф досинхронизирован инкрементально: "
                                      "%d изм., %d уд.", len(changed_py), len(removed_py))
