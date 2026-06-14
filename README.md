@@ -324,9 +324,9 @@ rm /tmp/rag-reviewer.tgz
 | Gemini CLI | `~/.gemini/skills/` |
 | Mimo Code | `~/.config/mimocode/skills/` |
 | Kimi Code | `~/.kimi-code/skills/` + `extra_skill_dirs` in `~/.kimi-code/config.toml` |
+| OpenCode | `~/.config/opencode/skills/` |
 | Claude Code | bundled in the plugin (step above) |
 | Cursor | project-level via `.cursor-plugin/plugin.json` |
-| OpenCode | JS plugin system — file-based skills not supported |
 
 ---
 

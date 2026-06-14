@@ -199,4 +199,4 @@ def test_install_skills_unsupported_client(tmp_path):
 
 def test_skills_capable_clients_have_dirs():
     capable = {c.key for c in inst.CLIENTS.values() if c.skills_fn}
-    assert capable == {"gemini", "mimo", "kimi"}
+    assert capable == {"gemini", "mimo", "kimi", "opencode"}

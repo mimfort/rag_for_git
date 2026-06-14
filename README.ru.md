@@ -347,9 +347,9 @@ rm /tmp/rag-reviewer.tgz
 | Gemini CLI | `~/.gemini/skills/` |
 | Mimo Code | `~/.config/mimocode/skills/` |
 | Kimi Code | `~/.kimi-code/skills/` + `extra_skill_dirs` в `~/.kimi-code/config.toml` |
+| OpenCode | `~/.config/opencode/skills/` |
 | Claude Code | поставляется в плагине (шаг выше) |
 | Cursor | на уровне проекта через `.cursor-plugin/plugin.json` |
-| OpenCode | JS-плагины — файловые скиллы не поддерживаются |
 
 ## Использование
 

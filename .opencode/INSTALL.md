@@ -45,6 +45,11 @@ You should see `prepare_review`, `publish_review`, `search_code`, etc.
 
 ## Skills
 
-OpenCode uses a JS plugin system — file-based skills are not supported.
-Use the MCP tools directly (`prepare_review`, `publish_review`, etc.) or refer to
-`plugin/skills/review-pr/SKILL.md` for the review workflow steps.
+OpenCode loads file-based skills from `~/.config/opencode/skills/<name>/SKILL.md`. Install them:
+
+```bash
+uvx --from rag-reviewer reviewer install-skills opencode
+```
+
+(or `reviewer install opencode`, which sets up the MCP server and the skills together).
+Then restart OpenCode and run `opencode debug skill` — the `reviewer_*` skills should be listed.
