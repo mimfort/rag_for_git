@@ -123,7 +123,8 @@ def check() -> None:
 @cli.command()
 @click.argument("repo")
 @click.option("--ref", default=None,
-              help="git-ref для чтения файлов и ключ ветки; по умолчанию первичная ветка")
+              help="git-ref для чтения файлов; по умолчанию первичная ветка "
+                   "(ключ хранения, если --branch не задан)")
 @click.option("--branch", "branch_opt", default=None,
               help="имя ветки для хранения индекса; по умолчанию = --ref")
 @click.option("--repo", "repo_tag", default=None,
