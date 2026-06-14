@@ -11,6 +11,7 @@ from reviewer.gitutil import file_at_ref, list_python_files, rev_parse, remote_u
 from reviewer.graph.backend import build_code_graph
 from reviewer.graph.store import GraphStore
 from reviewer.index.freshness import update_base
+from reviewer.index.refs import base_ref
 from reviewer.index.store import ChunkStore
 
 log = logging.getLogger(__name__)
@@ -121,34 +122,40 @@ def check() -> None:
 
 @cli.command()
 @click.argument("repo")
-@click.option("--ref", default="HEAD")
+@click.option("--ref", default=None,
+              help="git-ref для чтения файлов и ключ ветки; по умолчанию первичная ветка")
+@click.option("--branch", "branch_opt", default=None,
+              help="имя ветки для хранения индекса; по умолчанию = --ref")
 @click.option("--repo", "repo_tag", default=None,
               help="owner/name тег индекса; по умолчанию из git remote origin")
-def index(repo: str, ref: str, repo_tag: str | None) -> None:
+def index(repo: str, ref: str | None, branch_opt: str | None, repo_tag: str | None) -> None:
     """Построить/обновить base-индекс целевой ветки из локального репо."""
     s = Settings()
     c = build_components(s)
     repo_id = _resolve_repo(repo_tag, repo, s)
+    ref = ref or s.primary_branch()
+    branch = branch_opt or ref
+    bref = base_ref(branch)
     try:
         c.store.init_schema()
         files = list_python_files(repo, ref)
-        update_base(c.store, c.embedder, repo_id, ref, files,
+        update_base(c.store, c.embedder, repo_id, branch, files,
                     read=lambda p: file_at_ref(repo, p, ref))
-        c.store.delete_paths_except(repo_id, "base", files)
+        c.store.delete_paths_except(repo_id, bref, files)
         sha = rev_parse(repo, ref)
-        c.store.set_index_meta(repo_id, "base", sha)
-        # --- граф кода ---
+        c.store.set_index_meta(repo_id, bref, sha)
+        # --- граф кода (в рамках ветки) ---
         src_by_path = {p: file_at_ref(repo, p, ref) for p in files}
         src_by_path = {p: v for p, v in src_by_path.items() if v is not None}
         gnodes, gedges, backend = build_code_graph(
             repo, ref, files, src_by_path, s.graph_backend,
         )
         c.graph.init_schema()
-        c.graph.clear(repo_id)   # rebuild только этого репо
-        c.graph.upsert_nodes(repo_id, list(gnodes))
-        c.graph.upsert_edges(repo_id, gedges)
+        c.graph.clear(repo_id, branch=branch)   # rebuild только этой ветки репо
+        c.graph.upsert_nodes(repo_id, list(gnodes), branch=branch)
+        c.graph.upsert_edges(repo_id, gedges, branch=branch)
         click.echo(
-            f"Проиндексировано [{repo_id}] файлов: {len(files)} @ {sha[:7]}; "
+            f"Проиндексировано [{repo_id}@{branch}] файлов: {len(files)} @ {sha[:7]}; "
             f"граф [{backend}]: узлов {len(gnodes)}, рёбер {len(gedges)}"
         )
     finally:
