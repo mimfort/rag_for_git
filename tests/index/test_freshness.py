@@ -71,7 +71,7 @@ def test_update_base_removed_files_calls_delete_paths():
                 changed_files=[],
                 read=lambda p: None,
                 removed_files=["old.py", "readme.md"])
-    assert ("a/x", "base", ["old.py"]) in store.deleted_paths
+    assert ("a/x", "base:main", ["old.py"]) in store.deleted_paths
 
 
 def test_update_base_removed_files_skips_non_py():
@@ -101,7 +101,7 @@ def test_update_base_read_none_calls_delete_paths():
     update_base(store, emb, repo="a/x", target_ref="main",
                 changed_files=["gone.py"],
                 read=lambda p: None)
-    assert ("a/x", "base", ["gone.py"]) in store.deleted_paths
+    assert ("a/x", "base:main", ["gone.py"]) in store.deleted_paths
 
 
 def test_update_base_read_none_does_not_upsert():
@@ -125,7 +125,7 @@ def test_update_base_calls_delete_missing_symbols_with_actual_fqns():
     assert len(store.deleted_missing) == 1
     repo, ref, path, keep_fqns = store.deleted_missing[0]
     assert repo == "a/x"
-    assert ref == "base"
+    assert ref == "base:main"
     assert path == "mod.py"
     assert set(keep_fqns) == {"alpha", "beta"}
 
