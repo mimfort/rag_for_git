@@ -107,3 +107,20 @@ class TaskGraph:
             linked.append(n)
         return {"key": r["key"], "title": r["title"], "status": r["status"],
                 "url": r["url"], "prs": r["prs"], "linked": linked}
+
+    def keys_with_prs(self) -> set[str]:
+        """Ключи :Task-узлов с хотя бы одним ребром IMPLEMENTED_BY."""
+        records, _, _ = self._driver.execute_query(
+            "MATCH (t:Task)-[:IMPLEMENTED_BY]->(:PR) RETURN t.key AS key"
+        )
+        return {r["key"] for r in records}
+
+    def delete_tasks(self, keys: list[str]) -> int:
+        """Удалить :Task-узлы с рёбрами DETACH DELETE. :PR/:Symbol не трогает."""
+        if not keys:
+            return 0
+        _, summary, _ = self._driver.execute_query(
+            "MATCH (t:Task) WHERE t.key IN $keys DETACH DELETE t",
+            keys=list(keys),
+        )
+        return summary.counters.nodes_deleted
