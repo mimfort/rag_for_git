@@ -8,7 +8,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
-from reviewer.agent.assemble import AssembledReview, assemble_review, ground_line
+from reviewer.agent.assemble import AssembledReview, assemble_review, ground_line, snap_to_commentable
 from reviewer.agent.dedup import dedup_findings
 from reviewer.app import Components
 from reviewer.config.settings import Settings
@@ -42,8 +42,7 @@ def _finding_from_dict(d) -> Finding | None:
     Вход приходит от модели — кривые словари штатны, коэрция самодостаточная
     (НЕ зависит от _FindingModel в analyzer). Схема: ``category, severity, file,
     line, code_quote, message, suggestion, fix{start_line,end_line,replacement},
-    confidence`` (+опц. ``side``). ``code_quote`` тут не используется (нужен
-    только для грунтовки строки).
+    confidence`` (+опц. ``side``). ``code_quote`` хранится в Finding для fuzzy snap в publish_review.
 
     Гарантии коэрции:
 
@@ -91,6 +90,7 @@ def _finding_from_dict(d) -> Finding | None:
         fix_start=fix_start,
         fix_end=fix_end,
         replacement=replacement,
+        code_quote=d.get("code_quote") if isinstance(d.get("code_quote"), str) else None,
     )
 
 
@@ -329,10 +329,13 @@ class MCPReviewService:
                 invalid += 1
                 log.warning("publish_review: пропущена некорректная находка: %r", d)
                 continue
-            quote = d.get("code_quote")
-            if not isinstance(quote, str):
-                quote = None
-            f.line = ground_line(p.sources.get(f.file), quote, f.line)
+            f.line = ground_line(p.sources.get(f.file), f.code_quote, f.line)
+            patch = p.patches.get(f.file)
+            if patch and f.line is not None:
+                _commentable = commentable_lines(patch)
+                f.line = snap_to_commentable(
+                    f.line, f.side, f.code_quote, _commentable, p.sources.get(f.file, ""),
+                )
             parsed.append(f)
 
         # 2) Gate (категория/severity/confidence/пути) + dedup.
@@ -356,6 +359,10 @@ class MCPReviewService:
             existing_fps=existing,
             max_comments=p.policy.max_comments,
             suggestions_mode=self._suggestions_mode(),
+        )
+        log.info(
+            "publish_review %s pr:%s — grounding: inline=%d moved_to_summary=%d capped=%d",
+            repo, pr, len(asm.inline_comments), asm.moved_to_summary, asm.capped,
         )
         full_summary = summary + ("\n\n" + asm.summary if asm.summary else "")
 
