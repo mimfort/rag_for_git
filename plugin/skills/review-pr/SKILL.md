@@ -56,7 +56,9 @@ of posting.
 3. **Analyze (fan-out).** For each unit in `units`, dispatch a subagent (Task tool,
    run independent subagents in parallel; batch units if there are more than ~10) with:
    - the contents of `references/analyze-prompt.md` (read it once, include verbatim);
-   - the unit's `path` and `patch`, the PR `title`/`body`;
+   - the unit's `path`, `patch`, `commentable_right` (sorted list of new-file line numbers
+     available for inline), `commentable_left` (sorted list of old-file line numbers available
+     for inline), and the PR `title`/`body`;
    - the repo/pr identifiers so the subagent can call the reviewer MCP tools
      (`search_code`, `get_related_symbols`, `read_file`, `get_definition`,
      `find_callers`, `get_changed_file_diff`);

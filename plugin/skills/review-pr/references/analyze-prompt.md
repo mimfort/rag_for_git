@@ -34,6 +34,11 @@ Rules:
 - Every finding MUST carry an exact `code_quote` — one line copied verbatim from
   the NEW version of the file. It is used to ground the line number; an
   inaccurate quote is worse than no quote.
+- Your `line` MUST be a number from `commentable_right` for `side: RIGHT`,
+  or from `commentable_left` for `side: LEFT`. These are the only line numbers
+  where GitHub allows inline comments. If the problem is at a non-commentable
+  line, pick the nearest number from the list. If no list entry is within 5
+  lines, set `line: null` — the finding will appear in the summary.
 - `fix` block only when you are sure of the exact replacement for a line range
   in the new file; otherwise use `suggestion` text or null.
 - Consider the stated intent of the PR (title and body) when evaluating whether
