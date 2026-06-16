@@ -71,6 +71,117 @@ class TaskService:
         return {"key": key, "embedded": embedded,
                 "links_upserted": links_upserted, "warnings": warnings}
 
+    def index_batch(self, tasks: list[dict]) -> list[dict]:
+        """Батчевая индексация: один Voyage-вызов для всех изменившихся задач."""
+        if not tasks:
+            return []
+
+        # Шаг 1: распарсить все задачи и вычислить хэши
+        parsed: list[dict | None] = []
+        results: list[dict | None] = [None] * len(tasks)
+
+        for i, task in enumerate(tasks):
+            key = task.get("key") if isinstance(task, dict) else None
+            if not key:
+                results[i] = {"key": None, "embedded": False, "links_upserted": 0,
+                              "warnings": ["task has no key"]}
+                parsed.append(None)
+                continue
+            aliases = [a for a in (task.get("aliases") or []) if a and a != key]
+            title = task.get("title") or ""
+            description = task.get("description") or ""
+            criteria = task.get("criteria") or []
+            status = task.get("status")
+            url = task.get("url")
+            links = [lk for lk in (task.get("links") or [])
+                     if isinstance(lk, dict) and lk.get("key")]
+            text = build_task_text(title, description, criteria)
+            chash = task_content_hash(text)
+            parsed.append({"key": key, "aliases": aliases, "title": title,
+                           "description": description, "status": status, "url": url,
+                           "links": links, "text": text, "chash": chash})
+
+        # Шаг 2: разделить на to_embed / meta_only по content-hash
+        to_embed: list[int] = []
+        meta_only: list[int] = []
+
+        for i, p in enumerate(parsed):
+            if p is None:
+                continue
+            try:
+                prev = self._store.existing_hash(p["key"])
+            except Exception as e:
+                log.warning("index_batch: existing_hash сбой для %s", p["key"], exc_info=True)
+                results[i] = {"key": p["key"], "embedded": False, "links_upserted": 0,
+                              "warnings": [f"store: {type(e).__name__}: {e}"]}
+                continue
+            (meta_only if prev == p["chash"] else to_embed).append(i)
+
+        # Шаг 3: один Voyage-вызов для изменившихся задач
+        embed_err: str | None = None
+        embeddings: dict[int, list[float]] = {}
+        if to_embed:
+            try:
+                vecs = self._embedder.embed_documents([parsed[i]["text"] for i in to_embed])
+                embeddings = {i: vecs[idx] for idx, i in enumerate(to_embed)}
+            except Exception as e:
+                log.warning("index_batch: сбой embed_documents", exc_info=True)
+                embed_err = f"embedder: {type(e).__name__}: {e}"
+
+        # Шаг 4: upsert изменившихся задач (или propagate embed_err)
+        for i in to_embed:
+            p = parsed[i]
+            warnings: list[str] = []
+            embedded = False
+            if embed_err:
+                warnings.append(embed_err)
+            else:
+                try:
+                    self._store.upsert_task(TaskRow(
+                        key=p["key"], aliases=p["aliases"], title=p["title"],
+                        description=p["description"], status=p["status"], url=p["url"],
+                        content_hash=p["chash"], text=p["text"], embedding=embeddings[i]))
+                    embedded = True
+                except Exception as e:
+                    log.warning("index_batch: сбой store для %s", p["key"], exc_info=True)
+                    warnings.append(f"store: {type(e).__name__}: {e}")
+            results[i] = {"key": p["key"], "embedded": embedded,
+                          "links_upserted": 0, "warnings": warnings}
+
+        # Шаг 5: update_meta для неизменившихся задач
+        for i in meta_only:
+            p = parsed[i]
+            warnings: list[str] = []
+            try:
+                self._store.update_meta(p["key"], p["title"], p["status"],
+                                        p["url"], p["aliases"])
+            except Exception as e:
+                log.warning("index_batch: сбой update_meta для %s", p["key"], exc_info=True)
+                warnings.append(f"store: {type(e).__name__}: {e}")
+            results[i] = {"key": p["key"], "embedded": False,
+                          "links_upserted": 0, "warnings": warnings}
+
+        # Шаг 6: граф для всех валидных задач
+        for i, p in enumerate(parsed):
+            if p is None or results[i] is None:
+                continue
+            links_upserted = 0
+            if self._graph is None:
+                results[i]["warnings"].append(
+                    "graph unavailable: task not added to task graph")
+            else:
+                try:
+                    self._graph.upsert_task(p["key"], p["aliases"], p["title"],
+                                            p["status"], p["url"])
+                    if p["links"]:
+                        links_upserted = self._graph.upsert_links(p["key"], p["links"])
+                except Exception as e:
+                    log.warning("index_batch: сбой графа для %s", p["key"], exc_info=True)
+                    results[i]["warnings"].append(f"graph: {type(e).__name__}: {e}")
+            results[i]["links_upserted"] = links_upserted
+
+        return results
+
     def search_tasks(self, query: str, top_k: int = 5) -> str:
         """Похожие по смыслу задачи (гибрид-поиск по корпусу). Пусто/сбой → текстовая нота."""
         try:
