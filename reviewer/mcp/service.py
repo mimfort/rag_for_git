@@ -233,6 +233,10 @@ class MCPReviewService:
         """Проиндексировать нормализованный TaskBrief: эмбеддинг + граф задачи."""
         return self.components.task_service.index_task(task)
 
+    def index_tasks_batch(self, tasks: list[dict]) -> list[dict]:
+        """Батчевая индексация списка TaskBrief: один Voyage-вызов для изменившихся задач."""
+        return self.components.task_service.index_batch(tasks)
+
     def search_tasks(self, query: str, top_k: int = 5) -> str:
         """Похожие по смыслу задачи (гибрид-поиск по корпусу задач)."""
         return self.components.task_service.search_tasks(query, top_k)

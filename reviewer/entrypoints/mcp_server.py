@@ -69,6 +69,14 @@ def create_server(service: MCPReviewService) -> FastMCP:
         return service.index_task(task)
 
     @mcp.tool()
+    def index_tasks_batch(tasks: list[dict]) -> list[dict]:
+        """Batch-index a list of TaskBriefs with a single Voyage embedding call.
+        tasks: list of {key, aliases[], title, description, criteria[], status, url, links[]}.
+        Idempotent: re-embeds only tasks whose text changed. Returns list of
+        {key, embedded, links_upserted, warnings} in input order."""
+        return service.index_tasks_batch(tasks)
+
+    @mcp.tool()
     def search_tasks(query: str, top_k: int = 5) -> str:
         """Find semantically similar tasks in the indexed task corpus."""
         return service.search_tasks(query, top_k)
