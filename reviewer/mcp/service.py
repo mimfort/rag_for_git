@@ -256,6 +256,14 @@ class MCPReviewService:
         """
         return {"task_board": self.settings.task_board_default()}
 
+    def purge_orphaned_tasks(
+        self, active_keys: list[str], keep_with_prs: bool = True
+    ) -> dict:
+        """Удалить осиротевшие задачи из store и графа."""
+        return self.components.task_service.purge_orphaned_tasks(
+            active_keys, keep_with_prs=keep_with_prs
+        )
+
     def search_codebase(self, repo: str, query: str, top_k: int = 10,
                         branch: str | None = None) -> str:
         """Гибрид-поиск по base-индексу репозитория (без PR-сессии) — для /solve-task.

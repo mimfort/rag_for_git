@@ -77,6 +77,16 @@ def create_server(service: MCPReviewService) -> FastMCP:
         return service.index_tasks_batch(tasks)
 
     @mcp.tool()
+    def purge_orphaned_tasks(
+        active_keys: list[str], keep_with_prs: bool = True
+    ) -> dict:
+        """Remove tasks no longer on the board from the vector store and task graph.
+        active_keys: all current board task keys (canonical ID-N form).
+        keep_with_prs: if True (default), tasks with IMPLEMENTED_BY edges are protected.
+        Returns {deleted_store, deleted_graph, protected_prs, warnings}."""
+        return service.purge_orphaned_tasks(active_keys, keep_with_prs)
+
+    @mcp.tool()
     def search_tasks(query: str, top_k: int = 5) -> str:
         """Find semantically similar tasks in the indexed task corpus."""
         return service.search_tasks(query, top_k)

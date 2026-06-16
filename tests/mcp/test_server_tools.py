@@ -78,3 +78,30 @@ def test_search_codebase_tool_forwards_repo():
         {"repo": "owner/name", "query": "token verification", "top_k": 5},
     ))
     svc.search_codebase.assert_called_once_with("owner/name", "token verification", 5, None)
+
+
+def test_purge_orphaned_tasks_tool_registered():
+    import asyncio
+
+    svc = _service()
+    svc.purge_orphaned_tasks.return_value = {
+        "deleted_store": 0, "deleted_graph": 0, "protected_prs": 0, "warnings": []
+    }
+    server = create_server(svc)
+    names = {t.name for t in asyncio.run(server.list_tools())}
+    assert "purge_orphaned_tasks" in names
+
+
+def test_purge_orphaned_tasks_tool_forwards_to_service():
+    import asyncio
+
+    svc = _service()
+    svc.purge_orphaned_tasks.return_value = {
+        "deleted_store": 2, "deleted_graph": 2, "protected_prs": 1, "warnings": []
+    }
+    server = create_server(svc)
+    asyncio.run(server.call_tool(
+        "purge_orphaned_tasks",
+        {"active_keys": ["ID-1", "ID-2"], "keep_with_prs": True},
+    ))
+    svc.purge_orphaned_tasks.assert_called_once_with(["ID-1", "ID-2"], True)
