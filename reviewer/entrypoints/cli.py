@@ -384,15 +384,27 @@ def update() -> None:
         capture_output=True,
     ).returncode == 0
 
-    # Чистим кэш — при uvx это и есть "обновление": следующий запуск возьмёт свежую версию
-    subprocess.run([uv, "cache", "clean", "rag-reviewer"], capture_output=True)
-
     if upgraded:
         click.echo("Готово. Перезапустите MCP-сервер в редакторе/CLI, чтобы применить новую версию.")
+        return
+
+    # uvx/ephemeral: чистим кэш и сразу скачиваем свежую версию в этом же запуске
+    subprocess.run([uv, "cache", "clean", "rag-reviewer"], capture_output=True)
+    fetch = subprocess.run(
+        [uv, "run", "--with", "rag-reviewer", "--no-project",
+         "python", "-c",
+         "from importlib.metadata import version; print(version('rag-reviewer'))"],
+        capture_output=True, text=True,
+    )
+    new_ver = fetch.stdout.strip() if fetch.returncode == 0 else None
+    if new_ver and new_ver != cur:
+        click.echo(f"Обновлено: {cur} → {new_ver}. Перезапустите MCP-сервер.")
+    elif new_ver:
+        click.echo(f"Версия актуальна: {cur}.")
     else:
         click.echo(
-            "Кэш uvx очищен — следующий запуск подхватит последнюю версию с PyPI.\n"
-            "Если установили постоянно: uv tool install rag-reviewer (или uv tool upgrade rag-reviewer)."
+            "Кэш очищен. Следующий запуск подхватит последнюю версию с PyPI.\n"
+            "Если хотите постоянную установку: uv tool install rag-reviewer"
         )
 
 
