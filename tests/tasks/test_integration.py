@@ -26,7 +26,11 @@ def _vec(seed: str) -> list[float]:
 
 
 class _FakeEmbedder:
+    def __init__(self):
+        self.doc_calls: list[list[str]] = []
+
     def embed_documents(self, texts):
+        self.doc_calls.append(list(texts))
         return [_vec(t) for t in texts]
 
     def embed_query(self, text):
@@ -107,3 +111,37 @@ def test_task_service_end_to_end(store, graph):
     ctx = svc.get_task_context("PRI-1")  # резолв по alias
     assert "ID-1" in ctx and "o/r#7" in ctx and "auth.py#logout" in ctx
     assert "ID-2" in ctx and "subtask" in ctx
+
+
+def test_index_batch_matches_sequential_index_task(store, graph):
+    """index_batch([t1,t2]) даёт те же записи что index_task(t1)+index_task(t2)."""
+    emb = _FakeEmbedder()
+    svc = TaskService(store, graph, emb)
+
+    t1 = {"key": "ID-B1", "aliases": ["PRI-B1"], "title": "Batch task 1",
+          "description": "desc1", "criteria": [], "status": "Open",
+          "url": None, "links": []}
+    t2 = {"key": "ID-B2", "aliases": ["PRI-B2"], "title": "Batch task 2",
+          "description": "desc2", "criteria": [], "status": "Open",
+          "url": None, "links": [{"key": "ID-B1", "type": "related"}]}
+
+    results = svc.index_batch([t1, t2])
+
+    assert len(results) == 2
+    assert all(r["embedded"] is True for r in results)
+    assert results[1]["links_upserted"] == 1
+    assert results[0]["warnings"] == []
+    assert results[1]["warnings"] == []
+
+    # Хэши в Postgres совпадают с тем, что вычислил бы index_task
+    assert store.existing_hash("ID-B1") == task_content_hash(
+        build_task_text(t1["title"], t1["description"], t1["criteria"]))
+    assert store.existing_hash("ID-B2") == task_content_hash(
+        build_task_text(t2["title"], t2["description"], t2["criteria"]))
+
+    # Повторный прогон: без изменений → embedded=False, embed_documents не вызывается
+    emb2 = _FakeEmbedder()
+    svc2 = TaskService(store, graph, emb2)
+    results2 = svc2.index_batch([t1, t2])
+    assert all(r["embedded"] is False for r in results2)
+    assert emb2.doc_calls == []
