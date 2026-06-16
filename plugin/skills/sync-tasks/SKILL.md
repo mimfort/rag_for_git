@@ -16,6 +16,10 @@ Parse from $ARGUMENTS (all optional):
 - `--board <name>`: limit to one board by name.
 - `--limit <N>`: index at most N tasks (useful for a first smoke run).
 - a board type override; otherwise infer from the connected MCP (Yougile is the reference).
+- `--purge-orphaned`: после индексации удалить из store/графа задачи, которых нет на доске.
+  По умолчанию off — без флага поведение не меняется.
+- `--no-keep-with-prs`: в сочетании с `--purge-orphaned` удалять также задачи с PR-историей
+  (`:IMPLEMENTED_BY`). По умолчанию такие задачи защищены.
 
 ## Pipeline
 
@@ -40,8 +44,27 @@ Parse from $ARGUMENTS (all optional):
    `index_tasks_batch` is idempotent (re-embeds only tasks whose text changed) and uses a single
    Voyage embedding call for all changed tasks — O(1) Voyage API calls regardless of board size.
 
-4. **Report.** Print a summary: indexed (embedded), refreshed (unchanged → metadata only), failed,
+4. **Purge orphaned tasks** *(только при `--purge-orphaned`).*
+
+   Собери все канонические ключи (`idTaskCommon`, вида `ID-N`) задач, прочитанных с доски
+   на шаге 2. Вызови:
+
+   ```
+   purge_orphaned_tasks(
+       active_keys=[...все ID-N с доски...],
+       keep_with_prs=<True, если НЕ задан --no-keep-with-prs>
+   )
+   ```
+
+   Включи результат в итоговый summary.
+
+5. **Report.** Print a summary: indexed (embedded), refreshed (unchanged → metadata only), failed,
    and any `warnings` from each entry returned by `index_tasks_batch` (e.g. "graph unavailable").
+   
+   При активном `--purge-orphaned` включи в summary строку:
+   ```
+   Purge: N deleted (store+graph), M protected (have PR history), K warnings.
+   ```
 
 ## Rate limits & failure handling (fail-open)
 
