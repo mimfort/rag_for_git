@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 
 import pytest
 
@@ -254,3 +255,24 @@ def test_apply_allowlist_plan_no_write_when_unchanged(tmp_path):
     plan2 = inst.build_allowlist_plan(cfg)
     assert plan2.already is True
     assert inst.apply_allowlist_plan(plan2) is None
+
+
+def test_cli_install_claude_code_writes_allowlist(monkeypatch):
+    from click.testing import CliRunner
+
+    from reviewer.entrypoints.cli import cli
+
+    monkeypatch.setattr(inst.shutil, "which",
+                        lambda name: "/fake/bin/uvx" if name == "uvx" else None)
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        result = runner.invoke(cli, ["install", "claude-code"])
+        assert result.exit_code == 0, result.output
+        assert Path(".mcp.json").exists()
+        settings = json.loads(Path(".claude/settings.json").read_text())
+        assert "mcp__reviewer__*" in settings["permissions"]["allow"]
+        # идемпотентность: повторный запуск не плодит дубли
+        result2 = runner.invoke(cli, ["install", "claude-code"])
+        assert result2.exit_code == 0, result2.output
+        settings2 = json.loads(Path(".claude/settings.json").read_text())
+        assert settings2["permissions"]["allow"].count("mcp__reviewer__*") == 1
