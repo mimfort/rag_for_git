@@ -218,6 +218,59 @@ class TaskService:
         except Exception:
             log.warning("link_review: сбой линковки PR для %s", task_key, exc_info=True)
 
+    def purge_orphaned_tasks(
+        self,
+        active_keys: list[str],
+        *,
+        keep_with_prs: bool = True,
+    ) -> dict:
+        """Удалить задачи, отсутствующие в active_keys. Fail-soft по слоям."""
+        warnings: list[str] = []
+        active = set(active_keys)
+
+        try:
+            all_keys = set(self._store.list_keys())
+        except Exception as e:
+            log.warning("purge_orphaned_tasks: сбой list_keys", exc_info=True)
+            warnings.append(f"store: {type(e).__name__}: {e}")
+            return {"deleted_store": 0, "deleted_graph": 0,
+                    "protected_prs": 0, "warnings": warnings}
+
+        orphaned = all_keys - active
+        protected: set[str] = set()
+
+        if keep_with_prs and self._graph is not None:
+            try:
+                pr_keys = self._graph.keys_with_prs()
+                protected = orphaned & pr_keys
+                orphaned = orphaned - protected
+            except Exception as e:
+                log.warning("purge_orphaned_tasks: сбой keys_with_prs", exc_info=True)
+                warnings.append(f"graph: {type(e).__name__}: {e}")
+
+        to_delete = list(orphaned)
+        deleted_store = 0
+        try:
+            deleted_store = self._store.delete_tasks(to_delete)
+        except Exception as e:
+            log.warning("purge_orphaned_tasks: сбой delete_tasks (store)", exc_info=True)
+            warnings.append(f"store: {type(e).__name__}: {e}")
+
+        deleted_graph = 0
+        if self._graph is not None:
+            try:
+                deleted_graph = self._graph.delete_tasks(to_delete)
+            except Exception as e:
+                log.warning("purge_orphaned_tasks: сбой delete_tasks (graph)", exc_info=True)
+                warnings.append(f"graph: {type(e).__name__}: {e}")
+
+        return {
+            "deleted_store": deleted_store,
+            "deleted_graph": deleted_graph,
+            "protected_prs": len(protected),
+            "warnings": warnings,
+        }
+
 
 def _format_task_context(ctx: dict, max_chars: int) -> str:
     lines: list[str] = []

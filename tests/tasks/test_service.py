@@ -5,9 +5,10 @@ from reviewer.tasks.store import task_content_hash, build_task_text
 
 class _FakeStore:
     def __init__(self, hashes=None, search_result=None):
-        self._hashes = hashes or {}
+        self._hashes = dict(hashes or {})
         self.upserted = []
         self.meta_updates = []
+        self.deleted = []
         self._search_result = search_result or []
 
     def existing_hash(self, key):
@@ -22,14 +23,28 @@ class _FakeStore:
     def search(self, q, vec, top_k=5):
         return self._search_result
 
+    def list_keys(self):
+        return list(self._hashes.keys())
+
+    def delete_tasks(self, keys):
+        count = 0
+        for k in list(keys):
+            if k in self._hashes:
+                del self._hashes[k]
+                count += 1
+        self.deleted.extend(keys)
+        return count
+
 
 class _FakeGraph:
-    def __init__(self, context=None, raise_on=()):
+    def __init__(self, context=None, raise_on=(), pr_keys=()):
         self.tasks = []
         self.links = []
         self.pr_links = []
+        self.deleted_tasks = []
         self._context = context or {}
         self._raise_on = set(raise_on)
+        self._pr_keys = set(pr_keys)
 
     def upsert_task(self, key, aliases, title, status, url):
         if "upsert_task" in self._raise_on:
@@ -47,6 +62,17 @@ class _FakeGraph:
         if "task_context" in self._raise_on:
             raise RuntimeError("neo4j down")
         return self._context
+
+    def keys_with_prs(self):
+        if "keys_with_prs" in self._raise_on:
+            raise RuntimeError("neo4j down")
+        return set(self._pr_keys)
+
+    def delete_tasks(self, keys):
+        if "delete_tasks" in self._raise_on:
+            raise RuntimeError("neo4j down")
+        self.deleted_tasks.extend(keys)
+        return len(list(keys))
 
 
 class _FakeEmbedder:
@@ -167,3 +193,83 @@ def test_link_review_noop_without_graph_or_key():
     g = _FakeGraph()
     TaskService(_FakeStore(), g, _FakeEmbedder()).link_review("", pr, [])         # no key
     assert g.pr_links == []
+
+
+def test_purge_deletes_orphaned():
+    store = _FakeStore(hashes={"ID-1": "h1", "ID-2": "h2"})
+    graph = _FakeGraph()
+    result = TaskService(store, graph, _FakeEmbedder()).purge_orphaned_tasks(["ID-1"])
+    assert result["deleted_store"] == 1
+    assert result["deleted_graph"] == 1
+    assert "ID-2" in store.deleted
+    assert "ID-1" not in store.deleted
+
+
+def test_purge_keeps_tasks_with_prs():
+    store = _FakeStore(hashes={"ID-1": "h1", "ID-2": "h2"})
+    graph = _FakeGraph(pr_keys={"ID-2"})
+    result = TaskService(store, graph, _FakeEmbedder()).purge_orphaned_tasks([])
+    assert result["deleted_store"] == 1
+    assert result["protected_prs"] == 1
+    assert "ID-2" not in store.deleted
+    assert "ID-1" in store.deleted
+
+
+def test_purge_no_keep_with_prs():
+    store = _FakeStore(hashes={"ID-1": "h1", "ID-2": "h2"})
+    graph = _FakeGraph(pr_keys={"ID-2"})
+    result = TaskService(store, graph, _FakeEmbedder()).purge_orphaned_tasks(
+        [], keep_with_prs=False
+    )
+    assert result["deleted_store"] == 2
+    assert "ID-1" in store.deleted and "ID-2" in store.deleted
+
+
+def test_purge_all_active_no_delete():
+    store = _FakeStore(hashes={"ID-1": "h1"})
+    result = TaskService(store, _FakeGraph(), _FakeEmbedder()).purge_orphaned_tasks(["ID-1"])
+    assert result["deleted_store"] == 0
+    assert result["deleted_graph"] == 0
+
+
+def test_purge_empty_active_keys_deletes_all():
+    store = _FakeStore(hashes={"ID-1": "h1", "ID-2": "h2"})
+    result = TaskService(store, _FakeGraph(), _FakeEmbedder()).purge_orphaned_tasks([])
+    assert result["deleted_store"] == 2
+
+
+def test_purge_store_list_keys_error_returns_warning():
+    class _BrokenStore(_FakeStore):
+        def list_keys(self):
+            raise RuntimeError("pg down")
+
+    result = TaskService(
+        _BrokenStore(hashes={"ID-1": "h1"}), _FakeGraph(), _FakeEmbedder()
+    ).purge_orphaned_tasks([])
+    assert result["deleted_store"] == 0
+    assert any("store:" in w for w in result["warnings"])
+
+
+def test_purge_graph_keys_with_prs_error_continues_without_protection():
+    store = _FakeStore(hashes={"ID-1": "h1", "ID-2": "h2"})
+    graph = _FakeGraph(raise_on=("keys_with_prs",))
+    result = TaskService(store, graph, _FakeEmbedder()).purge_orphaned_tasks([])
+    assert any("graph:" in w for w in result["warnings"])
+    assert result["deleted_store"] == 2
+
+
+def test_purge_graph_delete_error_is_warning_store_cleaned():
+    store = _FakeStore(hashes={"ID-1": "h1"})
+    graph = _FakeGraph(raise_on=("delete_tasks",))
+    result = TaskService(store, graph, _FakeEmbedder()).purge_orphaned_tasks([])
+    assert result["deleted_store"] == 1
+    assert result["deleted_graph"] == 0
+    assert any("graph:" in w for w in result["warnings"])
+
+
+def test_purge_graph_none_works_store_only():
+    store = _FakeStore(hashes={"ID-1": "h1"})
+    result = TaskService(store, None, _FakeEmbedder()).purge_orphaned_tasks([])
+    assert result["deleted_store"] == 1
+    assert result["deleted_graph"] == 0
+    assert result["warnings"] == []
