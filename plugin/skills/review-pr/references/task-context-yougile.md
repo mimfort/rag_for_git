@@ -34,7 +34,7 @@ NOT return a task link:
 | `status`      | `columnId` — a UUID, NOT a name       | call `get_column` with that id → its `title`; on error omit |
 | `criteria[]`  | `subtasks[]` — UUIDs, NOT titles      | optional: `get_task` each id → its `title` (see note); else `[]` |
 | `url`       | `task_board.url_template` with the **project code** | the web link fragment is the project code (`…/team/<teamId>/#PRI-4`), so substitute `PRI-N` (not `ID-N`); default `null` if no template |
-| `links[]`   | `subtasks[]` (UUIDs of child tasks)            | for each subtask UUID, `get_task` it → `{type:"subtask", key:<its idTaskCommon>, title}` (best-effort; a failed subtask fetch is skipped, not fatal) |
+| `links[]`   | `subtasks[]` + `description` text              | two sources, merged and deduplicated by key: (1) for each subtask UUID, `get_task` it → `{type:"subtask", key:<its idTaskCommon>, title}` (best-effort; a failed fetch is skipped); (2) scan `description` for all matches of `task_board.key_pattern`, exclude own `key`/`aliases` and subtask keys already resolved → `{type:"related", key}` (no extra `get_task`, key alone is enough for the graph edge) |
 
 **Canonical key note.** A PR may reference either code (`PRI-N` or `ID-N`); both resolve via
 `get_task`. Always set `key` to the company-wide `idTaskCommon` and put the project `idTaskProject`
