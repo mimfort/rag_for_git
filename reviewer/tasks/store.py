@@ -128,6 +128,23 @@ class TaskStore:
             )
             conn.commit()
 
+    def list_keys(self) -> list[str]:
+        """Все ключи задач в Postgres."""
+        with self._connect() as conn:
+            rows = conn.execute("SELECT key FROM tasks").fetchall()
+        return [r[0] for r in rows]
+
+    def delete_tasks(self, keys: list[str]) -> int:
+        """Удалить задачи по ключам. Возвращает кол-во удалённых строк."""
+        if not keys:
+            return 0
+        with self._connect() as conn:
+            result = conn.execute(
+                "DELETE FROM tasks WHERE key = ANY(%s)", (keys,)
+            )
+            conn.commit()
+        return result.rowcount
+
     def search(self, query_text: str, query_embedding: list[float],
                top_k: int = 5, candidates: int = 50) -> list[TaskHit]:
         """Гибрид RRF (BM25 ⊕ ANN) по корпусу задач — без ref-фильтра."""
