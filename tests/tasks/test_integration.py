@@ -145,3 +145,60 @@ def test_index_batch_matches_sequential_index_task(store, graph):
     results2 = svc2.index_batch([t1, t2])
     assert all(r["embedded"] is False for r in results2)
     assert emb2.doc_calls == []
+
+
+def test_purge_full_cycle(store, graph):
+    """index_task → purge_orphaned_tasks(active=[]) → задача исчезает из search."""
+    svc = TaskService(store, graph, _FakeEmbedder())
+
+    svc.index_task({
+        "key": "ID-P1", "aliases": ["PRI-P1"], "title": "Purge test task",
+        "description": "Will be purged after sync", "criteria": [],
+        "status": "Open", "url": None, "links": [],
+    })
+    assert store.existing_hash("ID-P1") is not None
+    assert "ID-P1" in store.list_keys()
+
+    result = svc.purge_orphaned_tasks([])  # ничего активного
+    assert result["deleted_store"] == 1
+    assert result["deleted_graph"] == 1
+    assert result["warnings"] == []
+    assert store.list_keys() == []
+
+    found = svc.search_tasks("purge test")
+    assert "ID-P1" not in found
+
+
+def test_purge_protects_task_with_pr_link(store, graph):
+    """Задача с PR-ссылкой защищена при keep_with_prs=True (default)."""
+    svc = TaskService(store, graph, _FakeEmbedder())
+
+    svc.index_task({
+        "key": "ID-P2", "aliases": [], "title": "PR-linked task",
+        "description": "Has review history", "criteria": [],
+        "status": "Done", "url": None, "links": [],
+    })
+    pr = PRRef(repo="o/r", number=10, url="https://github.com/o/r/pull/10", sha="sha1")
+    svc.link_review("ID-P2", pr, ["auth.py#login"])
+
+    result = svc.purge_orphaned_tasks([])  # не активна, но есть PR
+    assert result["deleted_store"] == 0
+    assert result["protected_prs"] == 1
+    assert "ID-P2" in store.list_keys()
+
+
+def test_purge_no_keep_with_prs_deletes_all(store, graph):
+    """При keep_with_prs=False удаляются все, включая задачи с PR-историей."""
+    svc = TaskService(store, graph, _FakeEmbedder())
+
+    svc.index_task({
+        "key": "ID-P3", "aliases": [], "title": "Force purge task",
+        "description": "Has PR but force-purged", "criteria": [],
+        "status": "Done", "url": None, "links": [],
+    })
+    pr = PRRef(repo="o/r", number=11, url="https://github.com/o/r/pull/11", sha="sha2")
+    svc.link_review("ID-P3", pr, ["main.py#run"])
+
+    result = svc.purge_orphaned_tasks([], keep_with_prs=False)
+    assert result["deleted_store"] == 1
+    assert store.list_keys() == []
