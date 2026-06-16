@@ -59,6 +59,37 @@ def ground_line(source: str | None, code_quote: str | None, line: int | None) ->
     return line
 
 
+def snap_to_commentable(
+    line: int,
+    side: str,
+    code_quote: str | None,
+    commentable: dict[str, set[int]],
+    source: str,
+    max_distance: int = 5,
+) -> int:
+    """Снапнуть line к ближайшей commentable строке если текущая вне хунка.
+
+    Верификация по code_quote: целевая строка должна содержать цитату.
+    Без цитаты — принимаем ближайшего кандидата в пределах max_distance.
+    Возвращает исходный line если подходящего кандидата нет.
+    """
+    target_set = commentable.get(side, set())
+    if not target_set or line in target_set:
+        return line
+    src_lines = source.splitlines() if source else []
+    candidates = sorted(target_set, key=lambda ln: abs(ln - line))
+    for cand in candidates:
+        if abs(cand - line) > max_distance:
+            break
+        if code_quote:
+            cand_text = src_lines[cand - 1].strip() if 0 < cand <= len(src_lines) else ""
+            if code_quote.strip() in cand_text:
+                return cand
+        else:
+            return cand
+    return line
+
+
 # ---------------------------------------------------------------------------
 # Вспомогательные функции для suggestion-блоков
 # ---------------------------------------------------------------------------

@@ -98,3 +98,53 @@ def test_ground_line_unique_quote_wins():
     assert ground_line(src, "x = compute()", 9) == 2
     assert ground_line(src, None, 9) == 9
     assert ground_line(src, "nope", 9) == 9
+
+
+from reviewer.agent.assemble import snap_to_commentable
+
+_SNAP_COMMENTABLE = {"RIGHT": {10, 11, 12, 20}, "LEFT": {8, 9, 10}}
+# Строки 1..24 вида "line 1", "line 2", ...
+_SNAP_SOURCE = "\n".join(f"line {i}" for i in range(1, 25))
+
+
+def test_snap_line_already_commentable():
+    """Строка уже в commentable — без изменений."""
+    assert snap_to_commentable(10, "RIGHT", None, _SNAP_COMMENTABLE, _SNAP_SOURCE) == 10
+
+
+def test_snap_with_matching_code_quote():
+    """code_quote совпадает с кандидатом — снапаем."""
+    src = "\n".join([""] * 11 + ["match_me"] + [""] * 5)  # line 12 = "match_me"
+    commentable = {"RIGHT": {12}, "LEFT": set()}
+    assert snap_to_commentable(13, "RIGHT", "match_me", commentable, src) == 12
+
+
+def test_snap_code_quote_no_match_returns_original():
+    """code_quote не совпадает ни с одним кандидатом — возвращаем оригинал."""
+    src = "\n".join([""] * 11 + ["other_content"] + [""] * 5)
+    commentable = {"RIGHT": {12}, "LEFT": set()}
+    assert snap_to_commentable(13, "RIGHT", "no_match", commentable, src) == 13
+
+
+def test_snap_without_code_quote_snaps_nearest():
+    """Без code_quote снапаем на ближайшего кандидата в пределах max_distance."""
+    commentable = {"RIGHT": {10, 12}, "LEFT": set()}
+    # line=14, ближайший в RIGHT — 12 (расстояние 2 ≤ 5)
+    assert snap_to_commentable(14, "RIGHT", None, commentable, _SNAP_SOURCE) == 12
+
+
+def test_snap_too_far_returns_original():
+    """Ближайший кандидат дальше max_distance=5 — без изменений."""
+    # line=1, ближайший в RIGHT — 10 (расстояние 9 > 5)
+    assert snap_to_commentable(1, "RIGHT", None, _SNAP_COMMENTABLE, _SNAP_SOURCE) == 1
+
+
+def test_snap_empty_commentable_returns_original():
+    """Нет commentable строк — без изменений."""
+    assert snap_to_commentable(5, "RIGHT", "x", {}, _SNAP_SOURCE) == 5
+
+
+def test_snap_wrong_side_no_candidates():
+    """Кандидаты есть в RIGHT, но сторона LEFT пустая — без изменений."""
+    commentable = {"RIGHT": {10}, "LEFT": set()}
+    assert snap_to_commentable(11, "LEFT", None, commentable, _SNAP_SOURCE) == 11
