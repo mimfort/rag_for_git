@@ -7,7 +7,7 @@ description: Warm the task graph & vector store by indexing a board into the rev
 
 Bulk-index board tasks into the reviewer task graph + vector store so `search_tasks` and
 `get_task_context` are useful before many PRs have accrued. You read the board via the connected
-board MCP, normalize each task into a `TaskBrief`, and call `index_task` per task. The reviewer
+board MCP, normalize each task into a `TaskBrief`, and call `index_tasks_batch` once for all tasks. The reviewer
 Python never touches the board.
 
 ## Inputs
@@ -41,7 +41,7 @@ Parse from $ARGUMENTS (all optional):
    Voyage embedding call for all changed tasks — O(1) Voyage API calls regardless of board size.
 
 4. **Report.** Print a summary: indexed (embedded), refreshed (unchanged → metadata only), failed,
-   and any `warnings` returned by `index_task` (e.g. "graph unavailable").
+   and any `warnings` from each entry returned by `index_tasks_batch` (e.g. "graph unavailable").
 
 ## Rate limits & failure handling (fail-open)
 

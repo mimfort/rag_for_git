@@ -2,8 +2,9 @@
 
 Use when `task_board.type == "yougile"`. Tools are `mcp__<task_board.mcp>__<tool>`.
 
-Goal: enumerate the board's tasks and hand each one to the normalization in
-`../../review-pr/references/task-context-yougile.md` (same `TaskBrief` mapping), then `index_task`.
+Goal: enumerate the board's tasks, normalize each one via the mapping in
+`../../review-pr/references/task-context-yougile.md` (same `TaskBrief` mapping), then call
+`index_tasks_batch` once with all tasks.
 
 ## 1. Enumerate tasks
 
@@ -22,12 +23,20 @@ Build the `TaskBrief` exactly as in `task-context-yougile.md`:
 - `title` ← `title`; `description` ← `description`;
 - `status` ← the column title from step 1.2 (you already have it — no extra call);
 - `criteria[]` ← inline checklist in `description` if any, else `[]`;
-- `links[]` ← one `{type:"subtask", key, title}` per `subtasks[]` UUID (resolve title via `get_task`,
-  best-effort);
+- `links[]` ← union of two sources (deduplicate by key):
+  - one `{type:"subtask", key, title}` per `subtasks[]` UUID (resolve title via `get_task`,
+    best-effort; a failed fetch is skipped);
+  - one `{type:"related", key}` per match of `task_board.key_pattern` found anywhere in
+    `description`, excluding the task's own `key`/`aliases` and any keys already covered by
+    subtasks above. No extra `get_task` needed — the key alone is sufficient for the graph edge.
 - `url` ← `task_board.url_template` with the project code (`PRI-N`) if a template is configured, else
   `null`.
 
 ## 3. Index
 
-Call `index_task(TaskBrief)`. Accumulate the result counters (`embedded` true/false, `warnings`) for
-the final report. A failure on one task is logged and skipped — keep going.
+Collect all normalized `TaskBrief` objects into a list, then make a **single call**:
+`index_tasks_batch([...all TaskBriefs...])`.
+
+The result is `list[{key, embedded, links_upserted, warnings}]` in input order. Accumulate the
+counters for the final report (`embedded` true/false per entry, `warnings`). A failure on one task
+is reflected in that entry's `warnings` field — keep going with the rest.
