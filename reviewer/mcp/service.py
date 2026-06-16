@@ -322,7 +322,7 @@ class MCPReviewService:
 
         # 1) Коэрция LLM-входа (кривой dict без file → скип) и грунтовка строки
         # по дословной цитате (анти-галлюцинация).
-        _commentable_cache: dict[str, dict] = {
+        _commentable_cache: dict[str, dict[str, set[int]]] = {
             path: commentable_lines(patch)
             for path, patch in p.patches.items()
             if patch is not None
