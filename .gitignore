@@ -33,3 +33,5 @@ htmlcov/
 *.scip
 data/
 *.log
+sync_results.jsonl
+tasks.json
