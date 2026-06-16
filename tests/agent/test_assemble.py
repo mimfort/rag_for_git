@@ -1,4 +1,4 @@
-from reviewer.agent.assemble import assemble_review, ground_line
+from reviewer.agent.assemble import assemble_review, ground_line, snap_to_commentable
 from reviewer.vcs.base import Finding
 
 PATCH = "@@ -1,3 +1,4 @@\n line\n+x = 1\n line2\n line3"
@@ -99,8 +99,6 @@ def test_ground_line_unique_quote_wins():
     assert ground_line(src, None, 9) == 9
     assert ground_line(src, "nope", 9) == 9
 
-
-from reviewer.agent.assemble import snap_to_commentable
 
 _SNAP_COMMENTABLE = {"RIGHT": {10, 11, 12, 20}, "LEFT": {8, 9, 10}}
 # Строки 1..24 вида "line 1", "line 2", ...
