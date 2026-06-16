@@ -78,6 +78,7 @@ def _finding_from_dict(d) -> Finding | None:
     suggestion = d.get("suggestion")
     if not isinstance(suggestion, str):
         suggestion = None
+    _cq = d.get("code_quote")
     return Finding(
         category=str(d.get("category") or "correctness"),
         severity=severity,
@@ -90,7 +91,7 @@ def _finding_from_dict(d) -> Finding | None:
         fix_start=fix_start,
         fix_end=fix_end,
         replacement=replacement,
-        code_quote=d.get("code_quote") if isinstance(d.get("code_quote"), str) else None,
+        code_quote=_cq if isinstance(_cq, str) else None,
     )
 
 
@@ -321,6 +322,11 @@ class MCPReviewService:
 
         # 1) Коэрция LLM-входа (кривой dict без file → скип) и грунтовка строки
         # по дословной цитате (анти-галлюцинация).
+        _commentable_cache: dict[str, dict] = {
+            path: commentable_lines(patch)
+            for path, patch in p.patches.items()
+            if patch is not None
+        }
         parsed: list[Finding] = []
         invalid = 0
         for d in findings:
@@ -330,11 +336,9 @@ class MCPReviewService:
                 log.warning("publish_review: пропущена некорректная находка: %r", d)
                 continue
             f.line = ground_line(p.sources.get(f.file), f.code_quote, f.line)
-            patch = p.patches.get(f.file)
-            if patch and f.line is not None:
-                _commentable = commentable_lines(patch)
+            if f.line is not None and f.side == "RIGHT" and f.file in _commentable_cache:
                 f.line = snap_to_commentable(
-                    f.line, f.side, f.code_quote, _commentable, p.sources.get(f.file, ""),
+                    f.line, f.side, f.code_quote, _commentable_cache[f.file], p.sources.get(f.file, ""),
                 )
             parsed.append(f)
 
@@ -361,7 +365,7 @@ class MCPReviewService:
             suggestions_mode=self._suggestions_mode(),
         )
         log.info(
-            "publish_review %s pr:%s — grounding: inline=%d moved_to_summary=%d capped=%d",
+            "publish_review %s pr:%s — размещено inline=%d, в сводку=%d, обрезано=%d",
             repo, pr, len(asm.inline_comments), asm.moved_to_summary, asm.capped,
         )
         full_summary = summary + ("\n\n" + asm.summary if asm.summary else "")
