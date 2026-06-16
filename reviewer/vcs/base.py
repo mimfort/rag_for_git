@@ -41,6 +41,7 @@ class Finding:
     fix_start: int | None = None
     fix_end: int | None = None
     replacement: str | None = None
+    code_quote: str | None = None   # дословная цитата строки (для fuzzy snap)
 
     def fingerprint(self) -> str:
         import hashlib
