@@ -32,20 +32,25 @@ Parse from $ARGUMENTS (all optional):
 2. **Iterate the board.** Follow `references/sync-tasks-<type>.md` (Yougile is the reference) to
    enumerate tasks. Apply `--board` / `--limit` if given.
 
-3. **Normalize + index.** For each task, build a `TaskBrief`
-   `{key, aliases[], title, description, criteria[], status, url, links[]}` using the SAME mapping as
-   `../review-pr/references/task-context-<type>.md`, then call `index_task(TaskBrief)`.
-   `index_task` is idempotent (it re-embeds only when the task text changed), so re-running is cheap.
+3. **Normalize + index.** Build a `TaskBrief`
+   `{key, aliases[], title, description, criteria[], status, url, links[]}` for every enumerated task
+   using the SAME mapping as `../review-pr/references/task-context-<type>.md`, then call
+   `index_tasks_batch([...all TaskBriefs...])` in a **single tool call**.
+   Result: `list[{key, embedded, links_upserted, warnings}]` in input order.
+   `index_tasks_batch` is idempotent (re-embeds only tasks whose text changed) and uses a single
+   Voyage embedding call for all changed tasks — O(1) Voyage API calls regardless of board size.
 
 4. **Report.** Print a summary: indexed (embedded), refreshed (unchanged → metadata only), failed,
    and any `warnings` returned by `index_task` (e.g. "graph unavailable").
 
 ## Rate limits & failure handling (fail-open)
 
-- Voyage free tier is 3 RPM / 10K TPM; embedding inside `index_task` already retries/backs off, so a
-  large board simply runs slower — that is expected, not an error. Use `--limit` for a quick first
-  pass.
-- A single task that fails to read or index must NOT stop the sync: log it and continue.
+- Voyage free tier is 3 RPM / 10K TPM; `index_tasks_batch` makes a single `embed_documents` call
+  for all changed tasks and retries/backs off internally, so a large board is fast on first sync
+  and near-instant on repeat syncs (only changed tasks are re-embedded). Use `--limit` for a quick
+  smoke run.
+- A single task that fails to read or index must NOT stop the sync: `index_tasks_batch` returns a
+  per-task result list — check each entry's `warnings` field and log failures; continue.
 - If no `task_board` is configured anywhere (no `.review.yml` block AND `get_board_config()` →
   `null`) or the board MCP is not connected, stop and tell the user what to connect — do not
   partially guess. Mention the deploy-wide option: set `TASK_BOARD_*` in the reviewer `.env` once
