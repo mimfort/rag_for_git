@@ -346,6 +346,7 @@ def init(path_opt: str | None, force: bool) -> None:
 @cli.command()
 def update() -> None:
     """Обновить rag-reviewer до последней версии с PyPI."""
+    import json
     import subprocess
     from importlib import metadata
 
@@ -358,11 +359,41 @@ def update() -> None:
     except Exception:
         cur = "?"
     click.echo(f"Текущая версия (в этом окружении): {cur}")
-    # 1) если ставили постоянным tool — апгрейд (на uvx-установке просто без эффекта)
-    subprocess.run([uv, "tool", "upgrade", "rag-reviewer"])
-    # 2) чистим кэш — следующий `uvx --from rag-reviewer@latest` возьмёт свежую сборку
-    subprocess.run([uv, "cache", "clean", "rag-reviewer"])
-    click.echo("Готово. Перезапустите MCP-сервер в редакторе/CLI, чтобы применить новую версию.")
+
+    # Editable-установка (pip install -e .) — dev-режим
+    try:
+        dist = metadata.Distribution.from_name("rag-reviewer")
+        direct_url_text = dist.read_text("direct_url.json")
+        is_editable = (
+            bool(direct_url_text)
+            and json.loads(direct_url_text).get("dir_info", {}).get("editable", False)
+        )
+    except Exception:
+        is_editable = False
+
+    if is_editable:
+        click.echo(
+            "Обнаружена editable-установка (pip install -e .). "
+            "Обновите код через git pull и переустановите: pip install -e ."
+        )
+        return
+
+    # Persistent uv tool — пробуем апгрейд (подавляем вывод при неудаче)
+    upgraded = subprocess.run(
+        [uv, "tool", "upgrade", "rag-reviewer"],
+        capture_output=True,
+    ).returncode == 0
+
+    # Чистим кэш — при uvx это и есть "обновление": следующий запуск возьмёт свежую версию
+    subprocess.run([uv, "cache", "clean", "rag-reviewer"], capture_output=True)
+
+    if upgraded:
+        click.echo("Готово. Перезапустите MCP-сервер в редакторе/CLI, чтобы применить новую версию.")
+    else:
+        click.echo(
+            "Кэш uvx очищен — следующий запуск подхватит последнюю версию с PyPI.\n"
+            "Если установили постоянно: uv tool install rag-reviewer (или uv tool upgrade rag-reviewer)."
+        )
 
 
 @cli.command("install-skills")
