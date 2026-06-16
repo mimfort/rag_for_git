@@ -23,6 +23,11 @@ from typing import Callable
 PACKAGE = "rag-reviewer"
 SERVER_NAME = "reviewer"
 
+# anchored-glob правило, разрешающее ВЕСЬ сервер reviewer в Claude Code
+# (permissions.allow). Wildcard покрывает новые тулы автоматически — список
+# тулов синхронизировать не нужно.
+REVIEWER_PERMISSION_RULE = "mcp__reviewer__*"
+
 # Скилы лежат в репозитории (plugin/skills) и в wheel не пакуются — тянем их
 # тарболом с GitHub (кроссплатформенно, без клона).
 SKILLS_TARBALL = "https://github.com/mimfort/rag_for_git/archive/refs/heads/main.tar.gz"
@@ -62,6 +67,11 @@ def default_env_path() -> Path:
     """Каноническое место .env: $XDG_CONFIG_HOME/rag-reviewer/.env."""
     xdg = os.environ.get("XDG_CONFIG_HOME") or str(_home() / ".config")
     return Path(xdg) / "rag-reviewer" / ".env"
+
+
+def claude_settings_path() -> Path:
+    """Проектный settings.json Claude Code (рядом с .mcp.json в корне проекта)."""
+    return Path(".claude") / "settings.json"
 
 
 # --------------------------------------------------------------------------- #
@@ -205,6 +215,14 @@ class InstallPlan:
     already: bool         # запись reviewer уже была (перезапишем)
 
 
+@dataclass
+class AllowlistPlan:
+    path: Path
+    content: str          # что будет записано в файл целиком
+    created: bool         # файла не было — создаём
+    already: bool         # правило уже было в permissions.allow
+
+
 def build_plan(
     client: Client,
     *,
@@ -239,23 +257,62 @@ def build_plan(
     return InstallPlan(client, path, content, command, args, not existed, already)
 
 
-def apply_plan(plan: InstallPlan) -> Path | None:
-    """Записать план на диск. Возвращает путь к .bak (если был бэкап).
+def build_allowlist_plan(
+    path: Path | None = None, rule: str = REVIEWER_PERMISSION_RULE
+) -> AllowlistPlan:
+    """План мёрджа allow-правила reviewer в permissions.allow Claude Code settings.
 
-    Если содержимое не меняется (запись уже актуальна / TOML с существующей
-    секцией), ничего не пишем и не бэкапим.
+    Сохраняет чужие ключи и существующие правила; идемпотентен (already=True,
+    если правило уже присутствует). Запись на диск — apply_allowlist_plan.
     """
-    plan.path.parent.mkdir(parents=True, exist_ok=True)
-    if plan.path.exists():
-        existing = plan.path.read_text(encoding="utf-8")
-        if existing == plan.content:
+    path = path or claude_settings_path()
+    existed = path.exists()
+    raw = path.read_text(encoding="utf-8") if existed else ""
+    cfg = json.loads(raw) if raw.strip() else {}
+    if not isinstance(cfg, dict):
+        raise ValueError(f"{path}: ожидался JSON-объект на верхнем уровне")
+    perms = cfg.get("permissions")
+    if not isinstance(perms, dict):
+        perms = {}
+    allow = perms.get("allow")
+    if not isinstance(allow, list):
+        allow = []
+    already = rule in allow
+    if not already:
+        allow = [*allow, rule]
+    perms["allow"] = allow
+    cfg["permissions"] = perms
+    content = json.dumps(cfg, indent=2, ensure_ascii=False) + "\n"
+    return AllowlistPlan(path, content, not existed, already)
+
+
+def _write_with_backup(path: Path, content: str) -> Path | None:
+    """Записать content в path; при изменении существующего файла сделать .bak.
+
+    Возвращает путь к .bak (если был бэкап) или None. Ничего не пишет и не
+    бэкапит, если содержимое не изменилось.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.exists():
+        existing = path.read_text(encoding="utf-8")
+        if existing == content:
             return None
-        backup = plan.path.with_suffix(plan.path.suffix + ".bak")
+        backup = path.with_suffix(path.suffix + ".bak")
         backup.write_text(existing, encoding="utf-8")
-        plan.path.write_text(plan.content, encoding="utf-8")
+        path.write_text(content, encoding="utf-8")
         return backup
-    plan.path.write_text(plan.content, encoding="utf-8")
+    path.write_text(content, encoding="utf-8")
     return None
+
+
+def apply_plan(plan: InstallPlan) -> Path | None:
+    """Записать MCP-план на диск. Возвращает путь к .bak (если был бэкап)."""
+    return _write_with_backup(plan.path, plan.content)
+
+
+def apply_allowlist_plan(plan: AllowlistPlan) -> Path | None:
+    """Записать allowlist-план на диск. Возвращает путь к .bak (если был бэкап)."""
+    return _write_with_backup(plan.path, plan.content)
 
 
 def detect_installed(system: str | None = None) -> list[Client]:

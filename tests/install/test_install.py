@@ -200,3 +200,57 @@ def test_install_skills_unsupported_client(tmp_path):
 def test_skills_capable_clients_have_dirs():
     capable = {c.key for c in inst.CLIENTS.values() if c.skills_fn}
     assert capable == {"gemini", "mimo", "kimi", "opencode"}
+
+
+# --------------------------------------------------------------------------- #
+# allowlist (permissions.allow в .claude/settings.json)
+# --------------------------------------------------------------------------- #
+def test_allowlist_plan_creates_file(tmp_path):
+    cfg = tmp_path / ".claude" / "settings.json"
+    plan = inst.build_allowlist_plan(cfg)
+    assert plan.created is True and plan.already is False
+    data = json.loads(plan.content)
+    assert data["permissions"]["allow"] == ["mcp__reviewer__*"]
+
+
+def test_allowlist_plan_preserves_existing(tmp_path):
+    cfg = tmp_path / ".claude" / "settings.json"
+    cfg.parent.mkdir(parents=True)
+    cfg.write_text(json.dumps({
+        "permissions": {"allow": ["Bash(ls:*)"], "deny": ["mcp__evil"]},
+        "model": "opus",
+    }))
+    plan = inst.build_allowlist_plan(cfg)
+    data = json.loads(plan.content)
+    assert data["model"] == "opus"
+    assert data["permissions"]["deny"] == ["mcp__evil"]
+    assert data["permissions"]["allow"] == ["Bash(ls:*)", "mcp__reviewer__*"]
+    assert plan.already is False
+
+
+def test_allowlist_plan_idempotent(tmp_path):
+    cfg = tmp_path / ".claude" / "settings.json"
+    cfg.parent.mkdir(parents=True)
+    cfg.write_text(json.dumps({"permissions": {"allow": ["mcp__reviewer__*"]}}))
+    plan = inst.build_allowlist_plan(cfg)
+    assert plan.already is True
+    assert json.loads(plan.content)["permissions"]["allow"].count("mcp__reviewer__*") == 1
+
+
+def test_apply_allowlist_plan_writes_and_backs_up(tmp_path):
+    cfg = tmp_path / ".claude" / "settings.json"
+    cfg.parent.mkdir(parents=True)
+    cfg.write_text(json.dumps({"permissions": {"allow": ["Bash(ls:*)"]}}))
+    plan = inst.build_allowlist_plan(cfg)
+    backup = inst.apply_allowlist_plan(plan)
+    assert backup is not None and backup.exists()
+    written = json.loads(cfg.read_text())
+    assert "mcp__reviewer__*" in written["permissions"]["allow"]
+
+
+def test_apply_allowlist_plan_no_write_when_unchanged(tmp_path):
+    cfg = tmp_path / ".claude" / "settings.json"
+    inst.apply_allowlist_plan(inst.build_allowlist_plan(cfg))
+    plan2 = inst.build_allowlist_plan(cfg)
+    assert plan2.already is True
+    assert inst.apply_allowlist_plan(plan2) is None
