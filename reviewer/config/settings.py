@@ -48,6 +48,8 @@ class Settings(BaseSettings):
     review_output_language: str = "ru"            # язык текста находок в публикуемом ревью
     review_skip_drafts: bool = True               # не ревьюить draft-PR
     review_history: bool = True                   # сохранять историю прогонов в Postgres
+    review_session_persist: bool = True           # персист сессии PR в Postgres (crash-recovery)
+    review_session_ttl_hours: int = 24            # TTL персистнутой сессии до истечения
     # Voyage
     voyage_api_key: str = ""
     embedding_model: str = "voyage-code-3"

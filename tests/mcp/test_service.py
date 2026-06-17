@@ -28,6 +28,7 @@ def _settings() -> Settings:
     s.review_max_files = 50
     s.voyage_api_key = "test"
     s.github_token = "test"
+    s.review_session_persist = False     # unit-тесты не трогают Postgres-таблицу сессий
     return s
 
 

@@ -12,6 +12,8 @@ from reviewer.agent.assemble import AssembledReview, assemble_review, ground_lin
 from reviewer.agent.dedup import dedup_findings
 from reviewer.app import Components
 from reviewer.config.settings import Settings
+from reviewer.mcp.session_serde import from_payload, to_payload
+from reviewer.mcp.session_store import SessionStore
 from reviewer.services.review_service import (
     BranchNotTrackedError,
     PreparedReview,
@@ -124,6 +126,7 @@ class MCPReviewService:
         self._review_service = ReviewService(settings, components)
         self._vcs_factory = vcs_factory  # для тестов; None = GitHubProvider
         self._sessions: dict[tuple[str, int], _Session] = {}
+        self._session_store: SessionStore | None = None
 
     def prepare_review(self, repo: str, pr: int) -> dict:
         """Подготовить ревью PR: получить юниты, policy, patches; сохранить сессию.
@@ -148,6 +151,9 @@ class MCPReviewService:
                     "reason": f"branch '{e.branch}' not tracked (REVIEW_BRANCHES)"}
         ctx = self._tool_context(prepared)
         self._sessions[(repo, pr)] = _Session(prepared, ctx)
+        store = self._ensure_session_store()
+        if store is not None:
+            store.save(repo, pr, to_payload(prepared))
         # Старую сессию прибираем ПОСЛЕ успешного prepare: при сбое повторной
         # подготовки старая сессия остаётся в _sessions, но её overlay уже удалён
         # self-healing'ом в начале prepare — последующие tool-вызовы по ней
@@ -182,14 +188,64 @@ class MCPReviewService:
             cache={},
         )
 
-    def _session(self, repo: str, pr: int) -> _Session:
-        """Получить сессию или бросить ValueError с понятным сообщением."""
-        s = self._sessions.get((repo, pr))
-        if s is None:
-            raise ValueError(
-                f"Сессия для {repo}#{pr} не найдена — сначала вызови prepare_review"
+    def _ensure_session_store(self) -> SessionStore | None:
+        """Ленивое хранилище подложки сессий (по образцу _ensure_history).
+
+        Возвращает None (персист выключен), если ``review_session_persist`` ложно
+        ИЛИ задан ``_vcs_factory`` (test-only: после рестарта фабрика недоступна,
+        регидрация подняла бы реальный GitHubProvider — неверно для снапшота).
+        Уже внедрённый ``_session_store`` (в тестах) возвращается как есть.
+        """
+        if self._session_store is not None:
+            return self._session_store
+        if self.settings.review_session_persist and self._vcs_factory is None:
+            self._session_store = SessionStore(
+                self.settings.pg_dsn,
+                min_size=self.settings.pg_pool_min_size,
+                max_size=self.settings.pg_pool_max_size,
             )
-        return s
+        return self._session_store
+
+    def _rehydrate_session(self, repo: str, pr: int) -> _Session | None:
+        """Восстановить сессию из Postgres при промахе in-memory кэша.
+
+        Возвращает None, если персист выключен, строки нет/истёк TTL, БД
+        недоступна или payload несовместим (fail-soft → вызывающий бросит
+        ValueError с recovery hint).
+        """
+        store = self._ensure_session_store()
+        if store is None:
+            return None
+        payload = store.load(repo, pr, self.settings.review_session_ttl_hours)
+        if not payload:
+            return None
+        try:
+            owner, name = repo.split("/", 1)
+            vcs = self._review_service._create_vcs_provider(owner, name)
+            prepared = from_payload(payload, vcs)
+        except Exception:
+            log.warning("Регидрация сессии %s#%s не удалась", repo, pr, exc_info=True)
+            return None
+        ctx = self._tool_context(prepared)
+        return _Session(prepared, ctx)
+
+    def _session(self, repo: str, pr: int) -> _Session:
+        """Получить сессию из кэша или регидрировать из Postgres (crash-recovery).
+
+        При промахе in-memory кэша пробуем поднять персистнутую сессию; успех
+        прогревает кэш. Полный промах (нет строки / истёк TTL / БД недоступна) —
+        ValueError с recovery hint.
+        """
+        s = self._sessions.get((repo, pr))
+        if s is not None:
+            return s
+        rehydrated = self._rehydrate_session(repo, pr)
+        if rehydrated is not None:
+            self._sessions[(repo, pr)] = rehydrated
+            return rehydrated
+        raise ValueError(
+            f"Сессия для {repo}#{pr} не найдена или истекла — вызови prepare_review заново"
+        )
 
     def _invoke_tool(self, repo: str, pr: int, name: str, args: dict) -> str:
         """Вызов инструмента с per-вызов пересозданием make_tools.
@@ -515,6 +571,9 @@ class MCPReviewService:
             self.components.store.delete_ref(repo, f"pr:{pr}")
         except Exception:
             log.warning("Не удалось очистить overlay %s pr:%s", repo, pr, exc_info=True)
+        store = self._ensure_session_store()
+        if store is not None:
+            store.delete(repo, pr)
 
     def _prepared_payload(self, p: PreparedReview) -> dict:
         """Сериализовать PreparedReview в dict для передачи MCP-клиенту."""
