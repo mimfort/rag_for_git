@@ -168,6 +168,11 @@ uvx --from rag-reviewer reviewer update
 > `reviewer install` or set `"command": "uvx"` with `"args": ["--from",
 > "rag-reviewer@latest", "reviewer-mcp"]` directly.
 
+> **Claude Code: tools work out of the box.** `reviewer install claude-code` also
+> writes an allowlist rule `mcp__reviewer__*` into the project's
+> `.claude/settings.json` (`permissions.allow`), so the reviewer MCP tools run
+> without hitting the `auto`-mode safety classifier — no manual settings edits.
+
 > **Where keys are read from.** The reviewer resolves its `.env` from a fixed
 > location, **not** the current working directory — MCP clients launch the server
 > with an arbitrary CWD, so a project-local `.env` is unreliable. Lookup order:

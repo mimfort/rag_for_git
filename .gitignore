@@ -29,6 +29,10 @@ htmlcov/
 .vscode/
 .DS_Store
 
+# Claude Code: личное/транзиентное игнорируем, общий settings.json коммитим
+.claude/*
+!.claude/settings.json
+
 # Data / artifacts
 *.scip
 data/
