@@ -300,8 +300,8 @@ def install(client: str | None, all_clients: bool, list_clients: bool,
             click.echo(f"# {c.label} → {plan.path}")
             click.echo(plan.content)
             if c.key == "claude-code":
-                al_plan = inst.build_allowlist_plan(plan.path.parent / ".claude" / "settings.json")
-                click.echo(f"# {c.label} allowlist → {al_plan.path}")
+                al_plan = inst.build_allowlist_plan(inst.claude_user_settings_path())
+                click.echo(f"# {c.label} allowlist (глобально, для всех проектов) → {al_plan.path}")
                 click.echo(al_plan.content)
             if c.skills_fn and not no_skills:
                 click.echo(f"# {c.label} скилы → {c.skills_fn(_platform.system())}")
@@ -321,7 +321,7 @@ def install(client: str | None, all_clients: bool, list_clients: bool,
         if c.note:
             click.echo(f"  прим.: {c.note}")
         if c.key == "claude-code":
-            al_plan = inst.build_allowlist_plan(plan.path.parent / ".claude" / "settings.json")
+            al_plan = inst.build_allowlist_plan(inst.claude_user_settings_path())
             al_backup = inst.apply_allowlist_plan(al_plan)
             if al_plan.already:
                 al_status = "правило уже есть"
@@ -329,8 +329,8 @@ def install(client: str | None, all_clients: bool, list_clients: bool,
                 al_status = "создан settings.json"
             else:
                 al_status = "добавлено правило"
-            click.echo(f"  allowlist: {al_status} → {al_plan.path} "
-                       f"({inst.REVIEWER_PERMISSION_RULE})")
+            click.echo(f"  allowlist (глобально, для всех проектов): {al_status} → "
+                       f"{al_plan.path} ({inst.REVIEWER_PERMISSION_RULE})")
             if al_backup:
                 click.echo(f"  бэкап: {al_backup}")
         _ensure_skills(c)
