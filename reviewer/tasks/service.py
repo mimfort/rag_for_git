@@ -228,13 +228,22 @@ class TaskService:
         warnings: list[str] = []
         active = set(active_keys)
 
+        # Вселенная ключей-кандидатов = стор ∪ граф. Стабы :Task (upsert_links/
+        # link_pr) живут только в графе и в стор не попадают — без учёта ключей
+        # графа они никогда не вычислялись как orphaned и оставались навсегда.
+        # Сбой любого слоя fail-soft: чистим то, что смогли перечислить.
+        all_keys: set[str] = set()
         try:
-            all_keys = set(self._store.list_keys())
+            all_keys |= set(self._store.list_keys())
         except Exception as e:
             log.warning("purge_orphaned_tasks: сбой list_keys", exc_info=True)
             warnings.append(f"store: {type(e).__name__}: {e}")
-            return {"deleted_store": 0, "deleted_graph": 0,
-                    "protected_prs": 0, "warnings": warnings}
+        if self._graph is not None:
+            try:
+                all_keys |= set(self._graph.list_keys())
+            except Exception as e:
+                log.warning("purge_orphaned_tasks: сбой list_keys (graph)", exc_info=True)
+                warnings.append(f"graph: {type(e).__name__}: {e}")
 
         orphaned = all_keys - active
         protected: set[str] = set()

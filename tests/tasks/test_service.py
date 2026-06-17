@@ -37,7 +37,7 @@ class _FakeStore:
 
 
 class _FakeGraph:
-    def __init__(self, context=None, raise_on=(), pr_keys=()):
+    def __init__(self, context=None, raise_on=(), pr_keys=(), keys=()):
         self.tasks = []
         self.links = []
         self.pr_links = []
@@ -45,6 +45,7 @@ class _FakeGraph:
         self._context = context or {}
         self._raise_on = set(raise_on)
         self._pr_keys = set(pr_keys)
+        self._keys = set(keys)
 
     def upsert_task(self, key, aliases, title, status, url):
         if "upsert_task" in self._raise_on:
@@ -67,6 +68,11 @@ class _FakeGraph:
         if "keys_with_prs" in self._raise_on:
             raise RuntimeError("neo4j down")
         return set(self._pr_keys)
+
+    def list_keys(self):
+        if "list_keys" in self._raise_on:
+            raise RuntimeError("neo4j down")
+        return set(self._keys)
 
     def delete_tasks(self, keys):
         if "delete_tasks" in self._raise_on:
@@ -203,6 +209,27 @@ def test_purge_deletes_orphaned():
     assert result["deleted_graph"] == 1
     assert "ID-2" in store.deleted
     assert "ID-1" not in store.deleted
+
+
+def test_purge_deletes_graph_only_stub():
+    # Стаб :Task, созданный upsert_links (link-only, без стора и без PR), должен
+    # удаляться из графа, даже если его нет в Postgres-сторе. Это и есть баг:
+    # вселенная ключей бралась только из стора, и стабы оставались навсегда.
+    store = _FakeStore(hashes={"ID-1": "h1"})
+    graph = _FakeGraph(keys={"ID-1", "PRI-42"})
+    result = TaskService(store, graph, _FakeEmbedder()).purge_orphaned_tasks(["ID-1"])
+    assert "PRI-42" in graph.deleted_tasks
+    assert result["deleted_graph"] == 1
+    assert result["deleted_store"] == 0   # стаба в сторе не было — нечего удалять
+
+
+def test_purge_graph_only_stub_protected_by_pr():
+    # Стаб с PR-историей (link_pr) защищён keep_with_prs, как и обычные задачи.
+    store = _FakeStore(hashes={"ID-1": "h1"})
+    graph = _FakeGraph(keys={"ID-1", "PRI-42"}, pr_keys={"PRI-42"})
+    result = TaskService(store, graph, _FakeEmbedder()).purge_orphaned_tasks(["ID-1"])
+    assert "PRI-42" not in graph.deleted_tasks
+    assert result["protected_prs"] == 1
 
 
 def test_purge_keeps_tasks_with_prs():

@@ -115,6 +115,15 @@ class TaskGraph:
         )
         return {r["key"] for r in records}
 
+    def list_keys(self) -> set[str]:
+        """Ключи всех :Task-узлов графа, включая link-стабы (upsert_links/link_pr).
+
+        Стабы создаются как соседи TASK_LINK/IMPLEMENTED_BY и в Postgres-стор не
+        попадают, поэтому purge должен учитывать и их (граф задач глобален — без
+        repo-фильтра, как и keys_with_prs)."""
+        records, _, _ = self._driver.execute_query("MATCH (t:Task) RETURN t.key AS key")
+        return {r["key"] for r in records}
+
     def delete_tasks(self, keys: list[str]) -> int:
         """Удалить :Task-узлы с рёбрами DETACH DELETE. :PR/:Symbol не трогает."""
         if not keys:

@@ -202,3 +202,28 @@ def test_purge_no_keep_with_prs_deletes_all(store, graph):
     result = svc.purge_orphaned_tasks([], keep_with_prs=False)
     assert result["deleted_store"] == 1
     assert store.list_keys() == []
+
+
+def test_purge_removes_link_only_stub_from_graph(store, graph):
+    """Стаб :Task, созданный upsert_links (нет в сторе), вычищается из графа.
+
+    Регрессия бага: вселенная ключей бралась только из Postgres-стора, поэтому
+    link-стабы (соседи TASK_LINK) никогда не попадали в orphaned и оседали в
+    графе навсегда, несмотря на --purge-orphaned."""
+    svc = TaskService(store, graph, _FakeEmbedder())
+
+    # Реальная задача линкуется на STUB-1, которого нет на доске → создаётся стаб.
+    svc.index_task({
+        "key": "ID-P4", "aliases": [], "title": "Has dangling link",
+        "description": "Links to a non-board task", "criteria": [],
+        "status": "Open", "url": None,
+        "links": [{"key": "STUB-1", "title": "", "type": "relates"}],
+    })
+    assert "STUB-1" not in store.list_keys()      # стаб только в графе
+    assert "STUB-1" in graph.list_keys()
+
+    # Синк с активной только ID-P4: стаб STUB-1 должен уйти из графа.
+    result = svc.purge_orphaned_tasks(["ID-P4"])
+    assert "STUB-1" not in graph.list_keys()
+    assert result["deleted_graph"] == 1
+    assert "ID-P4" in store.list_keys()           # активная задача не тронута
