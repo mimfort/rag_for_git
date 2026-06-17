@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import fields
 
 import pytest
 
@@ -68,6 +69,18 @@ def test_payload_roundtrip_preserves_fields() -> None:
 def test_to_payload_excludes_vcs() -> None:
     payload = to_payload(_prepared(_DummyVCS()))
     assert "vcs" not in payload
+
+
+def test_to_payload_covers_all_prepared_fields() -> None:
+    """Guard рассинхронизации: to_payload должен сериализовать каждое поле
+    PreparedReview, кроме живого ``vcs`` (восстанавливается отдельно).
+
+    Если в PreparedReview добавят поле, не попавшее в to_payload, тест упадёт
+    здесь — вместо тихой потери поля через рестарт (поле с дефолтом) или промаха
+    регидрации (поле без дефолта). См. session_serde.to_payload."""
+    expected = {f.name for f in fields(PreparedReview)} - {"vcs"}
+    payload = to_payload(_prepared(_DummyVCS()))
+    assert set(payload) == expected
 
 
 def test_from_payload_missing_key_raises() -> None:
