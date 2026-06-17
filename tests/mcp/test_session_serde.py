@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from reviewer.agent.state import ReviewUnit
 from reviewer.mcp.session_serde import from_payload, to_payload
 from reviewer.policy.policy import ReviewPolicy
@@ -66,3 +68,17 @@ def test_payload_roundtrip_preserves_fields() -> None:
 def test_to_payload_excludes_vcs() -> None:
     payload = to_payload(_prepared(_DummyVCS()))
     assert "vcs" not in payload
+
+
+def test_from_payload_missing_key_raises() -> None:
+    """Пустой payload бросает KeyError — контракт для _rehydrate_session."""
+    with pytest.raises(KeyError):
+        from_payload({}, _DummyVCS())
+
+
+def test_from_payload_bad_prq_raises_type_error() -> None:
+    """Испорченный prq бросает TypeError — контракт для _rehydrate_session."""
+    payload = json.loads(json.dumps(to_payload(_prepared(_DummyVCS()))))
+    payload["prq"] = {"unexpected_field": 1}  # PullRequest(**...) → TypeError
+    with pytest.raises(TypeError):
+        from_payload(payload, _DummyVCS())
