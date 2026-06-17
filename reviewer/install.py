@@ -74,6 +74,17 @@ def claude_settings_path() -> Path:
     return Path(".claude") / "settings.json"
 
 
+def claude_user_settings_path() -> Path:
+    """Глобальный (user-scope) settings.json Claude Code: ~/.claude/settings.json.
+
+    Allowlist-правило reviewer пишем сюда, а не в проект: тогда оно действует во
+    ВСЕХ проектах сразу — и при проектной установке (.mcp.json в CWD), и при
+    установке плагином через marketplace (сервер глобален, но плагин не раздаёт
+    разрешений). Где reviewer не подключён — правило инертно (сервера нет).
+    """
+    return _home() / ".claude" / "settings.json"
+
+
 # --------------------------------------------------------------------------- #
 # команда запуска
 # --------------------------------------------------------------------------- #

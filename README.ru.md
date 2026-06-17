@@ -204,6 +204,13 @@ uvx --from rag-reviewer reviewer update
 > `bash -lc` только для macOS/Linux; на Windows используйте `reviewer install` или указывайте
 > `"command": "uvx"` с `"args": ["--from", "rag-reviewer@latest", "reviewer-mcp"]` напрямую.
 
+> **Claude Code: тулы работают из коробки.** `reviewer install claude-code` дополнительно
+> прописывает allowlist-правило `mcp__reviewer__*` в **глобальный** `~/.claude/settings.json`
+> (`permissions.allow`), поэтому тулы reviewer MCP работают **во всех проектах** без обращения
+> к safety-classifier `auto`-режима — без ручного редактирования настроек. Глобальное правило
+> покрывает и установку плагином (marketplace): там сервер доступен везде, но плагин не раздаёт
+> разрешений.
+
 Где взять ключи:
 - **Voyage** (`VOYAGE_API_KEY`): https://dashboard.voyageai.com/ — есть бесплатный пул; привяжите карту, чтобы снять лимит 3 RPM / 10K TPM.
 - **GitHub** (`GITHUB_TOKEN`): PAT с правами *Pull requests: Read and write* + *Contents: Read* (fine-grained) или scope `repo` (classic). Быстрый вариант: `gh auth token`.

@@ -169,9 +169,11 @@ uvx --from rag-reviewer reviewer update
 > "rag-reviewer@latest", "reviewer-mcp"]` directly.
 
 > **Claude Code: tools work out of the box.** `reviewer install claude-code` also
-> writes an allowlist rule `mcp__reviewer__*` into the project's
-> `.claude/settings.json` (`permissions.allow`), so the reviewer MCP tools run
-> without hitting the `auto`-mode safety classifier — no manual settings edits.
+> writes an allowlist rule `mcp__reviewer__*` into your global
+> `~/.claude/settings.json` (`permissions.allow`), so the reviewer MCP tools run in
+> **every** project without hitting the `auto`-mode safety classifier — no manual
+> settings edits. Being global, it also covers the plugin (marketplace) install,
+> where the server is available everywhere but ships no permission grants.
 
 > **Where keys are read from.** The reviewer resolves its `.env` from a fixed
 > location, **not** the current working directory — MCP clients launch the server
