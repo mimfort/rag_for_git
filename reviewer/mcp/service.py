@@ -212,6 +212,9 @@ class MCPReviewService:
         Возвращает None, если персист выключен, строки нет/истёк TTL, БД
         недоступна или payload несовместим (fail-soft → вызывающий бросит
         ValueError с recovery hint).
+
+        Прогрев кэша `_sessions` — ответственность вызывающего (`_session`);
+        метод только загружает и собирает сессию, не мутируя кэш.
         """
         store = self._ensure_session_store()
         if store is None:

@@ -161,6 +161,7 @@ def test_persist_disabled_no_rehydration(_ov, _ch) -> None:
     vcs = _FakeVCS()
     with patch.object(svc._review_service, "_create_vcs_provider", return_value=vcs):
         svc.prepare_review("o/r", 7)                       # _ensure_session_store() → None, без save
+        assert svc._session_store is None          # гейт: персист выключен → store не создан
         svc._sessions.clear()                              # эмуляция рестарта
         with pytest.raises(ValueError, match="prepare_review"):
             svc.publish_review("o/r", 7, summary="s", findings=[RAW], dry_run=True)
