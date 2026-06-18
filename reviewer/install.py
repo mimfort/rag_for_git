@@ -511,3 +511,71 @@ def stamp_skills_dir(skills_dir: Path, *, source_etag: str | None) -> Path:
         pkg_version=current_pkg_version(),
         hashes=_skill_file_hashes(skills_dir),
     )
+
+
+# --------------------------------------------------------------------------- #
+# детект устарелости скилов
+# --------------------------------------------------------------------------- #
+@dataclass
+class StalenessReport:
+    client_key: str
+    client_label: str
+    skills_dir: Path
+    stale: bool
+    reason: str            # человекочитаемая причина (пусто, если свежо)
+    command: str           # рекомендуемая команда исправления
+
+
+def skills_staleness(
+    client: Client, *, system: str | None = None, timeout: float = 5.0
+) -> StalenessReport | None:
+    """Оценить, устарели ли установленные скилы клиента.
+
+    None — у клиента нет файловых скилов или каталог не существует (нечего
+    проверять). Иначе StalenessReport. Сетевой ETag — best-effort: при офлайне
+    используется фолбэк по версии пакета.
+    """
+    system = system or platform.system()
+    if client.skills_fn is None:
+        return None
+    skills_dir = client.skills_fn(system)
+    if not skills_dir.exists():
+        return None
+    cmd = f"reviewer install-skills {client.key}"
+
+    def report(stale: bool, reason: str) -> StalenessReport:
+        return StalenessReport(client.key, client.label, skills_dir, stale, reason, cmd)
+
+    stamp = read_skills_stamp(skills_dir)
+    if stamp is None:
+        return report(True, "нет стампа установки (старый установщик)")
+    if _skill_file_hashes(skills_dir) != (stamp.get("skills") or {}):
+        return report(True, "содержимое скилов разошлось со стампом (дрейф/частичная установка)")
+    etag = fetch_skills_etag(timeout=timeout)
+    if etag is not None:
+        if stamp.get("source_etag") and etag != stamp["source_etag"]:
+            return report(True, "upstream main обновился с момента установки")
+        return report(False, "")
+    # офлайн-фолбэк: сравнить версию пакета на момент установки и текущую
+    cur = current_pkg_version()
+    if cur != "unknown" and stamp.get("pkg_version") and cur != stamp["pkg_version"]:
+        return report(
+            True,
+            f"сервер обновился ({stamp['pkg_version']}→{cur}), upstream недоступен офлайн")
+    return report(False, "")
+
+
+def staleness_warnings(system: str | None = None, *, timeout: float = 5.0) -> list[str]:
+    """Строки-предупреждения по всем клиентам с файловыми скилами (fail-soft)."""
+    system = system or platform.system()
+    lines: list[str] = []
+    for client in CLIENTS.values():
+        if client.skills_fn is None or client.scope == "project":
+            continue
+        try:
+            rep = skills_staleness(client, system=system, timeout=timeout)
+        except Exception:  # noqa: BLE001 — детект не должен ломать вызывающего
+            continue
+        if rep and rep.stale:
+            lines.append(f"⚠ скилы {rep.client_label} устарели ({rep.reason}) → {rep.command}")
+    return lines
