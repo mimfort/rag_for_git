@@ -1,6 +1,6 @@
 [project]
 name = "rag-reviewer"
-version = "0.1.9"
+version = "0.2.0"
 requires-python = ">=3.11,<3.14"
 dependencies = [
     "pydantic-settings>=2.3",

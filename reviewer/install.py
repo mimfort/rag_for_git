@@ -16,7 +16,7 @@ import json
 import os
 import platform
 import shutil
-from dataclasses import dataclass
+from dataclasses import dataclass, field as _field
 from pathlib import Path
 from typing import Callable
 
@@ -61,6 +61,203 @@ GRAPH_BACKEND=auto
 DEFAULT_REPO=
 REVIEW_BRANCHES=main,master
 """
+
+
+@dataclass
+class EnvField:
+    key: str
+    prompt_text: str
+    default: str = ""
+    secret: bool = False
+    required: bool = False
+
+
+@dataclass
+class EnvGroup:
+    title: str
+    fields: list[EnvField] = _field(default_factory=list)
+    optional: bool = False
+
+
+WIZARD_GROUPS: list[EnvGroup] = [
+    EnvGroup(
+        title="Обязательные",
+        optional=False,
+        fields=[
+            EnvField(
+                key="VOYAGE_API_KEY",
+                prompt_text="VOYAGE_API_KEY (эмбеддинги + реранкер)",
+                secret=True,
+                required=True,
+            ),
+            EnvField(
+                key="GITHUB_TOKEN",
+                prompt_text="GITHUB_TOKEN (PAT: Pull requests read/write, Contents read)",
+                secret=True,
+            ),
+        ],
+    ),
+    EnvGroup(
+        title="Хранилища (Postgres / Neo4j)",
+        optional=True,
+        fields=[
+            EnvField(
+                key="PG_DSN",
+                prompt_text="PG_DSN",
+                default="postgresql://reviewer:reviewer@localhost:5433/reviewer",
+            ),
+            EnvField(key="NEO4J_URI", prompt_text="NEO4J_URI", default="neo4j://localhost:7687"),
+            EnvField(key="NEO4J_USER", prompt_text="NEO4J_USER", default="neo4j"),
+            EnvField(
+                key="NEO4J_PASSWORD",
+                prompt_text="NEO4J_PASSWORD",
+                default="reviewerpass",
+                secret=True,
+            ),
+        ],
+    ),
+    EnvGroup(
+        title="Мульти-репо / ветки",
+        optional=True,
+        fields=[
+            EnvField(
+                key="DEFAULT_REPO",
+                prompt_text="DEFAULT_REPO (owner/name или пусто)",
+                default="",
+            ),
+            EnvField(
+                key="REVIEW_BRANCHES",
+                prompt_text="REVIEW_BRANCHES (CSV, первая — первичная)",
+                default="main,master",
+            ),
+        ],
+    ),
+    EnvGroup(
+        title="Доска задач",
+        optional=True,
+        fields=[
+            EnvField(
+                key="TASK_BOARD_TYPE",
+                prompt_text="TASK_BOARD_TYPE (yougile | jira | ...)",
+                default="",
+            ),
+            EnvField(
+                key="TASK_BOARD_MCP",
+                prompt_text="TASK_BOARD_MCP (имя MCP-сервера доски)",
+                default="",
+            ),
+            EnvField(
+                key="TASK_BOARD_KEY_PATTERN",
+                prompt_text=r"TASK_BOARD_KEY_PATTERN (напр. [A-Z]+-\d+)",
+                default="",
+            ),
+            EnvField(
+                key="TASK_BOARD_URL_TEMPLATE",
+                prompt_text="TASK_BOARD_URL_TEMPLATE (напр. https://.../{code})",
+                default="",
+            ),
+        ],
+    ),
+]
+
+
+def read_env(path: Path) -> dict[str, str]:
+    """Прочитать KEY=VALUE из .env, пропуская комментарии и пустые строки."""
+    result: dict[str, str] = {}
+    if not path.is_file():
+        return result
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if "=" in line:
+            key, _, value = line.partition("=")
+            result[key.strip()] = value.strip()
+    return result
+
+
+_GROUP_HEADERS: dict[str, str] = {
+    "Обязательные": "# --- Voyage / GitHub ---",
+    "Хранилища (Postgres / Neo4j)": "# --- Postgres (ParadeDB :5433) / Neo4j (:7687) ---",
+    "Мульти-репо / ветки": "# --- Мульти-репо / ветки (опционально) ---",
+    "Доска задач": "# --- Доска задач (опционально) ---",
+}
+
+
+def render_env(values: dict[str, str], extra: dict[str, str]) -> str:
+    """Сгенерировать содержимое .env по wizard-группам и прочим (extra) ключам."""
+    lines: list[str] = [
+        "# rag_for_git — конфигурация (сгенерировано reviewer init)",
+        "# Обязательный ключ: VOYAGE_API_KEY; GITHUB_TOKEN нужен для ревью PR.",
+        "# Остальные переменные имеют дефолты в reviewer/config/settings.py.",
+        "",
+    ]
+    for group in WIZARD_GROUPS:
+        header = _GROUP_HEADERS.get(group.title, f"# --- {group.title} ---")
+        lines.append(header)
+        for field in group.fields:
+            lines.append(f"{field.key}={values.get(field.key, field.default)}")
+        lines.append("")
+
+    if extra:
+        lines.append("# Прочие настройки")
+        for key, value in extra.items():
+            lines.append(f"{key}={value}")
+        lines.append("")
+
+    return "\n".join(lines)
+
+
+def prompt_groups(
+    groups: list[EnvGroup],
+    current: dict[str, str],
+    yes: bool,
+) -> dict[str, str]:
+    """Интерактивно запросить значения полей по группам.
+
+    yes=True — CI-режим: без prompt'ов, берём current или field.default.
+    Секрет с существующим значением: показываем «уже задан», пустой ввод = оставить.
+    """
+    import click
+
+    values: dict[str, str] = {}
+
+    for group in groups:
+        # Опциональную группу предваряем вопросом (в интерактивном режиме)
+        if group.optional:
+            if yes:
+                # CI: сохраняем текущее или дефолт, не спрашиваем
+                for f in group.fields:
+                    values[f.key] = current.get(f.key, "") or f.default
+                continue
+            if not click.confirm(f"\nНастроить {group.title}?", default=False):
+                for f in group.fields:
+                    values[f.key] = current.get(f.key, "") or f.default
+                continue
+        elif not yes:
+            click.echo(f"\n[{group.title}]")
+
+        for field in group.fields:
+            cur = current.get(field.key, "")
+            effective_default = cur or field.default
+
+            if yes:
+                values[field.key] = effective_default
+                continue
+
+            if field.secret:
+                if cur:
+                    label = f"{field.prompt_text} (уже задан — Enter чтобы оставить)"
+                    val = click.prompt(label, default="", hide_input=True, show_default=False)
+                    values[field.key] = val if val else cur
+                else:
+                    val = click.prompt(field.prompt_text, default="", hide_input=True,
+                                       show_default=False)
+                    values[field.key] = val
+            else:
+                values[field.key] = click.prompt(field.prompt_text, default=effective_default)
+
+    return values
 
 
 def default_env_path() -> Path:
