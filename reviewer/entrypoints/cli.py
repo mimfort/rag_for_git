@@ -116,6 +116,17 @@ def check() -> None:
     else:
         click.echo("  GitHub API: токен не задан, проверка пропущена")
 
+    # 6. Свежесть установленных скилов (информационно, не влияет на exit-code)
+    try:
+        from reviewer import install as _inst
+        warns = _inst.staleness_warnings()
+        for line in warns:
+            click.echo(line)
+        if not warns:
+            click.echo("✓ Скилы клиентов: актуальны (или не установлены)")
+    except Exception:  # noqa: BLE001 — детект устарелости не должен валить check
+        pass
+
     if failed:
         raise SystemExit(1)
     click.echo("Готово к работе.")
@@ -273,7 +284,7 @@ def install(client: str | None, all_clients: bool, list_clients: bool,
         raise click.ClickException(
             "Укажите клиент (reviewer install <client>), либо --all / --list.")
 
-    tar_cache: list[bytes] = []  # тарбол скилов качаем один раз на все цели
+    tar_cache: list[tuple[bytes, str | None]] = []  # тарбол+ETag качаем один раз
 
     def _ensure_skills(c) -> None:
         if no_skills or c.skills_fn is None:
@@ -281,15 +292,16 @@ def install(client: str | None, all_clients: bool, list_clients: bool,
         if not tar_cache:
             click.echo("  скилы: скачиваю с GitHub…")
             try:
-                tar_cache.append(inst.fetch_skills_bytes())
+                tar_cache.append(inst.fetch_skills_archive())
             except Exception as exc:  # noqa: BLE001 — fail-soft, MCP уже прописан
                 click.echo(f"  скилы: пропуск (не скачать тарбол: {exc})")
-                tar_cache.append(b"")
+                tar_cache.append((b"", None))
                 return
-        if not tar_cache[0]:
+        data, etag = tar_cache[0]
+        if not data:
             return
         try:
-            dest, names = inst.install_skills(c, tar_bytes=tar_cache[0])
+            dest, names = inst.install_skills(c, tar_bytes=data, source_etag=etag)
             click.echo(f"  скилы: {len(names)} шт. → {dest}")
         except Exception as exc:  # noqa: BLE001
             click.echo(f"  скилы: пропуск ({exc})")
@@ -483,10 +495,11 @@ def install_skills(client: str | None, all_clients: bool,
             "Укажите клиент (reviewer install-skills <client>), либо --all / --list.")
 
     click.echo("Скачиваю скилы с GitHub…")
-    tar = inst.fetch_skills_bytes()
+    tar, etag = inst.fetch_skills_archive()
     for c in targets:
         dest = Path(path_opt).expanduser() if path_opt else c.skills_fn(_platform.system())
         names = inst.extract_skills(tar, dest)
+        inst.stamp_skills_dir(dest, source_etag=etag)
         click.echo(f"✓ {c.label}: {len(names)} скилов → {dest}")
         if c.note:
             click.echo(f"  прим.: {c.note}")
