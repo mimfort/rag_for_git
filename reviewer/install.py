@@ -346,13 +346,30 @@ def detect_installed(system: str | None = None) -> list[Client]:
 # --------------------------------------------------------------------------- #
 # скилы
 # --------------------------------------------------------------------------- #
-def fetch_skills_bytes(url: str = SKILLS_TARBALL) -> bytes:
-    """Скачать тарбол репозитория (httpx уже в зависимостях; кроссплатформенно)."""
+def fetch_skills_archive(url: str = SKILLS_TARBALL) -> tuple[bytes, str | None]:
+    """Скачать тарбол репозитория + вернуть его ETag (для стампа). httpx уже в зависимостях."""
     import httpx
 
     resp = httpx.get(url, follow_redirects=True, timeout=60)
     resp.raise_for_status()
-    return resp.content
+    return resp.content, resp.headers.get("etag")
+
+
+def fetch_skills_bytes(url: str = SKILLS_TARBALL) -> bytes:
+    """Только тарбол (обратная совместимость со старыми вызовами)."""
+    return fetch_skills_archive(url)[0]
+
+
+def fetch_skills_etag(url: str = SKILLS_TARBALL, *, timeout: float = 5.0) -> str | None:
+    """ETag тарбола через HEAD. Fail-soft: при любой ошибке/офлайне — None."""
+    import httpx
+
+    try:
+        resp = httpx.head(url, follow_redirects=True, timeout=timeout)
+        resp.raise_for_status()
+        return resp.headers.get("etag")
+    except Exception:  # noqa: BLE001 — детект устарелости не должен падать
+        return None
 
 
 def extract_skills(tar_bytes: bytes, dest: Path) -> list[str]:
@@ -393,15 +410,193 @@ def install_skills(
     *,
     system: str | None = None,
     tar_bytes: bytes | None = None,
+    source_etag: str | None = None,
 ) -> tuple[Path, list[str]]:
-    """Установить скилы в каталог клиента. Возвращает (каталог, имена скилов).
+    """Установить скилы в каталог клиента + записать стамп. Возвращает (каталог, имена).
 
-    tar_bytes можно передать заранее скачанным (чтобы не качать на каждый клиент).
+    tar_bytes можно передать заранее скачанным (чтобы не качать на каждый клиент);
+    в этом случае передайте и source_etag (иначе он будет None в стампе).
     """
     system = system or platform.system()
     if client.skills_fn is None:
         raise ValueError(f"{client.label}: файловые скилы не поддерживаются")
     dest = client.skills_fn(system)
-    data = tar_bytes if tar_bytes is not None else fetch_skills_bytes()
+    if tar_bytes is None:
+        data, fetched_etag = fetch_skills_archive()
+        if source_etag is None:
+            source_etag = fetched_etag
+    else:
+        data = tar_bytes
     names = extract_skills(data, dest)
+    stamp_skills_dir(dest, source_etag=source_etag)
     return dest, names
+
+
+# --------------------------------------------------------------------------- #
+# стамп установки скилов (для детекта устарелости)
+# --------------------------------------------------------------------------- #
+STAMP_NAME = ".reviewer-skills.json"
+
+
+def current_pkg_version() -> str:
+    """Версия установленного пакета rag-reviewer (или 'unknown')."""
+    import importlib.metadata as md
+
+    try:
+        return md.version(PACKAGE)
+    except md.PackageNotFoundError:
+        return "unknown"
+
+
+def _skill_file_hashes(skills_dir: Path) -> dict[str, str]:
+    """sha256 каждого скила (по всем его файлам). Ключ — имя подкаталога-скила.
+
+    Детерминизм: файлы скила сортируются по относительному пути, в дайджест идёт
+    rel-path + NUL + содержимое. Не-каталоги верхнего уровня (включая сам
+    стамп-файл) пропускаются.
+    """
+    import hashlib
+
+    result: dict[str, str] = {}
+    if not skills_dir.is_dir():
+        return result
+    for sub in sorted(p for p in skills_dir.iterdir() if p.is_dir()):
+        h = hashlib.sha256()
+        for f in sorted(sub.rglob("*")):
+            if f.is_file():
+                h.update(f.relative_to(sub).as_posix().encode("utf-8"))
+                h.update(b"\0")
+                h.update(f.read_bytes())
+        result[sub.name] = "sha256:" + h.hexdigest()
+    return result
+
+
+def write_skills_stamp(
+    skills_dir: Path, *, source_url: str, source_etag: str | None,
+    pkg_version: str, hashes: dict[str, str],
+) -> Path:
+    """Записать стамп установки скилов в <skills_dir>/.reviewer-skills.json."""
+    from datetime import datetime, timezone
+
+    stamp = {
+        "installed_at": datetime.now(timezone.utc).isoformat(),
+        "source_url": source_url,
+        "source_etag": source_etag,
+        "pkg_version": pkg_version,
+        "skills": hashes,
+    }
+    path = skills_dir / STAMP_NAME
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(stamp, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    return path
+
+
+def read_skills_stamp(skills_dir: Path) -> dict | None:
+    """Прочитать стамп; None, если файла нет или он битый."""
+    path = skills_dir / STAMP_NAME
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (ValueError, OSError):
+        return None
+
+
+def stamp_skills_dir(skills_dir: Path, *, source_etag: str | None) -> Path:
+    """Записать стамп для уже распакованного каталога скилов."""
+    return write_skills_stamp(
+        skills_dir,
+        source_url=SKILLS_TARBALL,
+        source_etag=source_etag,
+        pkg_version=current_pkg_version(),
+        hashes=_skill_file_hashes(skills_dir),
+    )
+
+
+# --------------------------------------------------------------------------- #
+# детект устарелости скилов
+# --------------------------------------------------------------------------- #
+@dataclass
+class StalenessReport:
+    client_key: str
+    client_label: str
+    skills_dir: Path
+    stale: bool
+    reason: str            # человекочитаемая причина (пусто, если свежо)
+    command: str           # рекомендуемая команда исправления
+
+
+# сигнал «получи ETag сам»; отличаем от явного None (= офлайн/недоступен)
+_FETCH_ETAG: object = object()
+
+
+def skills_staleness(
+    client: Client,
+    *,
+    system: str | None = None,
+    timeout: float = 5.0,
+    upstream_etag: str | None | object = _FETCH_ETAG,
+) -> StalenessReport | None:
+    """Оценить, устарели ли установленные скилы клиента.
+
+    None — у клиента нет файловых скилов или каталог не существует (нечего
+    проверять). Иначе StalenessReport. Сетевой ETag — best-effort: при офлайне
+    используется фолбэк по версии пакета. upstream_etag можно передать заранее
+    полученным (staleness_warnings берёт его один раз на весь обход), чтобы не
+    слать HEAD на каждого клиента; _FETCH_ETAG — получить самостоятельно.
+    """
+    system = system or platform.system()
+    if client.skills_fn is None:
+        return None
+    skills_dir = client.skills_fn(system)
+    if not skills_dir.exists():
+        return None
+    cmd = f"reviewer install-skills {client.key}"
+
+    def report(stale: bool, reason: str) -> StalenessReport:
+        return StalenessReport(client.key, client.label, skills_dir, stale, reason, cmd)
+
+    stamp = read_skills_stamp(skills_dir)
+    if stamp is None:
+        return report(True, "нет стампа установки (старый установщик)")
+    if _skill_file_hashes(skills_dir) != (stamp.get("skills") or {}):
+        return report(True, "содержимое скилов разошлось со стампом (дрейф/частичная установка)")
+    etag = fetch_skills_etag(timeout=timeout) if upstream_etag is _FETCH_ETAG else upstream_etag
+    if etag is not None:
+        if stamp.get("source_etag") and etag != stamp["source_etag"]:
+            return report(True, "upstream main обновился с момента установки")
+        return report(False, "")
+    # офлайн-фолбэк: сравнить версию пакета на момент установки и текущую
+    cur = current_pkg_version()
+    stamp_ver = stamp.get("pkg_version")
+    if cur != "unknown" and stamp_ver and stamp_ver != "unknown" and cur != stamp_ver:
+        return report(
+            True,
+            f"сервер обновился ({stamp_ver}→{cur}), upstream недоступен офлайн")
+    return report(False, "")
+
+
+def staleness_warnings(system: str | None = None, *, timeout: float = 5.0) -> list[str]:
+    """Строки-предупреждения по установленным клиентам с файловыми скилами (fail-soft).
+
+    Upstream-ETag берётся ОДИН раз на весь обход (а не HEAD на каждого клиента);
+    сеть не дёргается вовсе, если ни у кого нет каталога скилов.
+    """
+    system = system or platform.system()
+    candidates = [
+        c for c in CLIENTS.values()
+        if c.skills_fn is not None and c.scope != "project" and c.skills_fn(system).exists()
+    ]
+    if not candidates:
+        return []
+    upstream_etag = fetch_skills_etag(timeout=timeout)  # один HEAD на весь обход
+    lines: list[str] = []
+    for client in candidates:
+        try:
+            rep = skills_staleness(
+                client, system=system, timeout=timeout, upstream_etag=upstream_etag)
+        except Exception:  # noqa: BLE001 — детект не должен ломать вызывающего
+            continue
+        if rep and rep.stale:
+            lines.append(f"⚠ скилы {rep.client_label} устарели ({rep.reason}) → {rep.command}")
+    return lines

@@ -12,7 +12,7 @@ uvx --from rag-reviewer reviewer install kimi
 ```
 
 Пропишет MCP-сервер в `~/.kimi-code/mcp.json` автоматически (кроссплатформенно,
-подставляет абсолютный путь к `uvx` — обёртка `bash -lc` не нужна).
+подставляет абсолютный путь к `uvx` — обёртка `bash -lc` не нужна) **и установит скилы**.
 
 ## Ручная установка (альтернатива)
 
@@ -47,7 +47,19 @@ Kimi Code loads skills from directories listed in `extra_skill_dirs` in `~/.kimi
 extra_skill_dirs = ["~/.kimi-code/skills"]
 ```
 
-**Step 2** — download the skills (no repo clone needed):
+**Step 2** — install the skills:
+
+Рекомендуемый способ — через основную команду установки (если уже выполнена выше, скилы
+уже стоят):
+
+```bash
+uvx --from rag-reviewer reviewer install kimi      # MCP + скилы
+# или только скилы:
+uvx --from rag-reviewer reviewer install-skills kimi
+```
+
+**Офлайн-альтернатива** (снапшот; не обновляется сам — для обновления используйте
+`reviewer install kimi`, см. раздел «Обновление»):
 
 ```bash
 curl -sL https://github.com/mimfort/rag_for_git/archive/refs/heads/main.tar.gz -o /tmp/rag-reviewer.tgz
@@ -57,6 +69,19 @@ rm /tmp/rag-reviewer.tgz
 ```
 
 Skills installed: `reviewer_review-pr`, `reviewer_solve-task`, `reviewer_sync-codebase`, `reviewer_sync-tasks`, `reviewer_performance-review`, `reviewer_maintainability-review`.
+
+## Обновление
+
+Скилы — это снапшот, скачанный при установке; сами они не обновляются. После апгрейда
+сервера освежите их повторным запуском:
+
+```bash
+uvx --from rag-reviewer reviewer install kimi      # MCP + свежие скилы
+# или только скилы:
+uvx --from rag-reviewer reviewer install-skills kimi
+```
+
+`reviewer check` предупредит, если установленные скилы устарели.
 
 ## Verify
 

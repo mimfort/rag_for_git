@@ -44,6 +44,12 @@ Parse from $ARGUMENTS (all optional):
    `index_tasks_batch` is idempotent (re-embeds only tasks whose text changed) and uses a single
    Voyage embedding call for all changed tasks — O(1) Voyage API calls regardless of board size.
 
+   > **НИКОГДА не вызывай `index_task` в цикле по задачам.** Собери все `TaskBrief` в один
+   > список и сделай **один** `index_tasks_batch(...)`. Для очень больших досок — чанками по
+   > ≤25 задач за вызов (всё равно O(число чанков) вызовов Voyage, а не O(N)). Одиночный
+   > `index_task` существует только для сценария одной задачи (`solve-task`) — для синка он
+   > запрещён: поштучный цикл упирается в Voyage 3 RPM и приводит к таймауту.
+
 4. **Purge orphaned tasks** *(только при `--purge-orphaned`).*
 
    Собери все канонические ключи (`idTaskCommon`, вида `ID-N`) задач, прочитанных с доски
