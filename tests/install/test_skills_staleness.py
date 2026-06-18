@@ -59,16 +59,44 @@ def test_offline_fallback_pkg_version(monkeypatch, tmp_path):
 
 def test_staleness_warnings_collects(monkeypatch, tmp_path):
     _setup_kimi(monkeypatch, tmp_path)  # kimi без стампа → stale
+    monkeypatch.setattr(inst, "fetch_skills_etag", lambda *a, **k: None)  # без сети
     lines = inst.staleness_warnings(system="Linux")
     assert any("kimi" in ln.lower() or "Kimi" in ln for ln in lines)
 
 
 def test_staleness_warnings_failsoft(monkeypatch, tmp_path):
-    monkeypatch.setattr(inst, "_home", lambda: tmp_path)
+    _setup_kimi(monkeypatch, tmp_path)  # установленный клиент → дойдём до skills_staleness
+    monkeypatch.setattr(inst, "fetch_skills_etag", lambda *a, **k: None)
     def boom(*a, **k):
         raise RuntimeError("x")
     monkeypatch.setattr(inst, "skills_staleness", boom)
-    assert inst.staleness_warnings(system="Linux") == []  # не падает
+    assert inst.staleness_warnings(system="Linux") == []  # исключение проглочено
+
+
+def test_staleness_warnings_fetches_etag_once(monkeypatch, tmp_path):
+    # несколько установленных клиентов → upstream-ETag тянется ОДИН раз на весь обход
+    monkeypatch.setattr(inst, "_home", lambda: tmp_path)
+    for key in ("kimi", "gemini"):
+        d = inst.CLIENTS[key].skills_fn("Linux")
+        (d / "sync-tasks").mkdir(parents=True)
+        (d / "sync-tasks" / "SKILL.md").write_bytes(b"# sync")
+        inst.stamp_skills_dir(d, source_etag='"same"')   # стамп + чистые хэши
+    calls = {"n": 0}
+    def fake_etag(*a, **k):
+        calls["n"] += 1
+        return '"same"'                                  # совпадает со стампом → свежо
+    monkeypatch.setattr(inst, "fetch_skills_etag", fake_etag)
+    lines = inst.staleness_warnings(system="Linux")
+    assert lines == []           # оба свежие
+    assert calls["n"] == 1       # один HEAD, не по разу на клиента
+
+
+def test_staleness_warnings_no_network_when_nothing_installed(monkeypatch, tmp_path):
+    monkeypatch.setattr(inst, "_home", lambda: tmp_path)  # ни у кого нет каталога скилов
+    def boom(*a, **k):
+        raise AssertionError("сеть не должна дёргаться без установленных скилов")
+    monkeypatch.setattr(inst, "fetch_skills_etag", boom)
+    assert inst.staleness_warnings(system="Linux") == []
 
 
 def test_offline_fresh_when_stamp_version_unknown(monkeypatch, tmp_path):

@@ -526,14 +526,24 @@ class StalenessReport:
     command: str           # рекомендуемая команда исправления
 
 
+# сигнал «получи ETag сам»; отличаем от явного None (= офлайн/недоступен)
+_FETCH_ETAG: object = object()
+
+
 def skills_staleness(
-    client: Client, *, system: str | None = None, timeout: float = 5.0
+    client: Client,
+    *,
+    system: str | None = None,
+    timeout: float = 5.0,
+    upstream_etag: str | None | object = _FETCH_ETAG,
 ) -> StalenessReport | None:
     """Оценить, устарели ли установленные скилы клиента.
 
     None — у клиента нет файловых скилов или каталог не существует (нечего
     проверять). Иначе StalenessReport. Сетевой ETag — best-effort: при офлайне
-    используется фолбэк по версии пакета.
+    используется фолбэк по версии пакета. upstream_etag можно передать заранее
+    полученным (staleness_warnings берёт его один раз на весь обход), чтобы не
+    слать HEAD на каждого клиента; _FETCH_ETAG — получить самостоятельно.
     """
     system = system or platform.system()
     if client.skills_fn is None:
@@ -551,7 +561,7 @@ def skills_staleness(
         return report(True, "нет стампа установки (старый установщик)")
     if _skill_file_hashes(skills_dir) != (stamp.get("skills") or {}):
         return report(True, "содержимое скилов разошлось со стампом (дрейф/частичная установка)")
-    etag = fetch_skills_etag(timeout=timeout)
+    etag = fetch_skills_etag(timeout=timeout) if upstream_etag is _FETCH_ETAG else upstream_etag
     if etag is not None:
         if stamp.get("source_etag") and etag != stamp["source_etag"]:
             return report(True, "upstream main обновился с момента установки")
@@ -567,14 +577,24 @@ def skills_staleness(
 
 
 def staleness_warnings(system: str | None = None, *, timeout: float = 5.0) -> list[str]:
-    """Строки-предупреждения по всем клиентам с файловыми скилами (fail-soft)."""
+    """Строки-предупреждения по установленным клиентам с файловыми скилами (fail-soft).
+
+    Upstream-ETag берётся ОДИН раз на весь обход (а не HEAD на каждого клиента);
+    сеть не дёргается вовсе, если ни у кого нет каталога скилов.
+    """
     system = system or platform.system()
+    candidates = [
+        c for c in CLIENTS.values()
+        if c.skills_fn is not None and c.scope != "project" and c.skills_fn(system).exists()
+    ]
+    if not candidates:
+        return []
+    upstream_etag = fetch_skills_etag(timeout=timeout)  # один HEAD на весь обход
     lines: list[str] = []
-    for client in CLIENTS.values():
-        if client.skills_fn is None or client.scope == "project":
-            continue
+    for client in candidates:
         try:
-            rep = skills_staleness(client, system=system, timeout=timeout)
+            rep = skills_staleness(
+                client, system=system, timeout=timeout, upstream_etag=upstream_etag)
         except Exception:  # noqa: BLE001 — детект не должен ломать вызывающего
             continue
         if rep and rep.stale:
