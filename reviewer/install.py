@@ -16,7 +16,7 @@ import json
 import os
 import platform
 import shutil
-from dataclasses import dataclass
+from dataclasses import dataclass, field as _field
 from pathlib import Path
 from typing import Callable
 
@@ -61,6 +61,119 @@ GRAPH_BACKEND=auto
 DEFAULT_REPO=
 REVIEW_BRANCHES=main,master
 """
+
+
+@dataclass
+class EnvField:
+    key: str
+    prompt_text: str
+    default: str = ""
+    secret: bool = False
+    required: bool = False
+
+
+@dataclass
+class EnvGroup:
+    title: str
+    fields: list[EnvField] = _field(default_factory=list)
+    optional: bool = False
+
+
+WIZARD_GROUPS: list[EnvGroup] = [
+    EnvGroup(
+        title="Обязательные",
+        optional=False,
+        fields=[
+            EnvField(
+                key="VOYAGE_API_KEY",
+                prompt_text="VOYAGE_API_KEY (эмбеддинги + реранкер)",
+                secret=True,
+                required=True,
+            ),
+            EnvField(
+                key="GITHUB_TOKEN",
+                prompt_text="GITHUB_TOKEN (PAT: Pull requests read/write, Contents read)",
+                secret=True,
+            ),
+        ],
+    ),
+    EnvGroup(
+        title="Хранилища (Postgres / Neo4j)",
+        optional=True,
+        fields=[
+            EnvField(
+                key="PG_DSN",
+                prompt_text="PG_DSN",
+                default="postgresql://reviewer:reviewer@localhost:5433/reviewer",
+            ),
+            EnvField(key="NEO4J_URI", prompt_text="NEO4J_URI", default="neo4j://localhost:7687"),
+            EnvField(key="NEO4J_USER", prompt_text="NEO4J_USER", default="neo4j"),
+            EnvField(
+                key="NEO4J_PASSWORD",
+                prompt_text="NEO4J_PASSWORD",
+                default="reviewerpass",
+                secret=True,
+            ),
+        ],
+    ),
+    EnvGroup(
+        title="Мульти-репо / ветки",
+        optional=True,
+        fields=[
+            EnvField(
+                key="DEFAULT_REPO",
+                prompt_text="DEFAULT_REPO (owner/name или пусто)",
+                default="",
+            ),
+            EnvField(
+                key="REVIEW_BRANCHES",
+                prompt_text="REVIEW_BRANCHES (CSV, первая — первичная)",
+                default="main,master",
+            ),
+        ],
+    ),
+    EnvGroup(
+        title="Доска задач",
+        optional=True,
+        fields=[
+            EnvField(
+                key="TASK_BOARD_TYPE",
+                prompt_text="TASK_BOARD_TYPE (yougile | jira | ...)",
+                default="",
+            ),
+            EnvField(
+                key="TASK_BOARD_MCP",
+                prompt_text="TASK_BOARD_MCP (имя MCP-сервера доски)",
+                default="",
+            ),
+            EnvField(
+                key="TASK_BOARD_KEY_PATTERN",
+                prompt_text=r"TASK_BOARD_KEY_PATTERN (напр. [A-Z]+-\d+)",
+                default="",
+            ),
+            EnvField(
+                key="TASK_BOARD_URL_TEMPLATE",
+                prompt_text="TASK_BOARD_URL_TEMPLATE (напр. https://.../{code})",
+                default="",
+            ),
+        ],
+    ),
+]
+
+
+def read_env(path: Path) -> dict[str, str]:
+    """Прочитать KEY=VALUE из .env, пропуская комментарии и пустые строки."""
+    result: dict[str, str] = {}
+    if not path.is_file():
+        return result
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if "=" in line:
+            key, _, value = line.partition("=")
+            result[key.strip()] = value.strip()
+    return result
 
 
 def default_env_path() -> Path:
