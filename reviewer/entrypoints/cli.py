@@ -354,22 +354,41 @@ def install(client: str | None, all_clients: bool, list_clients: bool,
 @cli.command()
 @click.option("--path", "path_opt", default=None,
               help="куда писать .env (по умолчанию ~/.config/rag-reviewer/.env)")
-@click.option("--force", is_flag=True, help="перезаписать существующий файл")
-def init(path_opt: str | None, force: bool) -> None:
-    """Создать .env в стабильном месте (~/.config/rag-reviewer/.env)."""
+@click.option("--yes", "yes", is_flag=True,
+              help="принять все дефолты без интерактива (CI-режим)")
+def init(path_opt: str | None, yes: bool) -> None:
+    """Интерактивный мастер настройки .env для rag-reviewer."""
+    import subprocess
     from pathlib import Path
     from reviewer import install as inst
 
     dest = Path(path_opt).expanduser() if path_opt else inst.default_env_path()
-    if dest.exists() and not force:
-        click.echo(f"Файл уже существует: {dest}")
-        click.echo("Откройте его и заполните VOYAGE_API_KEY / GITHUB_TOKEN "
-                   "(перезапись: reviewer init --force).")
-        return
     dest.parent.mkdir(parents=True, exist_ok=True)
-    dest.write_text(inst.ENV_TEMPLATE, encoding="utf-8")
-    click.echo(f"✓ Создан {dest}")
-    click.echo("Заполните VOYAGE_API_KEY и GITHUB_TOKEN, затем: reviewer check")
+
+    current = inst.read_env(dest)
+    wizard_keys = {f.key for g in inst.WIZARD_GROUPS for f in g.fields}
+
+    if not yes:
+        click.echo(f"Настройка rag-reviewer: {dest}")
+        click.echo("─" * 52)
+
+    try:
+        values = inst.prompt_groups(inst.WIZARD_GROUPS, current=current, yes=yes)
+    except click.Abort:
+        click.echo("\nОтменено — файл не изменён.")
+        return
+
+    extra = {k: v for k, v in current.items() if k not in wizard_keys}
+    content = inst.render_env(values, extra)
+    dest.write_text(content, encoding="utf-8")
+    click.echo(f"\n✓ Записан {dest}")
+
+    if not yes and click.confirm("\nЗапустить reviewer check сейчас?", default=True):
+        subprocess.run(["reviewer", "check"], check=False)
+    elif not yes:
+        click.echo("Запустите: reviewer check")
+    else:
+        click.echo("Готово. Запустите: reviewer check")
 
 
 @cli.command()

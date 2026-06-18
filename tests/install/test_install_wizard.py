@@ -1,4 +1,6 @@
+from click.testing import CliRunner
 from reviewer import install as inst
+from reviewer.entrypoints.cli import cli
 
 
 def test_read_env_parses_key_value(tmp_path):
@@ -97,3 +99,37 @@ def test_prompt_groups_yes_skips_optional_groups():
     assert result["TASK_BOARD_TYPE"] == "yougile"
     # Остальные поля доски — пустые (default)
     assert result["TASK_BOARD_MCP"] == ""
+
+
+def test_init_yes_creates_env_file(tmp_path, monkeypatch):
+    dest = tmp_path / ".env"
+    monkeypatch.setattr("reviewer.install.default_env_path", lambda: dest)
+    runner = CliRunner()
+    result = runner.invoke(cli, ["init", "--yes"])
+    assert result.exit_code == 0, result.output
+    assert dest.exists()
+    content = dest.read_text(encoding="utf-8")
+    assert "VOYAGE_API_KEY=" in content
+    assert "PG_DSN=" in content
+
+
+def test_init_yes_preserves_existing_secret(tmp_path, monkeypatch):
+    dest = tmp_path / ".env"
+    dest.write_text("VOYAGE_API_KEY=sk-existing\n", encoding="utf-8")
+    monkeypatch.setattr("reviewer.install.default_env_path", lambda: dest)
+    runner = CliRunner()
+    result = runner.invoke(cli, ["init", "--yes"])
+    assert result.exit_code == 0, result.output
+    content = dest.read_text(encoding="utf-8")
+    assert "VOYAGE_API_KEY=sk-existing" in content
+
+
+def test_init_yes_preserves_extra_keys(tmp_path, monkeypatch):
+    dest = tmp_path / ".env"
+    dest.write_text("VOYAGE_API_KEY=sk-x\nREVIEW_MAX_COMMENTS=42\n", encoding="utf-8")
+    monkeypatch.setattr("reviewer.install.default_env_path", lambda: dest)
+    runner = CliRunner()
+    result = runner.invoke(cli, ["init", "--yes"])
+    assert result.exit_code == 0, result.output
+    content = dest.read_text(encoding="utf-8")
+    assert "REVIEW_MAX_COMMENTS=42" in content
