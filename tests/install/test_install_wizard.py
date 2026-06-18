@@ -26,3 +26,51 @@ def test_read_env_value_with_equals(tmp_path):
     f.write_text("PG_DSN=postgresql://u:p@localhost:5433/db\n", encoding="utf-8")
     result = inst.read_env(f)
     assert result["PG_DSN"] == "postgresql://u:p@localhost:5433/db"
+
+
+def test_render_env_contains_wizard_keys():
+    values = {
+        "VOYAGE_API_KEY": "sk-test",
+        "GITHUB_TOKEN": "",
+        "PG_DSN": "postgresql://reviewer:reviewer@localhost:5433/reviewer",
+        "NEO4J_URI": "neo4j://localhost:7687",
+        "NEO4J_USER": "neo4j",
+        "NEO4J_PASSWORD": "reviewerpass",
+        "DEFAULT_REPO": "",
+        "REVIEW_BRANCHES": "main,master",
+        "TASK_BOARD_TYPE": "",
+        "TASK_BOARD_MCP": "",
+        "TASK_BOARD_KEY_PATTERN": "",
+        "TASK_BOARD_URL_TEMPLATE": "",
+    }
+    result = inst.render_env(values, extra={})
+    assert "VOYAGE_API_KEY=sk-test" in result
+    assert "PG_DSN=postgresql://reviewer:reviewer@localhost:5433/reviewer" in result
+
+
+def test_render_env_extra_keys_preserved():
+    values = {
+        "VOYAGE_API_KEY": "sk-test",
+        "GITHUB_TOKEN": "",
+        "PG_DSN": "postgresql://reviewer:reviewer@localhost:5433/reviewer",
+        "NEO4J_URI": "neo4j://localhost:7687",
+        "NEO4J_USER": "neo4j",
+        "NEO4J_PASSWORD": "reviewerpass",
+        "DEFAULT_REPO": "",
+        "REVIEW_BRANCHES": "main,master",
+        "TASK_BOARD_TYPE": "",
+        "TASK_BOARD_MCP": "",
+        "TASK_BOARD_KEY_PATTERN": "",
+        "TASK_BOARD_URL_TEMPLATE": "",
+    }
+    extra = {"REVIEW_MAX_COMMENTS": "30", "REVIEW_HISTORY": "true"}
+    result = inst.render_env(values, extra=extra)
+    assert "REVIEW_MAX_COMMENTS=30" in result
+    assert "REVIEW_HISTORY=true" in result
+    assert "Прочие настройки" in result
+
+
+def test_render_env_no_extra_no_extra_block():
+    values = {f.key: f.default for g in inst.WIZARD_GROUPS for f in g.fields}
+    result = inst.render_env(values, extra={})
+    assert "Прочие настройки" not in result

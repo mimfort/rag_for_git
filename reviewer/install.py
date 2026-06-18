@@ -176,6 +176,38 @@ def read_env(path: Path) -> dict[str, str]:
     return result
 
 
+_GROUP_HEADERS: dict[str, str] = {
+    "Обязательные": "# --- Voyage / GitHub ---",
+    "Хранилища (Postgres / Neo4j)": "# --- Postgres (ParadeDB :5433) / Neo4j (:7687) ---",
+    "Мульти-репо / ветки": "# --- Мульти-репо / ветки (опционально) ---",
+    "Доска задач": "# --- Доска задач (опционально) ---",
+}
+
+
+def render_env(values: dict[str, str], extra: dict[str, str]) -> str:
+    """Сгенерировать содержимое .env по wizard-группам и прочим (extra) ключам."""
+    lines: list[str] = [
+        "# rag_for_git — конфигурация (сгенерировано reviewer init)",
+        "# Обязательный ключ: VOYAGE_API_KEY; GITHUB_TOKEN нужен для ревью PR.",
+        "# Остальные переменные имеют дефолты в reviewer/config/settings.py.",
+        "",
+    ]
+    for group in WIZARD_GROUPS:
+        header = _GROUP_HEADERS.get(group.title, f"# --- {group.title} ---")
+        lines.append(header)
+        for field in group.fields:
+            lines.append(f"{field.key}={values.get(field.key, field.default)}")
+        lines.append("")
+
+    if extra:
+        lines.append("# Прочие настройки")
+        for key, value in extra.items():
+            lines.append(f"{key}={value}")
+        lines.append("")
+
+    return "\n".join(lines)
+
+
 def default_env_path() -> Path:
     """Каноническое место .env: $XDG_CONFIG_HOME/rag-reviewer/.env."""
     xdg = os.environ.get("XDG_CONFIG_HOME") or str(_home() / ".config")
