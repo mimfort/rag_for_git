@@ -558,10 +558,11 @@ def skills_staleness(
         return report(False, "")
     # офлайн-фолбэк: сравнить версию пакета на момент установки и текущую
     cur = current_pkg_version()
-    if cur != "unknown" and stamp.get("pkg_version") and cur != stamp["pkg_version"]:
+    stamp_ver = stamp.get("pkg_version")
+    if cur != "unknown" and stamp_ver and stamp_ver != "unknown" and cur != stamp_ver:
         return report(
             True,
-            f"сервер обновился ({stamp['pkg_version']}→{cur}), upstream недоступен офлайн")
+            f"сервер обновился ({stamp_ver}→{cur}), upstream недоступен офлайн")
     return report(False, "")
 
 

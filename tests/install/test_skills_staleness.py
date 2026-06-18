@@ -69,3 +69,21 @@ def test_staleness_warnings_failsoft(monkeypatch, tmp_path):
         raise RuntimeError("x")
     monkeypatch.setattr(inst, "skills_staleness", boom)
     assert inst.staleness_warnings(system="Linux") == []  # не падает
+
+
+def test_offline_fresh_when_stamp_version_unknown(monkeypatch, tmp_path):
+    d = _setup_kimi(monkeypatch, tmp_path)
+    monkeypatch.setattr(inst, "current_pkg_version", lambda: "unknown")
+    inst.stamp_skills_dir(d, source_etag='"e1"')           # стамп пишет pkg_version="unknown"
+    monkeypatch.setattr(inst, "fetch_skills_etag", lambda *a, **k: None)
+    monkeypatch.setattr(inst, "current_pkg_version", lambda: "1.0.0")
+    rep = inst.skills_staleness(inst.CLIENTS["kimi"], system="Linux")
+    assert rep is not None and rep.stale is False          # стамп "unknown" → fresh
+
+
+def test_offline_fresh_same_version(monkeypatch, tmp_path):
+    d = _setup_kimi(monkeypatch, tmp_path)
+    inst.stamp_skills_dir(d, source_etag='"e1"')
+    monkeypatch.setattr(inst, "fetch_skills_etag", lambda *a, **k: None)
+    rep = inst.skills_staleness(inst.CLIENTS["kimi"], system="Linux")
+    assert rep is not None and rep.stale is False
