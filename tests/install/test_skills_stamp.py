@@ -1,3 +1,5 @@
+import io
+import tarfile
 from pathlib import Path
 
 from reviewer import install as inst
@@ -47,3 +49,42 @@ def test_read_stamp_missing_returns_none(tmp_path):
 
 def test_current_pkg_version_is_str():
     assert isinstance(inst.current_pkg_version(), str)
+
+
+def _make_tarball(members: dict[str, bytes]) -> bytes:
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tf:
+        for name, data in members.items():
+            info = tarfile.TarInfo(name)
+            info.size = len(data)
+            tf.addfile(info, io.BytesIO(data))
+    return buf.getvalue()
+
+
+def test_install_skills_writes_stamp(monkeypatch, tmp_path):
+    monkeypatch.setattr(inst, "_home", lambda: tmp_path)
+    tar = _make_tarball({
+        "r/plugin/skills/sync-tasks/SKILL.md": b"# sync",
+        "r/plugin/skills/solve-task/SKILL.md": b"# solve",
+    })
+    dest, names = inst.install_skills(
+        inst.CLIENTS["kimi"], system="Linux", tar_bytes=tar, source_etag='"abc"')
+    stamp = inst.read_skills_stamp(dest)
+    assert stamp is not None
+    assert stamp["source_etag"] == '"abc"'
+    assert set(stamp["skills"]) == set(names)
+    assert stamp["source_url"] == inst.SKILLS_TARBALL
+
+
+def test_fetch_skills_bytes_backward_compat(monkeypatch):
+    monkeypatch.setattr(inst, "fetch_skills_archive", lambda url=inst.SKILLS_TARBALL: (b"X", '"e"'))
+    assert inst.fetch_skills_bytes() == b"X"
+
+
+def test_fetch_skills_etag_failsoft(monkeypatch):
+    import httpx
+    def boom(*a, **k):
+        raise RuntimeError("no network")
+    # fetch_skills_etag делает `import httpx` внутри → патчим реальный httpx.head
+    monkeypatch.setattr(httpx, "head", boom)
+    assert inst.fetch_skills_etag(timeout=0.1) is None

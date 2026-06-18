@@ -346,13 +346,30 @@ def detect_installed(system: str | None = None) -> list[Client]:
 # --------------------------------------------------------------------------- #
 # скилы
 # --------------------------------------------------------------------------- #
-def fetch_skills_bytes(url: str = SKILLS_TARBALL) -> bytes:
-    """Скачать тарбол репозитория (httpx уже в зависимостях; кроссплатформенно)."""
+def fetch_skills_archive(url: str = SKILLS_TARBALL) -> tuple[bytes, str | None]:
+    """Скачать тарбол репозитория + вернуть его ETag (для стампа). httpx уже в зависимостях."""
     import httpx
 
     resp = httpx.get(url, follow_redirects=True, timeout=60)
     resp.raise_for_status()
-    return resp.content
+    return resp.content, resp.headers.get("etag")
+
+
+def fetch_skills_bytes(url: str = SKILLS_TARBALL) -> bytes:
+    """Только тарбол (обратная совместимость со старыми вызовами)."""
+    return fetch_skills_archive(url)[0]
+
+
+def fetch_skills_etag(url: str = SKILLS_TARBALL, *, timeout: float = 5.0) -> str | None:
+    """ETag тарбола через HEAD. Fail-soft: при любой ошибке/офлайне — None."""
+    import httpx
+
+    try:
+        resp = httpx.head(url, follow_redirects=True, timeout=timeout)
+        resp.raise_for_status()
+        return resp.headers.get("etag")
+    except Exception:  # noqa: BLE001 — детект устарелости не должен падать
+        return None
 
 
 def extract_skills(tar_bytes: bytes, dest: Path) -> list[str]:
@@ -393,17 +410,25 @@ def install_skills(
     *,
     system: str | None = None,
     tar_bytes: bytes | None = None,
+    source_etag: str | None = None,
 ) -> tuple[Path, list[str]]:
-    """Установить скилы в каталог клиента. Возвращает (каталог, имена скилов).
+    """Установить скилы в каталог клиента + записать стамп. Возвращает (каталог, имена).
 
-    tar_bytes можно передать заранее скачанным (чтобы не качать на каждый клиент).
+    tar_bytes можно передать заранее скачанным (чтобы не качать на каждый клиент);
+    в этом случае передайте и source_etag (иначе он будет None в стампе).
     """
     system = system or platform.system()
     if client.skills_fn is None:
         raise ValueError(f"{client.label}: файловые скилы не поддерживаются")
     dest = client.skills_fn(system)
-    data = tar_bytes if tar_bytes is not None else fetch_skills_bytes()
+    if tar_bytes is None:
+        data, fetched_etag = fetch_skills_archive()
+        if source_etag is None:
+            source_etag = fetched_etag
+    else:
+        data = tar_bytes
     names = extract_skills(data, dest)
+    stamp_skills_dir(dest, source_etag=source_etag)
     return dest, names
 
 
@@ -475,3 +500,14 @@ def read_skills_stamp(skills_dir: Path) -> dict | None:
         return json.loads(path.read_text(encoding="utf-8"))
     except (ValueError, OSError):
         return None
+
+
+def stamp_skills_dir(skills_dir: Path, *, source_etag: str | None) -> Path:
+    """Записать стамп для уже распакованного каталога скилов."""
+    return write_skills_stamp(
+        skills_dir,
+        source_url=SKILLS_TARBALL,
+        source_etag=source_etag,
+        pkg_version=current_pkg_version(),
+        hashes=_skill_file_hashes(skills_dir),
+    )
