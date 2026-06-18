@@ -208,6 +208,58 @@ def render_env(values: dict[str, str], extra: dict[str, str]) -> str:
     return "\n".join(lines)
 
 
+def prompt_groups(
+    groups: list[EnvGroup],
+    current: dict[str, str],
+    yes: bool,
+) -> dict[str, str]:
+    """Интерактивно запросить значения полей по группам.
+
+    yes=True — CI-режим: без prompt'ов, берём current или field.default.
+    Секрет с существующим значением: показываем «уже задан», пустой ввод = оставить.
+    """
+    import click
+
+    values: dict[str, str] = {}
+
+    for group in groups:
+        # Опциональную группу предваряем вопросом (в интерактивном режиме)
+        if group.optional:
+            if yes:
+                # CI: сохраняем текущее или дефолт, не спрашиваем
+                for f in group.fields:
+                    values[f.key] = current.get(f.key, "") or f.default
+                continue
+            if not click.confirm(f"\nНастроить {group.title}?", default=False):
+                for f in group.fields:
+                    values[f.key] = current.get(f.key, "") or f.default
+                continue
+        elif not yes:
+            click.echo(f"\n[{group.title}]")
+
+        for field in group.fields:
+            cur = current.get(field.key, "")
+            effective_default = cur or field.default
+
+            if yes:
+                values[field.key] = effective_default
+                continue
+
+            if field.secret:
+                if cur:
+                    label = f"{field.prompt_text} (уже задан — Enter чтобы оставить)"
+                    val = click.prompt(label, default="", hide_input=True, show_default=False)
+                    values[field.key] = val if val else cur
+                else:
+                    val = click.prompt(field.prompt_text, default="", hide_input=True,
+                                       show_default=False)
+                    values[field.key] = val
+            else:
+                values[field.key] = click.prompt(field.prompt_text, default=effective_default)
+
+    return values
+
+
 def default_env_path() -> Path:
     """Каноническое место .env: $XDG_CONFIG_HOME/rag-reviewer/.env."""
     xdg = os.environ.get("XDG_CONFIG_HOME") or str(_home() / ".config")

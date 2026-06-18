@@ -74,3 +74,26 @@ def test_render_env_no_extra_no_extra_block():
     values = {f.key: f.default for g in inst.WIZARD_GROUPS for f in g.fields}
     result = inst.render_env(values, extra={})
     assert "Прочие настройки" not in result
+
+
+def test_prompt_groups_yes_uses_current_values():
+    current = {"VOYAGE_API_KEY": "sk-existing", "GITHUB_TOKEN": "ghp-existing"}
+    result = inst.prompt_groups(inst.WIZARD_GROUPS, current=current, yes=True)
+    assert result["VOYAGE_API_KEY"] == "sk-existing"
+    assert result["GITHUB_TOKEN"] == "ghp-existing"
+
+
+def test_prompt_groups_yes_uses_field_default_when_no_current():
+    result = inst.prompt_groups(inst.WIZARD_GROUPS, current={}, yes=True)
+    assert result["PG_DSN"] == "postgresql://reviewer:reviewer@localhost:5433/reviewer"
+    assert result["REVIEW_BRANCHES"] == "main,master"
+    assert result["VOYAGE_API_KEY"] == ""
+
+
+def test_prompt_groups_yes_skips_optional_groups():
+    # При yes=True опциональные группы сохраняют current или default — не вызывают confirm
+    current = {"TASK_BOARD_TYPE": "yougile"}
+    result = inst.prompt_groups(inst.WIZARD_GROUPS, current=current, yes=True)
+    assert result["TASK_BOARD_TYPE"] == "yougile"
+    # Остальные поля доски — пустые (default)
+    assert result["TASK_BOARD_MCP"] == ""
