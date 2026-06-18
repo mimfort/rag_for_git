@@ -40,3 +40,6 @@ Collect all normalized `TaskBrief` objects into a list, then make a **single cal
 The result is `list[{key, embedded, links_upserted, warnings}]` in input order. Accumulate the
 counters for the final report (`embedded` true/false per entry, `warnings`). A failure on one task
 is reflected in that entry's `warnings` field — keep going with the rest.
+
+> **НИКОГДА не вызывай `index_task` в цикле.** Только один `index_tasks_batch(...)` на весь
+> список (или чанки по ≤25). Поштучный `index_task` — лишь для `solve-task`; здесь запрещён.
