@@ -405,3 +405,73 @@ def install_skills(
     data = tar_bytes if tar_bytes is not None else fetch_skills_bytes()
     names = extract_skills(data, dest)
     return dest, names
+
+
+# --------------------------------------------------------------------------- #
+# стамп установки скилов (для детекта устарелости)
+# --------------------------------------------------------------------------- #
+STAMP_NAME = ".reviewer-skills.json"
+
+
+def current_pkg_version() -> str:
+    """Версия установленного пакета rag-reviewer (или 'unknown')."""
+    import importlib.metadata as md
+
+    try:
+        return md.version(PACKAGE)
+    except md.PackageNotFoundError:
+        return "unknown"
+
+
+def _skill_file_hashes(skills_dir: Path) -> dict[str, str]:
+    """sha256 каждого скила (по всем его файлам). Ключ — имя подкаталога-скила.
+
+    Детерминизм: файлы скила сортируются по относительному пути, в дайджест идёт
+    rel-path + NUL + содержимое. Не-каталоги верхнего уровня (включая сам
+    стамп-файл) пропускаются.
+    """
+    import hashlib
+
+    result: dict[str, str] = {}
+    if not skills_dir.is_dir():
+        return result
+    for sub in sorted(p for p in skills_dir.iterdir() if p.is_dir()):
+        h = hashlib.sha256()
+        for f in sorted(sub.rglob("*")):
+            if f.is_file():
+                h.update(f.relative_to(sub).as_posix().encode("utf-8"))
+                h.update(b"\0")
+                h.update(f.read_bytes())
+        result[sub.name] = "sha256:" + h.hexdigest()
+    return result
+
+
+def write_skills_stamp(
+    skills_dir: Path, *, source_url: str, source_etag: str | None,
+    pkg_version: str, hashes: dict[str, str],
+) -> Path:
+    """Записать стамп установки скилов в <skills_dir>/.reviewer-skills.json."""
+    from datetime import datetime, timezone
+
+    stamp = {
+        "installed_at": datetime.now(timezone.utc).isoformat(),
+        "source_url": source_url,
+        "source_etag": source_etag,
+        "pkg_version": pkg_version,
+        "skills": hashes,
+    }
+    path = skills_dir / STAMP_NAME
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(stamp, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    return path
+
+
+def read_skills_stamp(skills_dir: Path) -> dict | None:
+    """Прочитать стамп; None, если файла нет или он битый."""
+    path = skills_dir / STAMP_NAME
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (ValueError, OSError):
+        return None
