@@ -174,29 +174,37 @@
 MCP-сервер опубликован на PyPI как [`rag-reviewer`](https://pypi.org/project/rag-reviewer/)
 и запускается через `uvx` — **клонировать этот репозиторий не нужно**.
 
-Нужны: Docker, `uv` (`pip install uv`), ключ Voyage, GitHub-токен.
+Нужны: Docker, [`uv`](https://docs.astral.sh/uv/getting-started/installation/) (включает `uvx`),
+ключ Voyage, GitHub-токен.
 
 ### Быстрая установка (рекомендуется, все платформы)
 
 ```bash
+# 0) Установить reviewer CLI — один раз, глобально
+uv tool install rag-reviewer
+# uv и uvx — одна бинарка; устанавливая uv, вы получаете оба.
+# MCP-сервер, который запускает редактор, использует uvx @latest и обновляется сам.
+
 # 1) Инфраструктура
 curl -O https://raw.githubusercontent.com/mimfort/rag_for_git/main/docker-compose.yml
 docker compose up -d          # Postgres/ParadeDB (:5433) + Neo4j (:7687) + web-админка (:8000)
 
-# 2) Ключи — создаёт ~/.config/rag-reviewer/.env из шаблона
-uvx --from rag-reviewer reviewer init
-#    заполните VOYAGE_API_KEY и GITHUB_TOKEN в этом файле
+# 2) Настроить ключи и параметры интерактивно
+reviewer init
+#    Пошаговый wizard: VOYAGE_API_KEY, GITHUB_TOKEN и опциональные группы
+#    (хранилища, мульти-репо, доска задач). Запускайте повторно в любое время для изменения.
+#    CI / без интерактива: reviewer init --yes  (принимает все дефолты молча)
 
 # 3) Прописать MCP-сервер (и скиллы) в ваш редактор/CLI
-uvx --from rag-reviewer reviewer install --all   # автодетект клиентов + установка скиллов
+reviewer install --all        # автодетект клиентов + установка скиллов
 #    или конкретный: reviewer install cursor|vscode|claude-code|windsurf|gemini|antigravity|mimo|opencode|kimi|trae|codex
 #    скиллы ставятся в клиенты, которые их поддерживают (Gemini/Mimo/Kimi); --no-skills чтобы пропустить
 
 # 4) Проверить
-uvx --from rag-reviewer reviewer check
+reviewer check
 
-# Обновиться позже:
-uvx --from rag-reviewer reviewer update
+# Обновить CLI позже:
+uv tool upgrade rag-reviewer
 ```
 
 > **`reviewer install` кроссплатформенный** (Windows / macOS / Linux). Подставляет абсолютный

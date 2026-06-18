@@ -137,29 +137,37 @@ Rules:
 The MCP server is published on PyPI as [`rag-reviewer`](https://pypi.org/project/rag-reviewer/)
 and runs via `uvx` — **no clone of this repo required**.
 
-Requirements: Docker, `uv` (`pip install uv`), a Voyage API key, a GitHub token.
+Requirements: Docker, [`uv`](https://docs.astral.sh/uv/getting-started/installation/) (includes `uvx`),
+a Voyage API key, a GitHub token.
 
 ### Quick setup (recommended, all platforms)
 
 ```bash
+# 0) Install the reviewer CLI — once, globally
+uv tool install rag-reviewer
+# uv and uvx are the same binary; installing uv gives you both.
+# The MCP server launched by your editor uses uvx @latest and self-updates automatically.
+
 # 1) Infrastructure
 curl -O https://raw.githubusercontent.com/mimfort/rag_for_git/main/docker-compose.yml
 docker compose up -d          # Postgres/ParadeDB (:5433) + Neo4j (:7687) + web admin (:8000)
 
-# 2) Keys — creates ~/.config/rag-reviewer/.env from the template
-uvx --from rag-reviewer reviewer init
-#    then edit ~/.config/rag-reviewer/.env: fill in VOYAGE_API_KEY and GITHUB_TOKEN
+# 2) Configure keys and settings interactively
+reviewer init
+#    Interactive wizard: fills VOYAGE_API_KEY, GITHUB_TOKEN, and optional groups
+#    (stores, multi-repo, task board). Re-run any time to update settings.
+#    CI / non-interactive: reviewer init --yes  (accepts all defaults silently)
 
 # 3) Register the MCP server (and skills) in your editor/CLI
-uvx --from rag-reviewer reviewer install --all   # auto-detect installed clients + install skills
+reviewer install --all        # auto-detect installed clients + install skills
 #    or a specific one: reviewer install cursor|vscode|claude-code|windsurf|gemini|antigravity|mimo|opencode|kimi|trae|codex
 #    skills go to clients that support them (Gemini/Mimo/Kimi); add --no-skills to skip
 
 # 4) Verify
-uvx --from rag-reviewer reviewer check
+reviewer check
 
-# Update later:
-uvx --from rag-reviewer reviewer update
+# Update CLI later:
+uv tool upgrade rag-reviewer
 ```
 
 > **`reviewer install` is cross-platform** (Windows / macOS / Linux). It injects the
