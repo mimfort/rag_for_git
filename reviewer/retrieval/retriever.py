@@ -103,7 +103,8 @@ class Retriever:
         ranked = self.reranker.rerank(query, list(merged.values()), top_k=top_k)
         return ContextPack(items=ranked, max_chars=self.max_context_chars)
 
-    def search_base(self, repo, query, top_k=10, candidates=50, *, branch="") -> ContextPack:
+    def search_base(self, repo, query, top_k=10, candidates=50, *, branch="",
+                    include_tests=False) -> ContextPack:
         """Гибрид-поиск по base-индексу ветки без PR-сессии — для /solve-task.
 
         Зеркало :meth:`retrieve`, но base-only и сидинг графа от хитов:
@@ -134,6 +135,9 @@ class Retriever:
             except Exception:
                 log.warning("search_base: graph-expansion недоступен", exc_info=True)
         items = list(merged.values())
+        if not include_tests:
+            items = [it for it in items if not _is_test_path(it.path)]
+        items = _dedupe_overlapping(items)
         if self.reranker is None or len(items) <= 3 or (len(items) <= top_k and not graph_new):
             return ContextPack(items=items[:top_k], max_chars=self.max_context_chars)
         try:
