@@ -108,12 +108,15 @@ def create_server(service: MCPReviewService) -> FastMCP:
 
     @mcp.tool()
     def search_codebase(repo: str, query: str, top_k: int = 10,
-                        branch: str | None = None) -> str:
+                        branch: str | None = None,
+                        include_tests: bool = False) -> str:
         """Hybrid semantic+lexical search over a repo's base code index (no PR session).
         repo is "owner/name" (or "" to use DEFAULT_REPO). branch is a tracked branch
-        (REVIEW_BRANCHES); defaults to the primary branch. Use it (e.g. from /solve-task)
-        to find relevant existing code by a free-text formulation."""
-        return service.search_codebase(repo, query, top_k, branch)
+        (REVIEW_BRANCHES); defaults to the primary branch. Results are deduplicated
+        (no nested class/method duplicates) and line-numbered for citing path:line
+        without a re-Read; test files are excluded unless include_tests=True. Use it
+        (e.g. from /solve-task) to find relevant existing code by a free-text formulation."""
+        return service.search_codebase(repo, query, top_k, branch, include_tests)
 
     @mcp.tool()
     def related_symbols(repo: str, node_id: str, branch: str | None = None) -> str:
