@@ -323,12 +323,12 @@ class MCPReviewService:
             active_keys, keep_with_prs=keep_with_prs
         )
 
-    def search_codebase(self, repo: str, query: str, top_k: int = 10,
-                        branch: str | None = None) -> str:
-        """Гибрид-поиск по base-индексу репозитория (без PR-сессии) — для /solve-task.
+    def _resolve_repo_branch(self, repo: str, branch: str | None) -> tuple[str, str] | str:
+        """Резолв (repo, ветка) для session-less тулов.
 
-        branch — отслеживаемая ветка (allowlist REVIEW_BRANCHES); по умолчанию
-        первичная. Поиск идёт по индексу указанной ветки (base:<branch>).
+        Возвращает (normalized_repo, resolved_branch) при успехе либо строку-заметку
+        об ошибке (её тул отдаёт пользователю как есть). Ветка валидируется по
+        REVIEW_BRANCHES; пустая ветка → первичная.
         """
         from reviewer.services.repo_id import normalize_repo
         raw = repo or self.settings.default_repo
@@ -341,7 +341,19 @@ class MCPReviewService:
         if branch and branch not in self.settings.review_branches_list():
             return (f"(ветка {branch!r} не в REVIEW_BRANCHES "
                     f"({self.settings.review_branches_list()}))")
-        resolved = branch or self.settings.primary_branch()
+        return repo, branch or self.settings.primary_branch()
+
+    def search_codebase(self, repo: str, query: str, top_k: int = 10,
+                        branch: str | None = None) -> str:
+        """Гибрид-поиск по base-индексу репозитория (без PR-сессии) — для /solve-task.
+
+        branch — отслеживаемая ветка (allowlist REVIEW_BRANCHES); по умолчанию
+        первичная. Поиск идёт по индексу указанной ветки (base:<branch>).
+        """
+        rb = self._resolve_repo_branch(repo, branch)
+        if isinstance(rb, str):
+            return rb
+        repo, resolved = rb
         try:
             pack = self.components.retriever.search_base(
                 repo, query, top_k=top_k, branch=resolved)

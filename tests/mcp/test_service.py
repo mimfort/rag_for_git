@@ -505,3 +505,11 @@ def test_search_codebase_falls_back_to_default_repo() -> None:
     svc.search_codebase("", "find foo")
     call_args = svc.components.retriever.search_base.call_args
     assert call_args.args[0] == "d/efault"
+
+
+def test_search_codebase_rejects_untracked_branch() -> None:
+    """Ветка не из REVIEW_BRANCHES → понятная заметка, retriever не зовётся."""
+    svc = _make_mcp_service()
+    out = svc.search_codebase("a/b", "x", branch="release/v9")
+    assert "REVIEW_BRANCHES" in out
+    svc.components.retriever.search_base.assert_not_called()
