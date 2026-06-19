@@ -8,6 +8,7 @@ from __future__ import annotations
 import logging
 
 from reviewer.tasks.graph import PRRef
+from reviewer.tasks.pr_links import extract_pr_refs
 from reviewer.tasks.store import TaskRow, build_task_text, task_content_hash
 
 log = logging.getLogger(__name__)
@@ -27,7 +28,7 @@ class TaskService:
         key = task.get("key") if isinstance(task, dict) else None
         if not key:
             return {"key": None, "embedded": False, "links_upserted": 0,
-                    "warnings": ["task has no key"]}
+                    "prs_linked": 0, "warnings": ["task has no key"]}
         aliases = [a for a in (task.get("aliases") or []) if a and a != key]
         title = task.get("title") or ""
         description = task.get("description") or ""
@@ -68,8 +69,18 @@ class TaskService:
                 log.warning("index_task: сбой графа для %s", key, exc_info=True)
                 warnings.append(f"graph: {type(e).__name__}: {e}")
 
+        # Авто-линковка PR из description — только для изменившихся (embedded)
+        # задач и при доступном графе (повторный синк без изменений ничего не делает).
+        prs_linked = 0
+        if embedded and self._graph is not None:
+            refs = extract_pr_refs(description)
+            for pr in refs:
+                self.link_review(key, pr, [])  # touched=[] — код подтянется лениво
+            prs_linked = len(refs)
+
         return {"key": key, "embedded": embedded,
-                "links_upserted": links_upserted, "warnings": warnings}
+                "links_upserted": links_upserted, "prs_linked": prs_linked,
+                "warnings": warnings}
 
     def index_batch(self, tasks: list[dict]) -> list[dict]:
         """Батчевая индексация: один Voyage-вызов для всех изменившихся задач."""
@@ -84,7 +95,7 @@ class TaskService:
             key = task.get("key") if isinstance(task, dict) else None
             if not key:
                 results[i] = {"key": None, "embedded": False, "links_upserted": 0,
-                              "warnings": ["task has no key"]}
+                              "prs_linked": 0, "warnings": ["task has no key"]}
                 parsed.append(None)
                 continue
             aliases = [a for a in (task.get("aliases") or []) if a and a != key]
@@ -113,7 +124,7 @@ class TaskService:
             except Exception as e:
                 log.warning("index_batch: existing_hash сбой для %s", p["key"], exc_info=True)
                 results[i] = {"key": p["key"], "embedded": False, "links_upserted": 0,
-                              "warnings": [f"store: {type(e).__name__}: {e}"]}
+                              "prs_linked": 0, "warnings": [f"store: {type(e).__name__}: {e}"]}
                 continue
             (meta_only if prev == p["chash"] else to_embed).append(i)
 
@@ -161,11 +172,13 @@ class TaskService:
             results[i] = {"key": p["key"], "embedded": False,
                           "links_upserted": 0, "warnings": warnings}
 
-        # Шаг 6: граф для всех валидных задач
+        # Шаг 6: граф для всех валидных задач (+ сбор PR-пар для батч-линковки)
+        pr_pairs: list[tuple[str, PRRef]] = []
         for i, p in enumerate(parsed):
             if p is None or results[i] is None:
                 continue
             links_upserted = 0
+            prs_linked = 0
             if self._graph is None:
                 results[i]["warnings"].append(
                     "graph unavailable: task not added to task graph")
@@ -178,7 +191,20 @@ class TaskService:
                 except Exception as e:
                     log.warning("index_batch: сбой графа для %s", p["key"], exc_info=True)
                     results[i]["warnings"].append(f"graph: {type(e).__name__}: {e}")
+                # Собираем PR-ссылки для батчевого MERGE (один запрос после цикла).
+                if results[i]["embedded"]:
+                    refs = extract_pr_refs(p["description"])
+                    pr_pairs.extend((p["key"], ref) for ref in refs)
+                    prs_linked = len(refs)
             results[i]["links_upserted"] = links_upserted
+            results[i]["prs_linked"] = prs_linked
+
+        # Батчевый MERGE IMPLEMENTED_BY — один запрос вместо N×M round-trip.
+        if pr_pairs and self._graph is not None:
+            try:
+                self._graph.link_prs_batch(pr_pairs)
+            except Exception:
+                log.warning("index_batch: сбой батчевой PR-линковки", exc_info=True)
 
         return results
 

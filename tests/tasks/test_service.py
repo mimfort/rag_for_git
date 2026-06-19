@@ -300,3 +300,33 @@ def test_purge_graph_none_works_store_only():
     assert result["deleted_store"] == 1
     assert result["deleted_graph"] == 0
     assert result["warnings"] == []
+
+
+def test_index_task_links_prs_when_embedded():
+    graph = _FakeGraph()
+    task = {"key": "ID-1", "title": "T",
+            "description": "https://github.com/o/r/pull/7 и https://github.com/o/r/pull/8"}
+    res = TaskService(_FakeStore(), graph, _FakeEmbedder()).index_task(task)
+    assert res["embedded"] is True
+    assert res["prs_linked"] == 2
+    assert [tk for tk, _, _ in graph.pr_links] == ["ID-1", "ID-1"]
+    assert all(touched == [] for _, _, touched in graph.pr_links)
+
+
+def test_index_task_no_pr_link_when_unchanged():
+    text = build_task_text("T", "https://github.com/o/r/pull/7", [])
+    store = _FakeStore(hashes={"ID-1": task_content_hash(text)})
+    graph = _FakeGraph()
+    task = {"key": "ID-1", "title": "T", "description": "https://github.com/o/r/pull/7"}
+    res = TaskService(store, graph, _FakeEmbedder()).index_task(task)
+    assert res["embedded"] is False
+    assert res["prs_linked"] == 0
+    assert graph.pr_links == []
+
+
+def test_index_task_pr_link_noop_without_graph():
+    task = {"key": "ID-1", "title": "T",
+            "description": "https://github.com/o/r/pull/7"}
+    res = TaskService(_FakeStore(), None, _FakeEmbedder()).index_task(task)
+    assert res["embedded"] is True
+    assert res["prs_linked"] == 0

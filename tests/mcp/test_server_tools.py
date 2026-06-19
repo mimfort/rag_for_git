@@ -150,3 +150,23 @@ def test_definition_tool_forwards():
     asyncio.run(server.call_tool(
         "definition", {"repo": "owner/name", "symbol": "foo"}))
     svc.definition.assert_called_once_with("owner/name", "foo", None)
+
+
+def test_get_pr_diff_tool_registered():
+    import asyncio
+
+    svc = _service()
+    svc.get_pr_diff.return_value = "diff"
+    server = create_server(svc)
+    names = {t.name for t in asyncio.run(server.list_tools())}
+    assert "get_pr_diff" in names
+
+
+def test_get_pr_diff_tool_forwards():
+    import asyncio
+
+    svc = _service()
+    svc.get_pr_diff.return_value = "diff"
+    server = create_server(svc)
+    asyncio.run(server.call_tool("get_pr_diff", {"repo": "o/r", "number": 7}))
+    svc.get_pr_diff.assert_called_once_with("o/r", 7)

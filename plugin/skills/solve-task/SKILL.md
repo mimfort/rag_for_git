@@ -45,6 +45,13 @@ brief to `superpowers:brainstorming` (which leads to writing-plans → subagent-
      - `callers(repo, node_id, branch?)` → who depends on the code you would change (blast radius — what not to break);
      - `related_symbols(repo, node_id, branch?)` → neighbors (calls / implementations / tests) to touch or mimic;
      - `definition(repo, symbol, branch?)` → exact source of a symbol to follow as a pattern.
+     - **Lazy PR diff (optional).** `get_task_context` surfaces a task and its PRs (id form
+       `owner/name#N`); `search_tasks` surfaces similar task keys — fetch a key's context to see
+       its PRs. If a related task passed the relevance filter AND its PR is worth inspecting for
+       the implementation, parse `repo`/`number` from the PR id and call `get_pr_diff(repo, number)`
+       to see what that PR changed — pull it lazily, only when the LLM judges it useful (don't
+       fetch diffs for low-relevance tasks).
+       Fail-open: a `(diff PR недоступен)` / `(repo не задан…)` note is non-fatal — continue.
      `search_codebase` now returns deduplicated, line-numbered, test-free snippets — keep using the
      graph tools for blast radius, but expand only the few symbols central to the task, and cite
      `path:line` from the line-numbered snippets directly (no re-Read needed for grounding).

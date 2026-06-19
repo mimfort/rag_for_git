@@ -58,6 +58,27 @@ class TaskGraph:
             key=key, rows=rows)
         return len(rows)
 
+    def link_prs_batch(self, pairs: list[tuple[str, "PRRef"]]) -> int:
+        """Батчевый UNWIND-MERGE для N пар (task_key, PRRef) без TOUCHES.
+
+        Используется из index_batch вместо N×M вызовов link_pr — один execute_query.
+        touched=[] для всех пар: код подтягивается лениво через get_pr_diff.
+        """
+        if not pairs:
+            return 0
+        rows = [{"key": key, "pid": pr.id, "repo": pr.repo,
+                 "number": pr.number, "url": pr.url, "sha": pr.sha}
+                for key, pr in pairs]
+        self._driver.execute_query(
+            "UNWIND $rows AS row "
+            "MERGE (t:Task {key: row.key}) ON CREATE SET t.codes=[row.key] "
+            "MERGE (p:PR {id: row.pid}) "
+            "  SET p.repo=row.repo, p.number=row.number, p.url=row.url, "
+            "      p.sha = CASE WHEN row.sha <> '' THEN row.sha ELSE coalesce(p.sha, '') END "
+            "MERGE (t)-[:IMPLEMENTED_BY]->(p)",
+            rows=rows)
+        return len(pairs)
+
     def link_pr(self, task_key: str, pr: PRRef, touched_node_ids: list[str]) -> None:
         """(:Task)-[:IMPLEMENTED_BY]->(:PR)-[:TOUCHES]->(:Symbol). Symbol скоупится по pr.repo.
 
@@ -65,11 +86,15 @@ class TaskGraph:
         (sentinel ``branch=''`` — тот же дефолт, что у ``find_symbol``/``base_ref('')``).
         Это корреляционный маркер «PR затронул node_id», сшиваемый с код-графом по
         строке node_id, а не привязка к конкретной ветке кода.
+
+        sha проставляется условно: пустой sha (линковка исторического PR из
+        sync-tasks) не затирает реальный sha, ранее проставленный publish_review.
         """
         self._driver.execute_query(
             "MERGE (t:Task {key: $key}) ON CREATE SET t.codes=[$key] "
             "MERGE (p:PR {id: $pid}) "
-            "  SET p.repo=$repo, p.number=$number, p.url=$url, p.sha=$sha "
+            "  SET p.repo=$repo, p.number=$number, p.url=$url, "
+            "      p.sha = CASE WHEN $sha <> '' THEN $sha ELSE coalesce(p.sha, '') END "
             "MERGE (t)-[:IMPLEMENTED_BY]->(p) "
             "WITH p "
             "UNWIND $touched AS nid "

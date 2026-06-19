@@ -30,6 +30,7 @@ def settings() -> Settings:
     s.review_max_files = 50
     s.voyage_api_key = "test"
     s.github_token = "test"
+    s.task_board_type = ""               # изолируем от локального .env (TASK_BOARD_TYPE)
     return s
 
 

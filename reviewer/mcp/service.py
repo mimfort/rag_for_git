@@ -28,7 +28,7 @@ from reviewer.services.review_service import (
 )
 from reviewer.tasks.graph import PRRef
 from reviewer.tools.code_tools import ToolContext, make_tools
-from reviewer.vcs.base import Finding, VCSProvider
+from reviewer.vcs.base import ChangedFile, Finding, VCSProvider
 from reviewer.vcs.diff import commentable_lines
 
 log = logging.getLogger(__name__)
@@ -432,6 +432,41 @@ class MCPReviewService:
             log.warning("definition: сбой", exc_info=True)
             return "(определение не найдено)"
 
+    def get_pr_diff(self, repo: str, number: int) -> str:
+        """Unified diff изменённых файлов PR (session-less) — ленивая подтяжка для /solve-task.
+
+        repo обязателен ("owner/name"): PR может быть в другом репозитории, граф
+        задач глобален. Дифф усечён до _PR_DIFF_MAX_CHARS. Любая ошибка → fail-soft нота.
+        """
+        from reviewer.services.repo_id import normalize_repo
+        raw = repo or self.settings.default_repo
+        if not raw:
+            return "(repo не задан: передайте repo или задайте DEFAULT_REPO)"
+        try:
+            repo = normalize_repo(raw)
+        except ValueError:
+            return f"(некорректный repo: {raw!r})"
+        owner, name = repo.split("/", 1)
+        # Создание провайдера ВНУТРИ try: сбой (плохой токен и т.п.) → fail-soft нота,
+        # а не проброс. vcs=None до создания, чтобы finally не упал NameError'ом.
+        vcs = None
+        try:
+            vcs = (self._vcs_factory(owner, name) if self._vcs_factory
+                   else self._review_service._create_vcs_provider(owner, name))
+            files = vcs.get_changed_files(number)
+        except Exception:
+            log.warning("get_pr_diff: сбой получения diff для %s#%s",
+                        repo, number, exc_info=True)
+            return "(diff PR недоступен)"
+        finally:
+            # Внутренне созданный провайдер закрываем сами (factory-владельца — нет).
+            if vcs is not None and self._vcs_factory is None:
+                try:
+                    vcs.close()
+                except Exception:
+                    log.warning("get_pr_diff: не удалось закрыть VCS", exc_info=True)
+        return _format_pr_diff(files) or "(PR без изменённых файлов)"
+
     def publish_review(
         self,
         repo: str,
@@ -702,3 +737,21 @@ class MCPReviewService:
     def _suggestions_mode(self) -> str:
         """Режим предложений (apply/text) — передаётся в assemble_review для сборки suggestion-блоков."""
         return self.settings.review_suggestions
+
+
+_PR_DIFF_MAX_CHARS = 20000
+
+
+def _format_pr_diff(files: list[ChangedFile]) -> str:
+    """Список ChangedFile → текстовый unified-diff с символьным капом."""
+    blocks: list[str] = []
+    for f in files:
+        head = f"--- {f.path} [{f.status}]"
+        if f.patch is None:
+            blocks.append(f"{head}\n(patch недоступен: файл слишком большой или бинарный)")
+        else:
+            blocks.append(f"{head}\n{f.patch}")
+    out = "\n\n".join(blocks)
+    if len(out) > _PR_DIFF_MAX_CHARS:
+        out = out[:_PR_DIFF_MAX_CHARS] + "\n… (truncated)"
+    return out
