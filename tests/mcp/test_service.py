@@ -5,6 +5,7 @@
 """
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -513,3 +514,76 @@ def test_search_codebase_rejects_untracked_branch() -> None:
     out = svc.search_codebase("a/b", "x", branch="release/v9")
     assert "REVIEW_BRANCHES" in out
     svc.components.retriever.search_base.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Тесты Task 2: session-less методы related_symbols/callers/definition
+# ---------------------------------------------------------------------------
+
+def test_related_symbols_delegates_to_graph() -> None:
+    """related_symbols зовёт graph.expand(repo, [node_id], hops=2, branch=primary)."""
+    svc = _make_mcp_service()
+    svc.components.graph.expand.return_value = {"a.py#bar", "a.py#baz"}
+    out = svc.related_symbols("a/b", "a.py#foo")
+    assert "a.py#bar" in out and "a.py#baz" in out
+    svc.components.graph.expand.assert_called_once_with(
+        "a/b", ["a.py#foo"], hops=2, branch=svc.settings.primary_branch())
+
+
+def test_related_symbols_empty_and_failsoft() -> None:
+    """Пусто → '(нет связей)'; исключение графа → тоже заглушка, не падаем."""
+    svc = _make_mcp_service()
+    svc.components.graph.expand.return_value = set()
+    assert svc.related_symbols("a/b", "a.py#foo") == "(нет связей)"
+    svc.components.graph.expand.side_effect = RuntimeError("neo4j down")
+    assert svc.related_symbols("a/b", "a.py#foo") == "(нет связей)"
+
+
+def test_related_symbols_graph_none() -> None:
+    """graph=None (Neo4j выключен) → '(граф недоступен)'."""
+    svc = _make_mcp_service()
+    svc.components.graph = None
+    assert svc.related_symbols("a/b", "a.py#foo") == "(граф недоступен)"
+
+
+def test_related_symbols_invalid_branch() -> None:
+    """Невалидная ветка → заметка из _resolve_repo_branch, граф не зовётся."""
+    svc = _make_mcp_service()
+    out = svc.related_symbols("a/b", "a.py#foo", branch="nope")
+    assert "REVIEW_BRANCHES" in out
+
+
+def test_callers_delegates_to_graph() -> None:
+    """callers зовёт graph.callers и форматирует множество."""
+    svc = _make_mcp_service()
+    svc.components.graph.callers.return_value = {"a.py#caller"}
+    out = svc.callers("a/b", "a.py#foo")
+    assert "a.py#caller" in out
+    svc.components.graph.callers.assert_called_once_with(
+        "a/b", ["a.py#foo"], branch=svc.settings.primary_branch())
+    svc.components.graph.callers.return_value = set()
+    assert svc.callers("a/b", "a.py#foo") == "(вызовов не найдено)"
+
+
+def test_definition_uses_graph_then_store() -> None:
+    """definition: find_symbol → fetch_nodes → отрендеренный исходник."""
+    svc = _make_mcp_service()
+    svc.components.graph.find_symbol.return_value = ["a.py#foo"]
+    node = SimpleNamespace(node_id="a.py#foo", path="a.py",
+                           start_line=10, end_line=12, text="def foo(): ...")
+    svc.components.store.fetch_nodes.return_value = [node]
+    out = svc.definition("a/b", "foo")
+    assert "a.py#foo" in out and "def foo()" in out and "a.py:10-12" in out
+    svc.components.graph.find_symbol.assert_called_once_with(
+        "a/b", "foo", branch=svc.settings.primary_branch())
+
+
+def test_definition_falls_back_to_search_base() -> None:
+    """Граф пуст → фолбэк на retriever.search_base."""
+    svc = _make_mcp_service()
+    svc.components.graph.find_symbol.return_value = []
+    svc.components.retriever.search_base.return_value.as_context.return_value = "semantic hit"
+    out = svc.definition("a/b", "foo")
+    assert "semantic hit" in out
+    svc.components.retriever.search_base.assert_called_once_with(
+        "a/b", "foo", top_k=3, branch=svc.settings.primary_branch())

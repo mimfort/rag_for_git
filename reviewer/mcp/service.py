@@ -12,6 +12,7 @@ from reviewer.agent.assemble import AssembledReview, assemble_review, ground_lin
 from reviewer.agent.dedup import dedup_findings
 from reviewer.app import Components
 from reviewer.config.settings import Settings
+from reviewer.index.refs import base_ref
 from reviewer.mcp.session_serde import from_payload, to_payload
 from reviewer.mcp.session_store import SessionStore
 from reviewer.services.review_service import (
@@ -361,6 +362,67 @@ class MCPReviewService:
             log.warning("search_codebase: сбой поиска", exc_info=True)
             return "(ничего не найдено)"
         return pack.as_context() or "(ничего не найдено)"
+
+    def related_symbols(self, repo: str, node_id: str,
+                        branch: str | None = None) -> str:
+        """Соседи символа по графу (calls/implements/tests) без PR-сессии."""
+        rb = self._resolve_repo_branch(repo, branch)
+        if isinstance(rb, str):
+            return rb
+        repo, resolved = rb
+        if self.components.graph is None:
+            return "(граф недоступен)"
+        try:
+            related = self.components.graph.expand(
+                repo, [node_id], hops=2, branch=resolved)
+        except Exception:
+            log.warning("related_symbols: сбой графа", exc_info=True)
+            return "(нет связей)"
+        return "\n".join(sorted(related)) or "(нет связей)"
+
+    def callers(self, repo: str, node_id: str,
+                branch: str | None = None) -> str:
+        """Кто вызывает символ node_id ('path#fqn') — входящие CALLS, без PR-сессии."""
+        rb = self._resolve_repo_branch(repo, branch)
+        if isinstance(rb, str):
+            return rb
+        repo, resolved = rb
+        if self.components.graph is None:
+            return "(граф недоступен)"
+        try:
+            found = self.components.graph.callers(
+                repo, [node_id], branch=resolved)
+        except Exception:
+            log.warning("callers: сбой графа", exc_info=True)
+            return "(вызовов не найдено)"
+        return "\n".join(sorted(found)) or "(вызовов не найдено)"
+
+    def definition(self, repo: str, symbol: str,
+                   branch: str | None = None) -> str:
+        """Где определён символ + исходник (граф → индекс → семантический фолбэк),
+        без PR-сессии."""
+        rb = self._resolve_repo_branch(repo, branch)
+        if isinstance(rb, str):
+            return rb
+        repo, resolved = rb
+        try:
+            ids: list[str] = []
+            if self.components.graph is not None:
+                ids = self.components.graph.find_symbol(
+                    repo, symbol, branch=resolved)
+            if ids:
+                nodes = self.components.store.fetch_nodes(
+                    repo, ids[:3], None, [], base_ref=base_ref(resolved))
+                if nodes:
+                    return "\n\n".join(
+                        f"// {n.node_id} ({n.path}:{n.start_line}-{n.end_line})\n{n.text}"
+                        for n in nodes)
+            pack = self.components.retriever.search_base(
+                repo, symbol, top_k=3, branch=resolved)
+            return pack.as_context() or "(определение не найдено)"
+        except Exception:
+            log.warning("definition: сбой", exc_info=True)
+            return "(определение не найдено)"
 
     def publish_review(
         self,
