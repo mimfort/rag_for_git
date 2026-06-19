@@ -124,7 +124,7 @@ class TaskService:
             except Exception as e:
                 log.warning("index_batch: existing_hash сбой для %s", p["key"], exc_info=True)
                 results[i] = {"key": p["key"], "embedded": False, "links_upserted": 0,
-                              "warnings": [f"store: {type(e).__name__}: {e}"]}
+                              "prs_linked": 0, "warnings": [f"store: {type(e).__name__}: {e}"]}
                 continue
             (meta_only if prev == p["chash"] else to_embed).append(i)
 
