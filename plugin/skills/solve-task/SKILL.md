@@ -39,6 +39,14 @@ brief to `superpowers:brainstorming` (which leads to writing-plans → subagent-
      is connected, you may read the most relevant similar tasks from the board for fuller detail.
    - `search_codebase("<task description>")` → relevant existing code (files/symbols to touch or
      mimic).
+   - **Deepen via the code graph (optional — when `search_codebase` surfaced concrete symbols).**
+     `search_codebase` chunks are headed by `path#fqn (path:start-end)`; feed those `node_id`s to the
+     session-less graph tools to sharpen the brief:
+     - `callers(repo, node_id, branch?)` → who depends on the code you would change (blast radius — what not to break);
+     - `related_symbols(repo, node_id, branch?)` → neighbors (calls / implementations / tests) to touch or mimic;
+     - `definition(repo, symbol, branch?)` → exact source of a symbol to follow as a pattern.
+     Expand only the few symbols central to the task. Pass the same `branch` you pass to `search_codebase`.
+     Fail-open: a `(граф недоступен)` / `(нет связей)` / `(вызовов не найдено)` note is non-fatal — continue.
 
    **Branch selection for `search_codebase`.** Before calling `search_codebase`, determine the
    current git branch of the project: `git branch --show-current`. If it is in `REVIEW_BRANCHES`
@@ -46,13 +54,14 @@ brief to `superpowers:brainstorming` (which leads to writing-plans → subagent-
    branch's index. If the user explicitly stated which branch to work from, use that branch instead.
    Otherwise, omit `branch` entirely and the server will use the primary branch (the first entry in
    `REVIEW_BRANCHES`).
+   The same branch applies to `callers` / `related_symbols` / `definition` — pass it (or omit it) identically.
 
 4. **Distill the solution brief.** Write a structured markdown brief. Apply a strict relevance
    filter: include an item ONLY if it directly informs the implementation; drop the rest and note how
    many were dropped. Sections:
    - **Task** — key/title/requirements/criteria (or the user's formulation in board-less mode).
    - **Related work** — only the relevant linked/similar tasks and their PRs (what to reuse / follow).
-   - **Relevant code** — files/symbols to touch or mimic, each with a one-line "why".
+   - **Relevant code** — files/symbols to touch or mimic, each with a one-line "why"; where the graph surfaced them, note key callers / impacted symbols (blast radius).
    - **Constraints / open questions** — limits, unknowns, and context gaps (e.g. "board unavailable",
      "task corpus empty").
 
