@@ -30,6 +30,8 @@ def _settings() -> Settings:
     s.voyage_api_key = "test"
     s.github_token = "test"
     s.review_session_persist = False     # unit-тесты не трогают Postgres-таблицу сессий
+    s.default_repo = ""                  # изолируем от локального .env (DEFAULT_REPO)
+    s.task_board_type = ""               # изолируем от локального .env (TASK_BOARD_TYPE)
     return s
 
 
@@ -471,13 +473,17 @@ def test_task_tool_delegates() -> None:
 
 
 def test_search_codebase_delegates_to_retriever() -> None:
-    """search_codebase зовёт retriever.search_base и форматирует ContextPack."""
+    """search_codebase зовёт retriever.search_base (include_tests=False)
+    и рендерит ContextPack с номерами строк."""
     svc = _make_mcp_service()
     svc.components.retriever.search_base.return_value.as_context.return_value = "auth.py#logout\nbody"
     out = svc.search_codebase("a/b", "logout", top_k=5)
     assert "auth.py#logout" in out
     svc.components.retriever.search_base.assert_called_once_with(
-        "a/b", "logout", top_k=5, branch=svc.settings.primary_branch())
+        "a/b", "logout", top_k=5, branch=svc.settings.primary_branch(),
+        include_tests=False)
+    svc.components.retriever.search_base.return_value.as_context.assert_called_once_with(
+        line_numbers=True)
 
 
 def test_search_codebase_empty_or_error_returns_note() -> None:
@@ -566,7 +572,7 @@ def test_callers_delegates_to_graph() -> None:
 
 
 def test_definition_uses_graph_then_store() -> None:
-    """definition: find_symbol → fetch_nodes → отрендеренный исходник."""
+    """definition: find_symbol → fetch_nodes → рендер через as_context (с номерами строк)."""
     svc = _make_mcp_service()
     svc.components.graph.find_symbol.return_value = ["a.py#foo"]
     node = SimpleNamespace(node_id="a.py#foo", path="a.py",
@@ -574,6 +580,7 @@ def test_definition_uses_graph_then_store() -> None:
     svc.components.store.fetch_nodes.return_value = [node]
     out = svc.definition("a/b", "foo")
     assert "a.py#foo" in out and "def foo()" in out and "a.py:10-12" in out
+    assert "   10 | def foo()" in out  # номера строк присутствуют
     svc.components.graph.find_symbol.assert_called_once_with(
         "a/b", "foo", branch=svc.settings.primary_branch())
     svc.components.store.fetch_nodes.assert_called_once_with(
@@ -581,11 +588,54 @@ def test_definition_uses_graph_then_store() -> None:
 
 
 def test_definition_falls_back_to_search_base() -> None:
-    """Граф пуст → фолбэк на retriever.search_base."""
+    """Граф пуст → фолбэк на retriever.search_base (include_tests=True)."""
     svc = _make_mcp_service()
     svc.components.graph.find_symbol.return_value = []
     svc.components.retriever.search_base.return_value.as_context.return_value = "semantic hit"
     out = svc.definition("a/b", "foo")
     assert "semantic hit" in out
     svc.components.retriever.search_base.assert_called_once_with(
-        "a/b", "foo", top_k=3, branch=svc.settings.primary_branch())
+        "a/b", "foo", top_k=3, branch=svc.settings.primary_branch(),
+        include_tests=True)
+
+
+# ---------------------------------------------------------------------------
+# Тесты Task 5: session-less get_pr_diff
+# ---------------------------------------------------------------------------
+
+def test_get_pr_diff_formats_changed_files():
+    vcs = MagicMock()
+    vcs.get_changed_files.return_value = [
+        _changed(path="a.py", status="modified", patch="@@ -1 +1 @@\n-x\n+y"),
+    ]
+    svc = MCPReviewService(_settings(), _components(), vcs_factory=lambda o, r: vcs)
+    out = svc.get_pr_diff("o/r", 7)
+    assert "a.py" in out and "+y" in out
+    vcs.get_changed_files.assert_called_once_with(7)
+    vcs.close.assert_not_called()  # factory-владелец не закрываем
+
+
+def test_get_pr_diff_failsoft_on_error():
+    vcs = MagicMock()
+    vcs.get_changed_files.side_effect = RuntimeError("boom")
+    svc = MCPReviewService(_settings(), _components(), vcs_factory=lambda o, r: vcs)
+    assert svc.get_pr_diff("o/r", 7) == "(diff PR недоступен)"
+
+
+def test_get_pr_diff_empty_repo_note():
+    svc = MCPReviewService(_settings(), _components(), vcs_factory=lambda o, r: MagicMock())
+    assert "repo не задан" in svc.get_pr_diff("", 7)
+
+
+def test_get_pr_diff_failsoft_on_provider_error():
+    def boom_factory(o, r):
+        raise RuntimeError("no token")
+    svc = MCPReviewService(_settings(), _components(), vcs_factory=boom_factory)
+    assert svc.get_pr_diff("o/r", 7) == "(diff PR недоступен)"
+
+
+def test_get_pr_diff_empty_files_note():
+    vcs = MagicMock()
+    vcs.get_changed_files.return_value = []
+    svc = MCPReviewService(_settings(), _components(), vcs_factory=lambda o, r: vcs)
+    assert svc.get_pr_diff("o/r", 7) == "(PR без изменённых файлов)"

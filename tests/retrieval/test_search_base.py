@@ -2,12 +2,12 @@ from reviewer.retrieval.retriever import ContextPack, Retriever
 
 
 class _Hit:
-    def __init__(self, node_id, score=1.0):
+    def __init__(self, node_id, score=1.0, start_line=1, end_line=2):
         self.node_id = node_id
         self.path, self.symbol_fqn = node_id.split("#", 1)
         self.kind = "function"
-        self.start_line = 1
-        self.end_line = 2
+        self.start_line = start_line
+        self.end_line = end_line
         self.text = "body"
         self.score = score
 
@@ -110,3 +110,25 @@ def test_search_base_reranks_when_many_hits_and_graph_adds_nothing():
 def test_search_base_empty_returns_empty_pack():
     r = Retriever(_FakeStore([]), graph=None, embedder=_FakeEmbedder(), reranker=None)
     assert r.search_base("a/x", "nothing").as_context() == ""
+
+
+def test_search_base_dedupes_nested_chunks():
+    hits = [_Hit("a.py#Foo", start_line=1, end_line=50),
+            _Hit("a.py#Foo.bar", start_line=10, end_line=20)]
+    r = Retriever(_FakeStore(hits), graph=None, embedder=_FakeEmbedder(), reranker=None)
+    pack = r.search_base("a/x", "q", top_k=5)
+    assert [it.node_id for it in pack.items] == ["a.py#Foo"]
+
+
+def test_search_base_filters_tests_by_default():
+    hits = [_Hit("a.py#f"), _Hit("tests/test_a.py#t")]
+    r = Retriever(_FakeStore(hits), graph=None, embedder=_FakeEmbedder(), reranker=None)
+    pack = r.search_base("a/x", "q", top_k=5)
+    assert [it.node_id for it in pack.items] == ["a.py#f"]
+
+
+def test_search_base_include_tests_keeps_tests():
+    hits = [_Hit("a.py#f"), _Hit("tests/test_a.py#t")]
+    r = Retriever(_FakeStore(hits), graph=None, embedder=_FakeEmbedder(), reranker=None)
+    pack = r.search_base("a/x", "q", top_k=5, include_tests=True)
+    assert {it.node_id for it in pack.items} == {"a.py#f", "tests/test_a.py#t"}

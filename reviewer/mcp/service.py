@@ -8,13 +8,19 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
-from reviewer.agent.assemble import AssembledReview, assemble_review, ground_line, snap_to_commentable
+from reviewer.agent.assemble import (
+    AssembledReview,
+    assemble_review,
+    ground_line,
+    snap_to_commentable,
+)
 from reviewer.agent.dedup import dedup_findings
 from reviewer.app import Components
 from reviewer.config.settings import Settings
 from reviewer.index.refs import base_ref
 from reviewer.mcp.session_serde import from_payload, to_payload
 from reviewer.mcp.session_store import SessionStore
+from reviewer.retrieval.retriever import ContextPack
 from reviewer.services.review_service import (
     BranchNotTrackedError,
     PreparedReview,
@@ -22,7 +28,7 @@ from reviewer.services.review_service import (
 )
 from reviewer.tasks.graph import PRRef
 from reviewer.tools.code_tools import ToolContext, make_tools
-from reviewer.vcs.base import Finding, VCSProvider
+from reviewer.vcs.base import ChangedFile, Finding, VCSProvider
 from reviewer.vcs.diff import commentable_lines
 
 log = logging.getLogger(__name__)
@@ -345,11 +351,15 @@ class MCPReviewService:
         return (repo, branch or self.settings.primary_branch())
 
     def search_codebase(self, repo: str, query: str, top_k: int = 10,
-                        branch: str | None = None) -> str:
+                        branch: str | None = None,
+                        include_tests: bool = False) -> str:
         """Гибрид-поиск по base-индексу репозитория (без PR-сессии) — для /solve-task.
 
         branch — отслеживаемая ветка (allowlist REVIEW_BRANCHES); по умолчанию
         первичная. Поиск идёт по индексу указанной ветки (base:<branch>).
+        Выдача: без вложенных дублей и (по умолчанию) без тест-чанков, с
+        построчными номерами для цитирования path:line без повторного Read.
+        include_tests=True возвращает тест-чанки.
         """
         rb = self._resolve_repo_branch(repo, branch)
         if isinstance(rb, str):
@@ -357,11 +367,11 @@ class MCPReviewService:
         repo, resolved = rb
         try:
             pack = self.components.retriever.search_base(
-                repo, query, top_k=top_k, branch=resolved)
+                repo, query, top_k=top_k, branch=resolved, include_tests=include_tests)
         except Exception:
             log.warning("search_codebase: сбой поиска", exc_info=True)
             return "(ничего не найдено)"
-        return pack.as_context() or "(ничего не найдено)"
+        return pack.as_context(line_numbers=True) or "(ничего не найдено)"
 
     def related_symbols(self, repo: str, node_id: str,
                         branch: str | None = None) -> str:
@@ -400,7 +410,7 @@ class MCPReviewService:
     def definition(self, repo: str, symbol: str,
                    branch: str | None = None) -> str:
         """Где определён символ + исходник (граф → индекс → семантический фолбэк),
-        без PR-сессии."""
+        без PR-сессии. Тесты не отфильтровываются — символ может быть тестом."""
         rb = self._resolve_repo_branch(repo, branch)
         if isinstance(rb, str):
             return rb
@@ -414,15 +424,48 @@ class MCPReviewService:
                 nodes = self.components.store.fetch_nodes(
                     repo, ids[:3], None, [], base_ref=base_ref(resolved))
                 if nodes:
-                    return "\n\n".join(
-                        f"// {n.node_id} ({n.path}:{n.start_line}-{n.end_line})\n{n.text}"
-                        for n in nodes)
+                    return ContextPack(items=nodes).as_context(line_numbers=True)
             pack = self.components.retriever.search_base(
-                repo, symbol, top_k=3, branch=resolved)
-            return pack.as_context() or "(определение не найдено)"
+                repo, symbol, top_k=3, branch=resolved, include_tests=True)
+            return pack.as_context(line_numbers=True) or "(определение не найдено)"
         except Exception:
             log.warning("definition: сбой", exc_info=True)
             return "(определение не найдено)"
+
+    def get_pr_diff(self, repo: str, number: int) -> str:
+        """Unified diff изменённых файлов PR (session-less) — ленивая подтяжка для /solve-task.
+
+        repo обязателен ("owner/name"): PR может быть в другом репозитории, граф
+        задач глобален. Дифф усечён до _PR_DIFF_MAX_CHARS. Любая ошибка → fail-soft нота.
+        """
+        from reviewer.services.repo_id import normalize_repo
+        raw = repo or self.settings.default_repo
+        if not raw:
+            return "(repo не задан: передайте repo или задайте DEFAULT_REPO)"
+        try:
+            repo = normalize_repo(raw)
+        except ValueError:
+            return f"(некорректный repo: {raw!r})"
+        owner, name = repo.split("/", 1)
+        # Создание провайдера ВНУТРИ try: сбой (плохой токен и т.п.) → fail-soft нота,
+        # а не проброс. vcs=None до создания, чтобы finally не упал NameError'ом.
+        vcs = None
+        try:
+            vcs = (self._vcs_factory(owner, name) if self._vcs_factory
+                   else self._review_service._create_vcs_provider(owner, name))
+            files = vcs.get_changed_files(number)
+        except Exception:
+            log.warning("get_pr_diff: сбой получения diff для %s#%s",
+                        repo, number, exc_info=True)
+            return "(diff PR недоступен)"
+        finally:
+            # Внутренне созданный провайдер закрываем сами (factory-владельца — нет).
+            if vcs is not None and self._vcs_factory is None:
+                try:
+                    vcs.close()
+                except Exception:
+                    log.warning("get_pr_diff: не удалось закрыть VCS", exc_info=True)
+        return _format_pr_diff(files) or "(PR без изменённых файлов)"
 
     def publish_review(
         self,
@@ -694,3 +737,21 @@ class MCPReviewService:
     def _suggestions_mode(self) -> str:
         """Режим предложений (apply/text) — передаётся в assemble_review для сборки suggestion-блоков."""
         return self.settings.review_suggestions
+
+
+_PR_DIFF_MAX_CHARS = 20000
+
+
+def _format_pr_diff(files: list[ChangedFile]) -> str:
+    """Список ChangedFile → текстовый unified-diff с символьным капом."""
+    blocks: list[str] = []
+    for f in files:
+        head = f"--- {f.path} [{f.status}]"
+        if f.patch is None:
+            blocks.append(f"{head}\n(patch недоступен: файл слишком большой или бинарный)")
+        else:
+            blocks.append(f"{head}\n{f.patch}")
+    out = "\n\n".join(blocks)
+    if len(out) > _PR_DIFF_MAX_CHARS:
+        out = out[:_PR_DIFF_MAX_CHARS] + "\n… (truncated)"
+    return out

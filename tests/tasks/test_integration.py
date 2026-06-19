@@ -76,6 +76,21 @@ def graph():
     g.close()
 
 
+def test_link_pr_empty_sha_preserves_existing(graph):
+    """Линковка того же PR с пустым sha не затирает реальный sha."""
+    pr_real = PRRef(repo="o/r", number=20,
+                    url="https://github.com/o/r/pull/20", sha="realsha")
+    graph.link_pr("ID-A", pr_real, ["a.py#foo"])
+
+    pr_empty = PRRef(repo="o/r", number=20,
+                     url="https://github.com/o/r/pull/20", sha="")
+    graph.link_pr("ID-B", pr_empty, [])  # другая задача, тот же PR, пустой sha
+
+    ctx = graph.task_context("ID-A")
+    assert ctx["prs"][0]["id"] == "o/r#20"
+    assert ctx["prs"][0]["sha"] == "realsha"  # sha сохранён
+
+
 def test_taskgraph_link_and_context(graph):
     graph.upsert_task("ID-1", ["PRI-1"], "Parent", "Open", "u1")
     graph.upsert_links("ID-1", [{"key": "ID-2", "title": "Child", "type": "subtask"}])
