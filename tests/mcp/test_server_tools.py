@@ -77,7 +77,7 @@ def test_search_codebase_tool_forwards_repo():
         "search_codebase",
         {"repo": "owner/name", "query": "token verification", "top_k": 5},
     ))
-    svc.search_codebase.assert_called_once_with("owner/name", "token verification", 5, None)
+    svc.search_codebase.assert_called_once_with("owner/name", "token verification", 5, None, False)
 
 
 def test_purge_orphaned_tasks_tool_registered():

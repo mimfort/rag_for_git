@@ -7,16 +7,62 @@ from reviewer.index.refs import base_ref
 log = logging.getLogger(__name__)
 
 
+def _is_test_path(path: str) -> bool:
+    """Путь относится к тестам: содержит сегмент ``tests`` или basename
+    соответствует ``test_*.py`` / ``*_test.py``.
+    """
+    p = path.replace("\\", "/")
+    parts = p.split("/")
+    if "tests" in parts:
+        return True
+    base = parts[-1]
+    return base.startswith("test_") or base.endswith("_test.py")
+
+
+def _dedupe_overlapping(items: list) -> list:
+    """Убрать вложенные дубли чанков.
+
+    Чанк отбрасывается, если его диапазон ``[start_line, end_line]`` полностью
+    вложен в диапазон другого удержанного чанка того же ``path`` (правило
+    «оставить самый широкий»: класс уже включает текст своих методов). Чанки с
+    одинаковым диапазоном и частично пересекающиеся сохраняются. Порядок
+    выживших стабилен относительно входа.
+    """
+    def _nested_in(inner, outer) -> bool:
+        return (
+            outer.path == inner.path
+            and outer.start_line <= inner.start_line
+            and inner.end_line <= outer.end_line
+            and (outer.start_line, outer.end_line) != (inner.start_line, inner.end_line)
+        )
+
+    kept: list = []
+    for it in items:
+        if any(_nested_in(it, k) for k in kept):
+            continue
+        kept = [k for k in kept if not _nested_in(k, it)]
+        kept.append(it)
+    return kept
+
+
 @dataclass
 class ContextPack:
     items: list
     max_chars: int = 0
     max_tokens: int = 0
 
-    def as_context(self) -> str:
+    def as_context(self, line_numbers: bool = False) -> str:
         parts = []
         for it in self.items:
-            parts.append(f"// {it.node_id} ({it.path}:{it.start_line}-{it.end_line})\n{it.text}")
+            header = f"// {it.node_id} ({it.path}:{it.start_line}-{it.end_line})"
+            if line_numbers:
+                body = "\n".join(
+                    f"{it.start_line + i:>5} | {line}"
+                    for i, line in enumerate(it.text.split("\n"))
+                )
+            else:
+                body = it.text
+            parts.append(f"{header}\n{body}")
         text = "\n\n".join(parts)
         limit = 0
         if self.max_chars > 0:
@@ -57,7 +103,8 @@ class Retriever:
         ranked = self.reranker.rerank(query, list(merged.values()), top_k=top_k)
         return ContextPack(items=ranked, max_chars=self.max_context_chars)
 
-    def search_base(self, repo, query, top_k=10, candidates=50, *, branch="") -> ContextPack:
+    def search_base(self, repo, query, top_k=10, candidates=50, *, branch="",
+                    include_tests=False) -> ContextPack:
         """Гибрид-поиск по base-индексу ветки без PR-сессии — для /solve-task.
 
         Зеркало :meth:`retrieve`, но base-only и сидинг графа от хитов:
@@ -88,6 +135,9 @@ class Retriever:
             except Exception:
                 log.warning("search_base: graph-expansion недоступен", exc_info=True)
         items = list(merged.values())
+        if not include_tests:
+            items = [it for it in items if not _is_test_path(it.path)]
+        items = _dedupe_overlapping(items)
         if self.reranker is None or len(items) <= 3 or (len(items) <= top_k and not graph_new):
             return ContextPack(items=items[:top_k], max_chars=self.max_context_chars)
         try:
