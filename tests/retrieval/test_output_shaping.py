@@ -1,6 +1,8 @@
 from types import SimpleNamespace
 
-from reviewer.retrieval.retriever import _dedupe_overlapping
+import pytest
+
+from reviewer.retrieval.retriever import _dedupe_overlapping, _is_test_path
 
 
 def _it(path, start, end, node_id=None):
@@ -38,3 +40,22 @@ def test_dedupe_preserves_order_of_survivors():
     b = _it("b.py", 1, 5)
     c = _it("c.py", 1, 5)
     assert _dedupe_overlapping([a, b, c]) == [a, b, c]
+
+
+@pytest.mark.parametrize("path", [
+    "tests/retrieval/test_x.py",
+    "reviewer/index/test_store.py",
+    "pkg/foo_test.py",
+    "tests/conftest.py",
+])
+def test_is_test_path_true(path):
+    assert _is_test_path(path) is True
+
+
+@pytest.mark.parametrize("path", [
+    "reviewer/retrieval/retriever.py",
+    "reviewer/index/store.py",
+    "contests/runner.py",   # 'contests' не равно сегменту 'tests'
+])
+def test_is_test_path_false(path):
+    assert _is_test_path(path) is False

@@ -7,6 +7,18 @@ from reviewer.index.refs import base_ref
 log = logging.getLogger(__name__)
 
 
+def _is_test_path(path: str) -> bool:
+    """Путь относится к тестам: содержит сегмент ``tests`` или basename
+    соответствует ``test_*.py`` / ``*_test.py``.
+    """
+    p = path.replace("\\", "/")
+    parts = p.split("/")
+    if "tests" in parts:
+        return True
+    base = parts[-1]
+    return base.startswith("test_") or base.endswith("_test.py")
+
+
 def _dedupe_overlapping(items: list) -> list:
     """Убрать вложенные дубли чанков.
 
