@@ -570,7 +570,7 @@ def test_callers_delegates_to_graph() -> None:
 
 
 def test_definition_uses_graph_then_store() -> None:
-    """definition: find_symbol → fetch_nodes → отрендеренный исходник."""
+    """definition: find_symbol → fetch_nodes → рендер через as_context (с номерами строк)."""
     svc = _make_mcp_service()
     svc.components.graph.find_symbol.return_value = ["a.py#foo"]
     node = SimpleNamespace(node_id="a.py#foo", path="a.py",
@@ -578,6 +578,7 @@ def test_definition_uses_graph_then_store() -> None:
     svc.components.store.fetch_nodes.return_value = [node]
     out = svc.definition("a/b", "foo")
     assert "a.py#foo" in out and "def foo()" in out and "a.py:10-12" in out
+    assert "   10 | def foo()" in out  # номера строк присутствуют
     svc.components.graph.find_symbol.assert_called_once_with(
         "a/b", "foo", branch=svc.settings.primary_branch())
     svc.components.store.fetch_nodes.assert_called_once_with(
@@ -585,11 +586,12 @@ def test_definition_uses_graph_then_store() -> None:
 
 
 def test_definition_falls_back_to_search_base() -> None:
-    """Граф пуст → фолбэк на retriever.search_base."""
+    """Граф пуст → фолбэк на retriever.search_base (include_tests=True)."""
     svc = _make_mcp_service()
     svc.components.graph.find_symbol.return_value = []
     svc.components.retriever.search_base.return_value.as_context.return_value = "semantic hit"
     out = svc.definition("a/b", "foo")
     assert "semantic hit" in out
     svc.components.retriever.search_base.assert_called_once_with(
-        "a/b", "foo", top_k=3, branch=svc.settings.primary_branch())
+        "a/b", "foo", top_k=3, branch=svc.settings.primary_branch(),
+        include_tests=True)

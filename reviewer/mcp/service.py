@@ -14,6 +14,7 @@ from reviewer.app import Components
 from reviewer.config.settings import Settings
 from reviewer.index.refs import base_ref
 from reviewer.mcp.session_serde import from_payload, to_payload
+from reviewer.retrieval.retriever import ContextPack
 from reviewer.mcp.session_store import SessionStore
 from reviewer.services.review_service import (
     BranchNotTrackedError,
@@ -404,7 +405,7 @@ class MCPReviewService:
     def definition(self, repo: str, symbol: str,
                    branch: str | None = None) -> str:
         """Где определён символ + исходник (граф → индекс → семантический фолбэк),
-        без PR-сессии."""
+        без PR-сессии. Тесты не отфильтровываются — символ может быть тестом."""
         rb = self._resolve_repo_branch(repo, branch)
         if isinstance(rb, str):
             return rb
@@ -418,12 +419,10 @@ class MCPReviewService:
                 nodes = self.components.store.fetch_nodes(
                     repo, ids[:3], None, [], base_ref=base_ref(resolved))
                 if nodes:
-                    return "\n\n".join(
-                        f"// {n.node_id} ({n.path}:{n.start_line}-{n.end_line})\n{n.text}"
-                        for n in nodes)
+                    return ContextPack(items=nodes).as_context(line_numbers=True)
             pack = self.components.retriever.search_base(
-                repo, symbol, top_k=3, branch=resolved)
-            return pack.as_context() or "(определение не найдено)"
+                repo, symbol, top_k=3, branch=resolved, include_tests=True)
+            return pack.as_context(line_numbers=True) or "(определение не найдено)"
         except Exception:
             log.warning("definition: сбой", exc_info=True)
             return "(определение не найдено)"
