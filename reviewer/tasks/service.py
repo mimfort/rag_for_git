@@ -95,7 +95,7 @@ class TaskService:
             key = task.get("key") if isinstance(task, dict) else None
             if not key:
                 results[i] = {"key": None, "embedded": False, "links_upserted": 0,
-                              "warnings": ["task has no key"]}
+                              "prs_linked": 0, "warnings": ["task has no key"]}
                 parsed.append(None)
                 continue
             aliases = [a for a in (task.get("aliases") or []) if a and a != key]
@@ -172,11 +172,12 @@ class TaskService:
             results[i] = {"key": p["key"], "embedded": False,
                           "links_upserted": 0, "warnings": warnings}
 
-        # Шаг 6: граф для всех валидных задач
+        # Шаг 6: граф для всех валидных задач (+ PR-линковка для embedded)
         for i, p in enumerate(parsed):
             if p is None or results[i] is None:
                 continue
             links_upserted = 0
+            prs_linked = 0
             if self._graph is None:
                 results[i]["warnings"].append(
                     "graph unavailable: task not added to task graph")
@@ -189,7 +190,14 @@ class TaskService:
                 except Exception as e:
                     log.warning("index_batch: сбой графа для %s", p["key"], exc_info=True)
                     results[i]["warnings"].append(f"graph: {type(e).__name__}: {e}")
+                # PR-линковка (IMPLEMENTED_BY) — только для изменившихся задач.
+                if results[i]["embedded"]:
+                    refs = extract_pr_refs(p["description"])
+                    for pr in refs:
+                        self.link_review(p["key"], pr, [])
+                    prs_linked = len(refs)
             results[i]["links_upserted"] = links_upserted
+            results[i]["prs_linked"] = prs_linked
 
         return results
 

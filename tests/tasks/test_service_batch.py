@@ -23,6 +23,7 @@ class _FakeGraph:
     def __init__(self, raise_on=()):
         self.tasks = []
         self.links = []
+        self.pr_links = []
         self._raise_on = set(raise_on)
 
     def upsert_task(self, key, aliases, title, status, url):
@@ -33,6 +34,9 @@ class _FakeGraph:
     def upsert_links(self, key, links):
         self.links.append((key, links))
         return len(links)
+
+    def link_pr(self, task_key, pr, touched):
+        self.pr_links.append((task_key, pr, touched))
 
 
 class _FakeEmbedder:
@@ -177,3 +181,19 @@ def test_index_batch_result_order_matches_input():
     results = TaskService(store, _FakeGraph(), emb).index_batch(tasks)
 
     assert [r["key"] for r in results] == keys
+
+
+def test_index_batch_links_prs_for_embedded_only():
+    """embedded=True → PR из description линкуются; embedded=False (без изменений) → нет."""
+    unchanged = build_task_text("T2", "https://github.com/o/r/pull/9", [])
+    store = _FakeStore(hashes={"ID-2": task_content_hash(unchanged)})
+    graph, emb = _FakeGraph(), _FakeEmbedder()
+    tasks = [
+        {"key": "ID-1", "title": "T1", "description": "https://github.com/o/r/pull/7"},
+        {"key": "ID-2", "title": "T2", "description": "https://github.com/o/r/pull/9"},
+    ]
+    results = TaskService(store, graph, emb).index_batch(tasks)
+
+    assert results[0]["embedded"] is True and results[0]["prs_linked"] == 1
+    assert results[1]["embedded"] is False and results[1]["prs_linked"] == 0
+    assert [tk for tk, _, _ in graph.pr_links] == ["ID-1"]
