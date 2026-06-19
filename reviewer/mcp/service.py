@@ -345,11 +345,15 @@ class MCPReviewService:
         return (repo, branch or self.settings.primary_branch())
 
     def search_codebase(self, repo: str, query: str, top_k: int = 10,
-                        branch: str | None = None) -> str:
+                        branch: str | None = None,
+                        include_tests: bool = False) -> str:
         """Гибрид-поиск по base-индексу репозитория (без PR-сессии) — для /solve-task.
 
         branch — отслеживаемая ветка (allowlist REVIEW_BRANCHES); по умолчанию
         первичная. Поиск идёт по индексу указанной ветки (base:<branch>).
+        Выдача: без вложенных дублей и (по умолчанию) без тест-чанков, с
+        построчными номерами для цитирования path:line без повторного Read.
+        include_tests=True возвращает тест-чанки.
         """
         rb = self._resolve_repo_branch(repo, branch)
         if isinstance(rb, str):
@@ -357,11 +361,11 @@ class MCPReviewService:
         repo, resolved = rb
         try:
             pack = self.components.retriever.search_base(
-                repo, query, top_k=top_k, branch=resolved)
+                repo, query, top_k=top_k, branch=resolved, include_tests=include_tests)
         except Exception:
             log.warning("search_codebase: сбой поиска", exc_info=True)
             return "(ничего не найдено)"
-        return pack.as_context() or "(ничего не найдено)"
+        return pack.as_context(line_numbers=True) or "(ничего не найдено)"
 
     def related_symbols(self, repo: str, node_id: str,
                         branch: str | None = None) -> str:

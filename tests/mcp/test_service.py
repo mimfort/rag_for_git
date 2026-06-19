@@ -471,13 +471,17 @@ def test_task_tool_delegates() -> None:
 
 
 def test_search_codebase_delegates_to_retriever() -> None:
-    """search_codebase зовёт retriever.search_base и форматирует ContextPack."""
+    """search_codebase зовёт retriever.search_base (include_tests=False)
+    и рендерит ContextPack с номерами строк."""
     svc = _make_mcp_service()
     svc.components.retriever.search_base.return_value.as_context.return_value = "auth.py#logout\nbody"
     out = svc.search_codebase("a/b", "logout", top_k=5)
     assert "auth.py#logout" in out
     svc.components.retriever.search_base.assert_called_once_with(
-        "a/b", "logout", top_k=5, branch=svc.settings.primary_branch())
+        "a/b", "logout", top_k=5, branch=svc.settings.primary_branch(),
+        include_tests=False)
+    svc.components.retriever.search_base.return_value.as_context.assert_called_once_with(
+        line_numbers=True)
 
 
 def test_search_codebase_empty_or_error_returns_note() -> None:
