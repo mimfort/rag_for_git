@@ -7,6 +7,32 @@ from reviewer.index.refs import base_ref
 log = logging.getLogger(__name__)
 
 
+def _dedupe_overlapping(items: list) -> list:
+    """Убрать вложенные дубли чанков.
+
+    Чанк отбрасывается, если его диапазон ``[start_line, end_line]`` полностью
+    вложен в диапазон другого удержанного чанка того же ``path`` (правило
+    «оставить самый широкий»: класс уже включает текст своих методов). Чанки с
+    одинаковым диапазоном и частично пересекающиеся сохраняются. Порядок
+    выживших стабилен относительно входа.
+    """
+    def _nested_in(inner, outer) -> bool:
+        return (
+            outer.path == inner.path
+            and outer.start_line <= inner.start_line
+            and inner.end_line <= outer.end_line
+            and (outer.start_line, outer.end_line) != (inner.start_line, inner.end_line)
+        )
+
+    kept: list = []
+    for it in items:
+        if any(_nested_in(it, k) for k in kept):
+            continue
+        kept = [k for k in kept if not _nested_in(k, it)]
+        kept.append(it)
+    return kept
+
+
 @dataclass
 class ContextPack:
     items: list
