@@ -30,6 +30,7 @@ def _settings() -> Settings:
     s.voyage_api_key = "test"
     s.github_token = "test"
     s.review_session_persist = False     # unit-тесты не трогают Postgres-таблицу сессий
+    s.default_repo = ""                  # изолируем от локального .env (DEFAULT_REPO)
     return s
 
 
@@ -595,3 +596,31 @@ def test_definition_falls_back_to_search_base() -> None:
     svc.components.retriever.search_base.assert_called_once_with(
         "a/b", "foo", top_k=3, branch=svc.settings.primary_branch(),
         include_tests=True)
+
+
+# ---------------------------------------------------------------------------
+# Тесты Task 5: session-less get_pr_diff
+# ---------------------------------------------------------------------------
+
+def test_get_pr_diff_formats_changed_files():
+    vcs = MagicMock()
+    vcs.get_changed_files.return_value = [
+        _changed(path="a.py", status="modified", patch="@@ -1 +1 @@\n-x\n+y"),
+    ]
+    svc = MCPReviewService(_settings(), _components(), vcs_factory=lambda o, r: vcs)
+    out = svc.get_pr_diff("o/r", 7)
+    assert "a.py" in out and "+y" in out
+    vcs.get_changed_files.assert_called_once_with(7)
+    vcs.close.assert_not_called()  # factory-владелец не закрываем
+
+
+def test_get_pr_diff_failsoft_on_error():
+    vcs = MagicMock()
+    vcs.get_changed_files.side_effect = RuntimeError("boom")
+    svc = MCPReviewService(_settings(), _components(), vcs_factory=lambda o, r: vcs)
+    assert svc.get_pr_diff("o/r", 7) == "(diff PR недоступен)"
+
+
+def test_get_pr_diff_empty_repo_note():
+    svc = MCPReviewService(_settings(), _components(), vcs_factory=lambda o, r: MagicMock())
+    assert "repo не задан" in svc.get_pr_diff("", 7)
