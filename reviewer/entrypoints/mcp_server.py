@@ -15,7 +15,7 @@ log = logging.getLogger(__name__)
 
 
 def create_server(service: MCPReviewService) -> FastMCP:
-    """Создать и вернуть сконфигурированный FastMCP-сервер с 18 тулами.
+    """Создать и вернуть сконфигурированный FastMCP-сервер с 19 тулами.
 
     Все тулы — обычные def (sync), а не async: сервис не потокобезопасен
     и рассчитан на последовательное исполнение sync-тулов FastMCP в event loop.
@@ -136,6 +136,13 @@ def create_server(service: MCPReviewService) -> FastMCP:
         """Find a symbol definition over the base index (graph -> index -> semantic
         fallback), no PR session. branch defaults to the primary tracked branch."""
         return service.definition(repo, symbol, branch)
+
+    @mcp.tool()
+    def get_pr_diff(repo: str, number: int) -> str:
+        """Unified diff of a (possibly historical) GitHub PR's changed files, no PR session.
+        repo is "owner/name", number is the PR number. Use it (e.g. from /solve-task) to
+        lazily inspect what a related task's PR changed. Capped; fail-soft."""
+        return service.get_pr_diff(repo, number)
 
     @mcp.tool()
     def publish_review(
