@@ -45,7 +45,10 @@ brief to `superpowers:brainstorming` (which leads to writing-plans → subagent-
      - `callers(repo, node_id, branch?)` → who depends on the code you would change (blast radius — what not to break);
      - `related_symbols(repo, node_id, branch?)` → neighbors (calls / implementations / tests) to touch or mimic;
      - `definition(repo, symbol, branch?)` → exact source of a symbol to follow as a pattern.
-     Expand only the few symbols central to the task. Pass the same `branch` you pass to `search_codebase`.
+     `search_codebase` now returns deduplicated, line-numbered, test-free snippets — keep using the
+     graph tools for blast radius, but expand only the few symbols central to the task, and cite
+     `path:line` from the line-numbered snippets directly (no re-Read needed for grounding).
+     Pass the same `branch` you pass to `search_codebase`.
      Fail-open: a `(граф недоступен)` / `(нет связей)` / `(вызовов не найдено)` note is non-fatal — continue.
 
    **Branch selection for `search_codebase`.** Before calling `search_codebase`, determine the

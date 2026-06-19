@@ -41,12 +41,18 @@ Plus the harness file tools (`Read`, `Grep`, `Glob`) to read source from the loc
    `path#fqn (path:start-end)` headers to get candidate symbols (`node_id`) and line ranges.
    If the result is `(ничего не найдено)`, go to Fallback.
 
-3. **Expand (only as needed).** For the symbols most relevant to the question, call
+3. **Expand (only as needed).** For an architectural / "how does X work" question, DEFAULT to
+   skipping the graph tools (`related_symbols` / `callers` / `definition`) — the hybrid search
+   usually suffices; CLAUDE.md / README are cheap priors to consult first. Only when the answer
+   genuinely needs call relationships, for the symbols most relevant to the question, call
    `related_symbols` / `callers` / `definition` to follow the graph. Do NOT expand everything —
    only what the answer requires. Stop once you can answer.
 
-4. **Confirm source.** Before citing any `path:line`, open it with `Read` (from disk) and verify
-   the cited code actually exists and says what you claim. Drop any citation you cannot confirm.
+4. **Confirm source.** `search_codebase` snippets are line-numbered, so when the returned snippet
+   already shows the exact code you cite, you may cite `path:line` directly from the tool output —
+   a separate `Read` is not required for grounding. Use `Read` only when the snippet was truncated
+   (`[...truncated]`) or you need surrounding context. Never cite a `path:line` not present in any
+   tool output.
 
 5. **Answer (adaptive), in Russian.**
    - Default (focused question): a direct answer in 2–4 sentences, then an **Evidence** list —
@@ -59,6 +65,9 @@ Plus the harness file tools (`Read`, `Grep`, `Glob`) to read source from the loc
 Cite ONLY paths that were returned by a tool AND confirmed by `Read`. Never invent or guess a
 path or line number. If you cannot ground a statement, say so explicitly instead of fabricating a
 citation. This is the skill's acceptance criterion.
+
+A line-numbered `search_codebase` snippet that contains the cited code counts as grounding — an
+extra `Read` of the same lines is redundant.
 
 ## Fallback (fail-open)
 
