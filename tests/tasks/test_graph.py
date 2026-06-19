@@ -63,6 +63,16 @@ def test_link_pr_params():
     assert params["touched"] == ["a.py#foo", "b.py#bar"]
 
 
+def test_link_pr_sha_set_is_conditional():
+    """sha проставляется условно: пустой sha не должен затирать существующий."""
+    d = _FakeDriver()
+    pr = PRRef(repo="o/r", number=7, url="https://github.com/o/r/pull/7", sha="")
+    TaskGraph(d).link_pr("ID-1", pr, [])
+    query, params = d.calls[0]
+    assert "CASE WHEN $sha" in query
+    assert params["sha"] == ""
+
+
 def test_task_context_parses_record():
     rec = {
         "key": "ID-1", "title": "T", "status": "Open", "url": "u",

@@ -65,11 +65,15 @@ class TaskGraph:
         (sentinel ``branch=''`` — тот же дефолт, что у ``find_symbol``/``base_ref('')``).
         Это корреляционный маркер «PR затронул node_id», сшиваемый с код-графом по
         строке node_id, а не привязка к конкретной ветке кода.
+
+        sha проставляется условно: пустой sha (линковка исторического PR из
+        sync-tasks) не затирает реальный sha, ранее проставленный publish_review.
         """
         self._driver.execute_query(
             "MERGE (t:Task {key: $key}) ON CREATE SET t.codes=[$key] "
             "MERGE (p:PR {id: $pid}) "
-            "  SET p.repo=$repo, p.number=$number, p.url=$url, p.sha=$sha "
+            "  SET p.repo=$repo, p.number=$number, p.url=$url, "
+            "      p.sha = CASE WHEN $sha <> '' THEN $sha ELSE coalesce(p.sha, '') END "
             "MERGE (t)-[:IMPLEMENTED_BY]->(p) "
             "WITH p "
             "UNWIND $touched AS nid "
