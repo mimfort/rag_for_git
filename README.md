@@ -309,6 +309,7 @@ You get:
 - **MCP server** `reviewer` exposing: `prepare_review`, `publish_review`, `search_code`,
   `get_related_symbols`, `read_file`, `get_definition`, `find_callers`, `get_changed_file_diff`,
   `index_task`, `search_tasks`, `get_task_context`, `search_codebase`.
+  Рядом с `search_codebase` доступны session-less графовые тулы `related_symbols`/`callers`/`definition` (обход графа без PR-сессии) — их использует скил `/rag-reviewer:reviewer_ask` для grounded-вопросов по кодовой базе.
 
 > Run `/plugin` to confirm `rag-reviewer` is installed and enabled.
 
