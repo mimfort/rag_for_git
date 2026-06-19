@@ -624,3 +624,17 @@ def test_get_pr_diff_failsoft_on_error():
 def test_get_pr_diff_empty_repo_note():
     svc = MCPReviewService(_settings(), _components(), vcs_factory=lambda o, r: MagicMock())
     assert "repo не задан" in svc.get_pr_diff("", 7)
+
+
+def test_get_pr_diff_failsoft_on_provider_error():
+    def boom_factory(o, r):
+        raise RuntimeError("no token")
+    svc = MCPReviewService(_settings(), _components(), vcs_factory=boom_factory)
+    assert svc.get_pr_diff("o/r", 7) == "(diff PR недоступен)"
+
+
+def test_get_pr_diff_empty_files_note():
+    vcs = MagicMock()
+    vcs.get_changed_files.return_value = []
+    svc = MCPReviewService(_settings(), _components(), vcs_factory=lambda o, r: vcs)
+    assert svc.get_pr_diff("o/r", 7) == "(PR без изменённых файлов)"

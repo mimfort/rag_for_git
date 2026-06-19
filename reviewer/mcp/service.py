@@ -447,9 +447,12 @@ class MCPReviewService:
         except ValueError:
             return f"(некорректный repo: {raw!r})"
         owner, name = repo.split("/", 1)
-        vcs = (self._vcs_factory(owner, name) if self._vcs_factory
-               else self._review_service._create_vcs_provider(owner, name))
+        # Создание провайдера ВНУТРИ try: сбой (плохой токен и т.п.) → fail-soft нота,
+        # а не проброс. vcs=None до создания, чтобы finally не упал NameError'ом.
+        vcs = None
         try:
+            vcs = (self._vcs_factory(owner, name) if self._vcs_factory
+                   else self._review_service._create_vcs_provider(owner, name))
             files = vcs.get_changed_files(number)
         except Exception:
             log.warning("get_pr_diff: сбой получения diff для %s#%s",
@@ -457,7 +460,7 @@ class MCPReviewService:
             return "(diff PR недоступен)"
         finally:
             # Внутренне созданный провайдер закрываем сами (factory-владельца — нет).
-            if self._vcs_factory is None:
+            if vcs is not None and self._vcs_factory is None:
                 try:
                     vcs.close()
                 except Exception:
