@@ -8,14 +8,19 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
-from reviewer.agent.assemble import AssembledReview, assemble_review, ground_line, snap_to_commentable
+from reviewer.agent.assemble import (
+    AssembledReview,
+    assemble_review,
+    ground_line,
+    snap_to_commentable,
+)
 from reviewer.agent.dedup import dedup_findings
 from reviewer.app import Components
 from reviewer.config.settings import Settings
 from reviewer.index.refs import base_ref
 from reviewer.mcp.session_serde import from_payload, to_payload
-from reviewer.retrieval.retriever import ContextPack
 from reviewer.mcp.session_store import SessionStore
+from reviewer.retrieval.retriever import ContextPack
 from reviewer.services.review_service import (
     BranchNotTrackedError,
     PreparedReview,

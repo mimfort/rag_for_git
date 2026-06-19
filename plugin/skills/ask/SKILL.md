@@ -62,7 +62,7 @@ Plus the harness file tools (`Read`, `Grep`, `Glob`) to read source from the loc
 
 ## Grounding contract (hard rule)
 
-Cite ONLY paths that were returned by a tool AND confirmed by `Read`. Never invent or guess a
+Cite ONLY paths that were returned by a tool AND confirmed by the tool's line-numbered output or a `Read`. Never invent or guess a
 path or line number. If you cannot ground a statement, say so explicitly instead of fabricating a
 citation. This is the skill's acceptance criterion.
 
