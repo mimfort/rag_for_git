@@ -105,3 +105,48 @@ def test_purge_orphaned_tasks_tool_forwards_to_service():
         {"active_keys": ["ID-1", "ID-2"], "keep_with_prs": True},
     ))
     svc.purge_orphaned_tasks.assert_called_once_with(["ID-1", "ID-2"], True)
+
+
+def test_graph_base_tools_registered():
+    import asyncio
+
+    svc = _service()
+    svc.related_symbols.return_value = "x"
+    svc.callers.return_value = "x"
+    svc.definition.return_value = "x"
+    server = create_server(svc)
+    names = {t.name for t in asyncio.run(server.list_tools())}
+    assert {"related_symbols", "callers", "definition"} <= names
+
+
+def test_related_symbols_tool_forwards():
+    import asyncio
+
+    svc = _service()
+    svc.related_symbols.return_value = "neighbors"
+    server = create_server(svc)
+    asyncio.run(server.call_tool(
+        "related_symbols", {"repo": "owner/name", "node_id": "a.py#foo"}))
+    svc.related_symbols.assert_called_once_with("owner/name", "a.py#foo", None)
+
+
+def test_callers_tool_forwards():
+    import asyncio
+
+    svc = _service()
+    svc.callers.return_value = "callers"
+    server = create_server(svc)
+    asyncio.run(server.call_tool(
+        "callers", {"repo": "owner/name", "node_id": "a.py#foo", "branch": "main"}))
+    svc.callers.assert_called_once_with("owner/name", "a.py#foo", "main")
+
+
+def test_definition_tool_forwards():
+    import asyncio
+
+    svc = _service()
+    svc.definition.return_value = "def"
+    server = create_server(svc)
+    asyncio.run(server.call_tool(
+        "definition", {"repo": "owner/name", "symbol": "foo"}))
+    svc.definition.assert_called_once_with("owner/name", "foo", None)

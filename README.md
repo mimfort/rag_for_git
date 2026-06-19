@@ -305,16 +305,17 @@ Two commands, from any project:
 You get:
 
 - **Skills:** `/rag-reviewer:reviewer_review-pr`, `/rag-reviewer:reviewer_solve-task`, `/rag-reviewer:reviewer_sync-codebase`, `/rag-reviewer:reviewer_sync-tasks`
-  (plus `/rag-reviewer:reviewer_maintainability-review` and `/rag-reviewer:reviewer_performance-review`).
+  (plus `/rag-reviewer:reviewer_maintainability-review`, `/rag-reviewer:reviewer_performance-review`, and `/rag-reviewer:reviewer_ask`).
 - **MCP server** `reviewer` exposing: `prepare_review`, `publish_review`, `search_code`,
   `get_related_symbols`, `read_file`, `get_definition`, `find_callers`, `get_changed_file_diff`,
   `index_task`, `search_tasks`, `get_task_context`, `search_codebase`.
+  Alongside `search_codebase`, session-less graph tools `related_symbols`/`callers`/`definition` (graph traversal without a PR session) are available — used by the `/rag-reviewer:reviewer_ask` skill for grounded codebase Q&A.
 
 > Run `/plugin` to confirm `rag-reviewer` is installed and enabled.
 
 ### 3. Install skills globally (optional)
 
-Skills (`reviewer_review-pr`, `reviewer_solve-task`, `reviewer_sync-codebase`, `reviewer_sync-tasks`, `reviewer_performance-review`, `reviewer_maintainability-review`)
+Skills (`reviewer_review-pr`, `reviewer_solve-task`, `reviewer_sync-codebase`, `reviewer_sync-tasks`, `reviewer_performance-review`, `reviewer_maintainability-review`, `reviewer_ask`)
 let you invoke the full review workflow with a single command. Without them you can still call MCP
 tools directly, but the skills wrap them into a guided flow.
 

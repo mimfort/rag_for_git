@@ -15,7 +15,7 @@ log = logging.getLogger(__name__)
 
 
 def create_server(service: MCPReviewService) -> FastMCP:
-    """Создать и вернуть сконфигурированный FastMCP-сервер с 15 тулами.
+    """Создать и вернуть сконфигурированный FastMCP-сервер с 18 тулами.
 
     Все тулы — обычные def (sync), а не async: сервис не потокобезопасен
     и рассчитан на последовательное исполнение sync-тулов FastMCP в event loop.
@@ -114,6 +114,25 @@ def create_server(service: MCPReviewService) -> FastMCP:
         (REVIEW_BRANCHES); defaults to the primary branch. Use it (e.g. from /solve-task)
         to find relevant existing code by a free-text formulation."""
         return service.search_codebase(repo, query, top_k, branch)
+
+    @mcp.tool()
+    def related_symbols(repo: str, node_id: str, branch: str | None = None) -> str:
+        """Code-graph neighbors (calls/implementations/tests) of a symbol node_id
+        'path#fqn' over the base index (no PR session).
+        branch defaults to the primary tracked branch."""
+        return service.related_symbols(repo, node_id, branch)
+
+    @mcp.tool()
+    def callers(repo: str, node_id: str, branch: str | None = None) -> str:
+        """Direct callers of a symbol node_id 'path#fqn' over the base index
+        (no PR session). branch defaults to the primary tracked branch."""
+        return service.callers(repo, node_id, branch)
+
+    @mcp.tool()
+    def definition(repo: str, symbol: str, branch: str | None = None) -> str:
+        """Find a symbol definition over the base index (graph -> index -> semantic
+        fallback), no PR session. branch defaults to the primary tracked branch."""
+        return service.definition(repo, symbol, branch)
 
     @mcp.tool()
     def publish_review(
