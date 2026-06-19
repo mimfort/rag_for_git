@@ -73,6 +73,31 @@ def test_link_pr_sha_set_is_conditional():
     assert params["sha"] == ""
 
 
+def test_link_prs_batch_single_query():
+    """link_prs_batch отправляет ровно один execute_query с UNWIND $rows."""
+    d = _FakeDriver()
+    pairs = [
+        ("ID-1", PRRef(repo="o/r", number=7, url="https://github.com/o/r/pull/7", sha="")),
+        ("ID-2", PRRef(repo="o/r", number=8, url="https://github.com/o/r/pull/8", sha="abc")),
+    ]
+    n = TaskGraph(d).link_prs_batch(pairs)
+    assert n == 2
+    assert len(d.calls) == 1
+    query, params = d.calls[0]
+    assert "UNWIND $rows" in query
+    assert "IMPLEMENTED_BY" in query
+    rows = params["rows"]
+    assert len(rows) == 2
+    assert rows[0]["key"] == "ID-1" and rows[0]["pid"] == "o/r#7"
+    assert rows[1]["key"] == "ID-2" and rows[1]["sha"] == "abc"
+
+
+def test_link_prs_batch_empty_noop():
+    d = _FakeDriver()
+    assert TaskGraph(d).link_prs_batch([]) == 0
+    assert d.calls == []
+
+
 def test_task_context_parses_record():
     rec = {
         "key": "ID-1", "title": "T", "status": "Open", "url": "u",

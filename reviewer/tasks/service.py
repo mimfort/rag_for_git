@@ -172,7 +172,8 @@ class TaskService:
             results[i] = {"key": p["key"], "embedded": False,
                           "links_upserted": 0, "warnings": warnings}
 
-        # Шаг 6: граф для всех валидных задач (+ PR-линковка для embedded)
+        # Шаг 6: граф для всех валидных задач (+ сбор PR-пар для батч-линковки)
+        pr_pairs: list[tuple[str, PRRef]] = []
         for i, p in enumerate(parsed):
             if p is None or results[i] is None:
                 continue
@@ -190,14 +191,20 @@ class TaskService:
                 except Exception as e:
                     log.warning("index_batch: сбой графа для %s", p["key"], exc_info=True)
                     results[i]["warnings"].append(f"graph: {type(e).__name__}: {e}")
-                # PR-линковка (IMPLEMENTED_BY) — только для изменившихся задач.
+                # Собираем PR-ссылки для батчевого MERGE (один запрос после цикла).
                 if results[i]["embedded"]:
                     refs = extract_pr_refs(p["description"])
-                    for pr in refs:
-                        self.link_review(p["key"], pr, [])
+                    pr_pairs.extend((p["key"], ref) for ref in refs)
                     prs_linked = len(refs)
             results[i]["links_upserted"] = links_upserted
             results[i]["prs_linked"] = prs_linked
+
+        # Батчевый MERGE IMPLEMENTED_BY — один запрос вместо N×M round-trip.
+        if pr_pairs and self._graph is not None:
+            try:
+                self._graph.link_prs_batch(pr_pairs)
+            except Exception:
+                log.warning("index_batch: сбой батчевой PR-линковки", exc_info=True)
 
         return results
 

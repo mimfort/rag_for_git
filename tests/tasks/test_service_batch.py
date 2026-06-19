@@ -24,6 +24,7 @@ class _FakeGraph:
         self.tasks = []
         self.links = []
         self.pr_links = []
+        self.pr_batch_links: list[tuple[str, object]] = []
         self._raise_on = set(raise_on)
 
     def upsert_task(self, key, aliases, title, status, url):
@@ -37,6 +38,9 @@ class _FakeGraph:
 
     def link_pr(self, task_key, pr, touched):
         self.pr_links.append((task_key, pr, touched))
+
+    def link_prs_batch(self, pairs):
+        self.pr_batch_links.extend(pairs)
 
 
 class _FakeEmbedder:
@@ -196,4 +200,4 @@ def test_index_batch_links_prs_for_embedded_only():
 
     assert results[0]["embedded"] is True and results[0]["prs_linked"] == 1
     assert results[1]["embedded"] is False and results[1]["prs_linked"] == 0
-    assert [tk for tk, _, _ in graph.pr_links] == ["ID-1"]
+    assert [tk for tk, _ in graph.pr_batch_links] == ["ID-1"]
