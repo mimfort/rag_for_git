@@ -8,6 +8,7 @@ from __future__ import annotations
 import logging
 
 from reviewer.tasks.graph import PRRef
+from reviewer.tasks.pr_links import extract_pr_refs
 from reviewer.tasks.store import TaskRow, build_task_text, task_content_hash
 
 log = logging.getLogger(__name__)
@@ -27,7 +28,7 @@ class TaskService:
         key = task.get("key") if isinstance(task, dict) else None
         if not key:
             return {"key": None, "embedded": False, "links_upserted": 0,
-                    "warnings": ["task has no key"]}
+                    "prs_linked": 0, "warnings": ["task has no key"]}
         aliases = [a for a in (task.get("aliases") or []) if a and a != key]
         title = task.get("title") or ""
         description = task.get("description") or ""
@@ -68,8 +69,18 @@ class TaskService:
                 log.warning("index_task: сбой графа для %s", key, exc_info=True)
                 warnings.append(f"graph: {type(e).__name__}: {e}")
 
+        # Авто-линковка PR из description — только для изменившихся (embedded)
+        # задач и при доступном графе (повторный синк без изменений ничего не делает).
+        prs_linked = 0
+        if embedded and self._graph is not None:
+            refs = extract_pr_refs(description)
+            for pr in refs:
+                self.link_review(key, pr, [])  # touched=[] — код подтянется лениво
+            prs_linked = len(refs)
+
         return {"key": key, "embedded": embedded,
-                "links_upserted": links_upserted, "warnings": warnings}
+                "links_upserted": links_upserted, "prs_linked": prs_linked,
+                "warnings": warnings}
 
     def index_batch(self, tasks: list[dict]) -> list[dict]:
         """Батчевая индексация: один Voyage-вызов для всех изменившихся задач."""
