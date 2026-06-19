@@ -342,7 +342,7 @@ class MCPReviewService:
         if branch and branch not in self.settings.review_branches_list():
             return (f"(ветка {branch!r} не в REVIEW_BRANCHES "
                     f"({self.settings.review_branches_list()}))")
-        return repo, branch or self.settings.primary_branch()
+        return (repo, branch or self.settings.primary_branch())
 
     def search_codebase(self, repo: str, query: str, top_k: int = 10,
                         branch: str | None = None) -> str:

@@ -576,6 +576,8 @@ def test_definition_uses_graph_then_store() -> None:
     assert "a.py#foo" in out and "def foo()" in out and "a.py:10-12" in out
     svc.components.graph.find_symbol.assert_called_once_with(
         "a/b", "foo", branch=svc.settings.primary_branch())
+    svc.components.store.fetch_nodes.assert_called_once_with(
+        "a/b", ["a.py#foo"], None, [], base_ref="base:main")
 
 
 def test_definition_falls_back_to_search_base() -> None:
