@@ -2,7 +2,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from reviewer.retrieval.retriever import _dedupe_overlapping, _is_test_path
+from reviewer.retrieval.retriever import ContextPack, _dedupe_overlapping, _is_test_path
 
 
 def _it(path, start, end, node_id=None):
@@ -59,3 +59,27 @@ def test_is_test_path_true(path):
 ])
 def test_is_test_path_false(path):
     assert _is_test_path(path) is False
+
+
+def _node():
+    return SimpleNamespace(node_id="a.py#f", path="a.py", start_line=10,
+                           end_line=11, text="def f():\n    pass")
+
+
+def test_as_context_default_unchanged():
+    out = ContextPack(items=[_node()]).as_context()
+    assert out == "// a.py#f (a.py:10-11)\ndef f():\n    pass"
+
+
+def test_as_context_with_line_numbers():
+    out = ContextPack(items=[_node()]).as_context(line_numbers=True)
+    assert "// a.py#f (a.py:10-11)" in out
+    assert "   10 | def f():" in out
+    assert "   11 |     pass" in out
+
+
+def test_as_context_line_numbers_respect_truncation():
+    big = SimpleNamespace(node_id="a.py#f", path="a.py", start_line=1,
+                          end_line=3, text="x\ny\nz")
+    out = ContextPack(items=[big], max_chars=20).as_context(line_numbers=True)
+    assert out.endswith("[...truncated]")

@@ -51,10 +51,18 @@ class ContextPack:
     max_chars: int = 0
     max_tokens: int = 0
 
-    def as_context(self) -> str:
+    def as_context(self, line_numbers: bool = False) -> str:
         parts = []
         for it in self.items:
-            parts.append(f"// {it.node_id} ({it.path}:{it.start_line}-{it.end_line})\n{it.text}")
+            header = f"// {it.node_id} ({it.path}:{it.start_line}-{it.end_line})"
+            if line_numbers:
+                body = "\n".join(
+                    f"{it.start_line + i:>5} | {line}"
+                    for i, line in enumerate(it.text.split("\n"))
+                )
+            else:
+                body = it.text
+            parts.append(f"{header}\n{body}")
         text = "\n\n".join(parts)
         limit = 0
         if self.max_chars > 0:
