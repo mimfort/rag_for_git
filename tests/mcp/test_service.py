@@ -31,6 +31,7 @@ def _settings() -> Settings:
     s.github_token = "test"
     s.review_session_persist = False     # unit-тесты не трогают Postgres-таблицу сессий
     s.default_repo = ""                  # изолируем от локального .env (DEFAULT_REPO)
+    s.task_board_type = ""               # изолируем от локального .env (TASK_BOARD_TYPE)
     return s
 
 
