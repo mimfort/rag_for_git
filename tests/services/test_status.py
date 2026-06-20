@@ -43,6 +43,7 @@ def test_build_status_report_fresh_and_behind(monkeypatch):
     rep = build_status_report(store, graph, "a/x", ["main", "dev"], "/tmp/repo")
     assert rep.branches[0].drift == 0 and rep.branches[0].graph_nodes == 1207
     assert rep.branches[0].indexed_sha == "abc1234"
+    assert rep.branches[0].updated_at == dt
     assert rep.branches[1].drift == 12
     assert rep.overlays == [OverlayStatus(ref="pr:24", chunks=18)]
 
@@ -65,6 +66,7 @@ def test_render_status_shapes_output():
             BranchStatus("main", "base:main", "abc1234567", dt, 1843, 1207, 0),
             BranchStatus("dev", "base:dev", "def5678901", dt, 1850, None, 12),
             BranchStatus("old", "base:old", None, None, 0, None, None),
+            BranchStatus("nogit", "base:nogit", "aaa1111222", dt, 10, 5, None),  # drift=None
         ],
         overlays=[OverlayStatus("pr:24", 18)])
     out = render_status(rep, "tree-sitter (fallback)")
@@ -75,6 +77,7 @@ def test_render_status_shapes_output():
     assert "не проиндексирована" in out       # old: indexed_sha=None
     assert "pr:24   18 чанков" in out
     assert "abc1234" in out                    # короткий SHA (7 символов)
+    assert "дрейф неизвестен" in out          # nogit: drift=None, sha присутствует
 
 
 def test_status_command_smoke(monkeypatch):
