@@ -1,0 +1,27 @@
+from reviewer.config.settings import Settings
+from reviewer.tasks.boards import RawTask, make_board_provider
+
+
+def test_rawtask_fields():
+    rt = RawTask(key="ID-1", project_code="PRI-1", title="t", description="d",
+                 status="Backlog", subtask_ids=["u1"], timestamp=123)
+    assert rt.key == "ID-1" and rt.timestamp == 123
+
+
+def test_make_provider_none_when_no_board():
+    s = Settings(_env_file=None, task_board_type="", task_board_api_key="")
+    assert make_board_provider(s) is None
+
+
+def test_make_provider_none_when_no_api_key():
+    s = Settings(_env_file=None, task_board_type="yougile", task_board_api_key="")
+    assert make_board_provider(s) is None
+
+
+def test_make_provider_yougile():
+    s = Settings(_env_file=None, task_board_type="yougile", task_board_api_key="k",
+                 task_board_key_pattern=r"[A-Z]+-\d+")
+    prov = make_board_provider(s)
+    assert prov is not None
+    assert prov.__class__.__name__ == "YougileBoard"
+    prov.close()

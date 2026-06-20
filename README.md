@@ -420,7 +420,7 @@ call a skill:
 ```text
 /rag-reviewer:reviewer_review-pr owner/repo#42     # review a PR (prepare_review → subagents → publish_review)
 /rag-reviewer:reviewer_sync-codebase               # build/update vector store + code graph from local clone
-/rag-reviewer:reviewer_sync-tasks                  # warm the task graph & vector store from a connected board
+/rag-reviewer:reviewer_sync-tasks                  # warm the task graph & vector store (server-side ETL via sync_board)
 /rag-reviewer:reviewer_solve-task <key | free text>  # gather disciplined context for a task, then hand off to dev
 ```
 
@@ -461,9 +461,21 @@ is the same for every repo of one team, so configure it **once** in the reviewer
 (`TASK_BOARD_TYPE` / `TASK_BOARD_MCP` / `TASK_BOARD_KEY_PATTERN` / `TASK_BOARD_URL_TEMPLATE`) and
 every repo inherits it — no `.review.yml` needed just for the board. A `task_board` block in a repo's
 `.review.yml` **overrides** that default for that repo; an explicit empty `task_board:` **disables**
-the board for it. `review-pr` reads this through the policy; the client skills (`solve-task`,
-`sync-tasks`) read it via the `get_board_config` MCP tool as a fallback when the local `.review.yml`
+the board for it. `review-pr` reads this through the policy; `solve-task` reads it via the
+`get_board_config` MCP tool (and the board-MCP, LLM-side) as a fallback when the local `.review.yml`
 has no block.
+
+**Bulk task sync is server-side, not LLM (`sync_board`).** The `sync-tasks` skill is a thin trigger:
+it calls one MCP tool, `sync_board(board, limit, purge_orphaned, keep_with_prs)`, and the reviewer
+server enumerates the board over **REST** itself (`reviewer/tasks/boards/`, behind a
+`TaskBoardProvider` interface — Yougile is the reference), normalizes each task into a `TaskBrief`
+in Python, and indexes it via the existing batch indexer. The LLM passes no task text, so a sync
+costs O(1) tokens regardless of board size. It is incremental via a per-board timestamp watermark in
+`index_meta` (`ref="tasks:<board>"`): a repeat sync touches ~0 tasks; `--limit` disables purge and
+the watermark advance. The board REST credentials live only in the reviewer-mcp environment
+(`TASK_BOARD_API_KEY` / `TASK_BOARD_API_BASE`). This inverts the "reviewer Python never touches the
+board" rule **for bulk sync only** — single-task reads in `solve-task` / `review-pr` still go through
+the board-MCP on the LLM side.
 
 ## Known limitations & caveats
 
