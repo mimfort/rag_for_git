@@ -126,3 +126,27 @@ def test_format_impact_renders_callers():
 
 def test_format_impact_empty():
     assert "не найдено" in format_impact([])
+
+
+def test_get_impact_tool_registered_and_runs():
+    from reviewer.tools.code_tools import make_tools, ToolContext
+    graph = _Graph({"svc.py#f": ["a.py#g"]})
+    store = _Store({
+        "pr:1": {"svc.py#f": "def f(a, b, c):\n    ..."},
+        "base:dev": {"svc.py#f": "def f(a, b):\n    ...", "a.py#g": "def g():\n    f(1, 2)"},
+    })
+    ctx = ToolContext(retriever=None, graph=graph, overlay_ref="pr:1",
+                      changed_paths=["svc.py"], changed_node_ids=["svc.py#f"],
+                      repo="r", branch="dev", store=store)
+    tools = {t.name: t for t in make_tools(ctx)}
+    assert "get_impact" in tools
+    out = tools["get_impact"].invoke({})
+    assert "a.py:10" in out and "def f(a, b, c):" in out
+
+
+def test_get_impact_tool_no_graph():
+    from reviewer.tools.code_tools import make_tools, ToolContext
+    ctx = ToolContext(retriever=None, graph=None, overlay_ref="pr:1",
+                      changed_paths=[], changed_node_ids=[], repo="r", branch="dev")
+    tools = {t.name: t for t in make_tools(ctx)}
+    assert "недоступн" in tools["get_impact"].invoke({})
