@@ -1,7 +1,7 @@
 from datetime import datetime
 
 import reviewer.services.status as status_mod
-from reviewer.services.status import build_status_report, OverlayStatus
+from reviewer.services.status import build_status_report, OverlayStatus, render_status, RepoStatus, BranchStatus
 
 
 class FakeStore:
@@ -53,3 +53,23 @@ def test_build_status_report_not_indexed_and_neo4j_down(monkeypatch):
     b = rep.branches[0]
     assert b.indexed_sha is None and b.drift is None and b.graph_nodes is None
     assert rep.overlays == []  # base:main исключён из overlay
+
+
+def test_render_status_shapes_output():
+    dt = datetime(2026, 6, 18, 14, 2)
+    rep = RepoStatus(
+        repo="a/x",
+        branches=[
+            BranchStatus("main", "base:main", "abc1234567", dt, 1843, 1207, 0),
+            BranchStatus("dev", "base:dev", "def5678901", dt, 1850, None, 12),
+            BranchStatus("old", "base:old", None, None, 0, None, None),
+        ],
+        overlays=[OverlayStatus("pr:24", 18)])
+    out = render_status(rep, "tree-sitter (fallback)")
+    assert "Репозиторий: a/x" in out
+    assert "✓ свежо" in out
+    assert "отстаёт на 12 коммитов" in out
+    assert "Neo4j недоступен" in out         # dev: graph_nodes=None
+    assert "не проиндексирована" in out       # old: indexed_sha=None
+    assert "pr:24   18 чанков" in out
+    assert "abc1234" in out                    # короткий SHA (7 символов)

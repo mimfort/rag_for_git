@@ -69,3 +69,38 @@ def build_status_report(store, graph, repo: str, branches: list[str],
         if not r.startswith("base:")
     ]
     return RepoStatus(repo=repo, branches=branch_statuses, overlays=overlays)
+
+
+def _fmt_dt(dt: datetime | None) -> str:
+    return dt.strftime("%Y-%m-%d %H:%M") if dt else "—"
+
+
+def render_status(report: RepoStatus, backend: str) -> str:
+    """Человекочитаемый отчёт по RepoStatus (для click.echo)."""
+    lines = [
+        f"Репозиторий: {report.repo}",
+        f"Граф (бэкенд для индексации): {backend}",
+        "",
+    ]
+    for b in report.branches:
+        lines.append(f"Ветка {b.branch}   [{b.ref}]")
+        if b.indexed_sha is None:
+            lines.append("  SHA:    — (не проиндексирована)")
+            lines.append("")
+            continue
+        lines.append(
+            f"  SHA:    {b.indexed_sha[:7]}  (проиндексировано {_fmt_dt(b.updated_at)})")
+        if b.drift is None:
+            lines.append("  Статус: дрейф неизвестен (нет git-клона)")
+        elif b.drift == 0:
+            lines.append("  Статус: ✓ свежо")
+        else:
+            lines.append(f"  Статус: ↗ отстаёт на {b.drift} коммитов")
+        nodes = "—  (Neo4j недоступен)" if b.graph_nodes is None else str(b.graph_nodes)
+        lines.append(f"  Чанки:  {b.chunks}   Узлы графа: {nodes}")
+        lines.append("")
+    if report.overlays:
+        lines.append("Overlay:")
+        for o in report.overlays:
+            lines.append(f"  {o.ref}   {o.chunks} чанков")
+    return "\n".join(lines).rstrip() + "\n"
