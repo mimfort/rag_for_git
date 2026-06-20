@@ -156,6 +156,17 @@ WIZARD_GROUPS: list[EnvGroup] = [
                 prompt_text="TASK_BOARD_URL_TEMPLATE (напр. https://.../{code})",
                 default="",
             ),
+            EnvField(
+                key="TASK_BOARD_API_KEY",
+                prompt_text="TASK_BOARD_API_KEY (REST-ключ доски; yougile: Ctrl+~ → API)",
+                default="",
+                secret=True,
+            ),
+            EnvField(
+                key="TASK_BOARD_API_BASE",
+                prompt_text="TASK_BOARD_API_BASE (пусто → дефолт по типу)",
+                default="",
+            ),
         ],
     ),
 ]
@@ -180,7 +191,12 @@ _GROUP_HEADERS: dict[str, str] = {
     "Обязательные": "# --- Voyage / GitHub ---",
     "Хранилища (Postgres / Neo4j)": "# --- Postgres (ParadeDB :5433) / Neo4j (:7687) ---",
     "Мульти-репо / ветки": "# --- Мульти-репо / ветки (опционально) ---",
-    "Доска задач": "# --- Доска задач (опционально) ---",
+    "Доска задач": (
+        "# --- Доска задач (опционально; server-side sync_board) ---\n"
+        "# TASK_BOARD_API_KEY — REST-ключ доски. Yougile: конфигуратор (Ctrl+~ или ⚙\n"
+        "# рядом с компанией → «Настроить») → API → создать/скопировать; либо\n"
+        "# POST https://yougile.com/api-v2/auth/keys {login,password,companyId}."
+    ),
 }
 
 

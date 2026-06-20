@@ -339,8 +339,10 @@ class MCPReviewService:
         sync = getattr(self.components, "sync_service", None)
         if sync is None:
             return {"status": "error",
-                    "reason": "task board REST not configured "
-                              "(set TASK_BOARD_TYPE + TASK_BOARD_API_KEY)"}
+                    "reason": "task board REST not configured — set TASK_BOARD_TYPE + "
+                              "TASK_BOARD_API_KEY in the reviewer-mcp env "
+                              "(~/.config/rag-reviewer/.env), then reconnect. Yougile key: "
+                              "configurator (Ctrl+~ → API) or POST /api-v2/auth/keys"}
         try:
             return sync.run(board=board, limit=limit,
                             purge_orphaned=purge_orphaned,

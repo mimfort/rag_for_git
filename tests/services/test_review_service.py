@@ -30,7 +30,12 @@ def settings() -> Settings:
     s.review_max_files = 50
     s.voyage_api_key = "test"
     s.github_token = "test"
-    s.task_board_type = ""               # изолируем от локального .env (TASK_BOARD_TYPE)
+    # изолируем доску от локального .env целиком (настроенный TASK_BOARD_* в
+    # ~/.config/rag-reviewer/.env иначе протекает в payload)
+    s.task_board_type = ""
+    s.task_board_mcp = ""
+    s.task_board_key_pattern = ""
+    s.task_board_url_template = ""
     return s
 
 

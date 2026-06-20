@@ -54,9 +54,22 @@ Parse from `$ARGUMENTS` (all optional):
    «Purge: D удалено, P защищено (есть PR-история)». Surface any `warnings`.
 
 3. **Handle the error case.** If the tool returns `{"status": "error", "reason": ...}`,
-   the board is not configured server-side. Tell the user to set `TASK_BOARD_TYPE` +
-   `TASK_BOARD_API_KEY` (and optionally `TASK_BOARD_API_BASE`) in the reviewer-mcp
-   environment, then retry. Do not attempt to read the board yourself.
+   the board is not configured server-side. Tell the user (in Russian) to add the board
+   settings to the reviewer-mcp env file — the canonical `~/.config/rag-reviewer/.env`
+   (NOT the repo `./.env`: reviewer-mcp runs with an arbitrary CWD and reads the XDG file
+   first) — namely `TASK_BOARD_API_KEY` plus `TASK_BOARD_TYPE` and, for normalization,
+   `TASK_BOARD_KEY_PATTERN` / `TASK_BOARD_URL_TEMPLATE`. Then reconnect the MCP server
+   (`/mcp` reconnect or restart Claude Code — env is read at process start) and retry.
+
+   For **Yougile**, also explain how to obtain `TASK_BOARD_API_KEY`:
+   - **Configurator (easiest):** in Yougile press `Ctrl + ~` (or Projects → gear ⚙ next to
+     the company name → «Настроить») → API settings → generate/copy the key.
+   - **REST:** `POST https://yougile.com/api-v2/auth/keys` with `{login, password,
+     companyId}` (get `companyId` via `Ctrl + Alt + Q`, or `POST /api-v2/auth/companies`);
+     `POST /api-v2/auth/keys/get` lists existing keys.
+
+   Do not attempt to read the board yourself, and never ask the user to paste the key into
+   the chat — it belongs in the env file only.
 
 ## Notes
 
