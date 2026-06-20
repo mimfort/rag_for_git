@@ -75,6 +75,10 @@ of posting.
      similar tasks) as an optional "Related context" block, the repo/pr identifiers (so it can call
      the reviewer MCP tools), and the target output language. It returns the same findings JSON
      schema with category `requirements`.
+   - blast-radius: dispatch one subagent with `references/blast-radius-prompt.md`, the diffs of
+     all units (path + patch), the PR `title`/`body`, the repo/pr identifiers (so it can call the
+     reviewer MCP tools, including `get_impact`), and the target output language. It returns the
+     same findings JSON schema with category `correctness`.
    Give the performance/maintainability subagents: the diffs of all units (path + patch), the
    repo/pr identifiers so they can call the reviewer MCP tools, and the target output language.
    They must return the same findings JSON schema (category `performance` / `maintainability`).
@@ -82,7 +86,7 @@ of posting.
 5. **Verify.** Collect all findings into one numbered list. Dispatch one subagent
    with `references/verify-prompt.md`, the findings list, the diffs, and the
    repo/pr identifiers so the subagent can call the reviewer MCP tools
-   (`read_file`, `search_code`, `find_callers`, `get_definition`). It returns
+   (`read_file`, `search_code`, `find_callers`, `get_definition`, `get_impact`). It returns
    `{"verdicts": [{"index": N, "is_real": true|false}]}`. Drop findings with
    `is_real=false`. If the verifier fails or returns malformed output, KEEP all
    findings (recall-safe).
