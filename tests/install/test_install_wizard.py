@@ -101,6 +101,15 @@ def test_prompt_groups_yes_skips_optional_groups():
     assert result["TASK_BOARD_MCP"] == ""
 
 
+def test_render_env_includes_board_api_key_and_hint():
+    # init теперь пишет ключ REST-доски + подсказку, как его достать (yougile)
+    values = {f.key: f.default for g in inst.WIZARD_GROUPS for f in g.fields}
+    result = inst.render_env(values, extra={})
+    assert "TASK_BOARD_API_KEY=" in result
+    assert "TASK_BOARD_API_BASE=" in result
+    assert "auth/keys" in result            # подсказка получения ключа в заголовке группы
+
+
 def test_init_yes_creates_env_file(tmp_path, monkeypatch):
     dest = tmp_path / ".env"
     monkeypatch.setattr("reviewer.install.default_env_path", lambda: dest)
@@ -111,6 +120,7 @@ def test_init_yes_creates_env_file(tmp_path, monkeypatch):
     content = dest.read_text(encoding="utf-8")
     assert "VOYAGE_API_KEY=" in content
     assert "PG_DSN=" in content
+    assert "TASK_BOARD_API_KEY=" in content
 
 
 def test_init_yes_preserves_existing_secret(tmp_path, monkeypatch):

@@ -10,7 +10,11 @@ class _Svc(MCPReviewService):
 def test_sync_board_no_provider_returns_error():
     out = _Svc(None).sync_board()
     assert out["status"] == "error"
-    assert "board" in out["reason"].lower()
+    reason = out["reason"].lower()
+    assert "board" in reason
+    # подсказка: какой ключ задать и как достать его у yougile
+    assert "task_board_api_key" in reason
+    assert "auth/keys" in reason
 
 
 def test_sync_board_delegates_to_sync_service():
