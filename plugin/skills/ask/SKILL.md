@@ -37,6 +37,16 @@ Plus the harness file tools (`Read`, `Grep`, `Glob`) to read source from the loc
    - `branch`: `git branch --show-current`. Pass it only if it is in `REVIEW_BRANCHES`; if the
      user named a branch, use that; otherwise omit it (the server uses the primary branch).
 
+   **Freshness check (first code question of the session only).** After resolving repo/branch and
+   ONLY on the first code question in this conversation — rely on conversation memory: if you have
+   already checked index freshness earlier in this session, skip this — run
+   `uvx --from rag-reviewer reviewer status <path> --branch <branch> --json` and read `drift`. If
+   `drift > 0`, emit exactly **one banner line**, in Russian:
+   «⚠ индекс отстаёт на N коммитов, ответ может не учитывать свежие изменения → `/reviewer_sync-codebase`».
+   Do NOT block, reindex, ask for confirmation, or call `sync_board` — this is warn-only. Cost ≈ 0
+   Voyage (reads `index_meta` + local git). **Fail-open:** any error → skip the banner silently
+   (Q&A is latency-sensitive).
+
 2. **Search.** Call `search_codebase(repo, "<question>", branch=…)`. Parse the
    `path#fqn (path:start-end)` headers to get candidate symbols (`node_id`) and line ranges.
    If the result is `(ничего не найдено)`, go to Fallback.

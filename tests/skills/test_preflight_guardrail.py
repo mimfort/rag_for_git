@@ -18,3 +18,12 @@ def test_solve_task_has_preflight():
     assert "drift" in text                                  # проверяет дрейф
     assert "sync_board(" in text                            # прогрев корпуса задач
     assert "reviewer_sync-codebase" in text                 # делегирование reindex
+
+
+def test_ask_has_warn_only_freshness():
+    text = ASK.read_text(encoding="utf-8")
+    assert "--json" in text and "reviewer status" in text   # читает машиночитаемый статус
+    assert "отстаёт на" in text                             # warn-баннер про дрейф (рус.)
+    assert "reviewer_sync-codebase" in text                 # баннер указывает на reindex-скил
+    # облегчённый режим: НЕ зовёт sync_board и не реиндексирует
+    assert "sync_board(" not in text
