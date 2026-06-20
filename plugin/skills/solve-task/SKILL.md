@@ -17,6 +17,32 @@ brief to `superpowers:brainstorming` (which leads to writing-plans → subagent-
 
 ## Pipeline
 
+0. **Preflight (index freshness + task-corpus warm-up).** Run this BEFORE anything else.
+   First resolve, once, the repo path (`git rev-parse --show-toplevel`) and the working branch
+   (`git branch --show-current`; if it is in `REVIEW_BRANCHES` use it, else the primary branch) —
+   step 3 reuses the same branch for `search_codebase`.
+
+   1. **Base-index freshness.** Run
+      `uvx --from rag-reviewer reviewer status <path> --branch <branch> --json` and read `drift`
+      for that branch:
+      - `drift == 0` → continue;
+      - `drift > 0` → tell the user (in Russian) «индекс отстаёт на N коммитов» and **ask for
+        confirmation**: reindex now? **Yes** → delegate to `/reviewer_sync-codebase`
+        (`--path <path> --ref <branch>`), which reindexes and reports problems, then continue;
+        **No** → continue on the stale index and record the gap under **Constraints / open
+        questions** in the brief;
+      - `drift == null` (no clone / no index record) → do not block; note it in the brief.
+   2. **Problem report — in the style of `sync-codebase`.** If `reviewer status` fails (Postgres /
+      reviewer MCP / Neo4j unreachable, no index, or `uvx` missing): tell the user (in Russian)
+      what is missing and the command to fix it. **Fail-open** — never abort; continue on the
+      stale/unknown index.
+   3. **Warm the task corpus.** Call `sync_board(board=null, limit=null, purge_orphaned=false)` —
+      incremental (timestamp watermark), cheap when the corpus is warm. Board not configured or
+      `status=error` → print the `TASK_BOARD_*` hint and continue board-less.
+
+   Decisions: stale → confirmation, never auto (Voyage free tier is 3 RPM / 10K TPM); failures →
+   reported like `sync-codebase`; `sync_board` runs incrementally at start.
+
 1. **Config.** Resolve the `task_board` block (`type`, `mcp`, `key_pattern`): first from the repo's
    `.review.yml`, and if there is no block there, from the deploy-wide default via
    `get_board_config()` (reviewer MCP) — so a per-repo `.review.yml` is not required when the board
