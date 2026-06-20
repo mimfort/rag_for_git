@@ -6,6 +6,25 @@ An agent that automatically reviews pull/merge requests using **RAG + a code gra
 
 ---
 
+## Table of contents
+
+- [What it is](#what-it-is)
+- [How it works / Architecture](#how-it-works--architecture)
+- [One-click install prompt](#one-click-install-prompt)
+- [Installation](#installation)
+- [Configuration reference](#configuration-reference)
+- [CLI reference](#cli-reference)
+- [Skills reference](#skills-reference)
+- [MCP tools reference](#mcp-tools-reference)
+- [Plugin usage](#plugin-usage)
+- [Per-repo policy & task board](#per-repo-policy--task-board)
+- [Observability web admin](#observability-web-admin)
+- [Known limitations & caveats](#known-limitations--caveats)
+- [Tests](#tests)
+- [Project layout](#project-layout)
+
+---
+
 ## What it is
 
 Plain linters catch syntax and style but miss **meaning and relationships**: a broken
@@ -24,7 +43,9 @@ A single PR review runs as three stages:
    policy and per-file review units are assembled.
 2. **analyze** — the Claude Code skill fans out one subagent per file. Each reasons over the diff
    in a tool loop, pulling in whatever code it needs: `search_code`, `get_related_symbols`,
-   `read_file`, `get_definition`, `find_callers`, `get_changed_file_diff`.
+   `read_file`, `get_definition`, `find_callers`, `get_changed_file_diff`. In parallel,
+   dimension subagents run a **performance** and **maintainability** pass, plus a **requirements**
+   pass when a task board is wired up, and a final **verify** pass strips hallucinations.
 3. **publish** — a deterministic tail: policy gate (category/severity/confidence/paths) → line
    grounding by exact code quote (anti-hallucination) → dedup → assemble (inline vs summary,
    suggestion invariants, fingerprint idempotency, comment cap) → post to GitHub → history record
@@ -97,7 +118,7 @@ the index keeps a persistent base and layers PR changes on top:
                 │        └─────────────────── publish_review (gate/grounding/dedup/assemble) ◀─────┘
                 └─────────────────────────────────────────────────────────────────────────────────┘
 
-  Stores (Docker):  Postgres/ParadeDB (:5433)  ·  Neo4j (:7687)
+  Stores (Docker):  Postgres/ParadeDB (:5433)  ·  Neo4j (:7687)  ·  web admin (:8000)
   External API:     Voyage (embeddings voyage-code-3 + reranker rerank-2.5)
 ```
 
@@ -138,7 +159,8 @@ The MCP server is published on PyPI as [`rag-reviewer`](https://pypi.org/project
 and runs via `uvx` — **no clone of this repo required**.
 
 Requirements: Docker, [`uv`](https://docs.astral.sh/uv/getting-started/installation/) (includes `uvx`),
-a Voyage API key, a GitHub token.
+a Voyage API key, a GitHub token. Python 3.11–3.13 (only needed for a `pip`/editable install; `uvx`
+manages its own).
 
 ### Quick setup (recommended, all platforms)
 
@@ -160,7 +182,7 @@ reviewer init
 
 # 3) Register the MCP server (and skills) in your editor/CLI
 reviewer install --all        # auto-detect installed clients + install skills
-#    or a specific one: reviewer install cursor|vscode|claude-code|windsurf|gemini|antigravity|mimo|opencode|kimi|trae|codex
+#    or a specific one: reviewer install cursor|vscode|claude-code|claude-desktop|windsurf|gemini|antigravity|mimo|opencode|kimi|trae|codex
 #    skills go to clients that support them (Gemini/Mimo/Kimi); add --no-skills to skip
 
 # 4) Verify
@@ -197,13 +219,8 @@ uv tool upgrade rag-reviewer
 - **GitHub** (`GITHUB_TOKEN`): a PAT with *Pull requests: Read and write* + *Contents: Read*
   (fine-grained) or the `repo` scope (classic). Quick option: `gh auth token`.
 
-All other settings have defaults (documented in `.env.example`). `DEFAULT_REPO` (optional) sets
-the default `owner/name` for single-repo deployments. `REVIEW_BRANCHES` (optional, CSV, default
-`main`) lists the branches to track — each gets its own isolated base index; PRs targeting a
-branch outside this list are silently skipped by `prepare_review`. `TASK_BOARD_TYPE` /
-`TASK_BOARD_MCP` / `TASK_BOARD_KEY_PATTERN` / `TASK_BOARD_URL_TEMPLATE` (optional) configure the task
-board **once for the whole deployment**, so it need not be repeated in every repo's `.review.yml`
-(see *Per-repo policy* below).
+All other settings have defaults (documented in `.env.example` and in
+[Configuration reference](#configuration-reference) below).
 
 ### Manual setup (alternative)
 
@@ -293,7 +310,7 @@ args = ["-lc", "uvx --from rag-reviewer@latest reviewer-mcp"]
 
 After adding, restart the tool — `reviewer` will appear alongside other MCP servers.
 
-#### Claude Code
+### Claude Code (plugin marketplace)
 
 Two commands, from any project:
 
@@ -304,20 +321,18 @@ Two commands, from any project:
 
 You get:
 
-- **Skills:** `/rag-reviewer:reviewer_review-pr`, `/rag-reviewer:reviewer_solve-task`, `/rag-reviewer:reviewer_sync-codebase`, `/rag-reviewer:reviewer_sync-tasks`
-  (plus `/rag-reviewer:reviewer_maintainability-review`, `/rag-reviewer:reviewer_performance-review`, and `/rag-reviewer:reviewer_ask`).
-- **MCP server** `reviewer` exposing: `prepare_review`, `publish_review`, `search_code`,
-  `get_related_symbols`, `read_file`, `get_definition`, `find_callers`, `get_changed_file_diff`,
-  `index_task`, `search_tasks`, `get_task_context`, `search_codebase`.
-  Alongside `search_codebase`, session-less graph tools `related_symbols`/`callers`/`definition` (graph traversal without a PR session) are available — used by the `/rag-reviewer:reviewer_ask` skill for grounded codebase Q&A.
+- **Skills:** `/rag-reviewer:reviewer_review-pr`, `/rag-reviewer:reviewer_solve-task`,
+  `/rag-reviewer:reviewer_sync-codebase`, `/rag-reviewer:reviewer_sync-tasks`,
+  `/rag-reviewer:reviewer_performance-review`, `/rag-reviewer:reviewer_maintainability-review`,
+  `/rag-reviewer:reviewer_ask` (see [Skills reference](#skills-reference)).
+- **MCP server** `reviewer` exposing the 20 tools in [MCP tools reference](#mcp-tools-reference).
 
 > Run `/plugin` to confirm `rag-reviewer` is installed and enabled.
 
-### 3. Install skills globally (optional)
+### Install skills globally (optional)
 
-Skills (`reviewer_review-pr`, `reviewer_solve-task`, `reviewer_sync-codebase`, `reviewer_sync-tasks`, `reviewer_performance-review`, `reviewer_maintainability-review`, `reviewer_ask`)
-let you invoke the full review workflow with a single command. Without them you can still call MCP
-tools directly, but the skills wrap them into a guided flow.
+The 7 skills wrap the MCP tools into guided flows. Without them you can still call MCP tools
+directly, but the skills are the intended entry point.
 
 **`reviewer install` already installs them** for clients that support file-based skills (Gemini,
 Mimo, Kimi). To (re)install just the skills — or pick a specific client — use:
@@ -347,81 +362,311 @@ rm /tmp/rag-reviewer.tgz
 | Claude Code | bundled in the plugin (step above) |
 | Cursor | project-level via `.cursor-plugin/plugin.json` |
 
+That's it. Build the base index (recommended — see [CLI reference](#cli-reference)) and review a PR
+(see [Plugin usage](#plugin-usage)).
+
 ---
 
-That's it. Build the base index (recommended — see [CLI](#cli)) and review a PR (see
-[Plugin usage](#plugin-usage)).
+## Configuration reference
 
-## CLI
+Everything is configured through environment variables (`.env`, see `.env.example` with comments).
+The **only required external key is `VOYAGE_API_KEY`**; `GITHUB_TOKEN` is required for PR review.
+All other settings have working defaults that match the bundled `docker-compose.yml`. The `.env`
+is resolved from `$REVIEWER_ENV_FILE` → `~/.config/rag-reviewer/.env` → `./.env` (real env vars
+always win).
 
-All CLI commands are available via `uvx --from rag-reviewer <command>`, or after
-`pip install rag-reviewer` / `pip install -e ".[dev]"` (for contributors) simply as `reviewer`.
+### Voyage — embeddings + reranker (required)
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `VOYAGE_API_KEY` | `""` | **Required.** Voyage key for embeddings + reranking. |
+| `EMBEDDING_MODEL` | `voyage-code-3` | Embedding model. |
+| `EMBEDDING_DIM` | `1024` | Embedding dimension; **must match** the `vector(N)` column in Postgres — changing it requires a reindex. |
+| `EMBEDDING_BATCH_SIZE` | `256` | Texts per embedding request (≤1000 and ≤120K tokens). |
+| `RERANK_MODEL` | `rerank-2.5` | Voyage reranker model. |
+
+### GitHub (required for PR review)
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `GITHUB_TOKEN` | `""` | PAT — *Pull requests: Read and write* + *Contents: Read*. |
+| `GITHUB_RETRY_ATTEMPTS` | `3` | Retries on GitHub API network errors. |
+| `GITHUB_RETRY_BACKOFF_BASE` | `1.0` | Exponential backoff base (seconds). |
+
+### Stores (Postgres/ParadeDB + Neo4j)
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `PG_DSN` | `postgresql://reviewer:reviewer@localhost:5433/reviewer` | ParadeDB (pgvector + pg_search) on host port **5433**. |
+| `PG_POOL_MIN_SIZE` | `1` | Min Postgres pool connections. |
+| `PG_POOL_MAX_SIZE` | `4` | Max Postgres pool connections. |
+| `NEO4J_URI` | `neo4j://localhost:7687` | Neo4j bolt URI. |
+| `NEO4J_USER` | `neo4j` | Neo4j user. |
+| `NEO4J_PASSWORD` | `reviewerpass` | Neo4j password (one-off dev default). |
+| `GRAPH_BACKEND` | `auto` | Code-graph engine: `auto` (SCIP if `scip-python` in PATH, else tree-sitter), `scip`, `treesitter`. |
+
+### Multi-repo / multi-branch (optional)
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `DEFAULT_REPO` | `""` | Default `owner/name` for session-less tools and `reviewer index` without `--repo`; empty = multi-repo (repo must be passed explicitly). |
+| `REVIEW_BRANCHES` | `main` | CSV of tracked branches; the first is **primary** (default for `reviewer index --ref` and CLI search). PRs targeting a branch outside the list are skipped. |
+
+### Review policy (env defaults; per-repo `.review.yml` overrides)
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `REVIEW_SEVERITY_THRESHOLD` | `medium` | Minimum severity to keep: `low`/`medium`/`high`/`critical`. |
+| `REVIEW_MIN_CONFIDENCE` | `0.5` | Drop findings with confidence below this (0..1). |
+| `REVIEW_MAX_COMMENTS` | `25` | Cap on inline comments per review. |
+| `REVIEW_MAX_FILES` | `50` | Cap on `.py` files reviewed; the rest go to the summary as skipped. |
+| `REVIEW_CATEGORIES` | `""` | CSV whitelist of categories (`correctness`, `security`, `performance`, `style`, `requirements`); empty = all. |
+| `REVIEW_SUGGESTIONS` | `apply` | `apply` = applyable GitHub `suggestion` blocks; `text` = text-only advice. |
+| `REVIEW_OUTPUT_LANGUAGE` | `ru` | Language of the published findings' text. |
+| `REVIEW_SKIP_DRAFTS` | `true` | Don't review draft PRs. |
+| `MAX_TOOL_RESULT_CHARS` | `8000` | Max length of a tool result fed into the prompt. |
+
+### Observability & sessions (optional)
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `REVIEW_HISTORY` | `true` | Record run history in Postgres (`review_runs`/`review_findings`), fail-soft. |
+| `REVIEW_SESSION_PERSIST` | `true` | Persist the PR session in Postgres for crash recovery. |
+| `REVIEW_SESSION_TTL_HOURS` | `24` | TTL (hours) of a persisted session. |
+| `WEB_ADMIN_USER` | `""` | Basic-auth user for `reviewer serve` / the `web` service; empty = no auth. |
+| `WEB_ADMIN_PASSWORD` | `""` | Basic-auth password; empty = no auth. |
+
+### Task board (optional) — deploy-wide default
+
+A board connection is the same for every repo of one team, so it is configured **once** in the
+reviewer-mcp env rather than duplicated in each repo's `.review.yml`. See
+[Per-repo policy & task board](#per-repo-policy--task-board).
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `TASK_BOARD_TYPE` | `""` | Board type: `yougile`, `jira`, … (selects the skill playbook). |
+| `TASK_BOARD_MCP` | `""` | Name of the connected board MCP server (LLM-side tools `mcp__<mcp>__*`). |
+| `TASK_BOARD_KEY_PATTERN` | `""` | Task-key regex, e.g. `[A-Z]+-\d+`. |
+| `TASK_BOARD_URL_TEMPLATE` | `""` | Task-link template, e.g. `https://ru.yougile.com/team/<id>/#{code}`. |
+| `TASK_BOARD_API_KEY` | `""` | **REST API key** for server-side bulk sync (`sync_board`). Server-internal — never returned to clients. |
+| `TASK_BOARD_API_BASE` | `""` | REST API base URL; empty → default per type (`yougile`: `https://yougile.com/api-v2`). |
+
+> **Getting `TASK_BOARD_API_KEY` (Yougile).** UI: press `Ctrl + ~` (or ⚙ next to the company name →
+> "Настроить") → **API** → create/copy the key. REST: get `companyId` (`Ctrl + Alt + Q`, or
+> `POST /api-v2/auth/companies {login,password}`), then `POST /api-v2/auth/keys {login,password,companyId}`.
+> The key belongs **only** in the reviewer-mcp env (`~/.config/rag-reviewer/.env`), not in a chat or a client config.
+
+---
+
+## CLI reference
+
+All commands run via `uvx --from rag-reviewer <command>`, or after `uv tool install rag-reviewer` /
+`pip install -e ".[dev]"` simply as `reviewer`. Two entry points are installed:
+`reviewer` (the CLI below) and `reviewer-mcp` (the MCP server, started by your editor/plugin).
+
+| Command | Arguments | Options | What it does |
+|---|---|---|---|
+| `check` | — | — | Verify environment readiness (keys, Postgres, Neo4j, GitHub). Prints ✓/✗ per item; exits 1 on any problem. Spends no Voyage quota. |
+| `init` | — | `--path FILE` (default `~/.config/rag-reviewer/.env`), `--yes` (accept defaults, CI mode) | Interactive wizard that writes the `.env` (Voyage/GitHub + optional groups). |
+| `install` | `[client]` | `--all`, `--list`, `--path FILE`, `--pin VERSION`, `--no-latest`, `--no-skills`, `--dry-run` | Register the MCP server (and skills) in AI clients (cross-platform). |
+| `install-skills` | `[client]` | `--all`, `--list`, `--path FILE` | Install only the skills into a client's global skills directory. |
+| `update` | — | — | Check PyPI for a newer `rag-reviewer` and report how to upgrade. |
+| `index` | `<repo>` (path to local clone) | `--ref BRANCH` (git ref to read; default = primary branch), `--branch NAME` (storage key; default = `--ref`), `--repo OWNER/NAME` (default from git `origin`) | Build/update the base index of a branch (vectors + graph). Done once, then incremental. |
+| `search` | `<query>` | `--repo OWNER/NAME` (default `DEFAULT_REPO`), `--branch NAME` (default primary) | Diagnostic hybrid search over a branch's base index. |
+| `status` | `[path]` (default `.`) | `--repo OWNER/NAME` (default from git `origin`), `--branch NAME` (default: all `REVIEW_BRANCHES`) | Index health / freshness vs the clone's HEAD. Spends no Voyage quota. |
+| `migrate-branches` | — | — | One-time: rename legacy `ref="base"` → `base:<primary>` after upgrading to multi-branch. |
+| `serve` | — | `--host HOST` (default `127.0.0.1`), `--port PORT` (default `8000`) | Run the observability web admin on the host. |
+| `reviewer-mcp` | — | — | MCP server (stdio transport). Started automatically by the plugin / editor. |
+
+Examples:
 
 ```bash
-# Create ~/.config/rag-reviewer/.env from template (fill in VOYAGE_API_KEY + GITHUB_TOKEN).
-# Flags: --path FILE (custom location), --force (overwrite existing).
+# First-time setup
 uvx --from rag-reviewer reviewer init
-
-# Register the MCP server (and skills) in installed AI clients automatically (cross-platform).
-# --all auto-detects installed clients; or name one: cursor, claude-desktop, claude-code,
-# vscode, windsurf, gemini, antigravity, mimo, opencode, kimi, trae, codex.
-# Skills are installed for clients that support them (Gemini/Mimo/Kimi); --no-skills to skip.
-# Flags: --list, --dry-run, --path FILE, --pin VERSION, --no-latest, --no-skills.
 uvx --from rag-reviewer reviewer install --all
-uvx --from rag-reviewer reviewer install cursor
-
-# Install only the skills into a client's global skills directory (Gemini/Mimo/Kimi).
-# --all auto-detects; --list shows targets + directories; --path overrides the directory.
-uvx --from rag-reviewer reviewer install-skills --all
-
-# Check environment readiness: keys, Postgres, Neo4j, GitHub. Prints ✓/✗ per item;
-# exits 1 on any problem. Spends no Voyage quota.
 uvx --from rag-reviewer reviewer check
 
-# Update rag-reviewer to the latest version from PyPI.
-uvx --from rag-reviewer reviewer update
-
-# Build/update the base index of the target branch from a local clone (vectors + graph).
-# Done once, then updated incrementally; gives RAG and the graph whole-repo context.
-# --repo may be omitted if the local clone's origin remote is GitHub (owner/name derived automatically)
-# or DEFAULT_REPO is set in .env.
+# Build the base index (whole-repo context for RAG + graph)
 uvx --from rag-reviewer reviewer index /path/to/repo --ref main --repo owner/name
+uvx --from rag-reviewer reviewer index /path/to/repo --ref master --repo owner/name   # second tracked branch
 
-# Build the index for a second tracked branch (isolated index, same deployment).
-uvx --from rag-reviewer reviewer index /path/to/repo --ref master --repo owner/name
-
-# Diagnostic hybrid search over the base index (verify the index works).
-# --branch selects which tracked branch's index to search (default: primary branch).
-uvx --from rag-reviewer reviewer search "token verification"
+# Diagnostics (no Voyage spend except `search`)
 uvx --from rag-reviewer reviewer search "token verification" --branch master
-
-# Index health / freshness (does not spend Voyage quota).
-uvx --from rag-reviewer reviewer status
 uvx --from rag-reviewer reviewer status /path/to/repo --branch dev
 
-# One-time migration: rename legacy ref="base" → "base:<primary>" after upgrading to multi-branch.
-uvx --from rag-reviewer reviewer migrate-branches
-
-# Observability web admin (run history, findings) on the host.
-uvx --from rag-reviewer reviewer serve   # http://127.0.0.1:8000  (options: --host / --port)
-
-# MCP server (stdio transport) — started automatically by the plugin.
-uvx --from rag-reviewer@latest reviewer-mcp
+# Web admin
+uvx --from rag-reviewer reviewer serve --host 127.0.0.1 --port 8000
 ```
 
 Reviewing works even without a prior `index` — context is then limited to the diff and the overlay
 (RAG/graph are "thin"). For full whole-repo impact analysis, run `index` against the target branch.
 
+---
+
+## Skills reference
+
+Skills are the guided entry points for the workflow. With the plugin installed they are invoked as
+`/rag-reviewer:<name>` in Claude Code (the leading `/rag-reviewer:` is the plugin namespace; on
+other clients the skill name is the same). Arguments are passed as free text after the skill name
+(`$ARGUMENTS`).
+
+### `reviewer_review-pr` — full PR review
+
+Orchestrates the three-stage pipeline (`prepare_review` → subagents → `publish_review`).
+
+- **Arguments:** the PR as `owner/repo#N`, `owner/repo N`, or a GitHub PR URL. Add `--dry-run` to
+  assemble and return the full report **without** posting to GitHub.
+- **MCP tools used:** `prepare_review`, `search_code`, `get_related_symbols`, `read_file`,
+  `get_definition`, `find_callers`, `get_changed_file_diff`, `publish_review`; plus
+  `index_task` / `get_task_context` / `search_tasks` when a task board is wired up.
+- **Flow:** prepare (PR + policy + units + board config) → fan out one analysis subagent per file →
+  parallel **performance** / **maintainability** dimensions (+ **requirements** if a `TaskBrief`
+  exists) → **verify** pass (drops `is_real=false` findings) → publish (gate/grounding/dedup/assemble).
+  If `prepare_review` returns `status:"skipped"` (target branch not tracked) it stops; draft PRs are
+  skipped unless `REVIEW_SKIP_DRAFTS=false`.
+
+### `reviewer_solve-task` — gather context for a task, then hand off to dev
+
+Reads a task (if a key + board), pulls related/similar tasks and relevant code, distills a brief,
+and enters brainstorming. It disciplines context-gathering — it does **not** write the code.
+
+- **Arguments:** a task key (e.g. `PRI-4`, must match `key_pattern`) **or** a free-text description
+  (e.g. "add a logout endpoint"). Board-less mode falls back to description + code search.
+- **MCP tools used:** `get_board_config`, `index_task`, `get_task_context`, `search_tasks`,
+  `search_codebase`, `related_symbols`, `callers`, `definition`, `get_pr_diff`; plus the connected
+  board MCP (`mcp__<board>__*`) to read the task.
+- **Flow:** resolve board config → identify task (key vs free text) → best-effort, fail-open context
+  gathering (task graph, similar tasks, relevant code, lazy PR diffs of similar tasks) → distill a
+  structured brief (Task / Related work / Relevant code / Constraints) → hand off to
+  `superpowers:brainstorming` with the brief as seed.
+
+### `reviewer_sync-codebase` — build/update the base index
+
+Thin wrapper over `reviewer index` (vector store + code graph) from a local clone.
+
+- **Arguments (all optional):** `--path <path>` (default: CWD), `--ref <branch>` (default: `main`),
+  `--repo <owner/name>` (default: derived from `git remote get-url origin`),
+  `--backend <auto|scip|treesitter>` (default: `auto`, sets `GRAPH_BACKEND`).
+- **MCP tools used:** none directly — it shells out to `uvx --from rag-reviewer reviewer index`.
+- **Flow:** resolve inputs → check prerequisites (`uvx`, git repo, `reviewer check`, Docker up) →
+  run indexing → optional `reviewer search` to verify → report chunks/nodes/edges and which graph
+  backend was used.
+
+### `reviewer_sync-tasks` — warm the task graph & vector store
+
+A thin trigger over the server-side ETL tool `sync_board` — the reviewer enumerates the board over
+REST itself, so the LLM passes no task text (O(1) tokens regardless of board size).
+
+- **Arguments (all optional):** `--board <name>` (limit to one board/project), `--limit <N>` (smoke
+  run; **disables purge and watermark advance**), `--purge-orphaned` (remove tasks no longer on the
+  board; off by default), `--no-keep-with-prs` (with purge, also remove tasks that have PR history —
+  protected by default).
+- **MCP tools used:** `sync_board` (single call).
+- **Flow:** map args → one `sync_board(...)` call → print a counts summary (enumerated/changed/
+  embedded/unchanged/failed, purge, warnings). On `{"status":"error",...}` the board is not
+  configured server-side — set `TASK_BOARD_*` in `~/.config/rag-reviewer/.env` and reconnect.
+
+### `reviewer_performance-review` — performance-only review
+
+Reviews a diff only for performance/efficiency risks (N+1 queries, repeated work, bad asymptotics,
+missing batching/caching, blocking I/O, memory growth).
+
+- **Arguments (standalone):** scope — `staged`, `unstaged`, uncommitted, branch-vs-base, a commit,
+  a branch comparison, a file list, or a PR-like scope. If unclear, it asks. Inside
+  `reviewer_review-pr` it runs as a dimension over the provided unit diffs.
+- **MCP tools used (when run in the PR pipeline):** `search_code`, `read_file`, `find_callers`,
+  `get_related_symbols`, `get_definition`, `get_changed_file_diff`.
+- **Output:** JSON `{"findings":[{category:"performance", severity, file, line, side, code_quote,
+  message, suggestion, fix, confidence}]}`.
+
+### `reviewer_maintainability-review` — maintainability-only review
+
+Reviews a diff only for maintainability risks (unnecessary complexity, poor readability,
+duplication, weak separation of concerns, convention drift).
+
+- **Arguments (standalone):** same scope options as the performance review. Inside
+  `reviewer_review-pr` it runs as a dimension over the provided unit diffs.
+- **MCP tools used (when run in the PR pipeline):** `search_code`, `get_related_symbols`,
+  `read_file`, `get_definition`, `find_callers`, `get_changed_file_diff`.
+- **Output:** JSON `{"findings":[{category:"maintainability", severity, file, line, side, code_quote,
+  message, suggestion, fix, confidence}]}`.
+
+### `reviewer_ask` — grounded codebase Q&A
+
+Answers a free-text question about the codebase with citations (`path:line`), using RAG + the code
+graph. For onboarding / explaining a subsystem — **not** for reviewing PRs. Requires a built base
+index.
+
+- **Arguments:** a free-text question (e.g. "where is authentication", "how does index freshness
+  work", "explain the retrieval pipeline", "как устроено…").
+- **MCP tools used:** `search_codebase`, `related_symbols`, `callers`, `definition`; plus harness
+  `Read`/`Grep`/`Glob`.
+- **Flow:** resolve repo/branch → `search_codebase` → optionally expand via the graph → answer with
+  an Evidence list of `path:line` citations.
+
+---
+
+## MCP tools reference
+
+The `reviewer-mcp` server exposes 20 tools. PR-session tools require an active `prepare_review` for
+that `(repo, pr)` in the same running server; the rest are session-less.
+
+### Review lifecycle
+
+| Tool | Signature | Returns / does |
+|---|---|---|
+| `prepare_review` | `(repo: str, pr: int)` | Open a PR session: sync base index, build the PR overlay, load policy, assemble per-file units. Returns PR meta + policy + units (or `{"status":"skipped"}` for an untracked target branch). |
+| `publish_review` | `(repo, pr, summary, findings: list[dict], dry_run=False, task_key=None)` | Deterministic tail: gate → grounding → dedup → inline/summary split → post to GitHub → history → overlay cleanup. `dry_run=true` returns the report without posting; `task_key` links the PR to a task on real publish. |
+
+Each finding: `{category, severity(low|medium|high|critical), file, line, side(RIGHT|LEFT),
+code_quote, message, suggestion, fix:{start_line,end_line,replacement}|null, confidence:0..1}`.
+
+### PR-session analysis tools (require `prepare_review`)
+
+| Tool | Signature | Returns / does |
+|---|---|---|
+| `search_code` | `(repo, pr, query: str)` | Hybrid semantic+lexical search over `base ∪ overlay`. |
+| `get_related_symbols` | `(repo, pr, node_id: str)` | Graph neighbors (calls/implementations) of `node_id` = `path#fqn`. |
+| `read_file` | `(repo, pr, path, start=1, end=400)` | Source of a file at the PR HEAD (1-based, inclusive). |
+| `get_definition` | `(repo, pr, symbol: str)` | Definition of a symbol (graph → index → semantic fallback). |
+| `find_callers` | `(repo, pr, node_id: str)` | Direct callers of `node_id` `path#fqn` (impact analysis). |
+| `get_changed_file_diff` | `(repo, pr, path: str)` | Unified diff of another changed file in the same PR. |
+
+### Session-less tools (Q&A, `solve-task`)
+
+| Tool | Signature | Returns / does |
+|---|---|---|
+| `search_codebase` | `(repo, query, top_k=10, branch=None, include_tests=False)` | Hybrid search over a repo's base index; line-numbered, deduped, tests excluded by default. |
+| `related_symbols` | `(repo, node_id, branch=None)` | Graph neighbors (calls/implements/tests) of a symbol. |
+| `callers` | `(repo, node_id, branch=None)` | Incoming `CALLS` of `node_id` `path#fqn`. |
+| `definition` | `(repo, symbol, branch=None)` | Symbol definition (graph → index → semantic fallback). |
+| `get_pr_diff` | `(repo, number: int)` | Unified diff of any (historical) PR; capped, fail-soft. |
+
+### Tasks / boards
+
+| Tool | Signature | Returns / does |
+|---|---|---|
+| `sync_board` | `(board=None, limit=None, purge_orphaned=False, keep_with_prs=True)` | Server-side ETL: enumerate the board over REST, normalize to `TaskBrief`, index. Incremental via a per-board watermark; O(1) tokens. |
+| `index_task` | `(task: dict)` | Index one normalized `TaskBrief` into the task graph + vector store (idempotent). |
+| `index_tasks_batch` | `(tasks: list[dict])` | Same for a list, in one Voyage call. |
+| `search_tasks` | `(query, top_k=5)` | Semantically similar tasks from the indexed corpus. |
+| `get_task_context` | `(key: str)` | Graph context: the task, its PRs, linked tasks and their PRs, and the touched code. |
+| `purge_orphaned_tasks` | `(active_keys: list[str], keep_with_prs=True)` | Remove tasks no longer on the board (PR-linked tasks protected by default). |
+| `get_board_config` | `()` | Deploy-wide board config (`TASK_BOARD_*`); fallback for `sync-tasks`/`solve-task`. Credentials are **not** returned. |
+
+---
+
 ## Plugin usage
 
-With the plugin installed (see [Installation](#installation)) and Claude Code open at the repo root,
-call a skill:
+With the plugin installed and Claude Code open at the repo root, call a skill:
 
 ```text
-/rag-reviewer:reviewer_review-pr owner/repo#42     # review a PR (prepare_review → subagents → publish_review)
-/rag-reviewer:reviewer_sync-codebase               # build/update vector store + code graph from local clone
-/rag-reviewer:reviewer_sync-tasks                  # warm the task graph & vector store (server-side ETL via sync_board)
-/rag-reviewer:reviewer_solve-task <key | free text>  # gather disciplined context for a task, then hand off to dev
+/rag-reviewer:reviewer_review-pr owner/repo#42        # review a PR (prepare → subagents → publish)
+/rag-reviewer:reviewer_review-pr owner/repo#42 --dry-run   # assemble the report without posting
+/rag-reviewer:reviewer_sync-codebase --ref main      # build/update vector store + code graph
+/rag-reviewer:reviewer_sync-tasks                    # warm the task graph (server-side ETL)
+/rag-reviewer:reviewer_solve-task PRI-4              # gather task context, then hand off to dev
+/rag-reviewer:reviewer_ask how does index freshness work   # grounded codebase Q&A
 ```
 
 A typical end-to-end run:
@@ -433,10 +678,9 @@ reviewer index /tmp/REPO --ref master     # optionally index a second branch (RE
 # in Claude Code (from the repo root):  /rag-reviewer:reviewer_review-pr ORG/REPO#42
 ```
 
-For a dry run, pass `--dry-run` to the review skill — `publish_review` assembles the full report
-without posting to GitHub.
+---
 
-### Per-repo policy
+## Per-repo policy & task board
 
 A `.review.yml` file in the **target (base) branch** overrides the env defaults (a PR cannot weaken
 its own review — see *Caveats*):
@@ -475,7 +719,34 @@ costs O(1) tokens regardless of board size. It is incremental via a per-board ti
 the watermark advance. The board REST credentials live only in the reviewer-mcp environment
 (`TASK_BOARD_API_KEY` / `TASK_BOARD_API_BASE`). This inverts the "reviewer Python never touches the
 board" rule **for bulk sync only** — single-task reads in `solve-task` / `review-pr` still go through
-the board-MCP on the LLM side.
+the board-MCP on the LLM side. The task graph (`:Task`) is global, so one task can span PRs across
+several microservice repos.
+
+---
+
+## Observability web admin
+
+Every `publish_review` records the run in Postgres (`review_runs` / `review_findings`): repo/PR,
+model, timings, status, findings with verdicts and whether they were posted. The write is
+**fail-soft** (a logging failure never breaks the review) and gated by `REVIEW_HISTORY` (default
+`true`). The web admin (FastAPI + React/Vite SPA) shows run history, aggregates (gate filter rate,
+trends over time, findings by category/severity) and per-run details with finding drill-down.
+
+```bash
+# Via Docker (no manual steps) — the `web` service builds the frontend and serves FastAPI:
+docker compose up -d           # Postgres + Neo4j + web admin → http://127.0.0.1:8000
+
+# On the host (for frontend dev):
+pip install -e ".[web]"
+(cd web/frontend && npm install && npm run build)
+reviewer serve                 # http://127.0.0.1:8000 (options: --host / --port)
+```
+
+API: `GET /api/runs` (filterable list), `GET /api/runs/{id}` (run + findings),
+`GET /api/runs/{id}/trace` (step trace, forward-only — empty for pre-feature runs),
+`GET /api/stats?days=N` (aggregates).
+
+---
 
 ## Known limitations & caveats
 
@@ -510,11 +781,13 @@ A factual list of what this does and does not do today.
   diff, no overlap with other fixes); otherwise the advice is plain text.
 - **MCP session is in-process.** State between `prepare_review` and `publish_review` lives in the
   running `reviewer-mcp` process (`_Session` in `MCPReviewService`). Both calls for one PR must hit
-  the **same** running server — a restart in between loses the session.
+  the **same** running server — a restart in between loses the session (mitigated by
+  `REVIEW_SESSION_PERSIST`).
 - **Voyage free tier** = 3 RPM / 10K TPM; TPM is the main blocker — a full `reviewer index` of a
   large repo throttles (there is retry/backoff with jitter). A single PR review (overlay + query
   embeddings) fits within the limit.
-- **LLM cost.** A review fans out Claude subagents per file — that is real token cost, not free.
+- **LLM cost.** A review fans out Claude subagents per file plus dimension passes — that is real
+  token cost, not free.
 - **Observability web admin auth is optional.** Basic auth is enabled only if `WEB_ADMIN_USER` /
   `WEB_ADMIN_PASSWORD` are set; by default it is not hardened for public exposure (it binds to
   loopback in `docker-compose.yml`).
@@ -528,6 +801,7 @@ A factual list of what this does and does not do today.
 ```bash
 .venv/bin/pytest -q                 # unit: fast, on fakes; never hit external APIs
 .venv/bin/pytest -m integration     # integration: needs running Postgres/Neo4j + a Voyage key
+.venv/bin/ruff check .              # lint (line-length 100, target py311)
 ```
 
 `pytest` excludes integration tests by default (`addopts = -m 'not integration'`). External services
@@ -538,19 +812,22 @@ happen only in integration/E2E.
 
 ```
 reviewer/
-  config/      Settings (pydantic-settings): env → review thresholds, stores
+  config/      Settings (pydantic-settings): env → review thresholds, stores, branches, board
   vcs/         VCSProvider + github.py (httpx) · diff.py (lines available for inline)
   index/       chunker(tree-sitter) · embeddings(Voyage) · reranker · store(pgvector+pg_search/RRF) · freshness
   graph/       builder(tree-sitter call-graph) · scip(SCIP parser) · backend(backend orchestrator) · store(Neo4j)
   retrieval/   Retriever: hybrid + graph expansion + rerank → ContextPack
+  llm/         _retry.py (retry/backoff for Voyage)
   tools/       agent tools (search_code, get_related_symbols, read_file, get_definition, …)
+  tasks/       TaskBrief normalization · boards/ (TaskBoardProvider REST: yougile) · TaskService.index_batch
   agent/       state (ReviewUnit) · assemble · dedup
   mcp/         MCPReviewService: prepare / tool calls / publish; session management
   services/    ReviewService.prepare: ingest PR, overlay, units
   policy/      ReviewPolicy: env defaults + .review.yml + gating
-  entrypoints/ cli.py (index / search / check / serve) · mcp_server.py (FastMCP)
+  entrypoints/ cli.py (Click) · mcp_server.py (FastMCP, 20 tools)
+  install.py   reviewer init / install / install-skills (cross-platform client wiring)
   web/         FastAPI + React/Vite SPA — observability web admin
   app.py       dependency assembly from Settings
-plugin/        Claude Code plugin (skills /rag-reviewer:reviewer_review-pr, reviewer_solve-task, reviewer_sync-codebase, reviewer_sync-tasks)
+plugin/        Claude Code plugin (7 skills /rag-reviewer:reviewer_*)
 docker-compose.yml   ParadeDB (pgvector+pg_search) + Neo4j + web admin
 ```
