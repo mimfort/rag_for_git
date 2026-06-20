@@ -123,10 +123,23 @@ def make_tools(ctx: ToolContext) -> list[StructuredTool]:
         patch = (ctx.patches or {}).get(path)
         return patch or "(файл не входит в изменения PR)"
 
+    def get_impact() -> str:
+        """Радиус поражения PR: символы с ИЗМЕНЁННОЙ сигнатурой → их вызывающие вне диффа.
+        Помечает места, которые могут быть не обновлены под новый контракт (кросс-файловый impact).
+        Сам не выносит вердикт — подтверждай находки через read_file."""
+        from reviewer.tools.impact import compute_impact, format_impact
+        if ctx.graph is None or ctx.store is None:
+            return "(граф или индекс недоступны)"
+        items = compute_impact(
+            ctx.graph, ctx.store, repo=ctx.repo, branch=ctx.branch,
+            changed_node_ids=ctx.changed_node_ids, changed_paths=ctx.changed_paths,
+            overlay_ref=ctx.overlay_ref)
+        return format_impact(items)
+
     seen: set = set()
     ctx_sig = (ctx.repo, ctx.branch, ctx.overlay_ref,
                tuple(sorted(ctx.changed_paths or [])),
                tuple(sorted(ctx.changed_node_ids or [])))
     raw = [search_code, get_related_symbols, read_file,
-           get_definition, find_callers, get_changed_file_diff]
+           get_definition, find_callers, get_changed_file_diff, get_impact]
     return [StructuredTool.from_function(_memoize(fn, ctx_sig, seen, ctx.cache)) for fn in raw]

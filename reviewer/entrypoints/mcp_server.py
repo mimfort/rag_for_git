@@ -61,6 +61,11 @@ def create_server(service: MCPReviewService) -> FastMCP:
         return service.get_changed_file_diff(repo, pr, path)
 
     @mcp.tool()
+    def get_impact(repo: str, pr: int) -> str:
+        """Blast-radius: symbols whose signature changed -> their callers outside the PR diff."""
+        return service.get_impact(repo, pr)
+
+    @mcp.tool()
     def index_task(task: dict) -> dict:
         """Index a normalized TaskBrief into the task graph + vector store.
         task: {key, aliases[], title, description, criteria[], status, url, links[]}.
