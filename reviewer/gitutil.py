@@ -27,6 +27,18 @@ def rev_parse(repo: str, ref: str) -> str:
     return _git(repo, "rev-parse", ref).strip()
 
 
+def commits_behind(repo: str, sha: str, ref: str) -> int | None:
+    """На сколько коммитов ``ref`` опережает ``sha`` (`git rev-list --count <sha>..<ref>`).
+
+    Возвращает None, если ``repo`` не git-репо либо ``sha``/``ref`` недостижимы —
+    дрейф просто считается «неизвестным» (fail-soft, без падения вызывающего)."""
+    try:
+        out = _git(repo, "rev-list", "--count", f"{sha}..{ref}")
+    except subprocess.CalledProcessError:
+        return None
+    return int(out.strip())
+
+
 def remote_url(repo: str) -> str | None:
     """URL remote 'origin' или None, если remote нет."""
     try:
