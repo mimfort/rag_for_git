@@ -352,3 +352,29 @@ class ChunkStore:
         return [Retrieved(node_id=f"{p}#{f}", path=p, symbol_fqn=f, kind=k,
                           start_line=sl, end_line=el, text=t, score=0.0)
                 for (p, f, k, sl, el, t) in rows]
+
+    def fetch_nodes_at(self, repo, node_ids, ref):
+        """Текст чанков по КОНКРЕТНОМУ ref (без слияния base/overlay).
+
+        В отличие от fetch_nodes (правило свежести base∪overlay), отдаёт ровно
+        запрошенный ref — нужно для раздельного взятия base- и overlay-версии
+        символа при сравнении сигнатур (blast-radius).
+        """
+        if not node_ids:
+            return []
+        pairs = [nid.split("#", 1) for nid in node_ids if "#" in nid]
+        if not pairs:
+            return []
+        sql = """
+        SELECT c.path, c.symbol_fqn, c.kind, c.start_line, c.end_line, c.text
+        FROM chunks c JOIN unnest(%(paths)s::text[], %(fqns)s::text[]) AS q(p,f)
+          ON c.path=q.p AND c.symbol_fqn=q.f
+        WHERE c.repo=%(repo)s AND c.ref=%(ref)s
+        """
+        params = {"repo": repo, "paths": [p for p, _ in pairs],
+                  "fqns": [f for _, f in pairs], "ref": ref}
+        with self._connect() as conn:
+            rows = conn.execute(sql, params).fetchall()
+        return [Retrieved(node_id=f"{p}#{f}", path=p, symbol_fqn=f, kind=k,
+                          start_line=sl, end_line=el, text=t, score=0.0)
+                for (p, f, k, sl, el, t) in rows]
