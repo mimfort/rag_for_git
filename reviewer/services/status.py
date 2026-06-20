@@ -1,0 +1,71 @@
+"""Сбор и рендер статуса base-индекса (команда `reviewer status`).
+
+Чистый слой без эмбеддера/Settings: данные берутся только из стора чанков,
+графа и git — поэтому команда не тратит Voyage и легко тестируется на фейках.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import datetime
+
+from reviewer.gitutil import commits_behind
+from reviewer.index.refs import base_ref
+
+
+@dataclass
+class BranchStatus:
+    branch: str
+    ref: str
+    indexed_sha: str | None
+    updated_at: datetime | None
+    chunks: int
+    graph_nodes: int | None
+    drift: int | None
+
+
+@dataclass
+class OverlayStatus:
+    ref: str
+    chunks: int
+
+
+@dataclass
+class RepoStatus:
+    repo: str
+    branches: list[BranchStatus]
+    overlays: list[OverlayStatus]
+
+
+def _drift(repo_path: str, sha: str, branch: str) -> int | None:
+    """Дрейф ветки: пробуем локальный ref, затем origin/<branch>; иначе None."""
+    for cand in (branch, f"origin/{branch}"):
+        n = commits_behind(repo_path, sha, cand)
+        if n is not None:
+            return n
+    return None
+
+
+def build_status_report(store, graph, repo: str, branches: list[str],
+                        repo_path: str) -> RepoStatus:
+    """Собрать RepoStatus по веткам. Neo4j fail-soft (graph_nodes=None при сбое)."""
+    branch_statuses: list[BranchStatus] = []
+    for branch in branches:
+        ref = base_ref(branch)
+        row = store.get_index_meta_row(repo, ref)
+        sha = row[0] if row else None
+        updated_at = row[1] if row else None
+        chunks = store.count_chunks(repo, ref)
+        try:
+            graph_nodes = graph.count_nodes(repo, branch)
+        except Exception:  # noqa: BLE001 — Neo4j недоступен, граф недоступен
+            graph_nodes = None
+        drift = _drift(repo_path, sha, branch) if sha else None
+        branch_statuses.append(BranchStatus(
+            branch=branch, ref=ref, indexed_sha=sha, updated_at=updated_at,
+            chunks=chunks, graph_nodes=graph_nodes, drift=drift))
+    overlays = [
+        OverlayStatus(ref=r, chunks=store.count_chunks(repo, r))
+        for r in store.list_refs(repo)
+        if not r.startswith("base:")
+    ]
+    return RepoStatus(repo=repo, branches=branch_statuses, overlays=overlays)
