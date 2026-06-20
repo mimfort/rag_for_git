@@ -8,6 +8,9 @@ SeverityLevel = Literal["low", "medium", "high", "critical"]
 SuggestionsMode = Literal["apply", "text"]
 GraphBackend = Literal["auto", "scip", "treesitter"]
 
+# Дефолтный base URL REST API доски по её типу (когда task_board_api_base пуст).
+_BOARD_API_BASE_DEFAULTS = {"yougile": "https://yougile.com/api-v2"}
+
 
 def _resolve_env_file() -> str:
     """Найти .env независимо от рабочей директории процесса.
@@ -85,6 +88,10 @@ class Settings(BaseSettings):
     task_board_mcp: str = ""           # имя MCP-сервера доски (инструменты mcp__<mcp>__*)
     task_board_key_pattern: str = ""   # регэксп ключа задачи, напр. [A-Z]+-\d+
     task_board_url_template: str = ""  # шаблон ссылки на задачу, напр. https://.../#{code}
+    # креды и base URL REST API доски — для server-side синка (sync_board).
+    # Server-internal: НЕ возвращаются board_config() (клиентам креды не утекают).
+    task_board_api_key: str = ""       # ключ REST API доски (напр. YOUGILE_API_KEY)
+    task_board_api_base: str = ""      # base URL REST API; пусто → дефолт по типу
     # web admin basic auth (опционально; если не заданы — доступ без аутентификации)
     web_admin_user: str = ""
     web_admin_password: str = ""
@@ -118,3 +125,7 @@ class Settings(BaseSettings):
         if self.task_board_url_template:
             cfg["url_template"] = self.task_board_url_template
         return cfg or None
+
+    def task_board_api_base_for(self, type_: str) -> str:
+        """Base URL REST API доски: явный task_board_api_base или дефолт по типу."""
+        return self.task_board_api_base or _BOARD_API_BASE_DEFAULTS.get(type_, "")

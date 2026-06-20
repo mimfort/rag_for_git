@@ -51,3 +51,18 @@ def test_task_board_default_partial(monkeypatch):
     assert Settings(_env_file=None).task_board_default() == {
         "type": "yougile", "mcp": "yougile",
     }
+
+
+def test_task_board_api_base_default_yougile():
+    s = Settings(_env_file=None, task_board_api_key="k", task_board_api_base="")
+    assert s.task_board_api_base_for("yougile") == "https://yougile.com/api-v2"
+
+
+def test_task_board_api_base_explicit_overrides_default():
+    s = Settings(_env_file=None, task_board_api_base="https://ru.yougile.com/api-v2")
+    assert s.task_board_api_base_for("yougile") == "https://ru.yougile.com/api-v2"
+
+
+def test_task_board_api_base_unknown_type_empty():
+    s = Settings(_env_file=None, task_board_api_base="")
+    assert s.task_board_api_base_for("jira") == ""
