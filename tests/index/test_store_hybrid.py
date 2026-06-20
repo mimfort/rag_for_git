@@ -182,6 +182,26 @@ def test_two_repo_isolation():
 
 
 @pytest.mark.integration
+def test_fetch_nodes_at_returns_only_given_ref():
+    """fetch_nodes_at берёт текст строго указанного ref, не сливая base/overlay."""
+    s = Settings()
+    store = ChunkStore(s.pg_dsn)
+    store.init_schema()
+    store.clear()
+    d = s.embedding_dim
+    vec = [0.0] * d
+    store.upsert([
+        _row("base:dev", "svc.py", "f", "def f(a, b):\n    ...", vec),
+        _row("pr:1", "svc.py", "f", "def f(a, b, c):\n    ...", vec),
+    ])
+    base = store.fetch_nodes_at("a/x", ["svc.py#f"], "base:dev")
+    overlay = store.fetch_nodes_at("a/x", ["svc.py#f"], "pr:1")
+    assert [n.text for n in base] == ["def f(a, b):\n    ..."]
+    assert [n.text for n in overlay] == ["def f(a, b, c):\n    ..."]
+    assert store.fetch_nodes_at("a/x", [], "base:dev") == []
+
+
+@pytest.mark.integration
 def test_two_branch_isolation():
     """hybrid_search с разными base_ref изолирует ветки одного репо."""
     s = Settings()

@@ -296,6 +296,10 @@ class MCPReviewService:
         """Дифф другого изменённого файла этого PR."""
         return self._invoke_tool(repo, pr, "get_changed_file_diff", {"path": path})
 
+    def get_impact(self, repo: str, pr: int) -> str:
+        """Радиус поражения PR: изменённые сигнатуры → вызывающие вне диффа (impact-анализ)."""
+        return self._invoke_tool(repo, pr, "get_impact", {})
+
     def index_task(self, task: dict) -> dict:
         """Проиндексировать нормализованный TaskBrief: эмбеддинг + граф задачи."""
         return self.components.task_service.index_task(task)
