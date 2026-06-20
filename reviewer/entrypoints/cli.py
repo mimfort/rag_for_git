@@ -15,7 +15,7 @@ from reviewer.graph.store import GraphStore
 from reviewer.index.freshness import update_base
 from reviewer.index.refs import base_ref
 from reviewer.index.store import ChunkStore
-from reviewer.services.status import build_status_report, render_status
+from reviewer.services.status import build_status_report, render_status, render_status_json
 
 log = logging.getLogger(__name__)
 
@@ -236,7 +236,10 @@ def search(query: str, repo_tag: str | None, branch_opt: str | None) -> None:
               help="owner/name тег индекса; по умолчанию из git remote origin")
 @click.option("--branch", "branch_opt", default=None,
               help="одна ветка; по умолчанию все из REVIEW_BRANCHES")
-def status(path: str, repo_tag: str | None, branch_opt: str | None) -> None:
+@click.option("--json", "as_json", is_flag=True, default=False,
+              help="машиночитаемый JSON вместо текста")
+def status(path: str, repo_tag: str | None, branch_opt: str | None,
+           as_json: bool) -> None:
     """Показать здоровье/свежесть base-индекса по веткам (не тратит Voyage)."""
     s = Settings()
     repo = _resolve_repo(repo_tag, path, s)
@@ -250,6 +253,9 @@ def status(path: str, repo_tag: str | None, branch_opt: str | None) -> None:
     finally:
         store.close()
         graph.close()
+    if as_json:
+        click.echo(render_status_json(report))
+        return
     backend = ("scip-python (точный)" if _shutil.which("scip-python")
                else "tree-sitter (fallback, scip-python не найден)")
     click.echo(render_status(report, backend))

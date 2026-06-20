@@ -1,7 +1,8 @@
+import json
 from datetime import datetime
 
 import reviewer.services.status as status_mod
-from reviewer.services.status import build_status_report, OverlayStatus, render_status, RepoStatus, BranchStatus
+from reviewer.services.status import build_status_report, OverlayStatus, render_status, render_status_json, RepoStatus, BranchStatus
 from click.testing import CliRunner
 import reviewer.entrypoints.cli as cli_mod
 
@@ -91,3 +92,43 @@ def test_status_command_smoke(monkeypatch):
     assert res.exit_code == 0, res.output
     assert "Ветка main" in res.output
     assert "✓ свежо" in res.output
+
+
+def test_render_status_json_shapes_payload():
+    dt = datetime(2026, 6, 18, 14, 2)
+    rep = RepoStatus(
+        repo="a/x",
+        branches=[
+            BranchStatus("main", "base:main", "abc1234567def", dt, 1843, 1207, 0),
+            BranchStatus("dev", "base:dev", "def5678901abc", dt, 1850, None, 12),
+            BranchStatus("old", "base:old", None, None, 0, None, None),
+            BranchStatus("nogit", "base:nogit", "aaa1111222bbb", dt, 10, 5, None),
+        ],
+        overlays=[OverlayStatus("pr:24", 18)])
+    payload = json.loads(render_status_json(rep))
+    assert payload["repo"] == "a/x"
+    by = {b["branch"]: b for b in payload["branches"]}
+    assert by["main"]["drift"] == 0
+    assert by["main"]["indexed_sha"] == "abc1234567def"      # полный SHA, не усечён
+    assert by["main"]["updated_at"] == "2026-06-18T14:02:00"  # ISO 8601
+    assert by["dev"]["drift"] == 12
+    assert by["dev"]["graph_nodes"] is None                   # Neo4j недоступен → null
+    assert by["old"]["indexed_sha"] is None                   # не проиндексирована
+    assert by["old"]["updated_at"] is None
+    assert by["nogit"]["drift"] is None                       # дрейф неизвестен
+    assert payload["overlays"] == [{"ref": "pr:24", "chunks": 18}]
+
+
+def test_status_command_json(monkeypatch):
+    dt = datetime(2026, 6, 18, 14, 2)
+    rep = RepoStatus(
+        repo="a/x",
+        branches=[BranchStatus("main", "base:main", "abc1234567def", dt, 5, 3, 0)],
+        overlays=[])
+    monkeypatch.setattr(cli_mod, "build_status_report", lambda *a, **k: rep)
+    res = CliRunner().invoke(cli_mod.cli, ["status", ".", "--repo", "a/x", "--json"])
+    assert res.exit_code == 0, res.output
+    payload = json.loads(res.output)
+    assert payload["repo"] == "a/x"
+    assert payload["branches"][0]["drift"] == 0
+    assert payload["branches"][0]["indexed_sha"] == "abc1234567def"
