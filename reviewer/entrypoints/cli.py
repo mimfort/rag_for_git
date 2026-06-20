@@ -5,6 +5,7 @@ import shutil as _shutil
 
 import click
 import httpx
+import psycopg
 
 from reviewer.config.settings import Settings
 from reviewer.app import build_components
@@ -14,6 +15,7 @@ from reviewer.graph.store import GraphStore
 from reviewer.index.freshness import update_base
 from reviewer.index.refs import base_ref
 from reviewer.index.store import ChunkStore
+from reviewer.services.status import build_status_report, render_status
 
 log = logging.getLogger(__name__)
 
@@ -226,6 +228,31 @@ def search(query: str, repo_tag: str | None, branch_opt: str | None) -> None:
         c.store.close()
         if c.graph:
             c.graph.close()
+
+
+@cli.command()
+@click.argument("path", default=".")
+@click.option("--repo", "repo_tag", default=None,
+              help="owner/name тег индекса; по умолчанию из git remote origin")
+@click.option("--branch", "branch_opt", default=None,
+              help="одна ветка; по умолчанию все из REVIEW_BRANCHES")
+def status(path: str, repo_tag: str | None, branch_opt: str | None) -> None:
+    """Показать здоровье/свежесть base-индекса по веткам (не тратит Voyage)."""
+    s = Settings()
+    repo = _resolve_repo(repo_tag, path, s)
+    branches = [branch_opt] if branch_opt else s.review_branches_list()
+    store = ChunkStore(s.pg_dsn, min_size=s.pg_pool_min_size, max_size=s.pg_pool_max_size)
+    graph = GraphStore(s.neo4j_uri, s.neo4j_user, s.neo4j_password)
+    try:
+        report = build_status_report(store, graph, repo, branches, path)
+    except psycopg.OperationalError as e:
+        raise click.ClickException(f"Postgres недоступен: {e}")
+    finally:
+        store.close()
+        graph.close()
+    backend = ("scip-python (точный)" if _shutil.which("scip-python")
+               else "tree-sitter (fallback, scip-python не найден)")
+    click.echo(render_status(report, backend))
 
 
 @cli.command()
@@ -467,7 +494,7 @@ def update() -> None:
         # Для CLI-команд достаточно использовать @latest явно.
         click.echo(
             "MCP-сервер подхватит обновление автоматически при следующем запуске (@latest в конфиге).\n"
-            f"Для CLI: uvx --from rag-reviewer@latest reviewer <команда>"
+            "Для CLI: uvx --from rag-reviewer@latest reviewer <команда>"
         )
 
 

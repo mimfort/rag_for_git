@@ -134,3 +134,10 @@ class GraphStore:
             "UNWIND $ids AS id "
             "MATCH (s:Symbol {repo: $repo, branch: $branch, id: id})-[r:CALLS]->() DELETE r",
             ids=list(ids), repo=repo, branch=branch)
+
+    def count_nodes(self, repo: str, branch: str = "") -> int:
+        """Число :Symbol-узлов в (repo, branch)."""
+        records, _, _ = self._driver.execute_query(
+            "MATCH (s:Symbol {repo: $repo, branch: $branch}) RETURN count(s) AS n",
+            repo=repo, branch=branch)
+        return records[0]["n"]
