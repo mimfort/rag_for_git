@@ -31,7 +31,12 @@ def _settings() -> Settings:
     s.github_token = "test"
     s.review_session_persist = False     # unit-тесты не трогают Postgres-таблицу сессий
     s.default_repo = ""                  # изолируем от локального .env (DEFAULT_REPO)
-    s.task_board_type = ""               # изолируем от локального .env (TASK_BOARD_TYPE)
+    # изолируем доску от локального .env целиком (иначе настроенный TASK_BOARD_*
+    # в ~/.config/rag-reviewer/.env протекает в payload и ломает unconfigured-кейс)
+    s.task_board_type = ""
+    s.task_board_mcp = ""
+    s.task_board_key_pattern = ""
+    s.task_board_url_template = ""
     return s
 
 
