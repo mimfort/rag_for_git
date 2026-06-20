@@ -1,6 +1,7 @@
 from __future__ import annotations
 import threading
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 import re
 from pgvector.psycopg import register_vector, Vector
@@ -173,6 +174,38 @@ class ChunkStore:
                 (repo, ref, sha),
             )
             conn.commit()
+
+    def get_index_meta_row(self, repo: str, ref: str) -> tuple[str, datetime] | None:
+        """SHA и время последней индексации для ref, или None.
+
+        Как get_index_meta, но возвращает ещё updated_at. Отсутствие таблицы
+        (старый индекс без init_schema) равнозначно отсутствию записи."""
+        import psycopg.errors
+        try:
+            with self._connect() as conn:
+                row = conn.execute(
+                    "SELECT sha, updated_at FROM index_meta WHERE repo=%s AND ref=%s",
+                    (repo, ref),
+                ).fetchone()
+        except psycopg.errors.UndefinedTable:
+            return None
+        return (row[0], row[1]) if row else None
+
+    def count_chunks(self, repo: str, ref: str) -> int:
+        """Число чанков в (repo, ref)."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT count(*) FROM chunks WHERE repo=%s AND ref=%s", (repo, ref)
+            ).fetchone()
+        return row[0] if row else 0
+
+    def list_refs(self, repo: str) -> list[str]:
+        """Отсортированный список distinct ref репо (для поиска overlay)."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT DISTINCT ref FROM chunks WHERE repo=%s ORDER BY ref", (repo,)
+            ).fetchall()
+        return [r[0] for r in rows]
 
     def migrate_legacy_base(self, primary: str) -> int:
         """Перенести legacy ref='base' → 'base:<primary>' в chunks и index_meta.

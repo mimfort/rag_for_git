@@ -35,6 +35,8 @@ reviewer index /path/to/repo --ref main          # построить/обнов
 reviewer index /path/to/repo --ref master        # индекс второй ветки (изолированный, тот же деплой)
 reviewer search "token verification"              # диагностический гибрид-поиск по base-индексу (первичная ветка)
 reviewer search "token verification" --branch master  # поиск по индексу конкретной ветки
+reviewer status                                   # здоровье/свежесть индекса по веткам (не тратит Voyage)
+reviewer status /path/to/repo --branch dev        # статус конкретной ветки (дрейф vs git HEAD клона)
 reviewer migrate-branches                         # одноразовая миграция legacy base → base:<primary> после апгрейда
 reviewer serve                                    # веб-админка наблюдаемости на хосте (история прогонов, находки)
 
