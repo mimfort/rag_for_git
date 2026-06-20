@@ -395,6 +395,10 @@ uvx --from rag-reviewer reviewer index /path/to/repo --ref master --repo owner/n
 uvx --from rag-reviewer reviewer search "token verification"
 uvx --from rag-reviewer reviewer search "token verification" --branch master
 
+# Index health / freshness (does not spend Voyage quota).
+uvx --from rag-reviewer reviewer status
+uvx --from rag-reviewer reviewer status /path/to/repo --branch dev
+
 # One-time migration: rename legacy ref="base" → "base:<primary>" after upgrading to multi-branch.
 uvx --from rag-reviewer reviewer migrate-branches
 

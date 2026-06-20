@@ -2,6 +2,8 @@ from datetime import datetime
 
 import reviewer.services.status as status_mod
 from reviewer.services.status import build_status_report, OverlayStatus, render_status, RepoStatus, BranchStatus
+from click.testing import CliRunner
+import reviewer.entrypoints.cli as cli_mod
 
 
 class FakeStore:
@@ -73,3 +75,16 @@ def test_render_status_shapes_output():
     assert "не проиндексирована" in out       # old: indexed_sha=None
     assert "pr:24   18 чанков" in out
     assert "abc1234" in out                    # короткий SHA (7 символов)
+
+
+def test_status_command_smoke(monkeypatch):
+    dt = datetime(2026, 6, 18, 14, 2)
+    rep = RepoStatus(
+        repo="a/x",
+        branches=[BranchStatus("main", "base:main", "abc1234", dt, 5, 3, 0)],
+        overlays=[])
+    monkeypatch.setattr(cli_mod, "build_status_report", lambda *a, **k: rep)
+    res = CliRunner().invoke(cli_mod.cli, ["status", ".", "--repo", "a/x"])
+    assert res.exit_code == 0, res.output
+    assert "Ветка main" in res.output
+    assert "✓ свежо" in res.output
