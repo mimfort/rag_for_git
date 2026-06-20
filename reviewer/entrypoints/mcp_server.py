@@ -15,7 +15,7 @@ log = logging.getLogger(__name__)
 
 
 def create_server(service: MCPReviewService) -> FastMCP:
-    """Создать и вернуть сконфигурированный FastMCP-сервер с 19 тулами.
+    """Создать и вернуть сконфигурированный FastMCP-сервер с 20 тулами.
 
     Все тулы — обычные def (sync), а не async: сервис не потокобезопасен
     и рассчитан на последовательное исполнение sync-тулов FastMCP в event loop.
@@ -85,6 +85,18 @@ def create_server(service: MCPReviewService) -> FastMCP:
         keep_with_prs: if True (default), tasks with IMPLEMENTED_BY edges are protected.
         Returns {deleted_store, deleted_graph, protected_prs, warnings}."""
         return service.purge_orphaned_tasks(active_keys, keep_with_prs)
+
+    @mcp.tool()
+    def sync_board(board: str | None = None, limit: int | None = None,
+                   purge_orphaned: bool = False, keep_with_prs: bool = True) -> dict:
+        """Server-side ETL: enumerate the configured task board via REST, normalize,
+        and index it (vector store + task graph). The LLM passes no task payload —
+        all enumeration/normalization happens server-side, so a sync costs O(1) tokens.
+        Incremental via a per-board timestamp watermark; --limit disables purge and
+        cursor advance. Returns a compact counts summary (no task text). board filters
+        to one project/board by name; purge_orphaned removes tasks no longer on the
+        board (keep_with_prs protects tasks with IMPLEMENTED_BY edges)."""
+        return service.sync_board(board, limit, purge_orphaned, keep_with_prs)
 
     @mcp.tool()
     def search_tasks(query: str, top_k: int = 5) -> str:

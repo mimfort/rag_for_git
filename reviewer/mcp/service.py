@@ -330,6 +330,25 @@ class MCPReviewService:
             active_keys, keep_with_prs=keep_with_prs
         )
 
+    def sync_board(self, board: str | None = None, limit: int | None = None,
+                   purge_orphaned: bool = False, keep_with_prs: bool = True) -> dict:
+        """Server-side ETL: перечислить доску по REST, нормализовать, проиндексировать.
+
+        Доска/ключ не настроены → понятный error-summary (fail-soft), без падения.
+        """
+        sync = getattr(self.components, "sync_service", None)
+        if sync is None:
+            return {"status": "error",
+                    "reason": "task board REST not configured "
+                              "(set TASK_BOARD_TYPE + TASK_BOARD_API_KEY)"}
+        try:
+            return sync.run(board=board, limit=limit,
+                            purge_orphaned=purge_orphaned,
+                            keep_with_prs=keep_with_prs)
+        except Exception as e:
+            log.warning("sync_board: сбой синка", exc_info=True)
+            return {"status": "error", "reason": f"{type(e).__name__}: {e}"}
+
     def _resolve_repo_branch(self, repo: str, branch: str | None) -> tuple[str, str] | str:
         """Резолв (repo, ветка) для session-less тулов.
 
