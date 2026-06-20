@@ -5,6 +5,7 @@
 """
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -69,6 +70,32 @@ def build_status_report(store, graph, repo: str, branches: list[str],
         if not r.startswith("base:")
     ]
     return RepoStatus(repo=repo, branches=branch_statuses, overlays=overlays)
+
+
+def render_status_json(report: RepoStatus) -> str:
+    """Машиночитаемый JSON по RepoStatus (для скилов-потребителей).
+
+    Полный SHA (не усечён — потребитель машинный), datetime → ISO 8601,
+    None → null. `backend` в JSON не включается: это подсказка только для
+    текстового вывода, в список требуемых полей не входит.
+    """
+    payload = {
+        "repo": report.repo,
+        "branches": [
+            {
+                "branch": b.branch,
+                "ref": b.ref,
+                "indexed_sha": b.indexed_sha,
+                "updated_at": b.updated_at.isoformat() if b.updated_at else None,
+                "chunks": b.chunks,
+                "graph_nodes": b.graph_nodes,
+                "drift": b.drift,
+            }
+            for b in report.branches
+        ],
+        "overlays": [{"ref": o.ref, "chunks": o.chunks} for o in report.overlays],
+    }
+    return json.dumps(payload, ensure_ascii=False, indent=2)
 
 
 def _fmt_dt(dt: datetime | None) -> str:
