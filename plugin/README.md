@@ -1,22 +1,40 @@
 # rag-reviewer — Claude Code plugin
 
-Плагин = этот репозиторий. Требования: выполненная установка
-`python -m venv .venv && .venv/bin/pip install -e ".[dev]"`, заполненный `.env`,
-поднятые ParadeDB/Neo4j (`docker compose up -d`), построенный base-индекс
-(`reviewer index /path/to/repo --ref main`).
+Корень Claude Code-плагина для скиллов `/rag-reviewer:reviewer_*`. Полная документация
+проекта — в корневых [README.md](../README.md) (англ.) и [README.ru.md](../README.ru.md) (рус.).
 
-MCP-сервер запускается из `.venv` репозитория с `cwd` в корне плагина —
-`./.env` подхватывается оттуда. Если сервер стартует из другого каталога,
+## Что внутри
+
+- **MCP-сервер** `reviewer` (`reviewer-mcp`, 20 тулов) — конфиг в `.mcp.json`.
+- **7 скиллов** (`plugin/skills/*/SKILL.md`):
+  `/rag-reviewer:reviewer_review-pr` · `/rag-reviewer:reviewer_solve-task` ·
+  `/rag-reviewer:reviewer_sync-codebase` · `/rag-reviewer:reviewer_sync-tasks` ·
+  `/rag-reviewer:reviewer_performance-review` · `/rag-reviewer:reviewer_maintainability-review` ·
+  `/rag-reviewer:reviewer_ask`.
+
+## Требования
+
+- Поднятые ParadeDB/Neo4j (`docker compose up -d`), заполненный `.env`
+  (`reviewer init`; обязателен `VOYAGE_API_KEY`, для ревью — `GITHUB_TOKEN`).
+- Построенный base-индекс (`reviewer index /path/to/repo --ref main`) — для полного
+  whole-repo контекста. Без него ревью работает «тонко» (только дифф + overlay).
+
 `.env` резолвится из фиксированного места: `$REVIEWER_ENV_FILE` →
-`~/.config/rag-reviewer/.env` → `./.env` (диагностика при сбое старта:
-`reviewer check`).
+`~/.config/rag-reviewer/.env` → `./.env`. Диагностика старта: `reviewer check`.
 
-Подключение: `claude --plugin-dir /path/to/rag_for_git` (или установка через
-локальный marketplace). Скиллы: `/rag-reviewer:review-pr`,
-`/rag-reviewer:performance-review`, `/rag-reviewer:maintainability-review`.
+## Установка плагина
 
-Headless:
+Через marketplace (из любого проекта):
+
+```text
+/plugin marketplace add mimfort/rag_for_git
+/plugin install rag-reviewer@rag-reviewer-marketplace
+```
+
+Или локально для разработки: `claude --plugin-dir /path/to/rag_for_git`.
+
+## Headless
 
 ```bash
-claude --plugin-dir . -p "/rag-reviewer:review-pr owner/repo#123 --dry-run" --permission-mode bypassPermissions
+claude --plugin-dir . -p "/rag-reviewer:reviewer_review-pr owner/repo#123 --dry-run" --permission-mode bypassPermissions
 ```
