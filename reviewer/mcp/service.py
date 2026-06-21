@@ -317,6 +317,14 @@ class MCPReviewService:
         """Граф-контекст задачи: связанные задачи → их PR → затронутый код."""
         return self.components.task_service.get_task_context(key)
 
+    def get_task(self, key: str) -> dict | None:
+        """Нормализованный TaskBrief задачи из стора (store-first /solve-task).
+
+        В отличие от get_task_context (граф: связи/PR/код) — это собственный контент
+        задачи (title/description/status/url) из Postgres. None, если задачи нет в сторе.
+        """
+        return self.components.task_service.get_task(key)
+
     def board_config(self) -> dict:
         """Глобальный (env) конфиг доски задач деплоя — для клиентских скилов.
 

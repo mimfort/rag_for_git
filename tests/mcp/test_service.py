@@ -465,6 +465,22 @@ def test_publish_review_no_link_without_task_key(
     components.task_service.link_review.assert_not_called()
 
 
+def test_get_task_delegates_to_task_service():
+    """MCPReviewService.get_task делегирует в task_service.get_task."""
+    svc = _make_mcp_service()
+    brief = {"key": "ID-1", "aliases": ["PRI-1"], "title": "T",
+             "description": "d", "criteria": [], "status": "Open", "url": "u"}
+    svc.components.task_service.get_task.return_value = brief
+    assert svc.get_task("PRI-1") == brief
+    svc.components.task_service.get_task.assert_called_once_with("PRI-1")
+
+
+def test_get_task_miss_returns_none():
+    svc = _make_mcp_service()
+    svc.components.task_service.get_task.return_value = None
+    assert svc.get_task("ZZ-9") is None
+
+
 def test_task_tool_delegates() -> None:
     """index_task/search_tasks/get_task_context делегируют в task_service."""
     svc = _make_mcp_service()
