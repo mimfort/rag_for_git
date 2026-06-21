@@ -96,6 +96,26 @@ class TaskStore:
             ).fetchone()
         return row[0] if row else None
 
+    def get_task(self, key: str) -> TaskRow | None:
+        """Задача по ключу или алиасу (для store-first одиночного чтения в /solve-task).
+
+        Матч по каноническому ``key`` ИЛИ по ``aliases`` (стор ключует по ID-N, а
+        вызов часто передаёт проектный PRI-N). Эмбеддинг не читается (не нужен для
+        брифа) — в TaskRow ставится []. None, если задачи нет.
+        """
+        sql = """
+        SELECT key, aliases, title, description, status, url, content_hash, text
+        FROM tasks WHERE key = %s OR %s = ANY(aliases) LIMIT 1
+        """
+        with self._connect() as conn:
+            row = conn.execute(sql, (key, key)).fetchone()
+        if row is None:
+            return None
+        return TaskRow(
+            key=row[0], aliases=list(row[1] or []), title=row[2],
+            description=row[3], status=row[4], url=row[5],
+            content_hash=row[6], text=row[7], embedding=[])
+
     def upsert_task(self, row: TaskRow) -> None:
         sql = """
         INSERT INTO tasks (key, aliases, title, description, status, url,
