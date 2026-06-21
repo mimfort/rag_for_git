@@ -5,8 +5,8 @@ Tool discipline (shared):
   browse a file as a whole. Identical calls return cached results instantly;
   still avoid redundant calls — each call should answer a new question. Stop
   calling tools once you can decide.
-- If a signature or contract changes, locate all call sites and verify (via
-  `read_file` / `get_changed_file_diff`) that they stay consistent.
+- If a signature or contract changes, use `find_callers` to locate all call
+  sites and verify with `read_file` / `get_changed_file_diff` that they stay consistent.
 
 ## PR-session tools (inside `/reviewer_review-pr`)
 
