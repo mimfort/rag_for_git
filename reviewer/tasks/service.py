@@ -235,6 +235,30 @@ class TaskService:
             return f"(no task '{key}' in task graph)"
         return _format_task_context(ctx, self._max_chars)
 
+    def get_task(self, key: str) -> dict | None:
+        """Нормализованный TaskBrief задачи из стора (store-first одиночное чтение).
+
+        Источник — Postgres ``tasks`` (заполнен sync_board). Граф не трогаем: links/PRs
+        остаются за get_task_context. criteria=[] — требования несёт description
+        (как в board-MCP-пути). Miss/сбой стора → None, чтобы вызывающий фолбэкнул.
+        """
+        try:
+            row = self._store.get_task(key)
+        except Exception:
+            log.warning("get_task: сбой стора для %s", key, exc_info=True)
+            return None
+        if row is None:
+            return None
+        return {
+            "key": row.key,
+            "aliases": list(row.aliases or []),
+            "title": row.title,
+            "description": row.description,
+            "criteria": [],
+            "status": row.status,
+            "url": row.url,
+        }
+
     def link_review(self, task_key: str, pr: PRRef, touched_node_ids: list[str]) -> None:
         """Авто-линковка PR↔задача↔код (fail-soft; no-op без графа/ключа)."""
         if self._graph is None or not task_key:

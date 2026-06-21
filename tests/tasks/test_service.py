@@ -4,12 +4,13 @@ from reviewer.tasks.store import task_content_hash, build_task_text
 
 
 class _FakeStore:
-    def __init__(self, hashes=None, search_result=None):
+    def __init__(self, hashes=None, search_result=None, rows=None):
         self._hashes = dict(hashes or {})
         self.upserted = []
         self.meta_updates = []
         self.deleted = []
         self._search_result = search_result or []
+        self._rows = list(rows or [])      # list[TaskRow] для get_task
 
     def existing_hash(self, key):
         return self._hashes.get(key)
@@ -34,6 +35,12 @@ class _FakeStore:
                 count += 1
         self.deleted.extend(keys)
         return count
+
+    def get_task(self, key):
+        for r in self._rows:
+            if r.key == key or key in (r.aliases or []):
+                return r
+        return None
 
 
 class _FakeGraph:
@@ -330,3 +337,36 @@ def test_index_task_pr_link_noop_without_graph():
     res = TaskService(_FakeStore(), None, _FakeEmbedder()).index_task(task)
     assert res["embedded"] is True
     assert res["prs_linked"] == 0
+
+
+def test_get_task_hit_returns_normalized_brief():
+    from reviewer.tasks.store import TaskRow
+    row = TaskRow(key="ID-1", aliases=["PRI-1"], title="Add logout",
+                  description="Clear session", status="Open", url="u",
+                  content_hash="h", text="t", embedding=[])
+    svc = TaskService(_FakeStore(rows=[row]), _FakeGraph(), _FakeEmbedder())
+    out = svc.get_task("ID-1")
+    assert out == {"key": "ID-1", "aliases": ["PRI-1"], "title": "Add logout",
+                   "description": "Clear session", "criteria": [],
+                   "status": "Open", "url": "u"}
+
+
+def test_get_task_resolves_by_alias():
+    from reviewer.tasks.store import TaskRow
+    row = TaskRow(key="ID-1", aliases=["PRI-1"], title="T", description="d",
+                  status=None, url=None, content_hash="h", text="t", embedding=[])
+    out = TaskService(_FakeStore(rows=[row]), _FakeGraph(), _FakeEmbedder()).get_task("PRI-1")
+    assert out is not None and out["key"] == "ID-1"
+
+
+def test_get_task_miss_returns_none():
+    out = TaskService(_FakeStore(rows=[]), _FakeGraph(), _FakeEmbedder()).get_task("ZZ-9")
+    assert out is None
+
+
+def test_get_task_store_error_returns_none_not_raise():
+    class _BrokenStore(_FakeStore):
+        def get_task(self, key):
+            raise RuntimeError("pg down")
+    out = TaskService(_BrokenStore(), _FakeGraph(), _FakeEmbedder()).get_task("ID-1")
+    assert out is None

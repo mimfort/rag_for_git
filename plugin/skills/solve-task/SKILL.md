@@ -51,11 +51,25 @@ brief to `superpowers:brainstorming` (which leads to writing-plans → subagent-
    is not connected → board-less mode (continue without it).
 
 2. **Identify the task.**
-   - If `$ARGUMENTS` matches the board's `key_pattern` AND a board is configured/connected: read the
-     task via the playbook `../review-pr/references/task-context-<task_board.type>.md` and build a
-     `TaskBrief` `{key, aliases[], title, description, criteria[], status, url, links[]}`. Then call
-     `index_task(TaskBrief)` to persist it (idempotent — safe to repeat).
+   - If `$ARGUMENTS` matches the board's `key_pattern`:
+     1. **Store-first.** Call reviewer `get_task(key)` — it returns the task's own normalized
+        content (`{key, aliases[], title, description, criteria[], status, url}`) from the reviewer
+        store, which the preflight `sync_board` (step 0.3) just refreshed.
+        - **Hit** (a task object with a `key`): use it directly as the `TaskBrief`. The task is
+          already indexed (the preflight sync persisted it) — do NOT call `index_task`. Note in the
+          brief that the task data came from the reviewer store (after sync).
+        - **Miss** (`null` / no `key`) AND a board is configured/connected: read the task via the
+          playbook `../review-pr/references/task-context-<task_board.type>.md`, build a `TaskBrief`
+          `{key, aliases[], title, description, criteria[], status, url, links[]}`, then call
+          `index_task(TaskBrief)` to persist it (idempotent — safe to repeat).
+        - **Miss** AND no board (or board MCP not connected): board-less — treat `$ARGUMENTS` as the
+          task description.
    - Otherwise: treat `$ARGUMENTS` as the task description; do not read the board.
+
+   Store-first cuts the double-fetch: the preflight `sync_board` already pulled the whole board into
+   the reviewer store, so a single read of our own store avoids re-enumerating the board via board-MCP
+   (fewer LLM tokens, fewer external deps). The board-MCP fallback stays for misses and for boards
+   without a REST provider.
 
 3. **Gather context (best-effort, fail-open).** Any tool returning a "(… unavailable)" / "(ничего не
    найдено)" note or an error is non-fatal — continue.
