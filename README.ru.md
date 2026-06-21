@@ -72,7 +72,7 @@
                 │        └──────────────────── publish_review (gate/grounding/dedup/assemble) ◀─────────┘│
                 └────────────────────────────────────────────────────────────────────────────────────────┘
 
-  Хранилища поднимаются в Docker:  Postgres/ParadeDB (:5433)  ·  Neo4j (:7687)  ·  веб-админка (:8000)
+  Хранилища поднимаются в Docker:  Postgres/ParadeDB (:5433)  ·  Neo4j (:7687)
   Внешние API:  Voyage (эмбеддинги voyage-code-3 + reranker rerank-2.5)
 ```
 
@@ -199,7 +199,7 @@ uv tool install rag-reviewer
 
 # 1) Инфраструктура
 curl -O https://raw.githubusercontent.com/mimfort/rag_for_git/main/docker-compose.yml
-docker compose up -d          # Postgres/ParadeDB (:5433) + Neo4j (:7687) + web-админка (:8000)
+docker compose up -d          # Postgres/ParadeDB (:5433) + Neo4j (:7687)
 
 # 2) Настроить ключи и параметры интерактивно
 reviewer init
@@ -449,7 +449,7 @@ rm /tmp/rag-reviewer.tgz
 | `REVIEW_HISTORY` | `true` | Писать историю прогонов в Postgres (`review_runs`/`review_findings`), fail-soft. |
 | `REVIEW_SESSION_PERSIST` | `true` | Персистить сессию PR в Postgres (crash-recovery). |
 | `REVIEW_SESSION_TTL_HOURS` | `24` | TTL персистнутой сессии (часы). |
-| `WEB_ADMIN_USER` | `""` | Basic-auth логин для `reviewer serve` / сервиса `web`; пусто = без auth. |
+| `WEB_ADMIN_USER` | `""` | Basic-auth логин для `reviewer serve`; пусто = без auth. |
 | `WEB_ADMIN_PASSWORD` | `""` | Basic-auth пароль; пусто = без auth. |
 
 ### Доска задач (опционально) — глобальный дефолт деплоя
@@ -774,10 +774,7 @@ reviewer check          # ✓/✗ по ключам, Postgres, Neo4j, GitHub; ex
 времени, находки по категориям/severity) и детали каждого прогона с drill-down.
 
 ```bash
-# Через Docker (без ручных шагов) — сервис web сам собирает фронт и поднимает FastAPI:
-docker compose up -d                 # Postgres + Neo4j + web-админка → http://127.0.0.1:8000
-
-# На хосте (для разработки фронта):
+# На хосте — собрать фронт и запустить SPA + FastAPI:
 pip install -e ".[web]"
 (cd web/frontend && npm install && npm run build)
 reviewer serve                       # http://127.0.0.1:8000 (опции: --host/--port)
@@ -850,7 +847,7 @@ reviewer/
   web/         FastAPI + React/Vite SPA — веб-админка наблюдаемости
   app.py       сборка зависимостей из Settings
 plugin/        Claude Code-плагин (7 скиллов /rag-reviewer:reviewer_*)
-docker-compose.yml   ParadeDB (pgvector+pg_search) + Neo4j + web-админка
+docker-compose.yml   ParadeDB (pgvector+pg_search) + Neo4j
 ```
 
 ## Тесты
@@ -881,5 +878,5 @@ docker-compose.yml   ParadeDB (pgvector+pg_search) + Neo4j + web-админка
 - **Поверхность ревью.** Inline — только на строках диффа; остальное — в сводку. Applyable `suggestion` ставится только при безопасных инвариантах (`apply`, точная замена, диапазон целиком в RIGHT, без пересечений), иначе — текст.
 - **Капы GitHub API.** Список файлов PR пагинируется по 100; compare API для досинка базы отдаёт максимум 300 файлов — очень большие диффы усекаются.
 - **`.review.yml` берётся из base-ветки** (по дизайну — PR не может ослабить собственное ревью), не из head PR.
-- **Auth веб-админки опционален**: basic-auth включается только при `WEB_ADMIN_USER`/`WEB_ADMIN_PASSWORD`; по умолчанию слушает loopback в `docker-compose.yml`.
+- **Auth веб-админки опционален**: basic-auth включается только при `WEB_ADMIN_USER`/`WEB_ADMIN_PASSWORD`; по умолчанию `reviewer serve` слушает loopback.
 ```
