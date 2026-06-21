@@ -19,13 +19,8 @@ Tool calls, code identifiers, and `path:line` citations stay verbatim.
 
 ## Tools
 
-Session-less reviewer MCP tools (no PR / `prepare_review` needed):
-- `search_codebase(repo, query, top_k?, branch?)` — hybrid semantic+lexical search; already
-  includes 1-hop graph expansion + rerank. Returns chunks headed by `path#fqn (path:start-end)`.
-- `related_symbols(repo, node_id, branch?)` — graph neighbors (calls/implements/tests) of a
-  `node_id` ('path#fqn').
-- `callers(repo, node_id, branch?)` — direct callers of a `node_id` (impact).
-- `definition(repo, symbol, branch?)` — where a symbol is defined + its source.
+<!-- include: _common/tool-usage.md -->
+Use the session-less tools above.
 
 Plus the harness file tools (`Read`, `Grep`, `Glob`) to read source from the local clone on disk.
 
@@ -34,8 +29,9 @@ Plus the harness file tools (`Read`, `Grep`, `Glob`) to read source from the loc
 1. **Resolve repo/branch.**
    - `repo`: `git remote get-url origin` → strip a trailing `.git`, take the last two path
      segments (`owner/name`). Pass `""` to let the server use `DEFAULT_REPO` if origin is missing.
-   - `branch`: `git branch --show-current`. Pass it only if it is in `REVIEW_BRANCHES`; if the
-     user named a branch, use that; otherwise omit it (the server uses the primary branch).
+   - `branch`:
+
+<!-- include: _common/branch-selection.md -->
 
    **Freshness check (first code question of the session only).** After resolving repo/branch and
    ONLY on the first code question in this conversation — rely on conversation memory: if you have

@@ -54,3 +54,29 @@ def test_verify_keeps_verdicts_schema_and_tools():
     v = assemble("review-pr/references/verify-prompt.md")
     assert '{"verdicts":' in v.replace(" ", "")    # своя схема не тронута
     assert "find_callers" in v                      # tool-usage подставлен
+
+
+def test_performance_assembled_schema_and_goal():
+    p = assemble("performance-review/SKILL.md")
+    assert '"category": "performance"' in p or "performance" in p
+    assert '"confidence": 0.0' in p                 # из findings-schema
+    assert "N+1" in p                               # perf-специфичный хвост остался
+
+
+def test_maintainability_assembled_schema_and_whatnot():
+    m = assemble("maintainability-review/SKILL.md")
+    assert '"confidence": 0.0' in m                 # из findings-schema
+    assert "What Not To Flag" in m                  # maint-специфичный хвост остался
+
+
+def test_ask_assembled_has_sessionless_tools_and_branch():
+    a = assemble("ask/SKILL.md")
+    assert "search_codebase" in a                   # session-less tool-usage
+    assert "REVIEW_BRANCHES" in a                   # branch-selection
+    assert "Grounding contract" in a                # ask-специфичный хвост остался
+
+
+def test_solve_task_assembled_has_branch_and_tools():
+    s = assemble("solve-task/SKILL.md")
+    assert "REVIEW_BRANCHES" in s
+    assert "search_codebase" in s

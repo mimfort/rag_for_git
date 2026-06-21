@@ -21,9 +21,10 @@ Do not pick a scope yourself unless the user already made it clear. If the
 resulting diff is empty, stop and say there is nothing to review.
 
 Inside `/reviewer_review-pr`: the orchestrator provides the diffs of all units (path + patch)
-— review those. Call the reviewer MCP tools as needed (`search_code`,
-`get_related_symbols`, `read_file`, `get_definition`, `find_callers`,
-`get_changed_file_diff`) to check repository context and verify findings.
+— review those.
+
+<!-- include: _common/tool-usage.md -->
+Use the PR-session tools above.
 
 ## Goal
 
@@ -117,20 +118,8 @@ Return only actionable findings.
 Return ONLY the findings JSON used by the review pipeline, with
 `"category": "maintainability"`:
 
-```json
-{"findings": [{
-  "category": "maintainability",
-  "severity": "low|medium|high|critical",
-  "file": "<path of the reviewed file>",
-  "line": <line number in the NEW file or null>,
-  "side": "RIGHT",
-  "code_quote": "<exact line from the new file>",
-  "message": "<what increases maintenance cost or conflicts with project practice>",
-  "suggestion": "<concrete simpler alternative that preserves behavior, or null>",
-  "fix": {"start_line": N, "end_line": M, "replacement": "<new code>"} | null,
-  "confidence": 0.0
-}]}
-```
+<!-- include: _common/findings-schema.md -->
+Set "category" to "maintainability"; "side" is always "RIGHT".
 
 The `suggestion` field replaces what in the original Codex format appeared after
 `Simplification:` — put the concrete simplifying alternative there.
