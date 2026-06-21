@@ -34,6 +34,7 @@ SKILLS_TARBALL = "https://github.com/mimfort/rag_for_git/archive/refs/heads/main
 SKILL_NAMES = (
     "review-pr", "solve-task", "sync-codebase",
     "sync-tasks", "performance-review", "maintainability-review",
+    "_common",  # общий каталог reference-блоков (без своего SKILL.md), PRI-142
 )
 
 # Шаблон .env (встроен, чтобы `reviewer init` работал из published-wheel без
