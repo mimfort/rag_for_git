@@ -8,6 +8,7 @@ from typing import Any
 from langchain_core.tools import StructuredTool
 
 from reviewer.index.refs import base_ref
+from reviewer.tools.graph_format import format_neighbors
 
 _DUP_STUB = "(повтор: результат уже показан выше)"
 
@@ -65,9 +66,15 @@ def make_tools(ctx: ToolContext) -> list[StructuredTool]:
         return pack.as_context() or "(ничего не найдено)"
 
     def get_related_symbols(node_id: str) -> str:
-        """Связанные символы (вызовы/реализации/тесты) для node_id вида 'path#fqn'."""
-        related = ctx.graph.expand(ctx.repo, [node_id], hops=2, branch=ctx.branch)
-        return "\n".join(sorted(related)) or "(нет связей)"
+        """Связанные символы (вызовы/реализации/тесты) для node_id 'path#fqn'.
+        На элемент: file:line + строка определения + тип ребра (CALLS/IMPLEMENTS/TESTED_BY) и дистанция."""
+        if ctx.graph is None or not hasattr(ctx.graph, "expand_detailed"):
+            return "(граф недоступен)"
+        neighbors = ctx.graph.expand_detailed(ctx.repo, [node_id], hops=2, branch=ctx.branch)
+        return format_neighbors(
+            neighbors, store=ctx.store, repo=ctx.repo, branch=ctx.branch,
+            overlay_ref=ctx.overlay_ref, changed_paths=ctx.changed_paths,
+            empty_msg="(нет связей)")
 
     def read_file(path: str, start: int = 1, end: int = 400) -> str:
         """Точный исходник файла на head-ревизии PR, строки [start..end] с номерами (N|код).
@@ -112,11 +119,15 @@ def make_tools(ctx: ToolContext) -> list[StructuredTool]:
         return pack.as_context() or "(определение не найдено)"
 
     def find_callers(node_id: str) -> str:
-        """Кто вызывает символ node_id ('path#fqn') — направленный CALLS (impact-анализ)."""
-        if ctx.graph is None or not hasattr(ctx.graph, "callers"):
+        """Кто вызывает символ node_id ('path#fqn') — входящие CALLS (impact-анализ).
+        На элемент: file:line + строка определения вызывающего + [CALLS]."""
+        if ctx.graph is None or not hasattr(ctx.graph, "callers_detailed"):
             return "(граф недоступен)"
-        found = ctx.graph.callers(ctx.repo, [node_id], branch=ctx.branch)
-        return "\n".join(sorted(found)) or "(вызовов не найдено)"
+        found = ctx.graph.callers_detailed(ctx.repo, [node_id], branch=ctx.branch)
+        return format_neighbors(
+            found, store=ctx.store, repo=ctx.repo, branch=ctx.branch,
+            overlay_ref=ctx.overlay_ref, changed_paths=ctx.changed_paths,
+            empty_msg="(вызовов не найдено)")
 
     def get_changed_file_diff(path: str) -> str:
         """Дифф другого изменённого файла этого PR."""
