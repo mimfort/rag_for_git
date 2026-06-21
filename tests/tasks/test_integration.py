@@ -219,6 +219,28 @@ def test_purge_no_keep_with_prs_deletes_all(store, graph):
     assert store.list_keys() == []
 
 
+def test_taskstore_get_task_by_key_and_alias(store):
+    emb = _FakeEmbedder()
+    text = build_task_text("Add logout", "Clear the session on logout", [])
+    store.upsert_task(TaskRow(
+        key="ID-1", aliases=["PRI-1"], title="Add logout",
+        description="Clear the session on logout", status="Open", url="u",
+        content_hash=task_content_hash(text), text=text,
+        embedding=emb.embed_documents([text])[0]))
+
+    by_key = store.get_task("ID-1")
+    assert by_key is not None
+    assert by_key.key == "ID-1" and by_key.aliases == ["PRI-1"]
+    assert by_key.title == "Add logout"
+    assert by_key.description == "Clear the session on logout"
+    assert by_key.status == "Open" and by_key.url == "u"
+
+    by_alias = store.get_task("PRI-1")          # резолв по alias находит ту же задачу
+    assert by_alias is not None and by_alias.key == "ID-1"
+
+    assert store.get_task("ZZ-404") is None      # промах
+
+
 def test_purge_removes_link_only_stub_from_graph(store, graph):
     """Стаб :Task, созданный upsert_links (нет в сторе), вычищается из графа.
 

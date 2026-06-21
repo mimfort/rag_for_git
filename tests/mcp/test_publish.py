@@ -56,6 +56,8 @@ def _components() -> MagicMock:
     c.graph.expand.return_value = set()
     c.graph.callers.return_value = set()
     c.graph.find_symbol.return_value = []
+    c.graph.in_degree.return_value = {}
+    c.retriever.store.fetch_nodes_at.return_value = []
     c.llm_provider = MagicMock()
     return c
 
@@ -372,6 +374,23 @@ def test_publish_skipped_existing_not_counted_in_comments_summary(_ov, _ch) -> N
         f"comments_summary должен быть 1 (только реально опубликованная), "
         f"получили {run['comments_summary']}"
     )
+
+
+@patch("reviewer.services.review_service.chunk_python", side_effect=_fake_chunk)
+@patch("reviewer.services.review_service.build_overlay")
+def test_publish_annotates_centrality_from_graph(_ov, _ch) -> None:
+    from reviewer.index.store import Retrieved
+    svc, vcs, _ = _make_mcp_service_with_publish()
+    # Находка RAW на a.py:2 ложится в символ a.py#foo (диапазон 1..10); граф даёт degree=4.
+    svc.components.retriever.store.fetch_nodes_at.return_value = [
+        Retrieved("a.py#foo", "a.py", "foo", "function", 1, 10, "", 0.0)
+    ]
+    svc.components.graph.in_degree.return_value = {"a.py#foo": 4}
+    svc.prepare_review("o/r", 7)
+    svc.publish_review("o/r", 7, summary="s", findings=[RAW], dry_run=True)
+    # Центральность была запрошена ровно для пойманного символа.
+    svc.components.graph.in_degree.assert_called_once()
+    assert svc.components.graph.in_degree.call_args.args[1] == ["a.py#foo"]
 
 
 @patch("reviewer.services.review_service.chunk_python", side_effect=_fake_chunk)

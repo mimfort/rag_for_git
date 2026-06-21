@@ -170,3 +170,21 @@ def test_get_pr_diff_tool_forwards():
     server = create_server(svc)
     asyncio.run(server.call_tool("get_pr_diff", {"repo": "o/r", "number": 7}))
     svc.get_pr_diff.assert_called_once_with("o/r", 7)
+
+
+def test_get_task_tool_registered():
+    import asyncio
+    svc = _service()
+    svc.get_task.return_value = {"key": "ID-1"}
+    server = create_server(svc)
+    names = {t.name for t in asyncio.run(server.list_tools())}
+    assert "get_task" in names
+
+
+def test_get_task_tool_forwards_key():
+    import asyncio
+    svc = _service()
+    svc.get_task.return_value = {"key": "ID-1", "title": "T"}
+    server = create_server(svc)
+    asyncio.run(server.call_tool("get_task", {"key": "PRI-1"}))
+    svc.get_task.assert_called_once_with("PRI-1")
