@@ -58,7 +58,7 @@ def _finding_from_dict(d) -> Finding | None:
 
     - не-dict или dict без ``file`` → None (вызывающий считает invalid);
     - ``line``: int-коэрция, мусор → None;
-    - ``confidence``: float-коэрция, None/мусор → 0.5;
+    - ``confidence``: float-коэрция, None/мусор → 0.1; значение клампится в [0.0, 1.0];
     - ``severity`` вне {low,medium,high,critical} → "medium";
     - ``side`` вне {RIGHT,LEFT} → "RIGHT";
     - ``suggestion``: не-строка → None (не попадает в тело комментария как repr);
@@ -76,7 +76,8 @@ def _finding_from_dict(d) -> Finding | None:
     try:
         confidence = float(d.get("confidence"))
     except (TypeError, ValueError):
-        confidence = 0.5
+        confidence = 0.1   # не оценено = спекулятивно (ниже честного потолка 0.4) → отсекается гейтом
+    confidence = max(0.0, min(1.0, confidence))   # clamp в [0,1]
     fix = d.get("fix")
     fix_start = fix_end = replacement = None
     if isinstance(fix, dict):
