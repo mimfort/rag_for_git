@@ -135,3 +135,18 @@ def test_requirements_respects_severity_and_confidence():
     assert p.gate(F("requirements", "high", confidence=0.9)) is True
     assert p.gate(F("requirements", "low", confidence=0.9)) is False
     assert p.gate(F("requirements", "high", confidence=0.5)) is False
+
+
+def test_min_confidence_default_aligned_to_0_5():
+    # dataclass-дефолт и from_yaml-дефолт согласованы с env (0.5)
+    assert ReviewPolicy().min_confidence == 0.5
+    assert ReviewPolicy.from_yaml(None).min_confidence == 0.5
+
+
+def test_min_confidence_gate_predictable_set():
+    # набор примеров приёмки: порог 0.5 отсекает предсказуемо
+    p = ReviewPolicy(min_confidence=0.5)
+    assert p.gate(F("correctness", "high", confidence=0.4)) is False
+    assert p.gate(F("correctness", "high", confidence=0.49)) is False
+    assert p.gate(F("correctness", "high", confidence=0.5)) is True
+    assert p.gate(F("correctness", "high", confidence=0.8)) is True

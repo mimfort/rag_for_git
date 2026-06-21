@@ -15,7 +15,7 @@ class ReviewPolicy:
     severity_threshold: SeverityLevel = "low"
     ignore: list[str] = field(default_factory=list)
     max_comments: int = 25
-    min_confidence: float = 0.0
+    min_confidence: float = 0.5
     output_language: str = "ru"                                  # язык текста находок в публикуемом ревью
     task_board: dict | None = None                               # конфиг доски задач из .review.yml (None = выкл.)
 
@@ -32,7 +32,7 @@ class ReviewPolicy:
             severity_threshold=sev,
             ignore=(data.get("paths") or {}).get("ignore", []),
             max_comments=data.get("max_comments", 25),
-            min_confidence=data.get("min_confidence", 0.0),
+            min_confidence=data.get("min_confidence", 0.5),
             output_language=str(data.get("output_language", "ru")),
             task_board=data.get("task_board") or None,
         )
