@@ -140,8 +140,8 @@ inline comments. So anchor each finding on the CHANGED SIGNATURE line:
 - `file` = the changed file, `side: RIGHT`;
 - `code_quote` = the new `def`/`async def` header line, copied verbatim from the new file;
 - `line` = a number from `commentable_right` on that header;
-- `message` = describe the contract change and ENUMERATE the stale callers
-  (`path:line`) that need updating;
+- `message` = describe the contract change and ENUMERATE the callers to verify
+  (`path:line`), applying the Framing rule above per caller;
 - one finding per changed signature (do not split per caller).
 
 Return ONLY a JSON object in the schema of `analyze-prompt.md`, with

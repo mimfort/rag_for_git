@@ -72,7 +72,7 @@ Anchoring — стр. 22-29; привязка к схеме `analyze-prompt.md`;
 
 ### Сохраняется без изменений
 - блок различения «что ломает / что нет» (нынешние стр. 13-16);
-- секция Anchoring (привязка находки на строку изменённой сигнатуры, стр. 22-29);
+- секция Anchoring (привязка находки на строку изменённой сигнатуры); ПРАВКА по итогам финального ревью: bullet `message` смягчён — «ENUMERATE the callers to verify … applying the Framing rule above per caller» вместо «ENUMERATE the stale callers … that need updating», чтобы не противоречить новому правилу Framing;
 - `category: "correctness"` и привязка к схеме `analyze-prompt.md`;
 - правило: `get_impact` вернул «(… не найдено)» → пустой список находок.
 
