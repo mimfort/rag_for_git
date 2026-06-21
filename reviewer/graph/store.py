@@ -93,6 +93,22 @@ class GraphStore:
             ids=list(node_ids), repo=repo, branch=branch)
         return {r["id"] for r in records}
 
+    def in_degree(self, repo: str, node_ids: list[str], *, branch: str = "") -> dict[str, int]:
+        """Число входящих CALLS на каждый символ (центральность = сколько мест зависит).
+
+        Узлы без вызывающих в результат не попадают → вызывающий трактует
+        отсутствие ключа как 0.
+        """
+        if not node_ids:
+            return {}
+        records, _, _ = self._driver.execute_query(
+            "UNWIND $ids AS sid "
+            "MATCH (c:Symbol {repo: $repo, branch: $branch})-[:CALLS]->"
+            "(s:Symbol {repo: $repo, branch: $branch, id: sid}) "
+            "RETURN sid AS id, count(c) AS deg",
+            ids=list(node_ids), repo=repo, branch=branch)
+        return {r["id"]: r["deg"] for r in records}
+
     def find_symbol(self, repo: str, name: str, *, branch: str = "") -> list[str]:
         """Резолв имени символа в node_id ('path#fqn') в пределах (repo, branch).
         Точное имя (#name / .name) приоритетнее подстроки. Возврат — до 25 id."""

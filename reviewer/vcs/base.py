@@ -42,6 +42,7 @@ class Finding:
     fix_end: int | None = None
     replacement: str | None = None
     code_quote: str | None = None   # дословная цитата строки (для fuzzy snap)
+    centrality: float = 0.0         # центральность символа (входящие CALLS); tie-breaker сортировки (PRI-129)
 
     def fingerprint(self) -> str:
         import hashlib

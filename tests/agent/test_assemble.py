@@ -146,3 +146,21 @@ def test_snap_wrong_side_no_candidates():
     """Кандидаты есть в RIGHT, но сторона LEFT пустая — без изменений."""
     commentable = {"RIGHT": {10}, "LEFT": set()}
     assert snap_to_commentable(11, "LEFT", None, commentable, _SNAP_SOURCE) == 11
+
+
+def test_centrality_breaks_severity_tie_and_survives_cap():
+    # Обе находки: severity=high, confidence=0.9, строка 2 (в диффе). Различает центральность.
+    leaf = _f(message="leaf", centrality=0.0)
+    hub = _f(message="hub", centrality=5.0)
+    res = assemble_review(
+        [leaf, hub],                      # подаём leaf первым — сортировка должна поднять hub
+        patches={"a.py": PATCH},
+        sources={"a.py": SOURCE},
+        existing_fps=set(),
+        max_comments=1,                   # cap=1 → выживает только верхняя по рангу
+        suggestions_mode="off",
+    )
+    assert len(res.inline_comments) == 1
+    assert "hub" in res.inline_comments[0].body     # высокоцентральная опубликована inline
+    assert "leaf" in res.summary                    # менее центральная отсечена cap'ом → сводка
+    assert res.capped == 1

@@ -263,10 +263,11 @@ def assemble_review(
     capped = 0
 
     # Составной ранг: сначала severity (critical > high > medium > low),
-    # при равном severity — большая уверенность идёт раньше.
+    # при равном severity — большая центральность символа (хаб важнее, PRI-129),
+    # при равной центральности — большая уверенность идёт раньше.
     ranked = sorted(
         verified,
-        key=lambda f: (-_SEVERITY_RANK.get(f.severity, 0), -f.confidence),
+        key=lambda f: (-_SEVERITY_RANK.get(f.severity, 0), -f.centrality, -f.confidence),
     )
 
     for f in ranked:
