@@ -81,23 +81,21 @@ brief to `superpowers:brainstorming` (which leads to writing-plans → subagent-
      mimic).
    - **Deepen via the code graph (optional — when `search_codebase` surfaced concrete symbols).**
      `search_codebase` chunks are headed by `path#fqn (path:start-end)`; feed those `node_id`s to the
-     session-less graph tools to sharpen the brief:
-
-<!-- include: _common/tool-usage.md -->
-Use the session-less tools above.
-
-     - **Lazy PR diff (optional).** `get_task_context` surfaces a task and its PRs (id form
-       `owner/name#N`); `search_tasks` surfaces similar task keys — fetch a key's context to see
-       its PRs. If a related task passed the relevance filter AND its PR is worth inspecting for
-       the implementation, parse `repo`/`number` from the PR id and call `get_pr_diff(repo, number)`
-       to see what that PR changed — pull it lazily, only when the LLM judges it useful (don't
-       fetch diffs for low-relevance tasks).
-       Fail-open: a `(diff PR недоступен)` / `(repo не задан…)` note is non-fatal — continue.
-     `search_codebase` now returns deduplicated, line-numbered, test-free snippets — keep using the
-     graph tools for blast radius, but expand only the few symbols central to the task, and cite
+     session-less graph tools to sharpen the brief. `search_codebase` now returns deduplicated,
+     line-numbered, test-free snippets — expand only the few symbols central to the task, and cite
      `path:line` from the line-numbered snippets directly (no re-Read needed for grounding).
      Pass the same `branch` you pass to `search_codebase`.
      Fail-open: a `(граф недоступен)` / `(нет связей)` / `(вызовов не найдено)` note is non-fatal — continue.
+   - **Lazy PR diff (optional).** `get_task_context` surfaces a task and its PRs (id form
+     `owner/name#N`); `search_tasks` surfaces similar task keys — fetch a key's context to see
+     its PRs. If a related task passed the relevance filter AND its PR is worth inspecting for
+     the implementation, parse `repo`/`number` from the PR id and call `get_pr_diff(repo, number)`
+     to see what that PR changed — pull it lazily, only when the LLM judges it useful (don't
+     fetch diffs for low-relevance tasks).
+     Fail-open: a `(diff PR недоступен)` / `(repo не задан…)` note is non-fatal — continue.
+
+<!-- include: _common/tool-usage.md -->
+Use the session-less tools above.
 
    **Branch selection for `search_codebase`.**
 

@@ -58,7 +58,7 @@ def test_verify_keeps_verdicts_schema_and_tools():
 
 def test_performance_assembled_schema_and_goal():
     p = assemble("performance-review/SKILL.md")
-    assert '"category": "performance"' in p or "performance" in p
+    assert '"category": "performance"' in p
     assert '"confidence": 0.0' in p                 # из findings-schema
     assert "N+1" in p                               # perf-специфичный хвост остался
 
