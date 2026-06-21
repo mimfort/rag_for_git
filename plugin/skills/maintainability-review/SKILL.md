@@ -5,23 +5,7 @@ description: "Review code changes only for maintainability risks: unnecessary co
 
 # Maintainability Review
 
-## Scope
-
-Standalone: ask the user which diff to review if the scope is not clear:
-
-- `staged` — review only the staged diff;
-- `unstaged` — review only the unstaged diff;
-- uncommitted changes — staged plus unstaged;
-- branch-vs-base — compare the current branch against its base branch (state the
-  base branch used; infer from upstream, remote default, or common names: `main`,
-  `master`, `develop`, `trunk`);
-- commit, branch comparison, file list, or PR-like scope — review exactly that.
-
-Do not pick a scope yourself unless the user already made it clear. If the
-resulting diff is empty, stop and say there is nothing to review.
-
-Inside `/reviewer_review-pr`: the orchestrator provides the diffs of all units (path + patch)
-— review those.
+<!-- include: _common/dimension-scope.md -->
 
 <!-- include: _common/tool-usage.md -->
 Use the PR-session tools above.
@@ -124,13 +108,4 @@ Set "category" to "maintainability"; "side" is always "RIGHT".
 The `suggestion` field replaces what in the original Codex format appeared after
 `Simplification:` — put the concrete simplifying alternative there.
 
-Standalone runs may additionally render the findings as a readable list after the JSON.
-
-If a finding cannot be tied to a specific line, use the closest changed line and
-explain the scope in `message`.
-
-If there are no meaningful maintainability findings, return `{"findings": []}` and
-say so.
-
-Write `message` and `suggestion` in the output language given by the orchestrator
-(standalone: the user's language).
+<!-- include: _common/dimension-output-tail.md -->
