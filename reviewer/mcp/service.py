@@ -14,6 +14,7 @@ from reviewer.agent.assemble import (
     ground_line,
     snap_to_commentable,
 )
+from reviewer.agent.centrality import annotate_centrality
 from reviewer.agent.dedup import dedup_findings
 from reviewer.app import Components
 from reviewer.config.settings import Settings
@@ -554,6 +555,18 @@ class MCPReviewService:
         # 2) Gate (категория/severity/confidence/пути) + dedup.
         kept = [f for f in parsed if p.policy.gate(f)]
         deduped = dedup_findings(kept)
+
+        # 2b) Центральность символа (граф) → tie-breaker сортировки в assemble (PRI-129).
+        # Fail-soft: нет графа/стора/совпадений → centrality 0.0, порядок не меняется.
+        annotate_centrality(
+            deduped,
+            self.components.graph,
+            getattr(self.components.retriever, "store", None),
+            repo=repo,
+            branch=p.branch,
+            changed_node_ids=p.changed_node_ids,
+            overlay_ref=p.overlay_ref,
+        )
 
         # 3) Существующие fingerprint'ы — для идемпотентности (fail-soft).
         try:
