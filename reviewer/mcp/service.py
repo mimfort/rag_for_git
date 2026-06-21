@@ -29,6 +29,7 @@ from reviewer.services.review_service import (
 )
 from reviewer.tasks.graph import PRRef
 from reviewer.tools.code_tools import ToolContext, make_tools
+from reviewer.tools.graph_format import format_neighbors
 from reviewer.vcs.base import ChangedFile, Finding, VCSProvider
 from reviewer.vcs.diff import commentable_lines
 
@@ -410,7 +411,8 @@ class MCPReviewService:
 
     def related_symbols(self, repo: str, node_id: str,
                         branch: str | None = None) -> str:
-        """Соседи символа по графу (calls/implements/tests) без PR-сессии."""
+        """Соседи символа по графу (calls/implements/tests) без PR-сессии.
+        На элемент: file:line + строка определения + тип ребра и дистанция."""
         rb = self._resolve_repo_branch(repo, branch)
         if isinstance(rb, str):
             return rb
@@ -418,16 +420,19 @@ class MCPReviewService:
         if self.components.graph is None:
             return "(граф недоступен)"
         try:
-            related = self.components.graph.expand(
+            neighbors = self.components.graph.expand_detailed(
                 repo, [node_id], hops=2, branch=resolved)
         except Exception:
             log.warning("related_symbols: сбой графа", exc_info=True)
             return "(нет связей)"
-        return "\n".join(sorted(related)) or "(нет связей)"
+        return format_neighbors(
+            neighbors, store=self.components.store, repo=repo, branch=resolved,
+            overlay_ref=None, changed_paths=[], empty_msg="(нет связей)")
 
     def callers(self, repo: str, node_id: str,
                 branch: str | None = None) -> str:
-        """Кто вызывает символ node_id ('path#fqn') — входящие CALLS, без PR-сессии."""
+        """Кто вызывает символ node_id ('path#fqn') — входящие CALLS, без PR-сессии.
+        На элемент: file:line + строка определения вызывающего + [CALLS]."""
         rb = self._resolve_repo_branch(repo, branch)
         if isinstance(rb, str):
             return rb
@@ -435,12 +440,14 @@ class MCPReviewService:
         if self.components.graph is None:
             return "(граф недоступен)"
         try:
-            found = self.components.graph.callers(
+            found = self.components.graph.callers_detailed(
                 repo, [node_id], branch=resolved)
         except Exception:
             log.warning("callers: сбой графа", exc_info=True)
             return "(вызовов не найдено)"
-        return "\n".join(sorted(found)) or "(вызовов не найдено)"
+        return format_neighbors(
+            found, store=self.components.store, repo=repo, branch=resolved,
+            overlay_ref=None, changed_paths=[], empty_msg="(вызовов не найдено)")
 
     def definition(self, repo: str, symbol: str,
                    branch: str | None = None) -> str:
