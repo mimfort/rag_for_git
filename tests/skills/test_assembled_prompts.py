@@ -41,7 +41,7 @@ def test_analyze_assembled_has_all_rules():
 def test_requirements_assembled_has_schema_and_category():
     r = assemble("review-pr/references/requirements-prompt.md")
     assert '"severity": "low|medium|high|critical"' in r
-    assert "requirements" in r                     # фиксированная категория скилла
+    assert 'category MUST be exactly "requirements"' in r  # фиксированная категория скилла
 
 
 def test_blast_radius_assembled_has_tooling_and_confidence_tail():

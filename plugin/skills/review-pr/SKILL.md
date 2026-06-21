@@ -15,6 +15,15 @@ Parse from $ARGUMENTS: target PR as `owner/repo#N`, `owner/repo N`, or a GitHub 
 `--dry-run` flag → pass `dry_run=true` to publish_review and show the report instead
 of posting.
 
+**Include resolution (applies to all steps below).** When you read any
+`references/*-prompt.md` file to dispatch a subagent (steps 3, 4, and 5 —
+analyze, requirements, blast-radius, verify), it may contain
+`<!-- include: _common/<file>.md -->` markers. Before putting the prompt into
+the subagent, replace each marker with the verbatim contents of that file
+(path is relative to `plugin/skills/`). These `_common/*.md` files are the
+single source of the shared findings-schema / anti-hallucination / tool-usage
+blocks.
+
 ## Pipeline
 
 1. **Prepare.** Call `prepare_review(repo, pr)`. The payload contains:
@@ -53,14 +62,7 @@ of posting.
    dimension in step 4. All of this is best-effort: if `index_task`/`get_task_context`/`search_tasks`
    return a "(… unavailable)" note or error, continue — never abort the review.
 
-3. **Analyze (fan-out).** When you read a `references/*-prompt.md` file, it may contain
-   `<!-- include: _common/<file>.md -->` markers. Before putting the prompt into
-   a subagent, replace each marker with the verbatim contents of that file
-   (path is relative to `plugin/skills/`). These `_common/*.md` files are the
-   single source of the shared findings-schema / anti-hallucination / tool-usage
-   blocks.
-
-   For each unit in `units`, dispatch a subagent (Task tool,
+3. **Analyze (fan-out).** For each unit in `units`, dispatch a subagent (Task tool,
    run independent subagents in parallel; batch units if there are more than ~10) with:
    - the contents of `references/analyze-prompt.md` (read it once, resolve includes, include verbatim);
    - the unit's `path`, `patch`, `commentable_right` (sorted list of new-file line numbers
