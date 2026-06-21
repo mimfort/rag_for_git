@@ -81,6 +81,21 @@ def test_find_callers_directed():
     assert "def caller():" in out
 
 
+def test_get_related_symbols_graph_none():
+    ctx = ToolContext(retriever=FakeRetriever(), graph=None,
+                      overlay_ref="pr:1", changed_paths=[], changed_node_ids=[], repo="a/x")
+    tools = {t.name: t for t in make_tools(ctx)}
+    out = tools["get_related_symbols"].invoke({"node_id": "a.py#f"})
+    assert out == "(граф недоступен)"
+
+
+def test_get_related_symbols_compact_format():
+    tools = {t.name: t for t in make_tools(_rich_ctx())}
+    out = tools["get_related_symbols"].invoke({"node_id": "a.py#f"})
+    assert "// b.py#g (b.py:10) [CALLS, d1]" in out
+    assert "def g():" in out
+
+
 def test_get_changed_file_diff_returns_patch():
     tools = {t.name: t for t in make_tools(_rich_ctx())}
     out = tools["get_changed_file_diff"].invoke({"path": "a.py"})

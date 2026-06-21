@@ -78,3 +78,14 @@ def test_fetch_nodes_called_with_base_ref_for_branch():
     assert store.last["base_ref"] == "base:dev"
     assert store.last["overlay_ref"] == "pr:9"
     assert store.last["changed_paths"] == ["a.py"]
+
+
+def test_blank_text_renders_header_only():
+    class BlankStore:
+        def fetch_nodes(self, repo, ids, overlay_ref, changed_paths, *, base_ref="base"):
+            return [Retrieved(i, i.split("#", 1)[0], i.split("#", 1)[1], "function",
+                              7, 8, "   \n  ", 0.0) for i in ids]
+    out = format_neighbors([{"id": "a.py#f", "rel": "CALLS"}],
+                           store=BlankStore(), repo="a/b", branch="main",
+                           overlay_ref=None, changed_paths=[], empty_msg="x")
+    assert out == "// a.py#f (a.py:7) [CALLS]"

@@ -109,7 +109,9 @@ class GraphStore:
                         branch: str = "") -> list[dict]:
         """Соседи символа с типами рёбер кратчайшего пути и дистанцией.
         Элементы: {"id", "rels": [тип,...], "dist": int}; seed исключён;
-        упорядочены по (dist, id)."""
+        упорядочены по (dist, id).
+        Обход рёбер undirected — соседи в обе стороны (как expand).
+        При нескольких seed n.id<>sid исключает лишь свой sid (в тулах seed один)."""
         records, _, _ = self._driver.execute_query(
             f"UNWIND $ids AS sid "
             f"MATCH (s:Symbol {{repo: $repo, branch: $branch, id: sid}}) "

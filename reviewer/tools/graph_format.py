@@ -6,7 +6,7 @@ _CAP = 25
 
 
 def _rel_label(nb: dict) -> str:
-    """Метка связи: callers → 'CALLS'; related → 'CALLS→IMPLEMENTS, d2'."""
+    """Метка связи: входящие вызовы → 'CALLS'; соседи → 'CALLS→IMPLEMENTS, d2'."""
     if "rels" in nb:
         seen: list[str] = []
         for r in nb.get("rels") or []:
@@ -37,7 +37,7 @@ def format_neighbors(neighbors: list[dict], *, store, repo: str, branch: str,
         return empty_msg
     total = len(neighbors)
     items = neighbors[:_CAP]
-    nodes: dict = {}
+    nodes: dict[str, object] = {}
     if store is not None:
         try:
             fetched = store.fetch_nodes(repo, [n["id"] for n in items],
@@ -51,9 +51,9 @@ def format_neighbors(neighbors: list[dict], *, store, repo: str, branch: str,
         rel = _rel_label(nb)
         meta = nodes.get(nb["id"])
         if meta is not None:
-            lines.append(
-                f"// {nb['id']} ({meta.path}:{meta.start_line}) [{rel}]\n"
-                f"{_first_line(meta.text)}")
+            snippet = _first_line(meta.text)
+            header = f"// {nb['id']} ({meta.path}:{meta.start_line}) [{rel}]"
+            lines.append(f"{header}\n{snippet}" if snippet else header)
         elif store is None:
             lines.append(f"// {nb['id']} [{rel}]")
         else:
