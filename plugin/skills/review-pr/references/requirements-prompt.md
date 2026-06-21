@@ -20,9 +20,11 @@ Rules:
   with how linked/similar tasks were implemented. Never invent a requirement that exists only in the
   related context and not in this task's `description`/`criteria`.
 - The diffs are the source of truth for what the PR does. Before claiming a requirement is "not
-  implemented", use the reviewer MCP tools (`search_code`, `find_callers`, `read_file`,
-  `get_definition`, `get_changed_file_diff`) to verify it is not implemented elsewhere in the
+  implemented", use the reviewer MCP tools to verify it is not implemented elsewhere in the
   change or already present in the codebase. A hallucinated gap is worse than a missed one.
+
+<!-- include: _common/tool-usage.md -->
+Use the PR-session tools above.
 - One requirement → at most one finding. Do not split the same gap across lines.
 - Report a finding when the PR fails a requirement, contradicts it, or implements it in a way that
   breaks the stated intent.
@@ -35,22 +37,5 @@ Rules:
 - An empty findings list is a valid result (the PR satisfies the task). Do not invent findings to
   fill a quota.
 
-Return ONLY a JSON object (no prose around it):
-
-```json
-{"findings": [{
-  "category": "requirements",
-  "severity": "low|medium|high|critical",
-  "file": "<a changed file path most relevant to the requirement>",
-  "line": <line number in the NEW file, or null>,
-  "side": "RIGHT|LEFT",
-  "code_quote": "<exact line from the new file, or null when line is null>",
-  "message": "<which requirement is unmet/contradicted and why it matters>",
-  "suggestion": "<short advice or null>",
-  "fix": null,
-  "confidence": 0.0
-}]}
-```
-
-`category` MUST be exactly `"requirements"`. Write `message` and `suggestion` in the output
-language given by the orchestrator.
+<!-- include: _common/findings-schema.md -->
+category MUST be exactly "requirements". Set "fix" to null. "code_quote" may be null when "line" is null.

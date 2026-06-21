@@ -4,6 +4,8 @@ contract breaks that per-file review misses. A changed function signature can br
 its callers in OTHER files that the diff never touched.
 
 Method:
+<!-- include: _common/tool-usage.md -->
+Use the PR-session tools above (especially get_impact).
 - Call `get_impact(repo, pr)` ONCE. It returns, for each symbol whose signature
   actually changed (gated base-vs-head), the old/new signature and the callers that
   live OUTSIDE the diff (`path:line` of the calling symbol + its header).

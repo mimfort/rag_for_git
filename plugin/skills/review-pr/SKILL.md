@@ -53,9 +53,16 @@ of posting.
    dimension in step 4. All of this is best-effort: if `index_task`/`get_task_context`/`search_tasks`
    return a "(… unavailable)" note or error, continue — never abort the review.
 
-3. **Analyze (fan-out).** For each unit in `units`, dispatch a subagent (Task tool,
+3. **Analyze (fan-out).** When you read a `references/*-prompt.md` file, it may contain
+   `<!-- include: _common/<file>.md -->` markers. Before putting the prompt into
+   a subagent, replace each marker with the verbatim contents of that file
+   (path is relative to `plugin/skills/`). These `_common/*.md` files are the
+   single source of the shared findings-schema / anti-hallucination / tool-usage
+   blocks.
+
+   For each unit in `units`, dispatch a subagent (Task tool,
    run independent subagents in parallel; batch units if there are more than ~10) with:
-   - the contents of `references/analyze-prompt.md` (read it once, include verbatim);
+   - the contents of `references/analyze-prompt.md` (read it once, resolve includes, include verbatim);
    - the unit's `path`, `patch`, `commentable_right` (sorted list of new-file line numbers
      available for inline), `commentable_left` (sorted list of old-file line numbers available
      for inline), and the PR `title`/`body`;
