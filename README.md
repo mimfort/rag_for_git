@@ -118,7 +118,7 @@ the index keeps a persistent base and layers PR changes on top:
                 │        └─────────────────── publish_review (gate/grounding/dedup/assemble) ◀─────┘
                 └─────────────────────────────────────────────────────────────────────────────────┘
 
-  Stores (Docker):  Postgres/ParadeDB (:5433)  ·  Neo4j (:7687)  ·  web admin (:8000)
+  Stores (Docker):  Postgres/ParadeDB (:5433)  ·  Neo4j (:7687)
   External API:     Voyage (embeddings voyage-code-3 + reranker rerank-2.5)
 ```
 
@@ -172,7 +172,7 @@ uv tool install rag-reviewer
 
 # 1) Infrastructure
 curl -O https://raw.githubusercontent.com/mimfort/rag_for_git/main/docker-compose.yml
-docker compose up -d          # Postgres/ParadeDB (:5433) + Neo4j (:7687) + web admin (:8000)
+docker compose up -d          # Postgres/ParadeDB (:5433) + Neo4j (:7687)
 
 # 2) Configure keys and settings interactively
 reviewer init
@@ -433,7 +433,7 @@ always win).
 | `REVIEW_HISTORY` | `true` | Record run history in Postgres (`review_runs`/`review_findings`), fail-soft. |
 | `REVIEW_SESSION_PERSIST` | `true` | Persist the PR session in Postgres for crash recovery. |
 | `REVIEW_SESSION_TTL_HOURS` | `24` | TTL (hours) of a persisted session. |
-| `WEB_ADMIN_USER` | `""` | Basic-auth user for `reviewer serve` / the `web` service; empty = no auth. |
+| `WEB_ADMIN_USER` | `""` | Basic-auth user for `reviewer serve`; empty = no auth. |
 | `WEB_ADMIN_PASSWORD` | `""` | Basic-auth password; empty = no auth. |
 
 ### Task board (optional) — deploy-wide default
@@ -733,10 +733,7 @@ model, timings, status, findings with verdicts and whether they were posted. The
 trends over time, findings by category/severity) and per-run details with finding drill-down.
 
 ```bash
-# Via Docker (no manual steps) — the `web` service builds the frontend and serves FastAPI:
-docker compose up -d           # Postgres + Neo4j + web admin → http://127.0.0.1:8000
-
-# On the host (for frontend dev):
+# On the host — build the frontend, then serve the SPA + FastAPI:
 pip install -e ".[web]"
 (cd web/frontend && npm install && npm run build)
 reviewer serve                 # http://127.0.0.1:8000 (options: --host / --port)
