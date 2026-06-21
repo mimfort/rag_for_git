@@ -81,30 +81,25 @@ brief to `superpowers:brainstorming` (which leads to writing-plans → subagent-
      mimic).
    - **Deepen via the code graph (optional — when `search_codebase` surfaced concrete symbols).**
      `search_codebase` chunks are headed by `path#fqn (path:start-end)`; feed those `node_id`s to the
-     session-less graph tools to sharpen the brief:
-     - `callers(repo, node_id, branch?)` → who depends on the code you would change (blast radius — what not to break);
-     - `related_symbols(repo, node_id, branch?)` → neighbors (calls / implementations / tests) to touch or mimic;
-     - `definition(repo, symbol, branch?)` → exact source of a symbol to follow as a pattern.
-     - **Lazy PR diff (optional).** `get_task_context` surfaces a task and its PRs (id form
-       `owner/name#N`); `search_tasks` surfaces similar task keys — fetch a key's context to see
-       its PRs. If a related task passed the relevance filter AND its PR is worth inspecting for
-       the implementation, parse `repo`/`number` from the PR id and call `get_pr_diff(repo, number)`
-       to see what that PR changed — pull it lazily, only when the LLM judges it useful (don't
-       fetch diffs for low-relevance tasks).
-       Fail-open: a `(diff PR недоступен)` / `(repo не задан…)` note is non-fatal — continue.
-     `search_codebase` now returns deduplicated, line-numbered, test-free snippets — keep using the
-     graph tools for blast radius, but expand only the few symbols central to the task, and cite
+     session-less graph tools to sharpen the brief. `search_codebase` now returns deduplicated,
+     line-numbered, test-free snippets — expand only the few symbols central to the task, and cite
      `path:line` from the line-numbered snippets directly (no re-Read needed for grounding).
      Pass the same `branch` you pass to `search_codebase`.
      Fail-open: a `(граф недоступен)` / `(нет связей)` / `(вызовов не найдено)` note is non-fatal — continue.
+   - **Lazy PR diff (optional).** `get_task_context` surfaces a task and its PRs (id form
+     `owner/name#N`); `search_tasks` surfaces similar task keys — fetch a key's context to see
+     its PRs. If a related task passed the relevance filter AND its PR is worth inspecting for
+     the implementation, parse `repo`/`number` from the PR id and call `get_pr_diff(repo, number)`
+     to see what that PR changed — pull it lazily, only when the LLM judges it useful (don't
+     fetch diffs for low-relevance tasks).
+     Fail-open: a `(diff PR недоступен)` / `(repo не задан…)` note is non-fatal — continue.
 
-   **Branch selection for `search_codebase`.** Before calling `search_codebase`, determine the
-   current git branch of the project: `git branch --show-current`. If it is in `REVIEW_BRANCHES`
-   (the tracked branches list), pass it as the `branch` parameter — the search will use that
-   branch's index. If the user explicitly stated which branch to work from, use that branch instead.
-   Otherwise, omit `branch` entirely and the server will use the primary branch (the first entry in
-   `REVIEW_BRANCHES`).
-   The same branch applies to `callers` / `related_symbols` / `definition` — pass it (or omit it) identically.
+<!-- include: _common/tool-usage.md -->
+Use the session-less tools above.
+
+   **Branch selection for `search_codebase`.**
+
+<!-- include: _common/branch-selection.md -->
 
 4. **Distill the solution brief.** Write a structured markdown brief. Apply a strict relevance
    filter: include an item ONLY if it directly informs the implementation; drop the rest and note how
