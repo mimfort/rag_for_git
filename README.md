@@ -786,8 +786,8 @@ A factual list of what this does and does not do today.
 - **LLM cost.** A review fans out Claude subagents per file plus dimension passes — that is real
   token cost, not free.
 - **Observability web admin auth is optional.** Basic auth is enabled only if `WEB_ADMIN_USER` /
-  `WEB_ADMIN_PASSWORD` are set; by default it is not hardened for public exposure (it binds to
-  loopback in `docker-compose.yml`).
+  `WEB_ADMIN_PASSWORD` are set; by default it is not hardened for public exposure (`reviewer serve`
+  binds to loopback by default).
 - **GitHub API caps.** The PR file list is paginated by 100; the compare API used to re-sync the base
   index returns at most 300 files — very large diffs are truncated.
 - **`.review.yml` comes from the base branch** (by design — a PR cannot weaken its own review), not
@@ -826,5 +826,5 @@ reviewer/
   web/         FastAPI + React/Vite SPA — observability web admin
   app.py       dependency assembly from Settings
 plugin/        Claude Code plugin (7 skills /rag-reviewer:reviewer_*)
-docker-compose.yml   ParadeDB (pgvector+pg_search) + Neo4j + web admin
+docker-compose.yml   ParadeDB (pgvector+pg_search) + Neo4j
 ```
