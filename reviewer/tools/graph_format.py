@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import logging
+
 from reviewer.index.refs import base_ref
+
+log = logging.getLogger(__name__)
 
 _CAP = 25
 
@@ -44,7 +48,9 @@ def format_neighbors(neighbors: list[dict], *, store, repo: str, branch: str,
                                         overlay_ref, changed_paths,
                                         base_ref=base_ref(branch))
             nodes = {n.node_id: n for n in fetched}
-        except Exception:
+        except Exception as e:
+            # fail-open: при сбое Postgres рендерим '(вне индекса)', но логируем дегрейд
+            log.warning("format_neighbors: store.fetch_nodes упал (%s) — дегрейд к '(вне индекса)'", e)
             nodes = {}
     lines: list[str] = []
     for nb in items:

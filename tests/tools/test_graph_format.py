@@ -80,6 +80,24 @@ def test_fetch_nodes_called_with_base_ref_for_branch():
     assert store.last["changed_paths"] == ["a.py"]
 
 
+def test_store_failure_degrades_and_logs_warning(caplog):
+    import logging
+
+    class BoomStore:
+        def fetch_nodes(self, repo, ids, overlay_ref, changed_paths, *, base_ref="base"):
+            raise RuntimeError("postgres down")
+
+    with caplog.at_level(logging.WARNING, logger="reviewer.tools.graph_format"):
+        out = format_neighbors([{"id": "a.py#f", "rel": "CALLS"}],
+                               store=BoomStore(), repo="a/b", branch="main",
+                               overlay_ref=None, changed_paths=[], empty_msg="x")
+    # fail-open: рендер не падает, дегрейд к '(вне индекса)'
+    assert out == "// a.py#f [CALLS] (вне индекса)"
+    # дегрейд залогирован, а не проглочен молча
+    assert any("fetch_nodes" in r.message and "postgres down" in r.message
+               for r in caplog.records)
+
+
 def test_blank_text_renders_header_only():
     class BlankStore:
         def fetch_nodes(self, repo, ids, overlay_ref, changed_paths, *, base_ref="base"):
