@@ -8,15 +8,25 @@ def _read(name: str) -> str:
     return (COMMON / name).read_text(encoding="utf-8")
 
 
-def test_all_four_common_files_exist_nonempty():
+def test_all_common_files_exist_nonempty():
     for name in (
         "findings-schema.md",
         "anti-hallucination.md",
         "tool-usage.md",
         "branch-selection.md",
+        "dimension-scope.md",
+        "dimension-output-tail.md",
     ):
         assert (COMMON / name).is_file(), f"нет {name}"
         assert len(_read(name).strip()) > 0, f"{name} пустой"
+
+
+def test_common_files_have_no_include_markers():
+    # Резолвер include нерекурсивный (test_assembled_prompts.assemble подставляет
+    # за один проход), поэтому _common-файлы не должны содержать include-маркеров.
+    for path in sorted(COMMON.glob("*.md")):
+        text = path.read_text(encoding="utf-8")
+        assert "<!-- include:" not in text, f"{path.name} содержит include-маркер"
 
 
 def test_findings_schema_matches_finding_dataclass():
