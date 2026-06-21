@@ -38,4 +38,7 @@ Use the PR-session tools above.
   fill a quota.
 
 <!-- include: _common/findings-schema.md -->
+- Calibrate `confidence` by how explicitly the acceptance criterion is broken: an exact,
+  quoted criterion clearly violated → 0.8+; an inferred/implicit requirement → 0.5–0.7;
+  a guess about intent → ≤ 0.4 (drop).
 category MUST be exactly "requirements". Set "fix" to null. "code_quote" may be null when "line" is null.

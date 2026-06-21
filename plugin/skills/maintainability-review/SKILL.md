@@ -103,6 +103,9 @@ Return ONLY the findings JSON used by the review pipeline, with
 `"category": "maintainability"`:
 
 <!-- include: _common/findings-schema.md -->
+- Calibrate `confidence` against concrete, grounded evidence: a duplicated block you can quote
+  or a real complexity hotspot → 0.8+; a subjective readability concern → 0.5–0.7; pure taste
+  → ≤ 0.4 (drop).
 Set "category" to "maintainability"; "side" is always "RIGHT".
 
 The `suggestion` field replaces what in the original Codex format appeared after

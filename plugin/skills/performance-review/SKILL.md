@@ -51,6 +51,9 @@ Return ONLY the findings JSON used by the review pipeline, with
 `"category": "performance"`:
 
 <!-- include: _common/findings-schema.md -->
+- Calibrate `confidence` against a measurable, reproducible effect: a hot path you can point
+  to (loop bound, query inside a loop) → 0.8+; a plausible but data-dependent cost → 0.5–0.7;
+  no measurable/reproducible effect → ≤ 0.4 (drop).
 Set "category" to "performance"; "side" is always "RIGHT".
 
 <!-- include: _common/dimension-output-tail.md -->
