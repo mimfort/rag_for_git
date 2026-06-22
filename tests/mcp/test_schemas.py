@@ -55,6 +55,13 @@ def test_file_required():
         FindingIn.model_validate({"severity": "high", "message": "no file"})
 
 
+def test_file_rejects_empty_string():
+    with pytest.raises(Exception):
+        FindingIn.model_validate({**BASE, "file": ""})
+    # пробел-непустой проходит (паритет со старым _finding_from_dict: falsy-проверка)
+    assert FindingIn.model_validate({**BASE, "file": " "}).file == " "
+
+
 def test_category_default():
     assert FindingIn.model_validate(BASE).category == "correctness"
     assert FindingIn.model_validate({**BASE, "category": "security"}).category == "security"

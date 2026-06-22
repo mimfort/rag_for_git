@@ -668,8 +668,8 @@ class MCPReviewService:
             now = datetime.now(timezone.utc)
             status = "error" if (error and not dry_run) else "ok"
             comments_inline = len(asm.inline_comments)
-            # PRI-156: analyzed — все candidates (до verify-фильтра), по уникальным
-            # fingerprint (грунтовка выполнена в publish_review до передачи сюда).
+            # PRI-156: analyzed — все candidates (до verify-фильтра); грунтовка строк
+            # выполнена только для survived, не для отвергнутых candidates.
             findings_analyzed = len({f.fingerprint() for f in analyzed})
             run = {
                 "repo": repo,

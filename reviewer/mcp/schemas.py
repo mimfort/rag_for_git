@@ -8,7 +8,7 @@
 """
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 _VALID_SEVERITIES = frozenset({"low", "medium", "high", "critical"})
 
@@ -36,7 +36,7 @@ class FindingIn(BaseModel):
 
     model_config = ConfigDict(extra="ignore")
 
-    file: str
+    file: str = Field(min_length=1)
     category: str = "correctness"
     severity: str = "medium"
     side: str = "RIGHT"
