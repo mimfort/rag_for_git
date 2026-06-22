@@ -102,3 +102,33 @@ def diff_symbols(
                 new.start_line))
 
     return changes
+
+
+_ORDER = {"signature_changed": 0, "added": 1, "removed": 2}
+_MAX_LINES = 40
+
+
+def format_struct_summary(changes: list[SymbolChange]) -> str:
+    """Компактный текстовый блок структурного diff для агента; "" если изменений нет.
+
+    Порядок: изменённые сигнатуры → добавленные → удалённые. При >40 строк —
+    хвостовая пометка «(…ещё N)».
+    """
+    if not changes:
+        return ""
+    ordered = sorted(changes, key=lambda c: (_ORDER.get(c.kind, 9), c.fqn))
+    rows: list[str] = []
+    for c in ordered:
+        if c.kind == "signature_changed":
+            rows.append(f"  ~ сигнатура  {c.fqn}  было: {c.old_sig}  стало: {c.new_sig}")
+        elif c.kind == "added":
+            rows.append(f"  + добавлен   {c.fqn}  ({c.symbol_kind})  {c.new_sig}")
+        else:
+            rows.append(f"  - удалён     {c.fqn}  ({c.symbol_kind})")
+    extra = len(rows) - _MAX_LINES
+    if extra > 0:
+        rows = rows[:_MAX_LINES]
+    out = "Структурный diff:\n" + "\n".join(rows)
+    if extra > 0:
+        out += f"\n  (…ещё {extra})"
+    return out

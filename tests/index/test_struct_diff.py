@@ -1,4 +1,9 @@
-from reviewer.index.struct_diff import diff_symbols, extract_signature
+from reviewer.index.struct_diff import (
+    SymbolChange,
+    diff_symbols,
+    extract_signature,
+    format_struct_summary,
+)
 
 
 def test_extract_signature_reexported_and_works():
@@ -59,3 +64,36 @@ def test_diff_broken_source_fail_soft():
     # битый/неполный исходник не должен бросать исключение, а вернуть список
     result = diff_symbols("m.py", b"def (:\n", b"def foo(:\n")
     assert isinstance(result, list)
+
+
+def test_format_empty_returns_empty_string():
+    assert format_struct_summary([]) == ""
+
+
+def test_format_renders_all_kinds_in_order():
+    changes = [
+        SymbolChange("removed", "old_fn", "function", "def old_fn():", None, 5),
+        SymbolChange("added", "A.new_m", "method", None, "def new_m(self):", 12),
+        SymbolChange("signature_changed", "foo", "function",
+                     "def foo(a):", "def foo(a, b):", 1),
+    ]
+    out = format_struct_summary(changes)
+    assert out.startswith("Структурный diff:")
+    # порядок: signature_changed -> added -> removed
+    i_sig = out.index("foo")
+    i_add = out.index("A.new_m")
+    i_rem = out.index("old_fn")
+    assert i_sig < i_add < i_rem
+    assert "было: def foo(a):" in out
+    assert "стало: def foo(a, b):" in out
+    assert "(method)" in out
+
+
+def test_format_caps_long_lists():
+    changes = [
+        SymbolChange("added", f"f{i}", "function", None, f"def f{i}():", i)
+        for i in range(50)
+    ]
+    out = format_struct_summary(changes)
+    assert "(…ещё 10)" in out
+    assert out.count("def f") == 40
