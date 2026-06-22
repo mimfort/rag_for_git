@@ -683,6 +683,44 @@ def test_get_pr_diff_empty_files_note():
 # Тесты Task 1 (PRI-144): коэрция confidence — fallback 0.1 + clamp [0,1]
 # ---------------------------------------------------------------------------
 
+@patch("reviewer.services.review_service.chunk_python", side_effect=_fake_chunk)
+@patch("reviewer.services.review_service.build_overlay")
+def test_prepare_review_payload_includes_structural_summary(
+    _mock_overlay: MagicMock,
+    _mock_chunk: MagicMock,
+) -> None:
+    """При смене сигнатуры payload-юнит несёт structural_summary."""
+    settings = _settings()
+    components = _components()
+    vcs = _fake_vcs()
+
+    def _read(path: str, ref: str) -> str | None:
+        if path == ".review.yml":
+            return None
+        return "def foo(a, b): pass" if ref == "head456" else "def foo(a): pass"
+    vcs.get_file_at_ref.side_effect = _read
+
+    svc = MCPReviewService(settings, components, vcs_factory=lambda o, r: vcs)
+    out = svc.prepare_review("o/r", 7)
+
+    unit = out["units"][0]
+    assert "structural_summary" in unit
+    assert "foo" in unit["structural_summary"]
+
+
+@patch("reviewer.services.review_service.chunk_python", side_effect=_fake_chunk)
+@patch("reviewer.services.review_service.build_overlay")
+def test_prepare_review_payload_omits_empty_structural_summary(
+    _mock_overlay: MagicMock,
+    _mock_chunk: MagicMock,
+) -> None:
+    """Без структурных изменений (base==head) ключ structural_summary отсутствует."""
+    svc = _make_mcp_service()  # _fake_vcs отдаёт одинаковый исходник для base и head
+    out = svc.prepare_review("o/r", 7)
+
+    assert "structural_summary" not in out["units"][0]
+
+
 def test_finding_confidence_coercion_and_clamp():
     base = {"file": "a.py", "severity": "high", "message": "m", "line": 1, "code_quote": "x = 1"}
     # валидные значения проходят как есть
