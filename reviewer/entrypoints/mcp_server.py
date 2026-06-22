@@ -16,7 +16,7 @@ log = logging.getLogger(__name__)
 
 
 def create_server(service: MCPReviewService) -> FastMCP:
-    """Создать и вернуть сконфигурированный FastMCP-сервер с 25 тулами.
+    """Создать и вернуть сконфигурированный FastMCP-сервер с 29 тулами.
 
     Все тулы — обычные def (sync), а не async: сервис не потокобезопасен
     и рассчитан на последовательное исполнение sync-тулов FastMCP в event loop.
@@ -240,6 +240,14 @@ def create_server(service: MCPReviewService) -> FastMCP:
     def get_candidate_findings(repo: str, pr: int) -> str:
         """Прочитать накопленных кандидатов с id (для verify)."""
         return service.get_candidate_findings(repo, pr)
+
+    @mcp.tool()
+    def post_pr_walkthrough(repo: str, pr: int, markdown: str) -> dict:
+        """Post a human-facing PR reading guide (walkthrough) as a PR review comment,
+        separate from bug findings (carries a <!-- ai-walkthrough --> marker, empty
+        inline comments). Outward-facing: the /reviewer_pr-walkthrough skill calls this
+        only on explicit user request. Requires an active prepare_review session."""
+        return service.post_pr_walkthrough(repo, pr, markdown)
 
     return mcp
 

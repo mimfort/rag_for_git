@@ -36,6 +36,7 @@ from reviewer.vcs.diff import commentable_lines
 
 log = logging.getLogger(__name__)
 
+WALKTHROUGH_MARKER = "<!-- ai-walkthrough -->"
 
 
 @dataclass
@@ -691,6 +692,23 @@ class MCPReviewService:
             "moved_to_summary": asm.moved_to_summary,
             "capped": asm.capped,
         }
+
+    def post_pr_walkthrough(self, repo: str, pr: int, markdown: str) -> dict:
+        """Опубликовать walkthrough-гид в PR как review-комментарий (без inline-находок).
+
+        Маркер ``<!-- ai-walkthrough -->`` в body отделяет гид от ревью-находок
+        (``<!-- ai-review:* -->``). Outward-facing — вызывается только по явной
+        просьбе пользователя. Fail-soft при сетевой ошибке."""
+        from reviewer.services.repo_id import normalize_repo
+        sess = self._session(normalize_repo(repo), pr)
+        prepared = sess.prepared
+        body = f"{WALKTHROUGH_MARKER}\n\n{markdown}"
+        try:
+            prepared.vcs.publish_review(pr, prepared.prq.head_sha, body, [])
+        except Exception as e:
+            log.warning("post_pr_walkthrough: сбой постинга", exc_info=True)
+            return {"posted": False, "reason": f"{type(e).__name__}: {e}"}
+        return {"posted": True, "pr": pr}
 
     def _record_history(
         self,
