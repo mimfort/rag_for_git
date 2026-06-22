@@ -173,6 +173,23 @@ def test_search_tasks_empty():
     assert out == "(no similar tasks found)"
 
 
+def test_search_tasks_shows_rank_and_precise_score():
+    # RRF-скоры лежат в ≈0.016–0.033 — при грубой точности (.2f) близкие задачи
+    # схлопываются в одно число и прунить по score нельзя. Выдача должна показывать
+    # ранг-ординал (стабильный сигнал для relevance-фильтра) и различимый score.
+    from reviewer.tasks.store import TaskHit
+    store = _FakeStore(search_result=[
+        TaskHit("ID-1", "First", "Open", 0.0328),
+        TaskHit("ID-2", "Second", "Done", 0.0164),
+    ])
+    out = TaskService(store, _FakeGraph(), _FakeEmbedder()).search_tasks("q")
+    lines = out.splitlines()
+    assert lines[0].startswith("1. ") and "ID-1" in lines[0]
+    assert lines[1].startswith("2. ") and "ID-2" in lines[1]
+    # близкие RRF-скоры различимы (не оба «0.03»)
+    assert "0.0328" in out and "0.0164" in out
+
+
 def test_get_task_context_graph_none():
     out = TaskService(_FakeStore(), None, _FakeEmbedder()).get_task_context("ID-1")
     assert out == "(task graph unavailable)"
@@ -191,6 +208,40 @@ def test_get_task_context_formats():
     out = TaskService(_FakeStore(), _FakeGraph(context=ctx), _FakeEmbedder()).get_task_context("ID-1")
     assert "ID-1" in out and "o/r#7" in out and "a.py#foo" in out
     assert "subtask" in out and "ID-2" in out
+
+
+def test_format_task_context_truncates_on_block_boundary():
+    # Усечение не должно резать середину строки/блока: выбрасываются целые
+    # элементы (PR/связанная задача) с хвоста, заголовок секции не осиротеет.
+    from reviewer.tasks.service import _format_task_context
+    ctx = {"key": "ID-1", "title": "T", "status": "Open",
+           "prs": [{"id": "o/r#1", "touched": ["a.py#foo"]},
+                   {"id": "o/r#2", "touched": ["b.py#bar"]},
+                   {"id": "o/r#3", "touched": ["c.py#baz"]}]}
+    full = _format_task_context(ctx, 100000)
+    valid_lines = set(full.splitlines())
+    # бюджет режет ВНУТРИ строки второго PR — место, где наивный truncate оборвал
+    # бы строку посередине; блочное усечение должно выбросить весь блок PR2.
+    budget = full.index("b.py#bar")
+    out = _format_task_context(ctx, budget)
+    lines = out.splitlines()
+    assert lines[-1].startswith("… (truncated")  # нота на отдельной строке
+    for ln in lines[:-1]:                         # ни одной оборванной строки
+        assert ln in valid_lines
+    assert "o/r#1" in out                         # первый PR сохранён целиком
+    assert "b.py#bar" not in out                  # оборванный хвост не просочился
+
+
+def test_format_task_context_keeps_head_when_over_budget():
+    # Голова (ключ/статус/заголовок) обязательна и не режется посреди строки,
+    # даже если одна она превышает бюджет.
+    from reviewer.tasks.service import _format_task_context
+    ctx = {"key": "ID-1", "title": "Очень длинный заголовок " * 5,
+           "prs": [{"id": "o/r#1"}]}
+    out = _format_task_context(ctx, 5)
+    assert out.splitlines()[0].startswith("Task ID-1")  # голова цела
+    assert "o/r#1" not in out
+    assert "truncated" in out
 
 
 def test_link_review_calls_graph():
