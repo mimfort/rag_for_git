@@ -394,3 +394,53 @@ def test_prepare_task_keys_none_without_task_board(
 
     assert prepared.task_board is None
     assert prepared.task_keys is None
+
+
+@patch("reviewer.services.review_service.chunk_python", side_effect=_fake_chunk)
+@patch("reviewer.services.review_service.build_overlay")
+def test_prepare_attaches_structural_summary_for_modified_file(
+    _mock_overlay: MagicMock,
+    _mock_chunk: MagicMock,
+    settings: Settings,
+    components: MagicMock,
+) -> None:
+    """Для изменённого на месте файла со сменой сигнатуры prepare кладёт
+    непустой structural_summary в юнит."""
+    vcs = _vcs_with_files([_changed("a.py", status="modified")])
+    vcs.get_pull_request.return_value = PullRequest(
+        number=1, base_sha="base123", head_sha="head456", base_ref="main",
+        title="t", body="", draft=False,
+    )
+
+    def _read(path: str, ref: str) -> str | None:
+        if path == ".review.yml":
+            return None
+        return "def foo(a, b):\n    return a" if ref == "head456" else "def foo(a):\n    return a"
+    vcs.get_file_at_ref.side_effect = _read
+
+    service = ReviewService(settings, components)
+    prepared = service.prepare("o", "r", 1, vcs_provider=vcs)
+
+    summary = prepared.units[0].structural_summary
+    assert "foo" in summary
+    assert "сигнатура" in summary
+
+
+@patch("reviewer.services.review_service.chunk_python", side_effect=_fake_chunk)
+@patch("reviewer.services.review_service.build_overlay")
+def test_prepare_no_structural_summary_for_added_file(
+    _mock_overlay: MagicMock,
+    _mock_chunk: MagicMock,
+    settings: Settings,
+    components: MagicMock,
+) -> None:
+    """Для добавленного файла structural_summary пуст (для нового файла сводка — шум)."""
+    vcs = _vcs_with_files([_changed("a.py", status="added")])
+    vcs.get_file_at_ref.side_effect = (
+        lambda p, r: None if p == ".review.yml" else "def foo(a): pass"
+    )
+
+    service = ReviewService(settings, components)
+    prepared = service.prepare("o", "r", 1, vcs_provider=vcs)
+
+    assert prepared.units[0].structural_summary == ""
