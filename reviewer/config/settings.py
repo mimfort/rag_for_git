@@ -47,6 +47,7 @@ class Settings(BaseSettings):
     review_categories: str = ""                    # CSV вайтлист категорий; пусто = все
     review_suggestions: SuggestionsMode = "apply"             # apply = applyable ```suggestion; text = только текстом
     review_max_files: int = 50                    # кап файлов PR на ревью; остальные — в сводку как пропущенные
+    review_grounding_max_distance: int = 5        # макс. дистанция снапа строки к commentable при grounding
     max_tool_result_chars: int = 8000             # максимальная длина результата tool-вызова в промпт
     review_output_language: str = "ru"            # язык текста находок в публикуемом ревью
     review_skip_drafts: bool = True               # не ревьюить draft-PR

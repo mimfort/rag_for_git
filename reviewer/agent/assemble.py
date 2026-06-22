@@ -19,14 +19,33 @@ from reviewer.vcs.diff import commentable_lines
 # Вспомогательные функции грунтовки строк
 # ---------------------------------------------------------------------------
 
+def _pick_nearest(matches: list[int], line: int | None) -> int | None:
+    """Из строк-совпадений цитаты выбрать ближайшую к заявленной line.
+
+    - нет совпадений → None (вызывающий пробует следующий уровень поиска);
+    - одно совпадение → оно (line не нужен);
+    - несколько и line задан → ближайшее (тай-брейк: меньший номер строки);
+    - несколько и line is None → None (близость неопределена — не угадываем).
+    """
+    if not matches:
+        return None
+    if len(matches) == 1:
+        return matches[0]
+    if line is None:
+        return None
+    return min(matches, key=lambda i: (abs(i - line), i))
+
+
 def ground_line(source: str | None, code_quote: str | None, line: int | None) -> int | None:
     """Уточнить номер строки по точной цитате из исходника (анти-галлюцинация).
 
     Алгоритм:
     1. Ищем строки с точным совпадением (после strip).
-    2. Если единственное совпадение — возвращаем его.
-    3. Если нет ни одного точного совпадения — ищем подстроку.
-    4. Если единственное совпадение — возвращаем его.
+    2. Если одно совпадение — возвращаем его.
+    3. Если несколько совпадений и line задан — возвращаем ближайшее к line
+       (тай-брейк: меньший номер строки); если line is None — возвращаем None.
+    4. Если нет ни одного точного совпадения — ищем подстроку и применяем
+       ту же логику выбора ближайшего.
     5. Во всех остальных случаях возвращаем исходный ``line`` как есть.
 
     Parameters
@@ -50,12 +69,14 @@ def ground_line(source: str | None, code_quote: str | None, line: int | None) ->
         return line
     lines = source.splitlines()
     exact = [i for i, ln in enumerate(lines, 1) if ln.strip() == needle]
-    if len(exact) == 1:
-        return exact[0]
+    picked = _pick_nearest(exact, line)
+    if picked is not None:
+        return picked
     if not exact:
         sub = [i for i, ln in enumerate(lines, 1) if needle in ln]
-        if len(sub) == 1:
-            return sub[0]
+        picked = _pick_nearest(sub, line)
+        if picked is not None:
+            return picked
     return line
 
 
