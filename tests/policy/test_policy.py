@@ -150,3 +150,10 @@ def test_min_confidence_gate_predictable_set():
     assert p.gate(F("correctness", "high", confidence=0.49)) is False
     assert p.gate(F("correctness", "high", confidence=0.5)) is True
     assert p.gate(F("correctness", "high", confidence=0.8)) is True
+
+
+def test_policy_grounding_max_distance_default_and_yaml():
+    """Дефолт grounding_max_distance == 5; .review.yml с grounding_max_distance: 12 даёт 12."""
+    assert ReviewPolicy().grounding_max_distance == 5
+    p = ReviewPolicy.from_yaml("grounding_max_distance: 12")
+    assert p.grounding_max_distance == 12

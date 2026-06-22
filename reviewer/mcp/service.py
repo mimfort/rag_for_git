@@ -565,6 +565,7 @@ class MCPReviewService:
             if f.line is not None and f.side == "RIGHT" and f.file in _commentable_cache:
                 f.line = snap_to_commentable(
                     f.line, f.side, f.code_quote, _commentable_cache[f.file], p.sources.get(f.file, ""),
+                    max_distance=p.policy.grounding_max_distance,
                 )
             parsed.append(f)
 

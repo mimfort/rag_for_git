@@ -18,6 +18,7 @@ class ReviewPolicy:
     min_confidence: float = 0.5
     output_language: str = "ru"                                  # язык текста находок в публикуемом ревью
     task_board: dict | None = None                               # конфиг доски задач из .review.yml (None = выкл.)
+    grounding_max_distance: int = 5                              # макс. дистанция снапа строки к commentable при grounding
 
     @classmethod
     def from_yaml(cls, text: str | None) -> "ReviewPolicy":
@@ -35,6 +36,7 @@ class ReviewPolicy:
             min_confidence=data.get("min_confidence", 0.5),
             output_language=str(data.get("output_language", "ru")),
             task_board=data.get("task_board") or None,
+            grounding_max_distance=data.get("grounding_max_distance", 5),
         )
 
     @classmethod
@@ -47,6 +49,7 @@ class ReviewPolicy:
             min_confidence=settings.review_min_confidence,
             output_language=settings.review_output_language,
             task_board=settings.task_board_default(),   # глобальный env-дефолт доски
+            grounding_max_distance=settings.review_grounding_max_distance,
         )
 
     @classmethod
@@ -74,6 +77,8 @@ class ReviewPolicy:
             policy.output_language = str(data["output_language"])
         if "task_board" in data:
             policy.task_board = data["task_board"] or None
+        if "grounding_max_distance" in data:
+            policy.grounding_max_distance = data["grounding_max_distance"]
         return policy
 
     def category_enabled(self, category: str) -> bool:
