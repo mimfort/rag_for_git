@@ -1,12 +1,12 @@
-import os
 import pytest
 
+from reviewer.config.settings import Settings
 from reviewer.index.store import ChunkStore
 from reviewer.index.summary_store import SummaryStore
 
 pytestmark = pytest.mark.integration
 
-DSN = os.getenv("PG_DSN", "postgresql://postgres:postgres@localhost:5433/postgres")
+DSN = Settings().pg_dsn
 
 
 @pytest.fixture()
