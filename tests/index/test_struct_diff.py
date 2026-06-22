@@ -89,6 +89,13 @@ def test_format_renders_all_kinds_in_order():
     assert "(method)" in out
 
 
+def test_format_added_without_signature_no_literal_none():
+    changes = [SymbolChange("added", "CONST", "variable", None, None, 3)]
+    out = format_struct_summary(changes)
+    assert "None" not in out
+    assert "CONST" in out
+
+
 def test_format_caps_long_lists():
     changes = [
         SymbolChange("added", f"f{i}", "function", None, f"def f{i}():", i)

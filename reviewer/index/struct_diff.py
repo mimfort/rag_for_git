@@ -122,7 +122,8 @@ def format_struct_summary(changes: list[SymbolChange]) -> str:
         if c.kind == "signature_changed":
             rows.append(f"  ~ сигнатура  {c.fqn}  было: {c.old_sig}  стало: {c.new_sig}")
         elif c.kind == "added":
-            rows.append(f"  + добавлен   {c.fqn}  ({c.symbol_kind})  {c.new_sig}")
+            sig = f"  {c.new_sig}" if c.new_sig else ""
+            rows.append(f"  + добавлен   {c.fqn}  ({c.symbol_kind}){sig}")
         else:
             rows.append(f"  - удалён     {c.fqn}  ({c.symbol_kind})")
     extra = len(rows) - _MAX_LINES
