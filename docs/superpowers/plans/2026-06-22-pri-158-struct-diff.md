@@ -205,8 +205,9 @@ def test_diff_base_none_means_all_added():
 
 
 def test_diff_broken_source_fail_soft():
-    # битый/неполный исходник не должен бросать исключение
-    assert diff_symbols("m.py", b"def (:\n", b"def foo(:\n") == [] or True
+    # битый/неполный исходник не должен бросать исключение, а вернуть список
+    result = diff_symbols("m.py", b"def (:\n", b"def foo(:\n")
+    assert isinstance(result, list)
 ```
 
 - [ ] **Step 2: Запустить тесты — убедиться, что падают**
