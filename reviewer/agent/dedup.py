@@ -2,8 +2,10 @@
 
 Алгоритм:
 1. Точные дубли по ключу (file, line, category, message) — оставляем первый.
+   message нормализуется перед сравнением (регистр, пробелы, пунктуация), поэтому
+   near-duplicate с дрейфом формулировки LLM схлопываются на этом шаге.
 2. Fuzzy-дубли внутри группы (file, category): строки совпадают или отличаются ≤2,
-   и SequenceMatcher ratio ≥ similarity — это дубль.
+   и SequenceMatcher ratio по нормализованным message ≥ similarity — это дубль.
 3. Выживает находка с максимальным severity; при равенстве — с максимальным confidence.
    Если у выжившей нет fix/replacement, а у дубля есть — fix-поля переносятся с дубля.
 """
@@ -12,6 +14,8 @@ from __future__ import annotations
 import difflib
 import logging
 from typing import TYPE_CHECKING
+
+from reviewer.vcs.base import normalize_message
 
 if TYPE_CHECKING:
     from reviewer.vcs.base import Finding
@@ -50,18 +54,21 @@ def _better(a: "Finding", b: "Finding") -> "Finding":
 
 
 def _fuzzy_match(m1: str, m2: str, similarity: float) -> bool:
-    return difflib.SequenceMatcher(None, m1.lower(), m2.lower()).ratio() >= similarity
+    return difflib.SequenceMatcher(None, normalize_message(m1), normalize_message(m2)).ratio() >= similarity
 
 
 def dedup_findings(findings: list, similarity: float = 0.9) -> list:
     """Схлопнуть дубли находок без LLM/эмбеддингов. Порядок выживших — как во входе.
+
+    message нормализуется (регистр, пробелы, пунктуация) перед точным и fuzzy-сравнением,
+    поэтому мелкий дрейф формулировки LLM между прогонами не плодит дубли.
 
     Parameters
     ----------
     findings:
         Список объектов :class:`~reviewer.vcs.base.Finding`.
     similarity:
-        Порог SequenceMatcher ratio для fuzzy-совпадения сообщений (0..1).
+        Порог SequenceMatcher ratio для fuzzy-совпадения нормализованных сообщений (0..1).
 
     Returns
     -------
@@ -76,7 +83,7 @@ def dedup_findings(findings: list, similarity: float = 0.9) -> list:
     after_exact: list = []             # уже без точных дублей, индексы исходного списка
 
     for idx, f in enumerate(findings):
-        key = (f.file, f.line, f.category, f.message)
+        key = (f.file, f.line, f.category, normalize_message(f.message))
         if key in exact_seen:
             survivor_idx = exact_seen[key]
             survivor = after_exact[survivor_idx]
