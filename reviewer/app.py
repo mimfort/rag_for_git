@@ -5,6 +5,7 @@ from reviewer.config.settings import Settings
 from reviewer.index.store import ChunkStore
 from reviewer.index.embeddings import VoyageEmbedder
 from reviewer.index.reranker import VoyageReranker
+from reviewer.index.summary_store import SummaryStore
 from reviewer.graph.store import GraphStore
 from reviewer.retrieval.retriever import Retriever
 from reviewer.tasks.store import TaskStore
@@ -25,6 +26,7 @@ class Components:
     task_graph: TaskGraph | None
     task_service: TaskService
     sync_service: SyncService | None
+    summary_store: SummaryStore
 
 def _voyage_client(settings: Settings):
     import voyageai
@@ -61,5 +63,11 @@ def build_components(settings: Settings, connect: bool = True) -> Components:
     provider = make_board_provider(settings)
     sync_service = SyncService(provider, task_service, store) \
         if provider is not None else None
+    summary_store = SummaryStore(
+        settings.pg_dsn,
+        min_size=settings.pg_pool_min_size,
+        max_size=settings.pg_pool_max_size,
+    )
     return Components(settings, store, graph, embedder, reranker, retriever,
-                      task_store, task_graph, task_service, sync_service)
+                      task_store, task_graph, task_service, sync_service,
+                      summary_store)

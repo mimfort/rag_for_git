@@ -415,6 +415,59 @@ class MCPReviewService:
             log.warning("definition: сбой", exc_info=True)
             return "(определение не найдено)"
 
+    def list_subsystem_clusters(self, repo: str, branch: str | None = None,
+                                depth: int | None = None,
+                                min_size: int | None = None) -> dict:
+        """Кластеризовать base-граф по модулям → кластеры для /summarize-subsystems."""
+        from reviewer.graph.summaries import Member, build_clusters
+        rb = self._resolve_repo_branch(repo, branch)
+        if isinstance(rb, str):
+            return {"clusters": [], "note": rb}
+        repo, resolved = rb
+        raw = self.components.store.list_base_members(repo, resolved)
+        if not raw:
+            return {"clusters": [],
+                    "note": "(base-индекс пуст — выполните /reviewer_sync-codebase)"}
+        members = [Member(node_id=f"{p}#{s}", path=p, content_hash=h, start_line=sl)
+                   for p, s, h, sl in raw]
+        graph = self.components.graph
+        in_degree_fn = (
+            (lambda ids: graph.in_degree(repo, ids, branch=resolved))
+            if graph is not None else None)
+        clusters = build_clusters(
+            members, in_degree_fn,
+            depth=depth or self.settings.summary_cluster_depth,
+            min_size=min_size or 1)
+        stored = self.components.summary_store.get_source_hashes(repo, resolved)
+        return {"branch": resolved, "clusters": [
+            {"cluster_key": c.key, "num_members": c.num_members, "files": c.files,
+             "top_symbols": c.top_symbols, "source_hash": c.source_hash,
+             "stale": stored.get(c.key) != c.source_hash}
+            for c in clusters]}
+
+    def index_subsystem_summary(self, repo: str, branch: str, cluster_key: str,
+                                title: str, summary: str, source_hash: str) -> dict:
+        """Персистнуть один summary подсистемы (idempotent upsert)."""
+        rb = self._resolve_repo_branch(repo, branch)
+        if isinstance(rb, str):
+            return {"stored": False, "note": rb}
+        repo, resolved = rb
+        self.components.summary_store.upsert_summary(
+            repo, resolved, cluster_key, title, summary, [], source_hash)
+        return {"cluster_key": cluster_key, "stored": True}
+
+    def get_subsystem_summaries(self, repo: str, branch: str | None = None,
+                                cluster_key: str | None = None) -> dict:
+        """Дешёвый приор: предрасчитанные summary подсистем (fail-open у потребителя)."""
+        rb = self._resolve_repo_branch(repo, branch)
+        if isinstance(rb, str):
+            return {"summaries": [], "note": rb}
+        repo, resolved = rb
+        store = self.components.summary_store
+        if cluster_key:
+            return {"summary": store.get_summary(repo, resolved, cluster_key)}
+        return {"summaries": store.get_summaries(repo, resolved)}
+
     def get_pr_diff(self, repo: str, number: int) -> str:
         """Unified diff изменённых файлов PR (session-less) — ленивая подтяжка для /solve-task.
 
