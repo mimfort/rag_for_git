@@ -125,7 +125,8 @@ def test_publish_after_restart_rehydrates_session(_ov, _ch) -> None:
         svc.prepare_review("o/r", 7)
         assert ("o/r", 7) in store.rows               # сессия персистнута
         svc._sessions.clear()                          # эмуляция рестарта процесса
-        report = svc.publish_review("o/r", 7, summary="s", findings=[RAW], dry_run=True)
+        svc.submit_findings("o/r", 7, [RAW])
+        report = svc.publish_review("o/r", 7, summary="s", dry_run=True)
     assert report["inline"][0]["line"] == 2            # регидрация дала рабочую сессию
     assert ("o/r", 7) not in store.rows                # cleanup удалил персист
 
@@ -148,7 +149,7 @@ def test_publish_miss_raises_with_recovery_hint() -> None:
     store = _FakeSessionStore()                          # пусто: prepare не вызывался
     svc = _make_service(store)
     with pytest.raises(ValueError, match="prepare_review"):
-        svc.publish_review("o/r", 7, summary="s", findings=[RAW], dry_run=True)
+        svc.publish_review("o/r", 7, summary="s", dry_run=True)
 
 
 @patch("reviewer.services.review_service.chunk_python", side_effect=_fake_chunk)
@@ -164,4 +165,4 @@ def test_persist_disabled_no_rehydration(_ov, _ch) -> None:
         assert svc._session_store is None          # гейт: персист выключен → store не создан
         svc._sessions.clear()                              # эмуляция рестарта
         with pytest.raises(ValueError, match="prepare_review"):
-            svc.publish_review("o/r", 7, summary="s", findings=[RAW], dry_run=True)
+            svc.publish_review("o/r", 7, summary="s", dry_run=True)

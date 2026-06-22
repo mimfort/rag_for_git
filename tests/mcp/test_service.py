@@ -11,7 +11,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from reviewer.config.settings import Settings
-from reviewer.mcp.service import MCPReviewService, _finding_from_dict
+from reviewer.mcp.service import MCPReviewService
 from reviewer.vcs.base import (
     ChangedFile,
     PullRequest,
@@ -425,7 +425,7 @@ def test_publish_review_links_task_when_task_key(
     svc = MCPReviewService(settings, components, vcs_factory=lambda o, r: vcs)
     svc.prepare_review("o/r", 7)
 
-    svc.publish_review("o/r", 7, "summary", [], dry_run=False, task_key="ID-1")
+    svc.publish_review("o/r", 7, "summary", dry_run=False, task_key="ID-1")
 
     components.task_service.link_review.assert_called_once()
     args = components.task_service.link_review.call_args.args
@@ -448,7 +448,7 @@ def test_publish_review_no_link_on_dry_run(
     vcs.list_existing_fingerprints.return_value = set()
     svc = MCPReviewService(settings, components, vcs_factory=lambda o, r: vcs)
     svc.prepare_review("o/r", 7)
-    svc.publish_review("o/r", 7, "summary", [], dry_run=True, task_key="ID-1")
+    svc.publish_review("o/r", 7, "summary", dry_run=True, task_key="ID-1")
     components.task_service.link_review.assert_not_called()
 
 
@@ -464,7 +464,7 @@ def test_publish_review_no_link_without_task_key(
     vcs.list_existing_fingerprints.return_value = set()
     svc = MCPReviewService(settings, components, vcs_factory=lambda o, r: vcs)
     svc.prepare_review("o/r", 7)
-    svc.publish_review("o/r", 7, "summary", [], dry_run=False)
+    svc.publish_review("o/r", 7, "summary", dry_run=False)
     components.task_service.link_review.assert_not_called()
 
 
@@ -678,20 +678,3 @@ def test_get_pr_diff_empty_files_note():
     svc = MCPReviewService(_settings(), _components(), vcs_factory=lambda o, r: vcs)
     assert svc.get_pr_diff("o/r", 7) == "(PR без изменённых файлов)"
 
-
-# ---------------------------------------------------------------------------
-# Тесты Task 1 (PRI-144): коэрция confidence — fallback 0.1 + clamp [0,1]
-# ---------------------------------------------------------------------------
-
-def test_finding_confidence_coercion_and_clamp():
-    base = {"file": "a.py", "severity": "high", "message": "m", "line": 1, "code_quote": "x = 1"}
-    # валидные значения проходят как есть
-    assert _finding_from_dict({**base, "confidence": 0.9}).confidence == 0.9
-    assert _finding_from_dict({**base, "confidence": 0.5}).confidence == 0.5
-    # не оценено / None / мусор → 0.1 (ниже честного потолка спекулятивной зоны 0.4)
-    assert _finding_from_dict(base).confidence == 0.1
-    assert _finding_from_dict({**base, "confidence": None}).confidence == 0.1
-    assert _finding_from_dict({**base, "confidence": "abc"}).confidence == 0.1
-    # clamp в [0,1]
-    assert _finding_from_dict({**base, "confidence": 1.5}).confidence == 1.0
-    assert _finding_from_dict({**base, "confidence": -0.2}).confidence == 0.0
