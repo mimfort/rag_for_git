@@ -39,4 +39,7 @@ Finding: "new required parameter `timeout` breaks existing callers".
 Found via find_callers: 5 places call `connect(host, port)` without timeout.
 Verdict: is_real=true — all 5 call sites will raise TypeError on deploy.
 
-Return ONLY: {"verdicts": [{"index": N, "is_real": true|false}]}
+Read the candidate findings via `get_candidate_findings(repo, pr)` (each has a stable
+`id`). For each, submit your decision via `submit_verdicts(repo, pr, verdicts=[{"id": "<id>", "is_real": true|false}])`.
+Submit a verdict only for findings you decide to kill or explicitly keep; a finding
+with no verdict is kept (recall-safe). Do NOT return verdicts as text.

@@ -16,7 +16,10 @@ Tool discipline (shared):
 - `get_definition` — a symbol's definition;
 - `read_file` — exact source context;
 - `get_changed_file_diff` — other changed files of this PR;
-- `get_impact` — callers of a changed signature that live outside the diff.
+- `get_impact` — callers of a changed signature that live outside the diff;
+- `submit_findings` — submit findings (schema-enforced; server assigns ids);
+- `get_candidate_findings` — read accumulated candidate findings (verify only);
+- `submit_verdicts` — submit verify verdicts by candidate id (verify only).
 
 ## Session-less tools (`ask` / `solve-task`, no PR session)
 

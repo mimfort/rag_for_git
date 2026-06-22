@@ -31,10 +31,9 @@ def test_publish_review_tool_forwards_task_key():
     # Гоним реальную обёртку тула через FastMCP.call_tool, а не мок напрямую.
     asyncio.run(server.call_tool(
         "publish_review",
-        {"repo": "o/r", "pr": 7, "summary": "s", "findings": [],
-         "dry_run": False, "task_key": "ID-1"},
+        {"repo": "o/r", "pr": 7, "summary": "s", "task_key": "ID-1"},
     ))
-    svc.publish_review.assert_called_once_with("o/r", 7, "s", [], False, "ID-1")
+    svc.publish_review.assert_called_once_with("o/r", 7, "s", False, "ID-1")
 
 
 def test_get_board_config_tool_registered():

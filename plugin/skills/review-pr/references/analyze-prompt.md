@@ -58,3 +58,4 @@ these are stylistic preferences with no behavioural impact.
 
 <!-- include: _common/findings-schema.md -->
 Set "category" to one of: correctness|security|performance|maintainability|style.
+Submit via `submit_findings(repo, pr, findings=[…])` — do not return JSON text.
