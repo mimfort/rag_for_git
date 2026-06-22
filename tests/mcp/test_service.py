@@ -252,6 +252,7 @@ def test_search_tools_delegate_to_make_tools(
     assert isinstance(svc.search_code("o/r", 7, "token check"), str)
     assert isinstance(svc.get_related_symbols("o/r", 7, "a.py#f"), str)
     assert isinstance(svc.read_file("o/r", 7, "a.py", 1, 10), str)
+    assert isinstance(svc.read_file("o/r", 7, "a.py", 1, 10, skeleton=True), str)
     assert isinstance(svc.get_definition("o/r", 7, "f"), str)
     assert isinstance(svc.find_callers("o/r", 7, "a.py#f"), str)
     assert isinstance(svc.get_changed_file_diff("o/r", 7, "a.py"), str)

@@ -217,6 +217,38 @@ def test_cache_normalizes_read_file_defaults():
     assert calls["n"] == 1
 
 
+def test_read_file_skeleton_returns_signatures_not_bodies():
+    src = ('class A:\n'
+           '    """Doc A."""\n'
+           '    def m(self):\n'
+           '        secret = 42\n'
+           '        return secret\n')
+    tools = {t.name: t for t in make_tools(_rich_ctx(read_file_fn=lambda p: src))}
+    out = tools["read_file"].invoke({"path": "a.py", "skeleton": True})
+    assert "class A:" in out and '"""Doc A."""' in out and "def m(self):" in out
+    assert "secret = 42" not in out and "return secret" not in out
+
+def test_read_file_skeleton_fallback_when_no_definitions():
+    src = "import os\nX = 1\n"
+    tools = {t.name: t for t in make_tools(_rich_ctx(read_file_fn=lambda p: src))}
+    out = tools["read_file"].invoke({"path": "a.py", "skeleton": True})
+    assert "нет определений для скелета" in out
+    assert "1|import os" in out and "2|X = 1" in out
+
+def test_read_file_full_mode_unchanged_with_skeleton_false():
+    tools = {t.name: t for t in make_tools(_rich_ctx())}   # a.py = "l1\nl2\nl3"
+    out = tools["read_file"].invoke({"path": "a.py", "start": 1, "end": 2})
+    assert "1|l1" in out and "2|l2" in out and "3|l3" not in out
+
+def test_read_file_skeleton_caps_at_400_lines():
+    src = "\n".join(f"def f{i}(): pass" for i in range(500))   # 500 однострочных def
+    tools = {t.name: t for t in make_tools(_rich_ctx(read_file_fn=lambda p: src))}
+    out = tools["read_file"].invoke({"path": "a.py", "skeleton": True})
+    assert "1|def f0(): pass" in out and "(…усечено)" in out
+    assert out.count("|def f") == 400          # ровно 400 строк скелета
+    assert "401|def f400(): pass" not in out
+
+
 def test_tools_thread_repo_to_graph_and_retriever():
     calls = {}
     class G:

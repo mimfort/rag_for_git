@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from typing import Any
 from langchain_core.tools import StructuredTool
 
+from reviewer.index.chunker import python_skeleton
 from reviewer.index.refs import base_ref
 from reviewer.tools.graph_format import format_neighbors
 
@@ -76,9 +77,11 @@ def make_tools(ctx: ToolContext) -> list[StructuredTool]:
             overlay_ref=ctx.overlay_ref, changed_paths=ctx.changed_paths,
             empty_msg="(нет связей)")
 
-    def read_file(path: str, start: int = 1, end: int = 400) -> str:
-        """Точный исходник файла на head-ревизии PR, строки [start..end] с номерами (N|код).
-        Окно ограничено 400 строками."""
+    def read_file(path: str, start: int = 1, end: int = 400, skeleton: bool = False) -> str:
+        """Исходник файла на head-ревизии PR. По умолчанию строки [start..end] с номерами (N|код),
+        окно ≤400 строк. При skeleton=True — AST-скелет файла (сигнатуры def/class + 1-я строка
+        docstring) вместо тел, для первичной ориентации; start/end игнорируются, полное тело —
+        последующим read_file(path, start, end). Меньше токенов на навигацию."""
         if ctx.read_file_fn is None:
             return "(чтение файлов недоступно)"
         src = ctx.read_file_fn(path)
@@ -87,6 +90,15 @@ def make_tools(ctx: ToolContext) -> list[StructuredTool]:
         lines = src.splitlines()
         if not lines:
             return "(файл пуст)"
+        skel_note = ""
+        if skeleton:
+            nums = [n for n in python_skeleton(src.encode("utf-8")) if 1 <= n <= len(lines)]
+            if nums:
+                capped = len(nums) > 400
+                nums = nums[:400]
+                out = "\n".join(f"{n}|{lines[n - 1]}" for n in nums)
+                return out + "\n(…усечено)" if capped else out
+            skel_note = "(нет определений для скелета — полный фрагмент)\n"
         s = max(1, start)
         if s > len(lines):
             return f"(нет строки {s}; в файле {len(lines)} строк)"
@@ -97,7 +109,7 @@ def make_tools(ctx: ToolContext) -> list[StructuredTool]:
         body = "\n".join(f"{i}|{lines[i - 1]}" for i in range(s, e + 1))
         if capped:
             body += "\n(…усечено)"
-        return body
+        return skel_note + body
 
     def get_definition(symbol: str) -> str:
         """Где определён символ + его исходный код. Резолв имени через граф, код — через индекс.

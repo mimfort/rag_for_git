@@ -42,10 +42,13 @@ def create_server(service: MCPReviewService) -> FastMCP:
         return service.get_related_symbols(repo, pr, node_id)
 
     @mcp.tool()
-    def read_file(repo: str, pr: int, path: str, start: int = 1, end: int = 400) -> str:
-        """Read exact source lines of a file at the PR head revision.
-        start/end are 1-based inclusive line numbers."""
-        return service.read_file(repo, pr, path, start, end)
+    def read_file(repo: str, pr: int, path: str, start: int = 1, end: int = 400,
+                  skeleton: bool = False) -> str:
+        """Read source lines of a file at the PR head revision.
+        start/end are 1-based inclusive line numbers (full mode).
+        skeleton=True returns an AST skeleton (def/class signatures + first docstring line)
+        instead of bodies — compact orientation; fetch a full body afterwards with a range."""
+        return service.read_file(repo, pr, path, start, end, skeleton)
 
     @mcp.tool()
     def get_definition(repo: str, pr: int, symbol: str) -> str:
