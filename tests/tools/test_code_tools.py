@@ -240,6 +240,14 @@ def test_read_file_full_mode_unchanged_with_skeleton_false():
     out = tools["read_file"].invoke({"path": "a.py", "start": 1, "end": 2})
     assert "1|l1" in out and "2|l2" in out and "3|l3" not in out
 
+def test_read_file_skeleton_caps_at_400_lines():
+    src = "\n".join(f"def f{i}(): pass" for i in range(500))   # 500 однострочных def
+    tools = {t.name: t for t in make_tools(_rich_ctx(read_file_fn=lambda p: src))}
+    out = tools["read_file"].invoke({"path": "a.py", "skeleton": True})
+    assert "1|def f0(): pass" in out and "(…усечено)" in out
+    assert out.count("|def f") == 400          # ровно 400 строк скелета
+    assert "401|def f400(): pass" not in out
+
 
 def test_tools_thread_repo_to_graph_and_retriever():
     calls = {}
