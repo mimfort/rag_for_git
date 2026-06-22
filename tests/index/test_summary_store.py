@@ -36,3 +36,18 @@ def test_upsert_is_idempotent_update(store):
     store.upsert_summary("t/t", "dev", "reviewer/index", "A", "new", [], "h2")
     assert store.get_source_hashes("t/t", "dev") == {"reviewer/index": "h2"}
     assert store.get_summaries("t/t", "dev")[0]["summary"] == "new"
+
+
+def test_list_base_members_reads_base_ref_rows():
+    from reviewer.index.store import ChunkStore, ChunkRow
+    cs = ChunkStore(DSN)
+    cs.init_schema()
+    cs.upsert([ChunkRow(repo="t/t", ref="base:dev", content_hash="h", path="reviewer/x/a.py",
+                        lang="python", symbol_fqn="A", kind="function",
+                        start_line=3, end_line=9, text="def a(): ...", embedding=[0.0]*1024)])
+    try:
+        members = cs.list_base_members("t/t", "dev")
+        assert ("reviewer/x/a.py", "A", "h", 3) in members
+    finally:
+        cs.delete_ref("t/t", "base:dev")
+        cs.close()
