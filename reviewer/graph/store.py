@@ -93,6 +93,39 @@ class GraphStore:
             ids=list(node_ids), repo=repo, branch=branch)
         return {r["id"] for r in records}
 
+    def callers_detailed(self, repo: str, node_ids: list[str], *,
+                         branch: str = "") -> list[dict]:
+        """Вызывающие символы с типом ребра — входящие CALLS.
+        Элементы: {"id": <node_id>, "rel": "CALLS"}, упорядочены по id."""
+        records, _, _ = self._driver.execute_query(
+            "UNWIND $ids AS sid "
+            "MATCH (c:Symbol {repo: $repo, branch: $branch})-[:CALLS]->"
+            "(s:Symbol {repo: $repo, branch: $branch, id: sid}) "
+            "RETURN DISTINCT c.id AS id ORDER BY id",
+            ids=list(node_ids), repo=repo, branch=branch)
+        return [{"id": r["id"], "rel": "CALLS"} for r in records]
+
+    def expand_detailed(self, repo: str, node_ids: list[str], hops: int = 2, *,
+                        branch: str = "") -> list[dict]:
+        """Соседи символа с типами рёбер кратчайшего пути и дистанцией.
+        Элементы: {"id", "rels": [тип,...], "dist": int}; seed исключён;
+        упорядочены по (dist, id).
+        Обход рёбер undirected — соседи в обе стороны (как expand).
+        При нескольких seed n.id<>sid исключает лишь свой sid (в тулах seed один)."""
+        records, _, _ = self._driver.execute_query(
+            f"UNWIND $ids AS sid "
+            f"MATCH (s:Symbol {{repo: $repo, branch: $branch, id: sid}}) "
+            f"MATCH p=(s)-[:CALLS|IMPLEMENTS|TESTED_BY*1..{hops}]-"
+            f"(n:Symbol {{repo: $repo, branch: $branch}}) "
+            f"WHERE n.id <> sid "
+            f"WITH n.id AS id, [r IN relationships(p) | type(r)] AS rels, length(p) AS dist "
+            f"ORDER BY dist "
+            f"WITH id, collect({{rels: rels, dist: dist}})[0] AS best "
+            f"RETURN id, best.rels AS rels, best.dist AS dist "
+            f"ORDER BY best.dist, id",
+            ids=list(node_ids), repo=repo, branch=branch)
+        return [{"id": r["id"], "rels": list(r["rels"]), "dist": r["dist"]} for r in records]
+
     def in_degree(self, repo: str, node_ids: list[str], *, branch: str = "") -> dict[str, int]:
         """Число входящих CALLS на каждый символ (центральность = сколько мест зависит).
 

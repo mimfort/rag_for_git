@@ -94,3 +94,41 @@ def test_incremental_methods_preserve_incoming_calls(graph_store):
     # incoming edge from unchanged caller preserved; new internal caller added:
     assert graph_store.callers("a/x", ["a.py#foo"]) == {"u.py#caller", "a.py#bar"}
     assert graph_store.find_symbol("a/x", "gone") == []
+
+
+@pytest.mark.integration
+def test_callers_detailed_returns_rel_and_id(graph_store):
+    graph_store.init_schema()
+    graph_store.clear()
+    graph_store.upsert_nodes("test/repo", ["a.py#f", "a.py#g", "a.py#h"])
+    graph_store.upsert_edges("test/repo", [
+        ("a.py#g", "CALLS", "a.py#f"),
+        ("a.py#h", "CALLS", "a.py#f"),
+    ])
+    out = graph_store.callers_detailed("test/repo", ["a.py#f"])
+    assert out == [
+        {"id": "a.py#g", "rel": "CALLS"},
+        {"id": "a.py#h", "rel": "CALLS"},
+    ]
+    assert graph_store.callers_detailed("test/repo", ["a.py#g"]) == []
+
+
+@pytest.mark.integration
+def test_expand_detailed_rels_distance_and_self_excluded(graph_store):
+    graph_store.init_schema()
+    graph_store.clear()
+    graph_store.upsert_nodes(
+        "test/repo", ["base.py#A", "impl.py#B", "call.py#C", "deep.py#D"])
+    graph_store.upsert_edges("test/repo", [
+        ("impl.py#B", "IMPLEMENTS", "base.py#A"),   # B -[IMPLEMENTS]-> A  (d1)
+        ("call.py#C", "CALLS", "base.py#A"),        # C -[CALLS]-> A       (d1)
+        ("deep.py#D", "CALLS", "call.py#C"),        # D -[CALLS]-> C       (A..D = d2)
+    ])
+    out = graph_store.expand_detailed("test/repo", ["base.py#A"], hops=2)
+    by_id = {r["id"]: r for r in out}
+    assert "base.py#A" not in by_id                  # self исключён
+    assert by_id["impl.py#B"]["dist"] == 1 and by_id["impl.py#B"]["rels"] == ["IMPLEMENTS"]
+    assert by_id["call.py#C"]["dist"] == 1 and by_id["call.py#C"]["rels"] == ["CALLS"]
+    assert by_id["deep.py#D"]["dist"] == 2
+    # порядок — по (dist, id): d1 раньше d2
+    assert [r["id"] for r in out][-1] == "deep.py#D"

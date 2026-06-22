@@ -7,6 +7,10 @@ class FakeRetriever:
         return ContextPack([Retrieved("a.py#f","a.py","f","function",1,2,"def f(): ...",1.0)])
 class FakeGraph:
     def expand(self, repo, ids, hops=2, *, branch=""): return {"b.py#g"}
+    def expand_detailed(self, repo, ids, hops=2, *, branch=""):
+        return [{"id": "b.py#g", "rels": ["CALLS"], "dist": 1}]
+    def callers_detailed(self, repo, ids, *, branch=""):
+        return [{"id": "x.py#caller", "rel": "CALLS"}]
 
 def test_search_code_tool_returns_context_text():
     ctx = ToolContext(retriever=FakeRetriever(), graph=FakeGraph(),
@@ -29,11 +33,17 @@ class FakeGraphRich:
     def expand(self, repo, ids, hops=2, *, branch=""): return {"b.py#g"}
     def callers(self, repo, ids, *, branch=""): return {"x.py#caller"}
     def find_symbol(self, repo, name, *, branch=""): return ["a.py#f"]
+    def expand_detailed(self, repo, ids, hops=2, *, branch=""):
+        return [{"id": "b.py#g", "rels": ["CALLS"], "dist": 1}]
+    def callers_detailed(self, repo, ids, *, branch=""):
+        return [{"id": "x.py#caller", "rel": "CALLS"}]
 
 class FakeStore:
     def fetch_nodes(self, repo, ids, overlay_ref, changed_paths, *, base_ref="base"):
         from reviewer.index.store import Retrieved
-        return [Retrieved("a.py#f", "a.py", "f", "function", 1, 2, "def f():\n    return 1", 0.0)]
+        return [Retrieved(i, i.split("#", 1)[0], i.split("#", 1)[1], "function",
+                          10, 12, f"def {i.split('#', 1)[1]}():\n    return 1", 0.0)
+                for i in ids]
 
 
 def _rich_ctx(**over):
@@ -67,7 +77,23 @@ def test_get_definition_uses_graph_and_store():
 def test_find_callers_directed():
     tools = {t.name: t for t in make_tools(_rich_ctx())}
     out = tools["find_callers"].invoke({"node_id": "a.py#f"})
-    assert "x.py#caller" in out
+    assert "// x.py#caller (x.py:10) [CALLS]" in out
+    assert "def caller():" in out
+
+
+def test_get_related_symbols_graph_none():
+    ctx = ToolContext(retriever=FakeRetriever(), graph=None,
+                      overlay_ref="pr:1", changed_paths=[], changed_node_ids=[], repo="a/x")
+    tools = {t.name: t for t in make_tools(ctx)}
+    out = tools["get_related_symbols"].invoke({"node_id": "a.py#f"})
+    assert out == "(граф недоступен)"
+
+
+def test_get_related_symbols_compact_format():
+    tools = {t.name: t for t in make_tools(_rich_ctx())}
+    out = tools["get_related_symbols"].invoke({"node_id": "a.py#f"})
+    assert "// b.py#g (b.py:10) [CALLS, d1]" in out
+    assert "def g():" in out
 
 
 def test_get_changed_file_diff_returns_patch():
@@ -194,12 +220,12 @@ def test_cache_normalizes_read_file_defaults():
 def test_tools_thread_repo_to_graph_and_retriever():
     calls = {}
     class G:
-        def expand(self, repo, ids, hops=2, *, branch=""):
+        def expand_detailed(self, repo, ids, hops=2, *, branch=""):
             calls["expand_repo"] = repo
-            return set()
-        def callers(self, repo, ids, *, branch=""):
+            return []
+        def callers_detailed(self, repo, ids, *, branch=""):
             calls["callers_repo"] = repo
-            return set()
+            return []
         def find_symbol(self, repo, name, *, branch=""):
             calls["find_repo"] = repo
             return []
