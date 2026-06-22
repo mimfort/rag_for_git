@@ -736,12 +736,15 @@ class MCPReviewService:
         units = []
         for u in p.units:
             lines = commentable_lines(p.patches.get(u.path))
-            units.append({
+            unit = {
                 "path": u.path,
                 "patch": p.patches.get(u.path),
                 "commentable_right": sorted(lines["RIGHT"]),
                 "commentable_left": sorted(lines["LEFT"]),
-            })
+            }
+            if u.structural_summary:
+                unit["structural_summary"] = u.structural_summary
+            units.append(unit)
         return {
             "repo": p.repo,
             "pr": {

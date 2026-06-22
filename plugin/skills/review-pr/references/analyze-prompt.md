@@ -5,6 +5,12 @@ Rules:
   Pre-existing issues in untouched code are out of scope.
 - Report only real problems: bugs, edge cases, security issues, broken
   contracts, cross-file inconsistencies.
+- A unit may include a `structural_summary`: a compact symbol-level overview of
+  what changed in this file — changed signatures, added and removed symbols.
+  Use it to orient on the contract and to prioritise blast-radius checks BEFORE
+  reading the raw diff line by line. The raw `patch` and `commentable_right` /
+  `commentable_left` remain the source of truth for exact line numbers; the
+  summary never replaces them.
 <!-- include: _common/tool-usage.md -->
 Use the PR-session tools above.
 <!-- include: _common/anti-hallucination.md -->

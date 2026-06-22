@@ -678,3 +678,44 @@ def test_get_pr_diff_empty_files_note():
     svc = MCPReviewService(_settings(), _components(), vcs_factory=lambda o, r: vcs)
     assert svc.get_pr_diff("o/r", 7) == "(PR без изменённых файлов)"
 
+
+# ---------------------------------------------------------------------------
+# Тесты structural_summary в payload prepare_review (PRI-158)
+# ---------------------------------------------------------------------------
+
+@patch("reviewer.services.review_service.chunk_python", side_effect=_fake_chunk)
+@patch("reviewer.services.review_service.build_overlay")
+def test_prepare_review_payload_includes_structural_summary(
+    _mock_overlay: MagicMock,
+    _mock_chunk: MagicMock,
+) -> None:
+    """При смене сигнатуры payload-юнит несёт structural_summary."""
+    settings = _settings()
+    components = _components()
+    vcs = _fake_vcs()
+
+    def _read(path: str, ref: str) -> str | None:
+        if path == ".review.yml":
+            return None
+        return "def foo(a, b): pass" if ref == "head456" else "def foo(a): pass"
+    vcs.get_file_at_ref.side_effect = _read
+
+    svc = MCPReviewService(settings, components, vcs_factory=lambda o, r: vcs)
+    out = svc.prepare_review("o/r", 7)
+
+    unit = out["units"][0]
+    assert "structural_summary" in unit
+    assert "foo" in unit["structural_summary"]
+
+
+@patch("reviewer.services.review_service.chunk_python", side_effect=_fake_chunk)
+@patch("reviewer.services.review_service.build_overlay")
+def test_prepare_review_payload_omits_empty_structural_summary(
+    _mock_overlay: MagicMock,
+    _mock_chunk: MagicMock,
+) -> None:
+    """Без структурных изменений (base==head) ключ structural_summary отсутствует."""
+    svc = _make_mcp_service()  # _fake_vcs отдаёт одинаковый исходник для base и head
+    out = svc.prepare_review("o/r", 7)
+
+    assert "structural_summary" not in out["units"][0]
