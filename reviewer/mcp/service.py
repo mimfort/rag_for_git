@@ -5,7 +5,7 @@
 """
 import logging
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
 from reviewer.agent.assemble import (
@@ -30,81 +30,12 @@ from reviewer.services.review_service import (
 from reviewer.tasks.graph import PRRef
 from reviewer.tools.code_tools import ToolContext, make_tools
 from reviewer.tools.graph_format import format_neighbors
+from reviewer.mcp.schemas import FindingIn, VerdictIn
 from reviewer.vcs.base import ChangedFile, Finding, VCSProvider
 from reviewer.vcs.diff import commentable_lines
 
 log = logging.getLogger(__name__)
 
-
-_VALID_SEVERITIES = frozenset({"low", "medium", "high", "critical"})
-
-
-def _coerce_int(value) -> int | None:
-    """int-коэрция LLM-значения: int("42") → 42, None/мусор → None."""
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return None
-
-
-def _finding_from_dict(d) -> Finding | None:
-    """Собрать Finding из словаря в схеме analyze-промпта.
-
-    Вход приходит от модели — кривые словари штатны, коэрция самодостаточная
-    (НЕ зависит от _FindingModel в analyzer). Схема: ``category, severity, file,
-    line, code_quote, message, suggestion, fix{start_line,end_line,replacement},
-    confidence`` (+опц. ``side``). ``code_quote`` хранится в Finding для fuzzy snap в publish_review.
-
-    Гарантии коэрции:
-
-    - не-dict или dict без ``file`` → None (вызывающий считает invalid);
-    - ``line``: int-коэрция, мусор → None;
-    - ``confidence``: float-коэрция, None/мусор → 0.1; значение клампится в [0.0, 1.0];
-    - ``severity`` вне {low,medium,high,critical} → "medium";
-    - ``side`` вне {RIGHT,LEFT} → "RIGHT";
-    - ``suggestion``: не-строка → None (не попадает в тело комментария как repr);
-    - ``fix``: int-коэрция start/end; при мусоре (или нестроковом replacement)
-      fix отбрасывается целиком.
-    """
-    if not isinstance(d, dict) or not d.get("file"):
-        return None
-    severity = d.get("severity")
-    if not isinstance(severity, str) or severity not in _VALID_SEVERITIES:
-        severity = "medium"
-    side = d.get("side")
-    if side not in ("RIGHT", "LEFT"):
-        side = "RIGHT"
-    try:
-        confidence = float(d.get("confidence"))
-    except (TypeError, ValueError):
-        confidence = 0.1   # не оценено = спекулятивно (ниже честного потолка 0.4) → отсекается гейтом
-    confidence = max(0.0, min(1.0, confidence))   # clamp в [0,1]
-    fix = d.get("fix")
-    fix_start = fix_end = replacement = None
-    if isinstance(fix, dict):
-        fix_start = _coerce_int(fix.get("start_line"))
-        fix_end = _coerce_int(fix.get("end_line"))
-        replacement = fix.get("replacement")
-        if fix_start is None or fix_end is None or not isinstance(replacement, str):
-            fix_start = fix_end = replacement = None
-    suggestion = d.get("suggestion")
-    if not isinstance(suggestion, str):
-        suggestion = None
-    _cq = d.get("code_quote")
-    return Finding(
-        category=str(d.get("category") or "correctness"),
-        severity=severity,
-        file=str(d["file"]),
-        line=_coerce_int(d.get("line")),
-        side=side,
-        message=str(d.get("message") or ""),
-        suggestion=suggestion,
-        confidence=confidence,
-        fix_start=fix_start,
-        fix_end=fix_end,
-        replacement=replacement,
-        code_quote=_cq if isinstance(_cq, str) else None,
-    )
 
 
 @dataclass
@@ -115,6 +46,13 @@ class _Session:
     # пер-вызов. Повторный одинаковый вызов отдаёт реальный результат из
     # ctx.cache (пер-сессия), а не заглушку «повтор: результат уже показан выше».
     ctx: ToolContext
+    # PRI-156: schema-enforced находки/вердикты копятся в сессии между submit_*
+    # и publish_review. id вида "f{n}" присваивает submit_findings. Состояние
+    # in-memory (регидрированная из стора сессия стартует пустой — допустимо:
+    # перезапуск процесса посреди ревью теряет прогресс, как и раньше).
+    candidates: dict[str, Finding] = field(default_factory=dict)
+    verdicts: dict[str, bool] = field(default_factory=dict)
+    _seq: int = 0
 
 
 class MCPReviewService:
@@ -512,58 +450,96 @@ class MCPReviewService:
                     log.warning("get_pr_diff: не удалось закрыть VCS", exc_info=True)
         return _format_pr_diff(files) or "(PR без изменённых файлов)"
 
+    def submit_findings(self, repo: str, pr: int, findings: list[dict]) -> dict:
+        """Принять находки субагента в сессию (PRI-156): валидация по FindingIn,
+        присвоение server-assigned id, накопление в _Session.candidates.
+
+        Энфорс схемы — на тул-границе FastMCP (тип list[FindingIn]); здесь
+        повторная model_validate коэрцирует/валидирует dict при прямом вызове
+        (тесты). Невалидный элемент (нет file) → ValidationError → ретрай тула.
+        """
+        from reviewer.services.repo_id import normalize_repo
+        repo = normalize_repo(repo)
+        s = self._session(repo, pr)
+        ids: list[str] = []
+        for d in findings:
+            fi = FindingIn.model_validate(d)
+            s._seq += 1
+            fid = f"f{s._seq}"
+            s.candidates[fid] = Finding.from_in(fi)
+            ids.append(fid)
+        return {"accepted": len(ids), "ids": ids}
+
+    def get_candidate_findings(self, repo: str, pr: int) -> str:
+        """Вернуть накопленных кандидатов с id для verify (JSON-строка)."""
+        import json
+        from reviewer.services.repo_id import normalize_repo
+        repo = normalize_repo(repo)
+        s = self._session(repo, pr)
+        items = [
+            {"id": fid, "file": f.file, "line": f.line, "category": f.category,
+             "severity": f.severity, "message": f.message, "code_quote": f.code_quote}
+            for fid, f in s.candidates.items()
+        ]
+        return json.dumps({"candidates": items}, ensure_ascii=False, indent=2)
+
+    def submit_verdicts(self, repo: str, pr: int, verdicts: list[dict]) -> dict:
+        """Принять вердикты verify в сессию (PRI-156). id вне candidates →
+        игнор + warning. Отсутствие вердикта по находке = keep (см. publish_review)."""
+        from reviewer.services.repo_id import normalize_repo
+        repo = normalize_repo(repo)
+        s = self._session(repo, pr)
+        recorded, unknown = 0, []
+        for d in verdicts:
+            v = VerdictIn.model_validate(d)
+            if v.id not in s.candidates:
+                unknown.append(v.id)
+                log.warning("submit_verdicts: неизвестный id %s (%s#%s)", v.id, repo, pr)
+                continue
+            s.verdicts[v.id] = v.is_real
+            recorded += 1
+        return {"recorded": recorded, "unknown_ids": unknown}
+
     def publish_review(
         self,
         repo: str,
         pr: int,
         summary: str,
-        findings: list[dict],
         dry_run: bool = False,
         task_key: str | None = None,
     ) -> dict:
-        """Детерминированный хвост ревью: gate → grounding → dedup → assemble →
-        публикация → история → очистка overlay/сессии.
+        """Детерминированный хвост ревью: verify-фильтр → grounding → gate →
+        dedup → assemble → публикация → история → очистка overlay/сессии.
 
-        ``findings`` — словари в схеме analyze-промпта (вход от LLM). Кривые
-        словари не валят publish: запись без ``file`` пропускается (счётчик
-        ``invalid`` в отчёте), остальные поля коэрцируются с дефолтами — см.
-        :func:`_finding_from_dict`. Сессия (repo, pr) должна быть подготовлена
-        ``prepare_review``. Overlay и сессия очищаются ВСЕГДА (даже при сбое
-        VCS-публикации) — см. ``_cleanup``.
+        PRI-156: находки и вердикты читаются ИЗ СЕССИИ (submit_findings/
+        submit_verdicts), параметр findings убран. Отсев verify — только по
+        явному is_real=false; отсутствие вердикта = keep (recall-safe).
+        Сессия (repo, pr) должна быть подготовлена prepare_review. Overlay и
+        сессия очищаются ВСЕГДА (даже при сбое VCS-публикации) — см. _cleanup.
 
-        При указании ``task_key`` и успешной публикации (не dry_run) автоматически
-        линкует PR↔задача↔код в граф задач через ``task_service.link_review``
-        (рёбра IMPLEMENTED_BY + TOUCHES затронутых символов).
-
-        Args:
-            summary: сводка от модели; к ней добавляется markdown-отчёт assemble.
-            dry_run: не публиковать в VCS, только собрать отчёт.
-            task_key: канонический ключ задачи (например «ID-1») для авто-линковки.
+        При указании task_key и успешной публикации (не dry_run) линкует
+        PR↔задача↔код в граф задач (рёбра IMPLEMENTED_BY + TOUCHES).
 
         Returns:
-            Отчёт со счётчиками (posted/invalid/dropped_by_gate/deduped/
-            already_posted/moved_to_summary/capped) и inline.
+            Отчёт со счётчиками (posted/invalid/verify_rejected/dropped_by_gate/
+            deduped/already_posted/moved_to_summary/capped) и inline.
         """
         from reviewer.services.repo_id import normalize_repo
         repo = normalize_repo(repo)
         s = self._session(repo, pr)
         p = s.prepared
 
-        # 1) Коэрция LLM-входа (кривой dict без file → скип) и грунтовка строки
-        # по дословной цитате (анти-галлюцинация).
+        # 1) Verify-фильтр из сессии: keep, кроме явного is_real=false (recall-safe).
+        # Затем грунтовка строки по дословной цитате (анти-галлюцинация).
         _commentable_cache: dict[str, dict[str, set[int]]] = {
             path: commentable_lines(patch)
             for path, patch in p.patches.items()
             if patch is not None
         }
+        survived = [f for fid, f in s.candidates.items() if s.verdicts.get(fid) is not False]
+        verify_rejected = len(s.candidates) - len(survived)
         parsed: list[Finding] = []
-        invalid = 0
-        for d in findings:
-            f = _finding_from_dict(d)
-            if f is None:
-                invalid += 1
-                log.warning("publish_review: пропущена некорректная находка: %r", d)
-                continue
+        for f in survived:
             f.line = ground_line(p.sources.get(f.file), f.code_quote, f.line)
             if f.line is not None and f.side == "RIGHT" and f.file in _commentable_cache:
                 f.line = snap_to_commentable(
@@ -638,8 +614,9 @@ class MCPReviewService:
         # 6) История (fail-soft) и очистка overlay/сессии (ВСЕГДА).
         dropped_by_gate = len(parsed) - len(kept)
         run_id = self._record_history(
-            repo, pr, p, parsed, deduped, asm,
-            dropped_by_gate=dropped_by_gate, dry_run=dry_run, posted=posted, error=error,
+            repo, pr, p, list(s.candidates.values()), deduped, asm,
+            verify_rejected=verify_rejected,
+            dry_run=dry_run, posted=posted, error=error,
         )
         self._cleanup(repo, pr)
 
@@ -653,7 +630,8 @@ class MCPReviewService:
                 {"path": c.path, "line": c.line, "side": c.side, "body": c.body}
                 for c in asm.inline_comments
             ],
-            "invalid": invalid,
+            "invalid": 0,                       # PRI-156: вход валиден по схеме (submit)
+            "verify_rejected": verify_rejected,
             "dropped_by_gate": dropped_by_gate,
             "deduped": len(kept) - len(deduped),
             "already_posted": asm.skipped_existing,
@@ -666,11 +644,11 @@ class MCPReviewService:
         repo: str,
         pr: int,
         p: PreparedReview,
-        parsed: list[Finding],
+        analyzed: list[Finding],
         deduped: list[Finding],
         asm: AssembledReview,
         *,
-        dropped_by_gate: int,
+        verify_rejected: int,
         dry_run: bool,
         posted: bool,
         error: str,
@@ -690,9 +668,9 @@ class MCPReviewService:
             now = datetime.now(timezone.utc)
             status = "error" if (error and not dry_run) else "ok"
             comments_inline = len(asm.inline_comments)
-            # Паритет со старым пайплайном: analyzed — по уникальным fingerprint
-            # (parsed уже грунтован, но ещё без _sane_line из assemble — допустимо).
-            findings_analyzed = len({f.fingerprint() for f in parsed})
+            # PRI-156: analyzed — все candidates (до verify-фильтра); грунтовка строк
+            # выполнена только для survived, не для отвергнутых candidates.
+            findings_analyzed = len({f.fingerprint() for f in analyzed})
             run = {
                 "repo": repo,
                 "pr_number": pr,
@@ -710,9 +688,9 @@ class MCPReviewService:
                 "files_failed": 0,
                 "findings_analyzed": findings_analyzed,
                 "findings_kept": len(deduped),
-                # verify_rejected = отсев политикой-gate (в новом пути verify
-                # живёт в скилле, до publish доходят уже отфильтрованные находки).
-                "verify_rejected": dropped_by_gate,
+                # PRI-156: verify_rejected = число is_real=false (verify живёт в
+                # сессии submit_verdicts); gate-отсев отдельно в отчёте publish.
+                "verify_rejected": verify_rejected,
                 "comments_inline": comments_inline,
                 # Считаем только реально опубликованные не-inline строки
                 # (findings_rows включает skipped_existing с published=False).

@@ -1,9 +1,11 @@
 Findings output schema (shared). The calling skill sets `category`.
 
-Return ONLY a JSON object (no prose around it):
+Submit findings by calling `submit_findings(repo, pr, findings=[…])` — one call,
+each item matching this per-finding schema (the server validates against it and
+assigns a stable id). Do NOT return findings as prose/JSON text.
 
 ```json
-{"findings": [{
+[{
   "category": "<set by the calling skill>",
   "severity": "low|medium|high|critical",
   "file": "<path of the reviewed file>",
@@ -14,7 +16,7 @@ Return ONLY a JSON object (no prose around it):
   "suggestion": "<short advice or null>",
   "fix": {"start_line": N, "end_line": M, "replacement": "<new code>"} | null,
   "confidence": 0.0
-}]}
+}]
 ```
 
 Field semantics:

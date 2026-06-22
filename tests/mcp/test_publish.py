@@ -170,6 +170,16 @@ def _make_mcp_service_with_publish(
     return svc, vcs, history
 
 
+def _submit_then_publish(svc, repo, pr, findings, *, summary="s", dry_run=False,
+                         verdicts=None, task_key=None):
+    """PRI-156: вместо publish_review(findings=...) — submit + publish из сессии."""
+    if findings:
+        svc.submit_findings(repo, pr, findings)
+    if verdicts:
+        svc.submit_verdicts(repo, pr, verdicts)
+    return svc.publish_review(repo, pr, summary=summary, dry_run=dry_run, task_key=task_key)
+
+
 # ---------------------------------------------------------------------------
 # Тесты
 #
@@ -182,7 +192,7 @@ def _make_mcp_service_with_publish(
 def test_publish_posts_inline_and_records_history(_ov, _ch) -> None:
     svc, vcs, history = _make_mcp_service_with_publish()
     svc.prepare_review("o/r", 7)
-    report = svc.publish_review("o/r", 7, summary="Overall fine", findings=[RAW])
+    report = _submit_then_publish(svc, "o/r", 7, [RAW], summary="Overall fine")
     assert report["posted"] is True
     assert vcs.published[0]["comments"][0]["path"] == "a.py"
     assert history.runs[0]["pr_number"] == 7
@@ -194,7 +204,7 @@ def test_publish_posts_inline_and_records_history(_ov, _ch) -> None:
 def test_publish_dry_run_does_not_post_but_reports(_ov, _ch) -> None:
     svc, vcs, history = _make_mcp_service_with_publish()
     svc.prepare_review("o/r", 7)
-    report = svc.publish_review("o/r", 7, summary="s", findings=[RAW], dry_run=True)
+    report = _submit_then_publish(svc, "o/r", 7, [RAW], dry_run=True)
     assert report["posted"] is False and vcs.published == []
     assert report["inline"][0]["line"] == 2
     assert report["capped"] == 0
@@ -214,8 +224,7 @@ def test_publish_gates_low_severity_and_grounds_line(_ov, _ch) -> None:
     svc.prepare_review("o/r", 7)
     low = dict(RAW, severity="low")                       # ниже threshold=medium
     wrong_line = dict(RAW, line=99)                       # грунтовка по code_quote → 2
-    report = svc.publish_review("o/r", 7, summary="s",
-                                findings=[low, wrong_line], dry_run=True)
+    report = _submit_then_publish(svc, "o/r", 7, [low, wrong_line], dry_run=True)
     assert report["dropped_by_gate"] == 1
     assert report["inline"][0]["line"] == 2
 
@@ -225,7 +234,7 @@ def test_publish_gates_low_severity_and_grounds_line(_ov, _ch) -> None:
 def test_publish_cleans_overlay_even_on_vcs_error(_ov, _ch) -> None:
     svc, vcs, history = _make_mcp_service_with_publish(vcs_fails=True)
     svc.prepare_review("o/r", 7)
-    report = svc.publish_review("o/r", 7, summary="s", findings=[RAW])
+    report = _submit_then_publish(svc, "o/r", 7, [RAW])
     assert report["posted"] is False and report["error"]
     # prepare сам чистит overlay один раз (self-healing) + cleanup после publish
     assert svc.components.store.deleted_refs.count("pr:7") == 2
@@ -243,7 +252,7 @@ def test_publish_factory_vcs_not_closed(_ov, _ch) -> None:
     """Внешний (factory) VCS сервис НЕ закрывает — жизненным циклом владеет фабрика."""
     svc, vcs, _ = _make_mcp_service_with_publish()
     svc.prepare_review("o/r", 7)
-    svc.publish_review("o/r", 7, summary="s", findings=[RAW], dry_run=True)
+    _submit_then_publish(svc, "o/r", 7, [RAW], dry_run=True)
     assert vcs.close_calls == 0
 
 
@@ -262,7 +271,7 @@ def test_publish_closes_internal_vcs() -> None:
         "reviewer.services.review_service.chunk_python", side_effect=_fake_chunk,
     ), patch("reviewer.services.review_service.build_overlay"):
         svc.prepare_review("o/r", 7)
-        svc.publish_review("o/r", 7, summary="s", findings=[RAW], dry_run=True)
+        _submit_then_publish(svc, "o/r", 7, [RAW], dry_run=True)
     assert vcs.close_calls == 1
     assert ("o/r", 7) not in svc._sessions
 
@@ -278,32 +287,19 @@ def test_publish_history_failsoft(_ov, _ch) -> None:
 
     history.record_run = boom
     svc.prepare_review("o/r", 7)
-    report = svc.publish_review("o/r", 7, summary="s", findings=[RAW])
+    report = _submit_then_publish(svc, "o/r", 7, [RAW])
     assert report["posted"] is True
     assert report["run_id"] is None
 
 
 @patch("reviewer.services.review_service.chunk_python", side_effect=_fake_chunk)
 @patch("reviewer.services.review_service.build_overlay")
-def test_publish_coerces_malformed_llm_findings(_ov, _ch) -> None:
-    """Кривые dict'ы от LLM не валят publish: без file — скип (invalid),
-    line="42" — int-коэрция (+грунтовка), confidence=None → 0.1 (ниже порога → отсекается),
-    severity="urgent" → "medium". Валидные публикуются."""
-    svc, vcs, _ = _make_mcp_service_with_publish()
+def test_publish_invalid_always_zero_with_enforced_schema(_ov, _ch) -> None:
+    """Все candidates валидны (validated на submit) → invalid всегда 0."""
+    svc, _, _ = _make_mcp_service_with_publish()
     svc.prepare_review("o/r", 7)
-    pack = [
-        {"category": "correctness", "severity": "high",
-         "message": "no file", "confidence": 0.9},          # без file → invalid
-        dict(RAW, line="42", message="bug A"),               # int-коэрция строки
-        dict(RAW, confidence=None, message="bug B"),         # None → 0.1 (ниже порога 0.5 → dropped)
-        dict(RAW, severity="urgent", message="bug C"),       # вне enum → medium
-    ]
-    report = svc.publish_review("o/r", 7, summary="s", findings=pack)
-    assert report["posted"] is True
-    assert report["invalid"] == 1
-    assert report["dropped_by_gate"] == 1                    # bug B (confidence=0.1) отсекается
-    assert len(report["inline"]) == 2
-    assert all(c["line"] == 2 for c in report["inline"])     # все загрунтованы по цитате
+    report = _submit_then_publish(svc, "o/r", 7, [RAW], dry_run=True)
+    assert report["invalid"] == 0
 
 
 @patch("reviewer.services.review_service.chunk_python", side_effect=_fake_chunk)
@@ -316,7 +312,7 @@ def test_publish_skips_already_posted_fingerprints(_ov, _ch) -> None:
     ).fingerprint()
     svc, vcs, _ = _make_mcp_service_with_publish(existing_fps={fp})
     svc.prepare_review("o/r", 7)
-    report = svc.publish_review("o/r", 7, summary="s", findings=[RAW], dry_run=True)
+    report = _submit_then_publish(svc, "o/r", 7, [RAW], dry_run=True)
     assert report["already_posted"] == 1
     assert report["inline"] == []
 
@@ -327,7 +323,7 @@ def test_publish_empty_findings_posts_summary(_ov, _ch) -> None:
     """Пустой список находок: ревью публикуется со сводкой «Замечаний не найдено»."""
     svc, vcs, _ = _make_mcp_service_with_publish()
     svc.prepare_review("o/r", 7)
-    report = svc.publish_review("o/r", 7, summary="s", findings=[])
+    report = _submit_then_publish(svc, "o/r", 7, [], summary="s")
     assert report["posted"] is True
     assert report["inline"] == []
     assert "Замечаний не найдено" in report["summary"]
@@ -340,8 +336,7 @@ def test_publish_dedups_near_identical_findings(_ov, _ch) -> None:
     """Две одинаковые находки схлопываются в одну: deduped=1, один inline."""
     svc, vcs, history = _make_mcp_service_with_publish()
     svc.prepare_review("o/r", 7)
-    report = svc.publish_review("o/r", 7, summary="s",
-                                findings=[RAW, dict(RAW)], dry_run=True)
+    report = _submit_then_publish(svc, "o/r", 7, [RAW, dict(RAW)], dry_run=True)
     assert report["deduped"] == 1
     assert len(report["inline"]) == 1
     # findings_analyzed — по уникальным fingerprint (точный дубль не раздувает счётчик)
@@ -363,8 +358,8 @@ def test_publish_skipped_existing_not_counted_in_comments_summary(_ov, _ch) -> N
     summary_raw = dict(RAW, line=None, code_quote=None, message="summary finding")
     svc, vcs, history = _make_mcp_service_with_publish(existing_fps={fp})
     svc.prepare_review("o/r", 7)
-    report = svc.publish_review(
-        "o/r", 7, summary="s", findings=[RAW, summary_raw], dry_run=True,
+    report = _submit_then_publish(
+        svc, "o/r", 7, [RAW, summary_raw], dry_run=True,
     )
     # RAW пропущена (already_posted), summary_raw уходит в summary
     assert report["already_posted"] == 1
@@ -387,7 +382,7 @@ def test_publish_annotates_centrality_from_graph(_ov, _ch) -> None:
     ]
     svc.components.graph.in_degree.return_value = {"a.py#foo": 4}
     svc.prepare_review("o/r", 7)
-    svc.publish_review("o/r", 7, summary="s", findings=[RAW], dry_run=True)
+    _submit_then_publish(svc, "o/r", 7, [RAW], dry_run=True)
     # Центральность была запрошена ровно для пойманного символа.
     svc.components.graph.in_degree.assert_called_once()
     assert svc.components.graph.in_degree.call_args.args[1] == ["a.py#foo"]
@@ -395,25 +390,37 @@ def test_publish_annotates_centrality_from_graph(_ov, _ch) -> None:
 
 @patch("reviewer.services.review_service.chunk_python", side_effect=_fake_chunk)
 @patch("reviewer.services.review_service.build_overlay")
-def test_publish_coerces_unhashable_severity_and_nonstringsuggestion(_ov, _ch) -> None:
-    """Unhashable severity (список) → "medium"; не-строковый suggestion → None.
-
-    Проверяет фикс: frozenset-membership на списке давал TypeError,
-    repr suggestion в теле комментария устранён коэрцией в str | None.
-    """
+def test_publish_coerced_findings_publish(_ov, _ch) -> None:
+    """Коэрция severity/suggestion на submit → medium проходит гейт, suggestion=None не в теле."""
     svc, vcs, _ = _make_mcp_service_with_publish()
     svc.prepare_review("o/r", 7)
-    pack = [
-        dict(RAW, severity=["high"], message="unhashable severity"),    # список → medium
-        dict(RAW, suggestion=42, message="non-string suggestion"),       # int → None
-    ]
-    report = svc.publish_review("o/r", 7, summary="s", findings=pack, dry_run=True)
-    # Оба прошли гейт (medium >= threshold=medium) и опубликовались
-    assert report["invalid"] == 0
+    pack = [dict(RAW, severity=["high"], message="unhashable severity"),
+            dict(RAW, suggestion=42, message="non-string suggestion")]
+    report = _submit_then_publish(svc, "o/r", 7, pack, dry_run=True)
     assert report["dropped_by_gate"] == 0
     assert len(report["inline"]) == 2
-    # suggestion=42 должен превратиться в None (не "42" или repr)
     inline_bodies = [c["body"] for c in report["inline"]]
-    assert not any("42" in b and "suggestion" in b.lower() for b in inline_bodies), (
-        "suggestion=42 не должен попадать в тело комментария как repr/str"
-    )
+    assert not any("42" in b and "suggestion" in b.lower() for b in inline_bodies)
+
+
+@patch("reviewer.services.review_service.chunk_python", side_effect=_fake_chunk)
+@patch("reviewer.services.review_service.build_overlay")
+def test_publish_drops_findings_with_is_real_false(_ov, _ch) -> None:
+    """Явный is_real=false → находка отсеяна; verify_rejected=1."""
+    svc, _, _ = _make_mcp_service_with_publish()
+    svc.prepare_review("o/r", 7)
+    report = _submit_then_publish(svc, "o/r", 7, [RAW], dry_run=True,
+                                  verdicts=[{"id": "f1", "is_real": False}])
+    assert report["verify_rejected"] == 1
+    assert report["inline"] == []
+
+
+@patch("reviewer.services.review_service.chunk_python", side_effect=_fake_chunk)
+@patch("reviewer.services.review_service.build_overlay")
+def test_publish_keeps_finding_without_verdict(_ov, _ch) -> None:
+    """Нет вердикта (verify умер/частичный) → находка остаётся (recall-safe)."""
+    svc, _, _ = _make_mcp_service_with_publish()
+    svc.prepare_review("o/r", 7)
+    report = _submit_then_publish(svc, "o/r", 7, [RAW], dry_run=True)  # без verdicts
+    assert report["verify_rejected"] == 0
+    assert report["inline"][0]["line"] == 2

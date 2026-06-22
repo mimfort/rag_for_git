@@ -1,6 +1,9 @@
 import re
 from dataclasses import dataclass
-from typing import Literal, Protocol
+from typing import TYPE_CHECKING, Literal, Protocol
+
+if TYPE_CHECKING:
+    from reviewer.mcp.schemas import FindingIn
 
 def normalize_message(message: str) -> str:
     """Нормализовать текст находки для dedup/fingerprint: устранить незначимые
@@ -59,6 +62,29 @@ class Finding:
         import hashlib
         key = f"{self.file}|{self.line}|{self.side}|{self.category}|{normalize_message(self.message)}"
         return hashlib.sha256(key.encode()).hexdigest()[:16]
+
+    @classmethod
+    def from_in(cls, fi: "FindingIn") -> "Finding":
+        """Построить внутренний Finding из валидированного FindingIn (PRI-156).
+
+        Дакт-тайпинг по атрибутам: без runtime-импорта FindingIn (vcs не зависит
+        от mcp). centrality стартует с 0.0 (проставляется графом в publish_review).
+        """
+        fix = fi.fix
+        return cls(
+            category=fi.category,
+            severity=fi.severity,
+            file=fi.file,
+            line=fi.line,
+            side=fi.side,
+            message=fi.message,
+            suggestion=fi.suggestion,
+            confidence=fi.confidence,
+            fix_start=fix.start_line if fix else None,
+            fix_end=fix.end_line if fix else None,
+            replacement=fix.replacement if fix else None,
+            code_quote=fi.code_quote,
+        )
 
 class VCSProvider(Protocol):
     def get_pull_request(self, number: int) -> PullRequest: ...
