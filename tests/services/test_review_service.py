@@ -444,3 +444,43 @@ def test_prepare_no_structural_summary_for_added_file(
     prepared = service.prepare("o", "r", 1, vcs_provider=vcs)
 
     assert prepared.units[0].structural_summary == ""
+
+
+@patch("reviewer.services.review_service.chunk_python", side_effect=_fake_chunk)
+@patch("reviewer.services.review_service.build_overlay")
+def test_prepare_structural_summary_fail_soft_on_base_fetch_error(
+    _mock_overlay, _mock_chunk, settings, components,
+):
+    """Сбой получения base-исходника не валит prepare; structural_summary == ""."""
+    vcs = _vcs_with_files([_changed("a.py", status="modified")])
+    vcs.get_pull_request.return_value = PullRequest(
+        number=1, base_sha="base123", head_sha="head456", base_ref="main",
+        title="t", body="", draft=False,
+    )
+
+    def _read(path, ref):
+        if path == ".review.yml":
+            return None
+        if ref == "base123":
+            raise RuntimeError("base fetch failed")
+        return "def foo(a): pass"
+
+    vcs.get_file_at_ref.side_effect = _read
+    service = ReviewService(settings, components)
+    prepared = service.prepare("o", "r", 1, vcs_provider=vcs)
+    assert prepared.units[0].structural_summary == ""
+
+
+@patch("reviewer.services.review_service.chunk_python", side_effect=_fake_chunk)
+@patch("reviewer.services.review_service.build_overlay")
+def test_prepare_no_structural_summary_for_renamed_file(
+    _mock_overlay, _mock_chunk, settings, components,
+):
+    """Для переименованного файла structural_summary пуст (политика modified-only)."""
+    vcs = _vcs_with_files([_changed("a.py", status="renamed")])
+    vcs.get_file_at_ref.side_effect = (
+        lambda p, r: None if p == ".review.yml" else "def foo(a): pass"
+    )
+    service = ReviewService(settings, components)
+    prepared = service.prepare("o", "r", 1, vcs_provider=vcs)
+    assert prepared.units[0].structural_summary == ""

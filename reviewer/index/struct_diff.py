@@ -8,6 +8,7 @@ import re
 from dataclasses import dataclass
 
 from reviewer.index.chunker import chunk_python
+from reviewer.index.models import Chunk
 
 _DEF_RE = re.compile(r"^\s*(async\s+def|def|class)\s")
 _WS_RE = re.compile(r"\s+")
@@ -52,7 +53,7 @@ class SymbolChange:
     line: int | None        # head-строка для added/changed; base-строка для removed
 
 
-def _symbol_map(path: str, source: bytes | None) -> dict:
+def _symbol_map(path: str, source: bytes | None) -> dict[str, Chunk]:
     """fqn -> Chunk по исходнику (tree-sitter). Fail-soft: {} при пустом/битом вводе."""
     if not source:
         return {}
