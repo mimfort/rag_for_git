@@ -5,7 +5,7 @@
 """
 import logging
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
 from reviewer.agent.assemble import (
@@ -30,6 +30,7 @@ from reviewer.services.review_service import (
 from reviewer.tasks.graph import PRRef
 from reviewer.tools.code_tools import ToolContext, make_tools
 from reviewer.tools.graph_format import format_neighbors
+from reviewer.mcp.schemas import FindingIn, VerdictIn
 from reviewer.vcs.base import ChangedFile, Finding, VCSProvider
 from reviewer.vcs.diff import commentable_lines
 
@@ -115,6 +116,13 @@ class _Session:
     # пер-вызов. Повторный одинаковый вызов отдаёт реальный результат из
     # ctx.cache (пер-сессия), а не заглушку «повтор: результат уже показан выше».
     ctx: ToolContext
+    # PRI-156: schema-enforced находки/вердикты копятся в сессии между submit_*
+    # и publish_review. id вида "f{n}" присваивает submit_findings. Состояние
+    # in-memory (регидрированная из стора сессия стартует пустой — допустимо:
+    # перезапуск процесса посреди ревью теряет прогресс, как и раньше).
+    candidates: dict[str, Finding] = field(default_factory=dict)
+    verdicts: dict[str, bool] = field(default_factory=dict)
+    _seq: int = 0
 
 
 class MCPReviewService:
@@ -511,6 +519,56 @@ class MCPReviewService:
                 except Exception:
                     log.warning("get_pr_diff: не удалось закрыть VCS", exc_info=True)
         return _format_pr_diff(files) or "(PR без изменённых файлов)"
+
+    def submit_findings(self, repo: str, pr: int, findings: list[dict]) -> dict:
+        """Принять находки субагента в сессию (PRI-156): валидация по FindingIn,
+        присвоение server-assigned id, накопление в _Session.candidates.
+
+        Энфорс схемы — на тул-границе FastMCP (тип list[FindingIn]); здесь
+        повторная model_validate коэрцирует/валидирует dict при прямом вызове
+        (тесты). Невалидный элемент (нет file) → ValidationError → ретрай тула.
+        """
+        from reviewer.services.repo_id import normalize_repo
+        repo = normalize_repo(repo)
+        s = self._session(repo, pr)
+        ids: list[str] = []
+        for d in findings:
+            fi = FindingIn.model_validate(d)
+            s._seq += 1
+            fid = f"f{s._seq}"
+            s.candidates[fid] = Finding.from_in(fi)
+            ids.append(fid)
+        return {"accepted": len(ids), "ids": ids}
+
+    def get_candidate_findings(self, repo: str, pr: int) -> str:
+        """Вернуть накопленных кандидатов с id для verify (JSON-строка)."""
+        import json
+        from reviewer.services.repo_id import normalize_repo
+        repo = normalize_repo(repo)
+        s = self._session(repo, pr)
+        items = [
+            {"id": fid, "file": f.file, "line": f.line, "category": f.category,
+             "severity": f.severity, "message": f.message, "code_quote": f.code_quote}
+            for fid, f in s.candidates.items()
+        ]
+        return json.dumps({"candidates": items}, ensure_ascii=False, indent=2)
+
+    def submit_verdicts(self, repo: str, pr: int, verdicts: list[dict]) -> dict:
+        """Принять вердикты verify в сессию (PRI-156). id вне candidates →
+        игнор + warning. Отсутствие вердикта по находке = keep (см. publish_review)."""
+        from reviewer.services.repo_id import normalize_repo
+        repo = normalize_repo(repo)
+        s = self._session(repo, pr)
+        recorded, unknown = 0, []
+        for d in verdicts:
+            v = VerdictIn.model_validate(d)
+            if v.id not in s.candidates:
+                unknown.append(v.id)
+                log.warning("submit_verdicts: неизвестный id %s (%s#%s)", v.id, repo, pr)
+                continue
+            s.verdicts[v.id] = v.is_real
+            recorded += 1
+        return {"recorded": recorded, "unknown_ids": unknown}
 
     def publish_review(
         self,
