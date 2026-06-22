@@ -231,3 +231,49 @@ def test_order_after_dedup_preserved():
     assert result[0] is f1
     assert result[1] is f2
     assert result[2] is f3
+
+
+# ---------------------------------------------------------------------------
+# Нормализация message в точном dedup (PRI-152)
+# ---------------------------------------------------------------------------
+
+def test_exact_dedup_collapses_on_case_difference():
+    """Находки, различающиеся ТОЛЬКО регистром и пунктуацией, схлопываются на точном шаге.
+
+    similarity=1.0 отключает fuzzy-шаг для этой пары (SequenceMatcher ratio < 1.0
+    из-за точки), поэтому дубль должен пойматься именно точным шагом по нормализации.
+    """
+    f1 = make_finding(message="Баг X.", line=5)
+    f2 = make_finding(message="баг x", line=5)
+    result = dedup_findings([f1, f2], similarity=1.0)
+    assert len(result) == 1
+
+
+def test_exact_dedup_collapses_on_trailing_punctuation():
+    """Находки, различающиеся ТОЛЬКО финальной точкой в message, схлопываются на точном шаге.
+
+    similarity=1.0 отключает fuzzy — дубль должен пойматься именно точным шагом.
+    """
+    f1 = make_finding(message="небезопасная функция", line=5)
+    f2 = make_finding(message="небезопасная функция.", line=5)
+    result = dedup_findings([f1, f2], similarity=1.0)
+    assert len(result) == 1
+
+
+def test_exact_dedup_collapses_on_extra_spaces():
+    """Находки, различающиеся ТОЛЬКО лишним пробелом в message, схлопываются на точном шаге.
+
+    similarity=1.0 отключает fuzzy — дубль должен пойматься именно точным шагом.
+    """
+    f1 = make_finding(message="переменная не используется", line=5)
+    f2 = make_finding(message="переменная  не используется", line=5)
+    result = dedup_findings([f1, f2], similarity=1.0)
+    assert len(result) == 1
+
+
+def test_fuzzy_dedup_uses_normalized_messages():
+    """Fuzzy-dedup для соседних строк с дрейфом регистра/пунктуации схлопывает находки."""
+    f1 = make_finding(message="небезопасный вызов функции func", line=10)
+    f2 = make_finding(message="Небезопасный вызов функции func.", line=11)
+    result = dedup_findings([f1, f2], similarity=0.9)
+    assert len(result) == 1
