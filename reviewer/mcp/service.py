@@ -280,12 +280,15 @@ class MCPReviewService:
         """Связанные символы (вызовы/реализации/тесты) для node_id вида 'path#fqn'."""
         return self._invoke_tool(repo, pr, "get_related_symbols", {"node_id": node_id})
 
-    def read_file(self, repo: str, pr: int, path: str, start: int = 1, end: int = 400) -> str:
-        """Точный исходник файла на head-ревизии PR, строки [start..end].
+    def read_file(self, repo: str, pr: int, path: str, start: int = 1, end: int = 400,
+                  skeleton: bool = False) -> str:
+        """Исходник файла на head-ревизии PR, строки [start..end].
 
-        Дефолты start/end синхронизированы с code_tools.read_file.
+        При skeleton=True — AST-скелет (сигнатуры def/class + 1-я строка docstring),
+        start/end игнорируются. Дефолты start/end синхронизированы с code_tools.read_file.
         """
-        return self._invoke_tool(repo, pr, "read_file", {"path": path, "start": start, "end": end})
+        return self._invoke_tool(repo, pr, "read_file",
+                                 {"path": path, "start": start, "end": end, "skeleton": skeleton})
 
     def get_definition(self, repo: str, pr: int, symbol: str) -> str:
         """Где определён символ + его исходный код."""
