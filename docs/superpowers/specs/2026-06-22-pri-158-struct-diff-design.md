@@ -71,9 +71,14 @@
 ```
 Структурный diff:
   ~ сигнатура  ReviewService.prepare  было: def prepare(self, owner, name, pr_number)  стало: def prepare(self, owner, name, pr_number, vcs_provider=None)
-  + добавлен   ReviewService._ensure_history  (method)
+  + добавлен   ReviewService._ensure_history  (method)  def _ensure_history(self)
   - удалён     _legacy_helper  (function)
 ```
+
+> Примечание (реализация): строка `+ добавлен` показывает заголовок добавленного
+> символа (`new_sig`), когда он извлекается — это полезнее для оценки контракта;
+> при отсутствии сигнатуры заголовок опускается (без литерального «None»).
+> Строка `- удалён` сигнатуру не показывает.
 
 ### 2. `reviewer/tools/impact.py` (правка — обратная совместимость)
 
