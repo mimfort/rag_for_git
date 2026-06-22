@@ -71,6 +71,12 @@ def diff_symbols(
     не менялась) НЕ репортятся — это и даёт компактность. base_source=None →
     все символы head как added (политику пропуска added-файлов реализует
     вызывающий). Не бросает исключений.
+
+    Предположение: ``chunk_python`` возвращает чанки только для
+    ``function_definition`` / ``class_definition``, поэтому ``extract_signature``
+    ожидаемо возвращает non-None для реального чанка. Условие
+    ``if old_sig and new_sig`` — защитное: если сигнатура всё же не
+    извлеклась, signature-change для данной пары не репортится.
     """
     base = _symbol_map(path, base_source)
     head = _symbol_map(path, head_source)

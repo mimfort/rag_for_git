@@ -1,4 +1,4 @@
-from reviewer.index.struct_diff import SymbolChange, diff_symbols, extract_signature
+from reviewer.index.struct_diff import diff_symbols, extract_signature
 
 
 def test_extract_signature_reexported_and_works():
@@ -28,6 +28,11 @@ def test_diff_added_and_removed():
     head = b"def fresh():\n    pass\n"
     changes = diff_symbols("m.py", base, head)
     assert _kinds(changes) == {("added", "fresh"), ("removed", "gone")}
+    by_kind = {c.kind: c for c in changes}
+    assert by_kind["added"].new_sig == "def fresh():"
+    assert by_kind["added"].old_sig is None
+    assert by_kind["removed"].old_sig == "def gone():"
+    assert by_kind["removed"].new_sig is None
 
 
 def test_diff_body_only_change_not_reported():
