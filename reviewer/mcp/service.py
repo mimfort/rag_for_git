@@ -29,6 +29,7 @@ from reviewer.services.review_service import (
 )
 from reviewer.tasks.graph import PRRef
 from reviewer.tools.code_tools import ToolContext, make_tools
+from reviewer.tools.graph_format import format_neighbors
 from reviewer.vcs.base import ChangedFile, Finding, VCSProvider
 from reviewer.vcs.diff import commentable_lines
 
@@ -58,7 +59,7 @@ def _finding_from_dict(d) -> Finding | None:
 
     - не-dict или dict без ``file`` → None (вызывающий считает invalid);
     - ``line``: int-коэрция, мусор → None;
-    - ``confidence``: float-коэрция, None/мусор → 0.5;
+    - ``confidence``: float-коэрция, None/мусор → 0.1; значение клампится в [0.0, 1.0];
     - ``severity`` вне {low,medium,high,critical} → "medium";
     - ``side`` вне {RIGHT,LEFT} → "RIGHT";
     - ``suggestion``: не-строка → None (не попадает в тело комментария как repr);
@@ -76,7 +77,8 @@ def _finding_from_dict(d) -> Finding | None:
     try:
         confidence = float(d.get("confidence"))
     except (TypeError, ValueError):
-        confidence = 0.5
+        confidence = 0.1   # не оценено = спекулятивно (ниже честного потолка 0.4) → отсекается гейтом
+    confidence = max(0.0, min(1.0, confidence))   # clamp в [0,1]
     fix = d.get("fix")
     fix_start = fix_end = replacement = None
     if isinstance(fix, dict):
@@ -278,12 +280,15 @@ class MCPReviewService:
         """Связанные символы (вызовы/реализации/тесты) для node_id вида 'path#fqn'."""
         return self._invoke_tool(repo, pr, "get_related_symbols", {"node_id": node_id})
 
-    def read_file(self, repo: str, pr: int, path: str, start: int = 1, end: int = 400) -> str:
-        """Точный исходник файла на head-ревизии PR, строки [start..end].
+    def read_file(self, repo: str, pr: int, path: str, start: int = 1, end: int = 400,
+                  skeleton: bool = False) -> str:
+        """Исходник файла на head-ревизии PR, строки [start..end].
 
-        Дефолты start/end синхронизированы с code_tools.read_file.
+        При skeleton=True — AST-скелет (сигнатуры def/class + 1-я строка docstring),
+        start/end игнорируются. Дефолты start/end синхронизированы с code_tools.read_file.
         """
-        return self._invoke_tool(repo, pr, "read_file", {"path": path, "start": start, "end": end})
+        return self._invoke_tool(repo, pr, "read_file",
+                                 {"path": path, "start": start, "end": end, "skeleton": skeleton})
 
     def get_definition(self, repo: str, pr: int, symbol: str) -> str:
         """Где определён символ + его исходный код."""
@@ -409,7 +414,8 @@ class MCPReviewService:
 
     def related_symbols(self, repo: str, node_id: str,
                         branch: str | None = None) -> str:
-        """Соседи символа по графу (calls/implements/tests) без PR-сессии."""
+        """Соседи символа по графу (calls/implements/tests) без PR-сессии.
+        На элемент: file:line + строка определения + тип ребра и дистанция."""
         rb = self._resolve_repo_branch(repo, branch)
         if isinstance(rb, str):
             return rb
@@ -417,16 +423,19 @@ class MCPReviewService:
         if self.components.graph is None:
             return "(граф недоступен)"
         try:
-            related = self.components.graph.expand(
+            neighbors = self.components.graph.expand_detailed(
                 repo, [node_id], hops=2, branch=resolved)
         except Exception:
             log.warning("related_symbols: сбой графа", exc_info=True)
             return "(нет связей)"
-        return "\n".join(sorted(related)) or "(нет связей)"
+        return format_neighbors(
+            neighbors, store=self.components.store, repo=repo, branch=resolved,
+            overlay_ref=None, changed_paths=[], empty_msg="(нет связей)")
 
     def callers(self, repo: str, node_id: str,
                 branch: str | None = None) -> str:
-        """Кто вызывает символ node_id ('path#fqn') — входящие CALLS, без PR-сессии."""
+        """Кто вызывает символ node_id ('path#fqn') — входящие CALLS, без PR-сессии.
+        На элемент: file:line + строка определения вызывающего + [CALLS]."""
         rb = self._resolve_repo_branch(repo, branch)
         if isinstance(rb, str):
             return rb
@@ -434,12 +443,14 @@ class MCPReviewService:
         if self.components.graph is None:
             return "(граф недоступен)"
         try:
-            found = self.components.graph.callers(
+            found = self.components.graph.callers_detailed(
                 repo, [node_id], branch=resolved)
         except Exception:
             log.warning("callers: сбой графа", exc_info=True)
             return "(вызовов не найдено)"
-        return "\n".join(sorted(found)) or "(вызовов не найдено)"
+        return format_neighbors(
+            found, store=self.components.store, repo=repo, branch=resolved,
+            overlay_ref=None, changed_paths=[], empty_msg="(вызовов не найдено)")
 
     def definition(self, repo: str, symbol: str,
                    branch: str | None = None) -> str:
@@ -557,6 +568,7 @@ class MCPReviewService:
             if f.line is not None and f.side == "RIGHT" and f.file in _commentable_cache:
                 f.line = snap_to_commentable(
                     f.line, f.side, f.code_quote, _commentable_cache[f.file], p.sources.get(f.file, ""),
+                    max_distance=p.policy.grounding_max_distance,
                 )
             parsed.append(f)
 

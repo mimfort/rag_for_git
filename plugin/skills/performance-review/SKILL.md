@@ -5,25 +5,10 @@ description: Review code changes only for performance and efficiency risks (N+1 
 
 # Performance Review
 
-## Scope
+<!-- include: _common/dimension-scope.md -->
 
-Standalone: ask the user which diff to review if the scope is not clear:
-
-- `staged` — review only the staged diff;
-- `unstaged` — review only the unstaged diff;
-- uncommitted changes — staged plus unstaged;
-- branch-vs-base — compare the current branch against its base branch (state the
-  base branch used; infer from upstream, remote default, or common names: `main`,
-  `master`, `develop`, `trunk`);
-- commit, branch comparison, file list, or PR-like scope — review exactly that.
-
-Do not pick a scope yourself unless the user already made it clear. If the
-resulting diff is empty, stop and say there is nothing to review.
-
-Inside `/reviewer_review-pr`: the orchestrator provides the diffs of all units (path + patch)
-— review those. Call the reviewer MCP tools as needed (`search_code`,
-`get_related_symbols`, `read_file`, `get_definition`, `find_callers`,
-`get_changed_file_diff`) to verify whether a path is truly performance-sensitive.
+<!-- include: _common/tool-usage.md -->
+Use the PR-session tools above.
 
 ## Goal
 
@@ -65,27 +50,10 @@ Return only actionable findings.
 Return ONLY the findings JSON used by the review pipeline, with
 `"category": "performance"`:
 
-```json
-{"findings": [{
-  "category": "performance",
-  "severity": "low|medium|high|critical",
-  "file": "<path of the reviewed file>",
-  "line": <line number in the NEW file or null>,
-  "side": "RIGHT",
-  "code_quote": "<exact line from the new file>",
-  "message": "<what is wrong and why it matters>",
-  "suggestion": "<short advice or null>",
-  "fix": {"start_line": N, "end_line": M, "replacement": "<new code>"} | null,
-  "confidence": 0.0
-}]}
-```
+<!-- include: _common/findings-schema.md -->
+- Calibrate `confidence` against a measurable, reproducible effect: a hot path you can point
+  to (loop bound, query inside a loop) → 0.8+; a plausible but data-dependent cost → 0.5–0.7;
+  no measurable/reproducible effect → ≤ 0.4 (drop).
+Set "category" to "performance"; "side" is always "RIGHT".
 
-Standalone runs may additionally render the findings as a readable list after the JSON.
-
-If a finding cannot be tied to a specific line, use the closest changed line and
-explain the scope in `message`.
-
-If there are no meaningful performance findings, return `{"findings": []}` and say so.
-
-Write `message` and `suggestion` in the output language given by the orchestrator
-(standalone: the user's language).
+<!-- include: _common/dimension-output-tail.md -->

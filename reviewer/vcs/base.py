@@ -1,5 +1,16 @@
+import re
 from dataclasses import dataclass
 from typing import Literal, Protocol
+
+def normalize_message(message: str) -> str:
+    """Нормализовать текст находки для dedup/fingerprint: устранить незначимые
+    различия формулировки (регистр, пробелы, пунктуация), чтобы near-duplicate
+    схлопывались и повторный прогон не плодил дубли."""
+    s = message.casefold()              # юникод-корректный lower
+    s = re.sub(r"[^\w\s]", " ", s)      # пунктуация → пробел (\w юникодный: кириллица/латиница/цифры/_)
+    s = re.sub(r"\s+", " ", s).strip()  # схлопнуть пробелы + тримминг
+    return s
+
 
 @dataclass
 class PullRequest:
@@ -46,7 +57,7 @@ class Finding:
 
     def fingerprint(self) -> str:
         import hashlib
-        key = f"{self.file}|{self.line}|{self.side}|{self.category}|{self.message}"
+        key = f"{self.file}|{self.line}|{self.side}|{self.category}|{normalize_message(self.message)}"
         return hashlib.sha256(key.encode()).hexdigest()[:16]
 
 class VCSProvider(Protocol):

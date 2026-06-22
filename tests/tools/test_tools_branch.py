@@ -20,9 +20,9 @@ class FakeGraph:
     def __init__(self):
         self.branch = None
 
-    def expand(self, repo, node_ids, hops=2, *, branch=""):
+    def expand_detailed(self, repo, node_ids, hops=2, *, branch=""):
         self.branch = branch
-        return set()
+        return []
 
 
 def test_search_code_passes_branch():

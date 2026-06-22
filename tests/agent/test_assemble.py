@@ -148,6 +148,37 @@ def test_snap_wrong_side_no_candidates():
     assert snap_to_commentable(11, "LEFT", None, commentable, _SNAP_SOURCE) == 11
 
 
+def test_ground_line_picks_nearest_on_duplicate_quote():
+    """При нескольких точных совпадениях выбирается ближайшее к заявленной строке."""
+    src = "\n".join(["x = compute()", "a", "b", "x = compute()", "c", "x = compute()"])
+    # совпадения на строках 1, 4, 6
+    assert ground_line(src, "x = compute()", 5) == 4   # ближайшее к 5 — строка 4
+    assert ground_line(src, "x = compute()", 6) == 6   # точное попадание
+    assert ground_line(src, "x = compute()", 2) == 1   # ближайшее к 2 — строка 1
+
+
+def test_ground_line_duplicate_quote_line_none_returns_original():
+    """При нескольких совпадениях и line=None близость неопределена → возвращаем None."""
+    src = "\n".join(["dup", "x", "dup"])
+    assert ground_line(src, "dup", None) is None
+
+
+def test_ground_line_substring_picks_nearest():
+    """Нет точных совпадений, но несколько подстрочных → ближайшее."""
+    src = "\n".join(["foo(bar)", "z", "z", "foo(bar, baz)"])
+    # подстрока "foo(bar" на строках 1 и 4
+    assert ground_line(src, "foo(bar", 4) == 4
+    assert ground_line(src, "foo(bar", 1) == 1
+
+
+def test_snap_max_distance_configurable():
+    """Кандидат дальше дефолтных 5, но в пределах увеличенного max_distance."""
+    commentable = {"RIGHT": {18}, "LEFT": set()}
+    # line=10, кандидат 18 (расстояние 8): при дефолте 5 — не снапаем, при 10 — снапаем
+    assert snap_to_commentable(10, "RIGHT", None, commentable, _SNAP_SOURCE) == 10
+    assert snap_to_commentable(10, "RIGHT", None, commentable, _SNAP_SOURCE, max_distance=10) == 18
+
+
 def test_centrality_breaks_severity_tie_and_survives_cap():
     # Обе находки: severity=high, confidence=0.9, строка 2 (в диффе). Различает центральность.
     leaf = _f(message="leaf", centrality=0.0)

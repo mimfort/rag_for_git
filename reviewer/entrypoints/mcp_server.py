@@ -36,14 +36,19 @@ def create_server(service: MCPReviewService) -> FastMCP:
 
     @mcp.tool()
     def get_related_symbols(repo: str, pr: int, node_id: str) -> str:
-        """Code-graph neighbors (calls/implementations) of a symbol node_id 'path#fqn'."""
+        """Code-graph neighbors of a symbol node_id 'path#fqn'.
+        Each item: node_id + (file:line) + one-line definition snippet + edge type
+        (CALLS/IMPLEMENTS/TESTED_BY) and hop distance."""
         return service.get_related_symbols(repo, pr, node_id)
 
     @mcp.tool()
-    def read_file(repo: str, pr: int, path: str, start: int = 1, end: int = 400) -> str:
-        """Read exact source lines of a file at the PR head revision.
-        start/end are 1-based inclusive line numbers."""
-        return service.read_file(repo, pr, path, start, end)
+    def read_file(repo: str, pr: int, path: str, start: int = 1, end: int = 400,
+                  skeleton: bool = False) -> str:
+        """Read source lines of a file at the PR head revision.
+        start/end are 1-based inclusive line numbers (full mode).
+        skeleton=True returns an AST skeleton (def/class signatures + first docstring line)
+        instead of bodies — compact orientation; fetch a full body afterwards with a range."""
+        return service.read_file(repo, pr, path, start, end, skeleton)
 
     @mcp.tool()
     def get_definition(repo: str, pr: int, symbol: str) -> str:
@@ -52,7 +57,9 @@ def create_server(service: MCPReviewService) -> FastMCP:
 
     @mcp.tool()
     def find_callers(repo: str, pr: int, node_id: str) -> str:
-        """List direct callers of a symbol node_id."""
+        """Direct callers of a symbol node_id.
+        Each item: node_id + (file:line) + one-line snippet of the caller's
+        definition + [CALLS]."""
         return service.find_callers(repo, pr, node_id)
 
     @mcp.tool()
@@ -147,14 +154,16 @@ def create_server(service: MCPReviewService) -> FastMCP:
     @mcp.tool()
     def related_symbols(repo: str, node_id: str, branch: str | None = None) -> str:
         """Code-graph neighbors (calls/implementations/tests) of a symbol node_id
-        'path#fqn' over the base index (no PR session).
+        'path#fqn' over the base index (no PR session). Each item: node_id +
+        (file:line) + one-line definition snippet + edge type and distance.
         branch defaults to the primary tracked branch."""
         return service.related_symbols(repo, node_id, branch)
 
     @mcp.tool()
     def callers(repo: str, node_id: str, branch: str | None = None) -> str:
         """Direct callers of a symbol node_id 'path#fqn' over the base index
-        (no PR session). branch defaults to the primary tracked branch."""
+        (no PR session). Each item: node_id + (file:line) + one-line snippet of
+        the caller's definition + [CALLS]. branch defaults to the primary tracked branch."""
         return service.callers(repo, node_id, branch)
 
     @mcp.tool()

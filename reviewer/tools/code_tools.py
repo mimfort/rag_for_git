@@ -7,7 +7,9 @@ from dataclasses import dataclass, field
 from typing import Any
 from langchain_core.tools import StructuredTool
 
+from reviewer.index.chunker import python_skeleton
 from reviewer.index.refs import base_ref
+from reviewer.tools.graph_format import format_neighbors
 
 _DUP_STUB = "(повтор: результат уже показан выше)"
 
@@ -65,13 +67,21 @@ def make_tools(ctx: ToolContext) -> list[StructuredTool]:
         return pack.as_context() or "(ничего не найдено)"
 
     def get_related_symbols(node_id: str) -> str:
-        """Связанные символы (вызовы/реализации/тесты) для node_id вида 'path#fqn'."""
-        related = ctx.graph.expand(ctx.repo, [node_id], hops=2, branch=ctx.branch)
-        return "\n".join(sorted(related)) or "(нет связей)"
+        """Связанные символы (вызовы/реализации/тесты) для node_id 'path#fqn'.
+        На элемент: file:line + строка определения + тип ребра (CALLS/IMPLEMENTS/TESTED_BY) и дистанция."""
+        if ctx.graph is None or not hasattr(ctx.graph, "expand_detailed"):
+            return "(граф недоступен)"
+        neighbors = ctx.graph.expand_detailed(ctx.repo, [node_id], hops=2, branch=ctx.branch)
+        return format_neighbors(
+            neighbors, store=ctx.store, repo=ctx.repo, branch=ctx.branch,
+            overlay_ref=ctx.overlay_ref, changed_paths=ctx.changed_paths,
+            empty_msg="(нет связей)")
 
-    def read_file(path: str, start: int = 1, end: int = 400) -> str:
-        """Точный исходник файла на head-ревизии PR, строки [start..end] с номерами (N|код).
-        Окно ограничено 400 строками."""
+    def read_file(path: str, start: int = 1, end: int = 400, skeleton: bool = False) -> str:
+        """Исходник файла на head-ревизии PR. По умолчанию строки [start..end] с номерами (N|код),
+        окно ≤400 строк. При skeleton=True — AST-скелет файла (сигнатуры def/class + 1-я строка
+        docstring) вместо тел, для первичной ориентации; start/end игнорируются, полное тело —
+        последующим read_file(path, start, end). Меньше токенов на навигацию."""
         if ctx.read_file_fn is None:
             return "(чтение файлов недоступно)"
         src = ctx.read_file_fn(path)
@@ -80,6 +90,15 @@ def make_tools(ctx: ToolContext) -> list[StructuredTool]:
         lines = src.splitlines()
         if not lines:
             return "(файл пуст)"
+        skel_note = ""
+        if skeleton:
+            nums = [n for n in python_skeleton(src.encode("utf-8")) if 1 <= n <= len(lines)]
+            if nums:
+                capped = len(nums) > 400
+                nums = nums[:400]
+                out = "\n".join(f"{n}|{lines[n - 1]}" for n in nums)
+                return out + "\n(…усечено)" if capped else out
+            skel_note = "(нет определений для скелета — полный фрагмент)\n"
         s = max(1, start)
         if s > len(lines):
             return f"(нет строки {s}; в файле {len(lines)} строк)"
@@ -90,7 +109,7 @@ def make_tools(ctx: ToolContext) -> list[StructuredTool]:
         body = "\n".join(f"{i}|{lines[i - 1]}" for i in range(s, e + 1))
         if capped:
             body += "\n(…усечено)"
-        return body
+        return skel_note + body
 
     def get_definition(symbol: str) -> str:
         """Где определён символ + его исходный код. Резолв имени через граф, код — через индекс.
@@ -112,11 +131,15 @@ def make_tools(ctx: ToolContext) -> list[StructuredTool]:
         return pack.as_context() or "(определение не найдено)"
 
     def find_callers(node_id: str) -> str:
-        """Кто вызывает символ node_id ('path#fqn') — направленный CALLS (impact-анализ)."""
-        if ctx.graph is None or not hasattr(ctx.graph, "callers"):
+        """Кто вызывает символ node_id ('path#fqn') — входящие CALLS (impact-анализ).
+        На элемент: file:line + строка определения вызывающего + [CALLS]."""
+        if ctx.graph is None or not hasattr(ctx.graph, "callers_detailed"):
             return "(граф недоступен)"
-        found = ctx.graph.callers(ctx.repo, [node_id], branch=ctx.branch)
-        return "\n".join(sorted(found)) or "(вызовов не найдено)"
+        found = ctx.graph.callers_detailed(ctx.repo, [node_id], branch=ctx.branch)
+        return format_neighbors(
+            found, store=ctx.store, repo=ctx.repo, branch=ctx.branch,
+            overlay_ref=ctx.overlay_ref, changed_paths=ctx.changed_paths,
+            empty_msg="(вызовов не найдено)")
 
     def get_changed_file_diff(path: str) -> str:
         """Дифф другого изменённого файла этого PR."""

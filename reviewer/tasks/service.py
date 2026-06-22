@@ -218,9 +218,12 @@ class TaskService:
             return "(task search unavailable)"
         if not hits:
             return "(no similar tasks found)"
+        # Ранг-ординал — стабильный, query-независимый сигнал для relevance-фильтра
+        # (solve-task/review-pr прунят по порядку). Score даём с 4 знаками: RRF лежит
+        # в ≈0.016–0.033, и грубая точность схлопнула бы близкие задачи в одно число.
         return "\n".join(
-            f"- {h.key} [{h.status or '—'}] {h.title} (score {h.score:.2f})"
-            for h in hits)
+            f"{i}. {h.key} [{h.status or '—'}] {h.title} (score {h.score:.4f})"
+            for i, h in enumerate(hits, 1))
 
     def get_task_context(self, key: str) -> str:
         """Граф-контекст задачи: связанные задачи → их PR → код. Деградация → нота."""
@@ -332,41 +335,56 @@ class TaskService:
 
 
 def _format_task_context(ctx: dict, max_chars: int) -> str:
-    lines: list[str] = []
+    # Заголовочный блок (всегда сохраняется): задача, статус, url.
     head = f"Task {ctx.get('key')}"
     if ctx.get("status"):
         head += f" [{ctx['status']}]"
     if ctx.get("title"):
         head += f": {ctx['title']}"
-    lines.append(head)
+    head_block = [head]
     if ctx.get("url"):
-        lines.append(f"  url: {ctx['url']}")
+        head_block.append(f"  url: {ctx['url']}")
+
+    # Остальное — атомарные блоки: каждый PR и каждая связанная задача отдельным
+    # блоком; заголовок секции прикреплён к первому её блоку, чтобы при усечении
+    # на границе блока он не осиротел (а структура списка не рвалась посреди строки).
+    blocks: list[list[str]] = []
 
     prs = ctx.get("prs") or []
-    if prs:
-        lines.append("  Implemented by PRs:")
-        for p in prs:
-            line = f"    - {p.get('id')}"
-            if p.get("url"):
-                line += f" ({p['url']})"
-            touched = ", ".join(p.get("touched") or [])
-            if touched:
-                line += f" touches: {touched}"
-            lines.append(line)
+    for idx, p in enumerate(prs):
+        line = f"    - {p.get('id')}"
+        if p.get("url"):
+            line += f" ({p['url']})"
+        touched = ", ".join(p.get("touched") or [])
+        if touched:
+            line += f" touches: {touched}"
+        blocks.append(["  Implemented by PRs:", line] if idx == 0 else [line])
 
     linked = ctx.get("linked") or []
-    if linked:
-        lines.append("  Linked tasks:")
-        for n in linked:
-            ltype = n.get("type") or "relates"
-            nstatus = f" [{n['status']}]" if n.get("status") else ""
-            line = f"    - [{ltype}] {n.get('key')}{nstatus}: {n.get('title') or ''}"
-            npr = [p.get("id") for p in (n.get("prs") or []) if p.get("id")]
-            if npr:
-                line += "  PRs: " + ", ".join(npr)
-            lines.append(line)
+    for idx, n in enumerate(linked):
+        ltype = n.get("type") or "relates"
+        nstatus = f" [{n['status']}]" if n.get("status") else ""
+        line = f"    - [{ltype}] {n.get('key')}{nstatus}: {n.get('title') or ''}"
+        npr = [p.get("id") for p in (n.get("prs") or []) if p.get("id")]
+        if npr:
+            line += "  PRs: " + ", ".join(npr)
+        blocks.append(["  Linked tasks:", line] if idx == 0 else [line])
 
-    out = "\n".join(lines)
-    if len(out) > max_chars:
-        out = out[:max_chars] + "\n… (truncated)"
+    # Жадная сборка по границам блоков: голова обязательна, далее каждый блок
+    # добавляем целиком, пока влезает в бюджет; иначе стоп с нотой о хвосте.
+    out_lines = list(head_block)
+    total = len("\n".join(out_lines))
+    dropped = 0
+    for i, block in enumerate(blocks):
+        btext = "\n".join(block)
+        if total + 1 + len(btext) <= max_chars:
+            out_lines.extend(block)
+            total += 1 + len(btext)
+        else:
+            dropped = len(blocks) - i
+            break
+
+    out = "\n".join(out_lines)
+    if dropped:
+        out += f"\n… (truncated {dropped} more)"
     return out

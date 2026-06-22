@@ -4,6 +4,8 @@ contract breaks that per-file review misses. A changed function signature can br
 its callers in OTHER files that the diff never touched.
 
 Method:
+<!-- include: _common/tool-usage.md -->
+Use the PR-session tools above (especially get_impact).
 - Call `get_impact(repo, pr)` ONCE. It returns, for each symbol whose signature
   actually changed (gated base-vs-head), the old/new signature and the callers that
   live OUTSIDE the diff (`path:line` of the calling symbol + its header).
@@ -26,7 +28,8 @@ Confidence & graph completeness (mandatory):
     "nothing else is impacted", based on the list. A caller absent from the report is
     NOT evidence that no such caller exists.
   - Do NOT lower `severity` to benign because the caller list is empty or short.
-- Set `confidence` (a float; it feeds the publish gate — be honest) by this scale:
+- Set `confidence` by the shared scale in findings-schema (grounding + reproducibility);
+  for blast radius that scale concretely means:
   - 0.8–0.9 — the caller was read via `read_file` AND confirmed NOT updated via
     `get_changed_file_diff`, AND the break is unambiguous (a new REQUIRED parameter
     with no default, a removed/renamed parameter, or a changed parameter order that

@@ -81,39 +81,62 @@ brief to `superpowers:brainstorming` (which leads to writing-plans → subagent-
      mimic).
    - **Deepen via the code graph (optional — when `search_codebase` surfaced concrete symbols).**
      `search_codebase` chunks are headed by `path#fqn (path:start-end)`; feed those `node_id`s to the
-     session-less graph tools to sharpen the brief:
-     - `callers(repo, node_id, branch?)` → who depends on the code you would change (blast radius — what not to break);
-     - `related_symbols(repo, node_id, branch?)` → neighbors (calls / implementations / tests) to touch or mimic;
-     - `definition(repo, symbol, branch?)` → exact source of a symbol to follow as a pattern.
-     - **Lazy PR diff (optional).** `get_task_context` surfaces a task and its PRs (id form
-       `owner/name#N`); `search_tasks` surfaces similar task keys — fetch a key's context to see
-       its PRs. If a related task passed the relevance filter AND its PR is worth inspecting for
-       the implementation, parse `repo`/`number` from the PR id and call `get_pr_diff(repo, number)`
-       to see what that PR changed — pull it lazily, only when the LLM judges it useful (don't
-       fetch diffs for low-relevance tasks).
-       Fail-open: a `(diff PR недоступен)` / `(repo не задан…)` note is non-fatal — continue.
-     `search_codebase` now returns deduplicated, line-numbered, test-free snippets — keep using the
-     graph tools for blast radius, but expand only the few symbols central to the task, and cite
+     session-less graph tools to sharpen the brief. `search_codebase` now returns deduplicated,
+     line-numbered, test-free snippets — expand only the few symbols central to the task, and cite
      `path:line` from the line-numbered snippets directly (no re-Read needed for grounding).
      Pass the same `branch` you pass to `search_codebase`.
      Fail-open: a `(граф недоступен)` / `(нет связей)` / `(вызовов не найдено)` note is non-fatal — continue.
+   - **Lazy PR diff (optional).** `get_task_context` surfaces a task and its PRs (id form
+     `owner/name#N`); `search_tasks` surfaces similar task keys — fetch a key's context to see
+     its PRs. If a related task passed the relevance filter AND its PR is worth inspecting for
+     the implementation, parse `repo`/`number` from the PR id and call `get_pr_diff(repo, number)`
+     to see what that PR changed — pull it lazily, only when the LLM judges it useful (don't
+     fetch diffs for low-relevance tasks).
+     Fail-open: a `(diff PR недоступен)` / `(repo не задан…)` note is non-fatal — continue.
+   - **Relevance signals → Step 4 filter.** `search_tasks` `score` is an RRF rank score
+     (≈0.016–0.033), not comparable across queries; `search_codebase` has no score, only order.
+     Carry *rank/order* — not absolute score — into the Step 4 filter, and fetch `get_pr_diff`
+     only for a related task that survives that filter (within top-3, directly informing).
 
-   **Branch selection for `search_codebase`.** Before calling `search_codebase`, determine the
-   current git branch of the project: `git branch --show-current`. If it is in `REVIEW_BRANCHES`
-   (the tracked branches list), pass it as the `branch` parameter — the search will use that
-   branch's index. If the user explicitly stated which branch to work from, use that branch instead.
-   Otherwise, omit `branch` entirely and the server will use the primary branch (the first entry in
-   `REVIEW_BRANCHES`).
-   The same branch applies to `callers` / `related_symbols` / `definition` — pass it (or omit it) identically.
+<!-- include: _common/tool-usage.md -->
+Use the session-less tools above.
 
-4. **Distill the solution brief.** Write a structured markdown brief. Apply a strict relevance
-   filter: include an item ONLY if it directly informs the implementation; drop the rest and note how
-   many were dropped. Sections:
-   - **Task** — key/title/requirements/criteria (or the user's formulation in board-less mode).
-   - **Related work** — only the relevant linked/similar tasks and their PRs (what to reuse / follow).
-   - **Relevant code** — files/symbols to touch or mimic, each with a one-line "why"; where the graph surfaced them, note key callers / impacted symbols (blast radius).
-   - **Constraints / open questions** — limits, unknowns, and context gaps (e.g. "board unavailable",
-     "task corpus empty").
+   **Branch selection for `search_codebase`.**
+
+<!-- include: _common/branch-selection.md -->
+
+4. **Distill the solution brief.** Write a structured markdown brief whose only job is to seed
+   `brainstorming` — compact, scannable, nothing the implementer won't act on.
+
+   **Relevance filter (rank-based, no absolute score cutoff).** `search_tasks` returns a per-result
+   `score`, but it is an RRF rank score (`SUM(1/(60+rank))`, ≈0.016–0.033) — NOT comparable across
+   queries, so never gate on an absolute value. `search_codebase` exposes no score at all, only
+   result order. Therefore:
+   - **Order** candidates by result rank (tasks: rank/score; code: rank).
+   - **Caps (ceilings — take fewer if that's enough):** ≤3 related tasks · ≤5 files/symbols in
+     Relevant code. Expand the graph (`related_symbols`/`callers`/`definition`) only for the few
+     symbols central to the task.
+   - **Keep/drop is a binary judgment** — include an item ONLY if it *directly informs the
+     implementation*. Rank/score only sets review order and breaks ties at the cap; it is not a
+     numeric gate.
+     - ✅ INCLUDE: a symbol/file you will edit or mimic; a task whose PR shows a concrete pattern to
+       follow; a constraint that narrows the approach.
+     - ❌ EXCLUDE: a task in the same area but a different mechanism; a file the search surfaced that
+       you won't touch or copy; background you won't act on.
+   - **Report what you dropped:** end the Related work and Relevant code sections with
+     `(dropped N: reason)`.
+
+   **Brief skeleton — fill it, keep each item to one line:**
+
+   ```
+   # Brief — <KEY> <title>
+   ## Task — key/title/requirements/criteria (or the user's formulation in board-less mode). ≤~6 lines.
+   ## Related work — ≤3 tasks, one line each: «KEY — what to reuse / follow». (dropped N: …)
+   ## Relevant code — ≤5 files/symbols, one line: «path:line — why» (+ blast radius from the graph). (dropped N: …)
+   ## Constraints / open questions — terse bullets: limits, unknowns, context gaps (e.g. "board unavailable", "task corpus empty").
+   ```
+
+   Cite `path:line` straight from the line-numbered Step 3 snippets — no re-Read (Step 3 contract).
 
 5. **Hand off to development.** Show the brief, then invoke `superpowers:brainstorming` with the brief
    as the seed/context. From there the normal cycle takes over (brainstorming → writing-plans →

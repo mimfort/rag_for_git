@@ -5,32 +5,9 @@ Rules:
   Pre-existing issues in untouched code are out of scope.
 - Report only real problems: bugs, edge cases, security issues, broken
   contracts, cross-file inconsistencies.
-- Use tools BEFORE claiming cross-file effects: `search_code` for usages,
-  `get_related_symbols` / `find_callers` for impacted callers, `get_definition`
-  for a symbol's definition, `read_file` for exact context,
-  `get_changed_file_diff` for other files of this PR.
-  If a signature or contract changes, use `find_callers` to locate all call sites
-  and verify with `read_file` / `get_changed_file_diff` that they are consistent.
-- Targeted search: make each tool call answer ONE specific question about the
-  diff; do not browse the file as a whole. Identical calls return cached results
-  instantly; still avoid redundant calls — make each call answer a new question.
-  Stop calling tools once you can decide.
-- Anti-noise rules (follow strictly):
-  1. Only report problems RELATED to the changed lines. Unchanged code is out of
-     scope even if imperfect.
-  2. Before claiming "missing error handling / missing None check / missing
-     validation", verify through `read_file` or `search_code` that the handling
-     truly is absent — not a line above/below or at the call site. A hallucinated
-     absence is worse than a missed finding.
-  3. Do not duplicate the same observation across multiple lines: one problem →
-     one finding with the most representative line.
-  4. Style, naming and formatting are NOT findings unless they affect program
-     behaviour (line length, single-letter variable in a comprehension, import
-     order, etc.). Category `style` is only valid for real logic-readability
-     problems.
-  5. Do not suggest refactoring for its own sake. If code works correctly and
-     does not violate its contract, do not report it.
-  6. Do not invent issues to fill quota; an empty findings list is a valid result.
+<!-- include: _common/tool-usage.md -->
+Use the PR-session tools above.
+<!-- include: _common/anti-hallucination.md -->
 - Every finding MUST carry an exact `code_quote` — one line copied verbatim from
   the NEW version of the file. It is used to ground the line number; an
   inaccurate quote is worse than no quote.
@@ -79,21 +56,5 @@ result = [x for x in items if x > 0]
 Action: do NOT report "variable `x` is too short" or "line exceeds 79 chars" —
 these are stylistic preferences with no behavioural impact.
 
-Return ONLY a JSON object (no prose around it):
-
-```json
-{"findings": [{
-  "category": "correctness|security|performance|maintainability|style",
-  "severity": "low|medium|high|critical",
-  "file": "<path of the reviewed file>",
-  "line": <line number in the NEW file or null>,
-  "side": "RIGHT|LEFT",
-  "code_quote": "<exact line from the new file>",
-  "message": "<what is wrong and why it matters>",
-  "suggestion": "<short advice or null>",
-  "fix": {"start_line": N, "end_line": M, "replacement": "<new code>"} | null,
-  "confidence": 0.0
-}]}
-```
-
-Write `message` and `suggestion` in the output language given by the orchestrator.
+<!-- include: _common/findings-schema.md -->
+Set "category" to one of: correctness|security|performance|maintainability|style.

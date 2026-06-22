@@ -11,7 +11,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from reviewer.config.settings import Settings
-from reviewer.mcp.service import MCPReviewService
+from reviewer.mcp.service import MCPReviewService, _finding_from_dict
 from reviewer.vcs.base import (
     ChangedFile,
     PullRequest,
@@ -52,6 +52,8 @@ def _components() -> MagicMock:
     c.graph.expand.return_value = set()
     c.graph.callers.return_value = set()
     c.graph.find_symbol.return_value = []
+    c.graph.expand_detailed.return_value = []
+    c.graph.callers_detailed.return_value = []
     c.llm_provider = MagicMock()
     return c
 
@@ -250,6 +252,7 @@ def test_search_tools_delegate_to_make_tools(
     assert isinstance(svc.search_code("o/r", 7, "token check"), str)
     assert isinstance(svc.get_related_symbols("o/r", 7, "a.py#f"), str)
     assert isinstance(svc.read_file("o/r", 7, "a.py", 1, 10), str)
+    assert isinstance(svc.read_file("o/r", 7, "a.py", 1, 10, skeleton=True), str)
     assert isinstance(svc.get_definition("o/r", 7, "f"), str)
     assert isinstance(svc.find_callers("o/r", 7, "a.py#f"), str)
     assert isinstance(svc.get_changed_file_diff("o/r", 7, "a.py"), str)
@@ -548,21 +551,31 @@ def test_search_codebase_rejects_untracked_branch() -> None:
 # ---------------------------------------------------------------------------
 
 def test_related_symbols_delegates_to_graph() -> None:
-    """related_symbols зовёт graph.expand(repo, [node_id], hops=2, branch=primary)."""
+    """related_symbols зовёт graph.expand_detailed и форматирует компактно."""
     svc = _make_mcp_service()
-    svc.components.graph.expand.return_value = {"a.py#bar", "a.py#baz"}
+    svc.components.graph.expand_detailed.return_value = [
+        {"id": "a.py#bar", "rels": ["CALLS"], "dist": 1},
+        {"id": "a.py#baz", "rels": ["IMPLEMENTS"], "dist": 1},
+    ]
+    svc.components.store.fetch_nodes.return_value = [
+        SimpleNamespace(node_id="a.py#bar", path="a.py", start_line=5,
+                        end_line=6, text="def bar(): ..."),
+        SimpleNamespace(node_id="a.py#baz", path="a.py", start_line=9,
+                        end_line=10, text="def baz(): ..."),
+    ]
     out = svc.related_symbols("a/b", "a.py#foo")
-    assert "a.py#bar" in out and "a.py#baz" in out
-    svc.components.graph.expand.assert_called_once_with(
+    assert "// a.py#bar (a.py:5) [CALLS, d1]" in out
+    assert "// a.py#baz (a.py:9) [IMPLEMENTS, d1]" in out
+    svc.components.graph.expand_detailed.assert_called_once_with(
         "a/b", ["a.py#foo"], hops=2, branch=svc.settings.primary_branch())
 
 
 def test_related_symbols_empty_and_failsoft() -> None:
     """Пусто → '(нет связей)'; исключение графа → тоже заглушка, не падаем."""
     svc = _make_mcp_service()
-    svc.components.graph.expand.return_value = set()
+    svc.components.graph.expand_detailed.return_value = []
     assert svc.related_symbols("a/b", "a.py#foo") == "(нет связей)"
-    svc.components.graph.expand.side_effect = RuntimeError("neo4j down")
+    svc.components.graph.expand_detailed.side_effect = RuntimeError("neo4j down")
     assert svc.related_symbols("a/b", "a.py#foo") == "(нет связей)"
 
 
@@ -581,14 +594,18 @@ def test_related_symbols_invalid_branch() -> None:
 
 
 def test_callers_delegates_to_graph() -> None:
-    """callers зовёт graph.callers и форматирует множество."""
+    """callers зовёт graph.callers_detailed и форматирует компактно."""
     svc = _make_mcp_service()
-    svc.components.graph.callers.return_value = {"a.py#caller"}
+    svc.components.graph.callers_detailed.return_value = [
+        {"id": "a.py#caller", "rel": "CALLS"}]
+    svc.components.store.fetch_nodes.return_value = [
+        SimpleNamespace(node_id="a.py#caller", path="a.py", start_line=3,
+                        end_line=4, text="def caller(): ...")]
     out = svc.callers("a/b", "a.py#foo")
-    assert "a.py#caller" in out
-    svc.components.graph.callers.assert_called_once_with(
+    assert "// a.py#caller (a.py:3) [CALLS]" in out
+    svc.components.graph.callers_detailed.assert_called_once_with(
         "a/b", ["a.py#foo"], branch=svc.settings.primary_branch())
-    svc.components.graph.callers.return_value = set()
+    svc.components.graph.callers_detailed.return_value = []
     assert svc.callers("a/b", "a.py#foo") == "(вызовов не найдено)"
 
 
@@ -660,3 +677,21 @@ def test_get_pr_diff_empty_files_note():
     vcs.get_changed_files.return_value = []
     svc = MCPReviewService(_settings(), _components(), vcs_factory=lambda o, r: vcs)
     assert svc.get_pr_diff("o/r", 7) == "(PR без изменённых файлов)"
+
+
+# ---------------------------------------------------------------------------
+# Тесты Task 1 (PRI-144): коэрция confidence — fallback 0.1 + clamp [0,1]
+# ---------------------------------------------------------------------------
+
+def test_finding_confidence_coercion_and_clamp():
+    base = {"file": "a.py", "severity": "high", "message": "m", "line": 1, "code_quote": "x = 1"}
+    # валидные значения проходят как есть
+    assert _finding_from_dict({**base, "confidence": 0.9}).confidence == 0.9
+    assert _finding_from_dict({**base, "confidence": 0.5}).confidence == 0.5
+    # не оценено / None / мусор → 0.1 (ниже честного потолка спекулятивной зоны 0.4)
+    assert _finding_from_dict(base).confidence == 0.1
+    assert _finding_from_dict({**base, "confidence": None}).confidence == 0.1
+    assert _finding_from_dict({**base, "confidence": "abc"}).confidence == 0.1
+    # clamp в [0,1]
+    assert _finding_from_dict({**base, "confidence": 1.5}).confidence == 1.0
+    assert _finding_from_dict({**base, "confidence": -0.2}).confidence == 0.0

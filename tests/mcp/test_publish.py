@@ -287,7 +287,7 @@ def test_publish_history_failsoft(_ov, _ch) -> None:
 @patch("reviewer.services.review_service.build_overlay")
 def test_publish_coerces_malformed_llm_findings(_ov, _ch) -> None:
     """Кривые dict'ы от LLM не валят publish: без file — скип (invalid),
-    line="42" — int-коэрция (+грунтовка), confidence=None → 0.5,
+    line="42" — int-коэрция (+грунтовка), confidence=None → 0.1 (ниже порога → отсекается),
     severity="urgent" → "medium". Валидные публикуются."""
     svc, vcs, _ = _make_mcp_service_with_publish()
     svc.prepare_review("o/r", 7)
@@ -295,14 +295,14 @@ def test_publish_coerces_malformed_llm_findings(_ov, _ch) -> None:
         {"category": "correctness", "severity": "high",
          "message": "no file", "confidence": 0.9},          # без file → invalid
         dict(RAW, line="42", message="bug A"),               # int-коэрция строки
-        dict(RAW, confidence=None, message="bug B"),         # None → 0.5 (порог 0.5 проходит)
+        dict(RAW, confidence=None, message="bug B"),         # None → 0.1 (ниже порога 0.5 → dropped)
         dict(RAW, severity="urgent", message="bug C"),       # вне enum → medium
     ]
     report = svc.publish_review("o/r", 7, summary="s", findings=pack)
     assert report["posted"] is True
     assert report["invalid"] == 1
-    assert report["dropped_by_gate"] == 0
-    assert len(report["inline"]) == 3
+    assert report["dropped_by_gate"] == 1                    # bug B (confidence=0.1) отсекается
+    assert len(report["inline"]) == 2
     assert all(c["line"] == 2 for c in report["inline"])     # все загрунтованы по цитате
 
 
