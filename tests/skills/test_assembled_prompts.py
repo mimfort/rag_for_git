@@ -52,7 +52,9 @@ def test_blast_radius_assembled_has_tooling_and_confidence_tail():
 
 def test_verify_keeps_verdicts_schema_and_tools():
     v = assemble("review-pr/references/verify-prompt.md")
-    assert '{"verdicts":' in v.replace(" ", "")    # своя схема не тронута
+    # PRI-156: verify теперь вызывает submit_verdicts, а не возвращает JSON-текст
+    assert "submit_verdicts" in v                   # submit-контракт на месте
+    assert "get_candidate_findings" in v            # чтение кандидатов тулом
     assert "find_callers" in v                      # tool-usage подставлен
 
 

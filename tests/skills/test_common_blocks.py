@@ -70,6 +70,18 @@ def test_tool_usage_has_both_tool_families():
     assert "search_code" in text and "get_changed_file_diff" in text and "get_impact" in text
     # session-less
     assert "search_codebase" in text and "related_symbols" in text and "definition" in text
+    # PRI-156: submit-тулы schema-enforced вывода
+    assert "submit_findings" in text and "submit_verdicts" in text
+
+
+def test_findings_schema_matches_finding_in_model():
+    # PRI-156: findings-schema.md — проекция канона FindingIn.
+    from reviewer.mcp.schemas import FindingIn
+
+    schema = _read("findings-schema.md")
+    for name in FindingIn.model_fields:
+        token = "fix" if name == "fix" else name
+        assert token in schema, f"поле FindingIn.{name} отсутствует в findings-schema.md"
 
 
 def test_branch_selection_has_review_branches_logic():
