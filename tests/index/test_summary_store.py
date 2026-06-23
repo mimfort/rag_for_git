@@ -25,8 +25,12 @@ def test_upsert_then_get_roundtrip(store):
                          "Хранилище чанков и ретрив.", ["reviewer/index/store.py#X"], "h1")
     assert store.get_source_hashes("t/t", "dev") == {"reviewer/index": "h1"}
     rows = store.get_summaries("t/t", "dev")
-    assert rows == [{"cluster_key": "reviewer/index", "title": "Индекс",
-                     "summary": "Хранилище чанков и ретрив."}]
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["cluster_key"] == "reviewer/index"
+    assert row["title"] == "Индекс"
+    assert row["summary"] == "Хранилище чанков и ретрив."
+    assert "T" in row["updated_at"]        # ISO-таймстамп (зеркало единичного get_summary)
     one = store.get_summary("t/t", "dev", "reviewer/index")
     assert one["member_node_ids"] == ["reviewer/index/store.py#X"]
 

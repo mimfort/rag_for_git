@@ -68,12 +68,13 @@ class SummaryStore:
         try:
             with self._connect() as conn:
                 rows = conn.execute(
-                    "SELECT cluster_key, title, summary FROM subsystem_summaries "
+                    "SELECT cluster_key, title, summary, updated_at FROM subsystem_summaries "
                     "WHERE repo=%s AND branch=%s ORDER BY cluster_key",
                     (repo, branch)).fetchall()
         except psycopg.errors.UndefinedTable:
             return []
-        return [{"cluster_key": k, "title": t, "summary": s} for k, t, s in rows]
+        return [{"cluster_key": k, "title": t, "summary": s, "updated_at": u.isoformat()}
+                for k, t, s, u in rows]
 
     def get_summary(self, repo: str, branch: str, cluster_key: str) -> dict | None:
         try:
