@@ -63,3 +63,17 @@ def test_skill_has_five_pipeline_steps():
     assert pipeline_section, "не найдена секция Pipeline"
     steps = re.findall(r"^\d+\.", pipeline_section.group(1), re.MULTILINE)
     assert len(steps) >= 5, f"ожидалось ≥5 шагов, найдено {len(steps)}"
+
+
+def test_skill_preflight_echoes_depth_and_confirms():
+    text = SKILL.read_text(encoding="utf-8")
+    assert "depth_source" in text, "preflight не эхо-ит depth_source"
+    assert "SUMMARY_CLUSTER_DEPTH" in text, "preflight не упоминает env-настройку depth"
+    assert "confirm" in text.lower(), "preflight не просит подтверждения перед прогоном"
+    assert "full rebuild" in text.lower(), "нет предупреждения о полном пересборе при смене depth"
+
+
+def test_skill_prunes_orphans_on_full_pass():
+    text = SKILL.read_text(encoding="utf-8")
+    assert "prune_subsystem_summaries" in text, "скилл не вызывает prune на полном прогоне"
+    assert "orphan" in text.lower(), "скилл не упоминает осиротевшие сводки"
