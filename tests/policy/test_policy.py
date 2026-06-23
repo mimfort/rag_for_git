@@ -157,3 +157,21 @@ def test_policy_grounding_max_distance_default_and_yaml():
     assert ReviewPolicy().grounding_max_distance == 5
     p = ReviewPolicy.from_yaml("grounding_max_distance: 12")
     assert p.grounding_max_distance == 12
+
+
+def test_summary_cluster_depth_env_default_and_yaml_override():
+    s = Settings(_env_file=None)                 # env-дефолт summary_cluster_depth = 2
+    p = ReviewPolicy.load(s, None)
+    assert p.summary_cluster_depth == 2          # из env, YAML отсутствует
+
+    p2 = ReviewPolicy.load(s, "summary_cluster_depth: 1")
+    assert p2.summary_cluster_depth == 1         # .review.yml переопределяет env
+
+    p3 = ReviewPolicy.load(s, "severity_threshold: high")
+    assert p3.summary_cluster_depth == 2         # YAML без ключа не трогает env-дефолт
+
+
+def test_summary_cluster_depth_from_yaml():
+    p = ReviewPolicy.from_yaml("summary_cluster_depth: 3")
+    assert p.summary_cluster_depth == 3
+    assert ReviewPolicy.from_yaml(None).summary_cluster_depth == 2
