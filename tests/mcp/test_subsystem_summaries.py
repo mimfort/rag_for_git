@@ -19,6 +19,7 @@ def _svc(components) -> MCPReviewService:
     # изолируем резолв repo/ветки и depth от .env / сети
     svc._resolve_repo_branch = lambda repo, branch: ("o/n", "dev")
     svc._resolve_summary_depth = lambda repo, branch: (2, "env")
+    svc._resolve_summary_topk_threshold = lambda repo, branch: (20, "env")
     return svc
 
 
@@ -267,3 +268,40 @@ def test_resolve_summary_topk_threshold_no_key_falls_back_to_env():
 
 def test_settings_default_summary_topk_threshold_is_20():
     assert _settings().summary_topk_threshold == 20
+
+
+def test_get_subsystem_summaries_query_above_threshold_returns_topk():
+    c = MagicMock()
+    c.summary_store.count_summaries.return_value = 25            # > порога 20
+    c.summary_store.search_summaries.return_value = [
+        {"cluster_key": "auth", "title": "Авторизация", "summary": "...",
+         "updated_at": "2026-06-23T00:00:00+00:00"}]
+    c.embedder.embed_query.return_value = [0.1, 0.2]
+    svc = _svc(c)
+    out = svc.get_subsystem_summaries("o/n", "dev", query="как работает логин")
+    assert out["summaries"][0]["cluster_key"] == "auth"
+    c.embedder.embed_query.assert_called_once_with("как работает логин")
+    assert c.summary_store.search_summaries.call_args.args[3] == 8   # top_k по умолчанию
+    c.summary_store.get_summaries.assert_not_called()
+
+
+def test_get_subsystem_summaries_query_below_threshold_returns_all():
+    c = MagicMock()
+    c.summary_store.count_summaries.return_value = 5             # ≤ порога 20
+    c.summary_store.get_summaries.return_value = [
+        {"cluster_key": "reviewer/index", "title": "Индекс", "summary": "...",
+         "updated_at": "2026-06-23T00:00:00+00:00"}]
+    svc = _svc(c)
+    out = svc.get_subsystem_summaries("o/n", "dev", query="что угодно")
+    assert out["summaries"][0]["cluster_key"] == "reviewer/index"
+    c.summary_store.search_summaries.assert_not_called()        # бэк-компат: отдаём все
+
+
+def test_get_subsystem_summaries_no_query_returns_all_without_counting():
+    c = MagicMock()
+    c.summary_store.get_summaries.return_value = []
+    svc = _svc(c)
+    out = svc.get_subsystem_summaries("o/n", "dev")
+    assert out == {"summaries": []}
+    c.summary_store.search_summaries.assert_not_called()
+    c.summary_store.count_summaries.assert_not_called()         # без query порог не считаем

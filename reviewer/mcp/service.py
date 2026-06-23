@@ -574,8 +574,13 @@ class MCPReviewService:
         return out
 
     def get_subsystem_summaries(self, repo: str, branch: str | None = None,
-                                cluster_key: str | None = None) -> dict:
-        """Дешёвый приор: предрасчитанные summary подсистем (fail-open у потребителя)."""
+                                cluster_key: str | None = None, query: str | None = None,
+                                top_k: int | None = None) -> dict:
+        """Дешёвый приор: предрасчитанные summary подсистем (fail-open у потребителя).
+
+        cluster_key → одна сводка. Иначе: при query И числе сводок > порога масштаба
+        (SUMMARY_TOPK_THRESHOLD, per-repo .review.yml) — ANN top-k по близости (PRI-167);
+        иначе (без query или ≤ порога) — все (бэк-компат)."""
         rb = self._resolve_repo_branch(repo, branch)
         if isinstance(rb, str):
             return {"summaries": [], "note": rb}
@@ -583,6 +588,11 @@ class MCPReviewService:
         store = self.components.summary_store
         if cluster_key:
             return {"summary": store.get_summary(repo, resolved, cluster_key)}
+        if query:
+            threshold, _ = self._resolve_summary_topk_threshold(repo, resolved)
+            if store.count_summaries(repo, resolved) > threshold:
+                qvec = self.components.embedder.embed_query(query)
+                return {"summaries": store.search_summaries(repo, resolved, qvec, top_k or 8)}
         return {"summaries": store.get_summaries(repo, resolved)}
 
     def prune_subsystem_summaries(self, repo: str, branch: str | None = None) -> dict:
