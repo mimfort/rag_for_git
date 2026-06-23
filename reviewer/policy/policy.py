@@ -1,9 +1,9 @@
 from __future__ import annotations
 from dataclasses import dataclass, field
-from fnmatch import fnmatch
 import yaml
 
 from reviewer.config.settings import SeverityLevel
+from reviewer.index.pathfilter import is_ignored
 
 _SEV = {"low": 0, "medium": 1, "high": 2, "critical": 3}
 
@@ -105,6 +105,6 @@ class ReviewPolicy:
             return False
         if finding.confidence < self.min_confidence:
             return False
-        if any(fnmatch(finding.file, pat) for pat in self.ignore):
+        if is_ignored(finding.file, self.ignore):
             return False
         return True
