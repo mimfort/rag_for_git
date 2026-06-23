@@ -22,3 +22,12 @@ def test_no_match_returns_false():
 def test_empty_patterns_and_blank():
     assert not is_ignored("a/b.py", [])
     assert not is_ignored("a/b.py", [""])
+
+
+def test_bare_pattern_matches_self():
+    assert is_ignored("vendor", ["vendor"])
+    assert is_ignored("a/b", ["a/b"])
+
+
+def test_bare_dir_matches_deep_subtree():
+    assert is_ignored("vendor/a/b/c.py", ["vendor"])
