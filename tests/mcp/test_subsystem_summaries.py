@@ -16,8 +16,9 @@ def _settings() -> Settings:
 
 def _svc(components) -> MCPReviewService:
     svc = MCPReviewService(_settings(), components)
-    # изолируем резолв repo/ветки от REVIEW_BRANCHES в .env
+    # изолируем резолв repo/ветки и depth от .env / сети
     svc._resolve_repo_branch = lambda repo, branch: ("o/n", "dev")
+    svc._resolve_summary_depth = lambda repo, branch: (2, "env")
     return svc
 
 
@@ -130,3 +131,72 @@ def test_list_subsystem_clusters_no_cap_returns_all():
     assert out["deferred"] == 0
     assert len(out["clusters"]) == 2
     c.summary_store.get_updated_ats.assert_not_called()           # порядок не нужен без cap
+
+
+# ── тесты _resolve_summary_depth и depth/orphans в ответе list ──────────────
+
+class _FakeVCS:
+    def __init__(self, text):
+        self._text = text
+
+    def get_file_at_ref(self, path, ref):
+        return self._text
+
+
+def _svc_with_vcs(vcs_or_exc):
+    """Сервис БЕЗ стаба _resolve_summary_depth — для проверки самого хелпера."""
+    c = MagicMock()
+    svc = MCPReviewService(_settings(), components=c)
+    svc._resolve_repo_branch = lambda repo, branch: ("o/n", "dev")
+    if isinstance(vcs_or_exc, Exception):
+        def _factory(owner, name):
+            raise vcs_or_exc
+    else:
+        def _factory(owner, name):
+            return vcs_or_exc
+    svc._vcs_factory = _factory
+    return svc
+
+
+def test_resolve_summary_depth_override_from_review_yml():
+    svc = _svc_with_vcs(_FakeVCS("summary_cluster_depth: 3"))
+    assert svc._resolve_summary_depth("o/n", "dev") == (3, ".review.yml")
+
+
+def test_resolve_summary_depth_no_key_falls_back_to_env():
+    svc = _svc_with_vcs(_FakeVCS("severity_threshold: high"))
+    depth, source = svc._resolve_summary_depth("o/n", "dev")
+    assert depth == svc.settings.summary_cluster_depth
+    assert source == "env"
+
+
+def test_resolve_summary_depth_failsoft_on_vcs_error():
+    svc = _svc_with_vcs(RuntimeError("no token"))
+    depth, source = svc._resolve_summary_depth("o/n", "dev")
+    assert depth == svc.settings.summary_cluster_depth
+    assert source == "env"
+
+
+def test_list_subsystem_clusters_reports_depth_and_orphans():
+    c = MagicMock()
+    c.store.list_base_members.return_value = [("reviewer/index/a.py", "A", "h1", 1, "sk1")]
+    c.graph = None
+    # хранится осиротевший ключ reviewer/old (его нет среди текущих кластеров) → orphans=1
+    c.summary_store.get_source_hashes.return_value = {"reviewer/old": "x"}
+    svc = _svc(c)
+    out = svc.list_subsystem_clusters("o/n", "dev", depth=2, min_size=1)
+    assert out["depth"] == 2
+    assert out["depth_source"] == "arg"           # передан явный depth
+    assert out["orphans"] == 1
+
+
+def test_list_subsystem_clusters_resolves_depth_when_not_given():
+    c = MagicMock()
+    c.store.list_base_members.return_value = [("reviewer/index/a.py", "A", "h1", 1, "sk1")]
+    c.graph = None
+    c.summary_store.get_source_hashes.return_value = {}
+    svc = _svc(c)                                  # стаб _resolve_summary_depth → (2, "env")
+    out = svc.list_subsystem_clusters("o/n", "dev")   # depth не передан
+    assert out["depth"] == 2
+    assert out["depth_source"] == "env"
+    assert out["orphans"] == 0
