@@ -171,6 +171,12 @@ class ReviewService:
 
             from reviewer.index.refs import base_ref as _base_ref
 
+            # paths.ignore из .review.yml целевой (base) ветки — общий для
+            # base-досинка и overlay; берётся по base_sha, а не по ref-имени,
+            # чтобы видеть конфиг именно целевого коммита PR.
+            review_yml = vcs.get_file_at_ref(".review.yml", prq.base_sha)
+            ignore = ReviewPolicy.from_yaml(review_yml).ignore if review_yml else []
+
             files = vcs.get_changed_files(pr_number)
 
             # Свежесть base-индекса: подтягиваем чанки файлов, изменённых после
@@ -190,6 +196,7 @@ class ReviewService:
                         [f.path for f in diff_files if f.status != "removed"],
                         read=lambda p: vcs.get_file_at_ref(p, prq.base_sha),
                         removed_files=[f.path for f in diff_files if f.status == "removed"],
+                        ignore=ignore,
                     )
                     self.components.store.set_index_meta(repo, _base_ref(branch), prq.base_sha)
                     # F2: инкрементальный repo-aware патч графа (fail-soft).
@@ -249,6 +256,7 @@ class ReviewService:
                 pr_number,
                 changed,
                 head_sources=head_sources,
+                ignore=ignore,
             )
 
             units: list[ReviewUnit] = []
