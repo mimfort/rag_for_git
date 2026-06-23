@@ -60,12 +60,37 @@ def test_list_subsystem_clusters_empty_index_returns_note():
 
 
 def test_index_and_get_subsystem_summaries_roundtrip_via_store():
+    from reviewer.graph.summaries import compute_source_hash
     c = MagicMock()
+    # base-состав кластера reviewer/index (depth=2) — сервер выведет member_node_ids из него
+    c.store.list_base_members.return_value = [
+        ("reviewer/index/a.py", "A", "h1", 1),
+        ("reviewer/index/b.py", "B", "h2", 2),
+    ]
+    sh = compute_source_hash([("reviewer/index/a.py#A", "h1"),
+                              ("reviewer/index/b.py#B", "h2")])
     c.summary_store.get_summaries.return_value = [
-        {"cluster_key": "reviewer/index", "title": "Индекс", "summary": "..."}]
+        {"cluster_key": "reviewer/index", "title": "Индекс", "summary": "...",
+         "updated_at": "2026-06-23T00:00:00+00:00"}]
     svc = _svc(c)
-    assert svc.index_subsystem_summary("o/n", "dev", "reviewer/index", "Индекс", "...", "h1") == {
-        "cluster_key": "reviewer/index", "stored": True}
-    c.summary_store.upsert_summary.assert_called_once()
+
+    out = svc.index_subsystem_summary("o/n", "dev", "reviewer/index", "Индекс", "...", sh)
+    assert out == {"cluster_key": "reviewer/index", "stored": True, "members": 2}
+    # upsert получил выведенный (отсортированный) member_node_ids, а не []
+    args = c.summary_store.upsert_summary.call_args.args
+    assert args[5] == ["reviewer/index/a.py#A", "reviewer/index/b.py#B"]
+
     got = svc.get_subsystem_summaries("o/n", "dev")
     assert got["summaries"][0]["cluster_key"] == "reviewer/index"
+
+
+def test_index_subsystem_summary_stale_hash_empties_members():
+    c = MagicMock()
+    c.store.list_base_members.return_value = [("reviewer/index/a.py", "A", "h1", 1)]
+    svc = _svc(c)
+    # передан неактуальный source_hash → пере-вычисленный не совпадёт
+    out = svc.index_subsystem_summary("o/n", "dev", "reviewer/index", "Индекс", "...", "STALE")
+    assert out["stored"] is True
+    assert out["members"] == 0
+    assert "note" in out
+    assert c.summary_store.upsert_summary.call_args.args[5] == []   # member_node_ids пуст

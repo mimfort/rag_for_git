@@ -448,14 +448,29 @@ class MCPReviewService:
 
     def index_subsystem_summary(self, repo: str, branch: str, cluster_key: str,
                                 title: str, summary: str, source_hash: str) -> dict:
-        """Персистнуть один summary подсистемы (idempotent upsert)."""
+        """Персистнуть один summary подсистемы (idempotent upsert).
+
+        member_node_ids выводятся сервером (re-derive по cluster_key над base-составом)
+        и пишутся только при совпадении пере-вычисленного source_hash с переданным —
+        иначе [] + note (состав базы изменился между list и index; самозалечивается
+        следующим проходом summarize-subsystems)."""
+        from reviewer.graph.summaries import cluster_key as cluster_key_of, compute_source_hash
         rb = self._resolve_repo_branch(repo, branch)
         if isinstance(rb, str):
             return {"stored": False, "note": rb}
         repo, resolved = rb
+        depth = self.settings.summary_cluster_depth
+        raw = self.components.store.list_base_members(repo, resolved)
+        members = [(f"{p}#{s}", h) for p, s, h, _ in raw
+                   if cluster_key_of(p, depth) == cluster_key]
+        consistent = compute_source_hash(members) == source_hash
+        member_node_ids = sorted(nid for nid, _ in members) if consistent else []
         self.components.summary_store.upsert_summary(
-            repo, resolved, cluster_key, title, summary, [], source_hash)
-        return {"cluster_key": cluster_key, "stored": True}
+            repo, resolved, cluster_key, title, summary, member_node_ids, source_hash)
+        out = {"cluster_key": cluster_key, "stored": True, "members": len(member_node_ids)}
+        if not consistent:
+            out["note"] = "состав кластера изменился с момента list — member_node_ids не сохранены"
+        return out
 
     def get_subsystem_summaries(self, repo: str, branch: str | None = None,
                                 cluster_key: str | None = None) -> dict:
