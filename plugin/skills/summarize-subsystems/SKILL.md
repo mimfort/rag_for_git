@@ -71,10 +71,17 @@ Plus `list_subsystem_clusters`, `index_subsystem_summary` and `prune_subsystem_s
    (`deferred > 0`) skip pruning — deferred clusters are not orphans — and say so in the report
    (mirrors `sync_board --limit`).
 
+6.5. **Backfill summary embeddings (every pass).** Call `backfill_summary_embeddings(repo, branch)` so
+   any summaries still missing an embedding (older summaries written before vectorization, or where a
+   prior pass's Voyage call failed) become searchable by proximity. It embeds from stored title+summary
+   (no LLM), is idempotent (a warm corpus embeds nothing), and is fail-soft. Mention the `embedded`
+   count in the report.
+
 7. **Report (Russian).** The applied `depth` + `depth_source`; how many clusters summarized vs
    skipped-as-fresh vs **deferred by the cap** (`deferred` from step 2 — never silently truncate); how
-   many summaries were **pruned** (step 6), or that pruning was skipped on a partial pass. If summaries
-   were written inline (no model override), say so.
+   many summaries were **pruned** (step 6), or that pruning was skipped on a partial pass; how many
+   embeddings were backfilled (`embedded` from step 6.5). If summaries were written inline (no model
+   override), say so.
 
 ## Grounding (hard rule)
 
