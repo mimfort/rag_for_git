@@ -1,3 +1,5 @@
+import hashlib
+
 import tree_sitter_python as tspython
 from tree_sitter import Language, Parser
 
@@ -88,3 +90,20 @@ def python_skeleton(source: bytes) -> list[int]:
 
     visit(tree.root_node)
     return sorted(lines)
+
+
+def symbol_skeleton_hash(text: str) -> str:
+    """Хэш структурного скелета символа: сигнатуры def/class (до ':') + 1-я строка docstring.
+
+    Ключ свежести сводок подсистем по структуре (PRI-165): меняется при смене сигнатуры/
+    docstring, но НЕ при правке тела. Хэшируется ТЕКСТ строк скелета (rstrip, как content_hash),
+    а не их номера, поэтому сдвиг/реордеринг символа в файл не протекают в хэш. Пустой скелет
+    (битый код / нет определений) → fallback на нормализованный полный текст (безопасно: любая
+    правка ре-стейлит)."""
+    nums = python_skeleton(text.encode("utf-8"))      # 1-based строки скелета относительно text
+    lines = text.splitlines()
+    if nums:
+        body = "\n".join(lines[n - 1].rstrip() for n in nums if 1 <= n <= len(lines))
+    else:
+        body = "\n".join(ln.rstrip() for ln in lines)
+    return hashlib.sha256(body.strip().encode("utf-8")).hexdigest()

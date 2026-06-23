@@ -69,6 +69,8 @@ class Settings(BaseSettings):
     neo4j_password: str = "reviewerpass"
     graph_backend: GraphBackend = "auto"   # auto|scip|treesitter
     summary_cluster_depth: int = 2   # глубина пути для кластера подсистемы (PRI-159)
+    summary_rebuild_cap: int | None = None   # макс. кластеров на пересборку за проход
+    # (PRI-165); None/0 = безлимит; env SUMMARY_REBUILD_CAP
     # github
     github_token: str = ""
     github_retry_attempts: int = 3

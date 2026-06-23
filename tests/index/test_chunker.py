@@ -1,4 +1,4 @@
-from reviewer.index.chunker import chunk_python, python_skeleton
+from reviewer.index.chunker import chunk_python, python_skeleton, symbol_skeleton_hash
 
 SRC = b'''\
 import os
@@ -75,3 +75,36 @@ def test_skeleton_empty_for_source_without_definitions():
 
 def test_skeleton_does_not_crash_on_syntax_error():
     assert isinstance(python_skeleton(b"def f(:\n  pass\n"), list)
+
+
+_FN = (
+    'def search(query: str, top_k: int = 10) -> list:\n'
+    '    """Поиск по индексу."""\n'
+    '    return rrf(query)[:top_k]\n'
+)
+
+
+def test_skeleton_hash_ignores_body_change():
+    body = _FN.replace("rrf(query)[:top_k]", "rrf(query, k=60)[:top_k]")
+    assert symbol_skeleton_hash(_FN) == symbol_skeleton_hash(body)   # тело не влияет
+
+
+def test_skeleton_hash_changes_on_signature():
+    sig = _FN.replace("top_k: int = 10)", "top_k: int = 10, *, rerank: bool = True)")
+    assert symbol_skeleton_hash(_FN) != symbol_skeleton_hash(sig)    # сигнатура влияет
+
+
+def test_skeleton_hash_changes_on_docstring_first_line():
+    doc = _FN.replace('"""Поиск по индексу."""', '"""Другое описание."""')
+    assert symbol_skeleton_hash(_FN) != symbol_skeleton_hash(doc)
+
+
+def test_skeleton_hash_is_position_independent():
+    shifted = "\n\n" + _FN                                           # сдвиг символа вниз
+    assert symbol_skeleton_hash(_FN) == symbol_skeleton_hash(shifted)
+
+
+def test_skeleton_hash_fallback_without_definitions():
+    # нет def/class → fallback на нормализованный полный текст (детерминирован, реагирует на правку)
+    assert symbol_skeleton_hash("X = 1\n") == symbol_skeleton_hash("X = 1")
+    assert symbol_skeleton_hash("X = 1\n") != symbol_skeleton_hash("X = 2\n")

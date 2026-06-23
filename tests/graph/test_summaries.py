@@ -3,8 +3,9 @@ from reviewer.graph.summaries import (
 )
 
 
-def _m(node_id, path, h="h", line=1):
-    return Member(node_id=node_id, path=path, content_hash=h, start_line=line)
+def _m(node_id, path, h="h", line=1, sk=None):
+    return Member(node_id=node_id, path=path, content_hash=h, start_line=line,
+                  skeleton_hash=sk if sk is not None else h)
 
 
 def test_cluster_key_takes_first_depth_dir_segments():
@@ -55,3 +56,19 @@ def test_build_clusters_fail_soft_when_in_degree_raises():
         raise RuntimeError("neo4j down")
     [c] = build_clusters(members, boom, depth=2)   # не падает
     assert c.top_symbols[0]["node_id"] == "reviewer/x/a.py#A"
+
+
+def test_build_clusters_source_hash_uses_skeleton_not_body():
+    base = [_m("p/a.py#A", "p/a.py", h="body1", sk="sig1"),
+            _m("p/b.py#B", "p/b.py", h="body2", sk="sig2")]
+    [c0] = build_clusters(base, None, depth=1)
+    # правка только тела (skeleton тот же) → тот же source_hash
+    body = [_m("p/a.py#A", "p/a.py", h="BODYX", sk="sig1"),
+            _m("p/b.py#B", "p/b.py", h="body2", sk="sig2")]
+    [c1] = build_clusters(body, None, depth=1)
+    assert c1.source_hash == c0.source_hash
+    # смена сигнатуры (skeleton изменился) → другой source_hash
+    sig = [_m("p/a.py#A", "p/a.py", h="body1", sk="SIGX"),
+           _m("p/b.py#B", "p/b.py", h="body2", sk="sig2")]
+    [c2] = build_clusters(sig, None, depth=1)
+    assert c2.source_hash != c0.source_hash
