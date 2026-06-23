@@ -55,6 +55,19 @@ class SummaryStore:
                                member_node_ids, source_hash))
             conn.commit()
 
+    def delete_summaries_except(self, repo: str, branch: str, keep_keys: list[str]) -> int:
+        """Удалить сводки repo/branch, чей cluster_key НЕ в keep_keys; вернуть число удалённых.
+
+        Пустой keep_keys → удаляет все сводки repo/branch (вызывающий гейтит на непустой base).
+        Используется prune_subsystem_summaries для чистки осиротевших при смене depth сводок."""
+        with self._connect() as conn:
+            cur = conn.execute(
+                "DELETE FROM subsystem_summaries "
+                "WHERE repo=%s AND branch=%s AND NOT (cluster_key = ANY(%s))",
+                (repo, branch, list(keep_keys)))
+            conn.commit()
+            return cur.rowcount
+
     def get_source_hashes(self, repo: str, branch: str) -> dict[str, str]:
         try:
             with self._connect() as conn:
