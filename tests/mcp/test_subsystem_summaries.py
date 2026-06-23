@@ -19,6 +19,7 @@ def _svc(components) -> MCPReviewService:
     # изолируем резолв repo/ветки и depth от .env / сети
     svc._resolve_repo_branch = lambda repo, branch: ("o/n", "dev")
     svc._resolve_summary_depth = lambda repo, branch: (2, "env")
+    svc._resolve_summary_topk_threshold = lambda repo, branch: (20, "env")
     return svc
 
 
@@ -226,3 +227,129 @@ def test_prune_subsystem_summaries_empty_base_is_noop():
     assert out["pruned"] == 0
     assert "note" in out
     c.summary_store.delete_summaries_except.assert_not_called()   # base пуст → не вайпаем
+
+
+def test_index_subsystem_summary_embeds_when_hash_changed():
+    from reviewer.graph.summaries import compute_source_hash
+    c = MagicMock()
+    c.store.list_base_members.return_value = [("reviewer/index/a.py", "A", "h1", 1, "sk1")]
+    sh = compute_source_hash([("reviewer/index/a.py#A", "sk1")])
+    c.summary_store.get_source_hashes.return_value = {}          # сводки ещё нет → hash изменился
+    c.embedder.embed_documents.return_value = [[0.5, 0.5]]
+    svc = _svc(c)
+    svc.index_subsystem_summary("o/n", "dev", "reviewer/index", "Индекс", "тело", sh)
+    c.embedder.embed_documents.assert_called_once_with(["Индекс\nтело"])
+    assert c.summary_store.upsert_summary.call_args.kwargs["embedding"] == [0.5, 0.5]
+
+
+def test_index_subsystem_summary_dedups_embedding_on_unchanged_hash():
+    from reviewer.graph.summaries import compute_source_hash
+    c = MagicMock()
+    c.store.list_base_members.return_value = [("reviewer/index/a.py", "A", "h1", 1, "sk1")]
+    sh = compute_source_hash([("reviewer/index/a.py#A", "sk1")])
+    c.summary_store.get_source_hashes.return_value = {"reviewer/index": sh}   # хеш совпал
+    svc = _svc(c)
+    svc.index_subsystem_summary("o/n", "dev", "reviewer/index", "Индекс", "тело", sh)
+    c.embedder.embed_documents.assert_not_called()              # Voyage не дёрнут
+    assert c.summary_store.upsert_summary.call_args.kwargs["embedding"] is None
+
+
+def test_resolve_summary_topk_threshold_override_from_review_yml():
+    svc = _svc_with_vcs(_FakeVCS("summary_topk_threshold: 5"))
+    assert svc._resolve_summary_topk_threshold("o/n", "dev") == (5, ".review.yml")
+
+
+def test_resolve_summary_topk_threshold_no_key_falls_back_to_env():
+    svc = _svc_with_vcs(_FakeVCS("severity_threshold: high"))
+    val, source = svc._resolve_summary_topk_threshold("o/n", "dev")
+    assert val == svc.settings.summary_topk_threshold
+    assert source == "env"
+
+
+def test_settings_default_summary_topk_threshold_is_20():
+    assert _settings().summary_topk_threshold == 20
+
+
+def test_get_subsystem_summaries_query_above_threshold_returns_topk():
+    c = MagicMock()
+    c.summary_store.count_summaries.return_value = 25            # > порога 20
+    c.summary_store.search_summaries.return_value = [
+        {"cluster_key": "auth", "title": "Авторизация", "summary": "...",
+         "updated_at": "2026-06-23T00:00:00+00:00"}]
+    c.embedder.embed_query.return_value = [0.1, 0.2]
+    svc = _svc(c)
+    out = svc.get_subsystem_summaries("o/n", "dev", query="как работает логин")
+    assert out["summaries"][0]["cluster_key"] == "auth"
+    c.embedder.embed_query.assert_called_once_with("как работает логин")
+    assert c.summary_store.search_summaries.call_args.args[3] == 8   # top_k по умолчанию
+    c.summary_store.get_summaries.assert_not_called()
+
+
+def test_get_subsystem_summaries_query_below_threshold_returns_all():
+    c = MagicMock()
+    c.summary_store.count_summaries.return_value = 5             # ≤ порога 20
+    c.summary_store.get_summaries.return_value = [
+        {"cluster_key": "reviewer/index", "title": "Индекс", "summary": "...",
+         "updated_at": "2026-06-23T00:00:00+00:00"}]
+    svc = _svc(c)
+    out = svc.get_subsystem_summaries("o/n", "dev", query="что угодно")
+    assert out["summaries"][0]["cluster_key"] == "reviewer/index"
+    c.summary_store.search_summaries.assert_not_called()        # бэк-компат: отдаём все
+    c.embedder.embed_query.assert_not_called()                  # Voyage не дёрнут (ниже порога)
+
+
+def test_get_subsystem_summaries_no_query_returns_all_without_counting():
+    c = MagicMock()
+    c.summary_store.get_summaries.return_value = []
+    svc = _svc(c)
+    out = svc.get_subsystem_summaries("o/n", "dev")
+    assert out == {"summaries": []}
+    c.summary_store.search_summaries.assert_not_called()
+    c.summary_store.count_summaries.assert_not_called()         # без query порог не считаем
+
+
+def test_backfill_summary_embeddings_fills_pending():
+    c = MagicMock()
+    c.summary_store.get_pending_embeddings.return_value = [
+        {"cluster_key": "auth", "title": "Авторизация", "summary": "тело"}]
+    c.embedder.embed_documents.return_value = [[0.3, 0.4]]
+    svc = _svc(c)
+    out = svc.backfill_summary_embeddings("o/n", "dev")
+    assert out == {"embedded": 1}
+    c.embedder.embed_documents.assert_called_once_with(["Авторизация\nтело"])
+    c.summary_store.set_embedding.assert_called_once_with("o/n", "dev", "auth", [0.3, 0.4])
+
+
+def test_backfill_summary_embeddings_noop_when_none_pending():
+    c = MagicMock()
+    c.summary_store.get_pending_embeddings.return_value = []
+    svc = _svc(c)
+    out = svc.backfill_summary_embeddings("o/n", "dev")
+    assert out == {"embedded": 0}
+    c.embedder.embed_documents.assert_not_called()
+
+
+def test_index_subsystem_summary_failsoft_when_embed_raises():
+    from reviewer.graph.summaries import compute_source_hash
+    c = MagicMock()
+    c.store.list_base_members.return_value = [("reviewer/index/a.py", "A", "h1", 1, "sk1")]
+    sh = compute_source_hash([("reviewer/index/a.py#A", "sk1")])
+    c.summary_store.get_source_hashes.return_value = {}          # hash изменился → ветка эмбеддинга
+    c.embedder.embed_documents.side_effect = RuntimeError("voyage down")
+    svc = _svc(c)
+    out = svc.index_subsystem_summary("o/n", "dev", "reviewer/index", "Индекс", "тело", sh)
+    assert out["stored"] is True
+    assert "note" in out                                         # fail-soft нота
+    assert c.summary_store.upsert_summary.call_args.kwargs["embedding"] is None  # сводка сохранена без вектора
+
+
+def test_backfill_summary_embeddings_failsoft_when_embed_raises():
+    c = MagicMock()
+    c.summary_store.get_pending_embeddings.return_value = [
+        {"cluster_key": "auth", "title": "Авторизация", "summary": "тело"}]
+    c.embedder.embed_documents.side_effect = RuntimeError("voyage down")
+    svc = _svc(c)
+    out = svc.backfill_summary_embeddings("o/n", "dev")
+    assert out["embedded"] == 0
+    assert "note" in out
+    c.summary_store.set_embedding.assert_not_called()            # без вектора не пишем

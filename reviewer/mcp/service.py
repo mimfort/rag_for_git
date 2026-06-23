@@ -359,6 +359,37 @@ class MCPReviewService:
                 except Exception:
                     log.warning("_resolve_summary_depth: не удалось закрыть VCS", exc_info=True)
 
+    def _resolve_summary_topk_threshold(self, repo: str, branch: str) -> tuple[int, str]:
+        """Резолв порога масштаба приора сводок: env-дефолт → override из .review.yml ветки.
+
+        repo уже нормализован (вызывается после _resolve_repo_branch). Fail-soft:
+        нет токена/ветки/файла/кривой yml → (settings.summary_topk_threshold, "env").
+        source = ".review.yml", только если файл явно задаёт ключ summary_topk_threshold."""
+        import yaml
+        from reviewer.policy.policy import ReviewPolicy
+        default = self.settings.summary_topk_threshold
+        owner, name = repo.split("/", 1)
+        vcs = None
+        try:
+            vcs = (self._vcs_factory(owner, name) if self._vcs_factory
+                   else self._review_service._create_vcs_provider(owner, name))
+            text = vcs.get_file_at_ref(".review.yml", branch)
+            if not text:
+                return default, "env"
+            data = yaml.safe_load(text) or {}
+            val = ReviewPolicy.load(self.settings, text).summary_topk_threshold
+            return val, (".review.yml" if "summary_topk_threshold" in data else "env")
+        except Exception:
+            log.warning("_resolve_summary_topk_threshold: fail-soft → env-дефолт", exc_info=True)
+            return default, "env"
+        finally:
+            if vcs is not None and self._vcs_factory is None:
+                try:
+                    vcs.close()
+                except Exception:
+                    log.warning("_resolve_summary_topk_threshold: не удалось закрыть VCS",
+                                exc_info=True)
+
     def search_codebase(self, repo: str, query: str, top_k: int = 10,
                         branch: str | None = None,
                         include_tests: bool = False) -> str:
@@ -519,16 +550,40 @@ class MCPReviewService:
                    if cluster_key_of(p, depth) == cluster_key]
         consistent = compute_source_hash(members) == source_hash
         member_node_ids = sorted(nid for nid, _ in members) if consistent else []
+        # Дедуп эмбеддинга по source_hash (PRI-167): пересчитываем вектор только если
+        # хеш кластера изменился; иначе embedding=None → COALESCE сохранит старый вектор,
+        # Voyage не дёргается. Сбой Voyage → embedding=None + note (бэкфилл доберёт).
+        note: str | None = None
+        embedding: list[float] | None = None
+        # Свежесть эмбеддинга держится на source_hash (зависит только от node_id+skeleton_hash):
+        # неизменный hash → embedding=None → COALESCE сохраняет старый вектор. Скилл зовёт index
+        # только для stale-кластеров, поэтому «тот же hash, иной текст» в норме не возникает.
+        stored_hash = self.components.summary_store.get_source_hashes(repo, resolved).get(cluster_key)
+        if stored_hash != source_hash:
+            try:
+                embedding = self.components.embedder.embed_documents([f"{title}\n{summary}"])[0]
+            except Exception:
+                log.warning("index_subsystem_summary: сбой эмбеддинга — бэкфилл доберёт",
+                            exc_info=True)
+                note = "эмбеддинг не вычислен (Voyage недоступен) — будет добран бэкфиллом"
         self.components.summary_store.upsert_summary(
-            repo, resolved, cluster_key, title, summary, member_node_ids, source_hash)
+            repo, resolved, cluster_key, title, summary, member_node_ids, source_hash,
+            embedding=embedding)
         out = {"cluster_key": cluster_key, "stored": True, "members": len(member_node_ids)}
         if not consistent:
             out["note"] = "состав кластера изменился с момента list — member_node_ids не сохранены"
+        elif note:
+            out["note"] = note
         return out
 
     def get_subsystem_summaries(self, repo: str, branch: str | None = None,
-                                cluster_key: str | None = None) -> dict:
-        """Дешёвый приор: предрасчитанные summary подсистем (fail-open у потребителя)."""
+                                cluster_key: str | None = None, query: str | None = None,
+                                top_k: int | None = None) -> dict:
+        """Дешёвый приор: предрасчитанные summary подсистем (fail-open у потребителя).
+
+        cluster_key → одна сводка. Иначе: при query И числе сводок > порога масштаба
+        (SUMMARY_TOPK_THRESHOLD, per-repo .review.yml) — ANN top-k по близости (PRI-167);
+        иначе (без query или ≤ порога) — все (бэк-компат)."""
         rb = self._resolve_repo_branch(repo, branch)
         if isinstance(rb, str):
             return {"summaries": [], "note": rb}
@@ -536,6 +591,11 @@ class MCPReviewService:
         store = self.components.summary_store
         if cluster_key:
             return {"summary": store.get_summary(repo, resolved, cluster_key)}
+        if query:
+            threshold, _ = self._resolve_summary_topk_threshold(repo, resolved)
+            if store.count_summaries(repo, resolved) > threshold:
+                qvec = self.components.embedder.embed_query(query)
+                return {"summaries": store.search_summaries(repo, resolved, qvec, top_k or 8)}
         return {"summaries": store.get_summaries(repo, resolved)}
 
     def prune_subsystem_summaries(self, repo: str, branch: str | None = None) -> dict:
@@ -557,6 +617,28 @@ class MCPReviewService:
         keep_keys = sorted({cluster_key_of(p, depth) for p, _s, _h, _sl, _sk in raw})
         pruned = self.components.summary_store.delete_summaries_except(repo, resolved, keep_keys)
         return {"pruned": pruned, "kept": len(keep_keys)}
+
+    def backfill_summary_embeddings(self, repo: str, branch: str | None = None) -> dict:
+        """Self-heal: дозаполнить эмбеддинги сводок с embedding IS NULL из хранимого
+        title+summary (без LLM, дедуп по NULL). Идемпотентно: следующий прогон → 0.
+        Вызывается /summarize-subsystems после LLM-прохода. Fail-soft (PRI-167)."""
+        rb = self._resolve_repo_branch(repo, branch)
+        if isinstance(rb, str):
+            return {"embedded": 0, "note": rb}
+        repo, resolved = rb
+        store = self.components.summary_store
+        pending = store.get_pending_embeddings(repo, resolved)
+        if not pending:
+            return {"embedded": 0}
+        try:
+            vecs = self.components.embedder.embed_documents(
+                [f"{p['title']}\n{p['summary']}" for p in pending])
+        except Exception:
+            log.warning("backfill_summary_embeddings: сбой эмбеддинга", exc_info=True)
+            return {"embedded": 0, "note": "Voyage недоступен — бэкфилл пропущен"}
+        for p, vec in zip(pending, vecs):
+            store.set_embedding(repo, resolved, p["cluster_key"], vec)
+        return {"embedded": len(pending)}
 
     def get_pr_diff(self, repo: str, number: int) -> str:
         """Unified diff изменённых файлов PR (session-less) — ленивая подтяжка для /solve-task.

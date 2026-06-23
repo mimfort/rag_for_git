@@ -43,11 +43,13 @@ Plus the harness file tools (`Read`, `Grep`, `Glob`) to read source from the loc
    Voyage (reads `index_meta` + local git). **Fail-open:** any error → skip the banner silently
    (Q&A is latency-sensitive).
 
-1.5. **Subsystem prior (cheap, optional).** Call `get_subsystem_summaries(repo, branch)`. If it
-   returns summaries, use the one matching the question's subsystem as a high-level orientation
-   **before** `search_codebase` — this cuts exploration steps for architectural / "how does
-   subsystem X work" questions. The summary is only a prior: every `path:line` you cite in the
-   answer still comes from real code (`search_codebase` / `Read`), never from the summary text.
+1.5. **Subsystem prior (cheap, optional).** Call `get_subsystem_summaries(repo, branch, query="<the user's question>")`.
+   At scale (summary count above the deploy threshold) this returns the top-k subsystems nearest the
+   question; on small repos it returns all (back-compat). If it returns summaries, use the one matching
+   the question's subsystem as a high-level orientation **before** `search_codebase` — this cuts
+   exploration steps for architectural / "how does subsystem X work" questions. The summary is only a
+   prior: every `path:line` you cite in the answer still comes from real code (`search_codebase` /
+   `Read`), never from the summary text.
    **Fail-open:** empty / unavailable → skip this step and proceed exactly as before.
 
 2. **Search.** Call `search_codebase(repo, "<question>", branch=…)`. Parse the

@@ -9,7 +9,7 @@ import threading
 from datetime import datetime
 
 import psycopg.errors
-from pgvector.psycopg import register_vector
+from pgvector.psycopg import Vector, register_vector
 from psycopg_pool import ConnectionPool
 
 
@@ -40,19 +40,27 @@ class SummaryStore:
             self._pool = None
 
     def upsert_summary(self, repo: str, branch: str, cluster_key: str, title: str,
-                       summary: str, member_node_ids: list[str], source_hash: str) -> None:
+                       summary: str, member_node_ids: list[str], source_hash: str,
+                       embedding: list[float] | None = None) -> None:
+        """Idempotent upsert сводки. embedding=None сохраняет существующий вектор
+        (COALESCE) — дедуп по source_hash на стороне вызывающего: при неизменном
+        хеше эмбеддинг не пересчитывается и передаётся None (PRI-167)."""
         sql = """
         INSERT INTO subsystem_summaries
-            (repo, branch, cluster_key, title, summary, member_node_ids, source_hash, updated_at)
-        VALUES (%s,%s,%s,%s,%s,%s,%s, now())
+            (repo, branch, cluster_key, title, summary, member_node_ids,
+             source_hash, embedding, updated_at)
+        VALUES (%s,%s,%s,%s,%s,%s,%s,%s, now())
         ON CONFLICT (repo, branch, cluster_key) DO UPDATE SET
             title=EXCLUDED.title, summary=EXCLUDED.summary,
             member_node_ids=EXCLUDED.member_node_ids,
-            source_hash=EXCLUDED.source_hash, updated_at=now()
+            source_hash=EXCLUDED.source_hash,
+            embedding=COALESCE(EXCLUDED.embedding, subsystem_summaries.embedding),
+            updated_at=now()
         """
+        vec = Vector(embedding) if embedding is not None else None
         with self._connect() as conn:
             conn.execute(sql, (repo, branch, cluster_key, title, summary,
-                               member_node_ids, source_hash))
+                               member_node_ids, source_hash, vec))
             conn.commit()
 
     def delete_summaries_except(self, repo: str, branch: str, keep_keys: list[str]) -> int:
@@ -116,3 +124,52 @@ class SummaryStore:
         return {"cluster_key": row[0], "title": row[1], "summary": row[2],
                 "member_node_ids": list(row[3] or []), "source_hash": row[4],
                 "updated_at": row[5].isoformat()}
+
+    def search_summaries(self, repo: str, branch: str, query_embedding: list[float],
+                         top_k: int) -> list[dict]:
+        """ANN-поиск (cosine) по сводкам с эмбеддингом — приор по близости (PRI-167)."""
+        try:
+            with self._connect() as conn:
+                rows = conn.execute(
+                    "SELECT cluster_key, title, summary, updated_at "
+                    "FROM subsystem_summaries "
+                    "WHERE repo=%s AND branch=%s AND embedding IS NOT NULL "
+                    "ORDER BY embedding <=> %s LIMIT %s",
+                    (repo, branch, Vector(query_embedding), top_k)).fetchall()
+        except psycopg.errors.UndefinedTable:
+            return []
+        return [{"cluster_key": k, "title": t, "summary": s, "updated_at": u.isoformat()}
+                for k, t, s, u in rows]
+
+    def count_summaries(self, repo: str, branch: str) -> int:
+        """Число сводок repo/branch — для порога масштаба в query-пути (PRI-167)."""
+        try:
+            with self._connect() as conn:
+                row = conn.execute(
+                    "SELECT COUNT(*) FROM subsystem_summaries WHERE repo=%s AND branch=%s",
+                    (repo, branch)).fetchone()
+        except psycopg.errors.UndefinedTable:
+            return 0
+        return int(row[0]) if row else 0
+
+    def get_pending_embeddings(self, repo: str, branch: str) -> list[dict]:
+        """Сводки без эмбеддинга (embedding IS NULL) — для серверного бэкфилла (PRI-167)."""
+        try:
+            with self._connect() as conn:
+                rows = conn.execute(
+                    "SELECT cluster_key, title, summary FROM subsystem_summaries "
+                    "WHERE repo=%s AND branch=%s AND embedding IS NULL ORDER BY cluster_key",
+                    (repo, branch)).fetchall()
+        except psycopg.errors.UndefinedTable:
+            return []
+        return [{"cluster_key": k, "title": t, "summary": s} for k, t, s in rows]
+
+    def set_embedding(self, repo: str, branch: str, cluster_key: str,
+                      embedding: list[float]) -> None:
+        """Записать эмбеддинг одной сводки (бэкфилл NULL-векторов, PRI-167)."""
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE subsystem_summaries SET embedding=%s "
+                "WHERE repo=%s AND branch=%s AND cluster_key=%s",
+                (Vector(embedding), repo, branch, cluster_key))
+            conn.commit()
