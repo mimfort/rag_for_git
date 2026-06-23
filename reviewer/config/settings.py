@@ -68,7 +68,8 @@ class Settings(BaseSettings):
     neo4j_user: str = "neo4j"
     neo4j_password: str = "reviewerpass"
     graph_backend: GraphBackend = "auto"   # auto|scip|treesitter
-    summary_cluster_depth: int = 2   # глубина пути для кластера подсистемы (PRI-159)
+    summary_cluster_depth: int = 2   # глубина пути кластера подсистемы (PRI-159); env
+    # SUMMARY_CLUSTER_DEPTH; per-repo override в .review.yml; смена = полный пересбор сводок (PRI-166)
     summary_rebuild_cap: int | None = None   # макс. кластеров на пересборку за проход
     # (PRI-165); None/0 = безлимит; env SUMMARY_REBUILD_CAP
     # github

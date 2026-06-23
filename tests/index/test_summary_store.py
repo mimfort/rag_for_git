@@ -65,3 +65,19 @@ def test_get_updated_ats_returns_datetime_per_cluster(store):
     ats = store.get_updated_ats("t/t", "dev")
     assert "reviewer/index" in ats
     assert isinstance(ats["reviewer/index"], datetime)   # сырой datetime, не isoformat
+
+
+def test_delete_summaries_except_prunes_orphans(store):
+    store.upsert_summary("t/t", "dev", "reviewer/index", "A", "s", [], "h1")
+    store.upsert_summary("t/t", "dev", "reviewer/graph", "B", "s", [], "h2")
+    store.upsert_summary("t/t", "dev", "reviewer/old", "C", "s", [], "h3")
+    pruned = store.delete_summaries_except("t/t", "dev", ["reviewer/index", "reviewer/graph"])
+    assert pruned == 1                                   # удалён только reviewer/old
+    assert set(store.get_source_hashes("t/t", "dev")) == {"reviewer/index", "reviewer/graph"}
+
+
+def test_delete_summaries_except_empty_keep_deletes_all(store):
+    store.upsert_summary("t/t", "dev", "reviewer/index", "A", "s", [], "h1")
+    pruned = store.delete_summaries_except("t/t", "dev", [])
+    assert pruned == 1
+    assert store.get_source_hashes("t/t", "dev") == {}

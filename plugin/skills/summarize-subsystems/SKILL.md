@@ -16,7 +16,8 @@ file's language. Tool calls, code identifiers and `path:line` stay verbatim.
 ## Tools
 
 <!-- include: _common/tool-usage.md -->
-Plus `list_subsystem_clusters` and `index_subsystem_summary` (reviewer MCP), and the harness `Read`.
+Plus `list_subsystem_clusters`, `index_subsystem_summary` and `prune_subsystem_summaries`
+(reviewer MCP), and the harness `Read`.
 
 ## Pipeline
 
@@ -26,17 +27,31 @@ Plus `list_subsystem_clusters` and `index_subsystem_summary` (reviewer MCP), and
 
 2. **List clusters.** Call `list_subsystem_clusters(repo, branch)`. Empty / `note` about an empty
    index → tell the user (in Russian) to run `/reviewer_sync-codebase` first, then stop. The response
-   also carries `deferred` — the number of stale clusters the server held back this pass under the
-   cost cap (env `SUMMARY_REBUILD_CAP`); the `clusters` it returns are already capped, so just process
-   them and report `deferred` in step 4.
+   carries `depth` (the applied cluster depth), `depth_source` (`env` | `.review.yml` | `arg`),
+   `deferred` (stale clusters held back this pass under the cost cap, env `SUMMARY_REBUILD_CAP`),
+   `orphans` (stored summaries whose `cluster_key` is no longer a current cluster), and the
+   (already cap-capped) `clusters`.
 
-3. **Choose the summary model (only if any cluster is `stale == true`).** A subsystem summary is a
+3. **Preflight — echo the applied depth and ask for confirmation (gate the run).** BEFORE summarizing,
+   show the user (in Russian):
+   - the applied `depth` and where it came from (`depth_source`: env `SUMMARY_CLUSTER_DEPTH`, the repo's
+     `.review.yml`, or an explicit arg);
+   - how many clusters there are and at what path level — e.g. «depth=2 → 15 кластеров уровня
+     `reviewer/index`» — sampling a few `cluster_key`s from `clusters`;
+   - how many are `stale` vs fresh, plus `deferred` (held back by the cap).
+   - If `orphans > 0`, **warn**: the depth changed or modules were removed, so N summaries are orphaned;
+     a full (uncapped) pass will rebuild and prune them.
+   - State the invariant explicitly: `cluster_key` depends on depth, so **changing depth triggers a
+     full rebuild of every summary** (old-depth summaries orphan and get pruned).
+   Then **ask the user to confirm** before running. If they decline, stop without summarizing or pruning.
+
+4. **Choose the summary model (only if any cluster is `stale == true`).** A subsystem summary is a
    coarse, high-level prior — a small/cheap model is appropriate, and reviewing on an expensive model
    burns tokens. Ask the user which model tier to use for writing summaries, defaulting to a cheap
    tier (e.g. Haiku/Sonnet/Fable). Remember the choice for this run. If nothing is stale, skip this
    step (nothing to generate).
 
-4. **Summarize only STALE clusters.** For each cluster with `stale == true` (fresh ones are already
+5. **Summarize only STALE clusters.** For each cluster with `stale == true` (fresh ones are already
    up to date — skip them, this keeps the pass incremental and cheap):
    - Where your harness supports per-subagent model override, **dispatch a subagent on the chosen
      model** to read a few representative files (from `files` / `top_symbols`) and return
@@ -49,9 +64,17 @@ Plus `list_subsystem_clusters` and `index_subsystem_summary` (reviewer MCP), and
    - Persist: `index_subsystem_summary(repo, branch, cluster_key, title, summary, source_hash)` —
      pass back the cluster's own `source_hash` from step 2.
 
-5. **Report (Russian).** How many clusters summarized vs skipped-as-fresh vs **deferred by the cap**
-   (`deferred` from step 2 — never silently truncate). If summaries were written inline (no model
-   override), say so.
+6. **Prune orphaned summaries (only on a full pass).** If the pass was full — `deferred == 0` and you
+   did NOT pass an explicit `depth`/`cap` override (so `clusters` covered every current cluster) — call
+   `prune_subsystem_summaries(repo, branch)` to delete summaries whose `cluster_key` is no longer a
+   current cluster (orphaned by a depth change or removed modules). On a **partial** pass
+   (`deferred > 0`) skip pruning — deferred clusters are not orphans — and say so in the report
+   (mirrors `sync_board --limit`).
+
+7. **Report (Russian).** The applied `depth` + `depth_source`; how many clusters summarized vs
+   skipped-as-fresh vs **deferred by the cap** (`deferred` from step 2 — never silently truncate); how
+   many summaries were **pruned** (step 6), or that pruning was skipped on a partial pass. If summaries
+   were written inline (no model override), say so.
 
 ## Grounding (hard rule)
 

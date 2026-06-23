@@ -328,6 +328,37 @@ class MCPReviewService:
                     f"({self.settings.review_branches_list()}))")
         return (repo, branch or self.settings.primary_branch())
 
+    def _resolve_summary_depth(self, repo: str, branch: str) -> tuple[int, str]:
+        """Резолв глубины кластеризации сводок: env-дефолт → override из .review.yml ветки.
+
+        repo уже нормализован (вызывается после _resolve_repo_branch). Fail-soft:
+        нет токена/ветки/файла/кривой yml → (settings.summary_cluster_depth, "env").
+        Внутренне созданный VCS-провайдер закрываем в finally (как get_pr_diff).
+        source = ".review.yml", только если файл явно задаёт ключ summary_cluster_depth."""
+        import yaml
+        from reviewer.policy.policy import ReviewPolicy
+        default = self.settings.summary_cluster_depth
+        owner, name = repo.split("/", 1)
+        vcs = None
+        try:
+            vcs = (self._vcs_factory(owner, name) if self._vcs_factory
+                   else self._review_service._create_vcs_provider(owner, name))
+            text = vcs.get_file_at_ref(".review.yml", branch)
+            if not text:
+                return default, "env"
+            data = yaml.safe_load(text) or {}
+            depth = ReviewPolicy.load(self.settings, text).summary_cluster_depth
+            return depth, (".review.yml" if "summary_cluster_depth" in data else "env")
+        except Exception:
+            log.warning("_resolve_summary_depth: fail-soft → env-дефолт", exc_info=True)
+            return default, "env"
+        finally:
+            if vcs is not None and self._vcs_factory is None:
+                try:
+                    vcs.close()
+                except Exception:
+                    log.warning("_resolve_summary_depth: не удалось закрыть VCS", exc_info=True)
+
     def search_codebase(self, repo: str, query: str, top_k: int = 10,
                         branch: str | None = None,
                         include_tests: bool = False) -> str:
@@ -439,12 +470,15 @@ class MCPReviewService:
         in_degree_fn = (
             (lambda ids: graph.in_degree(repo, ids, branch=resolved))
             if graph is not None else None)
+        if depth is None:
+            resolved_depth, depth_source = self._resolve_summary_depth(repo, resolved)
+        else:
+            resolved_depth, depth_source = depth, "arg"
         clusters = build_clusters(
-            members, in_degree_fn,
-            depth=depth or self.settings.summary_cluster_depth,
-            min_size=min_size or 1)
+            members, in_degree_fn, depth=resolved_depth, min_size=min_size or 1)
         stored = self.components.summary_store.get_source_hashes(repo, resolved)
         stale = {c.key: (stored.get(c.key) != c.source_hash) for c in clusters}
+        orphans = len(set(stored) - {c.key for c in clusters})
         effective_cap = cap if cap is not None else self.settings.summary_rebuild_cap
         deferred_keys: set[str] = set()
         if effective_cap and effective_cap > 0:
@@ -455,7 +489,8 @@ class MCPReviewService:
                 aged = sorted((c for c in stale_cl if c.key in updated),
                               key=lambda c: updated[c.key])                # старейшие — раньше
                 deferred_keys = {c.key for c in (never + aged)[effective_cap:]}
-        return {"branch": resolved, "deferred": len(deferred_keys), "clusters": [
+        return {"branch": resolved, "depth": resolved_depth, "depth_source": depth_source,
+                "deferred": len(deferred_keys), "orphans": orphans, "clusters": [
             {"cluster_key": c.key, "num_members": c.num_members, "files": c.files,
              "top_symbols": c.top_symbols, "source_hash": c.source_hash,
              "stale": stale[c.key]}
@@ -474,10 +509,11 @@ class MCPReviewService:
         if isinstance(rb, str):
             return {"stored": False, "note": rb}
         repo, resolved = rb
-        # depth берём дефолтный (как list_subsystem_clusters без явного depth): cluster_key и
-        # source_hash зависят от depth, поэтому совпадение хешей гарантировано только когда
-        # кластеры листались тем же дефолтом. При нестандартном depth — fail-soft []+note ниже.
-        depth = self.settings.summary_cluster_depth
+        # depth резолвится тем же хелпером, что list_subsystem_clusters без явного depth:
+        # cluster_key и source_hash зависят от depth, поэтому совпадение хешей гарантировано
+        # только когда кластеры листались тем же дефолтом. При нестандартном depth —
+        # fail-soft []+note ниже.
+        depth, _ = self._resolve_summary_depth(repo, resolved)
         raw = self.components.store.list_base_members(repo, resolved)
         members = [(f"{p}#{s}", sk) for p, s, _h, _sl, sk in raw
                    if cluster_key_of(p, depth) == cluster_key]
@@ -501,6 +537,26 @@ class MCPReviewService:
         if cluster_key:
             return {"summary": store.get_summary(repo, resolved, cluster_key)}
         return {"summaries": store.get_summaries(repo, resolved)}
+
+    def prune_subsystem_summaries(self, repo: str, branch: str | None = None) -> dict:
+        """Удалить сводки подсистем, осиротевшие после смены depth или удаления модулей.
+
+        Пере-выводит текущие cluster_keys из base-состава на резолвнутом depth и
+        удаляет сводки вне этого множества. Вызывать ТОЛЬКО на полном (uncapped)
+        прогоне скилла — иначе отложенные капом кластеры будут приняты за осиротевшие.
+        Пустой base → no-op (не вайпать на транзиентной пустоте). Fail-soft."""
+        from reviewer.graph.summaries import cluster_key as cluster_key_of
+        rb = self._resolve_repo_branch(repo, branch)
+        if isinstance(rb, str):
+            return {"pruned": 0, "kept": 0, "note": rb}
+        repo, resolved = rb
+        depth, _ = self._resolve_summary_depth(repo, resolved)
+        raw = self.components.store.list_base_members(repo, resolved)
+        if not raw:
+            return {"pruned": 0, "kept": 0, "note": "(base-индекс пуст — purge пропущен)"}
+        keep_keys = sorted({cluster_key_of(p, depth) for p, _s, _h, _sl, _sk in raw})
+        pruned = self.components.summary_store.delete_summaries_except(repo, resolved, keep_keys)
+        return {"pruned": pruned, "kept": len(keep_keys)}
 
     def get_pr_diff(self, repo: str, number: int) -> str:
         """Unified diff изменённых файлов PR (session-less) — ленивая подтяжка для /solve-task.
