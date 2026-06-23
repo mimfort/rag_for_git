@@ -1,14 +1,26 @@
 # rag_for_git
 
-> 🇷🇺 Русская версия: [README.ru.md](README.ru.md)
+> **An AI pull-request reviewer that reads your whole repository — hybrid RAG + a code graph + Claude Code.**
+> Plain linters check a diff in isolation; this agent gives the model the same context a human
+> reviewer has — semantic + lexical retrieval over the entire repo and a structural code graph —
+> then posts the result back to GitHub as **inline comments on the exact diff lines, with applyable fixes**.
 
-An agent that automatically reviews pull/merge requests using **RAG + a code graph + Claude Code**.
+[![PyPI](https://img.shields.io/pypi/v/rag-reviewer?color=2563eb&label=PyPI)](https://pypi.org/project/rag-reviewer/)
+[![Python 3.11–3.13](https://img.shields.io/badge/python-3.11%E2%80%933.13-2563eb)](https://pypi.org/project/rag-reviewer/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-22c55e)](LICENSE)
+[![MCP server](https://img.shields.io/badge/MCP-server-8b5cf6)](#mcp-tools-reference)
+[![Claude Code plugin](https://img.shields.io/badge/Claude%20Code-plugin-d97757)](#claude-code-plugin-marketplace)
+
+> 🇷🇺 Русская версия — глубокий, сверенный с кодом разбор: [README.ru.md](README.ru.md)
 
 ---
 
 ## Table of contents
 
-- [What it is](#what-it-is)
+- [Why it exists](#why-it-exists)
+- [What a review looks like](#what-a-review-looks-like)
+- [Highlights](#highlights)
+- [How a review runs](#how-a-review-runs)
 - [How it works / Architecture](#how-it-works--architecture)
 - [One-click install prompt](#one-click-install-prompt)
 - [Installation](#installation)
@@ -22,19 +34,74 @@ An agent that automatically reviews pull/merge requests using **RAG + a code gra
 - [Known limitations & caveats](#known-limitations--caveats)
 - [Tests](#tests)
 - [Project layout](#project-layout)
+- [Contributing](#contributing)
+- [License](#license)
 
 ---
 
-## What it is
+## Why it exists
 
-Plain linters catch syntax and style but miss **meaning and relationships**: a broken
-function contract, the impact of a change on its callers, a removed guard, a contradiction
-with an existing test. This agent gives an LLM **the same context a human reviewer has** —
-semantic + lexical retrieval over the whole repository, structural code-graph expansion, and
-an agentic tool loop — then posts the result back to GitHub as **inline comments on diff lines
-plus a summary**.
+Plain linters catch syntax and style but miss **meaning and relationships** — the things a human
+reviewer actually looks for:
 
-A single PR review runs as three stages:
+- a changed function contract that silently breaks its callers,
+- a guard clause removed three files away from where it mattered,
+- a change that contradicts an existing test,
+- an edge case that only shows up once you read the helper it calls.
+
+Catching those needs **context beyond the diff**: who calls this, what it implements, which tests
+pin its behaviour. `rag_for_git` gives the model that context — semantic + lexical retrieval over
+the **whole repository** and a structural **code graph** — then runs an agentic tool loop per
+changed file and posts the result back to GitHub as **inline comments on the exact diff lines,
+plus a summary and applyable fixes**.
+
+It is not a wrapper around "send the diff to an LLM." It is a retrieval + code-graph pipeline with
+a deterministic, anti-hallucination publishing tail.
+
+## What a review looks like
+
+An *illustrative* inline comment the agent posts on a changed line — it found the bug by following
+the call graph from the edited function to its callers and a contract test:
+
+> **🟠 correctness — an expired token is no longer rejected**
+>
+> `verify_token` used to raise on an expired signature; the new guard only checks `payload is
+> None`, so `_decode()` returning a payload with a past `exp` now passes as valid. Two call sites
+> depend on that raise — `require_auth` (`auth/deps.py:48`) and the contract test
+> `test_expired_rejected` (`tests/test_auth.py:71`), which this change would break.
+>
+> ```suggestion
+>     if payload is None or payload.get("exp", 0) < now:
+>         raise InvalidToken("expired or malformed token")
+> ```
+> <!-- ai-review:9f3c2a -->
+
+Every finding is grounded on an **exact quote** from the diff, carries a category / severity /
+confidence, and — when it's safe — ships as a one-click GitHub `suggestion`. A hidden fingerprint
+(`<!-- ai-review:… -->`) makes re-runs **idempotent**: the same issue is never posted twice.
+
+## Highlights
+
+- **Whole-repo context, not just the diff.** Hybrid retrieval (pgvector ANN + BM25, fused with RRF,
+  reranked by Voyage) over the entire indexed codebase — for changed files the agent sees the new
+  version, for everything else a stable base index.
+- **It sees impact.** A Neo4j code graph (`CALLS` / `IMPLEMENTS`) expands each changed symbol 1–2
+  hops to surface callers, callees, implementations, and the tests that pin them.
+- **Anti-hallucination by construction.** A finding must quote real code to be placed on a line; a
+  dedicated **verify** pass drops invented findings; line grounding is exact-match.
+- **Real GitHub output.** Inline comments on diff lines, applyable `suggestion` blocks under safe
+  invariants, a summary for everything off-diff — idempotent across re-runs.
+- **Lives in your editor, not a CI black box.** Ships as a **Claude Code plugin** and as an **MCP
+  server** usable from 12+ AI clients (Cursor, VS Code, Gemini CLI, Codex, Windsurf, Claude
+  Desktop, …). One `uvx` command; published on [PyPI](https://pypi.org/project/rag-reviewer/).
+- **Local-first.** Your code stays on your machine — only embedding/query text goes to Voyage; the
+  stores (Postgres/ParadeDB + Neo4j) run in local Docker.
+- **More than review.** The same RAG + graph powers grounded codebase **Q&A** (`ask`), disciplined
+  task-context gathering (`solve-task`), PR **walkthroughs**, and per-subsystem summaries.
+
+## How a review runs
+
+A single PR review is three stages:
 
 **`prepare_review` (MCP)** → **analyze (Claude subagents)** → **`publish_review` (MCP)**
 
@@ -828,3 +895,26 @@ reviewer/
 plugin/        Claude Code plugin (7 skills /rag-reviewer:reviewer_*)
 docker-compose.yml   ParadeDB (pgvector+pg_search) + Neo4j
 ```
+
+---
+
+## Contributing
+
+Issues and PRs are welcome. To work on the project locally:
+
+```bash
+git clone https://github.com/mimfort/rag_for_git
+cd rag_for_git
+python -m venv .venv && .venv/bin/pip install -e ".[dev]"
+docker compose up -d            # Postgres/ParadeDB (:5433) + Neo4j (:7687)
+.venv/bin/pytest -q             # unit tests — fast, on fakes, no external APIs
+.venv/bin/ruff check .          # lint (line-length 100, target py311)
+```
+
+External services (GitHub, Voyage, Postgres, Neo4j) sit behind interfaces and are mocked in unit
+tests; real calls happen only in integration/E2E. Commit messages follow Conventional Commits. The
+architecture is documented in depth in [README.ru.md](README.ru.md) (Russian) and `CLAUDE.md`.
+
+## License
+
+[MIT](LICENSE) © rag_for_git contributors.
