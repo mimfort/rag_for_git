@@ -25,20 +25,33 @@ Plus `list_subsystem_clusters` and `index_subsystem_summary` (reviewer MCP), and
 <!-- include: _common/branch-selection.md -->
 
 2. **List clusters.** Call `list_subsystem_clusters(repo, branch)`. Empty / `note` about an empty
-   index → tell the user (in Russian) to run `/reviewer_sync-codebase` first, then stop.
+   index → tell the user (in Russian) to run `/reviewer_sync-codebase` first, then stop. The response
+   also carries `deferred` — the number of stale clusters the server held back this pass under the
+   cost cap (env `SUMMARY_REBUILD_CAP`); the `clusters` it returns are already capped, so just process
+   them and report `deferred` in step 4.
 
-3. **Summarize only STALE clusters.** For each cluster with `stale == true` (fresh ones are already
+3. **Choose the summary model (only if any cluster is `stale == true`).** A subsystem summary is a
+   coarse, high-level prior — a small/cheap model is appropriate, and reviewing on an expensive model
+   burns tokens. Ask the user which model tier to use for writing summaries, defaulting to a cheap
+   tier (e.g. Haiku/Sonnet/Fable). Remember the choice for this run. If nothing is stale, skip this
+   step (nothing to generate).
+
+4. **Summarize only STALE clusters.** For each cluster with `stale == true` (fresh ones are already
    up to date — skip them, this keeps the pass incremental and cheap):
-   - `Read` a few representative files (from `files` / `top_symbols`) to ground the summary — do NOT
-     invent behavior the code does not show.
-   - Write, in Russian:
+   - Where your harness supports per-subagent model override, **dispatch a subagent on the chosen
+     model** to read a few representative files (from `files` / `top_symbols`) and return
+     `{title, summary}` (Russian, grounded — see Grounding below); the orchestrator then persists it.
+     Where override is unavailable, write the summary inline on the session model and note this in the
+     report. Either way:
      - `title` — one line: what this subsystem is.
      - `summary` — a compact paragraph: what it does, its key symbols (from `top_symbols`) and
-       invariants. No `path:line` required in the text; it is a high-level prior.
+       invariants. No `path:line` required; it is a high-level prior.
    - Persist: `index_subsystem_summary(repo, branch, cluster_key, title, summary, source_hash)` —
      pass back the cluster's own `source_hash` from step 2.
 
-4. **Report (Russian).** How many clusters summarized vs skipped-as-fresh.
+5. **Report (Russian).** How many clusters summarized vs skipped-as-fresh vs **deferred by the cap**
+   (`deferred` from step 2 — never silently truncate). If summaries were written inline (no model
+   override), say so.
 
 ## Grounding (hard rule)
 
