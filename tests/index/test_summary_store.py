@@ -1,3 +1,6 @@
+"""Integration-тесты SummaryStore (PRI-167): требуют Postgres/pgvector на PG_DSN."""
+from __future__ import annotations
+
 import pytest
 
 from reviewer.config.settings import Settings
@@ -7,6 +10,15 @@ from reviewer.index.summary_store import SummaryStore
 pytestmark = pytest.mark.integration
 
 DSN = Settings().pg_dsn
+
+DIM = 1024
+
+
+def _vec(hot: int) -> list[float]:
+    """Орт-подобный 1024-вектор с единицей в позиции hot — для предсказуемого ANN."""
+    v = [0.0] * DIM
+    v[hot] = 1.0
+    return v
 
 
 @pytest.fixture()
@@ -81,3 +93,53 @@ def test_delete_summaries_except_empty_keep_deletes_all(store):
     pruned = store.delete_summaries_except("t/t", "dev", [])
     assert pruned == 1
     assert store.get_source_hashes("t/t", "dev") == {}
+
+
+# ── PRI-167: embedding в SummaryStore + HNSW-индекс ──────────────────────────
+
+@pytest.fixture()
+def store_pri167():
+    dsn = Settings().pg_dsn
+    ChunkStore(dsn).init_schema()                     # создаёт таблицу + HNSW-индекс
+    st = SummaryStore(dsn)
+    # чистим тестовый repo до и после
+    with st._connect() as conn:
+        conn.execute("DELETE FROM subsystem_summaries WHERE repo=%s", ("test/pri167",))
+        conn.commit()
+    yield st
+    with st._connect() as conn:
+        conn.execute("DELETE FROM subsystem_summaries WHERE repo=%s", ("test/pri167",))
+        conn.commit()
+    st.close()
+
+
+def test_upsert_writes_embedding_and_search_returns_nearest_first(store_pri167):
+    store_pri167.upsert_summary("test/pri167", "dev", "auth", "Авторизация", "...",
+                                ["auth/a.py#A"], "h-auth", embedding=_vec(0))
+    store_pri167.upsert_summary("test/pri167", "dev", "index", "Индекс", "...",
+                                ["index/b.py#B"], "h-index", embedding=_vec(500))
+    hits = store_pri167.search_summaries("test/pri167", "dev", _vec(0), top_k=1)
+    assert [h["cluster_key"] for h in hits] == ["auth"]
+    assert store_pri167.count_summaries("test/pri167", "dev") == 2
+
+
+def test_upsert_none_embedding_preserves_existing(store_pri167):
+    store_pri167.upsert_summary("test/pri167", "dev", "auth", "Авторизация", "v1",
+                                ["auth/a.py#A"], "h1", embedding=_vec(0))
+    # повторный upsert с embedding=None не должен обнулить вектор
+    store_pri167.upsert_summary("test/pri167", "dev", "auth", "Авторизация", "v2",
+                                ["auth/a.py#A"], "h1", embedding=None)
+    hits = store_pri167.search_summaries("test/pri167", "dev", _vec(0), top_k=1)
+    assert hits and hits[0]["cluster_key"] == "auth"
+    assert hits[0]["summary"] == "v2"          # текст обновился, вектор сохранён
+
+
+def test_pending_and_set_embedding_backfill(store_pri167):
+    store_pri167.upsert_summary("test/pri167", "dev", "legacy", "Легаси", "...",
+                                [], "h-legacy", embedding=None)   # без вектора
+    pending = store_pri167.get_pending_embeddings("test/pri167", "dev")
+    assert [p["cluster_key"] for p in pending] == ["legacy"]
+    store_pri167.set_embedding("test/pri167", "dev", "legacy", _vec(3))
+    assert store_pri167.get_pending_embeddings("test/pri167", "dev") == []
+    hits = store_pri167.search_summaries("test/pri167", "dev", _vec(3), top_k=1)
+    assert hits[0]["cluster_key"] == "legacy"
