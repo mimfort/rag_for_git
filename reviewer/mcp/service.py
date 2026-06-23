@@ -459,6 +459,9 @@ class MCPReviewService:
         if isinstance(rb, str):
             return {"stored": False, "note": rb}
         repo, resolved = rb
+        # depth берём дефолтный (как list_subsystem_clusters без явного depth): cluster_key и
+        # source_hash зависят от depth, поэтому совпадение хешей гарантировано только когда
+        # кластеры листались тем же дефолтом. При нестандартном depth — fail-soft []+note ниже.
         depth = self.settings.summary_cluster_depth
         raw = self.components.store.list_base_members(repo, resolved)
         members = [(f"{p}#{s}", h) for p, s, h, _ in raw
