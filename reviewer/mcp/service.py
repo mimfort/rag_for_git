@@ -359,6 +359,37 @@ class MCPReviewService:
                 except Exception:
                     log.warning("_resolve_summary_depth: не удалось закрыть VCS", exc_info=True)
 
+    def _resolve_summary_topk_threshold(self, repo: str, branch: str) -> tuple[int, str]:
+        """Резолв порога масштаба приора сводок: env-дефолт → override из .review.yml ветки.
+
+        repo уже нормализован (вызывается после _resolve_repo_branch). Fail-soft:
+        нет токена/ветки/файла/кривой yml → (settings.summary_topk_threshold, "env").
+        source = ".review.yml", только если файл явно задаёт ключ summary_topk_threshold."""
+        import yaml
+        from reviewer.policy.policy import ReviewPolicy
+        default = self.settings.summary_topk_threshold
+        owner, name = repo.split("/", 1)
+        vcs = None
+        try:
+            vcs = (self._vcs_factory(owner, name) if self._vcs_factory
+                   else self._review_service._create_vcs_provider(owner, name))
+            text = vcs.get_file_at_ref(".review.yml", branch)
+            if not text:
+                return default, "env"
+            data = yaml.safe_load(text) or {}
+            val = ReviewPolicy.load(self.settings, text).summary_topk_threshold
+            return val, (".review.yml" if "summary_topk_threshold" in data else "env")
+        except Exception:
+            log.warning("_resolve_summary_topk_threshold: fail-soft → env-дефолт", exc_info=True)
+            return default, "env"
+        finally:
+            if vcs is not None and self._vcs_factory is None:
+                try:
+                    vcs.close()
+                except Exception:
+                    log.warning("_resolve_summary_topk_threshold: не удалось закрыть VCS",
+                                exc_info=True)
+
     def search_codebase(self, repo: str, query: str, top_k: int = 10,
                         branch: str | None = None,
                         include_tests: bool = False) -> str:

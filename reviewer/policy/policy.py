@@ -20,6 +20,7 @@ class ReviewPolicy:
     task_board: dict | None = None                               # конфиг доски задач из .review.yml (None = выкл.)
     grounding_max_distance: int = 5                              # макс. дистанция снапа строки к commentable при grounding
     summary_cluster_depth: int = 2                               # глубина пути кластера подсистемы; per-repo override .review.yml (PRI-166)
+    summary_topk_threshold: int = 20                            # порог масштаба приора сводок; per-repo override .review.yml (PRI-167)
 
     @classmethod
     def from_yaml(cls, text: str | None) -> "ReviewPolicy":
@@ -39,6 +40,7 @@ class ReviewPolicy:
             task_board=data.get("task_board") or None,
             grounding_max_distance=data.get("grounding_max_distance", 5),
             summary_cluster_depth=int(data.get("summary_cluster_depth", 2)),
+            summary_topk_threshold=int(data.get("summary_topk_threshold", 20)),
         )
 
     @classmethod
@@ -53,6 +55,7 @@ class ReviewPolicy:
             task_board=settings.task_board_default(),   # глобальный env-дефолт доски
             grounding_max_distance=settings.review_grounding_max_distance,
             summary_cluster_depth=settings.summary_cluster_depth,
+            summary_topk_threshold=settings.summary_topk_threshold,
         )
 
     @classmethod
@@ -84,6 +87,8 @@ class ReviewPolicy:
             policy.grounding_max_distance = data["grounding_max_distance"]
         if "summary_cluster_depth" in data:
             policy.summary_cluster_depth = int(data["summary_cluster_depth"])
+        if "summary_topk_threshold" in data:
+            policy.summary_topk_threshold = int(data["summary_topk_threshold"])
         return policy
 
     def category_enabled(self, category: str) -> bool:

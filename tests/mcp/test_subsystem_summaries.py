@@ -226,3 +226,19 @@ def test_prune_subsystem_summaries_empty_base_is_noop():
     assert out["pruned"] == 0
     assert "note" in out
     c.summary_store.delete_summaries_except.assert_not_called()   # base пуст → не вайпаем
+
+
+def test_resolve_summary_topk_threshold_override_from_review_yml():
+    svc = _svc_with_vcs(_FakeVCS("summary_topk_threshold: 5"))
+    assert svc._resolve_summary_topk_threshold("o/n", "dev") == (5, ".review.yml")
+
+
+def test_resolve_summary_topk_threshold_no_key_falls_back_to_env():
+    svc = _svc_with_vcs(_FakeVCS("severity_threshold: high"))
+    val, source = svc._resolve_summary_topk_threshold("o/n", "dev")
+    assert val == svc.settings.summary_topk_threshold
+    assert source == "env"
+
+
+def test_settings_default_summary_topk_threshold_is_20():
+    assert _settings().summary_topk_threshold == 20

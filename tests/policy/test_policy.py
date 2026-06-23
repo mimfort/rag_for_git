@@ -175,3 +175,18 @@ def test_summary_cluster_depth_from_yaml():
     p = ReviewPolicy.from_yaml("summary_cluster_depth: 3")
     assert p.summary_cluster_depth == 3
     assert ReviewPolicy.from_yaml(None).summary_cluster_depth == 2
+
+
+def test_policy_summary_topk_threshold_override():
+    from reviewer.config.settings import Settings
+    from reviewer.policy.policy import ReviewPolicy
+    s = Settings()
+    p = ReviewPolicy.load(s, "summary_topk_threshold: 7")
+    assert p.summary_topk_threshold == 7
+
+
+def test_policy_summary_topk_threshold_default_from_settings():
+    from reviewer.config.settings import Settings
+    from reviewer.policy.policy import ReviewPolicy
+    s = Settings()
+    assert ReviewPolicy.from_settings(s).summary_topk_threshold == s.summary_topk_threshold
