@@ -20,6 +20,7 @@ from reviewer.vcs.base import ChangedFile, PullRequest, VCSProvider
 from reviewer.vcs.github import GitHubProvider
 from reviewer.policy.policy import ReviewPolicy
 from reviewer.index.chunker import chunk_python
+from reviewer.index.pathfilter import is_ignored
 from reviewer.index.struct_diff import diff_symbols, format_struct_summary
 from reviewer.index.freshness import build_overlay, update_base
 from reviewer.web.history import ReviewHistory
@@ -207,12 +208,16 @@ class ReviewService:
                             for f in diff_files:
                                 if f.status == "removed" or not f.path.endswith(".py"):
                                     continue
+                                if is_ignored(f.path, ignore):
+                                    continue  # игнор-путь: не в граф (parity с чанками)
                                 src = vcs.get_file_at_ref(f.path, prq.base_sha)
                                 if src:
                                     changed_py[f.path] = src
+                            # removed: явно удалённые + ставшие игнор (чистим их символы из графа)
                             removed_py = [
                                 f.path for f in diff_files
-                                if f.status == "removed" and f.path.endswith(".py")
+                                if f.path.endswith(".py")
+                                and (f.status == "removed" or is_ignored(f.path, ignore))
                             ]
                             patch_graph_incremental(
                                 self.components.graph, repo, branch=branch,

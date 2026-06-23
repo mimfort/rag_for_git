@@ -484,3 +484,96 @@ def test_prepare_no_structural_summary_for_renamed_file(
     service = ReviewService(settings, components)
     prepared = service.prepare("o", "r", 1, vcs_provider=vcs)
     assert prepared.units[0].structural_summary == ""
+
+
+# ---------------------------------------------------------------------------
+# Тест: инкрементальный граф-синк применяет paths.ignore (parity чанки↔граф)
+# ---------------------------------------------------------------------------
+
+@patch("reviewer.services.review_service.update_base")
+@patch("reviewer.services.review_service.chunk_python", side_effect=_fake_chunk)
+@patch("reviewer.services.review_service.build_overlay")
+def test_prepare_graph_sync_respects_ignore(
+    _mock_overlay: MagicMock,
+    _mock_chunk: MagicMock,
+    _mock_update_base: MagicMock,
+    settings: Settings,
+    components: MagicMock,
+) -> None:
+    """Граф-досинк применяет paths.ignore из .review.yml: игнорируемые пути
+    не попадают в changed_sources, но добавляются в removed_paths (parity с чанками).
+
+    Воспроизводит баг: changed_py строился без фильтрации по is_ignored, из-за
+    чего символы vendor/ уходили в Neo4j, хотя чанков для них в Postgres нет.
+    """
+    components.store.get_index_meta.return_value = "oldsha000"   # индекс устарел
+
+    # .review.yml задаёт paths.ignore = [vendor]
+    def _read(path: str, ref: str) -> str:
+        if path == ".review.yml":
+            return "paths:\n  ignore:\n    - vendor\n"
+        return "def func(): pass"
+
+    vcs = _vcs_with_files([_changed("reviewer/a.py")])
+    vcs.compare_files.return_value = [
+        _changed("vendor/x.py", status="modified"),   # должен быть проигнорирован
+        _changed("reviewer/a.py", status="modified"),  # должен пройти
+    ]
+    vcs.get_file_at_ref.side_effect = _read
+
+    # Фейковый граф, фиксирующий аргументы вызовов
+    class _FakeGraph:
+        def __init__(self):
+            self.captured_changed: dict[str, str] = {}
+            self.captured_removed: list[str] = []
+            self.upsert_nodes_calls: list[tuple[str, list[str]]] = []
+
+        def symbols_for_paths(self, repo, paths, *, branch=""):
+            return set()
+
+        def delete_symbols(self, repo, ids, *, branch=""):
+            pass
+
+        def delete_outgoing_calls(self, repo, ids, *, branch=""):
+            pass
+
+        def upsert_nodes(self, repo, ids, *, branch=""):
+            self.upsert_nodes_calls.append((repo, list(ids)))
+
+        def upsert_edges(self, repo, edges, *, branch=""):
+            pass
+
+    fake_graph = _FakeGraph()
+    components.graph = fake_graph
+
+    # Перехватываем вызов patch_graph_incremental, чтобы проверить аргументы
+    captured: dict[str, object] = {}
+
+    def _fake_patch(graph, repo, branch="", *, changed_sources, removed_paths):
+        captured["changed_sources"] = dict(changed_sources)
+        captured["removed_paths"] = list(removed_paths)
+        # Делегируем реальному графу для полноты
+        for path, src in changed_sources.items():
+            nids = [f"{path}#func"]
+            fake_graph.upsert_nodes(repo, nids, branch=branch)
+
+    service = ReviewService(settings, components)
+    with (
+        patch.object(service, "_create_vcs_provider", return_value=vcs),
+        # patch_graph_incremental импортируется внутри ветки — патчим по месту определения
+        patch("reviewer.services.graph_sync.patch_graph_incremental", _fake_patch),
+    ):
+        service.prepare("owner", "repo", 1)
+
+    # vendor/x.py не должен попасть в changed_sources (parity с чанками)
+    assert "vendor/x.py" not in captured.get("changed_sources", {}), (
+        "игнорируемый путь vendor/x.py попал в changed_sources графа"
+    )
+    # reviewer/a.py должен пройти
+    assert "reviewer/a.py" in captured.get("changed_sources", {}), (
+        "незаигнорированный путь reviewer/a.py пропущен"
+    )
+    # vendor/x.py должен быть в removed_paths (символы удаляются из графа, как из чанков)
+    assert "vendor/x.py" in captured.get("removed_paths", []), (
+        "игнорируемый путь vendor/x.py не добавлен в removed_paths"
+    )
