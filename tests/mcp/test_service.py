@@ -11,7 +11,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from reviewer.config.settings import Settings
-from reviewer.mcp.service import MCPReviewService, _finding_from_dict
+from reviewer.mcp.service import MCPReviewService
 from reviewer.vcs.base import (
     ChangedFile,
     PullRequest,
@@ -425,7 +425,7 @@ def test_publish_review_links_task_when_task_key(
     svc = MCPReviewService(settings, components, vcs_factory=lambda o, r: vcs)
     svc.prepare_review("o/r", 7)
 
-    svc.publish_review("o/r", 7, "summary", [], dry_run=False, task_key="ID-1")
+    svc.publish_review("o/r", 7, "summary", dry_run=False, task_key="ID-1")
 
     components.task_service.link_review.assert_called_once()
     args = components.task_service.link_review.call_args.args
@@ -448,7 +448,7 @@ def test_publish_review_no_link_on_dry_run(
     vcs.list_existing_fingerprints.return_value = set()
     svc = MCPReviewService(settings, components, vcs_factory=lambda o, r: vcs)
     svc.prepare_review("o/r", 7)
-    svc.publish_review("o/r", 7, "summary", [], dry_run=True, task_key="ID-1")
+    svc.publish_review("o/r", 7, "summary", dry_run=True, task_key="ID-1")
     components.task_service.link_review.assert_not_called()
 
 
@@ -464,7 +464,7 @@ def test_publish_review_no_link_without_task_key(
     vcs.list_existing_fingerprints.return_value = set()
     svc = MCPReviewService(settings, components, vcs_factory=lambda o, r: vcs)
     svc.prepare_review("o/r", 7)
-    svc.publish_review("o/r", 7, "summary", [], dry_run=False)
+    svc.publish_review("o/r", 7, "summary", dry_run=False)
     components.task_service.link_review.assert_not_called()
 
 
@@ -680,18 +680,42 @@ def test_get_pr_diff_empty_files_note():
 
 
 # ---------------------------------------------------------------------------
-# Тесты Task 1 (PRI-144): коэрция confidence — fallback 0.1 + clamp [0,1]
+# Тесты structural_summary в payload prepare_review (PRI-158)
 # ---------------------------------------------------------------------------
 
-def test_finding_confidence_coercion_and_clamp():
-    base = {"file": "a.py", "severity": "high", "message": "m", "line": 1, "code_quote": "x = 1"}
-    # валидные значения проходят как есть
-    assert _finding_from_dict({**base, "confidence": 0.9}).confidence == 0.9
-    assert _finding_from_dict({**base, "confidence": 0.5}).confidence == 0.5
-    # не оценено / None / мусор → 0.1 (ниже честного потолка спекулятивной зоны 0.4)
-    assert _finding_from_dict(base).confidence == 0.1
-    assert _finding_from_dict({**base, "confidence": None}).confidence == 0.1
-    assert _finding_from_dict({**base, "confidence": "abc"}).confidence == 0.1
-    # clamp в [0,1]
-    assert _finding_from_dict({**base, "confidence": 1.5}).confidence == 1.0
-    assert _finding_from_dict({**base, "confidence": -0.2}).confidence == 0.0
+@patch("reviewer.services.review_service.chunk_python", side_effect=_fake_chunk)
+@patch("reviewer.services.review_service.build_overlay")
+def test_prepare_review_payload_includes_structural_summary(
+    _mock_overlay: MagicMock,
+    _mock_chunk: MagicMock,
+) -> None:
+    """При смене сигнатуры payload-юнит несёт structural_summary."""
+    settings = _settings()
+    components = _components()
+    vcs = _fake_vcs()
+
+    def _read(path: str, ref: str) -> str | None:
+        if path == ".review.yml":
+            return None
+        return "def foo(a, b): pass" if ref == "head456" else "def foo(a): pass"
+    vcs.get_file_at_ref.side_effect = _read
+
+    svc = MCPReviewService(settings, components, vcs_factory=lambda o, r: vcs)
+    out = svc.prepare_review("o/r", 7)
+
+    unit = out["units"][0]
+    assert "structural_summary" in unit
+    assert "foo" in unit["structural_summary"]
+
+
+@patch("reviewer.services.review_service.chunk_python", side_effect=_fake_chunk)
+@patch("reviewer.services.review_service.build_overlay")
+def test_prepare_review_payload_omits_empty_structural_summary(
+    _mock_overlay: MagicMock,
+    _mock_chunk: MagicMock,
+) -> None:
+    """Без структурных изменений (base==head) ключ structural_summary отсутствует."""
+    svc = _make_mcp_service()  # _fake_vcs отдаёт одинаковый исходник для base и head
+    out = svc.prepare_review("o/r", 7)
+
+    assert "structural_summary" not in out["units"][0]

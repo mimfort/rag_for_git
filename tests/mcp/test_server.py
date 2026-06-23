@@ -88,7 +88,7 @@ def _make_mcp_service(number: int = 7) -> MCPReviewService:
 # ---------------------------------------------------------------------------
 
 def test_server_registers_all_tools() -> None:
-    """create_server регистрирует ровно 22 ожидаемых MCP-тулов."""
+    """create_server регистрирует ровно 29 ожидаемых MCP-тулов."""
     from reviewer.entrypoints.mcp_server import create_server
 
     server = create_server(_make_mcp_service())
@@ -112,11 +112,18 @@ def test_server_registers_all_tools() -> None:
         "get_task",
         "get_board_config",
         "publish_review",
+        "submit_findings",
+        "submit_verdicts",
+        "get_candidate_findings",
+        "post_pr_walkthrough",
         "search_codebase",
         "related_symbols",
         "callers",
         "definition",
         "get_pr_diff",
+        "list_subsystem_clusters",
+        "index_subsystem_summary",
+        "get_subsystem_summaries",
     }
 
 
@@ -145,21 +152,24 @@ def test_prepare_review_callable_via_mcp(_ov, _ch) -> None:
 @patch("reviewer.services.review_service.chunk_python", side_effect=_fake_chunk)
 @patch("reviewer.services.review_service.build_overlay")
 def test_publish_review_dry_run_callable_via_mcp(_ov, _ch) -> None:
-    """Smoke: publish_review через MCP-слой — pydantic-валидация findings
-    (list[dict]) и сериализация dict-отчёта в TextContent."""
+    """Smoke: submit_findings + publish_review через MCP-слой (PRI-156).
+
+    Находки сдаются через submit_findings (schema-enforced FindingIn),
+    publish_review вызывается без findings и возвращает dict-отчёт.
+    """
+    from tests.mcp.test_publish import RAW
+
     from reviewer.entrypoints.mcp_server import create_server
 
     server = create_server(_make_mcp_service())
     asyncio.run(server.call_tool("prepare_review", {"repo": "o/r", "pr": 7}))
-    finding = {
-        "category": "correctness", "severity": "high", "file": "a.py",
-        "line": 1, "code_quote": None, "message": "bug", "suggestion": None,
-        "fix": None, "confidence": 0.9,
-    }
+    asyncio.run(server.call_tool(
+        "submit_findings",
+        {"repo": "o/r", "pr": 7, "findings": [RAW]},
+    ))
     result = asyncio.run(server.call_tool(
         "publish_review",
-        {"repo": "o/r", "pr": 7, "summary": "s",
-         "findings": [finding], "dry_run": True},
+        {"repo": "o/r", "pr": 7, "summary": "s", "dry_run": True},
     ))
 
     assert result, "ожидали непустой результат"

@@ -72,7 +72,7 @@ blocks.
      (`search_code`, `get_related_symbols`, `read_file`, `get_definition`,
      `find_callers`, `get_changed_file_diff`);
    - the target output language.
-   Each subagent returns a JSON object `{"findings": [...]}` (schema in the prompt).
+   Each subagent submits findings via `submit_findings(repo, pr, findings=[...])` (schema-enforced; the server assigns ids).
 
 4. **Dimensions (parallel with step 3).** Dispatch whole-diff subagents:
    - performance: follow the methodology of `../performance-review/SKILL.md`
@@ -82,35 +82,33 @@ blocks.
      `references/requirements-prompt.md`, the diffs of all units (path + patch), the `TaskBrief`,
      plus the related/similar task context gathered in step 2 (linked tasks, their PRs, touched code,
      similar tasks) as an optional "Related context" block, the repo/pr identifiers (so it can call
-     the reviewer MCP tools), and the target output language. It returns the same findings JSON
-     schema with category `requirements`.
+     the reviewer MCP tools), and the target output language. It submits findings via
+     `submit_findings` with category `requirements`.
    - blast-radius: dispatch one subagent with `references/blast-radius-prompt.md`, the diffs of
      all units (path + patch), each unit's `commentable_right`/`commentable_left` (the line numbers
      where inline comments are allowed), the PR `title`/`body`, the repo/pr identifiers (so it can
      call the reviewer MCP tools, including `get_impact`), and the target output language. It
-     returns the same findings JSON schema with category `correctness`.
+     submits findings via `submit_findings` with category `correctness`.
    Give the performance/maintainability subagents: the diffs of all units (path + patch), the
    repo/pr identifiers so they can call the reviewer MCP tools, and the target output language.
-   They must return the same findings JSON schema (category `performance` / `maintainability`).
+   They must submit findings via `submit_findings` (category `performance` / `maintainability`).
 
-5. **Verify.** Collect all findings into one numbered list. Dispatch one subagent
-   with `references/verify-prompt.md`, the findings list, the diffs, and the
-   repo/pr identifiers so the subagent can call the reviewer MCP tools
-   (`read_file`, `search_code`, `find_callers`, `get_definition`, `get_impact`). It returns
-   `{"verdicts": [{"index": N, "is_real": true|false}]}`. Drop findings with
-   `is_real=false`. If the verifier fails or returns malformed output, KEEP all
-   findings (recall-safe).
+5. **Verify.** Dispatch one subagent with `references/verify-prompt.md` and the
+   repo/pr identifiers. It reads candidates via `get_candidate_findings(repo, pr)`
+   and submits verdicts via `submit_verdicts(repo, pr, verdicts=[{id, is_real}])`.
+   A finding with `is_real=false` is dropped at publish; a finding with no verdict
+   is kept (recall-safe — no orchestrator action needed if verify fails).
 
 6. **Publish.** Compose a short review summary (2-5 sentences, in
    `policy.output_language`): what the PR does, overall assessment, key risks.
    If a task was read, state whether the PR meets the task's requirements; if the task context was
    requested but unavailable (no key, board MCP not connected, task not found), say so briefly.
    Mention files that were not analyzed: failed subagents and `skipped_paths`
-   from the prepare payload. Call `publish_review(repo, pr, summary, findings, dry_run, task_key)`
+   from the prepare payload. Call `publish_review(repo, pr, summary, dry_run, task_key)`
    where `task_key` is the canonical `TaskBrief.key` if a task was read (else omit / null). When
    published, this links the PR to the task in the graph for future reviews. Report to the user:
    posted/dry-run, inline count, and the report counters
-   (dropped_by_gate/deduped/invalid/already_posted/moved_to_summary/capped), run_id.
+   (dropped_by_gate/deduped/invalid/already_posted/moved_to_summary/capped/verify_rejected), run_id.
 
 ## Failure handling
 

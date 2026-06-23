@@ -199,6 +199,16 @@ class ChunkStore:
             ).fetchone()
         return row[0] if row else 0
 
+    def list_base_members(self, repo: str, branch: str) -> list[tuple[str, str, str, int]]:
+        """Состав base-индекса ветки для кластеризации подсистем (PRI-159):
+        (path, symbol_fqn, content_hash, start_line) для ref=base:<branch>."""
+        from reviewer.index.refs import base_ref
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT path, symbol_fqn, content_hash, start_line FROM chunks "
+                "WHERE repo=%s AND ref=%s", (repo, base_ref(branch))).fetchall()
+        return [(p, s, h, sl) for p, s, h, sl in rows]
+
     def list_refs(self, repo: str) -> list[str]:
         """Отсортированный список distinct ref репо (для поиска overlay)."""
         with self._connect() as conn:

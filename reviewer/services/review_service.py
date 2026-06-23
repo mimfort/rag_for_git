@@ -20,6 +20,7 @@ from reviewer.vcs.base import ChangedFile, PullRequest, VCSProvider
 from reviewer.vcs.github import GitHubProvider
 from reviewer.policy.policy import ReviewPolicy
 from reviewer.index.chunker import chunk_python
+from reviewer.index.struct_diff import diff_symbols, format_struct_summary
 from reviewer.index.freshness import build_overlay, update_base
 from reviewer.web.history import ReviewHistory
 from reviewer.agent.state import ReviewUnit
@@ -46,6 +47,25 @@ def _hunk_count(patch: str | None) -> int:
 def _file_importance_key(file: ChangedFile) -> tuple[int, int]:
     """Ключ сортировки: больше hunks → важнее; при равенстве — длиннее patch."""
     return (-_hunk_count(file.patch), -(len(file.patch) if file.patch else 0))
+
+
+def _structural_summary(vcs, path: str, status: str, base_sha: str, head_src: str) -> str:
+    """Компактная структурная сводка изменений символов файла (fail-soft).
+
+    Только для изменённых на месте файлов (modified); added/renamed → "".
+    Любой сбой (base не дотянулся, tree-sitter упал) → "" — никогда не валит prepare.
+    """
+    if status != "modified":
+        return ""
+    try:
+        base_src = vcs.get_file_at_ref(path, base_sha)
+        if not base_src:
+            return ""
+        changes = diff_symbols(path, base_src.encode(), head_src.encode())
+        return format_struct_summary(changes)
+    except Exception:
+        log.warning("Не удалось построить структурный diff для %s", path, exc_info=True)
+        return ""
 
 
 def _select_changed_files(
@@ -237,8 +257,11 @@ class ReviewService:
                 if not src:
                     continue
                 node_ids = [ch.node_id for ch in chunk_python(f.path, src.encode())]
+                summary = _structural_summary(
+                    vcs, f.path, f.status, prq.base_sha, src)
                 units.append(
-                    ReviewUnit(f.path, node_ids, f.patch or "", new_source=src)
+                    ReviewUnit(f.path, node_ids, f.patch or "", new_source=src,
+                               structural_summary=summary)
                 )
 
             # Файлы вне лимита попадают в сводку как пропущенные

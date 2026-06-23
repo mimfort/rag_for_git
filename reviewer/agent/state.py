@@ -8,3 +8,4 @@ class ReviewUnit:
     node_ids: list[str]
     changed_text: str
     new_source: str = ""        # полная новая версия файла (для точных fix-диапазонов)
+    structural_summary: str = ""  # компактная сводка структурных изменений символов
