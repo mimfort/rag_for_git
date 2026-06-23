@@ -219,6 +219,15 @@ def create_server(service: MCPReviewService) -> FastMCP:
         return service.get_subsystem_summaries(repo, branch, cluster_key)
 
     @mcp.tool()
+    def prune_subsystem_summaries(repo: str, branch: str | None = None) -> dict:
+        """Prune subsystem summaries orphaned by a depth change or removed modules.
+        Re-derives current cluster_keys from the base index at the resolved depth and
+        deletes summaries outside that set. Call ONLY after a full (uncapped) pass of
+        /reviewer_summarize-subsystems — deferred clusters are not orphans. Empty base
+        → no-op. Returns {pruned, kept}. No PR session; branch defaults to primary."""
+        return service.prune_subsystem_summaries(repo, branch)
+
+    @mcp.tool()
     def publish_review(
         repo: str,
         pr: int,

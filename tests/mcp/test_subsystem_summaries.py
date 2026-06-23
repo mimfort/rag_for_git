@@ -200,3 +200,29 @@ def test_list_subsystem_clusters_resolves_depth_when_not_given():
     assert out["depth"] == 2
     assert out["depth_source"] == "env"
     assert out["orphans"] == 0
+
+
+def test_prune_subsystem_summaries_rederives_keys_and_prunes():
+    c = MagicMock()
+    c.store.list_base_members.return_value = [
+        ("a/x/f.py", "F", "h", 1, "skf"),
+        ("b/y/g.py", "G", "h", 1, "skg"),
+    ]
+    c.summary_store.delete_summaries_except.return_value = 2
+    svc = _svc(c)                                  # стаб _resolve_summary_depth → (2, "env")
+    out = svc.prune_subsystem_summaries("o/n", "dev")
+    assert out == {"pruned": 2, "kept": 2}
+    # keep_keys пере-выведены на depth=2 и отсортированы
+    args = c.summary_store.delete_summaries_except.call_args.args
+    assert args[0] == "o/n" and args[1] == "dev"
+    assert args[2] == ["a/x", "b/y"]
+
+
+def test_prune_subsystem_summaries_empty_base_is_noop():
+    c = MagicMock()
+    c.store.list_base_members.return_value = []
+    svc = _svc(c)
+    out = svc.prune_subsystem_summaries("o/n", "dev")
+    assert out["pruned"] == 0
+    assert "note" in out
+    c.summary_store.delete_summaries_except.assert_not_called()   # base пуст → не вайпаем

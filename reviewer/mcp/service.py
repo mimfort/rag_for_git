@@ -538,6 +538,26 @@ class MCPReviewService:
             return {"summary": store.get_summary(repo, resolved, cluster_key)}
         return {"summaries": store.get_summaries(repo, resolved)}
 
+    def prune_subsystem_summaries(self, repo: str, branch: str | None = None) -> dict:
+        """Удалить сводки подсистем, осиротевшие после смены depth или удаления модулей.
+
+        Пере-выводит текущие cluster_keys из base-состава на резолвнутом depth и
+        удаляет сводки вне этого множества. Вызывать ТОЛЬКО на полном (uncapped)
+        прогоне скилла — иначе отложенные капом кластеры будут приняты за осиротевшие.
+        Пустой base → no-op (не вайпать на транзиентной пустоте). Fail-soft."""
+        from reviewer.graph.summaries import cluster_key as cluster_key_of
+        rb = self._resolve_repo_branch(repo, branch)
+        if isinstance(rb, str):
+            return {"pruned": 0, "kept": 0, "note": rb}
+        repo, resolved = rb
+        depth, _ = self._resolve_summary_depth(repo, resolved)
+        raw = self.components.store.list_base_members(repo, resolved)
+        if not raw:
+            return {"pruned": 0, "kept": 0, "note": "(base-индекс пуст — purge пропущен)"}
+        keep_keys = sorted({cluster_key_of(p, depth) for p, _s, _h, _sl, _sk in raw})
+        pruned = self.components.summary_store.delete_summaries_except(repo, resolved, keep_keys)
+        return {"pruned": pruned, "kept": len(keep_keys)}
+
     def get_pr_diff(self, repo: str, number: int) -> str:
         """Unified diff изменённых файлов PR (session-less) — ленивая подтяжка для /solve-task.
 
