@@ -25,8 +25,6 @@ optional `post_pr_walkthrough` (only on explicit user request).
    If it returns `{"status": "skipped"}` (branch not in REVIEW_BRANCHES), tell the user (in Russian)
    and stop.
 
-<!-- include: _common/branch-selection.md -->
-
 2. **Reading order (centrality).** Call `get_impact(repo, pr)` → changed symbols and their callers.
    Order "start here" by how much depends on each changed symbol (most central first). Graph down →
    fall back to ordering by file (fail-open).
@@ -37,8 +35,10 @@ optional `post_pr_walkthrough` (only on explicit user request).
 4. **Impact ("careful, affects X").** For the central changed symbols, `find_callers` /
    `get_related_symbols` → who depends on them. Every "affects X" must be backed by a real caller.
 
-5. **Subsystem prior (optional).** `get_subsystem_summaries(repo, branch)` → name the touched
-   subsystem(s) in one line. Empty / unavailable → skip (fail-open).
+5. **Subsystem prior (optional).** `get_subsystem_summaries(repo, pr.base_ref)` → name the touched
+   subsystem(s) in one line. Pass the PR's target branch `pr.base_ref` (from the `prepare_review`
+   response), NOT the local git branch — subsystem summaries are indexed per target branch
+   (`base:<branch>`). Empty / unavailable → skip (fail-open).
 
 6. **Assemble the guide (Russian markdown):**
    - **Начни отсюда** — ordered list (most central first).

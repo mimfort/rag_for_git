@@ -22,6 +22,14 @@ def test_skill_includes_resolve_to_existing_common_files():
         assert (base / inc).is_file(), f"include не найден: {inc}"
 
 
+def test_step5_summaries_use_pr_base_ref():
+    text = SKILL.read_text(encoding="utf-8")
+    # summaries индексируются по целевой ветке PR, не по локальной git-ветке
+    assert "base_ref" in text
+    # include branch-selection убран — неверная абстракция для PR-скоупного скилла
+    assert "branch-selection" not in text
+
+
 def test_skill_posting_is_opt_in_and_russian():
     text = SKILL.read_text(encoding="utf-8")
     assert "post_pr_walkthrough" in text
