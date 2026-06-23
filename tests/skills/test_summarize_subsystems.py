@@ -35,7 +35,10 @@ def test_skill_reports_deferred():
 def test_skill_asks_model_choice():
     """Скилл должен предлагать выбор модели для сводок (шаг 3)."""
     text = SKILL.read_text(encoding="utf-8")
-    assert "model" in text.lower(), "скилл не упоминает выбор модели"
+    # Фраза уникальна для шага 3 и отсутствует в SKILL.md за пределами этого шага
+    assert "Ask the user which model tier to use for writing summaries" in text, (
+        "шаг 3 не спрашивает пользователя о модели (уникальная фраза шага удалена)"
+    )
     # Хотя бы один дешёвый вариант должен быть упомянут как дефолт
     assert any(m in text for m in ("Haiku", "Sonnet", "Fable")), (
         "скилл не предлагает дешёвую модель по умолчанию"
@@ -45,9 +48,9 @@ def test_skill_asks_model_choice():
 def test_skill_dispatches_subagent_on_chosen_model():
     """Шаг 4 должен описывать диспатч субагента на выбранной модели."""
     text = SKILL.read_text(encoding="utf-8")
-    assert "subagent" in text.lower(), "скилл не упоминает субагент"
-    assert "chosen" in text.lower() or "override" in text.lower(), (
-        "скилл не упоминает override модели субагента"
+    # Фраза уникальна для шага 4 и отсутствует в SKILL.md за пределами этого шага
+    assert "dispatch a subagent on the chosen" in text, (
+        "шаг 4 не предписывает диспатч субагента на выбранной модели (уникальная фраза шага удалена)"
     )
 
 
