@@ -41,12 +41,13 @@ def build_overlay(store, embedder, repo: str, pr_number: int, changed_files: lis
         ignore: список ignore-паттернов; совпадающие пути пропускаются без эмбеддинга.
     """
     ref = f"pr:{pr_number}"
+    ignore_list = list(ignore)
     seen = store.existing_hashes(repo, ref)
     batch: list[ChunkRow] = []
     for path in changed_files:
         if not path.endswith(".py"):
             continue
-        if is_ignored(path, list(ignore)):
+        if is_ignored(path, ignore_list):
             continue
         src = head_sources.get(path)
         if not src:
@@ -70,6 +71,7 @@ def update_base(store, embedder, repo: str, target_ref: str,
     Для каждого обработанного файла удаляются символы, исчезнувшие из новой версии.
     """
     ref = base_ref(target_ref)
+    ignore_list = list(ignore)
     py_removed = [p for p in removed_files if p.endswith(".py")]
     store.delete_paths(repo, ref, py_removed)
 
@@ -78,7 +80,7 @@ def update_base(store, embedder, repo: str, target_ref: str,
     for path in changed_files:
         if not path.endswith(".py"):
             continue
-        if is_ignored(path, list(ignore)):
+        if is_ignored(path, ignore_list):
             store.delete_paths(repo, ref, [path])   # путь стал игнор — вычищаем из base
             continue
         src = read(path)
