@@ -1,6 +1,36 @@
 [project]
 name = "rag-reviewer"
 version = "0.2.10"
+description = "AI pull-request reviewer: hybrid RAG + a code graph + Claude Code. Whole-repo context, inline GitHub comments grounded on exact code."
+readme = "README.md"
+license = { text = "MIT" }
+authors = [{ name = "rag_for_git contributors" }]
+keywords = [
+    "code-review",
+    "pull-request",
+    "rag",
+    "code-graph",
+    "mcp",
+    "claude-code",
+    "static-analysis",
+    "neo4j",
+    "pgvector",
+    "tree-sitter",
+    "scip",
+    "voyage",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Quality Assurance",
+    "Topic :: Software Development :: Version Control :: Git",
+]
 requires-python = ">=3.11,<3.14"
 dependencies = [
     "pydantic-settings>=2.3",
@@ -30,6 +60,12 @@ web = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.30",
 ]
+
+[project.urls]
+Homepage = "https://github.com/mimfort/rag_for_git"
+Repository = "https://github.com/mimfort/rag_for_git"
+Issues = "https://github.com/mimfort/rag_for_git/issues"
+PyPI = "https://pypi.org/project/rag-reviewer/"
 
 [project.scripts]
 reviewer = "reviewer.entrypoints.cli:cli"
