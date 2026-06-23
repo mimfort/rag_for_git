@@ -211,12 +211,17 @@ def create_server(service: MCPReviewService) -> FastMCP:
 
     @mcp.tool()
     def get_subsystem_summaries(repo: str, branch: str | None = None,
-                                cluster_key: str | None = None) -> dict:
+                                cluster_key: str | None = None,
+                                query: str | None = None,
+                                top_k: int | None = None) -> dict:
         """Cheap high-level prior for ask / PR-walkthrough: precomputed subsystem
-        summaries. cluster_key=None → all {cluster_key, title, summary}; a cluster_key
-        → one full summary (or null). Empty when none built (consumer is fail-open).
+        summaries. cluster_key → one full summary (or null). Otherwise: with `query`
+        AND when the summary count exceeds the scale threshold (SUMMARY_TOPK_THRESHOLD,
+        per-repo .review.yml), returns the top-k summaries nearest the query by
+        embedding; without `query` or at/below the threshold, returns all (back-compat).
+        top_k defaults to 8. Empty when none built (consumer is fail-open).
         No PR session; branch defaults to primary."""
-        return service.get_subsystem_summaries(repo, branch, cluster_key)
+        return service.get_subsystem_summaries(repo, branch, cluster_key, query, top_k)
 
     @mcp.tool()
     def prune_subsystem_summaries(repo: str, branch: str | None = None) -> dict:
@@ -226,6 +231,15 @@ def create_server(service: MCPReviewService) -> FastMCP:
         /reviewer_summarize-subsystems — deferred clusters are not orphans. Empty base
         → no-op. Returns {pruned, kept}. No PR session; branch defaults to primary."""
         return service.prune_subsystem_summaries(repo, branch)
+
+    @mcp.tool()
+    def backfill_summary_embeddings(repo: str, branch: str | None = None) -> dict:
+        """Self-heal: embed any subsystem summaries with a NULL embedding from their
+        stored title+summary (no LLM). Idempotent — a later run embeds nothing.
+        Called by /reviewer_summarize-subsystems after the LLM pass so older summaries
+        become searchable by proximity. Returns {embedded}. No PR session; branch
+        defaults to primary."""
+        return service.backfill_summary_embeddings(repo, branch)
 
     @mcp.tool()
     def publish_review(

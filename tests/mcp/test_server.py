@@ -125,6 +125,7 @@ def test_server_registers_all_tools() -> None:
         "index_subsystem_summary",
         "get_subsystem_summaries",
         "prune_subsystem_summaries",
+        "backfill_summary_embeddings",
     }
 
 
