@@ -57,6 +57,8 @@ def test_list_subsystem_clusters_empty_index_returns_note():
     out = svc.list_subsystem_clusters("o/n", "dev")
     assert out["clusters"] == []
     assert "note" in out
+    assert "branch" in out
+    assert out["deferred"] == 0
 
 
 def test_index_and_get_subsystem_summaries_roundtrip_via_store():

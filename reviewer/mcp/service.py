@@ -426,11 +426,11 @@ class MCPReviewService:
         from reviewer.graph.summaries import Member, build_clusters
         rb = self._resolve_repo_branch(repo, branch)
         if isinstance(rb, str):
-            return {"clusters": [], "note": rb}
+            return {"branch": branch or "", "deferred": 0, "clusters": [], "note": rb}
         repo, resolved = rb
         raw = self.components.store.list_base_members(repo, resolved)
         if not raw:
-            return {"clusters": [],
+            return {"branch": resolved, "deferred": 0, "clusters": [],
                     "note": "(base-индекс пуст — выполните /reviewer_sync-codebase)"}
         members = [Member(node_id=f"{p}#{s}", path=p, content_hash=h, start_line=sl,
                           skeleton_hash=sk)

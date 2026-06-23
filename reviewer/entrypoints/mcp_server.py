@@ -183,13 +183,21 @@ def create_server(service: MCPReviewService) -> FastMCP:
     @mcp.tool()
     def list_subsystem_clusters(repo: str, branch: str | None = None,
                                 depth: int | None = None,
-                                min_size: int | None = None) -> dict:
-        """Cluster the base code graph into subsystems (by module path) for the
-        /reviewer_summarize-subsystems skill. Returns per cluster: cluster_key,
-        num_members, files, top_symbols (by centrality), source_hash, and stale
-        (true when the stored summary is missing or its source_hash differs).
-        No PR session; branch defaults to the primary tracked branch."""
-        return service.list_subsystem_clusters(repo, branch, depth, min_size)
+                                min_size: int | None = None,
+                                cap: int | None = None) -> dict:
+        """Кластеризовать base-граф кода по путям модулей для скилла
+        /reviewer_summarize-subsystems. Возвращает {branch, deferred, clusters:[...]},
+        где каждый кластер содержит cluster_key, num_members, files, top_symbols
+        (по центральности), source_hash и stale (true, если сводка отсутствует
+        или её source_hash устарел). Без PR-сессии; branch по умолчанию —
+        первичная отслеживаемая ветка.
+
+        cap (по умолчанию — env SUMMARY_REBUILD_CAP; None/0 = без ограничений)
+        отбрасывает наименее приоритетные stale-кластеры за один проход: сначала
+        кластеры без сводки, затем с наиболее старым updated_at. Отложенные
+        кластеры не попадают в clusters, но учитываются в deferred — количестве
+        задержанных этим проходом кластеров."""
+        return service.list_subsystem_clusters(repo, branch, depth, min_size, cap)
 
     @mcp.tool()
     def index_subsystem_summary(repo: str, branch: str, cluster_key: str,
