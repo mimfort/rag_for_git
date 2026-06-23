@@ -305,3 +305,24 @@ def test_get_subsystem_summaries_no_query_returns_all_without_counting():
     assert out == {"summaries": []}
     c.summary_store.search_summaries.assert_not_called()
     c.summary_store.count_summaries.assert_not_called()         # без query порог не считаем
+
+
+def test_backfill_summary_embeddings_fills_pending():
+    c = MagicMock()
+    c.summary_store.get_pending_embeddings.return_value = [
+        {"cluster_key": "auth", "title": "Авторизация", "summary": "тело"}]
+    c.embedder.embed_documents.return_value = [[0.3, 0.4]]
+    svc = _svc(c)
+    out = svc.backfill_summary_embeddings("o/n", "dev")
+    assert out == {"embedded": 1}
+    c.embedder.embed_documents.assert_called_once_with(["Авторизация\nтело"])
+    c.summary_store.set_embedding.assert_called_once_with("o/n", "dev", "auth", [0.3, 0.4])
+
+
+def test_backfill_summary_embeddings_noop_when_none_pending():
+    c = MagicMock()
+    c.summary_store.get_pending_embeddings.return_value = []
+    svc = _svc(c)
+    out = svc.backfill_summary_embeddings("o/n", "dev")
+    assert out == {"embedded": 0}
+    c.embedder.embed_documents.assert_not_called()

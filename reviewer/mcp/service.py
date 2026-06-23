@@ -615,6 +615,28 @@ class MCPReviewService:
         pruned = self.components.summary_store.delete_summaries_except(repo, resolved, keep_keys)
         return {"pruned": pruned, "kept": len(keep_keys)}
 
+    def backfill_summary_embeddings(self, repo: str, branch: str | None = None) -> dict:
+        """Self-heal: дозаполнить эмбеддинги сводок с embedding IS NULL из хранимого
+        title+summary (без LLM, дедуп по NULL). Идемпотентно: следующий прогон → 0.
+        Вызывается /summarize-subsystems после LLM-прохода. Fail-soft (PRI-167)."""
+        rb = self._resolve_repo_branch(repo, branch)
+        if isinstance(rb, str):
+            return {"embedded": 0, "note": rb}
+        repo, resolved = rb
+        store = self.components.summary_store
+        pending = store.get_pending_embeddings(repo, resolved)
+        if not pending:
+            return {"embedded": 0}
+        try:
+            vecs = self.components.embedder.embed_documents(
+                [f"{p['title']}\n{p['summary']}" for p in pending])
+        except Exception:
+            log.warning("backfill_summary_embeddings: сбой эмбеддинга", exc_info=True)
+            return {"embedded": 0, "note": "Voyage недоступен — бэкфилл пропущен"}
+        for p, vec in zip(pending, vecs):
+            store.set_embedding(repo, resolved, p["cluster_key"], vec)
+        return {"embedded": len(pending)}
+
     def get_pr_diff(self, repo: str, number: int) -> str:
         """Unified diff изменённых файлов PR (session-less) — ленивая подтяжка для /solve-task.
 
