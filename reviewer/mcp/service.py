@@ -417,9 +417,12 @@ class MCPReviewService:
             return "(определение не найдено)"
 
     def list_subsystem_clusters(self, repo: str, branch: str | None = None,
-                                depth: int | None = None,
-                                min_size: int | None = None) -> dict:
-        """Кластеризовать base-граф по модулям → кластеры для /summarize-subsystems."""
+                                depth: int | None = None, min_size: int | None = None,
+                                cap: int | None = None) -> dict:
+        """Кластеризовать base-граф по модулям → кластеры для /summarize-subsystems.
+        cap (дефолт Settings.summary_rebuild_cap; None/0=безлимит) отбрасывает наименее
+        приоритетные stale-кластеры (без сводки → старейшие updated_at первыми) и считает
+        их в deferred (PRI-165)."""
         from reviewer.graph.summaries import Member, build_clusters
         rb = self._resolve_repo_branch(repo, branch)
         if isinstance(rb, str):
@@ -429,8 +432,9 @@ class MCPReviewService:
         if not raw:
             return {"clusters": [],
                     "note": "(base-индекс пуст — выполните /reviewer_sync-codebase)"}
-        members = [Member(node_id=f"{p}#{s}", path=p, content_hash=h, start_line=sl)
-                   for p, s, h, sl in raw]
+        members = [Member(node_id=f"{p}#{s}", path=p, content_hash=h, start_line=sl,
+                          skeleton_hash=sk)
+                   for p, s, h, sl, sk in raw]
         graph = self.components.graph
         in_degree_fn = (
             (lambda ids: graph.in_degree(repo, ids, branch=resolved))
@@ -440,11 +444,22 @@ class MCPReviewService:
             depth=depth or self.settings.summary_cluster_depth,
             min_size=min_size or 1)
         stored = self.components.summary_store.get_source_hashes(repo, resolved)
-        return {"branch": resolved, "clusters": [
+        stale = {c.key: (stored.get(c.key) != c.source_hash) for c in clusters}
+        effective_cap = cap if cap is not None else self.settings.summary_rebuild_cap
+        deferred_keys: set[str] = set()
+        if effective_cap and effective_cap > 0:
+            stale_cl = [c for c in clusters if stale[c.key]]
+            if len(stale_cl) > effective_cap:
+                updated = self.components.summary_store.get_updated_ats(repo, resolved)
+                never = [c for c in stale_cl if c.key not in updated]      # без сводки — первыми
+                aged = sorted((c for c in stale_cl if c.key in updated),
+                              key=lambda c: updated[c.key])                # старейшие — раньше
+                deferred_keys = {c.key for c in (never + aged)[effective_cap:]}
+        return {"branch": resolved, "deferred": len(deferred_keys), "clusters": [
             {"cluster_key": c.key, "num_members": c.num_members, "files": c.files,
              "top_symbols": c.top_symbols, "source_hash": c.source_hash,
-             "stale": stored.get(c.key) != c.source_hash}
-            for c in clusters]}
+             "stale": stale[c.key]}
+            for c in clusters if c.key not in deferred_keys]}
 
     def index_subsystem_summary(self, repo: str, branch: str, cluster_key: str,
                                 title: str, summary: str, source_hash: str) -> dict:
@@ -464,7 +479,7 @@ class MCPReviewService:
         # кластеры листались тем же дефолтом. При нестандартном depth — fail-soft []+note ниже.
         depth = self.settings.summary_cluster_depth
         raw = self.components.store.list_base_members(repo, resolved)
-        members = [(f"{p}#{s}", h) for p, s, h, _ in raw
+        members = [(f"{p}#{s}", sk) for p, s, _h, _sl, sk in raw
                    if cluster_key_of(p, depth) == cluster_key]
         consistent = compute_source_hash(members) == source_hash
         member_node_ids = sorted(nid for nid, _ in members) if consistent else []

@@ -16,6 +16,7 @@ class Member:
     node_id: str          # "path#fqn"
     path: str
     content_hash: str
+    skeleton_hash: str    # хэш структурного скелета — ключ свежести по структуре (PRI-165)
     start_line: int
 
 
@@ -42,10 +43,11 @@ def cluster_key(path: str, depth: int) -> str:
 
 
 def compute_source_hash(items: list[tuple[str, str]]) -> str:
-    """sha256 от sorted("node_id:content_hash") — детерминированный ключ свежести.
+    """sha256 от sorted("node_id:skeleton_hash") — детерминированный ключ свежести.
 
-    Меняется только при изменении состава кластера или содержимого его файлов
-    (content_hash — тот же дедуп-инвариант, что у чанков)."""
+    Меняется при изменении состава кластера или СТРУКТУРЫ его членов (сигнатуры/docstring),
+    но НЕ при правке тела (PRI-165: вход — skeleton_hash, не content_hash). Сортировка пар
+    делает ключ независимым от порядка членов."""
     joined = "\n".join(sorted(f"{nid}:{h}" for nid, h in items))
     return hashlib.sha256(joined.encode("utf-8")).hexdigest()
 
@@ -84,6 +86,6 @@ def build_clusters(
             files=sorted({m.path for m in ms}),
             top_symbols=top,
             num_members=len(ms),
-            source_hash=compute_source_hash([(m.node_id, m.content_hash) for m in ms]),
+            source_hash=compute_source_hash([(m.node_id, m.skeleton_hash) for m in ms]),
         ))
     return clusters
