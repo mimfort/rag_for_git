@@ -13,7 +13,9 @@ from reviewer.gitutil import file_at_ref, list_python_files, rev_parse, remote_u
 from reviewer.graph.backend import build_code_graph
 from reviewer.graph.store import GraphStore
 from reviewer.index.freshness import update_base
+from reviewer.index.pathfilter import is_ignored
 from reviewer.index.refs import base_ref
+from reviewer.policy.policy import ReviewPolicy
 from reviewer.index.store import ChunkStore
 from reviewer.services.status import build_status_report, render_status, render_status_json
 
@@ -154,8 +156,12 @@ def index(repo: str, ref: str | None, branch_opt: str | None, repo_tag: str | No
     try:
         c.store.init_schema()
         files = list_python_files(repo, ref)
+        review_yml = file_at_ref(repo, ".review.yml", ref)
+        ignore = ReviewPolicy.from_yaml(review_yml).ignore if review_yml else []
+        if ignore:
+            files = [f for f in files if not is_ignored(f, ignore)]
         update_base(c.store, c.embedder, repo_id, branch, files,
-                    read=lambda p: file_at_ref(repo, p, ref))
+                    read=lambda p: file_at_ref(repo, p, ref), ignore=ignore)
         c.store.delete_paths_except(repo_id, bref, files)
         sha = rev_parse(repo, ref)
         c.store.set_index_meta(repo_id, bref, sha)

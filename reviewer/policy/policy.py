@@ -1,9 +1,9 @@
 from __future__ import annotations
 from dataclasses import dataclass, field
-from fnmatch import fnmatch
 import yaml
 
 from reviewer.config.settings import SeverityLevel
+from reviewer.index.pathfilter import is_ignored
 
 _SEV = {"low": 0, "medium": 1, "high": 2, "critical": 3}
 
@@ -21,6 +21,8 @@ class ReviewPolicy:
     grounding_max_distance: int = 5                              # макс. дистанция снапа строки к commentable при grounding
     summary_cluster_depth: int = 2                               # глубина пути кластера подсистемы; per-repo override .review.yml (PRI-166)
     summary_topk_threshold: int = 20                            # порог масштаба приора сводок; per-repo override .review.yml (PRI-167)
+    summary_cluster_depth_overrides: dict[str, int] = field(
+        default_factory=dict)             # per-prefix depth из .review.yml (PRI-161)
 
     @classmethod
     def from_yaml(cls, text: str | None) -> "ReviewPolicy":
@@ -41,6 +43,8 @@ class ReviewPolicy:
             grounding_max_distance=data.get("grounding_max_distance", 5),
             summary_cluster_depth=int(data.get("summary_cluster_depth", 2)),
             summary_topk_threshold=int(data.get("summary_topk_threshold", 20)),
+            summary_cluster_depth_overrides=dict(
+                data.get("summary_cluster_depth_overrides", {}) or {}),
         )
 
     @classmethod
@@ -89,6 +93,9 @@ class ReviewPolicy:
             policy.summary_cluster_depth = int(data["summary_cluster_depth"])
         if "summary_topk_threshold" in data:
             policy.summary_topk_threshold = int(data["summary_topk_threshold"])
+        if "summary_cluster_depth_overrides" in data:
+            policy.summary_cluster_depth_overrides = dict(
+                data["summary_cluster_depth_overrides"] or {})
         return policy
 
     def category_enabled(self, category: str) -> bool:
@@ -105,6 +112,6 @@ class ReviewPolicy:
             return False
         if finding.confidence < self.min_confidence:
             return False
-        if any(fnmatch(finding.file, pat) for pat in self.ignore):
+        if is_ignored(finding.file, self.ignore):
             return False
         return True

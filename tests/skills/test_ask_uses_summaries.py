@@ -28,3 +28,16 @@ def test_pr_walkthrough_passes_query_to_summaries():
 def test_summarize_triggers_embedding_backfill():
     text = SUMM.read_text(encoding="utf-8")
     assert "backfill_summary_embeddings" in text
+
+
+SOLVE = Path(__file__).resolve().parents[2] / "plugin" / "skills" / "solve-task" / "SKILL.md"
+
+
+def test_solve_task_passes_query_to_summaries():
+    text = SOLVE.read_text(encoding="utf-8")
+    assert "get_subsystem_summaries(repo, branch, query=" in text
+
+
+def test_solve_task_has_subsystems_brief_section():
+    text = SOLVE.read_text(encoding="utf-8")
+    assert "## Subsystems" in text

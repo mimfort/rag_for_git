@@ -789,6 +789,21 @@ board" rule **for bulk sync only** — single-task reads in `solve-task` / `revi
 the board-MCP on the LLM side. The task graph (`:Task`) is global, so one task can span PRs across
 several microservice repos.
 
+#### Контекст-слой (PRI-161)
+
+- `paths.ignore` — список fnmatch-паттернов; перечисленные пути **не индексируются**
+  (вектора и граф) и не комментируются. Голое имя папки (`vendor`) ловит всё поддерево;
+  `vendor/*` — то же явно. Экономит квоту Voyage и убирает шум.
+- `summary_cluster_depth_overrides` — карта `префикс → depth` для точечной глубины
+  кластеризации сводок (longest-prefix-match по сегментам пути); дополняет глобальный
+  `summary_cluster_depth`. Смена глубины пересобирает затронутые сводки.
+- `summary_topk_threshold` — порог масштаба приора сводок подсистем. Если число сводок
+  репо/ветки **превышает** порог, при запросе используется ANN top-k по близости к запросу;
+  иначе все сводки передаются целиком (бэк-совместимое поведение для малых репо). Дефолт
+  берётся из env (`SUMMARY_TOPK_THRESHOLD`, 20).
+
+Все ключи берутся из `.review.yml` целевой ветки. Пример — в корневом `.review.yml`.
+
 ---
 
 ## Observability web admin

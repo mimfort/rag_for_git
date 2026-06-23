@@ -73,6 +73,11 @@ brief to `superpowers:brainstorming` (which leads to writing-plans → subagent-
 
 3. **Gather context (best-effort, fail-open).** Any tool returning a "(… unavailable)" / "(ничего не
    найдено)" note or an error is non-fatal — continue.
+   - **Subsystem prior (architectural map).** Call
+     `get_subsystem_summaries(repo, branch, query="<task title>. <first lines of description>")`
+     → top-k relevant subsystems by proximity (top-k vs all is server-side; PRI-167).
+     Use the same `branch` as `search_codebase`. Fail-open: an empty list / a `(… недоступно)`
+     note / an error is non-fatal — omit the `## Subsystems` brief section and note the gap.
    - If you have a task key: `get_task_context(key)` → linked tasks, their PRs, and the code those PRs
      touched.
    - `search_tasks("<title>. <first lines of description>")` → semantically similar tasks. If a board
@@ -132,6 +137,7 @@ Use the session-less tools above.
    # Brief — <KEY> <title>
    ## Task — key/title/requirements/criteria (or the user's formulation in board-less mode). ≤~6 lines.
    ## Related work — ≤3 tasks, one line each: «KEY — what to reuse / follow». (dropped N: …)
+   ## Subsystems — ≤8 relevant subsystems, one line: «cluster_key — gist of summary». (omit if prior empty)
    ## Relevant code — ≤5 files/symbols, one line: «path:line — why» (+ blast radius from the graph). (dropped N: …)
    ## Constraints / open questions — terse bullets: limits, unknowns, context gaps (e.g. "board unavailable", "task corpus empty").
    ```

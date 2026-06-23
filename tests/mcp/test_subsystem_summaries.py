@@ -18,7 +18,7 @@ def _svc(components) -> MCPReviewService:
     svc = MCPReviewService(_settings(), components)
     # изолируем резолв repo/ветки и depth от .env / сети
     svc._resolve_repo_branch = lambda repo, branch: ("o/n", "dev")
-    svc._resolve_summary_depth = lambda repo, branch: (2, "env")
+    svc._resolve_summary_depth = lambda repo, branch: (2, {}, "env")
     svc._resolve_summary_topk_threshold = lambda repo, branch: (20, "env")
     return svc
 
@@ -161,20 +161,25 @@ def _svc_with_vcs(vcs_or_exc):
 
 def test_resolve_summary_depth_override_from_review_yml():
     svc = _svc_with_vcs(_FakeVCS("summary_cluster_depth: 3"))
-    assert svc._resolve_summary_depth("o/n", "dev") == (3, ".review.yml")
+    depth, overrides, source = svc._resolve_summary_depth("o/n", "dev")
+    assert depth == 3
+    assert overrides == {}
+    assert source == ".review.yml"
 
 
 def test_resolve_summary_depth_no_key_falls_back_to_env():
     svc = _svc_with_vcs(_FakeVCS("severity_threshold: high"))
-    depth, source = svc._resolve_summary_depth("o/n", "dev")
+    depth, overrides, source = svc._resolve_summary_depth("o/n", "dev")
     assert depth == svc.settings.summary_cluster_depth
+    assert overrides == {}
     assert source == "env"
 
 
 def test_resolve_summary_depth_failsoft_on_vcs_error():
     svc = _svc_with_vcs(RuntimeError("no token"))
-    depth, source = svc._resolve_summary_depth("o/n", "dev")
+    depth, overrides, source = svc._resolve_summary_depth("o/n", "dev")
     assert depth == svc.settings.summary_cluster_depth
+    assert overrides == {}
     assert source == "env"
 
 

@@ -42,6 +42,24 @@ def cluster_key(path: str, depth: int) -> str:
     return "/".join(dir_parts[:depth])
 
 
+def depth_for(path: str, default: int, overrides: dict[str, int]) -> int:
+    """Глубина для пути: depth самого длинного ключа-префикса ``overrides``
+    (совпадение по сегментам ДИРЕКТОРИИ), иначе ``default``.
+
+    Ключ ``"reviewer/index"`` матчит ``"reviewer/index/store.py"``, но НЕ
+    ``"reviewer/indexer/x.py"`` (сравнение посегментно, не по строке-префиксу).
+    """
+    if not overrides:
+        return default
+    dir_parts = path.split("/")[:-1]
+    best_depth, best_len = default, -1
+    for key, d in overrides.items():
+        kparts = key.strip("/").split("/")
+        if dir_parts[:len(kparts)] == kparts and len(kparts) > best_len:
+            best_depth, best_len = d, len(kparts)
+    return best_depth
+
+
 def compute_source_hash(items: list[tuple[str, str]]) -> str:
     """sha256 от sorted("node_id:skeleton_hash") — детерминированный ключ свежести.
 
@@ -59,11 +77,17 @@ def build_clusters(
     depth: int = 2,
     min_size: int = 1,
     top_n: int = 10,
+    depth_overrides: dict[str, int] | None = None,
 ) -> list[Cluster]:
-    """Сгруппировать членов по cluster_key; top_symbols — по in_degree (fail-soft)."""
+    """Сгруппировать членов по cluster_key; top_symbols — по in_degree (fail-soft).
+
+    ``depth_overrides`` задаёт per-prefix глубину: longest-prefix-match по
+    сегментам директории; при отсутствии совпадения используется ``depth``.
+    """
+    overrides = depth_overrides or {}
     groups: dict[str, list[Member]] = {}
     for m in members:
-        groups.setdefault(cluster_key(m.path, depth), []).append(m)
+        groups.setdefault(cluster_key(m.path, depth_for(m.path, depth, overrides)), []).append(m)
 
     degrees: dict[str, int] = {}
     if in_degree_fn is not None:
