@@ -1,0 +1,57 @@
+from reviewer.graph.summaries import (
+    Member, cluster_key, compute_source_hash, build_clusters,
+)
+
+
+def _m(node_id, path, h="h", line=1):
+    return Member(node_id=node_id, path=path, content_hash=h, start_line=line)
+
+
+def test_cluster_key_takes_first_depth_dir_segments():
+    assert cluster_key("reviewer/index/store.py", 2) == "reviewer/index"
+    assert cluster_key("reviewer/graph/store.py", 2) == "reviewer/graph"
+    assert cluster_key("reviewer/index/sub/x.py", 2) == "reviewer/index"
+
+
+def test_cluster_key_root_file_and_short_dir():
+    assert cluster_key("setup.py", 2) == "<root>"
+    assert cluster_key("reviewer/app.py", 2) == "reviewer"
+
+
+def test_compute_source_hash_is_order_independent_and_changes_with_content():
+    a = compute_source_hash([("x#f", "h1"), ("y#g", "h2")])
+    b = compute_source_hash([("y#g", "h2"), ("x#f", "h1")])
+    assert a == b                       # детерминирован, не зависит от порядка
+    assert a != compute_source_hash([("x#f", "h1"), ("y#g", "CHANGED")])
+
+
+def test_build_clusters_groups_by_module_and_filters_min_size():
+    members = [
+        _m("reviewer/index/a.py#A", "reviewer/index/a.py"),
+        _m("reviewer/index/b.py#B", "reviewer/index/b.py"),
+        _m("reviewer/graph/c.py#C", "reviewer/graph/c.py"),
+    ]
+    clusters = build_clusters(members, None, depth=2, min_size=2)
+    keys = {c.key for c in clusters}
+    assert keys == {"reviewer/index"}     # graph отброшен (1 < min_size=2)
+    idx = next(c for c in clusters if c.key == "reviewer/index")
+    assert idx.num_members == 2
+    assert idx.files == ["reviewer/index/a.py", "reviewer/index/b.py"]
+
+
+def test_build_clusters_ranks_top_symbols_by_in_degree():
+    members = [
+        _m("reviewer/x/a.py#A", "reviewer/x/a.py", line=10),
+        _m("reviewer/x/b.py#B", "reviewer/x/b.py", line=20),
+    ]
+    deg = {"reviewer/x/b.py#B": 5, "reviewer/x/a.py#A": 1}
+    [c] = build_clusters(members, lambda ids: deg, depth=2, top_n=10)
+    assert c.top_symbols[0]["node_id"] == "reviewer/x/b.py#B"   # выше in_degree → первый
+
+
+def test_build_clusters_fail_soft_when_in_degree_raises():
+    members = [_m("reviewer/x/a.py#A", "reviewer/x/a.py")]
+    def boom(ids):
+        raise RuntimeError("neo4j down")
+    [c] = build_clusters(members, boom, depth=2)   # не падает
+    assert c.top_symbols[0]["node_id"] == "reviewer/x/a.py#A"

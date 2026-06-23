@@ -36,6 +36,7 @@ from reviewer.vcs.diff import commentable_lines
 
 log = logging.getLogger(__name__)
 
+WALKTHROUGH_MARKER = "<!-- ai-walkthrough -->"
 
 
 @dataclass
@@ -415,6 +416,77 @@ class MCPReviewService:
             log.warning("definition: сбой", exc_info=True)
             return "(определение не найдено)"
 
+    def list_subsystem_clusters(self, repo: str, branch: str | None = None,
+                                depth: int | None = None,
+                                min_size: int | None = None) -> dict:
+        """Кластеризовать base-граф по модулям → кластеры для /summarize-subsystems."""
+        from reviewer.graph.summaries import Member, build_clusters
+        rb = self._resolve_repo_branch(repo, branch)
+        if isinstance(rb, str):
+            return {"clusters": [], "note": rb}
+        repo, resolved = rb
+        raw = self.components.store.list_base_members(repo, resolved)
+        if not raw:
+            return {"clusters": [],
+                    "note": "(base-индекс пуст — выполните /reviewer_sync-codebase)"}
+        members = [Member(node_id=f"{p}#{s}", path=p, content_hash=h, start_line=sl)
+                   for p, s, h, sl in raw]
+        graph = self.components.graph
+        in_degree_fn = (
+            (lambda ids: graph.in_degree(repo, ids, branch=resolved))
+            if graph is not None else None)
+        clusters = build_clusters(
+            members, in_degree_fn,
+            depth=depth or self.settings.summary_cluster_depth,
+            min_size=min_size or 1)
+        stored = self.components.summary_store.get_source_hashes(repo, resolved)
+        return {"branch": resolved, "clusters": [
+            {"cluster_key": c.key, "num_members": c.num_members, "files": c.files,
+             "top_symbols": c.top_symbols, "source_hash": c.source_hash,
+             "stale": stored.get(c.key) != c.source_hash}
+            for c in clusters]}
+
+    def index_subsystem_summary(self, repo: str, branch: str, cluster_key: str,
+                                title: str, summary: str, source_hash: str) -> dict:
+        """Персистнуть один summary подсистемы (idempotent upsert).
+
+        member_node_ids выводятся сервером (re-derive по cluster_key над base-составом)
+        и пишутся только при совпадении пере-вычисленного source_hash с переданным —
+        иначе [] + note (состав базы изменился между list и index; самозалечивается
+        следующим проходом summarize-subsystems)."""
+        from reviewer.graph.summaries import cluster_key as cluster_key_of, compute_source_hash
+        rb = self._resolve_repo_branch(repo, branch)
+        if isinstance(rb, str):
+            return {"stored": False, "note": rb}
+        repo, resolved = rb
+        # depth берём дефолтный (как list_subsystem_clusters без явного depth): cluster_key и
+        # source_hash зависят от depth, поэтому совпадение хешей гарантировано только когда
+        # кластеры листались тем же дефолтом. При нестандартном depth — fail-soft []+note ниже.
+        depth = self.settings.summary_cluster_depth
+        raw = self.components.store.list_base_members(repo, resolved)
+        members = [(f"{p}#{s}", h) for p, s, h, _ in raw
+                   if cluster_key_of(p, depth) == cluster_key]
+        consistent = compute_source_hash(members) == source_hash
+        member_node_ids = sorted(nid for nid, _ in members) if consistent else []
+        self.components.summary_store.upsert_summary(
+            repo, resolved, cluster_key, title, summary, member_node_ids, source_hash)
+        out = {"cluster_key": cluster_key, "stored": True, "members": len(member_node_ids)}
+        if not consistent:
+            out["note"] = "состав кластера изменился с момента list — member_node_ids не сохранены"
+        return out
+
+    def get_subsystem_summaries(self, repo: str, branch: str | None = None,
+                                cluster_key: str | None = None) -> dict:
+        """Дешёвый приор: предрасчитанные summary подсистем (fail-open у потребителя)."""
+        rb = self._resolve_repo_branch(repo, branch)
+        if isinstance(rb, str):
+            return {"summaries": [], "note": rb}
+        repo, resolved = rb
+        store = self.components.summary_store
+        if cluster_key:
+            return {"summary": store.get_summary(repo, resolved, cluster_key)}
+        return {"summaries": store.get_summaries(repo, resolved)}
+
     def get_pr_diff(self, repo: str, number: int) -> str:
         """Unified diff изменённых файлов PR (session-less) — ленивая подтяжка для /solve-task.
 
@@ -638,6 +710,23 @@ class MCPReviewService:
             "moved_to_summary": asm.moved_to_summary,
             "capped": asm.capped,
         }
+
+    def post_pr_walkthrough(self, repo: str, pr: int, markdown: str) -> dict:
+        """Опубликовать walkthrough-гид в PR как review-комментарий (без inline-находок).
+
+        Маркер ``<!-- ai-walkthrough -->`` в body отделяет гид от ревью-находок
+        (``<!-- ai-review:* -->``). Outward-facing — вызывается только по явной
+        просьбе пользователя. Fail-soft при сетевой ошибке."""
+        from reviewer.services.repo_id import normalize_repo
+        sess = self._session(normalize_repo(repo), pr)
+        prepared = sess.prepared
+        body = f"{WALKTHROUGH_MARKER}\n\n{markdown}"
+        try:
+            prepared.vcs.publish_review(pr, prepared.prq.head_sha, body, [])
+        except Exception as e:
+            log.warning("post_pr_walkthrough: сбой постинга", exc_info=True)
+            return {"posted": False, "reason": f"{type(e).__name__}: {e}"}
+        return {"posted": True, "pr": pr}
 
     def _record_history(
         self,

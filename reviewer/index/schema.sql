@@ -69,3 +69,18 @@ CREATE INDEX IF NOT EXISTS tasks_bm25 ON tasks
 USING bm25 (id, text, key) WITH (key_field='id');
 CREATE INDEX IF NOT EXISTS tasks_hnsw ON tasks
 USING hnsw (embedding vector_cosine_ops) WITH (m = 16, ef_construction = 64);
+
+-- Предрасчитанные summary подсистем (PRI-159): кластер графа по модулю → краткий обзор.
+-- Отдельно от chunks — у summary нет lines/symbol и base/overlay-freshness.
+CREATE TABLE IF NOT EXISTS subsystem_summaries (
+    repo            text    NOT NULL DEFAULT '',
+    branch          text    NOT NULL,
+    cluster_key     text    NOT NULL,            -- напр. "reviewer/index"
+    title           text    NOT NULL,            -- одна строка «что это»
+    summary         text    NOT NULL,            -- сжатый абзац (RU)
+    member_node_ids text[]  NOT NULL DEFAULT '{}',
+    source_hash     text    NOT NULL,            -- ключ свежести
+    embedding       vector(1024),                -- nullable; зарезервировано под вектор-поиск
+    updated_at      timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (repo, branch, cluster_key)
+);

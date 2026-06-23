@@ -16,7 +16,7 @@ log = logging.getLogger(__name__)
 
 
 def create_server(service: MCPReviewService) -> FastMCP:
-    """Создать и вернуть сконфигурированный FastMCP-сервер с 25 тулами.
+    """Создать и вернуть сконфигурированный FastMCP-сервер с 29 тулами.
 
     Все тулы — обычные def (sync), а не async: сервис не потокобезопасен
     и рассчитан на последовательное исполнение sync-тулов FastMCP в event loop.
@@ -181,6 +181,36 @@ def create_server(service: MCPReviewService) -> FastMCP:
         return service.get_pr_diff(repo, number)
 
     @mcp.tool()
+    def list_subsystem_clusters(repo: str, branch: str | None = None,
+                                depth: int | None = None,
+                                min_size: int | None = None) -> dict:
+        """Cluster the base code graph into subsystems (by module path) for the
+        /reviewer_summarize-subsystems skill. Returns per cluster: cluster_key,
+        num_members, files, top_symbols (by centrality), source_hash, and stale
+        (true when the stored summary is missing or its source_hash differs).
+        No PR session; branch defaults to the primary tracked branch."""
+        return service.list_subsystem_clusters(repo, branch, depth, min_size)
+
+    @mcp.tool()
+    def index_subsystem_summary(repo: str, branch: str, cluster_key: str,
+                                title: str, summary: str, source_hash: str) -> dict:
+        """Persist one subsystem summary (idempotent upsert keyed by
+        repo+branch+cluster_key). Called by /reviewer_summarize-subsystems after the
+        LLM writes title+summary for a cluster. source_hash ties the summary to the
+        cluster's current content for staleness."""
+        return service.index_subsystem_summary(
+            repo, branch, cluster_key, title, summary, source_hash)
+
+    @mcp.tool()
+    def get_subsystem_summaries(repo: str, branch: str | None = None,
+                                cluster_key: str | None = None) -> dict:
+        """Cheap high-level prior for ask / PR-walkthrough: precomputed subsystem
+        summaries. cluster_key=None → all {cluster_key, title, summary}; a cluster_key
+        → one full summary (or null). Empty when none built (consumer is fail-open).
+        No PR session; branch defaults to primary."""
+        return service.get_subsystem_summaries(repo, branch, cluster_key)
+
+    @mcp.tool()
     def publish_review(
         repo: str,
         pr: int,
@@ -210,6 +240,14 @@ def create_server(service: MCPReviewService) -> FastMCP:
     def get_candidate_findings(repo: str, pr: int) -> str:
         """Прочитать накопленных кандидатов с id (для verify)."""
         return service.get_candidate_findings(repo, pr)
+
+    @mcp.tool()
+    def post_pr_walkthrough(repo: str, pr: int, markdown: str) -> dict:
+        """Post a human-facing PR reading guide (walkthrough) as a PR review comment,
+        separate from bug findings (carries a <!-- ai-walkthrough --> marker, empty
+        inline comments). Outward-facing: the /reviewer_pr-walkthrough skill calls this
+        only on explicit user request. Requires an active prepare_review session."""
+        return service.post_pr_walkthrough(repo, pr, markdown)
 
     return mcp
 
