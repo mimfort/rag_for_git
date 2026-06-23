@@ -550,11 +550,27 @@ class MCPReviewService:
                    if cluster_key_of(p, depth) == cluster_key]
         consistent = compute_source_hash(members) == source_hash
         member_node_ids = sorted(nid for nid, _ in members) if consistent else []
+        # Дедуп эмбеддинга по source_hash (PRI-167): пересчитываем вектор только если
+        # хеш кластера изменился; иначе embedding=None → COALESCE сохранит старый вектор,
+        # Voyage не дёргается. Сбой Voyage → embedding=None + note (бэкфилл доберёт).
+        note: str | None = None
+        embedding: list[float] | None = None
+        stored_hash = self.components.summary_store.get_source_hashes(repo, resolved).get(cluster_key)
+        if stored_hash != source_hash:
+            try:
+                embedding = self.components.embedder.embed_documents([f"{title}\n{summary}"])[0]
+            except Exception:
+                log.warning("index_subsystem_summary: сбой эмбеддинга — бэкфилл доберёт",
+                            exc_info=True)
+                note = "эмбеддинг не вычислен (Voyage недоступен) — будет добран бэкфиллом"
         self.components.summary_store.upsert_summary(
-            repo, resolved, cluster_key, title, summary, member_node_ids, source_hash)
+            repo, resolved, cluster_key, title, summary, member_node_ids, source_hash,
+            embedding=embedding)
         out = {"cluster_key": cluster_key, "stored": True, "members": len(member_node_ids)}
         if not consistent:
             out["note"] = "состав кластера изменился с момента list — member_node_ids не сохранены"
+        elif note:
+            out["note"] = note
         return out
 
     def get_subsystem_summaries(self, repo: str, branch: str | None = None,

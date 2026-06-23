@@ -228,6 +228,31 @@ def test_prune_subsystem_summaries_empty_base_is_noop():
     c.summary_store.delete_summaries_except.assert_not_called()   # base пуст → не вайпаем
 
 
+def test_index_subsystem_summary_embeds_when_hash_changed():
+    from reviewer.graph.summaries import compute_source_hash
+    c = MagicMock()
+    c.store.list_base_members.return_value = [("reviewer/index/a.py", "A", "h1", 1, "sk1")]
+    sh = compute_source_hash([("reviewer/index/a.py#A", "sk1")])
+    c.summary_store.get_source_hashes.return_value = {}          # сводки ещё нет → hash изменился
+    c.embedder.embed_documents.return_value = [[0.5, 0.5]]
+    svc = _svc(c)
+    svc.index_subsystem_summary("o/n", "dev", "reviewer/index", "Индекс", "тело", sh)
+    c.embedder.embed_documents.assert_called_once_with(["Индекс\nтело"])
+    assert c.summary_store.upsert_summary.call_args.kwargs["embedding"] == [0.5, 0.5]
+
+
+def test_index_subsystem_summary_dedups_embedding_on_unchanged_hash():
+    from reviewer.graph.summaries import compute_source_hash
+    c = MagicMock()
+    c.store.list_base_members.return_value = [("reviewer/index/a.py", "A", "h1", 1, "sk1")]
+    sh = compute_source_hash([("reviewer/index/a.py#A", "sk1")])
+    c.summary_store.get_source_hashes.return_value = {"reviewer/index": sh}   # хеш совпал
+    svc = _svc(c)
+    svc.index_subsystem_summary("o/n", "dev", "reviewer/index", "Индекс", "тело", sh)
+    c.embedder.embed_documents.assert_not_called()              # Voyage не дёрнут
+    assert c.summary_store.upsert_summary.call_args.kwargs["embedding"] is None
+
+
 def test_resolve_summary_topk_threshold_override_from_review_yml():
     svc = _svc_with_vcs(_FakeVCS("summary_topk_threshold: 5"))
     assert svc._resolve_summary_topk_threshold("o/n", "dev") == (5, ".review.yml")
