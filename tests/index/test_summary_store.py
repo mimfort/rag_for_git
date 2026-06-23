@@ -44,6 +44,7 @@ def test_upsert_is_idempotent_update(store):
 
 def test_list_base_members_reads_base_ref_rows():
     from reviewer.index.store import ChunkStore, ChunkRow
+    from reviewer.index.chunker import symbol_skeleton_hash
     cs = ChunkStore(DSN)
     cs.init_schema()
     cs.upsert([ChunkRow(repo="t/t", ref="base:dev", content_hash="h", path="reviewer/x/a.py",
@@ -51,7 +52,16 @@ def test_list_base_members_reads_base_ref_rows():
                         start_line=3, end_line=9, text="def a(): ...", embedding=[0.0]*1024)])
     try:
         members = cs.list_base_members("t/t", "dev")
-        assert ("reviewer/x/a.py", "A", "h", 3) in members
+        # 5-кортеж: skeleton_hash считается на лету из text
+        assert ("reviewer/x/a.py", "A", "h", 3, symbol_skeleton_hash("def a(): ...")) in members
     finally:
         cs.delete_ref("t/t", "base:dev")
         cs.close()
+
+
+def test_get_updated_ats_returns_datetime_per_cluster(store):
+    from datetime import datetime
+    store.upsert_summary("t/t", "dev", "reviewer/index", "A", "s", [], "h1")
+    ats = store.get_updated_ats("t/t", "dev")
+    assert "reviewer/index" in ats
+    assert isinstance(ats["reviewer/index"], datetime)   # сырой datetime, не isoformat

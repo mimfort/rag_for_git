@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import threading
+from datetime import datetime
 
 import psycopg.errors
 from pgvector.psycopg import register_vector
@@ -63,6 +64,18 @@ class SummaryStore:
         except psycopg.errors.UndefinedTable:
             return {}
         return {k: h for k, h in rows}
+
+    def get_updated_ats(self, repo: str, branch: str) -> dict[str, datetime]:
+        """updated_at по cluster_key — для упорядочивания stale-кластеров под cap (PRI-165:
+        без сводки → старейшие первыми). Нет таблицы → {} (fail-soft, как get_source_hashes)."""
+        try:
+            with self._connect() as conn:
+                rows = conn.execute(
+                    "SELECT cluster_key, updated_at FROM subsystem_summaries "
+                    "WHERE repo=%s AND branch=%s", (repo, branch)).fetchall()
+        except psycopg.errors.UndefinedTable:
+            return {}
+        return {k: u for k, u in rows}
 
     def get_summaries(self, repo: str, branch: str) -> list[dict]:
         try:
