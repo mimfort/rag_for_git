@@ -295,6 +295,7 @@ def test_get_subsystem_summaries_query_below_threshold_returns_all():
     out = svc.get_subsystem_summaries("o/n", "dev", query="что угодно")
     assert out["summaries"][0]["cluster_key"] == "reviewer/index"
     c.summary_store.search_summaries.assert_not_called()        # бэк-компат: отдаём все
+    c.embedder.embed_query.assert_not_called()                  # Voyage не дёрнут (ниже порога)
 
 
 def test_get_subsystem_summaries_no_query_returns_all_without_counting():
@@ -326,3 +327,29 @@ def test_backfill_summary_embeddings_noop_when_none_pending():
     out = svc.backfill_summary_embeddings("o/n", "dev")
     assert out == {"embedded": 0}
     c.embedder.embed_documents.assert_not_called()
+
+
+def test_index_subsystem_summary_failsoft_when_embed_raises():
+    from reviewer.graph.summaries import compute_source_hash
+    c = MagicMock()
+    c.store.list_base_members.return_value = [("reviewer/index/a.py", "A", "h1", 1, "sk1")]
+    sh = compute_source_hash([("reviewer/index/a.py#A", "sk1")])
+    c.summary_store.get_source_hashes.return_value = {}          # hash изменился → ветка эмбеддинга
+    c.embedder.embed_documents.side_effect = RuntimeError("voyage down")
+    svc = _svc(c)
+    out = svc.index_subsystem_summary("o/n", "dev", "reviewer/index", "Индекс", "тело", sh)
+    assert out["stored"] is True
+    assert "note" in out                                         # fail-soft нота
+    assert c.summary_store.upsert_summary.call_args.kwargs["embedding"] is None  # сводка сохранена без вектора
+
+
+def test_backfill_summary_embeddings_failsoft_when_embed_raises():
+    c = MagicMock()
+    c.summary_store.get_pending_embeddings.return_value = [
+        {"cluster_key": "auth", "title": "Авторизация", "summary": "тело"}]
+    c.embedder.embed_documents.side_effect = RuntimeError("voyage down")
+    svc = _svc(c)
+    out = svc.backfill_summary_embeddings("o/n", "dev")
+    assert out["embedded"] == 0
+    assert "note" in out
+    c.summary_store.set_embedding.assert_not_called()            # без вектора не пишем

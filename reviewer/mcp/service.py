@@ -555,6 +555,9 @@ class MCPReviewService:
         # Voyage не дёргается. Сбой Voyage → embedding=None + note (бэкфилл доберёт).
         note: str | None = None
         embedding: list[float] | None = None
+        # Свежесть эмбеддинга держится на source_hash (зависит только от node_id+skeleton_hash):
+        # неизменный hash → embedding=None → COALESCE сохраняет старый вектор. Скилл зовёт index
+        # только для stale-кластеров, поэтому «тот же hash, иной текст» в норме не возникает.
         stored_hash = self.components.summary_store.get_source_hashes(repo, resolved).get(cluster_key)
         if stored_hash != source_hash:
             try:

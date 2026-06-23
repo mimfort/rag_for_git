@@ -142,6 +142,7 @@ class SummaryStore:
                 for k, t, s, u in rows]
 
     def count_summaries(self, repo: str, branch: str) -> int:
+        """Число сводок repo/branch — для порога масштаба в query-пути (PRI-167)."""
         try:
             with self._connect() as conn:
                 row = conn.execute(
@@ -165,6 +166,7 @@ class SummaryStore:
 
     def set_embedding(self, repo: str, branch: str, cluster_key: str,
                       embedding: list[float]) -> None:
+        """Записать эмбеддинг одной сводки (бэкфилл NULL-векторов, PRI-167)."""
         with self._connect() as conn:
             conn.execute(
                 "UPDATE subsystem_summaries SET embedding=%s "

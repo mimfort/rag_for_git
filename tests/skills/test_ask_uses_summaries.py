@@ -22,7 +22,7 @@ def test_ask_passes_query_to_summaries():
 
 def test_pr_walkthrough_passes_query_to_summaries():
     text = PRW.read_text(encoding="utf-8")
-    assert "query=" in text and "get_subsystem_summaries" in text
+    assert "get_subsystem_summaries(repo, pr.base_ref, query=" in text
 
 
 def test_summarize_triggers_embedding_backfill():
