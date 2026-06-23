@@ -9,3 +9,4 @@ def test_example_review_yml_documents_new_keys():
     assert "ignore" in (data.get("paths") or {}), "paths.ignore должен быть в примере"
     assert "summary_cluster_depth_overrides" in data
     assert "summary_topk_threshold" in data
+    assert "summary_cluster_depth" in data
