@@ -84,3 +84,7 @@ CREATE TABLE IF NOT EXISTS subsystem_summaries (
     updated_at      timestamptz NOT NULL DEFAULT now(),
     PRIMARY KEY (repo, branch, cluster_key)
 );
+
+-- ANN по сводкам подсистем (pgvector HNSW, косинус) — PRI-167
+CREATE INDEX IF NOT EXISTS subsystem_summaries_hnsw ON subsystem_summaries
+USING hnsw (embedding vector_cosine_ops) WITH (m = 16, ef_construction = 64);

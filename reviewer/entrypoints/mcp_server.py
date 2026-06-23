@@ -183,13 +183,21 @@ def create_server(service: MCPReviewService) -> FastMCP:
     @mcp.tool()
     def list_subsystem_clusters(repo: str, branch: str | None = None,
                                 depth: int | None = None,
-                                min_size: int | None = None) -> dict:
-        """Cluster the base code graph into subsystems (by module path) for the
-        /reviewer_summarize-subsystems skill. Returns per cluster: cluster_key,
-        num_members, files, top_symbols (by centrality), source_hash, and stale
-        (true when the stored summary is missing or its source_hash differs).
-        No PR session; branch defaults to the primary tracked branch."""
-        return service.list_subsystem_clusters(repo, branch, depth, min_size)
+                                min_size: int | None = None,
+                                cap: int | None = None) -> dict:
+        """Кластеризовать base-граф кода по путям модулей для скилла
+        /reviewer_summarize-subsystems. Возвращает {branch, deferred, clusters:[...]},
+        где каждый кластер содержит cluster_key, num_members, files, top_symbols
+        (по центральности), source_hash и stale (true, если сводка отсутствует
+        или её source_hash устарел). Без PR-сессии; branch по умолчанию —
+        первичная отслеживаемая ветка.
+
+        cap (по умолчанию — env SUMMARY_REBUILD_CAP; None/0 = без ограничений)
+        отбрасывает наименее приоритетные stale-кластеры за один проход: сначала
+        кластеры без сводки, затем с наиболее старым updated_at. Отложенные
+        кластеры не попадают в clusters, но учитываются в deferred — количестве
+        задержанных этим проходом кластеров."""
+        return service.list_subsystem_clusters(repo, branch, depth, min_size, cap)
 
     @mcp.tool()
     def index_subsystem_summary(repo: str, branch: str, cluster_key: str,
@@ -203,12 +211,35 @@ def create_server(service: MCPReviewService) -> FastMCP:
 
     @mcp.tool()
     def get_subsystem_summaries(repo: str, branch: str | None = None,
-                                cluster_key: str | None = None) -> dict:
+                                cluster_key: str | None = None,
+                                query: str | None = None,
+                                top_k: int | None = None) -> dict:
         """Cheap high-level prior for ask / PR-walkthrough: precomputed subsystem
-        summaries. cluster_key=None → all {cluster_key, title, summary}; a cluster_key
-        → one full summary (or null). Empty when none built (consumer is fail-open).
+        summaries. cluster_key → one full summary (or null). Otherwise: with `query`
+        AND when the summary count exceeds the scale threshold (SUMMARY_TOPK_THRESHOLD,
+        per-repo .review.yml), returns the top-k summaries nearest the query by
+        embedding; without `query` or at/below the threshold, returns all (back-compat).
+        top_k defaults to 8. Empty when none built (consumer is fail-open).
         No PR session; branch defaults to primary."""
-        return service.get_subsystem_summaries(repo, branch, cluster_key)
+        return service.get_subsystem_summaries(repo, branch, cluster_key, query, top_k)
+
+    @mcp.tool()
+    def prune_subsystem_summaries(repo: str, branch: str | None = None) -> dict:
+        """Prune subsystem summaries orphaned by a depth change or removed modules.
+        Re-derives current cluster_keys from the base index at the resolved depth and
+        deletes summaries outside that set. Call ONLY after a full (uncapped) pass of
+        /reviewer_summarize-subsystems — deferred clusters are not orphans. Empty base
+        → no-op. Returns {pruned, kept}. No PR session; branch defaults to primary."""
+        return service.prune_subsystem_summaries(repo, branch)
+
+    @mcp.tool()
+    def backfill_summary_embeddings(repo: str, branch: str | None = None) -> dict:
+        """Self-heal: embed any subsystem summaries with a NULL embedding from their
+        stored title+summary (no LLM). Idempotent — a later run embeds nothing.
+        Called by /reviewer_summarize-subsystems after the LLM pass so older summaries
+        become searchable by proximity. Returns {embedded}. No PR session; branch
+        defaults to primary."""
+        return service.backfill_summary_embeddings(repo, branch)
 
     @mcp.tool()
     def publish_review(

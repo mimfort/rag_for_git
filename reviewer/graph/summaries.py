@@ -16,6 +16,7 @@ class Member:
     node_id: str          # "path#fqn"
     path: str
     content_hash: str
+    skeleton_hash: str    # хэш структурного скелета — ключ свежести по структуре (PRI-165)
     start_line: int
 
 
@@ -41,11 +42,30 @@ def cluster_key(path: str, depth: int) -> str:
     return "/".join(dir_parts[:depth])
 
 
-def compute_source_hash(items: list[tuple[str, str]]) -> str:
-    """sha256 от sorted("node_id:content_hash") — детерминированный ключ свежести.
+def depth_for(path: str, default: int, overrides: dict[str, int]) -> int:
+    """Глубина для пути: depth самого длинного ключа-префикса ``overrides``
+    (совпадение по сегментам ДИРЕКТОРИИ), иначе ``default``.
 
-    Меняется только при изменении состава кластера или содержимого его файлов
-    (content_hash — тот же дедуп-инвариант, что у чанков)."""
+    Ключ ``"reviewer/index"`` матчит ``"reviewer/index/store.py"``, но НЕ
+    ``"reviewer/indexer/x.py"`` (сравнение посегментно, не по строке-префиксу).
+    """
+    if not overrides:
+        return default
+    dir_parts = path.split("/")[:-1]
+    best_depth, best_len = default, -1
+    for key, d in overrides.items():
+        kparts = key.strip("/").split("/")
+        if dir_parts[:len(kparts)] == kparts and len(kparts) > best_len:
+            best_depth, best_len = d, len(kparts)
+    return best_depth
+
+
+def compute_source_hash(items: list[tuple[str, str]]) -> str:
+    """sha256 от sorted("node_id:skeleton_hash") — детерминированный ключ свежести.
+
+    Меняется при изменении состава кластера или СТРУКТУРЫ его членов (сигнатуры/docstring),
+    но НЕ при правке тела (PRI-165: вход — skeleton_hash, не content_hash). Сортировка пар
+    делает ключ независимым от порядка членов."""
     joined = "\n".join(sorted(f"{nid}:{h}" for nid, h in items))
     return hashlib.sha256(joined.encode("utf-8")).hexdigest()
 
@@ -57,11 +77,17 @@ def build_clusters(
     depth: int = 2,
     min_size: int = 1,
     top_n: int = 10,
+    depth_overrides: dict[str, int] | None = None,
 ) -> list[Cluster]:
-    """Сгруппировать членов по cluster_key; top_symbols — по in_degree (fail-soft)."""
+    """Сгруппировать членов по cluster_key; top_symbols — по in_degree (fail-soft).
+
+    ``depth_overrides`` задаёт per-prefix глубину: longest-prefix-match по
+    сегментам директории; при отсутствии совпадения используется ``depth``.
+    """
+    overrides = depth_overrides or {}
     groups: dict[str, list[Member]] = {}
     for m in members:
-        groups.setdefault(cluster_key(m.path, depth), []).append(m)
+        groups.setdefault(cluster_key(m.path, depth_for(m.path, depth, overrides)), []).append(m)
 
     degrees: dict[str, int] = {}
     if in_degree_fn is not None:
@@ -84,6 +110,6 @@ def build_clusters(
             files=sorted({m.path for m in ms}),
             top_symbols=top,
             num_members=len(ms),
-            source_hash=compute_source_hash([(m.node_id, m.content_hash) for m in ms]),
+            source_hash=compute_source_hash([(m.node_id, m.skeleton_hash) for m in ms]),
         ))
     return clusters

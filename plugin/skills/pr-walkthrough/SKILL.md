@@ -35,7 +35,7 @@ optional `post_pr_walkthrough` (only on explicit user request).
 4. **Impact ("careful, affects X").** For the central changed symbols, `find_callers` /
    `get_related_symbols` → who depends on them. Every "affects X" must be backed by a real caller.
 
-5. **Subsystem prior (optional).** `get_subsystem_summaries(repo, pr.base_ref)` → name the touched
+5. **Subsystem prior (optional).** `get_subsystem_summaries(repo, pr.base_ref, query="<PR title + changed file paths>")` → name the touched
    subsystem(s) in one line. Pass the PR's target branch `pr.base_ref` (from the `prepare_review`
    response), NOT the local git branch — subsystem summaries are indexed per target branch
    (`base:<branch>`). Empty / unavailable → skip (fail-open).

@@ -328,6 +328,71 @@ class MCPReviewService:
                     f"({self.settings.review_branches_list()}))")
         return (repo, branch or self.settings.primary_branch())
 
+    def _resolve_summary_depth(self, repo: str, branch: str) -> tuple[int, dict[str, int], str]:
+        """Резолв глубины кластеризации сводок: env-дефолт → override из .review.yml ветки.
+
+        Возвращает (depth, depth_overrides, source). depth_overrides — карта
+        префикс→depth из .review.yml (PRI-161); пусто, если ключа нет. Fail-soft:
+        нет токена/ветки/файла/кривой yml → (settings.summary_cluster_depth, {}, "env").
+        source = ".review.yml", если файл задаёт summary_cluster_depth или _overrides."""
+        import yaml
+        from reviewer.policy.policy import ReviewPolicy
+        default = self.settings.summary_cluster_depth
+        owner, name = repo.split("/", 1)
+        vcs = None
+        try:
+            vcs = (self._vcs_factory(owner, name) if self._vcs_factory
+                   else self._review_service._create_vcs_provider(owner, name))
+            text = vcs.get_file_at_ref(".review.yml", branch)
+            if not text:
+                return default, {}, "env"
+            data = yaml.safe_load(text) or {}
+            pol = ReviewPolicy.load(self.settings, text)
+            keyed = ("summary_cluster_depth" in data
+                     or "summary_cluster_depth_overrides" in data)
+            return (pol.summary_cluster_depth, pol.summary_cluster_depth_overrides,
+                    ".review.yml" if keyed else "env")
+        except Exception:
+            log.warning("_resolve_summary_depth: fail-soft → env-дефолт", exc_info=True)
+            return default, {}, "env"
+        finally:
+            if vcs is not None and self._vcs_factory is None:
+                try:
+                    vcs.close()
+                except Exception:
+                    log.warning("_resolve_summary_depth: не удалось закрыть VCS", exc_info=True)
+
+    def _resolve_summary_topk_threshold(self, repo: str, branch: str) -> tuple[int, str]:
+        """Резолв порога масштаба приора сводок: env-дефолт → override из .review.yml ветки.
+
+        repo уже нормализован (вызывается после _resolve_repo_branch). Fail-soft:
+        нет токена/ветки/файла/кривой yml → (settings.summary_topk_threshold, "env").
+        source = ".review.yml", только если файл явно задаёт ключ summary_topk_threshold."""
+        import yaml
+        from reviewer.policy.policy import ReviewPolicy
+        default = self.settings.summary_topk_threshold
+        owner, name = repo.split("/", 1)
+        vcs = None
+        try:
+            vcs = (self._vcs_factory(owner, name) if self._vcs_factory
+                   else self._review_service._create_vcs_provider(owner, name))
+            text = vcs.get_file_at_ref(".review.yml", branch)
+            if not text:
+                return default, "env"
+            data = yaml.safe_load(text) or {}
+            val = ReviewPolicy.load(self.settings, text).summary_topk_threshold
+            return val, (".review.yml" if "summary_topk_threshold" in data else "env")
+        except Exception:
+            log.warning("_resolve_summary_topk_threshold: fail-soft → env-дефолт", exc_info=True)
+            return default, "env"
+        finally:
+            if vcs is not None and self._vcs_factory is None:
+                try:
+                    vcs.close()
+                except Exception:
+                    log.warning("_resolve_summary_topk_threshold: не удалось закрыть VCS",
+                                exc_info=True)
+
     def search_codebase(self, repo: str, query: str, top_k: int = 10,
                         branch: str | None = None,
                         include_tests: bool = False) -> str:
@@ -417,34 +482,54 @@ class MCPReviewService:
             return "(определение не найдено)"
 
     def list_subsystem_clusters(self, repo: str, branch: str | None = None,
-                                depth: int | None = None,
-                                min_size: int | None = None) -> dict:
-        """Кластеризовать base-граф по модулям → кластеры для /summarize-subsystems."""
+                                depth: int | None = None, min_size: int | None = None,
+                                cap: int | None = None) -> dict:
+        """Кластеризовать base-граф по модулям → кластеры для /summarize-subsystems.
+        cap (дефолт Settings.summary_rebuild_cap; None/0=безлимит) отбрасывает наименее
+        приоритетные stale-кластеры (без сводки → старейшие updated_at первыми) и считает
+        их в deferred (PRI-165)."""
         from reviewer.graph.summaries import Member, build_clusters
         rb = self._resolve_repo_branch(repo, branch)
         if isinstance(rb, str):
-            return {"clusters": [], "note": rb}
+            return {"branch": branch or "", "deferred": 0, "clusters": [], "note": rb}
         repo, resolved = rb
         raw = self.components.store.list_base_members(repo, resolved)
         if not raw:
-            return {"clusters": [],
+            return {"branch": resolved, "deferred": 0, "clusters": [],
                     "note": "(base-индекс пуст — выполните /reviewer_sync-codebase)"}
-        members = [Member(node_id=f"{p}#{s}", path=p, content_hash=h, start_line=sl)
-                   for p, s, h, sl in raw]
+        members = [Member(node_id=f"{p}#{s}", path=p, content_hash=h, start_line=sl,
+                          skeleton_hash=sk)
+                   for p, s, h, sl, sk in raw]
         graph = self.components.graph
         in_degree_fn = (
             (lambda ids: graph.in_degree(repo, ids, branch=resolved))
             if graph is not None else None)
+        if depth is None:
+            resolved_depth, overrides, depth_source = self._resolve_summary_depth(repo, resolved)
+        else:
+            resolved_depth, overrides, depth_source = depth, {}, "arg"
         clusters = build_clusters(
-            members, in_degree_fn,
-            depth=depth or self.settings.summary_cluster_depth,
-            min_size=min_size or 1)
+            members, in_degree_fn, depth=resolved_depth, min_size=min_size or 1,
+            depth_overrides=overrides)
         stored = self.components.summary_store.get_source_hashes(repo, resolved)
-        return {"branch": resolved, "clusters": [
+        stale = {c.key: (stored.get(c.key) != c.source_hash) for c in clusters}
+        orphans = len(set(stored) - {c.key for c in clusters})
+        effective_cap = cap if cap is not None else self.settings.summary_rebuild_cap
+        deferred_keys: set[str] = set()
+        if effective_cap and effective_cap > 0:
+            stale_cl = [c for c in clusters if stale[c.key]]
+            if len(stale_cl) > effective_cap:
+                updated = self.components.summary_store.get_updated_ats(repo, resolved)
+                never = [c for c in stale_cl if c.key not in updated]      # без сводки — первыми
+                aged = sorted((c for c in stale_cl if c.key in updated),
+                              key=lambda c: updated[c.key])                # старейшие — раньше
+                deferred_keys = {c.key for c in (never + aged)[effective_cap:]}
+        return {"branch": resolved, "depth": resolved_depth, "depth_source": depth_source,
+                "deferred": len(deferred_keys), "orphans": orphans, "clusters": [
             {"cluster_key": c.key, "num_members": c.num_members, "files": c.files,
              "top_symbols": c.top_symbols, "source_hash": c.source_hash,
-             "stale": stored.get(c.key) != c.source_hash}
-            for c in clusters]}
+             "stale": stale[c.key]}
+            for c in clusters if c.key not in deferred_keys]}
 
     def index_subsystem_summary(self, repo: str, branch: str, cluster_key: str,
                                 title: str, summary: str, source_hash: str) -> dict:
@@ -454,30 +539,56 @@ class MCPReviewService:
         и пишутся только при совпадении пере-вычисленного source_hash с переданным —
         иначе [] + note (состав базы изменился между list и index; самозалечивается
         следующим проходом summarize-subsystems)."""
-        from reviewer.graph.summaries import cluster_key as cluster_key_of, compute_source_hash
+        from reviewer.graph.summaries import (cluster_key as cluster_key_of,
+                                              compute_source_hash, depth_for)
         rb = self._resolve_repo_branch(repo, branch)
         if isinstance(rb, str):
             return {"stored": False, "note": rb}
         repo, resolved = rb
-        # depth берём дефолтный (как list_subsystem_clusters без явного depth): cluster_key и
-        # source_hash зависят от depth, поэтому совпадение хешей гарантировано только когда
-        # кластеры листались тем же дефолтом. При нестандартном depth — fail-soft []+note ниже.
-        depth = self.settings.summary_cluster_depth
+        # depth резолвится тем же хелпером, что list_subsystem_clusters без явного depth:
+        # cluster_key и source_hash зависят от depth, поэтому совпадение хешей гарантировано
+        # только когда кластеры листались тем же дефолтом. При нестандартном depth —
+        # fail-soft []+note ниже.
+        depth, overrides, _ = self._resolve_summary_depth(repo, resolved)
         raw = self.components.store.list_base_members(repo, resolved)
-        members = [(f"{p}#{s}", h) for p, s, h, _ in raw
-                   if cluster_key_of(p, depth) == cluster_key]
+        members = [(f"{p}#{s}", sk) for p, s, _h, _sl, sk in raw
+                   if cluster_key_of(p, depth_for(p, depth, overrides)) == cluster_key]
         consistent = compute_source_hash(members) == source_hash
         member_node_ids = sorted(nid for nid, _ in members) if consistent else []
+        # Дедуп эмбеддинга по source_hash (PRI-167): пересчитываем вектор только если
+        # хеш кластера изменился; иначе embedding=None → COALESCE сохранит старый вектор,
+        # Voyage не дёргается. Сбой Voyage → embedding=None + note (бэкфилл доберёт).
+        note: str | None = None
+        embedding: list[float] | None = None
+        # Свежесть эмбеддинга держится на source_hash (зависит только от node_id+skeleton_hash):
+        # неизменный hash → embedding=None → COALESCE сохраняет старый вектор. Скилл зовёт index
+        # только для stale-кластеров, поэтому «тот же hash, иной текст» в норме не возникает.
+        stored_hash = self.components.summary_store.get_source_hashes(repo, resolved).get(cluster_key)
+        if stored_hash != source_hash:
+            try:
+                embedding = self.components.embedder.embed_documents([f"{title}\n{summary}"])[0]
+            except Exception:
+                log.warning("index_subsystem_summary: сбой эмбеддинга — бэкфилл доберёт",
+                            exc_info=True)
+                note = "эмбеддинг не вычислен (Voyage недоступен) — будет добран бэкфиллом"
         self.components.summary_store.upsert_summary(
-            repo, resolved, cluster_key, title, summary, member_node_ids, source_hash)
+            repo, resolved, cluster_key, title, summary, member_node_ids, source_hash,
+            embedding=embedding)
         out = {"cluster_key": cluster_key, "stored": True, "members": len(member_node_ids)}
         if not consistent:
             out["note"] = "состав кластера изменился с момента list — member_node_ids не сохранены"
+        elif note:
+            out["note"] = note
         return out
 
     def get_subsystem_summaries(self, repo: str, branch: str | None = None,
-                                cluster_key: str | None = None) -> dict:
-        """Дешёвый приор: предрасчитанные summary подсистем (fail-open у потребителя)."""
+                                cluster_key: str | None = None, query: str | None = None,
+                                top_k: int | None = None) -> dict:
+        """Дешёвый приор: предрасчитанные summary подсистем (fail-open у потребителя).
+
+        cluster_key → одна сводка. Иначе: при query И числе сводок > порога масштаба
+        (SUMMARY_TOPK_THRESHOLD, per-repo .review.yml) — ANN top-k по близости (PRI-167);
+        иначе (без query или ≤ порога) — все (бэк-компат)."""
         rb = self._resolve_repo_branch(repo, branch)
         if isinstance(rb, str):
             return {"summaries": [], "note": rb}
@@ -485,7 +596,55 @@ class MCPReviewService:
         store = self.components.summary_store
         if cluster_key:
             return {"summary": store.get_summary(repo, resolved, cluster_key)}
+        if query:
+            threshold, _ = self._resolve_summary_topk_threshold(repo, resolved)
+            if store.count_summaries(repo, resolved) > threshold:
+                qvec = self.components.embedder.embed_query(query)
+                return {"summaries": store.search_summaries(repo, resolved, qvec, top_k or 8)}
         return {"summaries": store.get_summaries(repo, resolved)}
+
+    def prune_subsystem_summaries(self, repo: str, branch: str | None = None) -> dict:
+        """Удалить сводки подсистем, осиротевшие после смены depth или удаления модулей.
+
+        Пере-выводит текущие cluster_keys из base-состава на резолвнутом depth и
+        удаляет сводки вне этого множества. Вызывать ТОЛЬКО на полном (uncapped)
+        прогоне скилла — иначе отложенные капом кластеры будут приняты за осиротевшие.
+        Пустой base → no-op (не вайпать на транзиентной пустоте). Fail-soft."""
+        from reviewer.graph.summaries import cluster_key as cluster_key_of, depth_for
+        rb = self._resolve_repo_branch(repo, branch)
+        if isinstance(rb, str):
+            return {"pruned": 0, "kept": 0, "note": rb}
+        repo, resolved = rb
+        depth, overrides, _ = self._resolve_summary_depth(repo, resolved)
+        raw = self.components.store.list_base_members(repo, resolved)
+        if not raw:
+            return {"pruned": 0, "kept": 0, "note": "(base-индекс пуст — purge пропущен)"}
+        keep_keys = sorted({cluster_key_of(p, depth_for(p, depth, overrides))
+                            for p, _s, _h, _sl, _sk in raw})
+        pruned = self.components.summary_store.delete_summaries_except(repo, resolved, keep_keys)
+        return {"pruned": pruned, "kept": len(keep_keys)}
+
+    def backfill_summary_embeddings(self, repo: str, branch: str | None = None) -> dict:
+        """Self-heal: дозаполнить эмбеддинги сводок с embedding IS NULL из хранимого
+        title+summary (без LLM, дедуп по NULL). Идемпотентно: следующий прогон → 0.
+        Вызывается /summarize-subsystems после LLM-прохода. Fail-soft (PRI-167)."""
+        rb = self._resolve_repo_branch(repo, branch)
+        if isinstance(rb, str):
+            return {"embedded": 0, "note": rb}
+        repo, resolved = rb
+        store = self.components.summary_store
+        pending = store.get_pending_embeddings(repo, resolved)
+        if not pending:
+            return {"embedded": 0}
+        try:
+            vecs = self.components.embedder.embed_documents(
+                [f"{p['title']}\n{p['summary']}" for p in pending])
+        except Exception:
+            log.warning("backfill_summary_embeddings: сбой эмбеддинга", exc_info=True)
+            return {"embedded": 0, "note": "Voyage недоступен — бэкфилл пропущен"}
+        for p, vec in zip(pending, vecs):
+            store.set_embedding(repo, resolved, p["cluster_key"], vec)
+        return {"embedded": len(pending)}
 
     def get_pr_diff(self, repo: str, number: int) -> str:
         """Unified diff изменённых файлов PR (session-less) — ленивая подтяжка для /solve-task.

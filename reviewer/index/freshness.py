@@ -2,6 +2,7 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from reviewer.index.chunker import chunk_python
+from reviewer.index.pathfilter import is_ignored
 from reviewer.index.refs import base_ref
 from reviewer.index.store import ChunkRow
 
@@ -31,18 +32,22 @@ def _embed_and_upsert(store, embedder, repo: str, rows: list[ChunkRow]) -> None:
 
 
 def build_overlay(store, embedder, repo: str, pr_number: int, changed_files: list[str],
-                  head_sources: dict[str, str]) -> None:
+                  head_sources: dict[str, str], ignore: list[str] = ()) -> None:
     """Чанкует изменённые файлы PR head в (repo, ref='pr:<n>'). Дедуп по content_hash.
 
     Аргументы:
         head_sources: словарь path → содержимое head-версии файла.
                       Файлы без содержимого или не-.py пропускаются.
+        ignore: список ignore-паттернов; совпадающие пути пропускаются без эмбеддинга.
     """
     ref = f"pr:{pr_number}"
+    ignore_list = list(ignore)
     seen = store.existing_hashes(repo, ref)
     batch: list[ChunkRow] = []
     for path in changed_files:
         if not path.endswith(".py"):
+            continue
+        if is_ignored(path, ignore_list):
             continue
         src = head_sources.get(path)
         if not src:
@@ -57,13 +62,16 @@ def build_overlay(store, embedder, repo: str, pr_number: int, changed_files: lis
 def update_base(store, embedder, repo: str, target_ref: str,
                 changed_files: list[str],
                 read: Callable[[str], str | None],
-                removed_files: list[str] | tuple[str, ...] = ()) -> None:
+                removed_files: list[str] | tuple[str, ...] = (),
+                ignore: list[str] = ()) -> None:
     """Инкрементально обновляет (repo, ref='base:<target_ref>') по изменённым файлам.
 
     removed_files — пути файлов, удалённых из репо; их чанки вычищаются из индекса.
+    ignore — список ignore-паттернов; совпадающие пути пропускаются и вычищаются из base.
     Для каждого обработанного файла удаляются символы, исчезнувшие из новой версии.
     """
     ref = base_ref(target_ref)
+    ignore_list = list(ignore)
     py_removed = [p for p in removed_files if p.endswith(".py")]
     store.delete_paths(repo, ref, py_removed)
 
@@ -71,6 +79,9 @@ def update_base(store, embedder, repo: str, target_ref: str,
     batch: list[ChunkRow] = []
     for path in changed_files:
         if not path.endswith(".py"):
+            continue
+        if is_ignored(path, ignore_list):
+            store.delete_paths(repo, ref, [path])   # путь стал игнор — вычищаем из base
             continue
         src = read(path)
         if src is None:
