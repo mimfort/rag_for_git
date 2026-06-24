@@ -58,12 +58,10 @@ def build_components(settings: Settings, connect: bool = True) -> Components:
         task_store, task_graph, embedder,
         max_chars=settings.max_tool_result_chars,
     )
-    # server-side синк доски: провайдеры по настроенным типам. None, если
-    # ни одна доска не настроена — sync_board вернёт понятный error-summary.
-    _providers = make_board_providers(settings)
-    provider = _providers[0] if _providers else None
-    sync_service = SyncService(provider, task_service, store) \
-        if provider is not None else None
+    # server-side синк досок: все настроенные провайдеры (связка ключей в env).
+    # Пустой список → sync_service=None, sync_board вернёт понятный error-summary.
+    providers = make_board_providers(settings)
+    sync_service = SyncService(providers, task_service, store) if providers else None
     summary_store = SummaryStore(
         settings.pg_dsn,
         min_size=settings.pg_pool_min_size,
