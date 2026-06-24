@@ -262,6 +262,28 @@ def test_taskstore_search_and_get_scoped_by_project(store):
     assert set(store.list_keys()) == {"ID-1", "ID-2"}
 
 
+@pytest.fixture()
+def tgraph():
+    s = Settings()
+    g = GraphStore(s.neo4j_uri, s.neo4j_user, s.neo4j_password)
+    g.driver.execute_query("MATCH (t:Task) DETACH DELETE t")
+    tg = TaskGraph(g.driver)
+    yield tg
+    g.driver.execute_query("MATCH (t:Task) DETACH DELETE t")
+    g.close()
+
+
+def test_task_context_excludes_foreign_project_neighbor(tgraph):
+    tgraph.upsert_task("PRI-1", [], "наша", "Open", None, project="PRI")
+    tgraph.upsert_task("TES-9", [], "чужая", "Open", None, project="TES")
+    tgraph.upsert_links("PRI-1", [{"type": "related", "key": "TES-9"},
+                                  {"type": "related", "key": "ABC-7"}])  # ABC-7 — стаб без project
+    ctx = tgraph.task_context("PRI-1", project="PRI")
+    assert {n["key"] for n in ctx["linked"]} == set()   # чужой проект и стаб отсечены
+    ctx_all = tgraph.task_context("PRI-1")               # без скоупа — видно всё
+    assert {"TES-9", "ABC-7"} <= {n["key"] for n in ctx_all["linked"]}
+
+
 def test_purge_removes_link_only_stub_from_graph(store, graph):
     """Стаб :Task, созданный upsert_links (нет в сторе), вычищается из графа.
 
