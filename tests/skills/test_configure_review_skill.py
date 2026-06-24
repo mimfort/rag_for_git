@@ -50,8 +50,16 @@ def test_skill_documents_untracked_junk_is_already_invisible():
 
 def test_skill_preserves_foreign_keys():
     text = SKILL.read_text(encoding="utf-8")
-    assert "task_board" in text                    # пример чужого ключа, который беречь
+    assert "categories" in text                    # пример чужого ключа, который беречь
     assert "Never clobber" in text
+
+
+def test_skill_manages_task_board_block():
+    text = SKILL.read_text(encoding="utf-8")
+    assert "task_board" in text
+    assert "youtrack" in text                       # знает про новый тип доски
+    # креды НЕ пишутся скиллом — только напоминание про env
+    assert "YOUTRACK_TOKEN" in text or "env деплоя" in text
 
 
 def test_skill_asks_before_writing_ignore():

@@ -3,8 +3,11 @@ from reviewer.tasks.sync import SyncService
 
 
 class FakeProvider:
-    def __init__(self, raws):
+    board_type = "fake"
+
+    def __init__(self, raws, board_type="fake"):
         self._raws = raws
+        self.board_type = board_type
 
     def iter_raw(self, board, limit):
         n = 0
@@ -37,10 +40,8 @@ class FakeTaskService:
 
 
 class FakeMeta:
-    def __init__(self, val=None):
-        self.store = {}
-        if val is not None:
-            self.store[("", "tasks:*")] = val
+    def __init__(self, init=None):
+        self.store = dict(init or {})
 
     def get_index_meta(self, repo, ref):
         return self.store.get((repo, ref))
@@ -57,52 +58,76 @@ def _raw(key, ts):
 def test_first_sync_indexes_all_and_advances_cursor():
     prov = FakeProvider([_raw("ID-1", 100), _raw("ID-2", 200)])
     ts, meta = FakeTaskService(), FakeMeta()
-    summary = SyncService(prov, ts, meta).run()
+    summary = SyncService([prov], ts, meta).run()
     assert ts.indexed == [["ID-1", "ID-2"]]
     assert summary["changed"] == 2 and summary["unchanged"] == 0
     assert summary["embedded"] == 2
     assert summary["cursor_advanced"] is True
-    assert meta.store[("", "tasks:*")] == "200"
+    assert meta.store[("", "tasks:fake:*")] == "200"
 
 
 def test_watermark_skips_unchanged():
     prov = FakeProvider([_raw("ID-1", 100), _raw("ID-2", 200)])
-    ts, meta = FakeTaskService(), FakeMeta(val="150")
-    summary = SyncService(prov, ts, meta).run()
-    assert ts.indexed == [["ID-2"]]            # ID-1 (ts=100<=150) пропущена
+    ts = FakeTaskService()
+    meta = FakeMeta({("", "tasks:fake:*"): "150"})
+    summary = SyncService([prov], ts, meta).run()
+    assert ts.indexed == [["ID-2"]]
     assert summary["changed"] == 1 and summary["unchanged"] == 1
-    assert meta.store[("", "tasks:*")] == "200"
+    assert meta.store[("", "tasks:fake:*")] == "200"
 
 
 def test_no_changes_does_not_advance_cursor():
     prov = FakeProvider([_raw("ID-1", 100), _raw("ID-2", 200)])
-    ts, meta = FakeTaskService(), FakeMeta(val="200")
-    summary = SyncService(prov, ts, meta).run()
-    assert ts.indexed == []                    # index_batch не зван для пустого списка
+    ts = FakeTaskService()
+    meta = FakeMeta({("", "tasks:fake:*"): "200"})
+    summary = SyncService([prov], ts, meta).run()
+    assert ts.indexed == []
     assert summary["changed"] == 0 and summary["unchanged"] == 2
     assert summary["cursor_advanced"] is False
 
 
 def test_purge_uses_full_active_keys():
     prov = FakeProvider([_raw("ID-1", 100), _raw("ID-2", 200)])
-    ts, meta = FakeTaskService(), FakeMeta(val="999")  # обе unchanged
-    summary = SyncService(prov, ts, meta).run(purge_orphaned=True, keep_with_prs=False)
-    assert ts.purged_with == (["ID-1", "ID-2"], False)   # полный набор ключей
+    ts = FakeTaskService()
+    meta = FakeMeta({("", "tasks:fake:*"): "999"})
+    summary = SyncService([prov], ts, meta).run(purge_orphaned=True, keep_with_prs=False)
+    assert ts.purged_with == (["ID-1", "ID-2"], False)
     assert summary["purge"]["deleted"] == 2
 
 
 def test_limit_disables_purge_and_cursor():
     prov = FakeProvider([_raw("ID-1", 100), _raw("ID-2", 200)])
     ts, meta = FakeTaskService(), FakeMeta()
-    summary = SyncService(prov, ts, meta).run(limit=1, purge_orphaned=True)
-    assert ts.purged_with is None                # purge выключен под limit
+    summary = SyncService([prov], ts, meta).run(limit=1, purge_orphaned=True)
+    assert ts.purged_with is None
     assert summary["cursor_advanced"] is False
-    assert ("", "tasks:*") not in meta.store     # курсор не записан
+    assert ("", "tasks:fake:*") not in meta.store
     assert any("limit" in w for w in summary["warnings"])
 
 
 def test_board_scoped_cursor_ref():
     prov = FakeProvider([_raw("ID-1", 100)])
     ts, meta = FakeTaskService(), FakeMeta()
-    SyncService(prov, ts, meta).run(board="MyBoard")
-    assert ("", "tasks:MyBoard") in meta.store
+    SyncService([prov], ts, meta).run(board="MyBoard")
+    assert ("", "tasks:fake:MyBoard") in meta.store
+
+
+def test_multi_provider_separate_cursors_and_union_purge():
+    a = FakeProvider([_raw("ID-1", 100)], board_type="yougile")
+    b = FakeProvider([_raw("ID-2", 300)], board_type="youtrack")
+    ts, meta = FakeTaskService(), FakeMeta()
+    summary = SyncService([a, b], ts, meta).run(purge_orphaned=True)
+    # каждый провайдер — свой курсор
+    assert meta.store[("", "tasks:yougile:*")] == "100"
+    assert meta.store[("", "tasks:youtrack:*")] == "300"
+    # counts агрегированы
+    assert summary["enumerated"] == 2 and summary["changed"] == 2
+    # purge — по ОБЪЕДИНЕНИЮ ключей обеих досок (иначе A удалит задачи B)
+    assert ts.purged_with == (["ID-1", "ID-2"], True)
+
+
+def test_empty_providers_no_crash():
+    ts, meta = FakeTaskService(), FakeMeta()
+    summary = SyncService([], ts, meta).run()
+    assert summary["enumerated"] == 0 and summary["changed"] == 0
+    assert summary["purge"] is None

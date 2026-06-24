@@ -14,10 +14,12 @@ from reviewer.tasks.sync import SyncService
 pytestmark = pytest.mark.integration
 
 _KEYS = ["ZID-901", "ZID-902"]
-_REF = "tasks:ztest"
+_REF = "tasks:fake:ztest"
 
 
 class FakeProvider:
+    board_type = "fake"
+
     def __init__(self, raws):
         self._raws = raws
 
@@ -49,7 +51,7 @@ def test_sync_idempotent_and_pr_edge():
     try:
         raws = [_raw("ZID-901", 1000),
                 _raw("ZID-902", 1000, desc="impl https://github.com/o/r/pull/7")]
-        svc = SyncService(FakeProvider(raws), comps.task_service, comps.store)
+        svc = SyncService([FakeProvider(raws)], comps.task_service, comps.store)
 
         first = svc.run(board="ztest")
         assert first["changed"] == 2 and first["embedded"] == 2

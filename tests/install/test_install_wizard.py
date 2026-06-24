@@ -102,12 +102,13 @@ def test_prompt_groups_yes_skips_optional_groups():
 
 
 def test_render_env_includes_board_api_key_and_hint():
-    # init теперь пишет ключ REST-доски + подсказку, как его достать (yougile)
+    # init теперь пишет per-type ключи досок + подсказки
     values = {f.key: f.default for g in inst.WIZARD_GROUPS for f in g.fields}
     result = inst.render_env(values, extra={})
-    assert "TASK_BOARD_API_KEY=" in result
-    assert "TASK_BOARD_API_BASE=" in result
-    assert "auth/keys" in result            # подсказка получения ключа в заголовке группы
+    assert "YOUGILE_API_KEY=" in result
+    assert "YOUTRACK_TOKEN=" in result
+    assert "YOUTRACK_BASE_URL=" in result
+    assert "permanent token" in result      # подсказка YouTrack в prompt_text поля
 
 
 def test_init_yes_creates_env_file(tmp_path, monkeypatch):
@@ -120,7 +121,8 @@ def test_init_yes_creates_env_file(tmp_path, monkeypatch):
     content = dest.read_text(encoding="utf-8")
     assert "VOYAGE_API_KEY=" in content
     assert "PG_DSN=" in content
-    assert "TASK_BOARD_API_KEY=" in content
+    assert "YOUGILE_API_KEY=" in content
+    assert "YOUTRACK_TOKEN=" in content
 
 
 def test_init_yes_preserves_existing_secret(tmp_path, monkeypatch):

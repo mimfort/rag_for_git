@@ -7,7 +7,7 @@ task-context-<type>.md), оркестратор SyncService остаётся boa
 from __future__ import annotations
 
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Protocol
 
 
@@ -21,6 +21,8 @@ class RawTask:
     status: str | None     # резолвнутый title колонки
     subtask_ids: list[str]  # UUID подзадач (titles резолвятся в normalize)
     timestamp: int         # epoch ms последнего изменения
+    links: list[dict] = field(default_factory=list)  # предрезолвленные ссылки
+    # (youtrack кладёт сразу в iter_raw; yougile оставляет пустым, резолвит в normalize)
 
 
 class TaskBoardProvider(Protocol):
@@ -29,6 +31,8 @@ class TaskBoardProvider(Protocol):
     iter_raw дёшев (listing-эндпоинты); normalize дороже (best-effort резолв
     title подзадач), поэтому оркестратор зовёт normalize только для изменившихся.
     """
+
+    board_type: str  # ключ типа доски для курсора синка (напр. "yougile", "youtrack")
 
     def iter_raw(self, board: str | None, limit: int | None) -> Iterable[RawTask]:
         ...
