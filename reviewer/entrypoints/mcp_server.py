@@ -101,35 +101,35 @@ def create_server(service: MCPReviewService) -> FastMCP:
 
     @mcp.tool()
     def sync_board(board: str | None = None, limit: int | None = None,
-                   purge_orphaned: bool = False, keep_with_prs: bool = True) -> dict:
+                   purge_orphaned: bool = False, keep_with_prs: bool = True,
+                   board_type: str | None = None) -> dict:
         """Server-side ETL: enumerate the configured task board via REST, normalize,
-        and index it (vector store + task graph). The LLM passes no task payload —
-        all enumeration/normalization happens server-side, so a sync costs O(1) tokens.
-        Incremental via a per-board timestamp watermark; --limit disables purge and
-        cursor advance. Returns a compact counts summary (no task text). board filters
-        to one project/board by name; purge_orphaned removes tasks no longer on the
-        board (keep_with_prs protects tasks with IMPLEMENTED_BY edges)."""
-        return service.sync_board(board, limit, purge_orphaned, keep_with_prs)
+        and index it (vector store + task graph). board_type limits the sync to one
+        board type (yougile|youtrack); board limits to one project by code prefix
+        (e.g. PRI). Incremental via a per-(type,board) timestamp watermark; --limit
+        disables purge and cursor advance. Returns a compact counts summary."""
+        return service.sync_board(board, limit, purge_orphaned, keep_with_prs, board_type)
 
     @mcp.tool()
-    def search_tasks(query: str, top_k: int = 5) -> str:
-        """Find semantically similar tasks in the indexed task corpus."""
-        return service.search_tasks(query, top_k)
+    def search_tasks(query: str, top_k: int = 5, project: str | None = None) -> str:
+        """Find semantically similar tasks in the indexed task corpus.
+        project scopes results to one board project (code prefix, e.g. PRI); empty = all."""
+        return service.search_tasks(query, top_k, project=project)
 
     @mcp.tool()
-    def get_task_context(key: str) -> str:
+    def get_task_context(key: str, project: str | None = None) -> str:
         """Graph context for a task (by key or alias): the task and its PRs,
-        linked tasks and their PRs, and the code those PRs touched."""
-        return service.get_task_context(key)
+        linked tasks and their PRs, and the code those PRs touched.
+        project scopes linked tasks to one board project (code prefix); empty = all."""
+        return service.get_task_context(key, project=project)
 
     @mcp.tool()
-    def get_task(key: str) -> dict | None:
+    def get_task(key: str, project: str | None = None) -> dict | None:
         """Read one task's own normalized content from the reviewer store (filled by
         sync_board): {key, aliases, title, description, status, url, criteria}.
-        Store-first single-task read for /solve-task — no board-MCP needed.
-        Returns null if the task is not in the store (caller falls back to the board).
-        For linked tasks / PRs / touched code use get_task_context instead."""
-        return service.get_task(key)
+        project scopes the lookup to one board project (code prefix); empty = all.
+        Returns null if the task is not in the store (caller falls back to the board)."""
+        return service.get_task(key, project=project)
 
     @mcp.tool()
     def get_board_config() -> dict:

@@ -186,4 +186,4 @@ def test_get_task_tool_forwards_key():
     svc.get_task.return_value = {"key": "ID-1", "title": "T"}
     server = create_server(svc)
     asyncio.run(server.call_tool("get_task", {"key": "PRI-1"}))
-    svc.get_task.assert_called_once_with("PRI-1")
+    svc.get_task.assert_called_once_with("PRI-1", project=None)
