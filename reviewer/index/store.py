@@ -175,6 +175,37 @@ class ChunkStore:
             )
             conn.commit()
 
+    def get_repo_vcs(self, repo: str) -> tuple[str, str] | None:
+        """Платформа VCS репо: (provider, base_url) или None.
+
+        Отсутствие таблицы (старый индекс без init_schema) равнозначно
+        отсутствию записи — резолв провайдера откатится на ENV-дефолт."""
+        import psycopg.errors
+        try:
+            with self._connect() as conn:
+                row = conn.execute(
+                    "SELECT provider, base_url FROM repo_vcs WHERE repo=%s", (repo,)
+                ).fetchone()
+        except psycopg.errors.UndefinedTable:
+            return None
+        return (row[0], row[1]) if row else None
+
+    def set_repo_vcs(self, repo: str, provider: str, base_url: str = "") -> None:
+        """Записать/обновить платформу VCS репо (UPSERT по repo)."""
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO repo_vcs (repo, provider, base_url, updated_at)
+                VALUES (%s, %s, %s, now())
+                ON CONFLICT (repo) DO UPDATE SET
+                    provider = EXCLUDED.provider,
+                    base_url = EXCLUDED.base_url,
+                    updated_at = now()
+                """,
+                (repo, provider, base_url),
+            )
+            conn.commit()
+
     def get_index_meta_row(self, repo: str, ref: str) -> tuple[str, datetime] | None:
         """SHA и время последней индексации для ref, или None.
 
