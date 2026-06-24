@@ -35,6 +35,7 @@ class TaskService:
         criteria = task.get("criteria") or []
         status = task.get("status")
         url = task.get("url")
+        project = task.get("project") or ""
         links = [lk for lk in (task.get("links") or [])
                  if isinstance(lk, dict) and lk.get("key")]
         text = build_task_text(title, description, criteria)
@@ -45,13 +46,13 @@ class TaskService:
         try:
             prev = self._store.existing_hash(key)
             if prev == chash:
-                self._store.update_meta(key, title, status, url, aliases)
+                self._store.update_meta(key, title, status, url, aliases, project)
             else:
                 vec = self._embedder.embed_documents([text])[0]
                 self._store.upsert_task(TaskRow(
                     key=key, aliases=aliases, title=title, description=description,
                     status=status, url=url, content_hash=chash, text=text,
-                    embedding=vec))
+                    embedding=vec, project=project))
                 embedded = True
         except Exception as e:
             log.warning("index_task: сбой store для %s", key, exc_info=True)
@@ -62,7 +63,7 @@ class TaskService:
             warnings.append("graph unavailable: task not added to task graph")
         else:
             try:
-                self._graph.upsert_task(key, aliases, title, status, url)
+                self._graph.upsert_task(key, aliases, title, status, url, project)
                 if links:
                     links_upserted = self._graph.upsert_links(key, links)
             except Exception as e:
@@ -110,7 +111,8 @@ class TaskService:
             chash = task_content_hash(text)
             parsed.append({"key": key, "aliases": aliases, "title": title,
                            "description": description, "status": status, "url": url,
-                           "links": links, "text": text, "chash": chash})
+                           "links": links, "text": text, "chash": chash,
+                           "project": task.get("project") or ""})
 
         # Шаг 2: разделить на to_embed / meta_only по content-hash
         to_embed: list[int] = []
@@ -151,7 +153,8 @@ class TaskService:
                     self._store.upsert_task(TaskRow(
                         key=p["key"], aliases=p["aliases"], title=p["title"],
                         description=p["description"], status=p["status"], url=p["url"],
-                        content_hash=p["chash"], text=p["text"], embedding=embeddings[i]))
+                        content_hash=p["chash"], text=p["text"], embedding=embeddings[i],
+                        project=p["project"]))
                     embedded = True
                 except Exception as e:
                     log.warning("index_batch: сбой store для %s", p["key"], exc_info=True)
@@ -165,7 +168,7 @@ class TaskService:
             warnings: list[str] = []
             try:
                 self._store.update_meta(p["key"], p["title"], p["status"],
-                                        p["url"], p["aliases"])
+                                        p["url"], p["aliases"], p["project"])
             except Exception as e:
                 log.warning("index_batch: сбой update_meta для %s", p["key"], exc_info=True)
                 warnings.append(f"store: {type(e).__name__}: {e}")
@@ -185,7 +188,7 @@ class TaskService:
             else:
                 try:
                     self._graph.upsert_task(p["key"], p["aliases"], p["title"],
-                                            p["status"], p["url"])
+                                            p["status"], p["url"], p["project"])
                     if p["links"]:
                         links_upserted = self._graph.upsert_links(p["key"], p["links"])
                 except Exception as e:
@@ -208,11 +211,12 @@ class TaskService:
 
         return results
 
-    def search_tasks(self, query: str, top_k: int = 5) -> str:
+    def search_tasks(self, query: str, top_k: int = 5,
+                     project: str | None = None) -> str:
         """Похожие по смыслу задачи (гибрид-поиск по корпусу). Пусто/сбой → текстовая нота."""
         try:
             vec = self._embedder.embed_query(query)
-            hits = self._store.search(query, vec, top_k=top_k)
+            hits = self._store.search(query, vec, top_k=top_k, project=project)
         except Exception:
             log.warning("search_tasks: сбой поиска по запросу %r", query, exc_info=True)
             return "(task search unavailable)"
@@ -225,12 +229,12 @@ class TaskService:
             f"{i}. {h.key} [{h.status or '—'}] {h.title} (score {h.score:.4f})"
             for i, h in enumerate(hits, 1))
 
-    def get_task_context(self, key: str) -> str:
+    def get_task_context(self, key: str, project: str | None = None) -> str:
         """Граф-контекст задачи: связанные задачи → их PR → код. Деградация → нота."""
         if self._graph is None:
             return "(task graph unavailable)"
         try:
-            ctx = self._graph.task_context(key)
+            ctx = self._graph.task_context(key, project or "")
         except Exception:
             log.warning("get_task_context: сбой обхода графа для %s", key, exc_info=True)
             return "(task graph unavailable)"
@@ -238,7 +242,7 @@ class TaskService:
             return f"(no task '{key}' in task graph)"
         return _format_task_context(ctx, self._max_chars)
 
-    def get_task(self, key: str) -> dict | None:
+    def get_task(self, key: str, project: str | None = None) -> dict | None:
         """Нормализованный TaskBrief задачи из стора (store-first одиночное чтение).
 
         Источник — Postgres ``tasks`` (заполнен sync_board). Граф не трогаем: links/PRs
@@ -246,7 +250,7 @@ class TaskService:
         (как в board-MCP-пути). Miss/сбой стора → None, чтобы вызывающий фолбэкнул.
         """
         try:
-            row = self._store.get_task(key)
+            row = self._store.get_task(key, project=project)
         except Exception:
             log.warning("get_task: сбой стора для %s", key, exc_info=True)
             return None
@@ -276,8 +280,9 @@ class TaskService:
         active_keys: list[str],
         *,
         keep_with_prs: bool = True,
+        project: str | None = None,
     ) -> dict:
-        """Удалить задачи, отсутствующие в active_keys. Fail-soft по слоям."""
+        """Удалить задачи вне active_keys. При project — скоуп по проекту (PRI-170)."""
         warnings: list[str] = []
         active = set(active_keys)
 
@@ -287,13 +292,13 @@ class TaskService:
         # Сбой любого слоя fail-soft: чистим то, что смогли перечислить.
         all_keys: set[str] = set()
         try:
-            all_keys |= set(self._store.list_keys())
+            all_keys |= set(self._store.list_keys(project=project))
         except Exception as e:
             log.warning("purge_orphaned_tasks: сбой list_keys", exc_info=True)
             warnings.append(f"store: {type(e).__name__}: {e}")
         if self._graph is not None:
             try:
-                all_keys |= set(self._graph.list_keys())
+                all_keys |= set(self._graph.list_keys(project or ""))
             except Exception as e:
                 log.warning("purge_orphaned_tasks: сбой list_keys (graph)", exc_info=True)
                 warnings.append(f"graph: {type(e).__name__}: {e}")
@@ -303,7 +308,7 @@ class TaskService:
 
         if keep_with_prs and self._graph is not None:
             try:
-                pr_keys = self._graph.keys_with_prs()
+                pr_keys = self._graph.keys_with_prs(project or "")
                 protected = orphaned & pr_keys
                 orphaned = orphaned - protected
             except Exception as e:
