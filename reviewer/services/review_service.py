@@ -113,8 +113,25 @@ class ReviewService:
         self._history = history
         self._history_owned = history is None
 
-    def _create_vcs_provider(self, owner: str, repo: str) -> GitHubProvider:
-        """Создать GitHub-провайдер с retry."""
+    def _create_vcs_provider(self, owner: str, repo: str) -> VCSProvider:
+        """Создать VCS-провайдер по платформе репо (repo_vcs → ENV-фолбэк).
+
+        Тип резолвится ДО любого API-вызова: дешёвое чтение repo_vcs из стора.
+        Токен берётся из ENV по платформе (секретов в .review.yml нет)."""
+        from reviewer.services.repo_id import normalize_repo
+        from reviewer.vcs.gitlab import GitLabProvider
+        full = normalize_repo(f"{owner}/{repo}")
+        row = self.components.store.get_repo_vcs(full)
+        provider, base_url = row if row else (self.settings.vcs_provider, "")
+        if provider == "gitlab":
+            return GitLabProvider(
+                owner,
+                repo,
+                token=self.settings.gitlab_token,
+                base_url=base_url or self.settings.gitlab_url,
+                retry_attempts=self.settings.github_retry_attempts,
+                retry_backoff_base=self.settings.github_retry_backoff_base,
+            )
         return GitHubProvider(
             owner,
             repo,
