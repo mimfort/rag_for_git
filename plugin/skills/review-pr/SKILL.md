@@ -60,8 +60,9 @@ blocks.
 
    The `TaskBrief` schema is `{key, aliases[], title, description, criteria[], status, url, links[]}`
    (phase 3 adds `aliases[]` and uses `links[]`; see the board playbook for how to fill them).
-   Once the `TaskBrief` is built, call `index_task(TaskBrief)` to persist it (idempotent — safe to
-   repeat). Then gather task context to sharpen the requirements check:
+   On a store **hit** the brief is already indexed — do NOT re-index. Only when the brief was freshly
+   built from the board MCP (the **Miss** branch) call `index_task(TaskBrief)` to persist it
+   (idempotent — safe to repeat). Then gather task context to sharpen the requirements check:
    - `get_task_context(TaskBrief.key)` → linked tasks, their PRs, and the code those PRs touched;
    - `search_tasks("<TaskBrief.title>. <first lines of description>")` → semantically similar tasks.
    Keep ONLY the related/similar items that look relevant; you will pass them to the requirements
