@@ -494,6 +494,7 @@ def test_task_tool_delegates() -> None:
     assert svc.search_tasks("q", 3) == "list"
     assert svc.get_task_context("ID-1") == "ctx"
     svc.components.task_service.search_tasks.assert_called_once_with("q", 3, project=None)
+    svc.components.task_service.get_task_context.assert_called_once_with("ID-1", project=None)
 
 
 def test_search_codebase_delegates_to_retriever() -> None:
