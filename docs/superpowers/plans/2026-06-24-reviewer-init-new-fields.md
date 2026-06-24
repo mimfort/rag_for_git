@@ -628,7 +628,7 @@ Expected: все PASS (root: 6; install: 14 существующих + `test_ren
 
 ```bash
 TMP_ENV=$(mktemp)
-.venv/bin/python -m reviewer.entrypoints.cli init --yes --path "$TMP_ENV"
+.venv/bin/reviewer init --yes --path "$TMP_ENV"   # консольный энтрипойнт; `python -m …cli` не вызывает Click (нет __main__)
 grep -E '^(VOYAGE_API_KEY|PG_DSN|REVIEW_BRANCHES|GITLAB_TOKEN|YOUGILE_API_BASE|WEB_ADMIN_USER)=' "$TMP_ENV"
 rm "$TMP_ENV"
 ```
