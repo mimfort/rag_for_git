@@ -134,6 +134,28 @@ WIZARD_GROUPS: list[EnvGroup] = [
         ],
     ),
     EnvGroup(
+        title="GitLab VCS",
+        optional=True,
+        fields=[
+            EnvField(
+                key="GITLAB_TOKEN",
+                prompt_text="GITLAB_TOKEN (PAT GitLab: api scope)",
+                default="",
+                secret=True,
+            ),
+            EnvField(
+                key="GITLAB_URL",
+                prompt_text="GITLAB_URL (self-hosted base URL)",
+                default="https://gitlab.com",
+            ),
+            EnvField(
+                key="VCS_PROVIDER",
+                prompt_text="VCS_PROVIDER (фолбэк-платформа: github)",
+                default="github",
+            ),
+        ],
+    ),
+    EnvGroup(
         title="Доска задач",
         optional=True,
         fields=[
@@ -164,6 +186,11 @@ WIZARD_GROUPS: list[EnvGroup] = [
                 secret=True,
             ),
             EnvField(
+                key="YOUGILE_API_BASE",
+                prompt_text="YOUGILE_API_BASE (base URL, пусто=дефолт)",
+                default="",
+            ),
+            EnvField(
                 key="YOUTRACK_TOKEN",
                 prompt_text="YOUTRACK_TOKEN (permanent token: Profile → Account "
                             "Security → New permanent token)",
@@ -174,6 +201,23 @@ WIZARD_GROUPS: list[EnvGroup] = [
                 key="YOUTRACK_BASE_URL",
                 prompt_text="YOUTRACK_BASE_URL (напр. https://company.youtrack.cloud/api)",
                 default="",
+            ),
+        ],
+    ),
+    EnvGroup(
+        title="Веб-админка",
+        optional=True,
+        fields=[
+            EnvField(
+                key="WEB_ADMIN_USER",
+                prompt_text="WEB_ADMIN_USER (basic-auth логин)",
+                default="",
+            ),
+            EnvField(
+                key="WEB_ADMIN_PASSWORD",
+                prompt_text="WEB_ADMIN_PASSWORD (basic-auth пароль)",
+                default="",
+                secret=True,
             ),
         ],
     ),
@@ -199,6 +243,11 @@ _GROUP_HEADERS: dict[str, str] = {
     "Обязательные": "# --- Voyage / GitHub ---",
     "Хранилища (Postgres / Neo4j)": "# --- Postgres (ParadeDB :5433) / Neo4j (:7687) ---",
     "Мульти-репо / ветки": "# --- Мульти-репо / ветки (опционально) ---",
+    "GitLab VCS": (
+        "# --- GitLab VCS (опционально; multi-platform: ревью GitLab MR) ---\n"
+        "# VCS_PROVIDER — фолбэк, когда репо не индексирован. Тип VCS\n"
+        "# автоопределяется из git remote при `reviewer index`."
+    ),
     "Доска задач": (
         "# --- Доска задач (опционально; server-side sync_board, связка ключей) ---\n"
         "# Тип доски репо выбирается в его .review.yml (task_board.type); ключи —\n"
@@ -206,6 +255,7 @@ _GROUP_HEADERS: dict[str, str] = {
         "# → API. YOUTRACK_TOKEN: permanent token, YOUTRACK_BASE_URL инстанс-специфичен.\n"
         "# TASK_BOARD_API_KEY/BASE — legacy-алиас для yougile (обратная совместимость)."
     ),
+    "Веб-админка": "# --- Веб-админка наблюдаемости (опционально; пусто = без аутентификации) ---",
 }
 
 
