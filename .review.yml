@@ -8,7 +8,7 @@
 task_board:
   type: yougile                       # тип доски → плейбук plugin/skills/review-pr/references/task-context-yougile.md
   mcp: yougile                        # имя MCP-сервера доски → инструменты mcp__yougile__*
-  key_pattern: '[A-Z]+-\d+'           # как искать коды задач в title/body/ветке PR (напр. PRI-4, ID-4)
+  key_pattern: 'PRI-\d+'              # коды задач проекта PRI (напр. PRI-4, PRI-170)
   url_template: 'https://ru.yougile.com/team/686c049c8af8/#{code}'  # {code} = проектный код PRI-N
   project: PRI                        # PRI-170: скоуп синка/выдачи задач этим проектом (префикс кода)
 
