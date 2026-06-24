@@ -33,8 +33,8 @@ class FakeTaskService:
         return [{"key": t["key"], "embedded": True, "links_upserted": 0,
                  "prs_linked": 0, "warnings": []} for t in tasks]
 
-    def purge_orphaned_tasks(self, active_keys, *, keep_with_prs=True):
-        self.purged_with = (sorted(active_keys), keep_with_prs)
+    def purge_orphaned_tasks(self, active_keys, *, keep_with_prs=True, project=None):
+        self.purged_with = (sorted(active_keys), keep_with_prs, project)
         return {"deleted_store": 1, "deleted_graph": 1, "protected_prs": 0,
                 "warnings": []}
 
@@ -91,7 +91,7 @@ def test_purge_uses_full_active_keys():
     ts = FakeTaskService()
     meta = FakeMeta({("", "tasks:fake:*"): "999"})
     summary = SyncService([prov], ts, meta).run(purge_orphaned=True, keep_with_prs=False)
-    assert ts.purged_with == (["ID-1", "ID-2"], False)
+    assert ts.purged_with == (["ID-1", "ID-2"], False, None)
     assert summary["purge"]["deleted"] == 2
 
 
@@ -123,7 +123,7 @@ def test_multi_provider_separate_cursors_and_union_purge():
     # counts агрегированы
     assert summary["enumerated"] == 2 and summary["changed"] == 2
     # purge — по ОБЪЕДИНЕНИЮ ключей обеих досок (иначе A удалит задачи B)
-    assert ts.purged_with == (["ID-1", "ID-2"], True)
+    assert ts.purged_with == (["ID-1", "ID-2"], True, None)
 
 
 def test_empty_providers_no_crash():
@@ -131,3 +131,29 @@ def test_empty_providers_no_crash():
     summary = SyncService([], ts, meta).run()
     assert summary["enumerated"] == 0 and summary["changed"] == 0
     assert summary["purge"] is None
+
+
+def test_board_type_scopes_to_one_provider():
+    a = FakeProvider([_raw("ID-1", 100)], board_type="yougile")
+    b = FakeProvider([_raw("ID-2", 300)], board_type="youtrack")
+    ts, meta = FakeTaskService(), FakeMeta()
+    summary = SyncService([a, b], ts, meta).run(board_type="yougile")
+    assert ts.indexed == [["ID-1"]]            # только yougile-провайдер
+    assert summary["enumerated"] == 1
+    assert ("", "tasks:youtrack:*") not in meta.store
+
+
+def test_scoped_purge_passes_project():
+    a = FakeProvider([_raw("ID-1", 100)], board_type="yougile")
+    ts, meta = FakeTaskService(), FakeMeta({("", "tasks:yougile:PRI"): "999"})
+    SyncService([a], ts, meta).run(board="PRI", board_type="yougile",
+                                   purge_orphaned=True)
+    assert ts.purged_with == (["ID-1"], True, "PRI")
+
+
+def test_unknown_board_type_warns_and_indexes_nothing():
+    a = FakeProvider([_raw("ID-1", 100)], board_type="yougile")
+    ts, meta = FakeTaskService(), FakeMeta()
+    summary = SyncService([a], ts, meta).run(board_type="jira")
+    assert summary["enumerated"] == 0
+    assert any("jira" in w for w in summary["warnings"])
