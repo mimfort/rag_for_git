@@ -50,8 +50,8 @@ def test_normalize_collapses_spaces():
 
 def test_normalize_punctuation_to_space():
     """Пунктуация заменяется пробелом."""
-    # «eval().» и «eval» должны дать одинаковый нормализованный вид
-    assert normalize_message("eval().") == normalize_message("eval")
+    # «format().» и «format» должны дать одинаковый нормализованный вид
+    assert normalize_message("format().") == normalize_message("format")
 
 
 def test_normalize_trims_whitespace():
@@ -61,9 +61,9 @@ def test_normalize_trims_whitespace():
 
 def test_normalize_preserves_cyrillic_letters():
     """Кириллические буквы (\\w) сохраняются после нормализации."""
-    result = normalize_message("Использование eval() небезопасно.")
+    result = normalize_message("Использование format() небезопасно.")
     assert "использование" in result
-    assert "eval" in result
+    assert "format" in result
     assert "небезопасно" in result
 
 
@@ -155,8 +155,8 @@ def test_idempotency_case_drift():
     Моделируем ситуацию: LLM во втором прогоне вернула тот же баг, но с иным регистром.
     fingerprint второй находки должен совпадать с уже опубликованным из первого прогона.
     """
-    f1 = make_finding(message="Баг в функции eval")   # первый прогон
-    f2 = make_finding(message="баг в функции eval")   # второй прогон — дрейф регистра
+    f1 = make_finding(message="Баг в функции format")   # первый прогон
+    f2 = make_finding(message="баг в функции format")   # второй прогон — дрейф регистра
 
     existing_fps = {f1.fingerprint()}
     assert f2.fingerprint() in existing_fps

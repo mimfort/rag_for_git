@@ -17,7 +17,7 @@
 - Back-compat: `project=None`/`""` в read-тулах и `board_type=None` в `sync_board` = текущее поведение (всё).
 - `project` = префикс кода задачи (`PRI-5` → `PRI`); один литерал для штампа, enumerate-фильтра и read-фильтра.
 - Запуск unit-тестов: `.venv/bin/pytest -q`. Integration: `.venv/bin/pytest -m integration` (нужен `docker compose up -d`).
-- Спека: `docs/superpowers/specs/2026-06-24-pri-170-task-board-project-scope-design.md`.
+- Spec: `docs/superpowers/specs/2026-06-24-pri-170-task-board-project-scope-design.md`.
 
 ---
 

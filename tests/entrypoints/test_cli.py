@@ -108,12 +108,12 @@ def fake_components() -> MagicMock:
 def fake_settings() -> MagicMock:
     """Фейковые настройки со всеми необходимыми ключами."""
     s = MagicMock()
-    s.voyage_api_key = "test-voyage"
-    s.github_token = "test-gh"
-    s.pg_dsn = "postgresql://test"
+    s.voyage_api_key = "test-key-111"
+    s.github_token = "test-token-222"
+    s.pg_dsn = "postgresql://localhost:5432/testdb"
     s.pg_pool_min_size = 1
     s.pg_pool_max_size = 4
-    s.neo4j_uri = "neo4j://test"
+    s.neo4j_uri = "bolt://localhost:7687"
     s.neo4j_user = "neo4j"
     s.neo4j_password = "pass"
     s.review_max_files = 50
