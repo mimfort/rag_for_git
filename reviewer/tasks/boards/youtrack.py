@@ -95,6 +95,14 @@ class YouTrackBoard:
     board_type = "youtrack"
 
     def __init__(self, *, token: str, base_url: str, key_pattern: str) -> None:
+        """Инициализация REST-клиента YouTrack.
+
+        ``token`` — **полный** постоянный токен YouTrack, включая префикс ``perm:``,
+        например ``perm:abc123...``. Именно в таком виде YouTrack выдаёт токены;
+        значение env-переменной ``YOUTRACK_TOKEN`` передаётся сюда напрямую.
+        Токен отправляется verbatim в заголовке ``Authorization: Bearer <token>``
+        — код *не добавляет* «perm:» самостоятельно (иначе вышло бы ``Bearer perm:perm:...``).
+        """
         self._key_pattern = key_pattern
         self._base = base_url.rstrip("/")
         self._client = httpx.Client(

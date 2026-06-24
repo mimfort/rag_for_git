@@ -75,3 +75,10 @@ def test_normalize_null_description():
     b = normalize_youtrack(raw, KP, BASE)
     assert b["description"] == ""
     assert b["links"] == []
+
+
+def test_issue_to_raw_state_non_dict_value():
+    raw = _issue_to_raw(_issue(customFields=[{"name": "State", "value": None}]))
+    assert raw.status is None
+    raw2 = _issue_to_raw(_issue(customFields=[{"name": "State", "value": "Done"}]))
+    assert raw2.status is None
