@@ -253,21 +253,18 @@ class MCPReviewService:
         """Батчевая индексация списка TaskBrief: один Voyage-вызов для изменившихся задач."""
         return self.components.task_service.index_batch(tasks)
 
-    def search_tasks(self, query: str, top_k: int = 5) -> str:
-        """Похожие по смыслу задачи (гибрид-поиск по корпусу задач)."""
-        return self.components.task_service.search_tasks(query, top_k)
+    def search_tasks(self, query: str, top_k: int = 5,
+                     project: str | None = None) -> str:
+        """Похожие по смыслу задачи (гибрид-поиск). При project — скоуп по проекту."""
+        return self.components.task_service.search_tasks(query, top_k, project=project)
 
-    def get_task_context(self, key: str) -> str:
-        """Граф-контекст задачи: связанные задачи → их PR → затронутый код."""
-        return self.components.task_service.get_task_context(key)
+    def get_task_context(self, key: str, project: str | None = None) -> str:
+        """Граф-контекст задачи. При project — соседи только этого проекта."""
+        return self.components.task_service.get_task_context(key, project=project)
 
-    def get_task(self, key: str) -> dict | None:
-        """Нормализованный TaskBrief задачи из стора (store-first /solve-task).
-
-        В отличие от get_task_context (граф: связи/PR/код) — это собственный контент
-        задачи (title/description/status/url) из Postgres. None, если задачи нет в сторе.
-        """
-        return self.components.task_service.get_task(key)
+    def get_task(self, key: str, project: str | None = None) -> dict | None:
+        """Нормализованный TaskBrief из стора. При project — только из этого проекта."""
+        return self.components.task_service.get_task(key, project=project)
 
     def board_config(self) -> dict:
         """Глобальный (env) конфиг доски задач деплоя — для клиентских скилов.
@@ -288,10 +285,12 @@ class MCPReviewService:
         )
 
     def sync_board(self, board: str | None = None, limit: int | None = None,
-                   purge_orphaned: bool = False, keep_with_prs: bool = True) -> dict:
+                   purge_orphaned: bool = False, keep_with_prs: bool = True,
+                   board_type: str | None = None) -> dict:
         """Server-side ETL: перечислить доску по REST, нормализовать, проиндексировать.
 
-        Доска/ключ не настроены → понятный error-summary (fail-soft), без падения.
+        board_type ограничивает синк одним типом доски (yougile|youtrack); board —
+        проектом (префикс кода). Доска/ключ не настроены → error-summary (fail-soft).
         """
         sync = getattr(self.components, "sync_service", None)
         if sync is None:
@@ -303,7 +302,7 @@ class MCPReviewService:
         try:
             return sync.run(board=board, limit=limit,
                             purge_orphaned=purge_orphaned,
-                            keep_with_prs=keep_with_prs)
+                            keep_with_prs=keep_with_prs, board_type=board_type)
         except Exception as e:
             log.warning("sync_board: сбой синка", exc_info=True)
             return {"status": "error", "reason": f"{type(e).__name__}: {e}"}

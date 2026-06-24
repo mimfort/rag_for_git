@@ -108,10 +108,17 @@ Parse from $ARGUMENTS (all optional):
      the link from its base URL; NO `mcp` — youtrack is read server-side via sync, not board-MCP).
    - off / none → write an empty `task_board:` (disables the board for this repo).
    - leave unchanged → skip.
+
+   **Then ask which PROJECT this repo uses** (e.g. PRI-170) and write it to `task_board.project` — the task
+   **code prefix** (e.g. `PRI`, `TES`), the part before the dash in task codes. Warn the user (in Russian):
+   если `project` пуст — и синк, и выдача/граф затянут **все проекты** аккаунта/инстанса вперемешку
+   (напр. чужой `TES-1` всплывёт в связях задачи `PRI`); один аккаунт с несколькими проектами без
+   `project` смешивает их. Пустой `task_board.project` = текущее глобальное поведение.
+
    **Never write credentials.** Remind the user (in Russian): ключи доски (`YOUTRACK_TOKEN`/
    `YOUTRACK_BASE_URL` для youtrack, `YOUGILE_API_KEY` для yougile) задаются в env деплоя reviewer-mcp,
-   не в `.review.yml`. Changing the board has no effect until those env keys are set and the board is
-   synced (`/reviewer_sync-tasks`).
+   не в `.review.yml`. Грабли youtrack: `YOUTRACK_BASE_URL` обязан оканчиваться на `/api`. Changing the
+   board has no effect until those env keys are set and the board is synced (`/reviewer_sync-tasks`).
 
 6. **Present draft + diff.** Show the proposed context layer and a unified diff against the current
    `.review.yml` (or "new file"). Briefly justify each recommendation in Russian (why this depth; why

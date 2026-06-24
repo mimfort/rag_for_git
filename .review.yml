@@ -10,6 +10,7 @@ task_board:
   mcp: yougile                        # имя MCP-сервера доски → инструменты mcp__yougile__*
   key_pattern: '[A-Z]+-\d+'           # как искать коды задач в title/body/ветке PR (напр. PRI-4, ID-4)
   url_template: 'https://ru.yougile.com/team/686c049c8af8/#{code}'  # {code} = проектный код PRI-N
+  project: PRI                        # PRI-170: скоуп синка/выдачи задач этим проектом (префикс кода)
 
 # --- Политика контекст-слоя (PRI-161) ---
 

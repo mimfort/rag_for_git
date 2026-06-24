@@ -6,9 +6,19 @@ task-context-<type>.md), оркестратор SyncService остаётся boa
 """
 from __future__ import annotations
 
+import re
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import Protocol
+
+_PREFIX_RE = re.compile(r"^([A-Za-z][A-Za-z0-9]*)-\d+$")
+
+
+def project_prefix(code: str) -> str:
+    """Префикс проекта из кода задачи: ``PRI-5`` → ``PRI``. ``""`` если не код вида
+    ``<PREFIX>-<число>`` (метка скоупа по проекту, PRI-170)."""
+    m = _PREFIX_RE.match(code or "")
+    return m.group(1) if m else ""
 
 
 @dataclass

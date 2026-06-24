@@ -65,6 +65,9 @@ CREATE TABLE IF NOT EXISTS tasks (
     text         text    NOT NULL,          -- эмбед/BM25-текст: title + description + criteria
     embedding    vector(1024)
 );
+-- PRI-170: скоуп задач по проекту доски. Выдача и синк фильтруются по project
+-- (префикс кода: PRI, TES). Пусто = вне проекта (исключается из scoped-чтения).
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS project text NOT NULL DEFAULT '';
 CREATE INDEX IF NOT EXISTS tasks_bm25 ON tasks
 USING bm25 (id, text, key) WITH (key_field='id');
 CREATE INDEX IF NOT EXISTS tasks_hnsw ON tasks

@@ -131,6 +131,38 @@ def test_task_context_dedups_linked_by_key_and_type():
         ("ID-2", "subtask"), ("ID-2", "relates")]
 
 
+def test_upsert_task_sets_project_property():
+    d = _FakeDriver()
+    TaskGraph(d).upsert_task("ID-1", [], "T", "Open", "u", project="PRI")
+    query, params = d.calls[0]
+    assert params["project"] == "PRI"
+    assert "t.project=$project" in query
+
+
+def test_task_context_filters_neighbors_by_project():
+    d = _FakeDriver(records=[])
+    TaskGraph(d).task_context("ID-1", project="PRI")
+    query, params = d.calls[0]
+    assert params["project"] == "PRI"
+    assert "n.project = $project" in query
+
+
+def test_list_keys_scoped_by_project():
+    d = _FakeDriver(records=[])
+    TaskGraph(d).list_keys(project="PRI")
+    query, params = d.calls[0]
+    assert params["project"] == "PRI"
+    assert "t.project = $project" in query
+
+
+def test_keys_with_prs_scoped_by_project():
+    d = _FakeDriver(records=[])
+    TaskGraph(d).keys_with_prs(project="PRI")
+    query, params = d.calls[0]
+    assert params["project"] == "PRI"
+    assert "t.project = $project" in query
+
+
 @pytest.mark.integration
 def test_link_pr_scopes_touched_symbol_by_repo(task_graph, graph_store):
     """TOUCHES создаёт :Symbol с repo=pr.repo — изоляция по репозиторию работает."""

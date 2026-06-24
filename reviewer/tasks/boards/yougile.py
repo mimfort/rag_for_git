@@ -15,7 +15,7 @@ from collections.abc import Iterable
 
 import httpx
 
-from reviewer.tasks.boards.base import RawTask
+from reviewer.tasks.boards.base import RawTask, project_prefix
 
 log = logging.getLogger(__name__)
 
@@ -65,6 +65,7 @@ def normalize_yougile(
         "status": raw.status,
         "url": url,
         "links": links,
+        "project": project_prefix(raw.project_code or key),
     }
 
 
@@ -108,15 +109,18 @@ class YougileBoard:
         count = 0
         for proj in self._get_all("/projects"):
             for brd in self._get_all("/boards", {"projectId": proj["id"]}):
-                if board and board not in (brd.get("title", ""), proj.get("title", "")):
-                    continue
                 col_title = {c["id"]: c.get("title")
                              for c in self._get_all("/columns", {"boardId": brd["id"]})}
                 for col_id in col_title:
                     for t in self._get_all("/tasks", {"columnId": col_id}):
+                        project_code = t.get("idTaskProject", "")
+                        # PRI-170: scoped-синк ограничивает доску одним проектом по
+                        # префиксу кода (board == project_prefix), а не по title.
+                        if board and project_prefix(project_code) != board:
+                            continue
                         yield RawTask(
                             key=t.get("idTaskCommon") or t["id"],
-                            project_code=t.get("idTaskProject", ""),
+                            project_code=project_code,
                             title=t.get("title", ""),
                             description=t.get("description", "") or "",
                             status=col_title.get(t.get("columnId")),

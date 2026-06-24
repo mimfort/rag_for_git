@@ -47,6 +47,7 @@ class TaskRow:
     content_hash: str
     text: str
     embedding: list[float]
+    project: str = ""
 
 
 @dataclass
@@ -96,62 +97,72 @@ class TaskStore:
             ).fetchone()
         return row[0] if row else None
 
-    def get_task(self, key: str) -> TaskRow | None:
-        """Задача по ключу или алиасу (для store-first одиночного чтения в /solve-task).
+    def get_task(self, key: str, project: str | None = None) -> TaskRow | None:
+        """Задача по ключу/алиасу; при project — только из этого проекта (PRI-170).
 
         Матч по каноническому ``key`` ИЛИ по ``aliases`` (стор ключует по ID-N, а
         вызов часто передаёт проектный PRI-N). Эмбеддинг не читается (не нужен для
         брифа) — в TaskRow ставится []. None, если задачи нет.
         """
-        sql = """
-        SELECT key, aliases, title, description, status, url, content_hash, text
-        FROM tasks WHERE key = %s OR %s = ANY(aliases) LIMIT 1
-        """
+        sql = ("SELECT key, aliases, title, description, status, url, "
+               "content_hash, text, project FROM tasks "
+               "WHERE (key = %s OR %s = ANY(aliases))")
+        params: list = [key, key]
+        if project:
+            sql += " AND project = %s"
+            params.append(project)
+        sql += " LIMIT 1"
         with self._connect() as conn:
-            row = conn.execute(sql, (key, key)).fetchone()
+            row = conn.execute(sql, params).fetchone()
         if row is None:
             return None
         return TaskRow(
             key=row[0], aliases=list(row[1] or []), title=row[2],
             description=row[3], status=row[4], url=row[5],
-            content_hash=row[6], text=row[7], embedding=[])
+            content_hash=row[6], text=row[7], embedding=[], project=row[8])
 
     def upsert_task(self, row: TaskRow) -> None:
         sql = """
         INSERT INTO tasks (key, aliases, title, description, status, url,
-                           content_hash, text, embedding)
+                           content_hash, text, embedding, project)
         VALUES (%(key)s,%(aliases)s,%(title)s,%(description)s,%(status)s,%(url)s,
-                %(content_hash)s,%(text)s,%(embedding)s)
+                %(content_hash)s,%(text)s,%(embedding)s,%(project)s)
         ON CONFLICT (key) DO UPDATE SET
             aliases=EXCLUDED.aliases, title=EXCLUDED.title,
             description=EXCLUDED.description, status=EXCLUDED.status,
             url=EXCLUDED.url, content_hash=EXCLUDED.content_hash,
-            text=EXCLUDED.text, embedding=EXCLUDED.embedding
+            text=EXCLUDED.text, embedding=EXCLUDED.embedding, project=EXCLUDED.project
         """
         params = {
             "key": row.key, "aliases": row.aliases, "title": row.title,
             "description": row.description, "status": row.status, "url": row.url,
             "content_hash": row.content_hash, "text": row.text,
-            "embedding": row.embedding,
+            "embedding": row.embedding, "project": row.project,
         }
         with self._connect() as conn:
             conn.execute(sql, params)
             conn.commit()
 
     def update_meta(self, key: str, title: str, status: str | None,
-                    url: str | None, aliases: list[str]) -> None:
+                    url: str | None, aliases: list[str], project: str = "") -> None:
         """Обновить лёгкие метаданные без переэмбеда (когда content_hash совпал)."""
         with self._connect() as conn:
             conn.execute(
-                "UPDATE tasks SET title=%s, status=%s, url=%s, aliases=%s WHERE key=%s",
-                (title, status, url, aliases, key),
+                "UPDATE tasks SET title=%s, status=%s, url=%s, aliases=%s, project=%s "
+                "WHERE key=%s",
+                (title, status, url, aliases, project, key),
             )
             conn.commit()
 
-    def list_keys(self) -> list[str]:
-        """Все ключи задач в Postgres."""
+    def list_keys(self, project: str | None = None) -> list[str]:
+        """Ключи задач; при project — только этого проекта (для scoped purge)."""
+        sql = "SELECT key FROM tasks"
+        params: list = []
+        if project:
+            sql += " WHERE project = %s"
+            params.append(project)
         with self._connect() as conn:
-            rows = conn.execute("SELECT key FROM tasks").fetchall()
+            rows = conn.execute(sql, params).fetchall()
         return [r[0] for r in rows]
 
     def delete_tasks(self, keys: list[str]) -> int:
@@ -166,17 +177,19 @@ class TaskStore:
         return result.rowcount
 
     def search(self, query_text: str, query_embedding: list[float],
-               top_k: int = 5, candidates: int = 50) -> list[TaskHit]:
-        """Гибрид RRF (BM25 ⊕ ANN) по корпусу задач — без ref-фильтра."""
-        sql = """
+               top_k: int = 5, candidates: int = 50,
+               project: str | None = None) -> list[TaskHit]:
+        """Гибрид RRF (BM25 ⊕ ANN). При project — скоуп по проекту (PRI-170)."""
+        proj = "AND project = %(project)s" if project else ""
+        sql = f"""
         WITH bm25 AS (
             SELECT id, RANK() OVER (ORDER BY pdb.score(id) DESC) AS rank
-            FROM tasks WHERE text @@@ %(q)s
+            FROM tasks WHERE text @@@ %(q)s {proj}
             ORDER BY pdb.score(id) DESC LIMIT %(cand)s
         ),
         ann AS (
             SELECT id, RANK() OVER (ORDER BY embedding <=> %(vec)s) AS rank
-            FROM tasks
+            FROM tasks WHERE TRUE {proj}
             ORDER BY embedding <=> %(vec)s LIMIT %(cand)s
         ),
         rrf AS (
@@ -190,6 +203,8 @@ class TaskStore:
         """
         params = {"q": _bm25_query(query_text), "vec": Vector(query_embedding),
                   "cand": candidates, "k": top_k}
+        if project:
+            params["project"] = project
         with self._connect() as conn:
             rows = conn.execute(sql, params).fetchall()
         return [TaskHit(key=k, title=t, status=s, score=float(sc))

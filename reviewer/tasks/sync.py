@@ -79,11 +79,18 @@ class SyncService:
         }
 
     def run(self, board=None, limit=None, purge_orphaned=False,
-            keep_with_prs=True) -> dict:
+            keep_with_prs=True, board_type=None) -> dict:
         agg = {"enumerated": 0, "changed": 0, "embedded": 0, "refreshed": 0,
                "unchanged": 0, "failed": 0, "warnings": [], "cursor_advanced": False}
+        # PRI-170: scoped-синк из репо — только один тип доски (board_type), а не все.
+        providers = self._providers
+        if board_type is not None:
+            providers = [p for p in self._providers if p.board_type == board_type]
+            if not providers:
+                agg["warnings"].append(
+                    f"тип доски '{board_type}' не настроен на сервере")
         all_active: list[str] = []
-        for provider in self._providers:
+        for provider in providers:
             active, one = self._sync_provider(provider, board, limit)
             all_active.extend(active)
             for k in ("enumerated", "changed", "embedded", "refreshed",
@@ -97,9 +104,11 @@ class SyncService:
         if purge_orphaned and partial:
             agg["warnings"].append("purge пропущен: задан limit (active_keys неполный)")
         elif purge_orphaned:
-            # purge по ОБЪЕДИНЕНИЮ ключей всех досок: задачи глобальны, иначе
-            # одна доска вычистила бы задачи другой.
-            pr = self._tasks.purge_orphaned_tasks(all_active, keep_with_prs=keep_with_prs)
+            # scoped-синк (board_type задан) → purge только своего проекта (board);
+            # deploy-wide → project=None, purge по объединению всех досок (как раньше).
+            project = board if board_type is not None else None
+            pr = self._tasks.purge_orphaned_tasks(
+                all_active, keep_with_prs=keep_with_prs, project=project)
             purge_summary = {"deleted": pr["deleted_store"] + pr["deleted_graph"],
                              "protected": pr["protected_prs"]}
             agg["warnings"].extend(pr.get("warnings") or [])

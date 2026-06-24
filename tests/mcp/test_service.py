@@ -475,7 +475,7 @@ def test_get_task_delegates_to_task_service():
              "description": "d", "criteria": [], "status": "Open", "url": "u"}
     svc.components.task_service.get_task.return_value = brief
     assert svc.get_task("PRI-1") == brief
-    svc.components.task_service.get_task.assert_called_once_with("PRI-1")
+    svc.components.task_service.get_task.assert_called_once_with("PRI-1", project=None)
 
 
 def test_get_task_miss_returns_none():
@@ -493,7 +493,8 @@ def test_task_tool_delegates() -> None:
     assert svc.index_task({"key": "ID-1"}) == {"key": "ID-1"}
     assert svc.search_tasks("q", 3) == "list"
     assert svc.get_task_context("ID-1") == "ctx"
-    svc.components.task_service.search_tasks.assert_called_once_with("q", 3)
+    svc.components.task_service.search_tasks.assert_called_once_with("q", 3, project=None)
+    svc.components.task_service.get_task_context.assert_called_once_with("ID-1", project=None)
 
 
 def test_search_codebase_delegates_to_retriever() -> None:

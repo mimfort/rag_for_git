@@ -82,3 +82,9 @@ def test_issue_to_raw_state_non_dict_value():
     assert raw.status is None
     raw2 = _issue_to_raw(_issue(customFields=[{"name": "State", "value": "Done"}]))
     assert raw2.status is None
+
+
+def test_normalize_sets_project_prefix():
+    raw = _issue_to_raw(_issue(idReadable="PRJ-7"))
+    b = normalize_youtrack(raw, KP, BASE)
+    assert b["project"] == "PRJ"
