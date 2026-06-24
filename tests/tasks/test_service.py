@@ -459,6 +459,13 @@ def test_get_task_threads_project():
     assert store.get_task_project == "PRI"
 
 
+def test_index_task_stamps_project_in_store_and_graph():
+    store, graph, emb = _FakeStore(), _FakeGraph(), _FakeEmbedder()
+    TaskService(store, graph, emb).index_task(_brief(project="PRI"))
+    assert store.upserted[0].project == "PRI"
+    assert graph.tasks[0][-1] == "PRI"
+
+
 def test_purge_threads_project_to_store_and_graph():
     store = _FakeStore(hashes={"ID-1": "h"})
     g = _FakeGraph(keys={"ID-1"}, pr_keys=set())

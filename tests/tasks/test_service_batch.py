@@ -22,6 +22,7 @@ class _FakeStore:
 class _FakeGraph:
     def __init__(self, raise_on=()):
         self.tasks = []
+        self.task_projects: list[str] = []
         self.links = []
         self.pr_links = []
         self.pr_batch_links: list[tuple[str, object]] = []
@@ -31,6 +32,7 @@ class _FakeGraph:
         if "upsert_task" in self._raise_on:
             raise RuntimeError("neo4j down")
         self.tasks.append(key)
+        self.task_projects.append(project)
 
     def upsert_links(self, key, links):
         self.links.append((key, links))
@@ -210,3 +212,4 @@ def test_index_batch_stamps_project_on_meta_only():
     TaskService(store, g, _FakeEmbedder()).index_batch([_brief(project="PRI")])
     assert store.meta_updates[0][-1] == "PRI"     # project прокинут в update_meta
     assert g.tasks == ["ID-1"]
+    assert g.task_projects[0] == "PRI"            # project достиг граф-write-path
