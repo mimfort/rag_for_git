@@ -31,3 +31,12 @@ def test_resolves_github_when_repo_vcs_says_github():
     p = svc._create_vcs_provider("o", "r")
     assert isinstance(p, GitHubProvider)
     p.close()
+
+
+def test_resolves_gitlab_falls_back_to_env_gitlab_url_when_base_url_empty():
+    # repo_vcs говорит «gitlab», но base_url пустой → должны упасть на settings.gitlab_url
+    svc = _service(("gitlab", ""))
+    p = svc._create_vcs_provider("o", "r")
+    assert isinstance(p, GitLabProvider)
+    assert str(p._c.base_url) == "https://gitlab.com/api/v4/"
+    p.close()
