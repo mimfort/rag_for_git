@@ -44,6 +44,25 @@ Parse from $ARGUMENTS (all optional):
    repo: `git -C <path> rev-parse --git-dir`. Not a repo → tell the user (in Russian) and stop. No
    database or reviewer MCP is required.
 
+1.5. **Check .env completeness (offer `reviewer init` if needed).**
+   Resolve the canonical .env path:
+   ```bash
+   echo "${REVIEWER_ENV_FILE:-${XDG_CONFIG_HOME:-$HOME/.config}/rag-reviewer/.env}"
+   ```
+   (fallback: `~/.config/rag-reviewer/.env`, then `./.env` for dev). Read and parse `KEY=VALUE` lines
+   (skip comments and blank lines). If the file doesn't exist — tell the user (Russian):
+   > .env не найден по пути `<path>`. Запустить `reviewer init` для первоначальной настройки?
+
+   If the file exists, check critical groups:
+   - **GitLab VCS:** `GITLAB_TOKEN` — if empty, warn.
+   - **Доска задач:** `YOUGILE_API_KEY` and `YOUTRACK_TOKEN` — if both empty, warn.
+   If any are missing → tell the user (Russian):
+   > В .env не хватает полей: `<list>`. Запустить `reviewer init` чтобы дополнить?
+
+   User can decline — skill continues normal pipeline. This check is **read-only** (parse
+   `KEY=VALUE` lines); no reviewer MCP / Postgres / Neo4j needed. **Do NOT run** `reviewer init`
+   automatically — only offer.
+
 2. **Scan the tracked tree.**
    ```bash
    git -C <path> ls-tree -r --name-only <branch> | grep '\.py$'
