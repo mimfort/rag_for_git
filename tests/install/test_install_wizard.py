@@ -136,6 +136,21 @@ def test_init_yes_preserves_existing_secret(tmp_path, monkeypatch):
     assert "VOYAGE_API_KEY=sk-existing" in content
 
 
+def test_render_env_includes_gitlab_and_web_admin():
+    values = {f.key: f.default for g in inst.WIZARD_GROUPS for f in g.fields}
+    values["GITLAB_TOKEN"] = "glpat-secret"
+    values["WEB_ADMIN_PASSWORD"] = "admin-secret"
+    result = inst.render_env(values, extra={})
+    # отличительный текст многострочного заголовка GitLab VCS (нет в дефолтном):
+    assert "автоопределяется из git remote" in result
+    assert "GITLAB_TOKEN=glpat-secret" in result
+    assert "GITLAB_URL=https://gitlab.com" in result
+    assert "VCS_PROVIDER=github" in result
+    assert "WEB_ADMIN_USER=" in result
+    assert "WEB_ADMIN_PASSWORD=admin-secret" in result
+    assert "YOUGILE_API_BASE=" in result
+
+
 def test_init_yes_preserves_extra_keys(tmp_path, monkeypatch):
     dest = tmp_path / ".env"
     dest.write_text("VOYAGE_API_KEY=sk-x\nREVIEW_MAX_COMMENTS=42\n", encoding="utf-8")
