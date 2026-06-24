@@ -45,7 +45,7 @@ brief to `superpowers:brainstorming` (which leads to writing-plans → subagent-
    Decisions: stale → confirmation, never auto (Voyage free tier is 3 RPM / 10K TPM); failures →
    reported like `sync-codebase`; `sync_board` runs incrementally at start.
 
-1. **Config.** Resolve the `task_board` block (`type`, `mcp`, `key_pattern`): first from the repo's
+1. **Config.** Resolve the `task_board` block (`type`, `mcp`, `key_pattern`, `project`): first from the repo's
    `.review.yml`, and if there is no block there, from the deploy-wide default via
    `get_board_config()` (reviewer MCP) — so a per-repo `.review.yml` is not required when the board
    is configured once in the reviewer deploy (`TASK_BOARD_*` env). If a board is resolved, its tools
@@ -80,8 +80,8 @@ brief to `superpowers:brainstorming` (which leads to writing-plans → subagent-
      → top-k relevant subsystems by proximity (top-k vs all is server-side; PRI-167).
      Use the same `branch` as `search_codebase`. Fail-open: an empty list / a `(… недоступно)`
      note / an error is non-fatal — omit the `## Subsystems` brief section and note the gap.
-   Pass `project=<task_board.project>` (from Step 1; empty = unscoped) to `get_task`, `get_task_context`,
-   and `search_tasks` so only this repo's project surfaces (PRI-170).
+   - **Project scope.** Pass `project=<task_board.project>` (from Step 1; empty = unscoped) to
+     `get_task`, `get_task_context`, and `search_tasks` so only this repo's project surfaces (PRI-170).
    - If you have a task key: `get_task_context(key, project=<task_board.project>)` → linked tasks, their PRs, and the code those PRs
      touched.
    - `search_tasks("<title>. <first lines of description>", project=<task_board.project>)` → semantically similar tasks. If a board

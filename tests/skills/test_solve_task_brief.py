@@ -21,4 +21,5 @@ def test_solve_task_brief_spec_present():
 
 def test_solve_task_passes_project_scope():
     text = SOLVE.read_text(encoding="utf-8")
-    assert "project=" in text or "task_board.project" in text
+    assert "project=" in text
+    assert "task_board.project" in text
