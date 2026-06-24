@@ -3,6 +3,18 @@ from reviewer import install as inst
 from reviewer.entrypoints.cli import cli
 
 
+def _keys_from_text(text: str) -> set[str]:
+    """Имена KEY из текста .env-вида: пропускаем комментарии и пустые строки."""
+    keys = set()
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if "=" in line:
+            keys.add(line.split("=", 1)[0].strip())
+    return keys
+
+
 def test_read_env_parses_key_value(tmp_path):
     f = tmp_path / ".env"
     f.write_text("VOYAGE_API_KEY=sk-abc\nGITHUB_TOKEN=ghp-xyz\n", encoding="utf-8")
@@ -160,3 +172,22 @@ def test_init_yes_preserves_extra_keys(tmp_path, monkeypatch):
     assert result.exit_code == 0, result.output
     content = dest.read_text(encoding="utf-8")
     assert "REVIEW_MAX_COMMENTS=42" in content
+
+
+def test_env_template_mirrors_env_example():
+    from pathlib import Path
+    repo_root = Path(__file__).resolve().parents[2]
+    example_keys = _keys_from_text((repo_root / ".env.example").read_text(encoding="utf-8"))
+    template_keys = _keys_from_text(inst.ENV_TEMPLATE)
+    assert template_keys == example_keys, (
+        f"ENV_TEMPLATE и .env.example разошлись:\n"
+        f"  только в .env.example: {sorted(example_keys - template_keys)}\n"
+        f"  только в ENV_TEMPLATE: {sorted(template_keys - example_keys)}"
+    )
+
+
+def test_env_template_contains_all_wizard_keys():
+    template_keys = _keys_from_text(inst.ENV_TEMPLATE)
+    wizard_keys = {f.key for g in inst.WIZARD_GROUPS for f in g.fields}
+    missing = wizard_keys - template_keys
+    assert not missing, f"в ENV_TEMPLATE нет ключей wizard: {sorted(missing)}"

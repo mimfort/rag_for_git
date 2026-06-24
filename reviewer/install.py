@@ -42,25 +42,66 @@ SKILL_NAMES = (
 ENV_TEMPLATE = """\
 # rag_for_git — конфигурация. Обязателен только VOYAGE_API_KEY; GITHUB_TOKEN
 # нужен для ревью PR. Остальное имеет дефолты в reviewer/config/settings.py.
+# Полный справочник полей — зеркало .env.example.
 
 # --- Voyage (эмбеддинги + реранкер) — обязательно ---
 VOYAGE_API_KEY=
+EMBEDDING_MODEL=voyage-code-3
+EMBEDDING_DIM=1024
+EMBEDDING_BATCH_SIZE=256
+RERANK_MODEL=rerank-2.5
 
 # --- GitHub (PAT: Pull requests read/write, Contents read) ---
 GITHUB_TOKEN=
+GITHUB_RETRY_ATTEMPTS=3
+GITHUB_RETRY_BACKOFF_BASE=1.0
+
+# --- multi-platform VCS: тип определяется из git remote при `reviewer index` ---
+VCS_PROVIDER=github
+GITLAB_TOKEN=
+GITLAB_URL=https://gitlab.com
 
 # --- Postgres (ParadeDB :5433) / Neo4j (:7687) — дефолты docker-compose ---
 PG_DSN=postgresql://reviewer:reviewer@localhost:5433/reviewer
+PG_POOL_MIN_SIZE=1
+PG_POOL_MAX_SIZE=4
 NEO4J_URI=neo4j://localhost:7687
 NEO4J_USER=neo4j
 NEO4J_PASSWORD=reviewerpass
 
 # --- Граф кода: auto|scip|treesitter ---
 GRAPH_BACKEND=auto
+SUMMARY_CLUSTER_DEPTH=2
 
 # --- Мульти-репо / ветки (опционально) ---
 DEFAULT_REPO=
 REVIEW_BRANCHES=main,master
+
+# --- Настройка ревью (дефолты; per-repo .review.yml может переопределить) ---
+REVIEW_SEVERITY_THRESHOLD=medium
+REVIEW_MIN_CONFIDENCE=0.5
+REVIEW_MAX_COMMENTS=25
+REVIEW_MAX_FILES=50
+REVIEW_CATEGORIES=
+REVIEW_SUGGESTIONS=apply
+REVIEW_OUTPUT_LANGUAGE=ru
+REVIEW_SKIP_DRAFTS=true
+REVIEW_HISTORY=true
+MAX_TOOL_RESULT_CHARS=8000
+
+# --- Доска задач (опционально; per-type креды, legacy-алиас TASK_BOARD_API_KEY/BASE) ---
+TASK_BOARD_TYPE=
+TASK_BOARD_MCP=
+TASK_BOARD_KEY_PATTERN=
+TASK_BOARD_URL_TEMPLATE=
+YOUGILE_API_KEY=
+YOUGILE_API_BASE=
+YOUTRACK_TOKEN=
+YOUTRACK_BASE_URL=
+
+# --- Веб-админка наблюдаемости (опционально; пусто = без аутентификации) ---
+WEB_ADMIN_USER=
+WEB_ADMIN_PASSWORD=
 """
 
 
