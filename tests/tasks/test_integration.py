@@ -241,6 +241,27 @@ def test_taskstore_get_task_by_key_and_alias(store):
     assert store.get_task("ZZ-404") is None      # промах
 
 
+def test_taskstore_search_and_get_scoped_by_project(store):
+    emb = _FakeEmbedder()
+    for key, proj, title in [("ID-1", "PRI", "logout flow"),
+                             ("ID-2", "TES", "logout flow")]:
+        text = build_task_text(title, "session logout", [])
+        store.upsert_task(TaskRow(
+            key=key, aliases=[], title=title, description="session logout",
+            status="Open", url=None, content_hash=task_content_hash(text),
+            text=text, embedding=emb.embed_query(text), project=proj))
+    # search скоупнут по проекту
+    hits = store.search("logout", emb.embed_query("logout"), top_k=10, project="PRI")
+    assert {h.key for h in hits} == {"ID-1"}
+    # get_task скоупнут: чужой проект не виден
+    assert store.get_task("ID-2", project="PRI") is None
+    assert store.get_task("ID-2", project="TES").project == "TES"
+    # list_keys скоупнут
+    assert store.list_keys(project="PRI") == ["ID-1"]
+    # без фильтра — обе (back-compat)
+    assert set(store.list_keys()) == {"ID-1", "ID-2"}
+
+
 def test_purge_removes_link_only_stub_from_graph(store, graph):
     """Стаб :Task, созданный upsert_links (нет в сторе), вычищается из графа.
 
