@@ -42,7 +42,7 @@ TASK_LINK-стаб на любой совпавший код, включая ч�
 |---|---|---|
 | Измерение скоупа | **По ПРОЕКТУ** (метка `project` на задаче), не по репо | Сохраняет инвариант «задача покрывает несколько микросервисных репо»: репо с одним проектом видят общие задачи. Совпадает с формулировкой PRI-170. |
 | Резолв скоупа на чтении | **Клиент передаёт** `project` в read-тулы | Скилы уже читают `.review.yml`; сервер при session-less чтении не имеет чекаута. Минимум новой инфраструктуры. Отклонён серверный repo→project маппинг (repo_vcs-style, ID-133) — тяжелее без выигрыша. |
-| Кросс-проект связи | **Фильтр на чтении + чистота на записи** | Read-фильтр — обязательный сейфти-нет (покрывает старые утечки); на записи scoped-синк не создаёт стабы на чужой префикс (граф чистый). |
+| Кросс-проект связи | **Фильтр на чтении** (read-only) | `task_context` обходит только соседей своего проекта — закрывает критерий 3 полностью. Write-side чистка **отклонена при планировании**: она инвертирует намеренный захват кросс-проект related-связей (`normalize` извлекает чужой `ABC-7`/`ABC-1` из описания, что закреплено зелёными тестами) — лишний риск без выигрыша, т.к. read-фильтр и так отсекает стабы без `project`. |
 | Хранилище | **Глобальный стор/граф + фильтр по `project`** | Минимум инфраструктуры; согласуется с «мульти-репо через дискриминатор». |
 
 **Контракт значения `project`:** одна и та же строка в `.review.yml task_board.project`, в метке
@@ -70,11 +70,13 @@ ALTER TABLE tasks ADD COLUMN IF NOT EXISTS project text NOT NULL DEFAULT '';
 **Семантика `project=''` (untagged):** «вне проекта», **исключается** из scoped-чтения (строгая
 изоляция, критерий 4). Видимость восстанавливается ре-синком/бэкфиллом.
 
-**Авто-бэкфилл (без ручного шага):** watermark-skip-ветка в `SyncService._sync_provider`
-(`sync.py:48-49`, сейчас `unchanged += 1; continue`) при scoped-синке делает дешёвый `update`
-проекта для уже присутствующих задач (без переэмбеда). После одного синка на доску всё
-протегировано; курсор не сбрасываем. (Альтернатива — однократный full re-sync со сбросом курсора;
-выбран авто-бэкфилл.)
+**Авто-бэкфилл (без ручного шага, через свежий курсор):** курсор синка ключуется по
+`tasks:{type}:{board}` (`sync.py:26`). Переход с deploy-wide (`board=None` → ref `tasks:{type}:*`) на
+scoped-синк (`board="<project>"` → ref `tasks:{type}:{project}`) даёт **новый** ref → курсор для него
+= 0 → первый scoped-синк переобрабатывает ВСЕ задачи проекта. Существующие задачи идут по
+`content_hash`-совпадению в `index_batch` через `meta_only`-ветку (**без переэмбеда**), а `update_meta`
+теперь пишет `project` (и `upsert_task` графа — `:Task.project`). Так `project` протегируется на всех
+задачах за один scoped-синк, без сброса курсора и без трат Voyage.
 
 ### 2. Путь записи (синк)
 
@@ -128,13 +130,10 @@ title (`yougile.py:111`). Штампуем **именно project title** для
 
 ### 4. Связи (TASK_LINK) и purge
 
-**Чтение** — см. п. 3 (`task_context` обходит только своих соседей).
-
-**Запись (чистота):** scoped-синк создаёт TASK_LINK только на ключи своего проекта. «Свой проект» —
-по префиксу ключа (yougile project code, напр. `PRI`; youtrack short name, напр. `TES`). Источник
-префикса — `RawTask.project_code` (напр. `PRI-5` → `PRI`) либо сам `project`-идентификатор; точный
-источник фиксируется в плане. Правило применяется и к related-ключам из описания (`key_pattern`), и к
-явным board-links (`raw.links`).
+**Чтение (единственный механизм изоляции связей):** `task_context` обходит только соседей своего
+проекта (`n.project = $project`). Стабы (`upsert_links`/`link_pr`) и задачи чужих проектов
+отсекаются — закрывает критерий 3. Write-side чистка отклонена (см. таблицу решений): `normalize` по-
+прежнему извлекает кросс-проект related-ключи (закреплено тестами), но на чтении они невидимы.
 
 **Purge** (`sync.py:96-106`): при scoped-синке `purge_orphaned` сверяет active_keys **только своего
 проекта** против задач **только своего проекта** (`WHERE project = ...` в `purge_orphaned_tasks` /
@@ -162,8 +161,8 @@ purge по объединению как сейчас. Защита `keep_with_p
 - **`tests/tasks/test_sync.py`**: scoped-синк итерирует только один тип; теги `project` проставлены;
   purge не трогает чужой проект; `board_type=None` → старое поведение (все провайдеры); авто-бэкфилл
   на skip-ветке тегирует существующие.
-- **`tests/tasks/boards/`**: `iter_raw`/`normalize` штампуют `project`; related-линки/board-links
-  чужого префикса не создаются.
+- **`tests/tasks/boards/`**: `project_prefix` (юнит); `normalize_yougile`/`normalize_youtrack`
+  кладут `project` = префикс кода; yougile iter_raw-фильтр по префиксу проверяется integration-синком.
 - **`tests/tasks/` (store/graph)**: `search`/`get_task`/`task_context` с `project` фильтруют; без
   `project` — back-compat; `task_context` отсекает чужих соседей и стабы.
 - **`tests/policy/`**: `task_board.project` парсится из `.review.yml` и доезжает в `policy.task_board`.
@@ -182,9 +181,9 @@ purge по объединению как сейчас. Защита `keep_with_p
 | `reviewer/tasks/graph.py` | `:Task.project`; `upsert_task`/`task_context`/`list_keys`/`keys_with_prs` — проперти+фильтр |
 | `reviewer/tasks/service.py` | `index_task`/`index_batch` несут `project`; `search_tasks`/`get_task_context`/`get_task`/`purge_orphaned_tasks` — `project`-параметр |
 | `reviewer/tasks/sync.py` | `run`/`_sync_provider` — `board_type`-скоуп, авто-бэкфилл на skip, scoped purge |
-| `reviewer/tasks/boards/base.py` | `RawTask.project` |
-| `reviewer/tasks/boards/yougile.py` | штамп `project` в `iter_raw`/`normalize` + фильтр кросс-проект линков |
-| `reviewer/tasks/boards/youtrack.py` | штамп `project` + фильтр кросс-проект линков |
+| `reviewer/tasks/boards/base.py` | хелпер `project_prefix(code)` |
+| `reviewer/tasks/boards/yougile.py` | `normalize_yougile` кладёт `project=project_prefix(project_code)`; `iter_raw` фильтрует по префиксу (замена title-матча) |
+| `reviewer/tasks/boards/youtrack.py` | `normalize_youtrack` кладёт `project=project_prefix(key)`; `iter_raw` без изменений |
 | `reviewer/mcp/service.py` | `sync_board(board_type)`; read-тулы `project`-параметр |
 | `reviewer/entrypoints/mcp_server.py` | сигнатуры тулов: `board_type` / `project` |
 | `plugin/skills/configure-review/SKILL.md` | шаг 5b: вопрос про проект + предупреждение |
@@ -194,12 +193,26 @@ purge по объединению как сейчас. Защита `keep_with_p
 | `.review.yml` | `task_board.project: PRI` |
 | `CLAUDE.md` | уточнение инварианта скоупа задач |
 
+## Контракт значения `project` (единообразный префикс кода)
+
+`project` = **префикс кода задачи** — единообразно для всех досок, без знания человеческих
+названий проектов. Хелпер `project_prefix(code)` = `<PREFIX>` из `<PREFIX>-<число>` (регэксп
+`^([A-Za-z][A-Za-z0-9]*)-\d+$`): `PRI-5`→`PRI`, `TES-1`→`TES`, иначе `""`.
+
+- **yougile:** `project = project_prefix(raw.project_code)` (`idTaskProject`, напр. `PRI-5` → `PRI`),
+  выводится в `normalize_yougile` (чисто). `iter_raw` при scoped-синке фильтрует по
+  `project_prefix(idTaskProject) == board` (замена title-матча на префикс-матч, `yougile.py:111`).
+- **youtrack:** `project = project_prefix(raw.key)` (`idReadable`, напр. `PRJ-7` → `PRJ`). `iter_raw`
+  без изменений: `query: project: <board>` — short name YouTrack == префикс `idReadable`.
+- `.review.yml task_board.project` = тот же префикс (`PRI` / `TES`). Один и тот же литерал для штампа,
+  enumerate-фильтра и read-фильтра.
+- Даже deploy-wide синк (`board=None`) штампует `project` по-задачно — выдачу можно скоупить и после
+  неотскоупленного синка.
+
 ## Открытые вопросы для плана (не блокеры)
 
-- Точный источник «префикса проекта» для фильтра кросс-проект линков (`RawTask.project_code` vs
-  `project`-идентификатор).
-- review-pr: клиент передаёт `project` или сервер резолвит из `policy.task_board` PR-сессии.
-- yougile: канонизация `project` = project title (а не board title) при штампе.
+- review-pr: его task-чтение (одиночная задача PR) скоупим, передавая `project` из резолвнутого
+  `task_board`; уточняется в задаче скилл-обвязки.
 
 ## Контекст/ограничения
 
