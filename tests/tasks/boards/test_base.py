@@ -2,10 +2,18 @@ from reviewer.config.settings import Settings
 from reviewer.tasks.boards import RawTask, make_board_provider
 
 
-def test_rawtask_fields():
+def test_rawtask_fields_and_links_default():
     rt = RawTask(key="ID-1", project_code="PRI-1", title="t", description="d",
                  status="Backlog", subtask_ids=["u1"], timestamp=123)
     assert rt.key == "ID-1" and rt.timestamp == 123
+    assert rt.links == []                       # links — необязательное, дефолт пуст
+
+
+def test_rawtask_links_explicit():
+    rt = RawTask(key="A-1", project_code="A-1", title="t", description="",
+                 status=None, subtask_ids=[], timestamp=1,
+                 links=[{"type": "related", "key": "A-2"}])
+    assert rt.links == [{"type": "related", "key": "A-2"}]
 
 
 def test_make_provider_none_when_no_board():
