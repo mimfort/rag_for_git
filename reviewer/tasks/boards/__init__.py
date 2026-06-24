@@ -1,9 +1,9 @@
 """Провайдеры досок задач: фабрика по типу + реэкспорт интерфейса."""
 from __future__ import annotations
 
-from reviewer.tasks.boards.base import RawTask, TaskBoardProvider
+from reviewer.tasks.boards.base import RawTask, TaskBoardProvider, project_prefix
 
-__all__ = ["RawTask", "TaskBoardProvider", "make_board_provider",
+__all__ = ["RawTask", "TaskBoardProvider", "project_prefix", "make_board_provider",
            "make_board_providers"]
 
 

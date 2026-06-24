@@ -12,7 +12,7 @@ from collections.abc import Iterable
 
 import httpx
 
-from reviewer.tasks.boards.base import RawTask
+from reviewer.tasks.boards.base import RawTask, project_prefix
 
 _PAGE = 200
 
@@ -85,6 +85,7 @@ def normalize_youtrack(raw: RawTask, key_pattern: str, base_url: str) -> dict:
         "status": raw.status,
         "url": url,
         "links": links,
+        "project": project_prefix(raw.key),
     }
 
 
