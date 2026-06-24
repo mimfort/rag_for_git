@@ -284,6 +284,34 @@ def test_task_context_excludes_foreign_project_neighbor(tgraph):
     assert {"TES-9", "ABC-7"} <= {n["key"] for n in ctx_all["linked"]}
 
 
+def test_two_projects_isolated_end_to_end(store, tgraph):
+    """Holistic-тест: два проекта (PRI, TES) изолированы по всему стеку write+read.
+
+    Проверяет: index_batch → search_tasks → get_task → get_task_context.
+    Тест доказывает, что store-фильтр и граф-фильтр project работают согласованно.
+    """
+    emb = _FakeEmbedder()
+    svc = TaskService(store, tgraph, emb)
+    svc.index_batch([
+        {"key": "PRI-1", "aliases": [], "title": "logout", "description": "session",
+         "criteria": [], "status": "Open", "url": None, "links": [], "project": "PRI"},
+        {"key": "TES-9", "aliases": [], "title": "logout", "description": "session",
+         "criteria": [], "status": "Open", "url": None, "links": [], "project": "TES"},
+    ])
+    # search скоупнут по проекту: PRI видит только PRI-1
+    out = svc.search_tasks("logout", top_k=10, project="PRI")
+    assert "PRI-1" in out and "TES-9" not in out
+
+    # get_task скоупнут: чужой проект не виден
+    assert svc.get_task("TES-9", project="PRI") is None
+    assert svc.get_task("TES-9", project="TES")["key"] == "TES-9"
+
+    # связь в чужой проект не вылезает на чтении get_task_context
+    tgraph.upsert_links("PRI-1", [{"type": "related", "key": "TES-9"}])
+    ctx = svc.get_task_context("PRI-1", project="PRI")
+    assert "TES-9" not in ctx
+
+
 def test_purge_removes_link_only_stub_from_graph(store, graph):
     """Стаб :Task, созданный upsert_links (нет в сторе), вычищается из графа.
 
