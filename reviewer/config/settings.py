@@ -79,6 +79,11 @@ class Settings(BaseSettings):
     github_token: str = ""
     github_retry_attempts: int = 3
     github_retry_backoff_base: float = 1.0
+    # multi-platform VCS (PRI-133): тип провайдера резолвится из repo_vcs
+    # (auto-derive при reviewer index), здесь — фолбэк и токены по платформе.
+    vcs_provider: str = "github"          # фолбэк, когда repo_vcs пуст / remote не распознан
+    gitlab_token: str = ""                # токен платформы gitlab
+    gitlab_url: str = "https://gitlab.com"  # дефолт base-url; фолбэк для self-hosted
     # multi-repo: дефолтный repo для session-less тулов (search_codebase) и
     # `reviewer index` без --repo; пусто = repo задаётся явно (мульти-репо-режим)
     default_repo: str = ""
