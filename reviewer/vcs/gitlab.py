@@ -1,11 +1,51 @@
 from __future__ import annotations
 import base64
+import logging
+import re
 from urllib.parse import quote
 
 import httpx
 
 from reviewer.vcs.base import PullRequest, ChangedFile, InlineComment
 from reviewer.vcs._http import _RetryTransport, _FP
+
+log = logging.getLogger(__name__)
+
+_HUNK_RE = re.compile(r"^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@")
+
+
+def _new_line_map(patch: str | None) -> dict[int, int | None]:
+    """new_line → old_line для контекстных строк, new_line → None для добавленных.
+
+    Парсит unified-diff хунки. Нужен GitLab-позиции: комментарий на контекстной
+    (неизменённой) строке требует и old_line, и new_line; на добавленной — только
+    new_line. Удалённые строки (LEFT) в карту не попадают.
+    """
+    result: dict[int, int | None] = {}
+    if not patch:
+        return result
+    old_ln = new_ln = 0
+    for line in patch.splitlines():
+        m = _HUNK_RE.match(line)
+        if m:
+            old_ln = int(m.group(1))
+            new_ln = int(m.group(2))
+            continue
+        if not line:
+            continue
+        tag = line[0]
+        if tag == "+":
+            result[new_ln] = None      # добавленная строка
+            new_ln += 1
+        elif tag == "-":
+            old_ln += 1                # удалённая строка (LEFT) — не в new-карте
+        elif tag == "\\":
+            continue                   # «\ No newline at end of file»
+        else:                          # контекст (' ')
+            result[new_ln] = old_ln
+            old_ln += 1
+            new_ln += 1
+    return result
 
 
 def _file_status(ch: dict) -> str:
@@ -126,32 +166,52 @@ class GitLabProvider:
         summary: str,
         comments: list[InlineComment],
     ) -> None:
-        # Сводка — обычный нот MR (у GitLab нет объекта «review»).
+        # Inline-комментарии — отдельные discussions с позицией. Тройку SHA
+        # берём из diff_refs MR (head_sha из аргумента может расходиться).
+        if comments:
+            d = self._c.get(self._mr(number)).raise_for_status().json()
+            refs = d.get("diff_refs") or {}
+            # Строим карту new_line → old_line для каждого файла: нужна для корректной
+            # GitLab-позиции на контекстных строках (требуют и old_line, и new_line).
+            maps: dict[str, dict[int, int | None]] = {
+                cf.path: _new_line_map(cf.patch)
+                for cf in self.get_changed_files(number)
+            }
+            for c in comments:
+                position = {
+                    "position_type": "text",
+                    "base_sha": refs.get("base_sha"),
+                    "start_sha": refs.get("start_sha"),
+                    "head_sha": refs.get("head_sha"),
+                    "new_path": c.path,
+                    "old_path": c.path,
+                }
+                # RIGHT → строка новой версии, LEFT → строка старой.
+                # Мультистрочные комментарии деградируют в однострочный (на c.line).
+                if c.side == "RIGHT":
+                    lmap = maps.get(c.path, {})
+                    old = lmap.get(c.line, "NOT_FOUND")
+                    if old != "NOT_FOUND" and old is not None:
+                        # Контекстная (неизменённая) строка — GitLab требует оба поля.
+                        position["new_line"] = c.line
+                        position["old_line"] = old
+                    else:
+                        # Добавленная строка или строка не найдена в патче.
+                        position["new_line"] = c.line
+                else:
+                    position["old_line"] = c.line
+                try:
+                    self._c.post(
+                        f"{self._mr(number)}/discussions",
+                        json={"body": c.body, "position": position},
+                    ).raise_for_status()
+                except httpx.HTTPStatusError as exc:
+                    log.warning(
+                        "Не удалось опубликовать inline-комментарий %s:%d: %s",
+                        c.path, c.line, exc,
+                    )
+        # Сводка — обычный нот MR (у GitLab нет объекта «review»). Публикуется
+        # последней, чтобы сбой в цикле комментариев не оставлял её сиротой.
         self._c.post(
             f"{self._mr(number)}/notes", json={"body": summary}
         ).raise_for_status()
-        if not comments:
-            return
-        # Inline-комментарии — отдельные discussions с позицией. Тройку SHA
-        # берём из diff_refs MR (head_sha из аргумента может расходиться).
-        d = self._c.get(self._mr(number)).raise_for_status().json()
-        refs = d.get("diff_refs") or {}
-        for c in comments:
-            position = {
-                "position_type": "text",
-                "base_sha": refs.get("base_sha"),
-                "start_sha": refs.get("start_sha"),
-                "head_sha": refs.get("head_sha"),
-                "new_path": c.path,
-                "old_path": c.path,
-            }
-            # RIGHT → строка новой версии, LEFT → строка старой.
-            # Мультистрочные комментарии деградируют в однострочный (на c.line).
-            if c.side == "RIGHT":
-                position["new_line"] = c.line
-            else:
-                position["old_line"] = c.line
-            self._c.post(
-                f"{self._mr(number)}/discussions",
-                json={"body": c.body, "position": position},
-            ).raise_for_status()
