@@ -36,8 +36,10 @@ brief to `superpowers:brainstorming` (which leads to writing-plans → subagent-
       reviewer MCP / Neo4j unreachable, no index, or `uvx` missing): tell the user (in Russian)
       what is missing and the command to fix it. **Fail-open** — never abort; continue on the
       stale/unknown index.
-   3. **Warm the task corpus.** Call `sync_board(board=null, limit=null, purge_orphaned=false)` —
-      incremental (timestamp watermark), cheap when the corpus is warm. Board not configured or
+   3. **Warm the task corpus.** Call
+      `sync_board(board=<task_board.project or null>, board_type=<task_board.type or null>, limit=null, purge_orphaned=false)` —
+      scoped warm-up корпуса задач своего проекта (PRI-170); пустой project → весь корпус.
+      Incremental (timestamp watermark), cheap when the corpus is warm. Board not configured or
       `status=error` → print the `TASK_BOARD_*` hint and continue board-less.
 
    Decisions: stale → confirmation, never auto (Voyage free tier is 3 RPM / 10K TPM); failures →
@@ -52,7 +54,7 @@ brief to `superpowers:brainstorming` (which leads to writing-plans → subagent-
 
 2. **Identify the task.**
    - If `$ARGUMENTS` matches the board's `key_pattern`:
-     1. **Store-first.** Call reviewer `get_task(key)` — it returns the task's own normalized
+     1. **Store-first.** Call reviewer `get_task(key, project=<task_board.project>)` — it returns the task's own normalized
         content (`{key, aliases[], title, description, criteria[], status, url}`) from the reviewer
         store, which the preflight `sync_board` (step 0.3) just refreshed.
         - **Hit** (a task object with a `key`): use it directly as the `TaskBrief`. The task is
@@ -78,9 +80,11 @@ brief to `superpowers:brainstorming` (which leads to writing-plans → subagent-
      → top-k relevant subsystems by proximity (top-k vs all is server-side; PRI-167).
      Use the same `branch` as `search_codebase`. Fail-open: an empty list / a `(… недоступно)`
      note / an error is non-fatal — omit the `## Subsystems` brief section and note the gap.
-   - If you have a task key: `get_task_context(key)` → linked tasks, their PRs, and the code those PRs
+   Pass `project=<task_board.project>` (from Step 1; empty = unscoped) to `get_task`, `get_task_context`,
+   and `search_tasks` so only this repo's project surfaces (PRI-170).
+   - If you have a task key: `get_task_context(key, project=<task_board.project>)` → linked tasks, their PRs, and the code those PRs
      touched.
-   - `search_tasks("<title>. <first lines of description>")` → semantically similar tasks. If a board
+   - `search_tasks("<title>. <first lines of description>", project=<task_board.project>)` → semantically similar tasks. If a board
      is connected, you may read the most relevant similar tasks from the board for fuller detail.
    - `search_codebase("<task description>")` → relevant existing code (files/symbols to touch or
      mimic).

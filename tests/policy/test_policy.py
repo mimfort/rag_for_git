@@ -190,3 +190,9 @@ def test_policy_summary_topk_threshold_default_from_settings():
     from reviewer.policy.policy import ReviewPolicy
     s = Settings()
     assert ReviewPolicy.from_settings(s).summary_topk_threshold == s.summary_topk_threshold
+
+
+def test_task_board_project_parsed_from_yaml():
+    p = ReviewPolicy.from_yaml(
+        "task_board: {type: yougile, mcp: yougile, project: PRI}")
+    assert p.task_board["project"] == "PRI"

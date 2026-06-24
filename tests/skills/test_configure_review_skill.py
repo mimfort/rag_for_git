@@ -77,3 +77,11 @@ def test_skill_suggests_rebuilds_without_running():
     assert "do NOT run" in text                     # не запускает пересбор сам
     assert "reviewer_sync-codebase" in text         # при смене ignore
     assert "reviewer_summarize-subsystems" in text  # при смене depth/threshold
+
+
+def test_skill_asks_for_project_scope():
+    text = SKILL.read_text(encoding="utf-8")
+    assert "task_board.project" in text             # пишет выбор проекта
+    assert "project" in text
+    # предупреждение про пустой project (тянет все проекты)
+    assert "все проект" in text.lower() or "all project" in text.lower()

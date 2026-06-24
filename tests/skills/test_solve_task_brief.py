@@ -17,3 +17,8 @@ def test_solve_task_brief_spec_present():
     assert "≤5" in text                 # колпак relevant code
     assert "(dropped" in text           # конвенция dropped-count
     assert "directly informs" in text   # бинарное правило релевантности
+
+
+def test_solve_task_passes_project_scope():
+    text = SOLVE.read_text(encoding="utf-8")
+    assert "project=" in text or "task_board.project" in text

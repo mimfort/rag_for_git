@@ -46,9 +46,13 @@ blocks.
    explicit key in `$ARGUMENTS` wins; otherwise use `task_keys.primary`. If no key is available,
    skip this step and note in the summary that no task key was found.
 
+   Task reads are scoped to this repo's project: pass `project=<task_board.project>` (from the target
+   branch `.review.yml`, see step with `task_board`) to `get_task`/`get_task_context`/`search_tasks`
+   (PRI-170; empty `project` = unscoped).
+
    Read the task **store-first** (unifies with solve-task; required for boards synced server-side
    without a board MCP, e.g. youtrack):
-   - Call reviewer `get_task(key)` first. **Hit** (object with a `key`) → use it as the `TaskBrief`
+   - Call reviewer `get_task(key, project=<task_board.project>)` first. **Hit** (object with a `key`) → use it as the `TaskBrief`
      directly; it is already indexed by the server-side sync, so do NOT call `index_task`.
    - **Miss** (`null`) AND `task_board.mcp` is set → fall back to the board-MCP playbook for
      `task_board.type` (`references/task-context-yougile.md` or `references/task-context-jira.md`):
@@ -63,8 +67,8 @@ blocks.
    On a store **hit** the brief is already indexed — do NOT re-index. Only when the brief was freshly
    built from the board MCP (the **Miss** branch) call `index_task(TaskBrief)` to persist it
    (idempotent — safe to repeat). Then gather task context to sharpen the requirements check:
-   - `get_task_context(TaskBrief.key)` → linked tasks, their PRs, and the code those PRs touched;
-   - `search_tasks("<TaskBrief.title>. <first lines of description>")` → semantically similar tasks.
+   - `get_task_context(TaskBrief.key, project=<task_board.project>)` → linked tasks, their PRs, and the code those PRs touched;
+   - `search_tasks("<TaskBrief.title>. <first lines of description>", project=<task_board.project>)` → semantically similar tasks.
    Keep ONLY the related/similar items that look relevant; you will pass them to the requirements
    dimension in step 4. All of this is best-effort: if `index_task`/`get_task_context`/`search_tasks`
    return a "(… unavailable)" note or error, continue — never abort the review.
