@@ -21,3 +21,9 @@ def test_skill_is_thin_trigger_of_sync_board():
 
 def test_legacy_enumeration_reference_removed():
     assert not OLD_REF.exists()
+
+
+def test_skill_passes_project_and_board_type():
+    text = SKILL.read_text(encoding="utf-8")
+    assert "board_type" in text                  # синк скоупится по типу доски
+    assert ".review.yml" in text                 # источник — конфиг репо

@@ -2,6 +2,15 @@ from reviewer.config.settings import Settings
 from reviewer.tasks.boards import (
     RawTask, make_board_provider, make_board_providers,
 )
+from reviewer.tasks.boards.base import project_prefix
+
+
+def test_project_prefix_extracts_alpha_prefix():
+    assert project_prefix("PRI-5") == "PRI"
+    assert project_prefix("TES-1") == "TES"
+    assert project_prefix("0DEV-7") == ""        # код должен начинаться с буквы
+    assert project_prefix("") == ""
+    assert project_prefix("UUID-NO-NUM") == ""   # хвост не число → не код задачи
 
 
 def test_rawtask_fields_and_links_default():

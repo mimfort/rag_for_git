@@ -11,6 +11,7 @@ class _FakeStore:
         self.deleted = []
         self._search_result = search_result or []
         self._rows = list(rows or [])      # list[TaskRow] для get_task
+        self.search_project = self.list_keys_project = self.get_task_project = "unset"
 
     def existing_hash(self, key):
         return self._hashes.get(key)
@@ -18,13 +19,15 @@ class _FakeStore:
     def upsert_task(self, row):
         self.upserted.append(row)
 
-    def update_meta(self, key, title, status, url, aliases):
-        self.meta_updates.append((key, title, status, url, aliases))
+    def update_meta(self, key, title, status, url, aliases, project=""):
+        self.meta_updates.append((key, title, status, url, aliases, project))
 
-    def search(self, q, vec, top_k=5):
+    def search(self, q, vec, top_k=5, project=None):
+        self.search_project = project
         return self._search_result
 
-    def list_keys(self):
+    def list_keys(self, project=None):
+        self.list_keys_project = project
         return list(self._hashes.keys())
 
     def delete_tasks(self, keys):
@@ -36,7 +39,8 @@ class _FakeStore:
         self.deleted.extend(keys)
         return count
 
-    def get_task(self, key):
+    def get_task(self, key, project=None):
+        self.get_task_project = project
         for r in self._rows:
             if r.key == key or key in (r.aliases or []):
                 return r
@@ -53,11 +57,14 @@ class _FakeGraph:
         self._raise_on = set(raise_on)
         self._pr_keys = set(pr_keys)
         self._keys = set(keys)
+        self.task_context_project = "unset"
+        self.list_keys_project = "unset"
+        self.keys_with_prs_project = "unset"
 
-    def upsert_task(self, key, aliases, title, status, url):
+    def upsert_task(self, key, aliases, title, status, url, project=""):
         if "upsert_task" in self._raise_on:
             raise RuntimeError("neo4j down")
-        self.tasks.append((key, aliases, title, status, url))
+        self.tasks.append((key, aliases, title, status, url, project))
 
     def upsert_links(self, key, links):
         self.links.append((key, links))
@@ -66,19 +73,22 @@ class _FakeGraph:
     def link_pr(self, task_key, pr, touched):
         self.pr_links.append((task_key, pr, touched))
 
-    def task_context(self, key):
+    def task_context(self, key, project=""):
         if "task_context" in self._raise_on:
             raise RuntimeError("neo4j down")
+        self.task_context_project = project
         return self._context
 
-    def keys_with_prs(self):
+    def keys_with_prs(self, project=""):
         if "keys_with_prs" in self._raise_on:
             raise RuntimeError("neo4j down")
+        self.keys_with_prs_project = project
         return set(self._pr_keys)
 
-    def list_keys(self):
+    def list_keys(self, project=""):
         if "list_keys" in self._raise_on:
             raise RuntimeError("neo4j down")
+        self.list_keys_project = project
         return set(self._keys)
 
     def delete_tasks(self, keys):
@@ -417,7 +427,50 @@ def test_get_task_miss_returns_none():
 
 def test_get_task_store_error_returns_none_not_raise():
     class _BrokenStore(_FakeStore):
-        def get_task(self, key):
+        def get_task(self, key, project=None):
             raise RuntimeError("pg down")
     out = TaskService(_BrokenStore(), _FakeGraph(), _FakeEmbedder()).get_task("ID-1")
     assert out is None
+
+
+def test_search_tasks_threads_project():
+    from reviewer.tasks.store import TaskHit
+    store = _FakeStore(search_result=[TaskHit(key="ID-1", title="t", status="Open", score=0.1)])
+    svc = TaskService(store, _FakeGraph(), _FakeEmbedder())
+    svc.search_tasks("q", project="PRI")
+    assert store.search_project == "PRI"
+
+
+def test_get_task_context_threads_project():
+    g = _FakeGraph(context={"key": "ID-1", "title": "t", "status": None,
+                            "url": None, "prs": [], "linked": []})
+    svc = TaskService(_FakeStore(), g, _FakeEmbedder())
+    svc.get_task_context("ID-1", project="PRI")
+    assert g.task_context_project == "PRI"
+
+
+def test_get_task_threads_project():
+    from reviewer.tasks.store import TaskRow
+    row = TaskRow(key="ID-1", aliases=[], title="t", description="d", status=None,
+                  url=None, content_hash="h", text="t", embedding=[], project="PRI")
+    store = _FakeStore(rows=[row])
+    svc = TaskService(store, _FakeGraph(), _FakeEmbedder())
+    svc.get_task("ID-1", project="PRI")
+    assert store.get_task_project == "PRI"
+
+
+def test_index_task_stamps_project_in_store_and_graph():
+    store, graph, emb = _FakeStore(), _FakeGraph(), _FakeEmbedder()
+    TaskService(store, graph, emb).index_task(_brief(project="PRI"))
+    assert store.upserted[0].project == "PRI"
+    assert graph.tasks[0][-1] == "PRI"
+
+
+def test_purge_threads_project_to_store_and_graph():
+    store = _FakeStore(hashes={"ID-1": "h"})
+    g = _FakeGraph(keys={"ID-1"}, pr_keys=set())
+    svc = TaskService(store, g, _FakeEmbedder())
+    svc.purge_orphaned_tasks(["ID-1"], project="PRI")
+    assert store.list_keys_project == "PRI"
+    assert g.list_keys_project == "PRI"
+    assert g.keys_with_prs_project == "PRI"

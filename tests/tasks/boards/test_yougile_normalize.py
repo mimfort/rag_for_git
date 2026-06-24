@@ -51,3 +51,8 @@ def test_subtask_without_title_keeps_edge():
     raw = _raw(subtask_ids=["u9"])
     b = normalize_yougile(raw, KP, URL)
     assert b["links"] == [{"type": "subtask", "key": "u9"}]
+
+
+def test_normalize_sets_project_prefix():
+    b = normalize_yougile(_raw(project_code="PRI-10"), KP, URL)
+    assert b["project"] == "PRI"

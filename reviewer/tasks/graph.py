@@ -29,13 +29,14 @@ class TaskGraph:
         self._driver = driver
 
     def upsert_task(self, key: str, aliases: list[str], title: str,
-                    status: str | None, url: str | None) -> None:
-        """Upsert узла :Task. codes = [key, ...aliases] для резолва по любому коду."""
+                    status: str | None, url: str | None, project: str = "") -> None:
+        """Upsert узла :Task. codes = [key, ...aliases]; project — метка скоупа (PRI-170)."""
         codes = [key] + [a for a in (aliases or []) if a and a != key]
         self._driver.execute_query(
             "MERGE (t:Task {key: $key}) "
-            "SET t.codes=$codes, t.title=$title, t.status=$status, t.url=$url",
-            key=key, codes=codes, title=title, status=status, url=url)
+            "SET t.codes=$codes, t.title=$title, t.status=$status, t.url=$url, "
+            "t.project=$project",
+            key=key, codes=codes, title=title, status=status, url=url, project=project)
 
     def upsert_links(self, key: str, links: list[dict]) -> int:
         """Рёбра TASK_LINK из явных board-links. Несуществующий сосед → стаб :Task.
@@ -103,19 +104,23 @@ class TaskGraph:
             key=task_key, pid=pr.id, repo=pr.repo, number=pr.number,
             url=pr.url, sha=pr.sha, touched=list(touched_node_ids or []))
 
-    def task_context(self, key: str) -> dict:
-        """Обход: сама задача + её PR/код + TASK_LINK-соседи и их PR. {} если не найдена."""
+    def task_context(self, key: str, project: str = "") -> dict:
+        """Обход: задача + её PR/код + TASK_LINK-соседи и их PR. {} если не найдена.
+
+        При project != "" соседи-задачи фильтруются по n.project (стабы без project
+        и задачи чужих проектов отсекаются — PRI-170, критерий 3).
+        """
         records, _, _ = self._driver.execute_query(
             "MATCH (t:Task) WHERE $k IN t.codes "
             "RETURN t.key AS key, t.title AS title, t.status AS status, t.url AS url, "
             "[ (t)-[:IMPLEMENTED_BY]->(p:PR) | "
             "  {id: p.id, url: p.url, sha: p.sha, "
             "   touched: [ (p)-[:TOUCHES]->(s:Symbol) | s.id ]} ] AS prs, "
-            "[ (t)-[l:TASK_LINK]-(n:Task) | "
+            "[ (t)-[l:TASK_LINK]-(n:Task) WHERE ($project = '' OR n.project = $project) | "
             "  {key: n.key, title: n.title, status: n.status, type: l.type, "
             "   prs: [ (n)-[:IMPLEMENTED_BY]->(np:PR) | {id: np.id, url: np.url} ]} ] AS linked "
             "LIMIT 1",
-            k=key)
+            k=key, project=project)
         if not records:
             return {}
         r = records[0]
@@ -133,20 +138,29 @@ class TaskGraph:
         return {"key": r["key"], "title": r["title"], "status": r["status"],
                 "url": r["url"], "prs": r["prs"], "linked": linked}
 
-    def keys_with_prs(self) -> set[str]:
-        """Ключи :Task-узлов с хотя бы одним ребром IMPLEMENTED_BY."""
-        records, _, _ = self._driver.execute_query(
-            "MATCH (t:Task)-[:IMPLEMENTED_BY]->(:PR) RETURN t.key AS key"
-        )
+    def keys_with_prs(self, project: str = "") -> set[str]:
+        """Ключи :Task с ребром IMPLEMENTED_BY; при project — только этого проекта."""
+        if project:
+            records, _, _ = self._driver.execute_query(
+                "MATCH (t:Task)-[:IMPLEMENTED_BY]->(:PR) WHERE t.project = $project "
+                "RETURN t.key AS key", project=project)
+        else:
+            records, _, _ = self._driver.execute_query(
+                "MATCH (t:Task)-[:IMPLEMENTED_BY]->(:PR) RETURN t.key AS key")
         return {r["key"] for r in records}
 
-    def list_keys(self) -> set[str]:
-        """Ключи всех :Task-узлов графа, включая link-стабы (upsert_links/link_pr).
+    def list_keys(self, project: str = "") -> set[str]:
+        """Ключи всех :Task (включая стабы); при project — только этого проекта.
 
-        Стабы создаются как соседи TASK_LINK/IMPLEMENTED_BY и в Postgres-стор не
-        попадают, поэтому purge должен учитывать и их (граф задач глобален — без
-        repo-фильтра, как и keys_with_prs)."""
-        records, _, _ = self._driver.execute_query("MATCH (t:Task) RETURN t.key AS key")
+        Стабы (upsert_links/link_pr) project не имеют → при scoped purge не попадают
+        в скоуп проекта и не вычищаются чужим синком (PRI-170)."""
+        if project:
+            records, _, _ = self._driver.execute_query(
+                "MATCH (t:Task) WHERE t.project = $project RETURN t.key AS key",
+                project=project)
+        else:
+            records, _, _ = self._driver.execute_query(
+                "MATCH (t:Task) RETURN t.key AS key")
         return {r["key"] for r in records}
 
     def delete_tasks(self, keys: list[str]) -> int:

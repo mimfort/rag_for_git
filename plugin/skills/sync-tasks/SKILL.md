@@ -19,7 +19,10 @@ Always answer the user in Russian (this skill body is English to save tokens).
 ## Inputs
 
 Parse from `$ARGUMENTS` (all optional):
-- `--board <name>`: limit to one project/board by name.
+- `--board <project>`: limit to one project by task code prefix (e.g. `PRI`). If omitted, read
+  `task_board.project` from the repo `.review.yml` (deploy default via `get_board_config()` otherwise).
+- `--board-type <yougile|youtrack>`: limit the sync to one board type. If omitted, read
+  `task_board.type` from the repo `.review.yml`. Empty both → deploy-wide sync of every configured board.
 - `--limit <N>`: index at most N tasks (a quick smoke run). Note: `--limit` also
   disables `--purge-orphaned` and watermark advance (a partial walk can't compute
   the full active-key set), so use it only for smoke runs.
@@ -30,16 +33,21 @@ Parse from `$ARGUMENTS` (all optional):
 
 ## Pipeline
 
-1. **Call the tool once.** Map the parsed arguments to a single call:
+1. **Resolve scope, then call the tool once.** Read `task_board` from the repo `.review.yml`
+   (`type` → `board_type`, `project` → `board`); fall back to the deploy default via
+   `get_board_config()` if there is no block. Map to a single call:
 
    ```
    sync_board(
-       board=<--board or null>,
+       board=<--board or task_board.project or null>,
+       board_type=<--board-type or task_board.type or null>,
        limit=<--limit or null>,
        purge_orphaned=<True if --purge-orphaned else False>,
        keep_with_prs=<False if --no-keep-with-prs else True>,
    )
    ```
+   Scoping by `board_type` + `board` keeps this repo's sync to its own board/project (PRI-170);
+   an empty project syncs everything (and mixes projects on read).
 
    The server enumerates the board over REST (incremental via a per-board timestamp
    watermark — a repeat sync touches ~0 tasks), normalizes every task into a

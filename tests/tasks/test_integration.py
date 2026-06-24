@@ -241,6 +241,77 @@ def test_taskstore_get_task_by_key_and_alias(store):
     assert store.get_task("ZZ-404") is None      # промах
 
 
+def test_taskstore_search_and_get_scoped_by_project(store):
+    emb = _FakeEmbedder()
+    for key, proj, title in [("ID-1", "PRI", "logout flow"),
+                             ("ID-2", "TES", "logout flow")]:
+        text = build_task_text(title, "session logout", [])
+        store.upsert_task(TaskRow(
+            key=key, aliases=[], title=title, description="session logout",
+            status="Open", url=None, content_hash=task_content_hash(text),
+            text=text, embedding=emb.embed_query(text), project=proj))
+    # search скоупнут по проекту
+    hits = store.search("logout", emb.embed_query("logout"), top_k=10, project="PRI")
+    assert {h.key for h in hits} == {"ID-1"}
+    # get_task скоупнут: чужой проект не виден
+    assert store.get_task("ID-2", project="PRI") is None
+    assert store.get_task("ID-2", project="TES").project == "TES"
+    # list_keys скоупнут
+    assert store.list_keys(project="PRI") == ["ID-1"]
+    # без фильтра — обе (back-compat)
+    assert set(store.list_keys()) == {"ID-1", "ID-2"}
+
+
+@pytest.fixture()
+def tgraph():
+    s = Settings()
+    g = GraphStore(s.neo4j_uri, s.neo4j_user, s.neo4j_password)
+    g.driver.execute_query("MATCH (t:Task) DETACH DELETE t")
+    tg = TaskGraph(g.driver)
+    yield tg
+    g.driver.execute_query("MATCH (t:Task) DETACH DELETE t")
+    g.close()
+
+
+def test_task_context_excludes_foreign_project_neighbor(tgraph):
+    tgraph.upsert_task("PRI-1", [], "наша", "Open", None, project="PRI")
+    tgraph.upsert_task("TES-9", [], "чужая", "Open", None, project="TES")
+    tgraph.upsert_links("PRI-1", [{"type": "related", "key": "TES-9"},
+                                  {"type": "related", "key": "ABC-7"}])  # ABC-7 — стаб без project
+    ctx = tgraph.task_context("PRI-1", project="PRI")
+    assert {n["key"] for n in ctx["linked"]} == set()   # чужой проект и стаб отсечены
+    ctx_all = tgraph.task_context("PRI-1")               # без скоупа — видно всё
+    assert {"TES-9", "ABC-7"} <= {n["key"] for n in ctx_all["linked"]}
+
+
+def test_two_projects_isolated_end_to_end(store, tgraph):
+    """Holistic-тест: два проекта (PRI, TES) изолированы по всему стеку write+read.
+
+    Проверяет: index_batch → search_tasks → get_task → get_task_context.
+    Тест доказывает, что store-фильтр и граф-фильтр project работают согласованно.
+    """
+    emb = _FakeEmbedder()
+    svc = TaskService(store, tgraph, emb)
+    svc.index_batch([
+        {"key": "PRI-1", "aliases": [], "title": "logout", "description": "session",
+         "criteria": [], "status": "Open", "url": None, "links": [], "project": "PRI"},
+        {"key": "TES-9", "aliases": [], "title": "logout", "description": "session",
+         "criteria": [], "status": "Open", "url": None, "links": [], "project": "TES"},
+    ])
+    # search скоупнут по проекту: PRI видит только PRI-1
+    out = svc.search_tasks("logout", top_k=10, project="PRI")
+    assert "PRI-1" in out and "TES-9" not in out
+
+    # get_task скоупнут: чужой проект не виден
+    assert svc.get_task("TES-9", project="PRI") is None
+    assert svc.get_task("TES-9", project="TES")["key"] == "TES-9"
+
+    # связь в чужой проект не вылезает на чтении get_task_context
+    tgraph.upsert_links("PRI-1", [{"type": "related", "key": "TES-9"}])
+    ctx = svc.get_task_context("PRI-1", project="PRI")
+    assert "TES-9" not in ctx
+
+
 def test_purge_removes_link_only_stub_from_graph(store, graph):
     """Стаб :Task, созданный upsert_links (нет в сторе), вычищается из графа.
 

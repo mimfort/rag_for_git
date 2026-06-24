@@ -15,22 +15,24 @@ class _FakeStore:
     def upsert_task(self, row):
         self.upserted.append(row)
 
-    def update_meta(self, key, title, status, url, aliases):
-        self.meta_updates.append((key, title, status, url, aliases))
+    def update_meta(self, key, title, status, url, aliases, project=""):
+        self.meta_updates.append((key, title, status, url, aliases, project))
 
 
 class _FakeGraph:
     def __init__(self, raise_on=()):
         self.tasks = []
+        self.task_projects: list[str] = []
         self.links = []
         self.pr_links = []
         self.pr_batch_links: list[tuple[str, object]] = []
         self._raise_on = set(raise_on)
 
-    def upsert_task(self, key, aliases, title, status, url):
+    def upsert_task(self, key, aliases, title, status, url, project=""):
         if "upsert_task" in self._raise_on:
             raise RuntimeError("neo4j down")
         self.tasks.append(key)
+        self.task_projects.append(project)
 
     def upsert_links(self, key, links):
         self.links.append((key, links))
@@ -201,3 +203,13 @@ def test_index_batch_links_prs_for_embedded_only():
     assert results[0]["embedded"] is True and results[0]["prs_linked"] == 1
     assert results[1]["embedded"] is False and results[1]["prs_linked"] == 0
     assert [tk for tk, _ in graph.pr_batch_links] == ["ID-1"]
+
+
+def test_index_batch_stamps_project_on_meta_only():
+    text = build_task_text("Add logout", "Clear session", ["redirects"])
+    store = _FakeStore(hashes={"ID-1": task_content_hash(text)})  # хэш совпал → meta_only
+    g = _FakeGraph()
+    TaskService(store, g, _FakeEmbedder()).index_batch([_brief(project="PRI")])
+    assert store.meta_updates[0][-1] == "PRI"     # project прокинут в update_meta
+    assert g.tasks == ["ID-1"]
+    assert g.task_projects[0] == "PRI"            # project достиг граф-write-path
