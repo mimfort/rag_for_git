@@ -1,0 +1,10 @@
+[scanner]
+profile = "public-marketplace"
+ignore_paths = [
+    "tests/*",
+    "docs/*",
+    ".superpowers/*",
+]
+
+[rules]
+severity_overrides = { CODEXIGNORE_MISSING = "low" }

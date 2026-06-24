@@ -81,9 +81,9 @@ def test_board_creds_yougile_legacy_fallback(monkeypatch):
 
 
 def test_board_creds_youtrack(monkeypatch):
-    s = Settings(_env_file=None, youtrack_token="perm:abc",
-                 youtrack_base_url="https://c.youtrack.cloud/api")
-    assert s.board_creds("youtrack") == ("perm:abc", "https://c.youtrack.cloud/api")
+    s = Settings(_env_file=None, youtrack_token="test-token-123",
+                 youtrack_base_url="https://example.youtrack.cloud/api")
+    assert s.board_creds("youtrack") == ("test-token-123", "https://example.youtrack.cloud/api")
 
 
 def test_board_creds_unknown_type_empty():

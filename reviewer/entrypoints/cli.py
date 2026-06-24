@@ -482,7 +482,11 @@ def update() -> None:
     # Получаем latest с PyPI
     latest_ver: str | None = None
     try:
-        with urllib.request.urlopen("https://pypi.org/pypi/rag-reviewer/json", timeout=10) as resp:
+        req = urllib.request.Request(
+            "https://pypi.org/pypi/rag-reviewer/json",
+            headers={"Cache-Control": "no-cache, no-store", "Pragma": "no-cache"},
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
             latest_ver = json.loads(resp.read())["info"]["version"]
     except Exception:
         pass
