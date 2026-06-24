@@ -158,14 +158,21 @@ WIZARD_GROUPS: list[EnvGroup] = [
                 default="",
             ),
             EnvField(
-                key="TASK_BOARD_API_KEY",
-                prompt_text="TASK_BOARD_API_KEY (REST-ключ доски; yougile: Ctrl+~ → API)",
+                key="YOUGILE_API_KEY",
+                prompt_text="YOUGILE_API_KEY (REST-ключ yougile; Ctrl+~ → API)",
                 default="",
                 secret=True,
             ),
             EnvField(
-                key="TASK_BOARD_API_BASE",
-                prompt_text="TASK_BOARD_API_BASE (пусто → дефолт по типу)",
+                key="YOUTRACK_TOKEN",
+                prompt_text="YOUTRACK_TOKEN (permanent token: Profile → Account "
+                            "Security → New permanent token)",
+                default="",
+                secret=True,
+            ),
+            EnvField(
+                key="YOUTRACK_BASE_URL",
+                prompt_text="YOUTRACK_BASE_URL (напр. https://company.youtrack.cloud/api)",
                 default="",
             ),
         ],
@@ -193,10 +200,11 @@ _GROUP_HEADERS: dict[str, str] = {
     "Хранилища (Postgres / Neo4j)": "# --- Postgres (ParadeDB :5433) / Neo4j (:7687) ---",
     "Мульти-репо / ветки": "# --- Мульти-репо / ветки (опционально) ---",
     "Доска задач": (
-        "# --- Доска задач (опционально; server-side sync_board) ---\n"
-        "# TASK_BOARD_API_KEY — REST-ключ доски. Yougile: конфигуратор (Ctrl+~ или ⚙\n"
-        "# рядом с компанией → «Настроить») → API → создать/скопировать; либо\n"
-        "# POST https://yougile.com/api-v2/auth/keys {login,password,companyId}."
+        "# --- Доска задач (опционально; server-side sync_board, связка ключей) ---\n"
+        "# Тип доски репо выбирается в его .review.yml (task_board.type); ключи —\n"
+        "# здесь, под каждую доску свой. YOUGILE_API_KEY: конфигуратор yougile (Ctrl+~)\n"
+        "# → API. YOUTRACK_TOKEN: permanent token, YOUTRACK_BASE_URL инстанс-специфичен.\n"
+        "# TASK_BOARD_API_KEY/BASE — legacy-алиас для yougile (обратная совместимость)."
     ),
 }
 

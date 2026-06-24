@@ -1,6 +1,6 @@
 ---
 name: reviewer_configure-review
-description: Configure or update a repo's .review.yml context layer (subsystem cluster depth, per-prefix depth overrides, summary top-k threshold, and ignore for noisy *tracked* paths) from a draft the skill generates and the user edits. Use when the user asks to set up or tune review config ("настроить .review.yml", "configure review config", "настрой контекст-слой", "tune cluster depth", "что игнорировать в ревью", "set up reviewer for this repo"). Standalone — needs only git, no reviewer MCP / DB.
+description: Configure or update a repo's .review.yml context layer (subsystem cluster depth, per-prefix depth overrides, summary top-k threshold, ignore for noisy *tracked* paths) and its task board selection (which board this repo uses — yougile/youtrack — key_pattern, url_template; never credentials) from a draft the skill generates and the user edits. Use when the user asks to set up or tune review config ("настроить .review.yml", "configure review config", "настрой контекст-слой", "tune cluster depth", "что игнорировать в ревью", "выбрать доску для репо", "set up reviewer for this repo"). Standalone — needs only git, no reviewer MCP / DB.
 ---
 
 # Configure review (.review.yml context layer)
@@ -16,13 +16,16 @@ Commands, code identifiers and `path:line` stay verbatim.
 
 ## Scope
 
-Edit **only** the context-layer keys of `.review.yml`:
+Edit **only** these keys of `.review.yml`:
 - `summary_cluster_depth` — global subsystem cluster depth.
 - `summary_cluster_depth_overrides` — per-prefix depth (longest-prefix-match by directory segments).
 - `summary_topk_threshold` — summary-prior scale threshold.
 - `paths.ignore` — only for **tracked** noisy paths (eval, fixtures, generated, vendored, migrations, data).
+- `task_board` — which board THIS repo uses (`type: yougile|youtrack`), plus `key_pattern` and (yougile only)
+  `url_template`. **NEVER** write credentials here — board API keys live only in the reviewer deploy env
+  (`YOUGILE_API_KEY` / `YOUTRACK_TOKEN` + `YOUTRACK_BASE_URL`). An empty `task_board:` disables the board for the repo.
 
-Do NOT touch any other key (`task_board`, `categories`, `severity_threshold`, …). Do NOT run a
+Do NOT touch any other key (`categories`, `severity_threshold`, `max_comments`, `min_confidence`, …). Do NOT run a
 reindex/resummarize. Do NOT walk the filesystem or try to detect untracked junk: `.venv`,
 `node_modules`, `__pycache__`, `dist`, `build` are gitignored, so they never reach the git-tracked
 index / graph / summaries — there is nothing to add to ignore for them.
@@ -78,6 +81,18 @@ Parse from $ARGUMENTS (all optional):
      (`eval`/`evals`, `fixtures`/`testdata`, `examples`/`samples`, `vendor`/`third_party`,
      `generated`/`gen`/`*_pb2.py`, `migrations`, large `data` modules). This is a judgment call, so
      **ask the user per candidate — never write it silently.**
+
+5b. **Task board selection (ask before writing).** Read the existing `task_board` block (keep it
+   verbatim if present). Ask the user which board this repo uses:
+   - `yougile` → write `{type: yougile, mcp: yougile, key_pattern: '[A-Z]+-\d+', url_template: <ask>}`.
+   - `youtrack` → write `{type: youtrack, key_pattern: '[A-Z]+-\d+'}` (NO `url_template` — youtrack derives
+     the link from its base URL; NO `mcp` — youtrack is read server-side via sync, not board-MCP).
+   - off / none → write an empty `task_board:` (disables the board for this repo).
+   - leave unchanged → skip.
+   **Never write credentials.** Remind the user (in Russian): ключи доски (`YOUTRACK_TOKEN`/
+   `YOUTRACK_BASE_URL` для youtrack, `YOUGILE_API_KEY` для yougile) задаются в env деплоя reviewer-mcp,
+   не в `.review.yml`. Changing the board has no effect until those env keys are set and the board is
+   synced (`/reviewer_sync-tasks`).
 
 6. **Present draft + diff.** Show the proposed context layer and a unified diff against the current
    `.review.yml` (or "new file"). Briefly justify each recommendation in Russian (why this depth; why

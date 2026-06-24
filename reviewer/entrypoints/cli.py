@@ -165,6 +165,13 @@ def index(repo: str, ref: str | None, branch_opt: str | None, repo_tag: str | No
         c.store.delete_paths_except(repo_id, bref, files)
         sha = rev_parse(repo, ref)
         c.store.set_index_meta(repo_id, bref, sha)
+        # Платформа VCS репо (PRI-133): auto-derive из git remote локального
+        # клона → repo_vcs. Читается при ревью (API-only) для выбора провайдера.
+        from reviewer.services.repo_id import derive_vcs_from_remote
+        vcs = derive_vcs_from_remote(remote_url(repo) or "")
+        if vcs:
+            c.store.set_repo_vcs(repo_id, vcs[0], vcs[1])
+            click.echo(f"VCS: {vcs[0]}{(' @ ' + vcs[1]) if vcs[1] else ''}")
         # --- граф кода (в рамках ветки) ---
         src_by_path = {p: file_at_ref(repo, p, ref) for p in files}
         src_by_path = {p: v for p, v in src_by_path.items() if v is not None}

@@ -72,6 +72,8 @@ class YougileBoard:
     """REST-провайдер Yougile. iter_raw перечисляет доску; normalize резолвит
     title подзадач (best-effort) и нормализует через normalize_yougile."""
 
+    board_type = "yougile"
+
     def __init__(self, *, api_key: str, api_base: str, key_pattern: str,
                  url_template: str) -> None:
         self._key_pattern = key_pattern

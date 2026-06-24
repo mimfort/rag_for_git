@@ -79,6 +79,11 @@ class Settings(BaseSettings):
     github_token: str = ""
     github_retry_attempts: int = 3
     github_retry_backoff_base: float = 1.0
+    # multi-platform VCS (PRI-133): тип провайдера резолвится из repo_vcs
+    # (auto-derive при reviewer index), здесь — фолбэк и токены по платформе.
+    vcs_provider: str = "github"          # фолбэк, когда repo_vcs пуст / remote не распознан
+    gitlab_token: str = ""                # токен платформы gitlab
+    gitlab_url: str = "https://gitlab.com"  # дефолт base-url; фолбэк для self-hosted
     # multi-repo: дефолтный repo для session-less тулов (search_codebase) и
     # `reviewer index` без --repo; пусто = repo задаётся явно (мульти-репо-режим)
     default_repo: str = ""
@@ -100,6 +105,12 @@ class Settings(BaseSettings):
     # Server-internal: НЕ возвращаются board_config() (клиентам креды не утекают).
     task_board_api_key: str = ""       # ключ REST API доски (напр. YOUGILE_API_KEY)
     task_board_api_base: str = ""      # base URL REST API; пусто → дефолт по типу
+    # per-type связка ключей REST-досок (форма A). yougile фолбэчит на legacy
+    # TASK_BOARD_API_KEY/API_BASE (обратная совместимость старых деплоев).
+    yougile_api_key: str = ""          # ключ yougile (приоритет над legacy TASK_BOARD_API_KEY)
+    yougile_api_base: str = ""         # base URL yougile; пусто → дефолт по типу
+    youtrack_token: str = ""           # permanent token youtrack (perm:...)
+    youtrack_base_url: str = ""        # base URL youtrack API; обязателен (инстанс-специфичен)
     # web admin basic auth (опционально; если не заданы — доступ без аутентификации)
     web_admin_user: str = ""
     web_admin_password: str = ""
@@ -137,3 +148,18 @@ class Settings(BaseSettings):
     def task_board_api_base_for(self, type_: str) -> str:
         """Base URL REST API доски: явный task_board_api_base или дефолт по типу."""
         return self.task_board_api_base or _BOARD_API_BASE_DEFAULTS.get(type_, "")
+
+    def board_creds(self, type_: str) -> tuple[str, str]:
+        """REST-креды доски по типу: (api_key, api_base). Пустой api_key = доска
+        этого типа не настроена. yougile фолбэчит на legacy TASK_BOARD_API_KEY/BASE."""
+        if type_ == "yougile":
+            api_key = self.yougile_api_key or self.task_board_api_key
+            api_base = self.yougile_api_base or self.task_board_api_base_for("yougile")
+            return api_key, api_base
+        if type_ == "youtrack":
+            return self.youtrack_token, self.youtrack_base_url
+        return "", ""
+
+    def configured_board_types(self) -> list[str]:
+        """Типы досок с заданным REST-ключом — для перебора в make_board_providers."""
+        return [t for t in ("yougile", "youtrack") if self.board_creds(t)[0]]

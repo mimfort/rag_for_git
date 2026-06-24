@@ -45,17 +45,24 @@ blocks.
 2. **Task context (optional).** Only if `task_board` is non-null. Resolve the task key: an
    explicit key in `$ARGUMENTS` wins; otherwise use `task_keys.primary`. If no key is available,
    skip this step and note in the summary that no task key was found.
-   With a key, read the task using the playbook for `task_board.type`
-   (`references/task-context-yougile.md` or `references/task-context-jira.md`): call the board MCP
-   server named by `task_board.mcp` and build a `TaskBrief`
-   `{key, aliases[], title, description, criteria[], status, url, links[]}`.
-   If the board MCP is not connected, the tool errors, or the task is not found: skip the
-   requirements dimension and note the reason in the summary — NEVER abort the review.
+
+   Read the task **store-first** (unifies with solve-task; required for boards synced server-side
+   without a board MCP, e.g. youtrack):
+   - Call reviewer `get_task(key)` first. **Hit** (object with a `key`) → use it as the `TaskBrief`
+     directly; it is already indexed by the server-side sync, so do NOT call `index_task`.
+   - **Miss** (`null`) AND `task_board.mcp` is set → fall back to the board-MCP playbook for
+     `task_board.type` (`references/task-context-yougile.md` or `references/task-context-jira.md`):
+     call the board MCP server named by `task_board.mcp`, build a `TaskBrief`, then `index_task(TaskBrief)`.
+   - **Miss** AND `task_board.mcp` is empty (e.g. youtrack — no board MCP) → treat the task as not
+     found: skip the requirements dimension and note the reason in the summary.
+   In all cases, if the board MCP is not connected, a tool errors, or the task is not found: skip the
+   requirements dimension and note the reason — NEVER abort the review.
 
    The `TaskBrief` schema is `{key, aliases[], title, description, criteria[], status, url, links[]}`
    (phase 3 adds `aliases[]` and uses `links[]`; see the board playbook for how to fill them).
-   Once the `TaskBrief` is built, call `index_task(TaskBrief)` to persist it (idempotent — safe to
-   repeat). Then gather task context to sharpen the requirements check:
+   On a store **hit** the brief is already indexed — do NOT re-index. Only when the brief was freshly
+   built from the board MCP (the **Miss** branch) call `index_task(TaskBrief)` to persist it
+   (idempotent — safe to repeat). Then gather task context to sharpen the requirements check:
    - `get_task_context(TaskBrief.key)` → linked tasks, their PRs, and the code those PRs touched;
    - `search_tasks("<TaskBrief.title>. <first lines of description>")` → semantically similar tasks.
    Keep ONLY the related/similar items that look relevant; you will pass them to the requirements

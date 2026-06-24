@@ -88,3 +88,13 @@ CREATE TABLE IF NOT EXISTS subsystem_summaries (
 -- ANN по сводкам подсистем (pgvector HNSW, косинус) — PRI-167
 CREATE INDEX IF NOT EXISTS subsystem_summaries_hnsw ON subsystem_summaries
 USING hnsw (embedding vector_cosine_ops) WITH (m = 16, ef_construction = 64);
+
+-- Карта платформы VCS репозитория (PRI-133): auto-derive из git remote при
+-- `reviewer index`. Читается _create_vcs_provider при ревью (API-only движок)
+-- ДО любого API-вызова. Ключ по repo (платформа — свойство репо, не ветки).
+CREATE TABLE IF NOT EXISTS repo_vcs (
+    repo       text        PRIMARY KEY,
+    provider   text        NOT NULL,
+    base_url   text        NOT NULL DEFAULT '',
+    updated_at timestamptz NOT NULL DEFAULT now()
+);
