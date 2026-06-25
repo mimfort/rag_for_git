@@ -18,11 +18,6 @@ def test_default_repo_from_env(monkeypatch):
     assert Settings(_env_file=None).default_repo == "owner/name"
 
 
-_TASK_BOARD_ENV = (
-    "TASK_BOARD_TYPE", "TASK_BOARD_MCP",
-    "TASK_BOARD_KEY_PATTERN", "TASK_BOARD_URL_TEMPLATE",
-)
-
 
 def test_task_board_default_none_when_unset(monkeypatch):
     for k in ("TASK_BOARD_MCP", "TASK_BOARD_KEY_PATTERN", "TASK_BOARD_URL_TEMPLATE",
