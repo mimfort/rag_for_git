@@ -621,8 +621,9 @@ and enters brainstorming. It disciplines context-gathering — it does **not** w
   board MCP (`mcp__<board>__*`) to read the task. All task tools are scoped via `project=<task_board.project>`.
 - **Flow:** preflight (index freshness check → task corpus warmup via `sync_board`) → subsystem prior via `get_subsystem_summaries` → resolve board config → identify task (key vs free text) → store-first task read via `get_task(key, project=...)` (hit = use directly; miss = board MCP fallback) → best-effort, fail-open context
   gathering (task graph, similar tasks, relevant code, lazy PR diffs of similar tasks) → distill a
-  structured brief (Task / Related work / Relevant code / Constraints) → hand off to
-  `superpowers:brainstorming` with the brief as seed → **full superpowers cycle**: brainstorming →
+  structured brief (Task / Related work / Relevant code / Constraints) → persist it to
+  `docs/superpowers/briefs/` (`ГГГГ-ММ-ДД-<KEY>-<slug>.md`, survives context compaction) → hand off to
+  `superpowers:brainstorming` with the brief file path as seed → **full superpowers cycle**: brainstorming →
   writing-plans → subagent-driven-development → executing-plans → finishing-a-development-branch.
 
 ### `reviewer_sync-codebase` — build/update the base index

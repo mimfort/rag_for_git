@@ -23,3 +23,12 @@ def test_solve_task_passes_project_scope():
     text = SOLVE.read_text(encoding="utf-8")
     assert "project=" in text
     assert "task_board.project" in text
+
+
+def test_solve_task_persists_brief():
+    """PRI-163: шаг персиста брифа в docs/superpowers/briefs/ + ссылка на путь в хендоффе."""
+    text = SOLVE.read_text(encoding="utf-8")
+    assert "docs/superpowers/briefs/" in text   # целевой путь персиста
+    assert "Persist the brief" in text          # шаг персиста присутствует
+    assert "file path" in text                  # хендофф ссылается на путь к файлу
+    assert "Board-less" in text                 # сохранение и без ключа (slug)
