@@ -15,7 +15,7 @@
 - [Архитектура: как связаны части](#архитектура-как-связаны-части)
 - [Как работает ревью (поток данных)](#как-работает-ревью-поток-данных)
 - [Свежесть индекса на «живом» репозитории](#свежесть-индекса-на-живом-репозитории)
-- [Промт для быстрой установки](#промт-для-быстрой-установки)
+- [One-click установка](#one-click-установка)
 - [Быстрый старт](#быстрый-старт)
 - [Конфигурация (справочник env)](#конфигурация-справочник-env)
 - [CLI (справочник команд)](#cli-справочник-команд)
@@ -153,31 +153,13 @@
 - **На запросе**: `retrieval = (base:<branch>, где path ∉ изменённых) ∪ overlay`. Для изменённых файлов агент видит **новую** версию, для остального — стабильную базу. Это и есть условие «находить произвольный релевантный код по всему репо, но по актуальной версии».
 - **Мульти-бранч**: PR ревьюится против индекса своей целевой ветки (`base_ref` из PR). PR в ветку вне `REVIEW_BRANCHES` пропускается (`prepare_review` → `{"status":"skipped",...}`). Граф кода (`:Symbol` в Neo4j) тоже разрезан по ветке через свойство `branch` (составная уникальность `(repo, branch, id)`).
 
-## Промт для быстрой установки
-
-Скопируйте и вставьте в любой AI-инструмент (Claude Code, Cursor, Gemini CLI, Mimo Code, OpenCode, Kimi Code, Codex, Copilot…):
+## One-click установка
 
 ```
-Настрой MCP-сервер rag-reviewer в этом AI-инструменте.
-
-Правила:
-- Для запуска сервера используй `uvx --from rag-reviewer@latest reviewer-mcp` — не pip install, не клонирование репозитория.
-- Обёртка `bash -lc` обязательна на macOS/Linux, чтобы uvx находился GUI-инструментами: command="/bin/bash", args=["-lc", "uvx --from rag-reviewer@latest reviewer-mcp"]. На Windows: command="uvx", args=["--from","rag-reviewer@latest","reviewer-mcp"].
-- Определи, в каком AI-инструменте ты работаешь, и запиши MCP-запись в нужный конфиг-файл:
-  - Claude Code / generic: .mcp.json в корне проекта ({"mcpServers":{"reviewer":{"command":"/bin/bash","args":["-lc","uvx --from rag-reviewer@latest reviewer-mcp"]}}})
-  - Cursor: ~/.cursor/mcp.json (тот же формат)
-  - Gemini CLI: ~/.gemini/settings.json ({"mcpServers":{"reviewer":{"command":"/bin/bash","args":["-lc","uvx --from rag-reviewer@latest reviewer-mcp"]}}})
-  - Antigravity: ~/.gemini/antigravity/mcp_config.json (тот же формат mcpServers)
-  - Windsurf: ~/.codeium/windsurf/mcp_config.json (тот же формат mcpServers)
-  - Claude Desktop: ~/Library/Application Support/Claude/claude_desktop_config.json (macOS) или %APPDATA%\Claude\claude_desktop_config.json (Windows) — тот же формат mcpServers
-  - Mimo Code: ~/.config/mimocode/mimocode.json ({"mcp":{"reviewer":{"type":"local","command":["/bin/bash","-lc","uvx --from rag-reviewer@latest reviewer-mcp"],"enabled":true}}})
-  - OpenCode: ~/.config/opencode/opencode.json ({"mcp":{"reviewer":{"type":"local","command":["/bin/bash","-lc","uvx --from rag-reviewer@latest reviewer-mcp"]}}})
-  - Kimi Code: ~/.kimi-code/mcp.json ({"mcpServers":{"reviewer":{"command":"/bin/bash","args":["-lc","uvx --from rag-reviewer@latest reviewer-mcp"]}}})
-  - Codex CLI: ~/.codex/config.toml ([mcp_servers.reviewer] command="/bin/bash" args=["-lc","uvx --from rag-reviewer@latest reviewer-mcp"])
-  - VS Code: ~/Library/Application Support/Code/User/mcp.json — ключ "servers" (не "mcpServers"): {"servers":{"reviewer":{"command":"/bin/bash","args":["-lc","uvx --from rag-reviewer@latest reviewer-mcp"]}}}
-- После записи конфига выполни: uvx --from rag-reviewer reviewer check
-- Сообщи, в какой файл записал и прошла ли проверка.
+uvx --from rag-reviewer reviewer install --all
 ```
+
+Авто-детектит установленные AI-клиенты и прописывает MCP-сервер. Ручная настройка — см. [Ручная установка плагина](#ручная-установка-плагина-альтернатива) ниже.
 
 ---
 
@@ -260,7 +242,6 @@ uv tool upgrade rag-reviewer
 | **Kimi Code** | `~/.kimi-code/mcp.json` | `.kimi-code/mcp.json` ✓ | [INSTALL.md](.kimi-code/INSTALL.md) |
 | **Gemini CLI** | `~/.gemini/settings.json` | `.gemini/settings.json` ✓ | [GEMINI.md](GEMINI.md) |
 | **Codex CLI** | `~/.codex/config.toml` | `.codex-plugin/plugin.json` ✓ | [AGENTS.md](AGENTS.md) |
-| **Copilot CLI** | — | `.github-copilot/plugin.json` ✓ | — |
 | **Trae IDE** | `~/Library/Application Support/Trae/User/mcp.json` | — | — |
 | **VS Code** | `~/Library/Application Support/Code/User/mcp.json` (ключ: `servers`, не `mcpServers`) | — | — |
 
@@ -345,16 +326,19 @@ args = ["-lc", "uvx --from rag-reviewer@latest reviewer-mcp"]
   `/rag-reviewer:reviewer_sync-codebase`, `/rag-reviewer:reviewer_sync-tasks`,
   `/rag-reviewer:reviewer_performance-review`, `/rag-reviewer:reviewer_maintainability-review`,
   `/rag-reviewer:reviewer_ask` (см. [справочник скиллов](#скиллы-справочник-с-параметрами)).
-- **MCP-сервер** `reviewer` с 20 тулами (см. [справочник MCP-тулов](#mcp-тулы-справочник)).
+- `/rag-reviewer:reviewer_pr-walkthrough` — гид по PR для живого ревьюера
+- `/rag-reviewer:reviewer_configure-review` — настройка `.review.yml` и доски задач
+- `/rag-reviewer:reviewer_summarize-subsystems` — построение сводок подсистем (GraphRAG)
+- **MCP-сервер** `reviewer` с 31 тулом (см. [справочник MCP-тулов](#mcp-тулы-справочник)).
 
 > Команда `/plugin` покажет, что `rag-reviewer` установлен и включён.
 
 #### Глобальная установка скиллов (опционально)
 
-7 скиллов оборачивают MCP-тулы в управляемый сценарий. Без них можно вызывать тулы напрямую,
+10 скиллов оборачивают MCP-тулы в управляемый сценарий. Без них можно вызывать тулы напрямую,
 но скиллы — основная точка входа.
 
-**`reviewer install` уже ставит их** для клиентов с файловыми скиллами (Gemini, Mimo, Kimi).
+**`reviewer install` уже ставит их** для клиентов с файловыми скиллами (Gemini, Mimo, Kimi, OpenCode).
 Чтобы (пере)установить только скиллы или выбрать конкретного клиента:
 
 ```bash
@@ -428,6 +412,14 @@ rm /tmp/rag-reviewer.tgz
 | `DEFAULT_REPO` | `""` | Дефолтный `owner/name` для session-less тулов и `reviewer index` без `--repo`; пусто = мульти-репо (репо передаётся явно). |
 | `REVIEW_BRANCHES` | `main` | CSV отслеживаемых веток; первая — **первичная** (дефолт для `reviewer index --ref` и CLI search). PR в ветку вне списка пропускается. |
 
+### Мульти-платформа VCS (опционально)
+
+| Переменная | Дефолт | Назначение |
+|---|---|---|
+| `VCS_PROVIDER` | `github` | VCS-провайдер: `github` или `gitlab`. |
+| `GITLAB_TOKEN` | `""` | GitLab PAT для ревью PR. |
+| `GITLAB_URL` | `""` | URL инстанса GitLab; пусто → `https://gitlab.com`. |
+
 ### Политика ревью (env-дефолты; per-repo `.review.yml` переопределяет)
 
 | Переменная | Дефолт | Назначение |
@@ -452,6 +444,15 @@ rm /tmp/rag-reviewer.tgz
 | `WEB_ADMIN_USER` | `""` | Basic-auth логин для `reviewer serve`; пусто = без auth. |
 | `WEB_ADMIN_PASSWORD` | `""` | Basic-auth пароль; пусто = без auth. |
 
+### Сводки и граф (опционально)
+
+| Переменная | Дефолт | Назначение |
+|---|---|---|
+| `SUMMARY_CLUSTER_DEPTH` | `2` | Макс. глубина пути для cluster_key подсистем (per-repo override в `.review.yml`). |
+| `SUMMARY_TOPK_THRESHOLD` | `20` | Если сводок больше порога — ANN top-k по близости к запросу. |
+| `SUMMARY_REBUILD_CAP` | `None` | Кап на число перестраиваемых stale-кластеров за проход (None/0 = без ограничений). |
+| `REVIEW_GROUNDING_MAX_DISTANCE` | `5` | Макс. расстояние для привязки строки находки к ближайшей commentable-строке диффа. |
+
 ### Доска задач (опционально) — глобальный дефолт деплоя
 
 Подключение к доске одинаково для всех репозиториев команды, поэтому задаётся **один раз** в env
@@ -460,14 +461,18 @@ reviewer-mcp, а не дублируется в `.review.yml` каждого р�
 
 | Переменная | Дефолт | Назначение |
 |---|---|---|
-| `TASK_BOARD_TYPE` | `""` | Тип доски: `yougile`, `jira`, … (выбирает плейбук скилла). |
+| `YOUGILE_API_KEY` | `""` | **REST API-ключ** для YouGile server-side болк-синка. |
+| `YOUGILE_API_BASE` | `""` | YouGile REST API base URL; пусто → `https://yougile.com/api-v2`. |
+| `YOUTRACK_TOKEN` | `""` | **REST API-токен** для YouTrack server-side болк-синка. |
+| `YOUTRACK_BASE_URL` | `""` | YouTrack REST API base URL. |
 | `TASK_BOARD_MCP` | `""` | Имя подключённого MCP-сервера доски (тулы LLM-стороны `mcp__<mcp>__*`). |
 | `TASK_BOARD_KEY_PATTERN` | `""` | Регэксп ключа задачи, напр. `[A-Z]+-\d+`. |
 | `TASK_BOARD_URL_TEMPLATE` | `""` | Шаблон ссылки на задачу, напр. `https://ru.yougile.com/team/<id>/#{code}`. |
-| `TASK_BOARD_API_KEY` | `""` | **REST API-ключ** для server-side болк-синка (`sync_board`). Server-internal — клиентам не отдаётся. |
-| `TASK_BOARD_API_BASE` | `""` | Base URL REST API; пусто → дефолт по типу (`yougile`: `https://yougile.com/api-v2`). |
+| `TASK_BOARD_TYPE` | `""` | **Устарел** — тип теперь выводится из наличия кредов (`YOUGILE_API_KEY` / `YOUTRACK_TOKEN`). |
+| `TASK_BOARD_API_KEY` | `""` | **Legacy** — лучше `YOUGILE_API_KEY`. Работает как фолбэк. |
+| `TASK_BOARD_API_BASE` | `""` | **Legacy** — лучше `YOUGILE_API_BASE`. Работает как фолбэк. |
 
-> **Как получить `TASK_BOARD_API_KEY` (Yougile).** UI: `Ctrl + ~` (или ⚙ рядом с названием компании →
+> **Как получить `YOUGILE_API_KEY` (Yougile).** UI: `Ctrl + ~` (или ⚙ рядом с названием компании →
 > «Настроить») → **API** → создать/скопировать ключ. REST: узнать `companyId` (`Ctrl + Alt + Q`, либо
 > `POST /api-v2/auth/companies {login,password}`), затем `POST /api-v2/auth/keys {login,password,companyId}`.
 > Ключ кладётся **только** в env reviewer-mcp (`~/.config/rag-reviewer/.env`), не в чат и не в конфиг клиента.
@@ -489,7 +494,7 @@ reviewer-mcp, а не дублируется в `.review.yml` каждого р�
 | `update` | — | — | Проверить PyPI на новую версию `rag-reviewer`. |
 | `index` | `<repo>` (путь к клону) | `--ref BRANCH` (git-ref для чтения; дефолт — первичная ветка), `--branch NAME` (ключ хранения; дефолт = `--ref`), `--repo OWNER/NAME` (дефолт из git `origin`) | Построить/обновить base-индекс ветки (вектора + граф). Раз, далее инкрементально. |
 | `search` | `<query>` | `--repo OWNER/NAME` (дефолт `DEFAULT_REPO`), `--branch NAME` (дефолт — первичная) | Диагностический гибрид-поиск по base-индексу ветки. |
-| `status` | `[path]` (дефолт `.`) | `--repo OWNER/NAME` (дефолт из git `origin`), `--branch NAME` (дефолт — все `REVIEW_BRANCHES`) | Здоровье/свежесть индекса vs HEAD клона. Квоту Voyage не тратит. |
+| `status` | `[path]` (дефолт `.`) | `--repo OWNER/NAME` (дефолт из git `origin`), `--branch NAME` (дефолт — все `REVIEW_BRANCHES`), `--json` (машинно-читаемый вывод) | Здоровье/свежесть индекса vs HEAD клона. Квоту Voyage не тратит. |
 | `migrate-branches` | — | — | Разово: переименовать legacy `ref="base"` → `base:<primary>` после апгрейда на мульти-бранч. |
 | `serve` | — | `--host HOST` (дефолт `127.0.0.1`), `--port PORT` (дефолт `8000`) | Веб-админка наблюдаемости на хосте. |
 | `reviewer-mcp` | — | — | MCP-сервер (stdio). Запускается плагином/редактором автоматически. |
@@ -533,13 +538,15 @@ Claude Code (`/rag-reviewer:` — namespace плагина; в других кл
 - **Аргументы:** PR как `owner/repo#N`, `owner/repo N` или GitHub PR URL. Флаг `--dry-run` — собрать
   и вернуть полный отчёт **без** постинга в GitHub.
 - **MCP-тулы:** `prepare_review`, `search_code`, `get_related_symbols`, `read_file`,
-  `get_definition`, `find_callers`, `get_changed_file_diff`, `publish_review`; плюс
+  `get_definition`, `find_callers`, `get_changed_file_diff`, `get_impact`, `submit_findings`,
+  `get_candidate_findings`, `submit_verdicts`, `publish_review`; плюс
   `index_task` / `get_task_context` / `search_tasks`, если подключена доска.
 - **Поток:** prepare (PR + политика + units + конфиг доски) → fan-out одного субагента на файл →
   параллельно dimension-проходы **performance** / **maintainability** (+ **requirements**, если есть
-  `TaskBrief`) → **verify** (отсев находок с `is_real=false`) → publish (gate/grounding/dedup/assemble).
+  `TaskBrief`) + **blast-radius** (impact-анализ через `get_impact`) → **verify** (отсев находок с `is_real=false`) → publish (gate/grounding/dedup/assemble).
   Если `prepare_review` вернул `status:"skipped"` (ветка вне `REVIEW_BRANCHES`) — стоп; draft-PR
   пропускаются, если не `REVIEW_SKIP_DRAFTS=false`.
+  Чтение задач скоупится через `project=<task_board.project>`, передаваемый в `get_task`/`get_task_context`/`search_tasks` (PRI-170).
 
 ### `reviewer_solve-task` — собрать контекст задачи и передать в разработку
 
@@ -551,9 +558,13 @@ Claude Code (`/rag-reviewer:` — namespace плагина; в других кл
 - **MCP-тулы:** `get_board_config`, `index_task`, `get_task_context`, `search_tasks`,
   `search_codebase`, `related_symbols`, `callers`, `definition`, `get_pr_diff`; плюс подключённая
   доска (`mcp__<board>__*`) для чтения задачи.
-- **Поток:** резолв конфига доски → идентификация задачи (ключ vs текст) → best-effort fail-open сбор
-  контекста (граф задач, похожие задачи, релевантный код, ленивые диффы PR похожих задач) → бриф
+- **Поток:** preflight: проверка свежести индекса → прогрев корпуса задач через `sync_board` →
+  резолв конфига доски → идентификация задачи (ключ vs текст) → subsystem prior через
+  `get_subsystem_summaries` → store-first чтение задачи через `get_task(key, project=...)`
+  (hit = напрямую; miss = board-MCP фолбэк) → best-effort fail-open сбор контекста (граф задач,
+  похожие задачи, релевантный код, ленивые диффы PR похожих задач) → бриф
   (Task / Related work / Relevant code / Constraints) → передача в `superpowers:brainstorming`.
+  `project=<task_board.project>` на всех task-тулах.
 
 ### `reviewer_sync-codebase` — построить/обновить base-индекс
 
@@ -571,7 +582,8 @@ Claude Code (`/rag-reviewer:` — namespace плагина; в других кл
 Тонкий триггер server-side ETL-тула `sync_board` — reviewer сам перечисляет доску по REST, LLM не
 передаёт текст задач (O(1) токенов независимо от размера доски).
 
-- **Аргументы (все опц.):** `--board <name>` (одна доска/проект), `--limit <N>` (smoke-прогон;
+- **Аргументы (все опц.):** `--board <name>` (одна доска/проект), `--board-type <yougile|youtrack>`
+  (ограничить синк одним типом доски), `--limit <N>` (smoke-прогон;
   **отключает purge и продвижение курсора**), `--purge-orphaned` (удалить задачи, которых больше нет
   на доске; по умолчанию off), `--no-keep-with-prs` (с purge — удалять и задачи с PR-историей,
   по умолчанию защищены).
@@ -614,14 +626,47 @@ Claude Code (`/rag-reviewer:` — namespace плагина; в других кл
   «объясни ретрив», «как устроено…»).
 - **MCP-тулы:** `search_codebase`, `related_symbols`, `callers`, `definition`; плюс harness
   `Read`/`Grep`/`Glob`.
-- **Поток:** резолв repo/branch → `search_codebase` → опц. расширение графом → ответ с Evidence-списком
+- **Поток:** при первом использовании за сессию — проверка свежести индекса `reviewer status` с
+  предупреждением о дрейфе → резолв repo/branch → опционально: `get_subsystem_summaries` для
+  архитектурного приора → `search_codebase` → опц. расширение графом → ответ с Evidence-списком
   цитат `path:line`.
+
+### `reviewer_pr-walkthrough` — гид по PR для ревьюера-человека
+
+Строит human-facing гид по PR: с чего начать, что меняет каждый файл, на что влияет.
+
+- **Аргументы:** `owner/repo#N`, `owner/repo N` или GitHub PR URL.
+- **MCP-тулы:** `prepare_review`, `get_impact`, `get_subsystem_summaries`, `post_pr_walkthrough`.
+- **Поток:** prepare PR-сессии → blast-radius через `get_impact` → сводки подсистем → сборка
+  структурированного гида (обзор → пофайловый нарратив → карта влияния) → опц. пост через
+  `post_pr_walkthrough` (с маркером `<!-- ai-walkthrough -->`, отдельно от баг-финдингов).
+
+### `reviewer_configure-review` — настройка per-repo политики ревью
+
+Настраивает или обновляет `.review.yml` (глубина кластеризации, per-prefix переопределения,
+пороги сводок, ignore-паттерны) и выбор доски задач.
+
+- **Аргументы:** нет — интерактивный; редактирует `.review.yml` в текущем репо.
+- **MCP-тулы:** нет — standalone (нужен только git).
+- **Поток:** анализ структуры репо → драфт `.review.yml` с настройками контекст-слоя →
+  пользователь ревьюит и правит → запись в целевую ветку.
+
+### `reviewer_summarize-subsystems` — сводки подсистем (GraphRAG)
+
+Строит per-подсистема сводки по base-индексу для дешёвого high-level приора в ask/PR-walkthrough.
+
+- **Аргументы (все опц.):** `--depth <N>` (глубина кластеризации, дефолт из env),
+  `--cap <N>` (лимит stale-кластеров за проход).
+- **MCP-тулы:** `list_subsystem_clusters`, `index_subsystem_summary`,
+  `prune_subsystem_summaries`, `backfill_summary_embeddings`.
+- **Поток:** list clusters → для каждого stale-кластера: title + summary → index →
+  после полного прохода: удаление осиротевших сводок (prune) → доэмбеддинг сводок с NULL embeddings.
 
 ---
 
 ## MCP-тулы (справочник)
 
-Сервер `reviewer-mcp` отдаёт 20 тулов. Тулы PR-сессии требуют активного `prepare_review` для того же
+Сервер `reviewer-mcp` отдаёт 31 тул. Тулы PR-сессии требуют активного `prepare_review` для того же
 `(repo, pr)` в том же запущенном сервере; остальные — session-less.
 
 ### Жизненный цикл ревью
@@ -629,7 +674,7 @@ Claude Code (`/rag-reviewer:` — namespace плагина; в других кл
 | Тул | Сигнатура | Что делает / возвращает |
 |---|---|---|
 | `prepare_review` | `(repo: str, pr: int)` | Открыть сессию PR: досинк base-индекса, overlay PR, политика, per-file units. Возвращает мету PR + политику + units (или `{"status":"skipped"}` для нетрекаемой целевой ветки). |
-| `publish_review` | `(repo, pr, summary, findings: list[dict], dry_run=False, task_key=None)` | Детерминированный хвост: gate → grounding → dedup → inline/summary → пост в GitHub → история → очистка overlay. `dry_run=true` возвращает отчёт без постинга; `task_key` линкует PR к задаче при реальной публикации. |
+| `publish_review` | `(repo, pr, summary, dry_run=False, task_key=None)` | Детерминированный хвост: gate → grounding → dedup → inline/summary → пост в GitHub → история → очистка overlay. `dry_run=true` возвращает отчёт без постинга; `task_key` линкует PR к задаче при реальной публикации. Находки накапливаются в сессии через `submit_findings`/`submit_verdicts` (PRI-156). |
 
 Поле находки: `{category, severity(low|medium|high|critical), file, line, side(RIGHT|LEFT),
 code_quote, message, suggestion, fix:{start_line,end_line,replacement}|null, confidence:0..1}`.
@@ -640,10 +685,15 @@ code_quote, message, suggestion, fix:{start_line,end_line,replacement}|null, con
 |---|---|---|
 | `search_code` | `(repo, pr, query: str)` | Гибрид-поиск по `base ∪ overlay`. |
 | `get_related_symbols` | `(repo, pr, node_id: str)` | Соседи графа (calls/implementations) узла `path#fqn`. |
-| `read_file` | `(repo, pr, path, start=1, end=400)` | Исходник файла на HEAD PR (1-based, inclusive). |
+| `read_file` | `(repo, pr, path, start=1, end=400, skeleton=False)` | Исходник файла на HEAD PR (1-based, inclusive). `skeleton=True` возвращает AST-скелет (def/class сигнатуры) вместо тел. |
 | `get_definition` | `(repo, pr, symbol: str)` | Определение символа (граф → индекс → семантический фолбэк). |
 | `find_callers` | `(repo, pr, node_id: str)` | Прямые вызывающие узла `path#fqn` (impact-анализ). |
 | `get_changed_file_diff` | `(repo, pr, path: str)` | Unified diff другого изменённого файла этого PR. |
+| `get_impact` | `(repo, pr)` | Blast-radius: символы с изменившейся сигнатурой → их вызывающие вне диффа PR. |
+| `submit_findings` | `(repo, pr, findings: list[dict])` | Сдать находки анализа в сессию (schema-enforced, PRI-156). |
+| `get_candidate_findings` | `(repo, pr)` | Прочитать накопленные находки с id для verify. |
+| `submit_verdicts` | `(repo, pr, verdicts: list[dict])` | Сдать вердикты verify (`{id, is_real}`) в сессию. |
+| `post_pr_walkthrough` | `(repo, pr, markdown: str)` | Запостить human-facing гид по PR как комментарий ревью (отдельно от баг-финдингов). |
 
 ### Session-less тулы (Q&A, `solve-task`)
 
@@ -654,16 +704,22 @@ code_quote, message, suggestion, fix:{start_line,end_line,replacement}|null, con
 | `callers` | `(repo, node_id, branch=None)` | Входящие `CALLS` узла `path#fqn`. |
 | `definition` | `(repo, symbol, branch=None)` | Определение символа (граф → индекс → семантический фолбэк). |
 | `get_pr_diff` | `(repo, number: int)` | Unified diff любого (исторического) PR; кап, fail-soft. |
+| `get_task` | `(key: str, project: str \| None = None)` | Прочитать нормализованный `TaskBrief` из стора (`{key, aliases, title, description, status, url, criteria}`). Возвращает `null` если нет. |
+| `list_subsystem_clusters` | `(repo, branch=None, depth=None, min_size=None, cap=None)` | Кластеризовать base-граф по путям модулей для `/reviewer_summarize-subsystems`. |
+| `index_subsystem_summary` | `(repo, branch, cluster_key, title, summary, source_hash)` | Сохранить сводку подсистемы (идемпотентный upsert). |
+| `get_subsystem_summaries` | `(repo, branch=None, cluster_key=None, query=None, top_k=None)` | Получить прекомпьюченные сводки подсистем. |
+| `prune_subsystem_summaries` | `(repo, branch=None)` | Удалить осиротевшие сводки подсистем после смены depth или удаления модулей. |
+| `backfill_summary_embeddings` | `(repo, branch=None)` | Самолечение: заэмбеддить сводки с NULL embeddings. |
 
 ### Задачи / доски
 
 | Тул | Сигнатура | Что делает |
 |---|---|---|
-| `sync_board` | `(board=None, limit=None, purge_orphaned=False, keep_with_prs=True)` | Server-side ETL: перечислить доску по REST, нормализовать в `TaskBrief`, проиндексировать. Инкрементально по watermark; O(1) токенов. |
+| `sync_board` | `(board=None, limit=None, purge_orphaned=False, keep_with_prs=True, board_type=None)` | Server-side ETL: перечислить доску по REST, нормализовать в `TaskBrief`, проиндексировать. Инкрементально по watermark; O(1) токенов. `board_type` ограничивает синк одним типом доски (`yougile`\|`youtrack`). |
 | `index_task` | `(task: dict)` | Индексировать один `TaskBrief` в граф + вектор (идемпотентно). |
 | `index_tasks_batch` | `(tasks: list[dict])` | То же для списка, одним вызовом Voyage. |
-| `search_tasks` | `(query, top_k=5)` | Семантически похожие задачи из индекса. |
-| `get_task_context` | `(key: str)` | Граф-контекст: задача, её PR, связанные задачи и их PR, затронутый код. |
+| `search_tasks` | `(query, top_k=5, project=None)` | Семантически похожие задачи из индекса. `project` скоупит результаты одним проектом доски (префикс кода). |
+| `get_task_context` | `(key: str, project=None)` | Граф-контекст: задача, её PR, связанные задачи и их PR, затронутый код. `project` скоупит связанные задачи одним проектом. |
 | `purge_orphaned_tasks` | `(active_keys: list[str], keep_with_prs=True)` | Удалить задачи, которых больше нет на доске (с PR-историей защищены по умолчанию). |
 | `get_board_config` | `()` | Deploy-wide конфиг доски (`TASK_BOARD_*`); фолбэк для `sync-tasks`/`solve-task`. Креды **не** отдаёт. |
 
@@ -708,15 +764,25 @@ max_comments: 25
 # Контекст задачи (опц.): читать задачу с доски и проверять соответствие требованиям.
 # Доску (MCP) подключает пользователь на стороне сессии Claude Code; плагин её не бандлит.
 task_board:
-  type: yougile          # yougile | jira — выбирает плейбук скилла
+  type: yougile          # yougile | youtrack — выбирает плейбук скилла
   mcp: yougile           # имя подключённого MCP-сервера доски (тулы зовутся mcp__<mcp>__*)
   key_pattern: "[A-Z]+-\\d+"   # опц.; подходит Yougile PRI-34/ID-34 и Jira PROJ-123
-  # url_template: "https://ru.yougile.com/team/<teamId>/#{code}"  # опц.; ссылка на задачу в сводке
+  project: PRI          # опц.; скоуп синка/выдачи задач этим проектом (префикс кода; пусто = всё)
+  url_template: 'https://ru.yougile.com/team/<teamId>/#{code}'  # опц.; кликабельные ссылки на задачи
+
+summary_cluster_depth: 2           # опц.; дефолт из env SUMMARY_CLUSTER_DEPTH
+summary_cluster_depth_overrides:   # опц.; per-prefix переопределения глубины
+  reviewer/retrieval: 3
+  reviewer/graph: 1
+summary_topk_threshold: 20         # опц.; дефолт из env SUMMARY_TOPK_THRESHOLD
+
+output_language: ru               # опц.; переопределяет REVIEW_OUTPUT_LANGUAGE
+grounding_max_distance: 5          # опц.; переопределяет REVIEW_GROUNDING_MAX_DISTANCE
 ```
 
 **Блок `task_board` — глобальный дефолт деплоя, а не per-repo требование.** Подключение к доске
 одинаково для всех репозиториев команды, поэтому настраивается **один раз** в `.env` reviewer-mcp
-(`TASK_BOARD_TYPE` / `TASK_BOARD_MCP` / `TASK_BOARD_KEY_PATTERN` / `TASK_BOARD_URL_TEMPLATE`), и
+(`YOUGILE_API_KEY` / `YOUTRACK_TOKEN` / `TASK_BOARD_MCP` / `TASK_BOARD_KEY_PATTERN` / `TASK_BOARD_URL_TEMPLATE`), и
 каждый репо его наследует — `.review.yml` ради доски не нужен. Блок `task_board` в `.review.yml` репо
 **переопределяет** дефолт для этого репо; пустой `task_board:` **выключает** доску для него.
 `review-pr` читает это через политику; `solve-task` — через тул `get_board_config` (и board-MCP на
@@ -729,7 +795,7 @@ task_board:
 текст задач → синк стоит O(1) токенов независимо от размера доски. Инкрементальность — timestamp-
 watermark на доску в `index_meta` (`ref="tasks:<board>"`): повторный синк трогает ~0 задач; `--limit`
 отключает purge и продвижение курсора. Креды REST-доски живут только в env reviewer-mcp
-(`TASK_BOARD_API_KEY` / `TASK_BOARD_API_BASE`). Это разворачивает инвариант «reviewer Python никогда
+(`YOUGILE_API_KEY` / `YOUGILE_API_BASE`). Это разворачивает инвариант «reviewer Python никогда
 не трогает доску» **только для болк-синка** — одиночное чтение задачи в `solve-task` / `review-pr`
 по-прежнему идёт через board-MCP на стороне LLM. Граф задач (`:Task`) глобален — одна задача может
 охватывать PR из нескольких микросервисных репозиториев.
@@ -740,6 +806,12 @@ watermark на доску в `index_meta` (`ref="tasks:<board>"`): повтор�
 `search_tasks`; при публикации PR автоматически линкуется к задаче (`task_key` в `publish_review`).
 Канонический ключ узла — сквозной код доски (Yougile `ID-N` / Jira key), прочие коды (Yougile `PRI-N`)
 хранятся как `aliases`, поэтому PR по любому коду резолвится в один узел.
+
+#### Контекст-слой (PRI-161)
+
+- `paths.ignore` — список fnmatch-паттернов; пути не индексируются (вектора и граф) и не комментируются. Экономит квоту Voyage и убирает шум.
+- `summary_cluster_depth_overrides` — карта `префикс → depth` для точечной глубины кластеризации сводок (longest-prefix-match по сегментам пути); дополняет глобальный `summary_cluster_depth`.
+- `summary_topk_threshold` — порог: если число сводок репо/ветки **превышает** порог, запрос использует ANN top-k; иначе все сводки целиком (бэк-совместимость для малых репо).
 
 ---
 
@@ -842,11 +914,11 @@ reviewer/
   mcp/         MCPReviewService: prepare/tool-вызовы/publish; управление сессиями
   services/    ReviewService.prepare: ingest PR, overlay, units
   policy/      ReviewPolicy: env-дефолты + .review.yml + гейтинг
-  entrypoints/ cli.py (Click) · mcp_server.py (FastMCP, 20 тулов)
+  entrypoints/ cli.py (Click) · mcp_server.py (FastMCP, 31 тул)
   install.py   reviewer init / install / install-skills (кроссплатформенная привязка клиентов)
   web/         FastAPI + React/Vite SPA — веб-админка наблюдаемости
   app.py       сборка зависимостей из Settings
-plugin/        Claude Code-плагин (7 скиллов /rag-reviewer:reviewer_*)
+plugin/        Claude Code-плагин (10 скиллов /rag-reviewer:reviewer_*)
 docker-compose.yml   ParadeDB (pgvector+pg_search) + Neo4j
 ```
 
@@ -865,7 +937,7 @@ docker-compose.yml   ParadeDB (pgvector+pg_search) + Neo4j
 
 - **Нет автотриггера.** Ревью не запускается на открытие/обновление PR — это ручной вызов скилла в Claude Code (нет GitHub App / webhook / CI из коробки).
 - **v1 — только Python** (чанкер и SCIP-бэкенд `scip-python`). Другие языки — за теми же интерфейсами чанкера/`GraphIndexer`.
-- **VCS — только GitHub**: `VCSProvider` реализован лишь для GitHub (абстракция под GitLab/Bitbucket есть, провайдеров нет).
+- **VCS — только GitHub и GitLab**: `VCSProvider` реализован для GitHub (референс) и GitLab; см. `VCS_PROVIDER` и `GITLAB_*` в env.
 - **Граф кода — два бэкенда** (`GRAPH_BACKEND=auto|scip|treesitter`):
   - **SCIP** (`@sourcegraph/scip-python`, npm): точный type-aware граф с рёбрами `CALLS` + `IMPLEMENTS`; требует `scip-python` в PATH; индексирует через временный git worktree.
   - **tree-sitter** (fallback): быстрый, без внешних зависимостей, только `CALLS` по имени.
@@ -879,4 +951,23 @@ docker-compose.yml   ParadeDB (pgvector+pg_search) + Neo4j
 - **Капы GitHub API.** Список файлов PR пагинируется по 100; compare API для досинка базы отдаёт максимум 300 файлов — очень большие диффы усекаются.
 - **`.review.yml` берётся из base-ветки** (по дизайну — PR не может ослабить собственное ревью), не из head PR.
 - **Auth веб-админки опционален**: basic-auth включается только при `WEB_ADMIN_USER`/`WEB_ADMIN_PASSWORD`; по умолчанию `reviewer serve` слушает loopback.
+
+## Участие в разработке
+
+Issues и PR приветствуются. Для локальной работы:
+
+```bash
+git clone https://github.com/mimfort/rag_for_git
+cd rag_for_git
+python -m venv .venv && .venv/bin/pip install -e ".[dev]"
+docker compose up -d            # Postgres/ParadeDB (:5433) + Neo4j (:7687)
+.venv/bin/pytest -q             # unit-тесты — быстрые, на фейках, без внешних API
+.venv/bin/ruff check .          # линт (line-length 100, target py311)
+```
+
+Внешние сервисы (GitHub, Voyage, Postgres, Neo4j) изолированы за интерфейсами и мокаются в unit-тестах; реальные вызовы — только в integration/E2E. Сообщения коммитов — Conventional Commits. Архитектура детально описана в [README.md](README.md) (EN) и `CLAUDE.md`.
+
+## Лицензия
+
+[MIT](LICENSE) © rag_for_git contributors.
 ```

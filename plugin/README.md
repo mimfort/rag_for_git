@@ -5,12 +5,15 @@
 
 ## Что внутри
 
-- **MCP-сервер** `reviewer` (`reviewer-mcp`, 20 тулов) — конфиг в `.mcp.json`.
-- **7 скиллов** (`plugin/skills/*/SKILL.md`):
+- **MCP-сервер** `reviewer` (`reviewer-mcp`, 31 тул) — конфиг в `.mcp.json`.
+- **10 скиллов** (`plugin/skills/*/SKILL.md`):
   `/rag-reviewer:reviewer_review-pr` · `/rag-reviewer:reviewer_solve-task` ·
   `/rag-reviewer:reviewer_sync-codebase` · `/rag-reviewer:reviewer_sync-tasks` ·
   `/rag-reviewer:reviewer_performance-review` · `/rag-reviewer:reviewer_maintainability-review` ·
-  `/rag-reviewer:reviewer_ask`.
+  `/rag-reviewer:reviewer_ask` ·
+  `/rag-reviewer:reviewer_pr-walkthrough` ·
+  `/rag-reviewer:reviewer_configure-review` ·
+  `/rag-reviewer:reviewer_summarize-subsystems`.
 
 ## Требования
 
