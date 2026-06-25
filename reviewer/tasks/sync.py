@@ -90,6 +90,7 @@ class SyncService:
                 agg["warnings"].append(
                     f"тип доски '{board_type}' не настроен на сервере")
         all_active: list[str] = []
+        by_board: list[dict] = []
         for provider in providers:
             active, one = self._sync_provider(provider, board, limit)
             all_active.extend(active)
@@ -98,6 +99,12 @@ class SyncService:
                 agg[k] += one[k]
             agg["warnings"].extend(one["warnings"])
             agg["cursor_advanced"] = agg["cursor_advanced"] or one["cursor_advanced"]
+            by_board.append({
+                "board_type": provider.board_type,
+                "board": board or "*",
+                **{k: one[k] for k in ("enumerated", "changed", "embedded",
+                                        "refreshed", "unchanged", "failed")},
+            })
 
         partial = bool(limit)
         purge_summary = None
@@ -113,4 +120,5 @@ class SyncService:
                              "protected": pr["protected_prs"]}
             agg["warnings"].extend(pr.get("warnings") or [])
         agg["purge"] = purge_summary
+        agg["by_board"] = by_board
         return agg

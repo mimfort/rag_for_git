@@ -27,3 +27,9 @@ def test_ask_has_warn_only_freshness():
     assert "reviewer_sync-codebase" in text                 # баннер указывает на reindex-скил
     # облегчённый режим: НЕ зовёт sync_board и не реиндексирует
     assert "sync_board(" not in text
+
+
+def test_solve_task_preflight_passes_board_type():
+    text = SOLVE.read_text(encoding="utf-8")
+    # preflight sync_board должен передавать board_type из task_board.type
+    assert "board_type" in text

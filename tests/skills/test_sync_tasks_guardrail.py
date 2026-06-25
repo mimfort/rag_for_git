@@ -27,3 +27,8 @@ def test_skill_passes_project_and_board_type():
     text = SKILL.read_text(encoding="utf-8")
     assert "board_type" in text                  # синк скоупится по типу доски
     assert ".review.yml" in text                 # источник — конфиг репо
+
+
+def test_skill_shows_by_board_breakdown():
+    text = SKILL.read_text(encoding="utf-8")
+    assert "by_board" in text          # обрабатывает per-board breakdown

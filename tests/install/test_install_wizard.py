@@ -52,7 +52,6 @@ def test_render_env_contains_wizard_keys():
         "NEO4J_PASSWORD": "reviewerpass",
         "DEFAULT_REPO": "",
         "REVIEW_BRANCHES": "main,master",
-        "TASK_BOARD_TYPE": "",
         "TASK_BOARD_MCP": "",
         "TASK_BOARD_KEY_PATTERN": "",
         "TASK_BOARD_URL_TEMPLATE": "",
@@ -72,7 +71,6 @@ def test_render_env_extra_keys_preserved():
         "NEO4J_PASSWORD": "reviewerpass",
         "DEFAULT_REPO": "",
         "REVIEW_BRANCHES": "main,master",
-        "TASK_BOARD_TYPE": "",
         "TASK_BOARD_MCP": "",
         "TASK_BOARD_KEY_PATTERN": "",
         "TASK_BOARD_URL_TEMPLATE": "",
@@ -106,11 +104,11 @@ def test_prompt_groups_yes_uses_field_default_when_no_current():
 
 def test_prompt_groups_yes_skips_optional_groups():
     # При yes=True опциональные группы сохраняют current или default — не вызывают confirm
-    current = {"TASK_BOARD_TYPE": "yougile"}
+    current = {"TASK_BOARD_MCP": "yougile"}
     result = inst.prompt_groups(inst.WIZARD_GROUPS, current=current, yes=True)
-    assert result["TASK_BOARD_TYPE"] == "yougile"
+    assert result["TASK_BOARD_MCP"] == "yougile"
     # Остальные поля доски — пустые (default)
-    assert result["TASK_BOARD_MCP"] == ""
+    assert result["TASK_BOARD_KEY_PATTERN"] == ""
 
 
 def test_render_env_includes_board_api_key_and_hint():

@@ -141,6 +141,34 @@ def test_board_type_scopes_to_one_provider():
     assert ts.indexed == [["ID-1"]]            # только yougile-провайдер
     assert summary["enumerated"] == 1
     assert ("", "tasks:youtrack:*") not in meta.store
+    assert len(summary["by_board"]) == 1
+    assert summary["by_board"][0]["board_type"] == "yougile"
+
+
+def test_board_type_none_syncs_all_providers():
+    yougile = FakeProvider([_raw("ID-1", 100)], board_type="yougile")
+    youtrack = FakeProvider([_raw("TES-1", 200)], board_type="youtrack")
+    ts, meta = FakeTaskService(), FakeMeta()
+    result = SyncService([yougile, youtrack], ts, meta).run(board_type=None)
+    assert result["enumerated"] == 2
+    assert len(result["by_board"]) == 2
+    types = {b["board_type"] for b in result["by_board"]}
+    assert types == {"yougile", "youtrack"}
+
+
+
+def test_by_board_includes_counts_per_provider():
+    prov = FakeProvider([_raw("ID-1", 100), _raw("ID-2", 200)], board_type="yougile")
+    meta = FakeMeta({("", "tasks:yougile:*"): "150"})  # ID-1 уже в курсоре
+    ts = FakeTaskService()
+    result = SyncService([prov], ts, meta).run()
+    assert len(result["by_board"]) == 1
+    entry = result["by_board"][0]
+    assert entry["board_type"] == "yougile"
+    assert entry["board"] == "*"
+    assert entry["enumerated"] == 2
+    assert entry["changed"] == 1
+    assert entry["unchanged"] == 1
 
 
 def test_scoped_purge_passes_project():

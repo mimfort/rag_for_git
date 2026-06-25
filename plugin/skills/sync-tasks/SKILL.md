@@ -1,6 +1,6 @@
 ---
 name: reviewer_sync-tasks
-description: Warm the task graph & vector store by indexing a board into the reviewer MCP server. Use when the user asks to sync/index tasks ("sync tasks", "index the board", "просиндексируй задачи") so search_tasks/get_task_context have a corpus. Requires the reviewer MCP server with a board configured server-side (TASK_BOARD_* env).
+description: Warm the task graph & vector store by indexing a board into the reviewer MCP server. Use when the user asks to sync/index tasks ("sync tasks", "index the board", "просиндексируй задачи") so search_tasks/get_task_context have a corpus. Requires the reviewer MCP server with board credentials configured server-side (YOUGILE_API_KEY or YOUTRACK_TOKEN).
 ---
 
 # Sync Tasks
@@ -33,14 +33,20 @@ Parse from `$ARGUMENTS` (all optional):
 
 ## Pipeline
 
-1. **Resolve scope, then call the tool once.** Read `task_board` from the repo `.review.yml`
-   (`type` → `board_type`, `project` → `board`); fall back to the deploy default via
-   `get_board_config()` if there is no block. Map to a single call:
+1. **Resolve `board_type` from `.review.yml`.** Run `git rev-parse --show-toplevel`
+   to find the repo root. Read `<root>/.review.yml` and extract `task_board.type`
+   (e.g. `"youtrack"`). Fallback chain:
+   - `.review.yml` not found or has no `task_board` block → call `get_board_config()`
+     and read `task_board.type` from the deploy default.
+   - Still not resolved → use `board_type=null` (syncs all configured boards).
+   Similarly extract `task_board.project` → `board` (or `--board` override).
+
+2. **Call the tool once.** Map the parsed arguments to a single call:
 
    ```
    sync_board(
+       board_type=<type from step 1 or null>,
        board=<--board or task_board.project or null>,
-       board_type=<--board-type or task_board.type or null>,
        limit=<--limit or null>,
        purge_orphaned=<True if --purge-orphaned else False>,
        keep_with_prs=<False if --no-keep-with-prs else True>,
@@ -55,21 +61,30 @@ Parse from `$ARGUMENTS` (all optional):
    `content_hash`), auto-links PRs found in descriptions
    (`:Task-[:IMPLEMENTED_BY]->:PR`), and optionally purges orphans.
 
-2. **Print the summary (in Russian).** The tool returns a compact counts dict:
-   `{enumerated, changed, embedded, refreshed, unchanged, failed, purge, warnings,
-   cursor_advanced}`. Report these to the user, e.g. «N задач на доске, изменено M
-   (эмбеддинги: K), без изменений U, ошибок F». If `purge` is present, add
-   «Purge: D удалено, P защищено (есть PR-история)». Surface any `warnings`.
+3. **Print the summary (in Russian).** The tool returns a counts dict with an optional
+   `by_board` key. If `by_board` is present, report per-board first, then total:
 
-3. **Handle the error case.** If the tool returns `{"status": "error", "reason": ...}`,
+   ```
+   Синк завершён:
+     youtrack / PRI: 64 задачи, изменено 2 (эмбеддинги: 0), без изменений 62
+   Итого: 64 задачи, изменено 2.
+   ```
+
+   If `by_board` is absent (old server): report aggregate counts only —
+   «N задач на доске, изменено M (эмбеддинги: K), без изменений U, ошибок F».
+   If `purge` is present, add «Purge: D удалено, P защищено (есть PR-история)».
+   Surface any `warnings`.
+
+4. **Handle the error case.** If the tool returns `{"status": "error", "reason": ...}`,
    the board is not configured server-side. Tell the user (in Russian) to add the board
-   settings to the reviewer-mcp env file — the canonical `~/.config/rag-reviewer/.env`
+   credentials to the reviewer-mcp env file — the canonical `~/.config/rag-reviewer/.env`
    (NOT the repo `./.env`: reviewer-mcp runs with an arbitrary CWD and reads the XDG file
-   first) — namely `TASK_BOARD_API_KEY` plus `TASK_BOARD_TYPE` and, for normalization,
-   `TASK_BOARD_KEY_PATTERN` / `TASK_BOARD_URL_TEMPLATE`. Then reconnect the MCP server
+   first) — namely `YOUGILE_API_KEY` (for Yougile) or `YOUTRACK_TOKEN` +
+   `YOUTRACK_BASE_URL` (for YouTrack), plus `TASK_BOARD_KEY_PATTERN` /
+   `TASK_BOARD_URL_TEMPLATE` for normalization. Then reconnect the MCP server
    (`/mcp` reconnect or restart Claude Code — env is read at process start) and retry.
 
-   For **Yougile**, also explain how to obtain `TASK_BOARD_API_KEY`:
+   For **Yougile**, also explain how to obtain `YOUGILE_API_KEY`:
    - **Configurator (easiest):** in Yougile press `Ctrl + ~` (or Projects → gear ⚙ next to
      the company name → «Настроить») → API settings → generate/copy the key.
    - **REST:** `POST https://yougile.com/api-v2/auth/keys` with `{login, password,
@@ -82,6 +97,6 @@ Parse from `$ARGUMENTS` (all optional):
 ## Notes
 
 - The board REST credentials live only in the reviewer-mcp deploy environment
-  (`TASK_BOARD_API_KEY`), never in this skill or the conversation.
+  (`YOUGILE_API_KEY` or `YOUTRACK_TOKEN`), never in this skill or the conversation.
 - This skill is read-only on the board; it never writes back.
 - `sync_board` is idempotent: re-running is safe and cheap (watermark + content_hash).
