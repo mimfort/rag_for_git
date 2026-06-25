@@ -97,6 +97,6 @@ Parse from `$ARGUMENTS` (all optional):
 ## Notes
 
 - The board REST credentials live only in the reviewer-mcp deploy environment
-  (`TASK_BOARD_API_KEY`), never in this skill or the conversation.
+  (`YOUGILE_API_KEY` or `YOUTRACK_TOKEN`), never in this skill or the conversation.
 - This skill is read-only on the board; it never writes back.
 - `sync_board` is idempotent: re-running is safe and cheap (watermark + content_hash).
