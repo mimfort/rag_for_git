@@ -12,8 +12,8 @@ def test_sync_board_no_provider_returns_error():
     assert out["status"] == "error"
     reason = out["reason"].lower()
     assert "board" in reason
-    # подсказка: какой ключ задать и как достать его у yougile
-    assert "task_board_api_key" in reason
+    # подсказка: какой ключ задать и как достать его у yougile/youtrack
+    assert "yougile_api_key" in reason or "youtrack_token" in reason
     assert "auth/keys" in reason
 
 
@@ -28,9 +28,9 @@ def test_sync_board_delegates_to_sync_service():
             return {"enumerated": 3, "changed": 1, "warnings": []}
 
     fake = FakeSync()
-    out = _Svc(fake).sync_board(board="B", limit=5)
+    out = _Svc(fake).sync_board(board="B", board_type="yougile", limit=5)
     assert out["enumerated"] == 3 and out["changed"] == 1
-    assert fake.called_with == ("B", 5, False, True, None)
+    assert fake.called_with == ("B", 5, False, True, "yougile")
 
 
 def test_sync_board_threads_board_type():

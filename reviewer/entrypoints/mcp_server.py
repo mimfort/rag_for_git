@@ -104,10 +104,11 @@ def create_server(service: MCPReviewService) -> FastMCP:
                    purge_orphaned: bool = False, keep_with_prs: bool = True,
                    board_type: str | None = None) -> dict:
         """Server-side ETL: enumerate the configured task board via REST, normalize,
-        and index it (vector store + task graph). board_type limits the sync to one
-        board type (yougile|youtrack); board limits to one project by code prefix
-        (e.g. PRI). Incremental via a per-(type,board) timestamp watermark; --limit
-        disables purge and cursor advance. Returns a compact counts summary."""
+        and index it (vector store + task graph). board_type limits sync to one board
+        type (yougile|youtrack) — take it from task_board.type in the repo's .review.yml,
+        not from the deploy env. board limits to one project/board by name (e.g. PRI).
+        Incremental via a per-(type,board) timestamp watermark; --limit disables purge
+        and cursor advance. Returns a compact counts summary with by_board breakdown."""
         return service.sync_board(board, limit, purge_orphaned, keep_with_prs, board_type)
 
     @mcp.tool()
