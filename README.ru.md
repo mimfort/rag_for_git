@@ -42,6 +42,12 @@
 
 Один прогон ревью идёт тремя стадиями: **`prepare_review` (MCP)** → **анализ (Claude subagents)** → **`publish_review` (MCP)**.
 
+**Но плагин — не только ревью.** Ключевая фича — `solve-task`: читает задачу с вашей доски, подтягивает
+RAG + графом связанные задачи/PR/код, сводит структурированный бриф и передаёт в **полный
+superpowers-цикл разработки** (brainstorming → writing-plans → subagent-driven-development →
+executing-plans → finishing). Единственный end-to-end пайплайн, реально связывающий таск-трекер
+с реализацией.
+
 ## Архитектура: как связаны части
 
 ```
@@ -548,7 +554,10 @@ Claude Code (`/rag-reviewer:` — namespace плагина; в других кл
   пропускаются, если не `REVIEW_SKIP_DRAFTS=false`.
   Чтение задач скоупится через `project=<task_board.project>`, передаваемый в `get_task`/`get_task_context`/`search_tasks` (PRI-170).
 
-### `reviewer_solve-task` — собрать контекст задачи и передать в разработку
+### `reviewer_solve-task` — от задачи до реализации (ключевая фича)
+
+Это standout-возможность плагина: читает задачу с доски, вытягивает всё нужное реализатору через
+RAG + граф кода и передаёт в **полный цикл superpowers-разработки** — не один шаг, а всю цепочку.
 
 Читает задачу (если есть ключ и доска), тянет связанные/похожие задачи и релевантный код, сводит
 бриф и входит в brainstorming. Дисциплинирует сбор контекста — **код не пишет**.
@@ -563,7 +572,9 @@ Claude Code (`/rag-reviewer:` — namespace плагина; в других кл
   `get_subsystem_summaries` → store-first чтение задачи через `get_task(key, project=...)`
   (hit = напрямую; miss = board-MCP фолбэк) → best-effort fail-open сбор контекста (граф задач,
   похожие задачи, релевантный код, ленивые диффы PR похожих задач) → бриф
-  (Task / Related work / Relevant code / Constraints) → передача в `superpowers:brainstorming`.
+  (Task / Related work / Relevant code / Constraints) → передача в `superpowers:brainstorming`
+  → **полный superpowers-цикл**: brainstorming → writing-plans → subagent-driven-development →
+  executing-plans → finishing-a-development-branch.
   `project=<task_board.project>` на всех task-тулах.
 
 ### `reviewer_sync-codebase` — построить/обновить base-индекс

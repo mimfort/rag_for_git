@@ -96,8 +96,13 @@ confidence, and — when it's safe — ships as a one-click GitHub `suggestion`.
   Desktop, …). One `uvx` command; published on [PyPI](https://pypi.org/project/rag-reviewer/).
 - **Local-first.** Your code stays on your machine — only embedding/query text goes to Voyage; the
   stores (Postgres/ParadeDB + Neo4j) run in local Docker.
-- **More than review.** The same RAG + graph powers grounded codebase **Q&A** (`ask`), disciplined
-  task-context gathering (`solve-task`), PR **walkthroughs**, and per-subsystem summaries.
+- **More than review.** The same RAG + graph powers grounded codebase **Q&A** (`ask`), PR
+  **walkthroughs**, and per-subsystem summaries.
+- **From task to implementation — the killer feature.** `solve-task` reads a task from your board,
+  pulls related tasks/prs/code via the RAG + graph, distills a structured brief, and hands off to the
+  **full superpowers cycle**: brainstorming → writing-plans → subagent-driven-development →
+  executing-plans → finishing. The only end-to-end pipeline that truly connects your task tracker
+  to implementation.
 
 ## How a review runs
 
@@ -600,7 +605,11 @@ Orchestrates the three-stage pipeline (`prepare_review` → subagents → `publi
   If `prepare_review` returns `status:"skipped"` (target branch not tracked) it stops; draft PRs are
   skipped unless `REVIEW_SKIP_DRAFTS=false`.
 
-### `reviewer_solve-task` — gather context for a task, then hand off to dev
+### `reviewer_solve-task` — from task to implementation (killer feature)
+
+This is the plugin's standout capability: it reads a task from your board, pulls everything the
+implementer needs via the RAG + code graph, and hands off to the **full superpowers development
+cycle** — not just a single step.
 
 Reads a task (if a key + board), pulls related/similar tasks and relevant code, distills a brief,
 and enters brainstorming. It disciplines context-gathering — it does **not** write the code.
@@ -613,7 +622,8 @@ and enters brainstorming. It disciplines context-gathering — it does **not** w
 - **Flow:** preflight (index freshness check → task corpus warmup via `sync_board`) → subsystem prior via `get_subsystem_summaries` → resolve board config → identify task (key vs free text) → store-first task read via `get_task(key, project=...)` (hit = use directly; miss = board MCP fallback) → best-effort, fail-open context
   gathering (task graph, similar tasks, relevant code, lazy PR diffs of similar tasks) → distill a
   structured brief (Task / Related work / Relevant code / Constraints) → hand off to
-  `superpowers:brainstorming` with the brief as seed.
+  `superpowers:brainstorming` with the brief as seed → **full superpowers cycle**: brainstorming →
+  writing-plans → subagent-driven-development → executing-plans → finishing-a-development-branch.
 
 ### `reviewer_sync-codebase` — build/update the base index
 
