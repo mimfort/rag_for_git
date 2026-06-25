@@ -131,12 +131,17 @@ class Settings(BaseSettings):
     def task_board_default(self) -> dict | None:
         """Глобальный конфиг доски из env (фолбэк, когда в .review.yml нет task_board).
 
-        Возвращает dict в форме блока ``task_board`` из .review.yml (только
-        непустые ключи) или ``None``, если ничего не задано.
+        Тип доски выводится из configured_board_types() — по факту наличия REST-кредов,
+        а не из TASK_BOARD_TYPE (устарел; поле pydantic сохранено для совместимости).
+        Возвращает dict в форме блока ``task_board`` из .review.yml (только непустые ключи)
+        или ``None``, если ничего не задано.
         """
         cfg = {}
-        if self.task_board_type:
-            cfg["type"] = self.task_board_type
+        types = self.configured_board_types()
+        if len(types) == 1:
+            cfg["type"] = types[0]
+        elif len(types) > 1:
+            cfg["type"] = types
         if self.task_board_mcp:
             cfg["mcp"] = self.task_board_mcp
         if self.task_board_key_pattern:

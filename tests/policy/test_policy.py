@@ -85,7 +85,10 @@ def test_load_task_board_none_without_yaml():
 
 
 def test_from_settings_task_board_from_env(monkeypatch):
-    monkeypatch.setenv("TASK_BOARD_TYPE", "yougile")
+    # тип доски выводится из кредов (YOUGILE_API_KEY → yougile), не из TASK_BOARD_TYPE
+    for k in ("TASK_BOARD_TYPE", "YOUTRACK_TOKEN"):
+        monkeypatch.delenv(k, raising=False)
+    monkeypatch.setenv("YOUGILE_API_KEY", "yg-test")
     monkeypatch.setenv("TASK_BOARD_MCP", "yougile")
     p = ReviewPolicy.from_settings(Settings(_env_file=None))
     assert p.task_board == {"type": "yougile", "mcp": "yougile"}
@@ -93,7 +96,10 @@ def test_from_settings_task_board_from_env(monkeypatch):
 
 def test_load_task_board_from_env_default(monkeypatch):
     # без .review.yml глобальный env-дефолт доски используется как fallback
-    monkeypatch.setenv("TASK_BOARD_TYPE", "yougile")
+    # тип доски выводится из кредов (YOUGILE_API_KEY → yougile), не из TASK_BOARD_TYPE
+    for k in ("TASK_BOARD_TYPE", "YOUTRACK_TOKEN"):
+        monkeypatch.delenv(k, raising=False)
+    monkeypatch.setenv("YOUGILE_API_KEY", "yg-test")
     monkeypatch.setenv("TASK_BOARD_MCP", "yougile")
     p = ReviewPolicy.load(Settings(_env_file=None), None)
     assert p.task_board == {"type": "yougile", "mcp": "yougile"}

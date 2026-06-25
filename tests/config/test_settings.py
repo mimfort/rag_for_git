@@ -25,32 +25,10 @@ _TASK_BOARD_ENV = (
 
 
 def test_task_board_default_none_when_unset(monkeypatch):
-    for k in _TASK_BOARD_ENV:
+    for k in ("TASK_BOARD_MCP", "TASK_BOARD_KEY_PATTERN", "TASK_BOARD_URL_TEMPLATE",
+              "YOUGILE_API_KEY", "TASK_BOARD_API_KEY", "YOUTRACK_TOKEN"):
         monkeypatch.delenv(k, raising=False)
     assert Settings(_env_file=None).task_board_default() is None
-
-
-def test_task_board_default_from_env(monkeypatch):
-    monkeypatch.setenv("TASK_BOARD_TYPE", "yougile")
-    monkeypatch.setenv("TASK_BOARD_MCP", "yougile")
-    monkeypatch.setenv("TASK_BOARD_KEY_PATTERN", r"[A-Z]+-\d+")
-    monkeypatch.setenv("TASK_BOARD_URL_TEMPLATE", "https://ru.yougile.com/#{code}")
-    assert Settings(_env_file=None).task_board_default() == {
-        "type": "yougile",
-        "mcp": "yougile",
-        "key_pattern": r"[A-Z]+-\d+",
-        "url_template": "https://ru.yougile.com/#{code}",
-    }
-
-
-def test_task_board_default_partial(monkeypatch):
-    for k in _TASK_BOARD_ENV:
-        monkeypatch.delenv(k, raising=False)
-    monkeypatch.setenv("TASK_BOARD_TYPE", "yougile")
-    monkeypatch.setenv("TASK_BOARD_MCP", "yougile")
-    assert Settings(_env_file=None).task_board_default() == {
-        "type": "yougile", "mcp": "yougile",
-    }
 
 
 def test_task_board_api_base_default_yougile():
@@ -105,3 +83,43 @@ def test_configured_board_types_empty_when_nothing(monkeypatch):
     for k in ("TASK_BOARD_API_KEY", "YOUGILE_API_KEY", "YOUTRACK_TOKEN"):
         monkeypatch.delenv(k, raising=False)
     assert Settings(_env_file=None).configured_board_types() == []
+
+
+def test_task_board_default_type_single_from_creds(monkeypatch):
+    for k in ("TASK_BOARD_TYPE", "YOUGILE_API_KEY", "TASK_BOARD_API_KEY",
+              "YOUTRACK_TOKEN"):
+        monkeypatch.delenv(k, raising=False)
+    monkeypatch.setenv("YOUTRACK_TOKEN", "perm:test")
+    monkeypatch.setenv("YOUTRACK_BASE_URL", "https://yt.example.com/api")
+    monkeypatch.setenv("TASK_BOARD_MCP", "yougile")
+    result = Settings(_env_file=None).task_board_default()
+    assert result is not None
+    assert result["type"] == "youtrack"
+
+
+def test_task_board_default_type_list_when_both_creds(monkeypatch):
+    monkeypatch.setenv("YOUGILE_API_KEY", "yg-key")
+    monkeypatch.setenv("YOUTRACK_TOKEN", "perm:test")
+    monkeypatch.setenv("YOUTRACK_BASE_URL", "https://yt.example.com/api")
+    result = Settings(_env_file=None).task_board_default()
+    assert result is not None
+    assert result["type"] == ["yougile", "youtrack"]
+
+
+def test_task_board_default_type_absent_when_no_creds(monkeypatch):
+    for k in ("TASK_BOARD_TYPE", "YOUGILE_API_KEY", "TASK_BOARD_API_KEY",
+              "YOUTRACK_TOKEN"):
+        monkeypatch.delenv(k, raising=False)
+    monkeypatch.setenv("TASK_BOARD_MCP", "yougile")
+    result = Settings(_env_file=None).task_board_default()
+    assert result is not None
+    assert "type" not in result
+
+
+def test_task_board_default_ignores_task_board_type_env(monkeypatch):
+    monkeypatch.setenv("TASK_BOARD_TYPE", "yougile")   # старый env, нет кредов
+    for k in ("YOUGILE_API_KEY", "TASK_BOARD_API_KEY", "YOUTRACK_TOKEN"):
+        monkeypatch.delenv(k, raising=False)
+    result = Settings(_env_file=None).task_board_default()
+    # TASK_BOARD_TYPE игнорируется — type не попадает в ответ без кредов
+    assert result is None or "type" not in (result or {})

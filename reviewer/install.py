@@ -90,7 +90,8 @@ REVIEW_HISTORY=true
 MAX_TOOL_RESULT_CHARS=8000
 
 # --- Доска задач (опционально; per-type креды, legacy-алиас TASK_BOARD_API_KEY/BASE) ---
-TASK_BOARD_TYPE=
+# Тип доски (yougile|youtrack) задаётся в .review.yml каждого репо (task_board.type),
+# а не в env; TASK_BOARD_TYPE устарел и игнорируется.
 TASK_BOARD_MCP=
 TASK_BOARD_KEY_PATTERN=
 TASK_BOARD_URL_TEMPLATE=
@@ -200,11 +201,6 @@ WIZARD_GROUPS: list[EnvGroup] = [
         title="Доска задач",
         optional=True,
         fields=[
-            EnvField(
-                key="TASK_BOARD_TYPE",
-                prompt_text="TASK_BOARD_TYPE (yougile | jira | ...)",
-                default="",
-            ),
             EnvField(
                 key="TASK_BOARD_MCP",
                 prompt_text="TASK_BOARD_MCP (имя MCP-сервера доски)",

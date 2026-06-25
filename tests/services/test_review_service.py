@@ -36,6 +36,11 @@ def settings() -> Settings:
     s.task_board_mcp = ""
     s.task_board_key_pattern = ""
     s.task_board_url_template = ""
+    # per-type креды: task_board_default() теперь выводит тип из кредов, а не из
+    # task_board_type; зануляем, чтобы unconfigured-кейс работал верно
+    s.yougile_api_key = ""
+    s.task_board_api_key = ""
+    s.youtrack_token = ""
     return s
 
 

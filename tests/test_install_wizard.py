@@ -15,7 +15,8 @@ def test_wizard_has_per_type_board_creds():
 
 def test_wizard_keeps_board_selectors():
     keys = _keys()
-    assert "TASK_BOARD_TYPE" in keys
+    # TASK_BOARD_TYPE устарел и удалён из wizard; TYPE задаётся в .review.yml через task_board.type
+    assert "TASK_BOARD_MCP" in keys
     assert "TASK_BOARD_KEY_PATTERN" in keys
 
 
@@ -38,4 +39,4 @@ def test_wizard_has_yougile_api_base():
 
 def test_wizard_total_field_count():
     total = sum(len(g.fields) for g in WIZARD_GROUPS)
-    assert total == 21, f"Expected 21 fields, got {total}"
+    assert total == 20, f"Expected 20 fields, got {total}"
