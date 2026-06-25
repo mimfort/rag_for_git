@@ -38,7 +38,9 @@ brief to `superpowers:brainstorming` (which leads to writing-plans → subagent-
       stale/unknown index.
    3. **Warm the task corpus.** Call
       `sync_board(board=<task_board.project or null>, board_type=<task_board.type or null>, limit=null, purge_orphaned=false)` —
-      scoped warm-up корпуса задач своего проекта (PRI-170); пустой project → весь корпус.
+      `task_board.type` и `task_board.project` берутся из `<root>/.review.yml` (прочитай здесь,
+      до вызова `sync_board`; при отсутствии файла или блока `task_board` — используй `null`).
+      Скоупированный прогрев корпуса своего проекта (PRI-170); пустой project → весь корпус.
       Incremental (timestamp watermark), cheap when the corpus is warm. Board not configured or
       `status=error` → print the `TASK_BOARD_*` hint and continue board-less.
 
