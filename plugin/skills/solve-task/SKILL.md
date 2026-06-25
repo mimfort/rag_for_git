@@ -43,9 +43,26 @@ brief to `superpowers:brainstorming` (which leads to writing-plans → subagent-
       Скоупированный прогрев корпуса своего проекта (PRI-170); пустой project → весь корпус.
       Incremental (timestamp watermark), cheap when the corpus is warm. Board not configured or
       `status=error` → print the `TASK_BOARD_*` hint and continue board-less.
+   4. **Summary warmth.** Call `get_subsystem_summaries(repo, branch)` (without `query`) and check
+      the returned count. Skip this check if `drift == null` (no index at all — summaries can't
+      exist). If count == 0 (summaries not built yet):
+      - Tell the user (in Russian): «Сводки подсистем не построены — архитектурный приор будет
+        пустым. Как поступим?» and present **three options**:
+        1. «Прогреть сейчас» → delegate to `/reviewer_summarize-subsystems`, wait for it to
+           complete, then continue. (Good if using the default model.)
+        2. «Прогрею сам» → **PAUSE HERE** and wait for the user to write something like
+           «готово», «прогрел», «done» or any confirmation that they have run their own tool
+           (e.g. an external CLI with a cheaper model). Once confirmed, call
+           `get_subsystem_summaries(repo, branch)` again to verify count > 0, then continue.
+        3. «Пропустить» → note in brief under **Constraints**: «сводки подсистем не построены;
+           `/reviewer_summarize-subsystems` не запускался». Continue without them.
+      - If count > 0: silently continue (no message needed — summaries are warm).
+      - Fail-open: an error from `get_subsystem_summaries` → treat as count == 0 and offer the
+        same options, but include the error detail in option 3's Constraints note.
 
    Decisions: stale → confirmation, never auto (Voyage free tier is 3 RPM / 10K TPM); failures →
-   reported like `sync-codebase`; `sync_board` runs incrementally at start.
+   reported like `sync-codebase`; `sync_board` runs incrementally at start; summaries missing →
+   three-way choice (build now / build yourself / skip).
 
 1. **Config.** Resolve the `task_board` block (`type`, `mcp`, `key_pattern`, `project`): first from the repo's
    `.review.yml`, and if there is no block there, from the deploy-wide default via
