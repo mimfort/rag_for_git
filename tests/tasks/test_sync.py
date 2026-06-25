@@ -156,6 +156,7 @@ def test_board_type_none_syncs_all_providers():
     assert types == {"yougile", "youtrack"}
 
 
+
 def test_by_board_includes_counts_per_provider():
     prov = FakeProvider([_raw("ID-1", 100), _raw("ID-2", 200)], board_type="yougile")
     meta = FakeMeta({("", "tasks:yougile:*"): "150"})  # ID-1 уже в курсоре
