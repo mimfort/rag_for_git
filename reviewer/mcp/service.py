@@ -302,7 +302,7 @@ class MCPReviewService:
         try:
             return sync.run(board=board, board_type=board_type, limit=limit,
                             purge_orphaned=purge_orphaned,
-                            keep_with_prs=keep_with_prs, board_type=board_type)
+                            keep_with_prs=keep_with_prs)
         except Exception as e:
             log.warning("sync_board: сбой синка", exc_info=True)
             return {"status": "error", "reason": f"{type(e).__name__}: {e}"}
