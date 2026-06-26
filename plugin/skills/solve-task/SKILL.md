@@ -99,6 +99,8 @@ brief to `superpowers:brainstorming` (which leads to writing-plans → subagent-
      → top-k relevant subsystems by proximity (top-k vs all is server-side; PRI-167).
      Use the same `branch` as `search_codebase`. Fail-open: an empty list / a `(… недоступно)`
      note / an error is non-fatal — omit the `## Subsystems` brief section and note the gap.
+     The summary is only a prior — every `path:line` in the brief still comes from
+     `search_codebase` snippets, never from the summary text.
    - **Project scope.** Pass `project=<task_board.project>` (from Step 1; empty = unscoped) to
      `get_task`, `get_task_context`, and `search_tasks` so only this repo's project surfaces (PRI-170).
    - If you have a task key: `get_task_context(key, project=<task_board.project>)` → linked tasks, their PRs, and the code those PRs
