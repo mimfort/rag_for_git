@@ -60,3 +60,47 @@ def test_upsert_block_replaces_when_present():
     assert "Модель: y" in out
     assert "Модель: x" not in out
     assert "## Task" in out
+
+
+def test_message_text_handles_list_content():
+    line = {"message": {"content": [
+        {"type": "text", "text": "Base directory for this skill: skills/solve-task"},
+    ]}}
+    assert "solve-task" in bc._message_text(line)
+
+
+def test_find_window_start_returns_last_marker():
+    lines = [
+        {"type": "user", "message": {"content": "hi"}},
+        {"type": "user", "message": {
+            "content": "Base directory for this skill: /x/plugin/skills/solve-task\n# Solve Task"}},
+        {"type": "assistant", "message": {"model": "m", "usage": {"input_tokens": 1}}},
+        {"type": "user", "message": {
+            "content": "Base directory for this skill: /x/plugin/skills/solve-task (rerun)"}},
+    ]
+    assert bc.find_window_start(lines) == 3
+
+
+def test_find_window_start_absent_returns_minus_one():
+    lines = [{"type": "user", "message": {"content": "nothing here"}}]
+    assert bc.find_window_start(lines) == -1
+
+
+def test_aggregate_usage_sums_per_model_skips_sidechain():
+    lines = [
+        {"type": "user", "message": {
+            "content": "Base directory for this skill: skills/solve-task"}},
+        {"type": "assistant", "message": {"model": "claude-opus-4-8", "usage": {
+            "input_tokens": 100, "output_tokens": 200,
+            "cache_creation_input_tokens": 300, "cache_read_input_tokens": 400}}},
+        {"type": "assistant", "isSidechain": True, "message": {
+            "model": "claude-opus-4-8", "usage": {"input_tokens": 999}}},
+        {"type": "assistant", "message": {"model": "claude-haiku-4-5", "usage": {
+            "input_tokens": 1, "output_tokens": 2,
+            "cache_creation_input_tokens": 3, "cache_read_input_tokens": 4}}},
+    ]
+    by_model = bc.aggregate_usage(lines, 0)
+    assert by_model["claude-opus-4-8"] == {
+        "fresh_in": 100, "output": 200, "cache_write": 300, "cache_read": 400}
+    assert by_model["claude-haiku-4-5"] == {
+        "fresh_in": 1, "output": 2, "cache_write": 3, "cache_read": 4}

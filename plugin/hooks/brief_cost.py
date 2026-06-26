@@ -58,3 +58,51 @@ def upsert_block(text: str, block: str) -> str:
         out.append(lines[i])
         i += 1
     return "\n".join(out).rstrip("\n") + "\n"
+
+
+SKILL_MARKER = "skills/solve-task"
+BASE_DIR_MARKER = "Base directory for this skill:"
+
+
+def _message_text(line: dict) -> str:
+    """Текст сообщения: message.content как строка или список блоков {text}."""
+    content = (line.get("message") or {}).get("content")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = [
+            b["text"] for b in content
+            if isinstance(b, dict) and isinstance(b.get("text"), str)
+        ]
+        return "\n".join(parts)
+    return ""
+
+
+def find_window_start(lines: list) -> int:
+    """Индекс последнего user-сообщения с маркерами solve-task; -1 если нет."""
+    start = -1
+    for i, line in enumerate(lines):
+        if line.get("type") != "user":
+            continue
+        text = _message_text(line)
+        if BASE_DIR_MARKER in text and SKILL_MARKER in text:
+            start = i
+    return start
+
+
+def aggregate_usage(lines: list, start_idx: int) -> dict:
+    """Сумма 4 бакетов токенов по model для assistant-ходов после start_idx."""
+    by_model: dict = {}
+    for line in lines[start_idx + 1:]:
+        if line.get("type") != "assistant" or line.get("isSidechain"):
+            continue
+        message = line.get("message") or {}
+        usage = message.get("usage") or {}
+        model = message.get("model") or "unknown"
+        bucket = by_model.setdefault(
+            model, {"fresh_in": 0, "output": 0, "cache_write": 0, "cache_read": 0})
+        bucket["fresh_in"] += int(usage.get("input_tokens") or 0)
+        bucket["output"] += int(usage.get("output_tokens") or 0)
+        bucket["cache_write"] += int(usage.get("cache_creation_input_tokens") or 0)
+        bucket["cache_read"] += int(usage.get("cache_read_input_tokens") or 0)
+    return {m: b for m, b in by_model.items() if any(b.values())}
