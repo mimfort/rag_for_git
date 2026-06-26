@@ -41,3 +41,10 @@ def test_solve_task_passes_query_to_summaries():
 def test_solve_task_has_subsystems_brief_section():
     text = SOLVE.read_text(encoding="utf-8")
     assert "## Subsystems" in text
+
+
+def test_solve_task_marks_summary_prior_only():
+    # Приор сводок — только ориентир: grounding (path:line) идёт из search_codebase,
+    # а не из текста summary (зеркало ask/SKILL.md). Критерий приёмки PRI-161.
+    text = SOLVE.read_text(encoding="utf-8")
+    assert "never from the summary text" in text
