@@ -174,12 +174,16 @@ fresh-in 9.9K · out 164K · cache-write 533K · cache-read 14.2M
 
 Хук получает на stdin JSON (Claude Code PostToolUse). Используемые поля:
 - `tool_name` — `"Write"` (подтверждено matcher'ом; в скрипте можно не проверять).
-- `tool_input.file_path` — абсолютный путь записанного файла → path-guard (§6.1).
-- `transcript_path` — путь к JSONL текущей сессии → атрибуция (§5.1).
-- `cwd` — рабочая директория → поиск `.review.yml` (от `cwd`, при необходимости вверх до git-toplevel).
+- `tool_input.file_path` — абсолютный путь записанного файла → path-guard (§6.1) **и** якорь поиска
+  `.review.yml` (вверх от каталога брифа до корня ФС). Это снимает зависимость от `cwd`.
+- `transcript_path` — путь к JSONL текущей сессии → атрибуция (§5.1). Единственный источник окна; нет в
+  payload → fail-open no-op.
+- `cwd` — фолбэк-якорь для `.review.yml`, если `file_path` пуст.
 
-Имена полей сверены с документацией Claude Code (через `claude-code-guide`). Отсутствующие поля скрипт
-трактует как пустые → fail-open.
+`tool_name`/`tool_input`/`tool_output` — PostToolUse-специфичные поля; `transcript_path`/`cwd` — общие поля
+всех хуков (подтверждено `claude-code-guide` по офиц. докам; в PostToolUse-секции не продублированы).
+Эмпирическая проверка контракта после установки — `BRIEF_COST_DEBUG=1` (хук пишет ключи payload в stderr).
+Отсутствующие поля скрипт трактует как пустые → fail-open.
 
 ## 9. Тестирование
 
