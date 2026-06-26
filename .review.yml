@@ -12,6 +12,15 @@ task_board:
   url_template: 'https://ru.yougile.com/team/686c049c8af8/#{code}'  # {code} = проектный код PRI-N
   project: PRI                        # PRI-170: скоуп синка/выдачи задач этим проектом (префикс кода)
 
+# --- Скилл solve-task ---
+
+# Дописывать в бриф solve-task расход LLM-токенов на этап (4 бакета:
+# fresh-in/output/cache-write/cache-read). Считает PostToolUse-хук плагина
+# (plugin/hooks/brief_cost.py) детерминированно по транскрипту сессии — ноль
+# доп. LLM-токенов, без долларов. Дефолт (без ключа) — выключено.
+solve_task:
+  brief_token_cost: true
+
 # --- Политика контекст-слоя (PRI-161) ---
 
 # Игнорируемые пути: НЕ индексируются (вектора + граф) и не комментируются.

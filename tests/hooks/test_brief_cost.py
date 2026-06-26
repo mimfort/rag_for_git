@@ -200,3 +200,13 @@ def test_run_replaces_on_rerun(tmp_path):
     bc.run(payload)
     out = brief.read_text(encoding="utf-8")
     assert out.count("## Токены (этап solve-task)") == 1
+
+
+def test_hooks_json_registers_posttooluse_write():
+    hooks = json.loads((ROOT / "plugin" / "hooks" / "hooks.json").read_text(encoding="utf-8"))
+    entries = hooks["hooks"]["PostToolUse"]
+    write_entries = [e for e in entries if e.get("matcher") == "Write"]
+    assert write_entries, "нужен PostToolUse-матчер на Write"
+    command = write_entries[0]["hooks"][0]["command"]
+    assert "brief_cost.py" in command
+    assert "${CLAUDE_PLUGIN_ROOT}" in command
