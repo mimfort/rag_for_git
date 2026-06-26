@@ -43,9 +43,26 @@ brief to `superpowers:brainstorming` (which leads to writing-plans → subagent-
       Скоупированный прогрев корпуса своего проекта (PRI-170); пустой project → весь корпус.
       Incremental (timestamp watermark), cheap when the corpus is warm. Board not configured or
       `status=error` → print the `TASK_BOARD_*` hint and continue board-less.
+   4. **Summary warmth.** Call `get_subsystem_summaries(repo, branch)` (without `query`) and check
+      the returned count. Skip this check if `drift == null` (no index at all — summaries can't
+      exist). If count == 0 (summaries not built yet):
+      - Tell the user (in Russian): «Сводки подсистем не построены — архитектурный приор будет
+        пустым. Как поступим?» and present **three options**:
+        1. «Прогреть сейчас» → delegate to `/reviewer_summarize-subsystems`, wait for it to
+           complete, then continue. (Good if using the default model.)
+        2. «Прогрею сам» → **PAUSE HERE** and wait for the user to write something like
+           «готово», «прогрел», «done» or any confirmation that they have run their own tool
+           (e.g. an external CLI with a cheaper model). Once confirmed, call
+           `get_subsystem_summaries(repo, branch)` again to verify count > 0, then continue.
+        3. «Пропустить» → note in brief under **Constraints**: «сводки подсистем не построены;
+           `/reviewer_summarize-subsystems` не запускался». Continue without them.
+      - If count > 0: silently continue (no message needed — summaries are warm).
+      - Fail-open: an error from `get_subsystem_summaries` → treat as count == 0 and offer the
+        same options, but include the error detail in option 3's Constraints note.
 
    Decisions: stale → confirmation, never auto (Voyage free tier is 3 RPM / 10K TPM); failures →
-   reported like `sync-codebase`; `sync_board` runs incrementally at start.
+   reported like `sync-codebase`; `sync_board` runs incrementally at start; summaries missing →
+   three-way choice (build now / build yourself / skip).
 
 1. **Config.** Resolve the `task_board` block (`type`, `mcp`, `key_pattern`, `project`): first from the repo's
    `.review.yml`, and if there is no block there, from the deploy-wide default via
@@ -82,6 +99,8 @@ brief to `superpowers:brainstorming` (which leads to writing-plans → subagent-
      → top-k relevant subsystems by proximity (top-k vs all is server-side; PRI-167).
      Use the same `branch` as `search_codebase`. Fail-open: an empty list / a `(… недоступно)`
      note / an error is non-fatal — omit the `## Subsystems` brief section and note the gap.
+     The summary is only a prior — every `path:line` in the brief still comes from
+     `search_codebase` snippets, never from the summary text.
    - **Project scope.** Pass `project=<task_board.project>` (from Step 1; empty = unscoped) to
      `get_task`, `get_task_context`, and `search_tasks` so only this repo's project surfaces (PRI-170).
    - If you have a task key: `get_task_context(key, project=<task_board.project>)` → linked tasks, their PRs, and the code those PRs
@@ -150,8 +169,25 @@ Use the session-less tools above.
 
    Cite `path:line` straight from the line-numbered Step 3 snippets — no re-Read (Step 3 contract).
 
-5. **Hand off to development.** Show the brief, then invoke `superpowers:brainstorming` with the brief
-   as the seed/context. From there the normal cycle takes over (brainstorming → writing-plans →
+   **Persist the brief (survivability).** After distilling, save the brief to a file so it
+   survives context compaction / a new session and seeds the trace задача→бриф→спека→план→PR.
+   - **Directory:** `docs/superpowers/briefs/` — create it if missing (`mkdir -p`). Committed like
+     `specs/`/`plans/` (leave a trace, do not gitignore).
+   - **Filename:** with a task key — `YYYY-MM-DD-<KEY>-<slug>.md`, where `KEY` is the board key
+     matching `key_pattern` (e.g. `PRI-163`, NOT the normalized store key `ID-163`) and `slug` is a
+     short ASCII kebab of the title. **Board-less** (no key): `YYYY-MM-DD-<slug>.md` (slug from the
+     user's formulation). `YYYY-MM-DD` = today's date.
+   - **Idempotency:** before writing, glob `docs/superpowers/briefs/<date>-<KEY>-*.md` and overwrite
+     the match if any (slug drift between runs must not spawn duplicates); board-less → exact name.
+   - **Content:** the distilled brief verbatim (the `# Brief — <KEY> <title>` skeleton); add the
+     task `url` on the line below the heading when available, for grep-by-key.
+   - **Fail-open:** a failed write (read-only FS, no permission) is non-fatal — note it and still
+     hand off with the in-context brief.
+
+5. **Hand off to development.** Show the brief, state the saved file path
+   (`docs/superpowers/briefs/…`), then invoke `superpowers:brainstorming` with the brief **file
+   path** as the seed/context — so the brief survives compaction, not just the in-context text.
+   From there the normal cycle takes over (brainstorming → writing-plans →
    subagent-driven-development/TDD). Your job ends at the handoff — do NOT plan or implement here.
 
 ## Failure handling (fail-open)
@@ -166,4 +202,5 @@ Use the session-less tools above.
   a key) or the user's formulation alone; still hand off to brainstorming.
 - Never abort: with any gap, distill what you have, note the deficit in the brief, and still hand off
   to brainstorming.
-- Read-only on the board; this skill never writes to it.
+- Read-only on the board; this skill never writes to it. The brief file under
+  `docs/superpowers/briefs/` is the only write this skill makes — to the repo, not the board.

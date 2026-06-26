@@ -49,3 +49,7 @@ Available skills:
 - `rag-reviewer:reviewer_sync-tasks` — index tasks into the vector store from a connected board
 - `rag-reviewer:reviewer_performance-review` — performance-focused PR review
 - `rag-reviewer:reviewer_maintainability-review` — maintainability-focused PR review
+- `rag-reviewer:reviewer_ask` — answer grounded questions about the codebase
+- `rag-reviewer:reviewer_pr-walkthrough` — build a human-facing reading guide for a PR
+- `rag-reviewer:reviewer_configure-review` — configure a repo's .review.yml context layer
+- `rag-reviewer:reviewer_summarize-subsystems` — precompute per-subsystem summaries
