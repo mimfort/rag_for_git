@@ -49,3 +49,10 @@ def test_solve_task_resolves_subtask_criteria_when_thin():
     assert "(?i)(критери|приёмк|acceptance)" in text          # детектор «тонкого» description
     assert "subtasks" in text                                  # источник критериев — подзадачи
     assert "do NOT call `index_task`" in text                  # обогащение только в бриф
+
+
+def test_solve_task_includes_test_exemplars():
+    """PRI-162: solve-task подмешивает тест-образцы (include_tests) для TDD-хендоффа."""
+    text = SOLVE.read_text(encoding="utf-8")
+    assert "include_tests=True" in text     # тест-ретрив в шаге 3
+    assert "Test exemplars" in text         # секция скелета брифа
