@@ -131,8 +131,9 @@ brief to `superpowers:brainstorming` (which leads to writing-plans → subagent-
      (`include_tests=False`) is unchanged.
    - **Deepen via the code graph (optional — when `search_codebase` surfaced concrete symbols).**
      `search_codebase` chunks are headed by `path#fqn (path:start-end)`; feed those `node_id`s to the
-     session-less graph tools to sharpen the brief. `search_codebase` now returns deduplicated,
-     line-numbered, test-free snippets — expand only the few symbols central to the task, and cite
+     session-less graph tools to sharpen the brief. The default `search_codebase` (code retrieval,
+     `include_tests=False`) returns deduplicated, line-numbered, test-free snippets — expand only the
+     few symbols central to the task (feed graph tools the code node_ids, not test-exemplar ones), and cite
      `path:line` from the line-numbered snippets directly (no re-Read needed for grounding).
      Pass the same `branch` you pass to `search_codebase`.
      Fail-open: a `(граф недоступен)` / `(нет связей)` / `(вызовов не найдено)` note is non-fatal — continue.
