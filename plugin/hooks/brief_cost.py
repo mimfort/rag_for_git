@@ -9,6 +9,7 @@ import json
 import os
 import re
 import sys
+import tempfile
 
 HEADER = "## Токены (этап solve-task)"
 
@@ -45,7 +46,8 @@ def render_block(by_model: dict) -> str:
 def upsert_block(text: str, block: str) -> str:
     """Заменить существующий блок по HEADER либо дописать в конец. Идемпотентно."""
     block = block.rstrip("\n")
-    if HEADER not in text:
+    has_header = any(line.strip() == HEADER for line in text.splitlines())
+    if not has_header:
         body = text.rstrip("\n")
         return f"{body}\n\n{block}\n"
     lines = text.splitlines()
@@ -135,7 +137,7 @@ def read_flag(text) -> bool:
 
 def _read_flag_fallback(text: str) -> bool:
     """Stdlib-разбор флага: inline `{...}` или block-style под `solve_task:`."""
-    if re.search(r"solve_task:\s*\{[^}]*brief_token_cost:\s*true", text):
+    if re.search(r"solve_task:\s*\{[^}]*brief_token_cost:\s*true\b", text):
         return True
     in_block = False
     for line in text.splitlines():
@@ -194,8 +196,18 @@ def _read_jsonl(path) -> list:
 
 
 def _write_text(path, text) -> None:
-    with open(path, "w", encoding="utf-8") as handle:
-        handle.write(text)
+    directory = os.path.dirname(path) or "."
+    fd, tmp = tempfile.mkstemp(dir=directory, suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(text)
+        os.replace(tmp, path)
+    except Exception:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
 
 
 def run(payload: dict) -> int:
@@ -207,9 +219,8 @@ def run(payload: dict) -> int:
         if not _under_briefs(file_path):
             return 0
         # .review.yml ищем вверх от каталога брифа (file_path гарантированно
-        # присутствует); cwd — фолбэк, если file_path пуст.
-        start_dir = (os.path.dirname(os.path.abspath(file_path)) if file_path
-                     else (payload.get("cwd") or os.getcwd()))
+        # непуст после path-guard выше).
+        start_dir = os.path.dirname(os.path.abspath(file_path))
         yml_path = _find_review_yml(start_dir)
         if not read_flag(_read_text(yml_path) if yml_path else None):
             return 0

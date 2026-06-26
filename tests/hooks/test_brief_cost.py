@@ -210,3 +210,31 @@ def test_hooks_json_registers_posttooluse_write():
     command = write_entries[0]["hooks"][0]["command"]
     assert "brief_cost.py" in command
     assert "${CLAUDE_PLUGIN_ROOT}" in command
+
+
+def test_read_flag_fallback_block_style_true():
+    assert bc._read_flag_fallback("solve_task:\n  brief_token_cost: true\n") is True
+
+
+def test_read_flag_fallback_inline_true():
+    assert bc._read_flag_fallback("solve_task: {brief_token_cost: true}\n") is True
+
+
+def test_read_flag_fallback_rejects_truely():
+    assert bc._read_flag_fallback("solve_task: {brief_token_cost: truely}\n") is False
+    assert bc._read_flag_fallback("solve_task:\n  brief_token_cost: truely\n") is False
+
+
+def test_read_flag_fallback_false_and_absent():
+    assert bc._read_flag_fallback("solve_task:\n  brief_token_cost: false\n") is False
+    assert bc._read_flag_fallback("other: 1\n") is False
+
+
+def test_upsert_block_appends_when_header_only_in_prose():
+    brief = "# Brief — test\n\nсм. раздел ## Токены (этап solve-task) ниже\n"
+    block = ("## Токены (этап solve-task)\nМодель: x\n"
+             "fresh-in 1K · out 1K · cache-write 0 · cache-read 0\nВсего: 2K токенов")
+    out = bc.upsert_block(brief, block)
+    # стандартный заголовок-строка появился ровно один раз
+    assert sum(1 for ln in out.splitlines() if ln.strip() == "## Токены (этап solve-task)") == 1
+    assert "см. раздел ## Токены" in out  # прозаическая строка не съедена
