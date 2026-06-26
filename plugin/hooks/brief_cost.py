@@ -5,6 +5,11 @@
 """
 from __future__ import annotations
 
+import json
+import os
+import re
+import sys
+
 HEADER = "## Токены (этап solve-task)"
 
 
@@ -106,3 +111,133 @@ def aggregate_usage(lines: list, start_idx: int) -> dict:
         bucket["cache_write"] += int(usage.get("cache_creation_input_tokens") or 0)
         bucket["cache_read"] += int(usage.get("cache_read_input_tokens") or 0)
     return {m: b for m, b in by_model.items() if any(b.values())}
+
+
+def read_flag(text) -> bool:
+    """True только если solve_task.brief_token_cost == true.
+
+    Хук исполняется системным python3, где PyYAML может отсутствовать → yaml,
+    если доступен, иначе минимальный stdlib-разбор задокументированного формата.
+    """
+    if not text:
+        return False
+    try:
+        import yaml
+    except ImportError:
+        return _read_flag_fallback(text)
+    try:
+        data = yaml.safe_load(text) or {}
+    except Exception:
+        return False
+    block = data.get("solve_task") if isinstance(data, dict) else None
+    return isinstance(block, dict) and block.get("brief_token_cost") is True
+
+
+def _read_flag_fallback(text: str) -> bool:
+    """Stdlib-разбор флага: inline `{...}` или block-style под `solve_task:`."""
+    if re.search(r"solve_task:\s*\{[^}]*brief_token_cost:\s*true", text):
+        return True
+    in_block = False
+    for line in text.splitlines():
+        if re.match(r"^solve_task:\s*(#.*)?$", line):
+            in_block = True
+            continue
+        if in_block:
+            if line and not line[0].isspace():
+                in_block = False
+                continue
+            if re.match(r"^\s+brief_token_cost:\s*true\b", line):
+                return True
+    return False
+
+
+def _under_briefs(path: str) -> bool:
+    norm = os.path.normpath(path).replace(os.sep, "/")
+    return "/docs/superpowers/briefs/" in norm or norm.startswith("docs/superpowers/briefs/")
+
+
+def _find_review_yml(cwd: str):
+    current = os.path.abspath(cwd)
+    while True:
+        candidate = os.path.join(current, ".review.yml")
+        if os.path.isfile(candidate):
+            return candidate
+        parent = os.path.dirname(current)
+        if parent == current:
+            return None
+        current = parent
+
+
+def _read_text(path):
+    try:
+        with open(path, encoding="utf-8") as handle:
+            return handle.read()
+    except OSError:
+        return None
+
+
+def _read_jsonl(path) -> list:
+    rows: list = []
+    try:
+        with open(path, encoding="utf-8") as handle:
+            for line in handle:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rows.append(json.loads(line))
+                except ValueError:
+                    continue
+    except OSError:
+        return []
+    return rows
+
+
+def _write_text(path, text) -> None:
+    with open(path, "w", encoding="utf-8") as handle:
+        handle.write(text)
+
+
+def run(payload: dict) -> int:
+    """Оркестрация хука. Всегда возвращает 0 (fail-open)."""
+    try:
+        if os.environ.get("BRIEF_COST_DEBUG"):
+            sys.stderr.write("brief_cost payload keys: " + ",".join(sorted(payload)) + "\n")
+        file_path = (payload.get("tool_input") or {}).get("file_path") or ""
+        if not _under_briefs(file_path):
+            return 0
+        # .review.yml ищем вверх от каталога брифа (file_path гарантированно
+        # присутствует); cwd — фолбэк, если file_path пуст.
+        start_dir = (os.path.dirname(os.path.abspath(file_path)) if file_path
+                     else (payload.get("cwd") or os.getcwd()))
+        yml_path = _find_review_yml(start_dir)
+        if not read_flag(_read_text(yml_path) if yml_path else None):
+            return 0
+        lines = _read_jsonl(payload.get("transcript_path") or "")
+        if not lines:
+            return 0
+        start = find_window_start(lines)
+        if start < 0:
+            return 0
+        by_model = aggregate_usage(lines, start)
+        if not by_model:
+            return 0
+        brief = _read_text(file_path)
+        if brief is None:
+            return 0
+        _write_text(file_path, upsert_block(brief, render_block(by_model)))
+    except Exception:
+        return 0
+    return 0
+
+
+def main() -> int:
+    try:
+        payload = json.load(sys.stdin)
+    except Exception:
+        return 0
+    return run(payload)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
