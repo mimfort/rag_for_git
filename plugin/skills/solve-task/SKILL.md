@@ -79,6 +79,15 @@ brief to `superpowers:brainstorming` (which leads to writing-plans → subagent-
         - **Hit** (a task object with a `key`): use it directly as the `TaskBrief`. The task is
           already indexed (the preflight sync persisted it) — do NOT call `index_task`. Note in the
           brief that the task data came from the reviewer store (after sync).
+          - **Thin-criteria enrichment (optional, fail-open).** The store returns `criteria=[]` —
+            requirements normally live in `description`. If `description` has NO acceptance-criteria
+            heading (no section matching `(?i)(критери|приёмк|acceptance)`) AND a board is connected,
+            resolve the task's subtasks into `criteria[]` via the board-MCP playbook
+            `../review-pr/references/task-context-<task_board.type>.md` (its «Criteria note»):
+            one board `get_task(key)` → for each `subtasks[]` id resolve its title. Fold the resolved
+            criteria into the brief's `## Task` section only — do NOT call `index_task`. When the
+            heading IS present, criteria are inline in `description` → skip (leave `[]`). No board /
+            no subtasks / any error → leave `criteria` empty.
         - **Miss** (`null` / no `key`) AND a board is configured/connected: read the task via the
           playbook `../review-pr/references/task-context-<task_board.type>.md`, build a `TaskBrief`
           `{key, aliases[], title, description, criteria[], status, url, links[]}`, then call
