@@ -107,6 +107,9 @@ brief to `superpowers:brainstorming` (which leads to writing-plans → subagent-
      touched.
    - `search_tasks("<title>. <first lines of description>", project=<task_board.project>)` → semantically similar tasks. If a board
      is connected, you may read the most relevant similar tasks from the board for fuller detail.
+   - **Related work = linked ∪ similar.** The «Related work» brief section draws from two sources —
+     `get_task_context` (linked) and `search_tasks` (similar). They overlap; the Step 4 filter
+     deduplicates them by key before the cap.
    - `search_codebase("<task description>")` → relevant existing code (files/symbols to touch or
      mimic).
    - **Deepen via the code graph (optional — when `search_codebase` surfaced concrete symbols).**
@@ -155,6 +158,11 @@ Use the session-less tools above.
        you won't touch or copy; background you won't act on.
    - **Report what you dropped:** end the Related work and Relevant code sections with
      `(dropped N: reason)`.
+   - **Dedup related sources by key (linked ∪ similar).** «Related work» draws from
+     `get_task_context` (linked) and `search_tasks` (similar). Deduplicate by canonical task key
+     BEFORE the ≤3 cap, matching `PRI-N`↔`ID-N` via `aliases` (one task, two codes). On collision
+     keep the linked entry (richer — carries PR/graph context) and drop the similar duplicate, so a
+     task never appears twice in the brief.
 
    **Brief skeleton — fill it, keep each item to one line:**
 

@@ -32,3 +32,11 @@ def test_solve_task_persists_brief():
     assert "Persist the brief" in text          # шаг персиста присутствует
     assert "file path" in text                  # хендофф ссылается на путь к файлу
     assert "Board-less" in text                 # сохранение и без ключа (slug)
+
+
+def test_solve_task_dedupes_related_sources():
+    """PRI-164(b): «Related work» дедупится по ключу между linked и similar."""
+    text = SOLVE.read_text(encoding="utf-8")
+    assert "Dedup related sources by key" in text   # явный шаг дедупа
+    assert "linked ∪ similar" in text               # оба источника, слитые
+    assert "canonical task key" in text             # дедуп по каноническому ключу
