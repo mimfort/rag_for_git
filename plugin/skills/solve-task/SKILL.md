@@ -79,6 +79,15 @@ brief to `superpowers:brainstorming` (which leads to writing-plans → subagent-
         - **Hit** (a task object with a `key`): use it directly as the `TaskBrief`. The task is
           already indexed (the preflight sync persisted it) — do NOT call `index_task`. Note in the
           brief that the task data came from the reviewer store (after sync).
+          - **Thin-criteria enrichment (optional, fail-open).** The store returns `criteria=[]` —
+            requirements normally live in `description`. If `description` has NO acceptance-criteria
+            heading (no section matching `(?i)(критери|приёмк|acceptance)`) AND a board is connected,
+            resolve the task's subtasks into `criteria[]` via the board-MCP playbook
+            `../review-pr/references/task-context-<task_board.type>.md` (its «Criteria note»):
+            one board `get_task(key)` → for each `subtasks[]` id resolve its title. Fold the resolved
+            criteria into the brief's `## Task` section only — do NOT call `index_task`. When the
+            heading IS present, criteria are inline in `description` → skip (leave `[]`). No board /
+            no subtasks / any error → leave `criteria` empty.
         - **Miss** (`null` / no `key`) AND a board is configured/connected: read the task via the
           playbook `../review-pr/references/task-context-<task_board.type>.md`, build a `TaskBrief`
           `{key, aliases[], title, description, criteria[], status, url, links[]}`, then call
@@ -107,12 +116,24 @@ brief to `superpowers:brainstorming` (which leads to writing-plans → subagent-
      touched.
    - `search_tasks("<title>. <first lines of description>", project=<task_board.project>)` → semantically similar tasks. If a board
      is connected, you may read the most relevant similar tasks from the board for fuller detail.
+   - **Related work = linked ∪ similar.** The «Related work» brief section draws from two sources —
+     `get_task_context` (linked) and `search_tasks` (similar). They overlap; the Step 4 filter
+     deduplicates them by key before the cap.
    - `search_codebase("<task description>")` → relevant existing code (files/symbols to touch or
      mimic).
+   - **Test exemplars (optional — when `search_codebase` surfaced concrete symbols).** One extra
+     `search_codebase("<how the task's area is tested — fixtures/mocks for the feature>", include_tests=True)`
+     on the same `branch` — a targeted *test* query (how the area is tested), not the code query with
+     the flag flipped, so it surfaces the testing pattern the TDD hand-off should mimic. Snippets are
+     line-numbered like the code retrieval → cite `path:line` directly. Apply the same Step 4 rank-based
+     filter (≤3 test files/symbols). Fail-open: no tests surfaced / a `(ничего не найдено)` note / an
+     error → omit the `## Test exemplars` brief section; the default code retrieval
+     (`include_tests=False`) is unchanged.
    - **Deepen via the code graph (optional — when `search_codebase` surfaced concrete symbols).**
      `search_codebase` chunks are headed by `path#fqn (path:start-end)`; feed those `node_id`s to the
-     session-less graph tools to sharpen the brief. `search_codebase` now returns deduplicated,
-     line-numbered, test-free snippets — expand only the few symbols central to the task, and cite
+     session-less graph tools to sharpen the brief. The default `search_codebase` (code retrieval,
+     `include_tests=False`) returns deduplicated, line-numbered, test-free snippets — expand only the
+     few symbols central to the task (feed graph tools the code node_ids, not test-exemplar ones), and cite
      `path:line` from the line-numbered snippets directly (no re-Read needed for grounding).
      Pass the same `branch` you pass to `search_codebase`.
      Fail-open: a `(граф недоступен)` / `(нет связей)` / `(вызовов не найдено)` note is non-fatal — continue.
@@ -144,8 +165,8 @@ Use the session-less tools above.
    result order. Therefore:
    - **Order** candidates by result rank (tasks: rank/score; code: rank).
    - **Caps (ceilings — take fewer if that's enough):** ≤3 related tasks · ≤5 files/symbols in
-     Relevant code. Expand the graph (`related_symbols`/`callers`/`definition`) only for the few
-     symbols central to the task.
+     Relevant code · ≤3 test files/symbols in Test exemplars. Expand the graph
+     (`related_symbols`/`callers`/`definition`) only for the few symbols central to the task.
    - **Keep/drop is a binary judgment** — include an item ONLY if it *directly informs the
      implementation*. Rank/score only sets review order and breaks ties at the cap; it is not a
      numeric gate.
@@ -153,8 +174,13 @@ Use the session-less tools above.
        follow; a constraint that narrows the approach.
      - ❌ EXCLUDE: a task in the same area but a different mechanism; a file the search surfaced that
        you won't touch or copy; background you won't act on.
-   - **Report what you dropped:** end the Related work and Relevant code sections with
+   - **Report what you dropped:** end the Related work, Relevant code and Test exemplars sections with
      `(dropped N: reason)`.
+   - **Dedup related sources by key (linked ∪ similar).** «Related work» draws from
+     `get_task_context` (linked) and `search_tasks` (similar). Deduplicate by canonical task key
+     BEFORE the ≤3 cap, matching `PRI-N`↔`ID-N` via `aliases` (one task, two codes). On collision
+     keep the linked entry (richer — carries PR/graph context) and drop the similar duplicate, so a
+     task never appears twice in the brief.
 
    **Brief skeleton — fill it, keep each item to one line:**
 
@@ -164,6 +190,7 @@ Use the session-less tools above.
    ## Related work — ≤3 tasks, one line each: «KEY — what to reuse / follow». (dropped N: …)
    ## Subsystems — ≤8 relevant subsystems, one line: «cluster_key — gist of summary». (omit if prior empty)
    ## Relevant code — ≤5 files/symbols, one line: «path:line — why» (+ blast radius from the graph). (dropped N: …)
+   ## Test exemplars — ≤3 test files/symbols, one line: «path:line — what's mocked / which pattern». (omit if none; dropped N: …)
    ## Constraints / open questions — terse bullets: limits, unknowns, context gaps (e.g. "board unavailable", "task corpus empty").
    ```
 
