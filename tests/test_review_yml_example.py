@@ -10,3 +10,4 @@ def test_example_review_yml_documents_new_keys():
     assert "summary_cluster_depth_overrides" in data
     assert "summary_topk_threshold" in data
     assert "summary_cluster_depth" in data
+    assert "brief_token_cost" in (data.get("solve_task") or {})
