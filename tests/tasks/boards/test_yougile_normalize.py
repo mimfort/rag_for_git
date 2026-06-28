@@ -1,5 +1,5 @@
 from reviewer.tasks.boards.base import RawTask
-from reviewer.tasks.boards.yougile import normalize_yougile
+from reviewer.tasks.boards.yougile import YougileBoard, normalize_yougile
 
 KP = r"[A-Z]+-\d+"
 URL = "https://ru.yougile.com/team/T/#{code}"
@@ -66,3 +66,98 @@ def test_normalize_includes_injected_attachments():
 
 def test_normalize_attachments_default_empty():
     assert normalize_yougile(_raw(), KP, URL)["attachments"] == []
+
+
+UUID = "09e30301-4d72-46c8-9161-87cb1ab32487"
+
+
+class _FakeYResp:
+    def __init__(self, json_data=None, content=b"", headers=None):
+        self._json = json_data or {}
+        self.content = content
+        self.headers = headers or {"Content-Length": str(len(content))}
+
+    def raise_for_status(self):
+        pass
+
+    def json(self):
+        return self._json
+
+
+class _FakeYClient:
+    """Маршрутизирует GET по точному пути/URL; отсутствие роута → KeyError (fail-soft внутри)."""
+    def __init__(self, routes):
+        self._routes = routes
+        self.requested = []
+
+    def get(self, path, params=None, timeout=None):
+        self.requested.append(path)
+        if path not in self._routes:
+            raise KeyError(path)
+        return self._routes[path]
+
+    def close(self):
+        pass
+
+
+def _board_with(routes):
+    b = YougileBoard.__new__(YougileBoard)   # обойти httpx.Client в __init__
+    b._key_pattern = KP
+    b._url_template = URL
+    b._att_max_bytes = 10 * 1024 * 1024
+    b._att_timeout = 10.0
+    b._att_store_chars = 200000
+    b._client = _FakeYClient(routes)
+    return b
+
+
+def test_yougile_normalize_pulls_chat_file():
+    routes = {
+        f"/chats/{UUID}/messages": _FakeYResp(json_data={"content": [
+            {"text": "вот ТЗ\n/root/#file:https://yougile.com/files/abc/tz.md"}]}),
+        "https://yougile.com/files/abc/tz.md": _FakeYResp(content="тело ТЗ".encode()),
+    }
+    board = _board_with(routes)
+    raw = _raw(key="ID-10", board_id=UUID, subtask_ids=[])
+    brief = board.normalize(raw)
+    names = [a["name"] for a in brief["attachments"]]
+    assert "tz.md" in names
+    att = next(a for a in brief["attachments"] if a["name"] == "tz.md")
+    assert att["content_text"] == "тело ТЗ"
+    assert f"/chats/{UUID}/messages" in board._client.requested
+
+
+def test_yougile_normalize_dedups_repeated_file_url():
+    routes = {
+        f"/chats/{UUID}/messages": _FakeYResp(json_data={"content": [
+            {"text": "/root/#file:https://yougile.com/f/x/a.md"},
+            {"text": "повтор /root/#file:https://yougile.com/f/x/a.md"}]}),
+        "https://yougile.com/f/x/a.md": _FakeYResp(content="A".encode()),
+    }
+    board = _board_with(routes)
+    brief = board.normalize(_raw(board_id=UUID, subtask_ids=[]))
+    assert len([a for a in brief["attachments"] if a["name"] == "a.md"]) == 1
+
+
+def test_yougile_normalize_ignores_plain_messages():
+    routes = {f"/chats/{UUID}/messages": _FakeYResp(json_data={"content": [
+        {"text": "обычное сообщение без файла"}]})}
+    board = _board_with(routes)
+    assert board.normalize(_raw(board_id=UUID, subtask_ids=[]))["attachments"] == []
+
+
+def test_yougile_normalize_failsoft_when_chat_unavailable():
+    board = _board_with({})   # нет роута чата → KeyError → fail-soft, normalize не падает
+    brief = board.normalize(_raw(board_id=UUID, subtask_ids=[]))
+    assert brief["attachments"] == []
+
+
+def test_yougile_normalize_marker_in_texthtml():
+    routes = {
+        f"/chats/{UUID}/messages": _FakeYResp(json_data={"content": [
+            {"text": "", "properties": {"textHtml": "<p>/root/#file:https://yg/f/d.txt</p>"}}]}),
+        "https://yg/f/d.txt": _FakeYResp(content="D".encode()),
+    }
+    board = _board_with(routes)
+    brief = board.normalize(_raw(board_id=UUID, subtask_ids=[]))
+    assert any(a["name"] == "d.txt" and a["content_text"] == "D" for a in brief["attachments"])
