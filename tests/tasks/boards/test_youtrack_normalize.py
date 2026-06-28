@@ -1,4 +1,10 @@
-from reviewer.tasks.boards.youtrack import _issue_to_raw, normalize_youtrack
+from reviewer.tasks.boards.youtrack import (
+    YouTrackBoard,
+    _attachments_of,
+    _issue_to_raw,
+    _origin,
+    normalize_youtrack,
+)
 
 KP = r"[A-Z]+-\d+"
 BASE = "https://c.youtrack.cloud/api"
@@ -100,3 +106,59 @@ def test_normalize_includes_injected_attachments():
 def test_normalize_attachments_default_empty():
     raw = _issue_to_raw(_issue())
     assert normalize_youtrack(raw, KP, BASE)["attachments"] == []
+
+
+def test_origin_strips_api_path():
+    assert _origin("https://c.youtrack.cloud/api") == "https://c.youtrack.cloud"
+
+
+def test_attachments_of_extracts_metadata():
+    issue = _issue(attachments=[
+        {"name": "spec.md", "mimeType": "text/markdown", "size": 4,
+         "url": "/api/files/7-2?sign=abc"},
+        {"name": "nourl", "mimeType": "text/plain"},   # без url — пропускается
+    ])
+    atts = _attachments_of(issue)
+    assert atts == [{"name": "spec.md", "mime": "text/markdown", "size": 4,
+                     "url": "/api/files/7-2?sign=abc"}]
+
+
+class _FakeHttpResp:
+    def __init__(self, content, headers=None):
+        self.content = content
+        self.headers = headers or {"Content-Length": str(len(content))}
+
+    def raise_for_status(self):
+        pass
+
+
+class _FakeHttpClient:
+    def __init__(self, content_by_url):
+        self._by_url = content_by_url
+        self.requested = []
+
+    def get(self, url, timeout=None):
+        self.requested.append(url)
+        return _FakeHttpResp(self._by_url[url])
+
+    def close(self):
+        pass
+
+
+def test_youtrack_board_normalize_downloads_attachment():
+    board = YouTrackBoard.__new__(YouTrackBoard)   # обойти httpx.Client в __init__
+    board._key_pattern = KP
+    board._base = BASE
+    board._att_max_bytes = 10 * 1024 * 1024
+    board._att_timeout = 10.0
+    board._att_store_chars = 200000
+    board._client = _FakeHttpClient(
+        {"https://c.youtrack.cloud/api/files/7-2?sign=abc": b"# \xd0\xa1\xd0\xbf\xd0\xb5\xd0\xba\xd0\xb0\n\xd1\x82\xd0\xb5\xd0\xba\xd1\x81\xd1\x82"})
+    raw = _issue_to_raw(_issue(attachments=[
+        {"name": "spec.md", "mimeType": "text/markdown", "size": 13,
+         "url": "/api/files/7-2?sign=abc"}]))
+    brief = board.normalize(raw)
+    assert brief["attachments"] == [{"name": "spec.md", "mime_type": "text/markdown",
+                                     "size": 13, "content_text": "# Спека\nтекст"}]
+    # скачано по полному origin+url (без Bearer-зависимости — sign в url):
+    assert board._client.requested == ["https://c.youtrack.cloud/api/files/7-2?sign=abc"]
