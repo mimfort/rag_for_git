@@ -56,3 +56,13 @@ def test_subtask_without_title_keeps_edge():
 def test_normalize_sets_project_prefix():
     b = normalize_yougile(_raw(project_code="PRI-10"), KP, URL)
     assert b["project"] == "PRI"
+
+
+def test_normalize_includes_injected_attachments():
+    atts = [{"name": "tz.docx", "mime_type": None, "size": 9, "content_text": "тз"}]
+    b = normalize_yougile(_raw(), KP, URL, attachments=atts)
+    assert b["attachments"] == atts
+
+
+def test_normalize_attachments_default_empty():
+    assert normalize_yougile(_raw(), KP, URL)["attachments"] == []

@@ -33,6 +33,8 @@ class RawTask:
     timestamp: int         # epoch ms последнего изменения
     links: list[dict] = field(default_factory=list)  # предрезолвленные ссылки
     # (youtrack кладёт сразу в iter_raw; yougile оставляет пустым, резолвит в normalize)
+    attachments: list[dict] = field(default_factory=list)  # метаданные вложений из iter_raw
+    # (youtrack: name/mime/size/url inline из _FIELDS; yougile: пусто, фетчится в normalize)
 
 
 class TaskBoardProvider(Protocol):
@@ -49,5 +51,5 @@ class TaskBoardProvider(Protocol):
 
     def normalize(self, raw: RawTask) -> dict:
         """RawTask → TaskBrief dict {key, aliases, title, description,
-        criteria, status, url, links}."""
+        criteria, status, url, links, attachments}."""
         ...

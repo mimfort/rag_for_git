@@ -27,6 +27,7 @@ def normalize_yougile(
     key_pattern: str,
     url_template: str,
     subtask_titles: dict[str, str] | None = None,
+    attachments: list[dict] | None = None,
 ) -> dict:
     """RawTask → TaskBrief dict. Чистая: без I/O (titles подзадач инжектятся)."""
     subtask_titles = subtask_titles or {}
@@ -66,6 +67,7 @@ def normalize_yougile(
         "url": url,
         "links": links,
         "project": project_prefix(raw.project_code or key),
+        "attachments": attachments or [],
     }
 
 

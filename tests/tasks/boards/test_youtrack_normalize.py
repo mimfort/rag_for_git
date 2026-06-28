@@ -88,3 +88,15 @@ def test_normalize_sets_project_prefix():
     raw = _issue_to_raw(_issue(idReadable="PRJ-7"))
     b = normalize_youtrack(raw, KP, BASE)
     assert b["project"] == "PRJ"
+
+
+def test_normalize_includes_injected_attachments():
+    raw = _issue_to_raw(_issue())
+    atts = [{"name": "spec.md", "mime_type": "text/markdown", "size": 4, "content_text": "spec"}]
+    b = normalize_youtrack(raw, KP, BASE, attachments=atts)
+    assert b["attachments"] == atts
+
+
+def test_normalize_attachments_default_empty():
+    raw = _issue_to_raw(_issue())
+    assert normalize_youtrack(raw, KP, BASE)["attachments"] == []

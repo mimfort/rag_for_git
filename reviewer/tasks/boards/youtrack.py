@@ -60,7 +60,8 @@ def _issue_to_raw(issue: dict) -> RawTask:
     )
 
 
-def normalize_youtrack(raw: RawTask, key_pattern: str, base_url: str) -> dict:
+def normalize_youtrack(raw: RawTask, key_pattern: str, base_url: str,
+                       attachments: list[dict] | None = None) -> dict:
     """RawTask → TaskBrief dict. Чистая: без I/O. url выводится из base_url."""
     key = raw.key
     links: list[dict] = list(raw.links)
@@ -86,6 +87,7 @@ def normalize_youtrack(raw: RawTask, key_pattern: str, base_url: str) -> dict:
         "url": url,
         "links": links,
         "project": project_prefix(raw.key),
+        "attachments": attachments or [],
     }
 
 
