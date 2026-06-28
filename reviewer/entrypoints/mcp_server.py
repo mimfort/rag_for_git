@@ -77,6 +77,7 @@ def create_server(service: MCPReviewService) -> FastMCP:
     def index_task(task: dict) -> dict:
         """Index a normalized TaskBrief into the task graph + vector store.
         task: {key, aliases[], title, description, criteria[], status, url, links[]}.
+        TaskBrief может содержать поле attachments: [{name, mime_type, size, content_text}].
         Idempotent: re-embeds only when the task text changed. Returns
         {key, embedded, links_upserted, warnings}."""
         return service.index_task(task)
@@ -85,6 +86,7 @@ def create_server(service: MCPReviewService) -> FastMCP:
     def index_tasks_batch(tasks: list[dict]) -> list[dict]:
         """Batch-index a list of TaskBriefs with a single Voyage embedding call.
         tasks: list of {key, aliases[], title, description, criteria[], status, url, links[]}.
+        TaskBrief может содержать поле attachments: [{name, mime_type, size, content_text}].
         Idempotent: re-embeds only tasks whose text changed. Returns list of
         {key, embedded, links_upserted, warnings} in input order."""
         return service.index_tasks_batch(tasks)
@@ -127,7 +129,7 @@ def create_server(service: MCPReviewService) -> FastMCP:
     @mcp.tool()
     def get_task(key: str, project: str | None = None) -> dict | None:
         """Read one task's own normalized content from the reviewer store (filled by
-        sync_board): {key, aliases, title, description, status, url, criteria}.
+        sync_board): {key, aliases, title, description, status, url, criteria, attachments}.
         project scopes the lookup to one board project (code prefix); empty = all.
         Returns null if the task is not in the store (caller falls back to the board).
         For linked tasks / PRs / touched code, use get_task_context instead."""
