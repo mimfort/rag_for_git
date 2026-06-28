@@ -1,6 +1,6 @@
 from io import BytesIO
 
-from reviewer.tasks.boards.attachments import _DOCX_MIME, extract_text
+from reviewer.tasks.boards.attachments import _DOCX_MIME, download, extract_text, fetch_attachment
 
 # Минимальный валидный PDF с извлекаемым текстом "PDF SPEC CONTENT".
 # pypdf логирует безвредный warning про startxref и пересобирает xref сам.
@@ -104,3 +104,66 @@ def test_extract_extension_wins_over_mime():
     data = "# Спецификация".encode("utf-8")
     result = extract_text("spec.md", "application/pdf", data)
     assert result == "# Спецификация"
+
+
+# --- тесты download/fetch_attachment (PRI-196) ---
+
+
+class _FakeResp:
+    def __init__(self, content=b"", headers=None, raise_exc=None):
+        self.content = content
+        self.headers = headers or {}
+        self._raise_exc = raise_exc
+
+    def raise_for_status(self):
+        if self._raise_exc:
+            raise self._raise_exc
+
+
+class _FakeClient:
+    """Минимальный httpx-подобный клиент: возвращает заранее заданный ответ."""
+    def __init__(self, resp):
+        self._resp = resp
+        self.calls = []
+
+    def get(self, url, timeout=None):
+        self.calls.append((url, timeout))
+        if isinstance(self._resp, Exception):
+            raise self._resp
+        return self._resp
+
+
+def test_download_ok():
+    client = _FakeClient(_FakeResp(content=b"hello", headers={"Content-Length": "5"}))
+    assert download(client, "/files/1", timeout=10.0, max_bytes=1000) == b"hello"
+
+
+def test_download_skips_by_content_length():
+    client = _FakeClient(_FakeResp(content=b"x" * 50, headers={"Content-Length": "9999"}))
+    assert download(client, "/files/1", timeout=10.0, max_bytes=10) is None
+
+
+def test_download_skips_by_actual_size():
+    # Content-Length отсутствует, но фактический размер превышает лимит.
+    client = _FakeClient(_FakeResp(content=b"x" * 50, headers={}))
+    assert download(client, "/files/1", timeout=10.0, max_bytes=10) is None
+
+
+def test_download_failsoft_on_exception():
+    client = _FakeClient(RuntimeError("network down"))
+    assert download(client, "/files/1", timeout=10.0, max_bytes=1000) is None
+
+
+def test_fetch_attachment_parses_and_caps():
+    client = _FakeClient(_FakeResp(content=b"hello world", headers={"Content-Length": "11"}))
+    att = fetch_attachment(client, name="spec.md", mime="text/markdown", size=11,
+                           url="/files/1", timeout=10.0, max_bytes=1000, store_chars=5)
+    assert att == {"name": "spec.md", "mime_type": "text/markdown",
+                   "size": 11, "content_text": "hello"}   # обрезано до store_chars=5
+
+
+def test_fetch_attachment_metadata_only_on_skip():
+    client = _FakeClient(_FakeResp(content=b"x" * 50, headers={"Content-Length": "9999"}))
+    att = fetch_attachment(client, name="big.docx", mime=None, size=9999,
+                           url="/files/1", timeout=10.0, max_bytes=10, store_chars=1000)
+    assert att == {"name": "big.docx", "mime_type": None, "size": 9999, "content_text": None}

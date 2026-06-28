@@ -81,3 +81,34 @@ def extract_text(name: str, mime: str | None, data: bytes) -> str | None:
         log.warning("attachments: парсинг %s упал (fail-soft)", name, exc_info=True)
         return None
     return None
+
+
+def download(client, url: str, *, timeout: float, max_bytes: int) -> bytes | None:
+    """Скачать файл по url через httpx-совместимый client. None при skip/сбое (fail-soft)."""
+    try:
+        resp = client.get(url, timeout=timeout)
+        resp.raise_for_status()
+        cl = resp.headers.get("Content-Length")
+        if cl and cl.isdigit() and int(cl) > max_bytes:
+            log.warning("attachments: %s > max_bytes (%s) — skip", url, cl)
+            return None
+        data = resp.content
+        if len(data) > max_bytes:
+            log.warning("attachments: %s превысил max_bytes при чтении — skip", url)
+            return None
+        return data
+    except Exception:
+        log.warning("attachments: скачивание %s упало (fail-soft)", url, exc_info=True)
+        return None
+
+
+def fetch_attachment(client, *, name: str, mime: str | None, size, url: str,
+                     timeout: float, max_bytes: int, store_chars: int) -> dict:
+    """Скачать+распарсить одно вложение → {name, mime_type, size, content_text|None}."""
+    content_text: str | None = None
+    data = download(client, url, timeout=timeout, max_bytes=max_bytes)
+    if data is not None:
+        text = extract_text(name, mime, data)
+        if text:
+            content_text = text[:store_chars]
+    return {"name": name, "mime_type": mime, "size": size, "content_text": content_text}
