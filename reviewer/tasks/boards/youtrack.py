@@ -136,7 +136,7 @@ class YouTrackBoard:
         """
         self._key_pattern = key_pattern
         self._base = base_url.rstrip("/")
-        self._att_domains = (_registrable_domain(urlsplit(self._base).netloc),)
+        self._att_domains = (_registrable_domain(urlsplit(self._base).netloc.split("@")[-1].split(":")[0]),)
         self._att_max_bytes = attachment_max_bytes
         self._att_timeout = attachment_timeout
         self._att_store_chars = attachment_store_chars

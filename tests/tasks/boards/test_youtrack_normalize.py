@@ -181,3 +181,25 @@ def test_youtrack_board_normalize_skips_offhost_attachment():
     brief = board.normalize(raw)
     assert board._client.requested == []      # off-host не запрашивался
     assert brief["attachments"] == []         # вложение пропущено
+
+
+def test_youtrack_selfhosted_with_port_allows_own_attachment():
+    """Self-hosted YouTrack на нестандартном порту качает свои же вложения (PRI-196)."""
+    from urllib.parse import urlsplit
+    from reviewer.tasks.boards.attachments import _registrable_domain
+    base = "https://youtrack.example.com:8443/api"
+    board = YouTrackBoard.__new__(YouTrackBoard)
+    board._key_pattern = KP
+    board._base = base
+    board._att_domains = (_registrable_domain(urlsplit(base).netloc.split("@")[-1].split(":")[0]),)
+    board._att_max_bytes = 10 * 1024 * 1024
+    board._att_timeout = 10.0
+    board._att_store_chars = 200000
+    url = "https://youtrack.example.com:8443/api/files/7-2?sign=abc"
+    board._client = _FakeHttpClient({url: "ТЗ".encode()})
+    raw = _issue_to_raw(_issue(attachments=[
+        {"name": "spec.md", "mimeType": "text/markdown", "size": 4,
+         "url": "/api/files/7-2?sign=abc"}]))
+    brief = board.normalize(raw)
+    assert board._client.requested == [url]            # свой хост — скачан
+    assert brief["attachments"][0]["content_text"] == "ТЗ"

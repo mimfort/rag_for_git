@@ -113,7 +113,7 @@ class YougileBoard:
         self._att_timeout = attachment_timeout
         self._att_store_chars = attachment_store_chars
         self._base = (api_base or "https://yougile.com/api-v2").rstrip("/")
-        self._att_domains = (_registrable_domain(urlsplit(self._base).netloc),)
+        self._att_domains = (_registrable_domain(urlsplit(self._base).netloc.split("@")[-1].split(":")[0]),)
         self._client = httpx.Client(
             base_url=self._base,
             headers={"Authorization": f"Bearer {api_key}"},

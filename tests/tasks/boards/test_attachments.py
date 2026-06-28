@@ -110,6 +110,28 @@ def test_host_allowed_blocks_offhost():
     assert not host_allowed("", dom)
 
 
+# --- тесты контракта парсинга хоста (PRI-196 регрессия) ---
+
+def test_host_allowed_strips_userinfo_in_url():
+    """Userinfo-уловка: https://yougile.com@evil.com/x — реальный хост evil.com → отклонить."""
+    assert not host_allowed("https://yougile.com@evil.com/x", ("yougile.com",))
+
+
+def test_host_allowed_userinfo_does_not_block_real_host():
+    """Userinfo присутствует, но реальный хост совпадает с allowlist → разрешить."""
+    assert host_allowed("https://a@yougile.com/x", ("yougile.com",))
+
+
+def test_host_allowed_strips_port_in_url():
+    """Нестандартный порт в URL не блокирует разрешённый хост (PRI-196 self-hosted)."""
+    assert host_allowed("https://yougile.com:8443/x", ("yougile.com",))
+
+
+def test_host_allowed_case_insensitive():
+    """Верхний регистр хоста URL не блокирует разрешённый домен."""
+    assert host_allowed("https://YOUGILE.COM/x", ("yougile.com",))
+
+
 # --- тесты mime-фолбэка (PRI-196) ---
 
 def test_extract_by_mime_when_extension_unknown():
