@@ -1,6 +1,6 @@
 from io import BytesIO
 
-from reviewer.tasks.boards.attachments import extract_text
+from reviewer.tasks.boards.attachments import _DOCX_MIME, extract_text
 
 # Минимальный валидный PDF с извлекаемым текстом "PDF SPEC CONTENT".
 # pypdf логирует безвредный warning про startxref и пересобирает xref сам.
@@ -79,3 +79,28 @@ def test_extract_corrupt_docx_failsoft():
 
 def test_extract_empty_text_returns_none():
     assert extract_text("empty.md", None, b"   ") is None
+
+
+# --- тесты mime-фолбэка (PRI-196) ---
+
+def test_extract_by_mime_when_extension_unknown():
+    """Файл без значимого расширения + mime=text/markdown → декодируется как текст."""
+    data = "# Заголовок\nтело".encode("utf-8")
+    result = extract_text("attachment", "text/markdown", data)
+    assert result == "# Заголовок\nтело"
+
+
+def test_extract_docx_by_mime():
+    """Файл без расширения + mime=docx → парсится как docx."""
+    data = _docx_bytes("Раздел один", "Раздел два")
+    result = extract_text("file", _DOCX_MIME, data)
+    assert result is not None
+    assert "Раздел один" in result
+    assert "Раздел два" in result
+
+
+def test_extract_extension_wins_over_mime():
+    """Расширение первично: .md + mime=application/pdf → декодируется как текст, не pdf."""
+    data = "# Спецификация".encode("utf-8")
+    result = extract_text("spec.md", "application/pdf", data)
+    assert result == "# Спецификация"
