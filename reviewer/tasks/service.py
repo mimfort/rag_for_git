@@ -17,11 +17,13 @@ log = logging.getLogger(__name__)
 class TaskService:
     """Оркестрация индексации и обхода графа задач."""
 
-    def __init__(self, store, graph, embedder, *, max_chars: int = 8000) -> None:
+    def __init__(self, store, graph, embedder, *, max_chars: int = 8000,
+                 attachment_embed_chars: int = 8000) -> None:
         self._store = store
         self._graph = graph          # None, если Neo4j не подключён
         self._embedder = embedder
         self._max_chars = max_chars
+        self._attachment_embed_chars = attachment_embed_chars
 
     def index_task(self, task: dict) -> dict:
         """Проиндексировать нормализованный TaskBrief: эмбеддинг (дедуп) + граф."""
@@ -33,12 +35,14 @@ class TaskService:
         title = task.get("title") or ""
         description = task.get("description") or ""
         criteria = task.get("criteria") or []
+        attachments = task.get("attachments") or []
         status = task.get("status")
         url = task.get("url")
         project = task.get("project") or ""
         links = [lk for lk in (task.get("links") or [])
                  if isinstance(lk, dict) and lk.get("key")]
-        text = build_task_text(title, description, criteria)
+        text = build_task_text(title, description, criteria, attachments,
+                               embed_chars=self._attachment_embed_chars)
         chash = task_content_hash(text)
         warnings: list[str] = []
 
@@ -52,7 +56,7 @@ class TaskService:
                 self._store.upsert_task(TaskRow(
                     key=key, aliases=aliases, title=title, description=description,
                     status=status, url=url, content_hash=chash, text=text,
-                    embedding=vec, project=project))
+                    embedding=vec, project=project, attachments=attachments))
                 embedded = True
         except Exception as e:
             log.warning("index_task: сбой store для %s", key, exc_info=True)
@@ -103,16 +107,19 @@ class TaskService:
             title = task.get("title") or ""
             description = task.get("description") or ""
             criteria = task.get("criteria") or []
+            attachments = task.get("attachments") or []
             status = task.get("status")
             url = task.get("url")
             links = [lk for lk in (task.get("links") or [])
                      if isinstance(lk, dict) and lk.get("key")]
-            text = build_task_text(title, description, criteria)
+            text = build_task_text(title, description, criteria, attachments,
+                                   embed_chars=self._attachment_embed_chars)
             chash = task_content_hash(text)
             parsed.append({"key": key, "aliases": aliases, "title": title,
                            "description": description, "status": status, "url": url,
                            "links": links, "text": text, "chash": chash,
-                           "project": task.get("project") or ""})
+                           "project": task.get("project") or "",
+                           "attachments": attachments})
 
         # Шаг 2: разделить на to_embed / meta_only по content-hash
         to_embed: list[int] = []
@@ -154,7 +161,7 @@ class TaskService:
                         key=p["key"], aliases=p["aliases"], title=p["title"],
                         description=p["description"], status=p["status"], url=p["url"],
                         content_hash=p["chash"], text=p["text"], embedding=embeddings[i],
-                        project=p["project"]))
+                        project=p["project"], attachments=p["attachments"]))
                     embedded = True
                 except Exception as e:
                     log.warning("index_batch: сбой store для %s", p["key"], exc_info=True)
@@ -264,6 +271,7 @@ class TaskService:
             "criteria": [],
             "status": row.status,
             "url": row.url,
+            "attachments": list(row.attachments or []),
         }
 
     def link_review(self, task_key: str, pr: PRRef, touched_node_ids: list[str]) -> None:

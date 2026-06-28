@@ -213,3 +213,12 @@ def test_index_batch_stamps_project_on_meta_only():
     assert store.meta_updates[0][-1] == "PRI"     # project прокинут в update_meta
     assert g.tasks == ["ID-1"]
     assert g.task_projects[0] == "PRI"            # project достиг граф-write-path
+
+
+def test_index_batch_passes_attachments_to_row():
+    """Поле attachments из брифа прокидывается в TaskRow при батчевом upsert."""
+    store, graph, emb = _FakeStore(), _FakeGraph(), _FakeEmbedder()
+    attachments = [{"name": "spec.md", "content_text": "spec"}]
+    task = _brief(attachments=attachments)
+    TaskService(store, graph, emb).index_batch([task])
+    assert store.upserted[-1].attachments == attachments

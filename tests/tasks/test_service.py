@@ -409,7 +409,7 @@ def test_get_task_hit_returns_normalized_brief():
     out = svc.get_task("ID-1")
     assert out == {"key": "ID-1", "aliases": ["PRI-1"], "title": "Add logout",
                    "description": "Clear session", "criteria": [],
-                   "status": "Open", "url": "u"}
+                   "status": "Open", "url": "u", "attachments": []}
 
 
 def test_get_task_resolves_by_alias():
@@ -474,3 +474,27 @@ def test_purge_threads_project_to_store_and_graph():
     assert store.list_keys_project == "PRI"
     assert g.list_keys_project == "PRI"
     assert g.keys_with_prs_project == "PRI"
+
+
+def test_index_task_passes_attachments_to_row():
+    """Поле attachments из брифа прокидывается в TaskRow при upsert."""
+    from reviewer.tasks.store import TaskRow  # noqa: F401
+    store, graph, emb = _FakeStore(), _FakeGraph(), _FakeEmbedder()
+    attachments = [{"name": "spec.md", "mime_type": "text/markdown",
+                    "size": 4, "content_text": "spec"}]
+    task = {"key": "ID-1", "title": "t", "description": "d",
+            "attachments": attachments}
+    TaskService(store, graph, emb).index_task(task)
+    assert store.upserted[-1].attachments == attachments
+
+
+def test_get_task_returns_attachments():
+    """get_task возвращает dict с ключом attachments из сохранённой строки."""
+    from reviewer.tasks.store import TaskRow
+    atts = [{"name": "a.txt", "content_text": "x"}]
+    row = TaskRow(key="ID-2", aliases=[], title="t", description="d",
+                  status=None, url=None, content_hash="h", text="t",
+                  embedding=[], attachments=atts)
+    svc = TaskService(_FakeStore(rows=[row]), _FakeGraph(), _FakeEmbedder())
+    out = svc.get_task("ID-2")
+    assert out["attachments"] == atts
