@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Iterable
-from urllib.parse import urlsplit
+from urllib.parse import urljoin, urlsplit
 
 import httpx
 
@@ -170,7 +170,7 @@ class YouTrackBoard:
         for a in raw.attachments:
             contents.append(fetch_attachment(
                 self._client, name=a["name"], mime=a.get("mime"), size=a.get("size"),
-                url=origin + a["url"], timeout=self._att_timeout,
+                url=urljoin(origin + "/", a["url"]), timeout=self._att_timeout,
                 max_bytes=self._att_max_bytes, store_chars=self._att_store_chars))
         return normalize_youtrack(raw, self._key_pattern, self._base,
                                   attachments=contents)
