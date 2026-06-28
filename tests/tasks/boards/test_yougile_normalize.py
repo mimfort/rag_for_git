@@ -104,6 +104,7 @@ def _board_with(routes):
     b = YougileBoard.__new__(YougileBoard)   # обойти httpx.Client в __init__
     b._key_pattern = KP
     b._url_template = URL
+    b._att_domains = ("yougile.com",)
     b._att_max_bytes = 10 * 1024 * 1024
     b._att_timeout = 10.0
     b._att_store_chars = 200000
@@ -155,9 +156,20 @@ def test_yougile_normalize_failsoft_when_chat_unavailable():
 def test_yougile_normalize_marker_in_texthtml():
     routes = {
         f"/chats/{UUID}/messages": _FakeYResp(json_data={"content": [
-            {"text": "", "properties": {"textHtml": "<p>/root/#file:https://yg/f/d.txt</p>"}}]}),
-        "https://yg/f/d.txt": _FakeYResp(content="D".encode()),
+            {"text": "", "properties": {
+                "textHtml": "<p>/root/#file:https://yougile.com/f/d.txt</p>"}}]}),
+        "https://yougile.com/f/d.txt": _FakeYResp(content="D".encode()),
     }
     board = _board_with(routes)
     brief = board.normalize(_raw(board_id=UUID, subtask_ids=[]))
     assert any(a["name"] == "d.txt" and a["content_text"] == "D" for a in brief["attachments"])
+
+
+def test_yougile_normalize_skips_offhost_chat_file():
+    """Файл из чата с off-host URL не скачивается (защита токена/SSRF, PRI-196)."""
+    routes = {f"/chats/{UUID}/messages": _FakeYResp(json_data={"content": [
+        {"text": "/root/#file:https://evil.example.com/x.md"}]})}
+    board = _board_with(routes)
+    brief = board.normalize(_raw(board_id=UUID, subtask_ids=[]))
+    assert brief["attachments"] == []
+    assert "https://evil.example.com/x.md" not in board._client.requested

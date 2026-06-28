@@ -7,14 +7,17 @@ description, updated, State, links) без доп. запросов, поэто�
 """
 from __future__ import annotations
 
+import logging
 import re
 from collections.abc import Iterable
 from urllib.parse import urljoin, urlsplit
 
 import httpx
 
-from reviewer.tasks.boards.attachments import fetch_attachment
+from reviewer.tasks.boards.attachments import fetch_attachment, host_allowed, _registrable_domain
 from reviewer.tasks.boards.base import RawTask, project_prefix
+
+log = logging.getLogger(__name__)
 
 _PAGE = 200
 
@@ -133,6 +136,7 @@ class YouTrackBoard:
         """
         self._key_pattern = key_pattern
         self._base = base_url.rstrip("/")
+        self._att_domains = (_registrable_domain(urlsplit(self._base).netloc),)
         self._att_max_bytes = attachment_max_bytes
         self._att_timeout = attachment_timeout
         self._att_store_chars = attachment_store_chars
@@ -168,9 +172,13 @@ class YouTrackBoard:
         origin = _origin(self._base)
         contents: list[dict] = []
         for a in raw.attachments:
+            full = urljoin(origin + "/", a["url"])
+            if not host_allowed(full, self._att_domains):
+                log.warning("youtrack: вложение %s вне домена доски — пропуск", full)
+                continue
             contents.append(fetch_attachment(
                 self._client, name=a["name"], mime=a.get("mime"), size=a.get("size"),
-                url=urljoin(origin + "/", a["url"]), timeout=self._att_timeout,
+                url=full, timeout=self._att_timeout,
                 max_bytes=self._att_max_bytes, store_chars=self._att_store_chars))
         return normalize_youtrack(raw, self._key_pattern, self._base,
                                   attachments=contents)

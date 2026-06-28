@@ -16,7 +16,7 @@ from urllib.parse import unquote, urlsplit
 
 import httpx
 
-from reviewer.tasks.boards.attachments import fetch_attachment
+from reviewer.tasks.boards.attachments import fetch_attachment, host_allowed, _registrable_domain
 from reviewer.tasks.boards.base import RawTask, project_prefix
 
 log = logging.getLogger(__name__)
@@ -113,6 +113,7 @@ class YougileBoard:
         self._att_timeout = attachment_timeout
         self._att_store_chars = attachment_store_chars
         self._base = (api_base or "https://yougile.com/api-v2").rstrip("/")
+        self._att_domains = (_registrable_domain(urlsplit(self._base).netloc),)
         self._client = httpx.Client(
             base_url=self._base,
             headers={"Authorization": f"Bearer {api_key}"},
@@ -191,6 +192,9 @@ class YougileBoard:
                     if url in seen:
                         continue
                     seen.add(url)
+                    if not host_allowed(url, self._att_domains):
+                        log.warning("yougile: файл чата %s вне домена доски — пропуск", url)
+                        continue
                     out.append(fetch_attachment(
                         self._client, name=_filename_from_url(url), mime=None,
                         size=None, url=url, timeout=self._att_timeout,

@@ -149,6 +149,7 @@ def test_youtrack_board_normalize_downloads_attachment():
     board = YouTrackBoard.__new__(YouTrackBoard)   # обойти httpx.Client в __init__
     board._key_pattern = KP
     board._base = BASE
+    board._att_domains = ("youtrack.cloud",)
     board._att_max_bytes = 10 * 1024 * 1024
     board._att_timeout = 10.0
     board._att_store_chars = 200000
@@ -164,22 +165,19 @@ def test_youtrack_board_normalize_downloads_attachment():
     assert board._client.requested == ["https://c.youtrack.cloud/api/files/7-2?sign=abc"]
 
 
-def test_youtrack_board_normalize_handles_absolute_attachment_url():
-    """Если YouTrack вернул абсолютный URL вложения, urljoin пропускает его без изменений."""
+def test_youtrack_board_normalize_skips_offhost_attachment():
+    """Off-host абсолютный URL вложения не скачивается (защита токена/SSRF, PRI-196)."""
     abs_url = "https://files.example.com/f/7-2?sign=abc"
     board = YouTrackBoard.__new__(YouTrackBoard)
     board._key_pattern = KP
     board._base = BASE
+    board._att_domains = ("youtrack.cloud",)
     board._att_max_bytes = 10 * 1024 * 1024
     board._att_timeout = 10.0
     board._att_store_chars = 200000
-    board._client = _FakeHttpClient(
-        {abs_url: b"# \xd0\x94\xd0\xbe\xd0\xba\n\xd1\x82\xd0\xb5\xd0\xba\xd1\x81\xd1\x82"})
+    board._client = _FakeHttpClient({})   # пустой — если запрос произойдёт, будет KeyError
     raw = _issue_to_raw(_issue(attachments=[
-        {"name": "doc.md", "mimeType": "text/markdown", "size": 12,
-         "url": abs_url}]))
+        {"name": "doc.md", "mimeType": "text/markdown", "size": 12, "url": abs_url}]))
     brief = board.normalize(raw)
-    # URL передан в клиент без искажений
-    assert board._client.requested == [abs_url]
-    assert brief["attachments"] == [{"name": "doc.md", "mime_type": "text/markdown",
-                                     "size": 12, "content_text": "# Док\nтекст"}]
+    assert board._client.requested == []      # off-host не запрашивался
+    assert brief["attachments"] == []         # вложение пропущено

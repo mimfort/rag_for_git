@@ -1,6 +1,13 @@
 from io import BytesIO
 
-from reviewer.tasks.boards.attachments import _DOCX_MIME, download, extract_text, fetch_attachment
+from reviewer.tasks.boards.attachments import (
+    _DOCX_MIME,
+    _registrable_domain,
+    download,
+    extract_text,
+    fetch_attachment,
+    host_allowed,
+)
 
 # Минимальный валидный PDF с извлекаемым текстом "PDF SPEC CONTENT".
 # pypdf логирует безвредный warning про startxref и пересобирает xref сам.
@@ -79,6 +86,28 @@ def test_extract_corrupt_docx_failsoft():
 
 def test_extract_empty_text_returns_none():
     assert extract_text("empty.md", None, b"   ") is None
+
+
+# --- тесты пьюр-хелперов домен-гейта (PRI-196) ---
+
+def test_registrable_domain():
+    assert _registrable_domain("c.youtrack.cloud") == "youtrack.cloud"
+    assert _registrable_domain("yougile.com") == "yougile.com"
+    assert _registrable_domain("localhost") == "localhost"
+
+
+def test_host_allowed_same_and_subdomain():
+    dom = ("yougile.com",)
+    assert host_allowed("https://yougile.com/f/x.md", dom)
+    assert host_allowed("https://ru.yougile.com/f/x.md", dom)
+    assert host_allowed("https://files.yougile.com/f/x.md", dom)
+
+
+def test_host_allowed_blocks_offhost():
+    dom = ("yougile.com",)
+    assert not host_allowed("https://evil.example.com/x.md", dom)
+    assert not host_allowed("https://yougile.com.evil.com/x.md", dom)  # не поддомен
+    assert not host_allowed("", dom)
 
 
 # --- тесты mime-фолбэка (PRI-196) ---

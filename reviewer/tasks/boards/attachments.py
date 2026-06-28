@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 from io import BytesIO
+from urllib.parse import urlsplit
 
 log = logging.getLogger(__name__)
 
@@ -18,6 +19,28 @@ _TEXT_EXT = {".md", ".markdown", ".txt", ".text"}
 _TEXT_MIME = {"text/markdown", "text/x-markdown", "text/plain"}
 _DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 _PDF_MIME = "application/pdf"
+
+
+def _registrable_domain(host: str) -> str:
+    """Регистрируемый домен (последние две метки): ``c.youtrack.cloud`` → ``youtrack.cloud``.
+
+    Наивно (без учёта ccTLD вида ``co.uk``) — достаточно для хостов досок задач.
+    """
+    labels = (host or "").lower().strip(".").split(".")
+    return ".".join(labels[-2:]) if len(labels) >= 2 else (host or "").lower()
+
+
+def host_allowed(url: str, allowed_domains: tuple[str, ...]) -> bool:
+    """True, если хост URL равен одному из ``allowed_domains`` или является его поддоменом.
+
+    Защита от утечки токена/SSRF (PRI-196): URL вложения может прийти из свободного
+    текста (чат YouGile), поэтому скачиваем ТОЛЬКО с доверенного домена доски; off-host
+    адреса не запрашиваются (Authorization не уходит, произвольные хосты недосягаемы).
+    """
+    host = urlsplit(url).netloc.split("@")[-1].split(":")[0].lower()
+    if not host:
+        return False
+    return any(host == d or host.endswith("." + d) for d in allowed_domains if d)
 
 
 def _ext(name: str) -> str:
