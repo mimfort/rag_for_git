@@ -9,6 +9,7 @@ REST API v2: base https://yougile.com/api-v2, заголовок Authorization: 
 """
 from __future__ import annotations
 
+import html
 import logging
 import re
 from collections.abc import Iterable
@@ -23,20 +24,32 @@ log = logging.getLogger(__name__)
 
 _PAGE = 1000
 
-# YouGile кодирует прикреплённый к чату файл маркером /root/#file:<url> в text сообщения
-# (POST /upload-file → {url}; см. send_task_file). Структурного списка файлов в API нет.
+# Структурного списка файлов YouGile в API не отдаёт. Файл попадает в задачу двумя путями:
+#  1) прикреплённый к задаче — HTML-ссылкой <a href="…/user-data/…"> в description
+#     (реальная модель, подтверждена на живой доске — PRI-196/PRI-197);
+#  2) прикреплённый в чате — маркером /root/#file:<url> в text/textHtml сообщения
+#     (POST /upload-file → {url}; см. send_task_file).
 _FILE_MARKER = re.compile(r"/root/#file:(\S+)")
+_HREF = re.compile(r"""href=["']([^"']+)["']""")
+_USER_DATA = "/user-data/"  # путь хранилища загруженных файлов YouGile
 
 
 def _file_urls_from_text(text: str | None) -> list[str]:
-    """Абсолютные URL файлов из YouGile-маркера /root/#file:<url> в тексте сообщения.
+    """URL загруженных в YouGile файлов из текста/HTML сообщения или описания задачи.
 
-    Если маркер пришёл из textHtml — обрезаем возможный HTML/кавычки-хвост.
+    Два источника: маркер ``/root/#file:<url>`` (доверяем — это всегда файл) и HTML-ссылка
+    ``<a href="…">``, ограниченная путём ``/user-data/`` (хранилище файлов), чтобы не качать
+    произвольные ссылки описания — на связанные задачи и т.п. ``&amp;`` в href разэкранируется.
     """
+    text = text or ""
     out: list[str] = []
-    for m in _FILE_MARKER.finditer(text or ""):
+    for m in _FILE_MARKER.finditer(text):
         url = re.split(r"[\"'<>\s]", m.group(1))[0]
         if url:
+            out.append(url)
+    for m in _HREF.finditer(text):
+        url = html.unescape(m.group(1)).strip()
+        if url and _USER_DATA in urlsplit(url).path:
             out.append(url)
     return out
 
@@ -166,13 +179,10 @@ class YougileBoard:
                         if limit and count >= limit:
                             return
 
-    def _attachments_from_chat(self, task_uuid: str) -> list[dict]:
-        """Вложения из сообщений чата задачи (best-effort, fail-soft).
+    def _chat_texts(self, task_uuid: str) -> list[str]:
+        """text + textHtml всех сообщений чата задачи (best-effort, fail-soft → []).
 
-        YouGile не отдаёт структурного списка файлов — они вшиты маркером
-        /root/#file:<url> в text/textHtml сообщений. chatId == внутренний UUID задачи.
-        Пустой/недоступный чат → []. fetch_attachment сам fail-soft (битый файл →
-        только метаданные). Имя файла — basename URL; mime неизвестен (диспатч по расширению).
+        chatId == внутренний UUID задачи. Пустой/недоступный чат → [].
         """
         if not task_uuid:
             return []
@@ -183,22 +193,43 @@ class YougileBoard:
         except Exception:
             log.warning("yougile: чат задачи %s недоступен", task_uuid, exc_info=True)
             return []
-        seen: set[str] = set()
-        out: list[dict] = []
+        texts: list[str] = []
         for msg in msgs:
             props = msg.get("properties") or {}
-            for field_text in (msg.get("text"), props.get("textHtml")):
-                for url in _file_urls_from_text(field_text):
-                    if url in seen:
-                        continue
-                    seen.add(url)
-                    if not host_allowed(url, self._att_domains):
-                        log.warning("yougile: файл чата %s вне домена доски — пропуск", url)
-                        continue
-                    out.append(fetch_attachment(
-                        self._client, name=_filename_from_url(url), mime=None,
-                        size=None, url=url, timeout=self._att_timeout,
-                        max_bytes=self._att_max_bytes, store_chars=self._att_store_chars))
+            texts.append(msg.get("text") or "")
+            texts.append(props.get("textHtml") or "")
+        return texts
+
+    def _fetch_urls(self, urls: list[str], seen: set[str], out: list[dict]) -> None:
+        """Скачать+распарсить новые (вне seen) URL; off-host пропустить (токен/SSRF).
+
+        fetch_attachment сам fail-soft (битый файл → только метаданные). Имя файла —
+        basename URL; mime неизвестен (диспатч парсинга по расширению).
+        """
+        for url in urls:
+            if url in seen:
+                continue
+            seen.add(url)
+            if not host_allowed(url, self._att_domains):
+                log.warning("yougile: файл %s вне домена доски — пропуск", url)
+                continue
+            out.append(fetch_attachment(
+                self._client, name=_filename_from_url(url), mime=None,
+                size=None, url=url, timeout=self._att_timeout,
+                max_bytes=self._att_max_bytes, store_chars=self._att_store_chars))
+
+    def _collect_attachments(self, description: str | None, task_uuid: str) -> list[dict]:
+        """Вложения задачи: файл-ссылки на /user-data/ из description + файлы из чата.
+
+        Источники объединяются и дедупятся по URL. best-effort: сбой любого слоя не валит
+        normalize (см. _chat_texts/_fetch_urls). Описание сканируется первым — это основной
+        путь прикрепления файла к задаче в YouGile (PRI-196).
+        """
+        seen: set[str] = set()
+        out: list[dict] = []
+        self._fetch_urls(_file_urls_from_text(description), seen, out)
+        for text in self._chat_texts(task_uuid):
+            self._fetch_urls(_file_urls_from_text(text), seen, out)
         return out
 
     def normalize(self, raw: RawTask) -> dict:
@@ -212,6 +243,6 @@ class YougileBoard:
                 subtask_titles[sid] = f"{code}:{st.get('title', '')}"
             except Exception:
                 log.warning("yougile: не резолвится подзадача %s", sid, exc_info=True)
-        attachments = self._attachments_from_chat(raw.board_id)
+        attachments = self._collect_attachments(raw.description, raw.board_id)
         return normalize_yougile(raw, self._key_pattern, self._url_template,
                                  subtask_titles, attachments=attachments)
