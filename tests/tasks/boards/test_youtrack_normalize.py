@@ -1,4 +1,10 @@
-from reviewer.tasks.boards.youtrack import _issue_to_raw, normalize_youtrack
+from reviewer.tasks.boards.youtrack import (
+    YouTrackBoard,
+    _attachments_of,
+    _issue_to_raw,
+    _origin,
+    normalize_youtrack,
+)
 
 KP = r"[A-Z]+-\d+"
 BASE = "https://c.youtrack.cloud/api"
@@ -88,3 +94,112 @@ def test_normalize_sets_project_prefix():
     raw = _issue_to_raw(_issue(idReadable="PRJ-7"))
     b = normalize_youtrack(raw, KP, BASE)
     assert b["project"] == "PRJ"
+
+
+def test_normalize_includes_injected_attachments():
+    raw = _issue_to_raw(_issue())
+    atts = [{"name": "spec.md", "mime_type": "text/markdown", "size": 4, "content_text": "spec"}]
+    b = normalize_youtrack(raw, KP, BASE, attachments=atts)
+    assert b["attachments"] == atts
+
+
+def test_normalize_attachments_default_empty():
+    raw = _issue_to_raw(_issue())
+    assert normalize_youtrack(raw, KP, BASE)["attachments"] == []
+
+
+def test_origin_strips_api_path():
+    assert _origin("https://c.youtrack.cloud/api") == "https://c.youtrack.cloud"
+
+
+def test_attachments_of_extracts_metadata():
+    issue = _issue(attachments=[
+        {"name": "spec.md", "mimeType": "text/markdown", "size": 4,
+         "url": "/api/files/7-2?sign=abc"},
+        {"name": "nourl", "mimeType": "text/plain"},   # без url — пропускается
+    ])
+    atts = _attachments_of(issue)
+    assert atts == [{"name": "spec.md", "mime": "text/markdown", "size": 4,
+                     "url": "/api/files/7-2?sign=abc"}]
+
+
+class _FakeHttpResp:
+    def __init__(self, content, headers=None):
+        self.content = content
+        self.headers = headers or {"Content-Length": str(len(content))}
+
+    def raise_for_status(self):
+        pass
+
+
+class _FakeHttpClient:
+    def __init__(self, content_by_url):
+        self._by_url = content_by_url
+        self.requested = []
+
+    def get(self, url, timeout=None):
+        self.requested.append(url)
+        return _FakeHttpResp(self._by_url[url])
+
+    def close(self):
+        pass
+
+
+def test_youtrack_board_normalize_downloads_attachment():
+    board = YouTrackBoard.__new__(YouTrackBoard)   # обойти httpx.Client в __init__
+    board._key_pattern = KP
+    board._base = BASE
+    board._att_domains = ("youtrack.cloud",)
+    board._att_max_bytes = 10 * 1024 * 1024
+    board._att_timeout = 10.0
+    board._att_store_chars = 200000
+    board._client = _FakeHttpClient(
+        {"https://c.youtrack.cloud/api/files/7-2?sign=abc": b"# \xd0\xa1\xd0\xbf\xd0\xb5\xd0\xba\xd0\xb0\n\xd1\x82\xd0\xb5\xd0\xba\xd1\x81\xd1\x82"})
+    raw = _issue_to_raw(_issue(attachments=[
+        {"name": "spec.md", "mimeType": "text/markdown", "size": 13,
+         "url": "/api/files/7-2?sign=abc"}]))
+    brief = board.normalize(raw)
+    assert brief["attachments"] == [{"name": "spec.md", "mime_type": "text/markdown",
+                                     "size": 13, "content_text": "# Спека\nтекст"}]
+    # скачано по полному origin+url (без Bearer-зависимости — sign в url):
+    assert board._client.requested == ["https://c.youtrack.cloud/api/files/7-2?sign=abc"]
+
+
+def test_youtrack_board_normalize_skips_offhost_attachment():
+    """Off-host абсолютный URL вложения не скачивается (защита токена/SSRF, PRI-196)."""
+    abs_url = "https://files.example.com/f/7-2?sign=abc"
+    board = YouTrackBoard.__new__(YouTrackBoard)
+    board._key_pattern = KP
+    board._base = BASE
+    board._att_domains = ("youtrack.cloud",)
+    board._att_max_bytes = 10 * 1024 * 1024
+    board._att_timeout = 10.0
+    board._att_store_chars = 200000
+    board._client = _FakeHttpClient({})   # пустой — если запрос произойдёт, будет KeyError
+    raw = _issue_to_raw(_issue(attachments=[
+        {"name": "doc.md", "mimeType": "text/markdown", "size": 12, "url": abs_url}]))
+    brief = board.normalize(raw)
+    assert board._client.requested == []      # off-host не запрашивался
+    assert brief["attachments"] == []         # вложение пропущено
+
+
+def test_youtrack_selfhosted_with_port_allows_own_attachment():
+    """Self-hosted YouTrack на нестандартном порту качает свои же вложения (PRI-196)."""
+    from urllib.parse import urlsplit
+    from reviewer.tasks.boards.attachments import _registrable_domain
+    base = "https://youtrack.example.com:8443/api"
+    board = YouTrackBoard.__new__(YouTrackBoard)
+    board._key_pattern = KP
+    board._base = base
+    board._att_domains = (_registrable_domain(urlsplit(base).netloc.split("@")[-1].split(":")[0]),)
+    board._att_max_bytes = 10 * 1024 * 1024
+    board._att_timeout = 10.0
+    board._att_store_chars = 200000
+    url = "https://youtrack.example.com:8443/api/files/7-2?sign=abc"
+    board._client = _FakeHttpClient({url: "ТЗ".encode()})
+    raw = _issue_to_raw(_issue(attachments=[
+        {"name": "spec.md", "mimeType": "text/markdown", "size": 4,
+         "url": "/api/files/7-2?sign=abc"}]))
+    brief = board.normalize(raw)
+    assert board._client.requested == [url]            # свой хост — скачан
+    assert brief["attachments"][0]["content_text"] == "ТЗ"

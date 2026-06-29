@@ -118,3 +118,12 @@ def test_task_board_default_ignores_task_board_type_env(monkeypatch):
     result = Settings(_env_file=None).task_board_default()
     # TASK_BOARD_TYPE игнорируется — type не попадает в ответ без кредов
     assert result is None or "type" not in (result or {})
+
+
+def test_attachment_settings_defaults():
+    from reviewer.config.settings import Settings
+    s = Settings(_env_file=None)
+    assert s.task_attachment_max_bytes == 10 * 1024 * 1024
+    assert s.task_attachment_timeout == 10.0
+    assert s.task_attachment_embed_chars == 8000
+    assert s.task_attachment_store_chars == 200000

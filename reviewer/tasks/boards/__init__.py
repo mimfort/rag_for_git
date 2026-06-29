@@ -24,6 +24,9 @@ def make_board_provider(settings, type_: str) -> TaskBoardProvider | None:
             api_base=api_base,
             key_pattern=key_pattern,
             url_template=settings.task_board_url_template,
+            attachment_max_bytes=settings.task_attachment_max_bytes,
+            attachment_timeout=settings.task_attachment_timeout,
+            attachment_store_chars=settings.task_attachment_store_chars,
         )
     if type_ == "youtrack":
         from reviewer.tasks.boards.youtrack import YouTrackBoard
@@ -31,6 +34,9 @@ def make_board_provider(settings, type_: str) -> TaskBoardProvider | None:
             token=api_key,
             base_url=api_base,
             key_pattern=key_pattern,
+            attachment_max_bytes=settings.task_attachment_max_bytes,
+            attachment_timeout=settings.task_attachment_timeout,
+            attachment_store_chars=settings.task_attachment_store_chars,
         )
     return None
 

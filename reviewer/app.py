@@ -57,6 +57,7 @@ def build_components(settings: Settings, connect: bool = True) -> Components:
     task_service = TaskService(
         task_store, task_graph, embedder,
         max_chars=settings.max_tool_result_chars,
+        attachment_embed_chars=settings.task_attachment_embed_chars,
     )
     # server-side синк досок: все настроенные провайдеры (связка ключей в env).
     # Пустой список → sync_service=None, sync_board вернёт понятный error-summary.
