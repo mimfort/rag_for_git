@@ -12,14 +12,39 @@ from __future__ import annotations
 import logging
 import re
 from collections.abc import Iterable
+from urllib.parse import unquote, urlsplit
 
 import httpx
 
+from reviewer.tasks.boards.attachments import fetch_attachment, host_allowed, _registrable_domain
 from reviewer.tasks.boards.base import RawTask, project_prefix
 
 log = logging.getLogger(__name__)
 
 _PAGE = 1000
+
+# YouGile кодирует прикреплённый к чату файл маркером /root/#file:<url> в text сообщения
+# (POST /upload-file → {url}; см. send_task_file). Структурного списка файлов в API нет.
+_FILE_MARKER = re.compile(r"/root/#file:(\S+)")
+
+
+def _file_urls_from_text(text: str | None) -> list[str]:
+    """Абсолютные URL файлов из YouGile-маркера /root/#file:<url> в тексте сообщения.
+
+    Если маркер пришёл из textHtml — обрезаем возможный HTML/кавычки-хвост.
+    """
+    out: list[str] = []
+    for m in _FILE_MARKER.finditer(text or ""):
+        url = re.split(r"[\"'<>\s]", m.group(1))[0]
+        if url:
+            out.append(url)
+    return out
+
+
+def _filename_from_url(url: str) -> str:
+    """Имя файла из basename URL (для диспатча парсинга по расширению)."""
+    name = unquote(urlsplit(url).path.rsplit("/", 1)[-1])
+    return name or "file"
 
 
 def normalize_yougile(
@@ -27,6 +52,7 @@ def normalize_yougile(
     key_pattern: str,
     url_template: str,
     subtask_titles: dict[str, str] | None = None,
+    attachments: list[dict] | None = None,
 ) -> dict:
     """RawTask → TaskBrief dict. Чистая: без I/O (titles подзадач инжектятся)."""
     subtask_titles = subtask_titles or {}
@@ -66,6 +92,7 @@ def normalize_yougile(
         "url": url,
         "links": links,
         "project": project_prefix(raw.project_code or key),
+        "attachments": attachments or [],
     }
 
 
@@ -76,10 +103,17 @@ class YougileBoard:
     board_type = "yougile"
 
     def __init__(self, *, api_key: str, api_base: str, key_pattern: str,
-                 url_template: str) -> None:
+                 url_template: str,
+                 attachment_max_bytes: int = 10 * 1024 * 1024,
+                 attachment_timeout: float = 10.0,
+                 attachment_store_chars: int = 200000) -> None:
         self._key_pattern = key_pattern
         self._url_template = url_template
+        self._att_max_bytes = attachment_max_bytes
+        self._att_timeout = attachment_timeout
+        self._att_store_chars = attachment_store_chars
         self._base = (api_base or "https://yougile.com/api-v2").rstrip("/")
+        self._att_domains = (_registrable_domain(urlsplit(self._base).netloc.split("@")[-1].split(":")[0]),)
         self._client = httpx.Client(
             base_url=self._base,
             headers={"Authorization": f"Bearer {api_key}"},
@@ -126,10 +160,46 @@ class YougileBoard:
                             status=col_title.get(t.get("columnId")),
                             subtask_ids=list(t.get("subtasks", []) or []),
                             timestamp=int(t.get("timestamp", 0) or 0),
+                            board_id=t["id"],
                         )
                         count += 1
                         if limit and count >= limit:
                             return
+
+    def _attachments_from_chat(self, task_uuid: str) -> list[dict]:
+        """Вложения из сообщений чата задачи (best-effort, fail-soft).
+
+        YouGile не отдаёт структурного списка файлов — они вшиты маркером
+        /root/#file:<url> в text/textHtml сообщений. chatId == внутренний UUID задачи.
+        Пустой/недоступный чат → []. fetch_attachment сам fail-soft (битый файл →
+        только метаданные). Имя файла — basename URL; mime неизвестен (диспатч по расширению).
+        """
+        if not task_uuid:
+            return []
+        try:
+            r = self._client.get(f"/chats/{task_uuid}/messages")
+            r.raise_for_status()
+            msgs = r.json().get("content", []) or []
+        except Exception:
+            log.warning("yougile: чат задачи %s недоступен", task_uuid, exc_info=True)
+            return []
+        seen: set[str] = set()
+        out: list[dict] = []
+        for msg in msgs:
+            props = msg.get("properties") or {}
+            for field_text in (msg.get("text"), props.get("textHtml")):
+                for url in _file_urls_from_text(field_text):
+                    if url in seen:
+                        continue
+                    seen.add(url)
+                    if not host_allowed(url, self._att_domains):
+                        log.warning("yougile: файл чата %s вне домена доски — пропуск", url)
+                        continue
+                    out.append(fetch_attachment(
+                        self._client, name=_filename_from_url(url), mime=None,
+                        size=None, url=url, timeout=self._att_timeout,
+                        max_bytes=self._att_max_bytes, store_chars=self._att_store_chars))
+        return out
 
     def normalize(self, raw: RawTask) -> dict:
         subtask_titles: dict[str, str] = {}
@@ -142,5 +212,6 @@ class YougileBoard:
                 subtask_titles[sid] = f"{code}:{st.get('title', '')}"
             except Exception:
                 log.warning("yougile: не резолвится подзадача %s", sid, exc_info=True)
+        attachments = self._attachments_from_chat(raw.board_id)
         return normalize_yougile(raw, self._key_pattern, self._url_template,
-                                 subtask_titles)
+                                 subtask_titles, attachments=attachments)

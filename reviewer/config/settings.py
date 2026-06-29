@@ -111,6 +111,11 @@ class Settings(BaseSettings):
     yougile_api_base: str = ""         # base URL yougile; пусто → дефолт по типу
     youtrack_token: str = ""           # permanent token youtrack (perm:...)
     youtrack_base_url: str = ""        # base URL youtrack API; обязателен (инстанс-специфичен)
+    # вложения задач (PRI-196): лимиты скачивания/парсинга для server-side синка.
+    task_attachment_max_bytes: int = 10 * 1024 * 1024   # пропуск файлов больше (байт)
+    task_attachment_timeout: float = 10.0               # таймаут скачивания одного файла (с)
+    task_attachment_embed_chars: int = 8000             # потолок текста на файл в эмбеддинге
+    task_attachment_store_chars: int = 200000           # санити-кап текста на файл в jsonb
     # web admin basic auth (опционально; если не заданы — доступ без аутентификации)
     web_admin_user: str = ""
     web_admin_password: str = ""

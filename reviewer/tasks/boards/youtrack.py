@@ -7,19 +7,25 @@ description, updated, State, links) без доп. запросов, поэто�
 """
 from __future__ import annotations
 
+import logging
 import re
 from collections.abc import Iterable
+from urllib.parse import urljoin, urlsplit
 
 import httpx
 
+from reviewer.tasks.boards.attachments import fetch_attachment, host_allowed, _registrable_domain
 from reviewer.tasks.boards.base import RawTask, project_prefix
+
+log = logging.getLogger(__name__)
 
 _PAGE = 200
 
 _FIELDS = (
     "idReadable,summary,description,updated,"
     "customFields(name,value(name)),"
-    "links(direction,linkType(name),issues(idReadable))"
+    "links(direction,linkType(name),issues(idReadable)),"
+    "attachments(name,size,mimeType,extension,url)"
 )
 
 
@@ -45,6 +51,24 @@ def _links_of(issue: dict) -> list[dict]:
     return out
 
 
+def _attachments_of(issue: dict) -> list[dict]:
+    """Метаданные вложений из issue (url относительный с подписью; без url — пропуск)."""
+    out: list[dict] = []
+    for a in issue.get("attachments") or []:
+        url = a.get("url")
+        if not url:
+            continue
+        out.append({"name": a.get("name") or "", "mime": a.get("mimeType"),
+                    "size": a.get("size"), "url": url})
+    return out
+
+
+def _origin(base_url: str) -> str:
+    """scheme://host из base_url (отбрасывает путь /api) — для абсолютного URL файла."""
+    p = urlsplit(base_url)
+    return f"{p.scheme}://{p.netloc}"
+
+
 def _issue_to_raw(issue: dict) -> RawTask:
     """YouTrack issue JSON → RawTask. Чистая: без I/O."""
     key = issue.get("idReadable", "")
@@ -57,10 +81,12 @@ def _issue_to_raw(issue: dict) -> RawTask:
         subtask_ids=[],
         timestamp=int(issue.get("updated", 0) or 0),
         links=_links_of(issue),
+        attachments=_attachments_of(issue),
     )
 
 
-def normalize_youtrack(raw: RawTask, key_pattern: str, base_url: str) -> dict:
+def normalize_youtrack(raw: RawTask, key_pattern: str, base_url: str,
+                       attachments: list[dict] | None = None) -> dict:
     """RawTask → TaskBrief dict. Чистая: без I/O. url выводится из base_url."""
     key = raw.key
     links: list[dict] = list(raw.links)
@@ -86,6 +112,7 @@ def normalize_youtrack(raw: RawTask, key_pattern: str, base_url: str) -> dict:
         "url": url,
         "links": links,
         "project": project_prefix(raw.key),
+        "attachments": attachments or [],
     }
 
 
@@ -95,7 +122,10 @@ class YouTrackBoard:
 
     board_type = "youtrack"
 
-    def __init__(self, *, token: str, base_url: str, key_pattern: str) -> None:
+    def __init__(self, *, token: str, base_url: str, key_pattern: str,
+                 attachment_max_bytes: int = 10 * 1024 * 1024,
+                 attachment_timeout: float = 10.0,
+                 attachment_store_chars: int = 200000) -> None:
         """Инициализация REST-клиента YouTrack.
 
         ``token`` — **полный** постоянный токен YouTrack, включая префикс ``perm:``,
@@ -106,6 +136,10 @@ class YouTrackBoard:
         """
         self._key_pattern = key_pattern
         self._base = base_url.rstrip("/")
+        self._att_domains = (_registrable_domain(urlsplit(self._base).netloc.split("@")[-1].split(":")[0]),)
+        self._att_max_bytes = attachment_max_bytes
+        self._att_timeout = attachment_timeout
+        self._att_store_chars = attachment_store_chars
         self._client = httpx.Client(
             base_url=self._base,
             headers={"Authorization": f"Bearer {token}"},
@@ -135,4 +169,16 @@ class YouTrackBoard:
             skip += len(page)
 
     def normalize(self, raw: RawTask) -> dict:
-        return normalize_youtrack(raw, self._key_pattern, self._base)
+        origin = _origin(self._base)
+        contents: list[dict] = []
+        for a in raw.attachments:
+            full = urljoin(origin + "/", a["url"])
+            if not host_allowed(full, self._att_domains):
+                log.warning("youtrack: вложение %s вне домена доски — пропуск", full)
+                continue
+            contents.append(fetch_attachment(
+                self._client, name=a["name"], mime=a.get("mime"), size=a.get("size"),
+                url=full, timeout=self._att_timeout,
+                max_bytes=self._att_max_bytes, store_chars=self._att_store_chars))
+        return normalize_youtrack(raw, self._key_pattern, self._base,
+                                  attachments=contents)

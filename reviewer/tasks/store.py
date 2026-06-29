@@ -7,9 +7,10 @@ base/overlay-freshness. Зеркалит паттерн :class:`ChunkStore` — 
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from pgvector.psycopg import Vector, register_vector
 from psycopg_pool import ConnectionPool
@@ -22,11 +23,20 @@ def _bm25_query(text: str) -> str:
     return cleaned or "____nomatch____"
 
 
-def build_task_text(title: str | None, description: str | None, criteria: list[str] | None) -> str:
-    """Текст задачи для эмбеддинга и BM25: заголовок + описание + критерии."""
+def build_task_text(title: str | None, description: str | None,
+                    criteria: list[str] | None, attachments: list[dict] | None = None,
+                    *, embed_chars: int = 8000) -> str:
+    """Текст задачи для эмбеддинга и BM25: заголовок + описание + критерии + вложения.
+
+    Текст каждого вложения с непустым ``content_text`` обрезается до ``embed_chars``
+    (усечение, не summary — синк не тратит LLM-токены)."""
     parts = [title or "", description or ""]
     if criteria:
         parts.append("\n".join(c for c in criteria if c))
+    for att in attachments or []:
+        text = (att.get("content_text") or "").strip()
+        if text:
+            parts.append(f"{att.get('name', '')}\n{text[:embed_chars]}")
     return "\n\n".join(p for p in parts if p).strip()
 
 
@@ -48,6 +58,7 @@ class TaskRow:
     text: str
     embedding: list[float]
     project: str = ""
+    attachments: list[dict] = field(default_factory=list)
 
 
 @dataclass
@@ -105,7 +116,7 @@ class TaskStore:
         брифа) — в TaskRow ставится []. None, если задачи нет.
         """
         sql = ("SELECT key, aliases, title, description, status, url, "
-               "content_hash, text, project FROM tasks "
+               "content_hash, text, project, attachments FROM tasks "
                "WHERE (key = %s OR %s = ANY(aliases))")
         params: list = [key, key]
         if project:
@@ -119,25 +130,28 @@ class TaskStore:
         return TaskRow(
             key=row[0], aliases=list(row[1] or []), title=row[2],
             description=row[3], status=row[4], url=row[5],
-            content_hash=row[6], text=row[7], embedding=[], project=row[8])
+            content_hash=row[6], text=row[7], embedding=[], project=row[8],
+            attachments=list(row[9] or []))
 
     def upsert_task(self, row: TaskRow) -> None:
         sql = """
         INSERT INTO tasks (key, aliases, title, description, status, url,
-                           content_hash, text, embedding, project)
+                           content_hash, text, embedding, project, attachments)
         VALUES (%(key)s,%(aliases)s,%(title)s,%(description)s,%(status)s,%(url)s,
-                %(content_hash)s,%(text)s,%(embedding)s,%(project)s)
+                %(content_hash)s,%(text)s,%(embedding)s,%(project)s,%(attachments)s::jsonb)
         ON CONFLICT (key) DO UPDATE SET
             aliases=EXCLUDED.aliases, title=EXCLUDED.title,
             description=EXCLUDED.description, status=EXCLUDED.status,
             url=EXCLUDED.url, content_hash=EXCLUDED.content_hash,
-            text=EXCLUDED.text, embedding=EXCLUDED.embedding, project=EXCLUDED.project
+            text=EXCLUDED.text, embedding=EXCLUDED.embedding, project=EXCLUDED.project,
+            attachments=EXCLUDED.attachments
         """
         params = {
             "key": row.key, "aliases": row.aliases, "title": row.title,
             "description": row.description, "status": row.status, "url": row.url,
             "content_hash": row.content_hash, "text": row.text,
             "embedding": row.embedding, "project": row.project,
+            "attachments": json.dumps(row.attachments, ensure_ascii=False),
         }
         with self._connect() as conn:
             conn.execute(sql, params)
