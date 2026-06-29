@@ -173,3 +173,53 @@ def test_yougile_normalize_skips_offhost_chat_file():
     brief = board.normalize(_raw(board_id=UUID, subtask_ids=[]))
     assert brief["attachments"] == []
     assert "https://evil.example.com/x.md" not in board._client.requested
+
+
+def test_yougile_normalize_pulls_file_from_description_href():
+    """Файл-вложение приходит HTML-ссылкой на /user-data/ в description (реальная модель PRI-196).
+
+    Так YouGile рендерит прикреплённый к задаче файл — не маркером /root/#file: в чате
+    (чат при этом пуст), а <a href="…/user-data/…"> в описании задачи.
+    """
+    href = ('<p><br><a target="_blank" rel="noopener noreferrer" '
+            'href="https://yougile.com/user-data/abc/Te.md">Te.md</a></p>')
+    routes = {
+        f"/chats/{UUID}/messages": _FakeYResp(json_data={"content": []}),
+        "https://yougile.com/user-data/abc/Te.md": _FakeYResp(content="Тестовая".encode()),
+    }
+    board = _board_with(routes)
+    brief = board.normalize(_raw(key="ID-10", board_id=UUID, description=href, subtask_ids=[]))
+    att = next(a for a in brief["attachments"] if a["name"] == "Te.md")
+    assert att["content_text"] == "Тестовая"
+
+
+def test_yougile_normalize_unescapes_amp_in_href():
+    """&amp; в href восстанавливается в & перед скачиванием (URL с query-подписью)."""
+    href = '<a href="https://yougile.com/user-data/x/d.txt?a=1&amp;b=2">d.txt</a>'
+    routes = {
+        f"/chats/{UUID}/messages": _FakeYResp(json_data={"content": []}),
+        "https://yougile.com/user-data/x/d.txt?a=1&b=2": _FakeYResp(content="D".encode()),
+    }
+    board = _board_with(routes)
+    brief = board.normalize(_raw(board_id=UUID, description=href, subtask_ids=[]))
+    assert any(a["name"] == "d.txt" and a["content_text"] == "D" for a in brief["attachments"])
+
+
+def test_yougile_normalize_ignores_nonfile_description_links():
+    """Обычная ссылка в описании (не на /user-data/) не качается — только файлы-вложения."""
+    desc = '<a href="https://yougile.com/team/T/#PRI-5">PRI-5</a>'
+    routes = {f"/chats/{UUID}/messages": _FakeYResp(json_data={"content": []})}
+    board = _board_with(routes)
+    brief = board.normalize(_raw(board_id=UUID, description=desc, subtask_ids=[]))
+    assert brief["attachments"] == []
+    assert "https://yougile.com/team/T/#PRI-5" not in board._client.requested
+
+
+def test_yougile_normalize_skips_offhost_description_href():
+    """Off-host файл-ссылка в описании не скачивается (защита токена/SSRF, PRI-196)."""
+    desc = '<a href="https://evil.example.com/user-data/x/leak.md">leak.md</a>'
+    routes = {f"/chats/{UUID}/messages": _FakeYResp(json_data={"content": []})}
+    board = _board_with(routes)
+    brief = board.normalize(_raw(board_id=UUID, description=desc, subtask_ids=[]))
+    assert brief["attachments"] == []
+    assert "https://evil.example.com/user-data/x/leak.md" not in board._client.requested
