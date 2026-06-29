@@ -204,7 +204,19 @@ Use the session-less tools above.
      matching `key_pattern` (e.g. `PRI-163`, NOT the normalized store key `ID-163`) and `slug` is a
      short ASCII kebab of the title. **Board-less** (no key): `YYYY-MM-DD-<slug>.md` (slug from the
      user's formulation). `YYYY-MM-DD` = today's date.
-   - **Idempotency:** before writing, glob `docs/superpowers/briefs/<date>-<KEY>-*.md` and overwrite
+   - **Check for existing artifacts (warn, don't block).** Before writing the brief, scan the
+     three artifact directories for files matching this task key (case-insensitive):
+     - `docs/superpowers/briefs/*<KEY>*`
+     - `docs/superpowers/specs/*<key>*-design.md`
+     - `docs/superpowers/plans/*<key>*.md`
+     Use case-insensitive matching (e.g., try both `PRI-176` and `pri-176` globs, or lowercase
+     file names before matching). If any artifacts are found, warn the user (in Russian):
+     > "⚠️ Похожие артефакты уже существуют: briefs/PRI-176-..., specs/pri-176-...-design.md,
+     > plans/pri-176-....md. Продолжить? [Y/n]"
+     Do **not** block — continue unless the user explicitly says no. If the user continues (or
+     auto-permission mode leaves no choice), list the found artifacts under `## Constraints` with
+     the tag `[existing_artifacts]`.
+   - **Idempotency:** before writing, glob `docs/superpowers/briefs/*-<KEY>-*.md` and overwrite
      the match if any (slug drift between runs must not spawn duplicates); board-less → exact name.
    - **Content:** the distilled brief verbatim (the `# Brief — <KEY> <title>` skeleton); add the
      task `url` on the line below the heading when available, for grep-by-key.
