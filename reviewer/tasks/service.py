@@ -218,23 +218,34 @@ class TaskService:
 
         return results
 
-    def search_tasks(self, query: str, top_k: int = 5,
+    def search_tasks(self, query: str, top_k: int | None = None,
                      project: str | None = None) -> str:
-        """Похожие по смыслу задачи (гибрид-поиск по корпусу). Пусто/сбой → текстовая нота."""
+        """Похожие задачи (RRF, без реранкера) с рельсой ceiling (PRI-202).
+
+        top_k — override потолка (None → дефолт-константа). Фетчим больше кандидатов,
+        возвращаем ≤ceiling, при хвосте дописываем заметку. Пусто/сбой → нота.
+        """
+        from reviewer.policy.context_limits import TasksLimits
+        ceiling = top_k or TasksLimits.ceiling
         try:
             vec = self._embedder.embed_query(query)
-            hits = self._store.search(query, vec, top_k=top_k, project=project)
+            hits = self._store.search(query, vec, top_k=max(ceiling * 3, 30), project=project)
         except Exception:
             log.warning("search_tasks: сбой поиска по запросу %r", query, exc_info=True)
             return "(task search unavailable)"
         if not hits:
             return "(no similar tasks found)"
+        total = len(hits)
+        shown = hits[:ceiling]
         # Ранг-ординал — стабильный, query-независимый сигнал для relevance-фильтра
         # (solve-task/review-pr прунят по порядку). Score даём с 4 знаками: RRF лежит
         # в ≈0.016–0.033, и грубая точность схлопнула бы близкие задачи в одно число.
-        return "\n".join(
-            f"{i}. {h.key} [{h.status or '—'}] {h.title} (score {h.score:.4f})"
-            for i, h in enumerate(hits, 1))
+        lines = [f"{i}. {h.key} [{h.status or '—'}] {h.title} (score {h.score:.4f})"
+                 for i, h in enumerate(shown, 1)]
+        if total > ceiling:
+            lines.append(f"— показано {ceiling} из {total} (рельса ceiling). "
+                         f"Перевызови с большим ceiling для остальных.")
+        return "\n".join(lines)
 
     def get_task_context(self, key: str, project: str | None = None) -> str:
         """Граф-контекст задачи: связанные задачи → их PR → код. Деградация → нота."""

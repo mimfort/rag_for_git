@@ -5,7 +5,7 @@ class _FakeTaskService:
     def __init__(self):
         self.calls = {}
 
-    def search_tasks(self, query, top_k=5, project=None):
+    def search_tasks(self, query, top_k=None, project=None):
         self.calls["search"] = (query, top_k, project)
         return "ok"
 
@@ -29,6 +29,6 @@ def test_read_tools_thread_project():
     svc.search_tasks("q", project="PRI")
     svc.get_task_context("ID-1", project="PRI")
     svc.get_task("ID-1", project="PRI")
-    assert ts.calls["search"] == ("q", 5, "PRI")
+    assert ts.calls["search"] == ("q", None, "PRI")  # top_k=None дефолт (PRI-202 рельсы)
     assert ts.calls["context"] == ("ID-1", "PRI")
     assert ts.calls["get"] == ("ID-1", "PRI")

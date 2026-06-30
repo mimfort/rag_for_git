@@ -257,7 +257,7 @@ class MCPReviewService:
         """Батчевая индексация списка TaskBrief: один Voyage-вызов для изменившихся задач."""
         return self.components.task_service.index_batch(tasks)
 
-    def search_tasks(self, query: str, top_k: int = 5,
+    def search_tasks(self, query: str, top_k: int | None = None,
                      project: str | None = None) -> str:
         """Похожие по смыслу задачи (гибрид-поиск). При project — скоуп по проекту."""
         return self.components.task_service.search_tasks(query, top_k, project=project)
