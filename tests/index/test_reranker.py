@@ -44,6 +44,16 @@ def test_rerank_keeps_items_only_signature():
     assert [it.text for it in out] == ["b", "a"]             # без скоров
 
 
+def test_rerank_truncates_to_top_k():
+    # Делегирование (PRI-202): rerank скорит весь пул, затем срез [:top_k].
+    items = [_It("a"), _It("b"), _It("c")]
+    client = _FakeClient([_Res(2, 0.9), _Res(0, 0.5), _Res(1, 0.1)])  # реранкер вернул c, a, b
+    rr = VoyageReranker(client=client)
+    out = rr.rerank("q", items, top_k=2)
+    assert [it.text for it in out] == ["c", "a"]            # усечено до 2 из 3
+    assert client.calls[0]["top_k"] == 3                    # Voyage реранкает весь пул (cost-нейтрально)
+
+
 def test_rerank_scored_empty():
     rr = VoyageReranker(client=_FakeClient([]))
     assert rr.rerank_scored("q", []) == []

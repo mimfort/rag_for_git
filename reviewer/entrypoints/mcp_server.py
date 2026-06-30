@@ -117,7 +117,7 @@ def create_server(service: MCPReviewService) -> FastMCP:
     def search_tasks(query: str, top_k: int | None = None, project: str | None = None) -> str:
         """Find semantically similar tasks in the indexed task corpus.
         project scopes results to one board project (code prefix, e.g. PRI); empty = all.
-        top_k — override потолка (ceiling); None → дефолт."""
+        top_k — optional override of the result ceiling; None → default."""
         return service.search_tasks(query, top_k, project=project)
 
     @mcp.tool()
