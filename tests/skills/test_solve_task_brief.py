@@ -56,3 +56,15 @@ def test_solve_task_includes_test_exemplars():
     text = SOLVE.read_text(encoding="utf-8")
     assert "include_tests=True" in text     # тест-ретрив в шаге 3
     assert "Test exemplars" in text         # секция скелета брифа
+
+
+def test_solve_task_warns_on_existing_artifacts():
+    """PRI-176: solve-task проверяет существующие briefs/specs/plans и предупреждает, не блокируя."""
+    text = SOLVE.read_text(encoding="utf-8")
+    assert "*-<KEY>-*.md" in text               # glob без даты
+    assert "docs/superpowers/specs/" in text    # проверка спек
+    assert "docs/superpowers/plans/" in text    # проверка планов
+    assert "case-insensitive" in text            # insensitive matching
+    assert "[Y/n]" in text                       # предупреждение с выбором
+    assert "[existing_artifacts]" in text        # тег в Constraints
+    assert "Do NOT block" in text or "not block" in text  # не блокировка
