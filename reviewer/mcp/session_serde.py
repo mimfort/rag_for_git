@@ -9,6 +9,7 @@ from __future__ import annotations
 from dataclasses import asdict
 
 from reviewer.agent.state import ReviewUnit
+from reviewer.policy.context_limits import ContextLimits
 from reviewer.policy.policy import ReviewPolicy
 from reviewer.services.review_service import PreparedReview
 from reviewer.vcs.base import PullRequest, VCSProvider
@@ -38,6 +39,23 @@ def to_payload(prepared: PreparedReview) -> dict:
     }
 
 
+def _policy_from_payload(d: dict) -> ReviewPolicy:
+    """Восстановить ReviewPolicy из asdict-плоского payload.
+
+    ``asdict(policy)`` рекурсивно разворачивает вложенный ``ContextLimits`` в
+    обычные dict'ы — ``ReviewPolicy(**d)`` напрямую оставил бы там dict вместо
+    типизированного ``ContextLimits``. Пересобираем его через тот же парсер,
+    что и .review.yml.
+    """
+    fields = dict(d)
+    context_limits = fields.pop("context_limits", None)
+    policy = ReviewPolicy(**fields)
+    if context_limits is not None:
+        policy.context_limits = ContextLimits.from_review_yaml(
+            {"context_limits": context_limits})
+    return policy
+
+
 def from_payload(d: dict, vcs: VCSProvider) -> PreparedReview:
     """Восстановить PreparedReview из payload; ``vcs`` подставляется отдельно.
 
@@ -50,7 +68,7 @@ def from_payload(d: dict, vcs: VCSProvider) -> PreparedReview:
         branch=d["branch"],
         prq=PullRequest(**d["prq"]),
         units=[ReviewUnit(**u) for u in d["units"]],
-        policy=ReviewPolicy(**d["policy"]),
+        policy=_policy_from_payload(d["policy"]),
         patches=d["patches"],
         sources=d["sources"],
         changed_paths=d["changed_paths"],

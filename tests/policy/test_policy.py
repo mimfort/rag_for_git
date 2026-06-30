@@ -206,3 +206,20 @@ def test_task_board_project_parsed_from_yaml():
     p = ReviewPolicy.from_yaml(
         "task_board: {type: yougile, mcp: yougile, project: PRI}")
     assert p.task_board["project"] == "PRI"
+
+
+def test_context_limits_from_yaml_overrides_defaults():
+    p = ReviewPolicy.from_yaml("context_limits:\n  search_codebase:\n    ceiling: 25\n")
+    assert p.context_limits.search_codebase.ceiling == 25
+    assert p.context_limits.search_codebase.floor == 4
+
+
+def test_context_limits_default_when_absent():
+    p = ReviewPolicy.from_yaml("max_comments: 10\n")
+    assert p.context_limits.search_codebase.candidate_pool == 30
+
+
+def test_load_applies_context_limits_over_env_defaults():
+    s = Settings(_env_file=None)
+    p = ReviewPolicy.load(s, "context_limits:\n  graph:\n    hops: 2\n")
+    assert p.context_limits.graph.hops == 2
