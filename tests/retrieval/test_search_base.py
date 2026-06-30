@@ -157,9 +157,15 @@ def test_search_base_reranks_always_and_applies_cliff():
 
 
 def test_search_base_ann_prefilter_drops_far_non_bm25():
-    keep = _Hit("a.py#keep", score=0.9); keep.bm25_hit = False; keep.ann_distance = 0.2
-    bm = _Hit("b.py#bm", score=0.5); bm.bm25_hit = True; bm.ann_distance = 0.95  # плохой вектор, но лексика
-    drop = _Hit("c.py#drop", score=0.4); drop.bm25_hit = False; drop.ann_distance = 0.95
+    keep = _Hit("a.py#keep", score=0.9)
+    keep.bm25_hit = False
+    keep.ann_distance = 0.2
+    bm = _Hit("b.py#bm", score=0.5)      # плохой вектор, но лексика
+    bm.bm25_hit = True
+    bm.ann_distance = 0.95
+    drop = _Hit("c.py#drop", score=0.4)
+    drop.bm25_hit = False
+    drop.ann_distance = 0.95
     store = _FakeStore([keep, bm, drop])
     reranker = _FakeReranker(scores=[0.9, 0.8])
     r = Retriever(store, _FakeGraph(), _FakeEmbedder(), reranker)
@@ -191,7 +197,8 @@ def test_search_base_reranker_failure_falls_back_to_rrf():
 
 
 def test_search_base_seeds_graph_with_configured_hops():
-    hits = [_Hit("a.py#f1")]; hits[0].bm25_hit = True
+    hits = [_Hit("a.py#f1")]
+    hits[0].bm25_hit = True
     graph = _FakeGraph({"e.py#n"})
     store = _FakeStore(hits, related=[_Hit("e.py#n")])
     r = Retriever(store, graph, _FakeEmbedder(), _FakeReranker())
