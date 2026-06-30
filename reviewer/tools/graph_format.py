@@ -6,7 +6,7 @@ from reviewer.index.refs import base_ref
 
 log = logging.getLogger(__name__)
 
-_CAP = 25
+_DEFAULT_CAP = 25
 
 
 def _rel_label(nb: dict) -> str:
@@ -30,17 +30,19 @@ def _first_line(text: str) -> str:
 
 
 def format_neighbors(neighbors: list[dict], *, store, repo: str, branch: str,
-                     overlay_ref, changed_paths: list[str], empty_msg: str) -> str:
+                     overlay_ref, changed_paths: list[str], empty_msg: str,
+                     cap: int = _DEFAULT_CAP) -> str:
     """Рендер соседей графа: '// id (path:line) [REL]\\n<сниппет>'.
 
     Сниппет — строка определения символа из Postgres (store.fetch_nodes).
     store=None → деградация к 'id [REL]'; промах индекса → '… (вне индекса)';
-    кап _CAP элементов, хвост '(…ещё N, усечено)'. Порядок сохраняется как есть.
+    кап cap элементов (дефолт _DEFAULT_CAP), хвост '(…ещё N, усечено)'.
+    Порядок сохраняется как есть.
     """
     if not neighbors:
         return empty_msg
     total = len(neighbors)
-    items = neighbors[:_CAP]
+    items = neighbors[:cap]
     nodes: dict[str, object] = {}
     if store is not None:
         try:
@@ -64,6 +66,6 @@ def format_neighbors(neighbors: list[dict], *, store, repo: str, branch: str,
             lines.append(f"// {nb['id']} [{rel}]")
         else:
             lines.append(f"// {nb['id']} [{rel}] (вне индекса)")
-    if total > _CAP:
-        lines.append(f"(…ещё {total - _CAP}, усечено)")
+    if total > cap:
+        lines.append(f"(…ещё {total - cap}, усечено)")
     return "\n".join(lines)
