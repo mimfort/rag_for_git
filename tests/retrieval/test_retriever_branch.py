@@ -11,6 +11,9 @@ class _Hit:
         self.end_line = 2
         self.text = "code"
         self.score = 1.0
+        # реалистичный хит hybrid_search: всегда из bm25- или ann-CTE (PRI-202 ANN-префильтр)
+        self.bm25_hit = True
+        self.ann_distance = 0.1
 
 
 class FakeStore:
