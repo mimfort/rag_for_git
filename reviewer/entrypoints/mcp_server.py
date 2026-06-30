@@ -145,7 +145,7 @@ def create_server(service: MCPReviewService) -> FastMCP:
         return service.board_config()
 
     @mcp.tool()
-    def search_codebase(repo: str, query: str, top_k: int = 10,
+    def search_codebase(repo: str, query: str, top_k: int | None = None,
                         branch: str | None = None,
                         include_tests: bool = False) -> str:
         """Hybrid semantic+lexical search over a repo's base code index (no PR session).
@@ -153,7 +153,9 @@ def create_server(service: MCPReviewService) -> FastMCP:
         (REVIEW_BRANCHES); defaults to the primary branch. Results are deduplicated
         (no nested class/method duplicates) and line-numbered for citing path:line
         without a re-Read; test files are excluded unless include_tests=True. Use it
-        (e.g. from /solve-task) to find relevant existing code by a free-text formulation."""
+        (e.g. from /solve-task) to find relevant existing code by a free-text formulation.
+        top_k — optional override of the result ceiling; None → ceiling from
+        .review.yml/default. Coverage is adaptive (reranker cliff cutoff)."""
         return service.search_codebase(repo, query, top_k, branch, include_tests)
 
     @mcp.tool()

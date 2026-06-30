@@ -12,6 +12,7 @@ import pytest
 
 from reviewer.config.settings import Settings
 from reviewer.mcp.service import MCPReviewService
+from reviewer.policy.context_limits import CodebaseLimits
 from reviewer.vcs.base import (
     ChangedFile,
     PullRequest,
@@ -509,9 +510,13 @@ def test_search_codebase_delegates_to_retriever() -> None:
     svc.components.retriever.search_base.return_value.as_context.return_value = "auth.py#logout\nbody"
     out = svc.search_codebase("a/b", "logout", top_k=5)
     assert "auth.py#logout" in out
-    svc.components.retriever.search_base.assert_called_once_with(
-        "a/b", "logout", top_k=5, branch=svc.settings.primary_branch(),
-        include_tests=False)
+    call = svc.components.retriever.search_base.call_args
+    assert call.args == ("a/b", "logout")
+    assert call.kwargs["ceiling_override"] == 5
+    assert isinstance(call.kwargs["limits"], CodebaseLimits)
+    assert call.kwargs["hops"] == 1
+    assert call.kwargs["branch"] == svc.settings.primary_branch()
+    assert call.kwargs["include_tests"] is False
     svc.components.retriever.search_base.return_value.as_context.assert_called_once_with(
         line_numbers=True)
 
@@ -638,8 +643,10 @@ def test_definition_falls_back_to_search_base() -> None:
     svc.components.retriever.search_base.return_value.as_context.return_value = "semantic hit"
     out = svc.definition("a/b", "foo")
     assert "semantic hit" in out
+    # PRI-202: definition не резолвит .review.yml (граф-фолбэк) — limits/hops
+    # дефолтные, только ceiling_override сужает охват (cliff floor-lift до 4).
     svc.components.retriever.search_base.assert_called_once_with(
-        "a/b", "foo", top_k=3, branch=svc.settings.primary_branch(),
+        "a/b", "foo", ceiling_override=3, branch=svc.settings.primary_branch(),
         include_tests=True)
 
 
