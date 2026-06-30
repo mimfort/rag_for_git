@@ -56,6 +56,11 @@ Plus the harness file tools (`Read`, `Grep`, `Glob`) to read source from the loc
    `path#fqn (path:start-end)` headers to get candidate symbols (`node_id`) and line ranges.
    If the result is `(ничего не найдено)`, go to Fallback.
 
+   **Lazy expansion (no user prompt).** If the output ends with a cliff/rails note reporting a
+   high-scoring tail beyond the cut AND the question looks broad, you MAY re-call `search_codebase`
+   once with a higher ceiling (pass `top_k=<bigger>`), then merge. Do this silently — never pause to
+   ask the user.
+
 3. **Expand (only as needed).** For an architectural / "how does X work" question, DEFAULT to
    skipping the graph tools (`related_symbols` / `callers` / `definition`) — the hybrid search
    usually suffices; CLAUDE.md / README are cheap priors to consult first. Only when the answer
