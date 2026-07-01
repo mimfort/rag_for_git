@@ -270,6 +270,13 @@ class MCPReviewService:
         """Нормализованный TaskBrief из стора. При project — только из этого проекта."""
         return self.components.task_service.get_task(key, project=project)
 
+    def count_tasks(self, project: str | None = None) -> dict:
+        """Число :Task проекта из графа (best-effort, read-only). Возвращает {"count": int}.
+
+        Источник размера доски для рекомендации context_limits в configure-review;
+        граф недоступен/сбой → {"count": 0}, вызывающий фолбэкает на вопрос."""
+        return {"count": self.components.task_service.count_tasks(project)}
+
     def board_config(self) -> dict:
         """Глобальный (env) конфиг доски задач деплоя — для клиентских скилов.
 

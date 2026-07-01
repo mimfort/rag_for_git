@@ -1,6 +1,6 @@
 ---
 name: reviewer_configure-review
-description: Configure or update a repo's .review.yml context layer (subsystem cluster depth, per-prefix depth overrides, summary top-k threshold, ignore for noisy *tracked* paths) and its task board selection (which board this repo uses — yougile/youtrack — key_pattern, url_template; never credentials) from a draft the skill generates and the user edits. Use when the user asks to set up or tune review config ("настроить .review.yml", "configure review config", "настрой контекст-слой", "tune cluster depth", "что игнорировать в ревью", "выбрать доску для репо", "set up reviewer for this repo"). Standalone — needs only git, no reviewer MCP / DB.
+description: Configure or update a repo's .review.yml context layer (subsystem cluster depth, per-prefix depth overrides, summary top-k threshold, ignore for noisy *tracked* paths, context_limits retrieval breadth per repo profile) and its task board selection (which board this repo uses — yougile/youtrack — key_pattern, url_template; never credentials) from a draft the skill generates and the user edits. Use when the user asks to set up or tune review config ("настроить .review.yml", "configure review config", "настрой контекст-слой", "tune cluster depth", "что игнорировать в ревью", "выбрать доску для репо", "set up reviewer for this repo"). Standalone baseline — needs only git, no reviewer MCP / DB required; optionally uses the reviewer MCP tool count_tasks to size context_limits.search_tasks.
 ---
 
 # Configure review (.review.yml context layer)
@@ -8,8 +8,11 @@ description: Configure or update a repo's .review.yml context layer (subsystem c
 Scan the repo's **tracked** tree (plus churn), generate a recommended `.review.yml` context layer
 (cluster depth, per-prefix depth overrides, summary top-k threshold, ignore for noisy tracked
 paths), show it as a draft + diff, let the user adjust, then write it — preserving every other key.
-Standalone: uses only `git` and file editing — **no reviewer MCP / Postgres / Neo4j** — so it works
-on a fresh repo before the first index.
+Standalone baseline: uses `git` and file editing — works on a fresh repo before the first index.
+The single optional exception is sizing `context_limits.search_tasks`: the skill may call the
+reviewer MCP tool `count_tasks(project)` when it is connected; if not (fresh repo / no reviewer MCP /
+older deploy / empty graph) it **falls back to asking** the user. Everything else needs
+**no reviewer MCP / Postgres / Neo4j**.
 
 **Always answer the user in Russian** (the project language), regardless of this file's language.
 Commands, code identifiers and `path:line` stay verbatim.
@@ -21,6 +24,8 @@ Edit **only** these keys of `.review.yml`:
 - `summary_cluster_depth_overrides` — per-prefix depth (longest-prefix-match by directory segments).
 - `summary_topk_threshold` — summary-prior scale threshold.
 - `paths.ignore` — only for **tracked** noisy paths (eval, fixtures, generated, vendored, migrations, data).
+- `context_limits` — per-repo retrieval breadth (search_codebase / search_tasks / graph limits,
+  PRI-202), recommended from a **repo profile**. Written as a full documented block.
 - `task_board` — which board THIS repo uses (`type: yougile|youtrack`), plus `key_pattern` and (yougile only)
   `url_template`. **NEVER** write credentials here — board API keys live only in the reviewer deploy env
   (`YOUGILE_API_KEY` / `YOUTRACK_TOKEN` + `YOUTRACK_BASE_URL`). An empty `task_board:` disables the board for the repo.
@@ -120,6 +125,49 @@ Parse from $ARGUMENTS (all optional):
    не в `.review.yml`. Грабли youtrack: `YOUTRACK_BASE_URL` обязан оканчиваться на `/api`. Changing the
    board has no effect until those env keys are set and the board is synced (`/reviewer_sync-tasks`).
 
+5c. **`context_limits` — retrieval breadth via a repo profile (PRI-202).** Classify the repo into
+   one **profile** from the step-2 structure scan and map it to a full, documented `context_limits`
+   block. Write **all** knobs (even when equal to code defaults) — the block is self-documenting,
+   matching this repo's own `.review.yml`.
+
+   **Profile from git signals** (no churn — churn drives cluster depth, not retrieval breadth):
+   - `N` = number of tracked `.py` files (from step 2).
+   - `pkgs` = number of large top-level packages (large ≈ > 50 `.py`; a monorepo signal — several
+     independent roots like `services/*`, `packages/*`).
+
+   | Profile | Condition | Meaning |
+   |---|---|---|
+   | tiny-util | `N < 80` and one package | narrow context, save Voyage |
+   | standard (default) | `80 ≤ N ≤ 800` | == code default constants |
+   | large / monorepo | `N > 800` OR `pkgs ≥ 3` large | wider rail so broad tasks aren't clipped |
+
+   **Preset bundles** (search_codebase + graph):
+   ```
+                       floor ceiling ratio abs_floor pool  ann   | hops callers_topk
+   tiny-util             3     8     0.60   0.35     20   0.65   |  1        20
+   standard (=default)   4    15     0.50   0.30     30   0.65   |  1        25
+   large / monorepo      4    25     0.45   0.30     40   0.60   |  1        30
+   ```
+   Strong signal (scale-driven): `ceiling`, `candidate_pool`, `callers_topk`. Weak signal
+   (score-shape): `ratio` / `abs_floor` / `ann_distance_max` — near default, nudged directionally;
+   annotate them in the yml «directional, weak — tune after watching the cliff notes».
+   `graph.hops` stays 1 in every profile (2 explodes cost).
+
+   **`search_tasks.{floor,ceiling}` from board size** (orthogonal to the repo profile):
+   | Board | Condition | floor / ceiling |
+   |---|---|---|
+   | small | < 150 tasks | 3 / 8 |
+   | medium | 150–800 | 3 / 10 |
+   | large | 800+ | 4 / 14 |
+
+   Get the count **best-effort**: call `count_tasks(project)` (reviewer MCP; `project` from step 5b).
+   Success and `count > 0` → bucket silently. reviewer MCP absent / tool missing (older deploy) /
+   `count == 0` (corpus never synced) → **fall back** to asking the user (small / medium / large).
+   Never block on it.
+
+   Emit the full block with explanatory comments (mirror the root `.review.yml`). Merge like every
+   other key (step 7) — never clobber.
+
 6. **Present draft + diff.** Show the proposed context layer and a unified diff against the current
    `.review.yml` (or "new file"). Briefly justify each recommendation in Russian (why this depth; why
    an override on this subtree — cite its size/churn; why each ignore candidate). Take the user's
@@ -135,6 +183,9 @@ Parse from $ARGUMENTS (all optional):
    - `summary_cluster_depth` / `*_overrides` / `summary_topk_threshold` changed → suggest
      `/reviewer_summarize-subsystems` (changing depth changes every `cluster_key` → a full summary
      rebuild; old-depth summaries orphan and are pruned on a full pass).
+   - `context_limits` changed → **no rebuild needed.** It is read live server-side
+     (`_resolve_context_limits`) at review / solve-task time; the effect applies on the next run from
+     the branch the `.review.yml` is committed to. Do NOT suggest a reindex/resummarize for it.
    - Remind the user (in Russian): changes take effect only after a rebuild, and only from the branch
      the `.review.yml` is committed to (policy is read from the target/index branch).
 

@@ -260,6 +260,19 @@ class TaskService:
             return f"(no task '{key}' in task graph)"
         return _format_task_context(ctx, self._max_chars)
 
+    def count_tasks(self, project: str | None = None) -> int:
+        """Число проиндексированных :Task проекта (best-effort). Граф None/сбой → 0.
+
+        Read-only: считает узлы графа, не ходит на доску. Источник размера доски для
+        рекомендации context_limits.search_tasks в скилле configure-review."""
+        if self._graph is None:
+            return 0
+        try:
+            return int(self._graph.count(project or ""))
+        except Exception:
+            log.warning("count_tasks: сбой графа (project=%s)", project, exc_info=True)
+            return 0
+
     def get_task(self, key: str, project: str | None = None) -> dict | None:
         """Нормализованный TaskBrief задачи из стора (store-first одиночное чтение).
 
