@@ -1,8 +1,10 @@
-"""Guardrail: solve-task фиксирует спеку brief + ранговый relevance-фильтр (PRI-146).
+"""Guardrail: solve-task фиксирует спеку brief + адаптивный relevance-фильтр (PRI-146, PRI-202).
 
-Шаг 4 SKILL.md должен нести: скелет-шаблон brief, колпаки top-3/top-5,
-dropped-count и бинарное правило релевантности. Тест не пинит точные
-формулировки — только стабильные маркеры спеки, чтобы правка не удалила её молча.
+Шаг 4 SKILL.md должен нести: скелет-шаблон brief, адаптивный (без фиксированных
+числовых колпаков для Related work/Relevant code/Test exemplars — ретрив уже
+ограничен server-side cliff/rails, PRI-202) relevance-фильтр, dropped-count и
+бинарное правило релевантности. Тест не пинит точные формулировки — только
+стабильные маркеры спеки, чтобы правка не удалила её молча.
 """
 from pathlib import Path
 
@@ -12,11 +14,11 @@ SOLVE = ROOT / "plugin" / "skills" / "solve-task" / "SKILL.md"
 
 def test_solve_task_brief_spec_present():
     text = SOLVE.read_text(encoding="utf-8")
-    assert "# Brief —" in text         # скелет-шаблон brief
-    assert "≤3" in text                 # колпак related tasks
-    assert "≤5" in text                 # колпак relevant code
-    assert "(dropped" in text           # конвенция dropped-count
-    assert "directly informs" in text   # бинарное правило релевантности
+    assert "# Brief —" in text                 # скелет-шаблон brief
+    assert "No fixed ceilings" in text          # адаптивный колпак (PRI-202, не «≤N»)
+    assert "bounded server-side" in text        # ретрив уже ограничен cliff/rails
+    assert "(dropped" in text                   # конвенция dropped-count
+    assert "directly informs" in text           # бинарное правило релевантности
 
 
 def test_solve_task_passes_project_scope():
@@ -56,6 +58,13 @@ def test_solve_task_includes_test_exemplars():
     text = SOLVE.read_text(encoding="utf-8")
     assert "include_tests=True" in text     # тест-ретрив в шаге 3
     assert "Test exemplars" in text         # секция скелета брифа
+
+
+def test_solve_task_lazy_expansion_present():
+    """PRI-202: ленивый перевызов search_codebase с большим top_k под cliff/rails-хвост."""
+    text = SOLVE.read_text(encoding="utf-8")
+    assert "Lazy expansion (no user prompt)" in text  # шаг присутствует, без интеррапта
+    assert "top_k=" in text                           # перевызов с большим потолком
 
 
 def test_solve_task_warns_on_existing_artifacts():

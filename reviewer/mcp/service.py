@@ -7,6 +7,7 @@ import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from typing import TYPE_CHECKING
 
 from reviewer.agent.assemble import (
     AssembledReview,
@@ -33,6 +34,9 @@ from reviewer.tools.graph_format import format_neighbors
 from reviewer.mcp.schemas import FindingIn, VerdictIn
 from reviewer.vcs.base import ChangedFile, Finding, VCSProvider
 from reviewer.vcs.diff import commentable_lines
+
+if TYPE_CHECKING:
+    from reviewer.policy.context_limits import ContextLimits
 
 log = logging.getLogger(__name__)
 
@@ -253,7 +257,7 @@ class MCPReviewService:
         """Батчевая индексация списка TaskBrief: один Voyage-вызов для изменившихся задач."""
         return self.components.task_service.index_batch(tasks)
 
-    def search_tasks(self, query: str, top_k: int = 5,
+    def search_tasks(self, query: str, top_k: int | None = None,
                      project: str | None = None) -> str:
         """Похожие по смыслу задачи (гибрид-поиск). При project — скоуп по проекту."""
         return self.components.task_service.search_tasks(query, top_k, project=project)
@@ -392,7 +396,30 @@ class MCPReviewService:
                     log.warning("_resolve_summary_topk_threshold: не удалось закрыть VCS",
                                 exc_info=True)
 
-    def search_codebase(self, repo: str, query: str, top_k: int = 10,
+    def _resolve_context_limits(self, repo: str, branch: str) -> "ContextLimits":
+        """Лимиты контекста из .review.yml ветки (PRI-202). Fail-soft → дефолт-константы."""
+        from reviewer.policy.context_limits import ContextLimits
+        from reviewer.policy.policy import ReviewPolicy
+        owner, name = repo.split("/", 1)
+        vcs = None
+        try:
+            vcs = (self._vcs_factory(owner, name) if self._vcs_factory
+                   else self._review_service._create_vcs_provider(owner, name))
+            text = vcs.get_file_at_ref(".review.yml", branch)
+            if not text:
+                return ContextLimits()
+            return ReviewPolicy.load(self.settings, text).context_limits
+        except Exception:
+            log.warning("_resolve_context_limits: fail-soft → дефолт-константы", exc_info=True)
+            return ContextLimits()
+        finally:
+            if vcs is not None and self._vcs_factory is None:
+                try:
+                    vcs.close()
+                except Exception:
+                    log.warning("_resolve_context_limits: не удалось закрыть VCS", exc_info=True)
+
+    def search_codebase(self, repo: str, query: str, top_k: int | None = None,
                         branch: str | None = None,
                         include_tests: bool = False) -> str:
         """Гибрид-поиск по base-индексу репозитория (без PR-сессии) — для /solve-task.
@@ -401,15 +428,19 @@ class MCPReviewService:
         первичная. Поиск идёт по индексу указанной ветки (base:<branch>).
         Выдача: без вложенных дублей и (по умолчанию) без тест-чанков, с
         построчными номерами для цитирования path:line без повторного Read.
-        include_tests=True возвращает тест-чанки.
+        include_tests=True возвращает тест-чанки. Охват адаптивен (cliff-отсечка
+        реранкера, PRI-202): top_k — необязательный override потолка (ceiling)
+        для этого вызова; None → потолок берётся из .review.yml/дефолта.
         """
         rb = self._resolve_repo_branch(repo, branch)
         if isinstance(rb, str):
             return rb
         repo, resolved = rb
+        cl = self._resolve_context_limits(repo, resolved)
         try:
             pack = self.components.retriever.search_base(
-                repo, query, top_k=top_k, branch=resolved, include_tests=include_tests)
+                repo, query, limits=cl.search_codebase, hops=cl.graph.hops,
+                ceiling_override=top_k, branch=resolved, include_tests=include_tests)
         except Exception:
             log.warning("search_codebase: сбой поиска", exc_info=True)
             return "(ничего не найдено)"
@@ -425,6 +456,7 @@ class MCPReviewService:
         repo, resolved = rb
         if self.components.graph is None:
             return "(граф недоступен)"
+        cl = self._resolve_context_limits(repo, resolved)
         try:
             neighbors = self.components.graph.expand_detailed(
                 repo, [node_id], hops=2, branch=resolved)
@@ -433,7 +465,8 @@ class MCPReviewService:
             return "(нет связей)"
         return format_neighbors(
             neighbors, store=self.components.store, repo=repo, branch=resolved,
-            overlay_ref=None, changed_paths=[], empty_msg="(нет связей)")
+            overlay_ref=None, changed_paths=[], empty_msg="(нет связей)",
+            cap=cl.graph.callers_topk)
 
     def callers(self, repo: str, node_id: str,
                 branch: str | None = None) -> str:
@@ -445,6 +478,7 @@ class MCPReviewService:
         repo, resolved = rb
         if self.components.graph is None:
             return "(граф недоступен)"
+        cl = self._resolve_context_limits(repo, resolved)
         try:
             found = self.components.graph.callers_detailed(
                 repo, [node_id], branch=resolved)
@@ -453,7 +487,8 @@ class MCPReviewService:
             return "(вызовов не найдено)"
         return format_neighbors(
             found, store=self.components.store, repo=repo, branch=resolved,
-            overlay_ref=None, changed_paths=[], empty_msg="(вызовов не найдено)")
+            overlay_ref=None, changed_paths=[], empty_msg="(вызовов не найдено)",
+            cap=cl.graph.callers_topk)
 
     def definition(self, repo: str, symbol: str,
                    branch: str | None = None) -> str:
@@ -474,7 +509,7 @@ class MCPReviewService:
                 if nodes:
                     return ContextPack(items=nodes).as_context(line_numbers=True)
             pack = self.components.retriever.search_base(
-                repo, symbol, top_k=3, branch=resolved, include_tests=True)
+                repo, symbol, ceiling_override=3, branch=resolved, include_tests=True)
             return pack.as_context(line_numbers=True) or "(определение не найдено)"
         except Exception:
             log.warning("definition: сбой", exc_info=True)

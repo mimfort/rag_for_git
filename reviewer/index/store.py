@@ -41,6 +41,8 @@ class Retrieved:
     end_line: int
     text: str
     score: float
+    ann_distance: float | None = None   # cosine-дистанция ANN (PRI-202); None — не в ANN top-cand
+    bm25_hit: bool = False              # был ли чанк лексическим (BM25) совпадением
 
 
 class ChunkStore:
@@ -352,7 +354,8 @@ class ChunkStore:
             ORDER BY pdb.score(id) DESC LIMIT %(cand)s
         ),
         ann AS (
-            SELECT id, RANK() OVER (ORDER BY embedding <=> %(vec)s) AS rank
+            SELECT id, (embedding <=> %(vec)s) AS dist,
+                   RANK() OVER (ORDER BY embedding <=> %(vec)s) AS rank
             FROM chunks
             WHERE {where}
             ORDER BY embedding <=> %(vec)s LIMIT %(cand)s
@@ -363,8 +366,12 @@ class ChunkStore:
             SELECT id, 1.0/(60+rank) AS s FROM ann
         )
         SELECT c.path, c.symbol_fqn, c.kind, c.start_line, c.end_line, c.text,
-               SUM(r.s) AS score
+               SUM(r.s) AS score,
+               MIN(a.dist) AS ann_dist,
+               bool_or(b.id IS NOT NULL) AS bm25_hit
         FROM rrf r JOIN chunks c USING (id)
+        LEFT JOIN ann a ON a.id = c.id
+        LEFT JOIN bm25 b ON b.id = c.id
         GROUP BY c.id, c.path, c.symbol_fqn, c.kind, c.start_line, c.end_line, c.text
         ORDER BY score DESC LIMIT %(k)s
         """
@@ -374,8 +381,10 @@ class ChunkStore:
         with self._connect() as conn:
             rows = conn.execute(sql, params).fetchall()
         return [Retrieved(node_id=f"{p}#{f}", path=p, symbol_fqn=f, kind=k,
-                          start_line=sl, end_line=el, text=t, score=float(sc))
-                for (p, f, k, sl, el, t, sc) in rows]
+                          start_line=sl, end_line=el, text=t, score=float(sc),
+                          ann_distance=(float(ad) if ad is not None else None),
+                          bm25_hit=bool(bh))
+                for (p, f, k, sl, el, t, sc, ad, bh) in rows]
 
     def fetch_nodes(self, repo, node_ids, overlay_ref, changed_paths, *, base_ref="base"):
         if not node_ids:

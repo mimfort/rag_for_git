@@ -3,6 +3,7 @@ from dataclasses import dataclass
 import logging
 
 from reviewer.index.refs import base_ref
+from reviewer.retrieval.cliff import format_tail_note, select_by_cliff
 
 log = logging.getLogger(__name__)
 
@@ -50,6 +51,7 @@ class ContextPack:
     items: list
     max_chars: int = 0
     max_tokens: int = 0
+    tail_meta: object = None        # TailMeta | None (PRI-202); ленивая заметка о хвосте
 
     def as_context(self, line_numbers: bool = False) -> str:
         parts = []
@@ -71,6 +73,9 @@ class ContextPack:
             limit = self.max_tokens * 4
         if limit > 0 and len(text) > limit:
             text = text[:limit] + "\n[...truncated]"
+        note = format_tail_note(self.tail_meta) if self.tail_meta is not None else None
+        if note:
+            text = f"{text}\n\n{note}" if text else note
         return text
 
 
@@ -103,46 +108,52 @@ class Retriever:
         ranked = self.reranker.rerank(query, list(merged.values()), top_k=top_k)
         return ContextPack(items=ranked, max_chars=self.max_context_chars)
 
-    def search_base(self, repo, query, top_k=10, candidates=50, *, branch="",
-                    include_tests=False) -> ContextPack:
-        """Гибрид-поиск по base-индексу ветки без PR-сессии — для /solve-task.
+    def search_base(self, repo, query, *, limits=None, hops=1, ceiling_override=None,
+                    branch="", include_tests=False) -> ContextPack:
+        """Гибрид-поиск по base-индексу ветки без PR-сессии — для /solve-task (PRI-202).
 
-        Зеркало :meth:`retrieve`, но base-only и сидинг графа от хитов:
-        ``changed_paths=[]`` + несуществующий ``overlay_ref="__none__"`` → WHERE отбирает
-        только base-строки. graph-expansion идёт от топ-хитов (а не от changed-файлов),
-        затем rerank. Граф и реранкер fail-soft.
+        ANN-префильтр (BM25-aware) → always rerank_scored → cliff-отсечка. Граф и
+        реранкер fail-soft (откат на RRF-порядок + срез по ceiling, без заметки).
         """
+        from reviewer.policy.context_limits import CodebaseLimits
+        lim = limits or CodebaseLimits()
+        ceiling = ceiling_override or lim.ceiling
         bref = base_ref(branch)
         qvec = self.embedder.embed_query(query)
         hits = self.store.hybrid_search(
             repo, query_text=query, query_embedding=qvec,
             overlay_ref="__none__", changed_paths=[],
-            top_k=candidates, candidates=candidates, base_ref=bref)
+            top_k=lim.candidate_pool, candidates=lim.candidate_pool, base_ref=bref)
+        # ANN-префильтр: оставляем лексические хиты и близкие по вектору; далёкий не-BM25 шум режем
+        hits = [h for h in hits if getattr(h, "bm25_hit", False)
+                or (getattr(h, "ann_distance", None) is not None
+                    and h.ann_distance <= lim.ann_distance_max)]
         merged: dict[str, object] = {}
         for h in hits:
             merged.setdefault(h.node_id, h)
-        graph_new = False
         if self.graph is not None and hits:
             try:
-                seeds = [h.node_id for h in hits[:top_k]]
-                related_ids = self.graph.expand(repo, seeds, hops=1, branch=branch)
+                seeds = [h.node_id for h in hits[:ceiling]]
+                related_ids = self.graph.expand(repo, seeds, hops=hops, branch=branch)
                 related = self.store.fetch_nodes(repo, list(related_ids), "__none__", [],
                                                  base_ref=bref)
                 for it in related:
-                    if it.node_id not in merged:
-                        merged[it.node_id] = it
-                        graph_new = True
+                    merged.setdefault(it.node_id, it)   # graph-items префильтр не трогает
             except Exception:
                 log.warning("search_base: graph-expansion недоступен", exc_info=True)
         items = list(merged.values())
         if not include_tests:
             items = [it for it in items if not _is_test_path(it.path)]
         items = _dedupe_overlapping(items)
-        if self.reranker is None or len(items) <= 3 or (len(items) <= top_k and not graph_new):
-            return ContextPack(items=items[:top_k], max_chars=self.max_context_chars)
+        # Fail-soft: нет реранкера/пусто/мелкий пул → RRF-порядок, срез по ceiling, без заметки
+        if self.reranker is None or len(items) <= lim.floor:
+            return ContextPack(items=items[:ceiling], max_chars=self.max_context_chars)
         try:
-            items = self.reranker.rerank(query, items, top_k=top_k)
+            scored = self.reranker.rerank_scored(query, items)
         except Exception:
             log.warning("search_base: rerank недоступен — RRF-порядок", exc_info=True)
-            items = items[:top_k]
-        return ContextPack(items=items, max_chars=self.max_context_chars)
+            return ContextPack(items=items[:ceiling], max_chars=self.max_context_chars)
+        kept, tail_meta = select_by_cliff(
+            scored, floor_n=lim.floor, ceiling_n=ceiling,
+            ratio=lim.ratio, abs_floor=lim.abs_floor)
+        return ContextPack(items=kept, max_chars=self.max_context_chars, tail_meta=tail_meta)

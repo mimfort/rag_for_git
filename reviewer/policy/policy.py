@@ -4,6 +4,7 @@ import yaml
 
 from reviewer.config.settings import SeverityLevel
 from reviewer.index.pathfilter import is_ignored
+from reviewer.policy.context_limits import ContextLimits
 
 _SEV = {"low": 0, "medium": 1, "high": 2, "critical": 3}
 
@@ -23,6 +24,7 @@ class ReviewPolicy:
     summary_topk_threshold: int = 20                            # порог масштаба приора сводок; per-repo override .review.yml (PRI-167)
     summary_cluster_depth_overrides: dict[str, int] = field(
         default_factory=dict)             # per-prefix depth из .review.yml (PRI-161)
+    context_limits: ContextLimits = field(default_factory=ContextLimits)  # PRI-202, только из .review.yml
 
     @classmethod
     def from_yaml(cls, text: str | None) -> "ReviewPolicy":
@@ -45,6 +47,7 @@ class ReviewPolicy:
             summary_topk_threshold=int(data.get("summary_topk_threshold", 20)),
             summary_cluster_depth_overrides=dict(
                 data.get("summary_cluster_depth_overrides", {}) or {}),
+            context_limits=ContextLimits.from_review_yaml(data),
         )
 
     @classmethod
@@ -96,6 +99,8 @@ class ReviewPolicy:
         if "summary_cluster_depth_overrides" in data:
             policy.summary_cluster_depth_overrides = dict(
                 data["summary_cluster_depth_overrides"] or {})
+        if "context_limits" in data:
+            policy.context_limits = ContextLimits.from_review_yaml(data)
         return policy
 
     def category_enabled(self, category: str) -> bool:
