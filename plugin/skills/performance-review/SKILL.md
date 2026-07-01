@@ -8,7 +8,10 @@ description: Review code changes only for performance and efficiency risks (N+1 
 <!-- include: _common/dimension-scope.md -->
 
 <!-- include: _common/tool-usage.md -->
-Use the PR-session tools above.
+<!-- include: _common/reviewer-grounding.md -->
+In `/reviewer_review-pr` use the PR-session tools above. Standalone (no PR session): use
+the session-less tools per the reviewer-grounding block when reviewer is connected and the
+index is fresh; otherwise fall back to grep/Read.
 
 ## Goal
 

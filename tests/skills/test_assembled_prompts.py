@@ -63,12 +63,16 @@ def test_performance_assembled_schema_and_goal():
     assert '"category": "performance"' in p
     assert '"confidence": 0.0' in p                 # из findings-schema
     assert "N+1" in p                               # perf-специфичный хвост остался
+    assert "Reviewer grounding (optional, fail-open)" in p   # reviewer-grounding подставлен
+    assert "search_codebase" in p                   # session-less тул для standalone
 
 
 def test_maintainability_assembled_schema_and_whatnot():
     m = assemble("maintainability-review/SKILL.md")
     assert '"confidence": 0.0' in m                 # из findings-schema
     assert "What Not To Flag" in m                  # maint-специфичный хвост остался
+    assert "Reviewer grounding (optional, fail-open)" in m   # reviewer-grounding подставлен
+    assert "search_codebase" in m                   # session-less тул для standalone
 
 
 def test_ask_assembled_has_sessionless_tools_and_branch():
