@@ -121,14 +121,17 @@ brief to `superpowers:brainstorming` (which leads to writing-plans → subagent-
      deduplicates them by key before the cap.
    - `search_codebase("<task description>")` → relevant existing code (files/symbols to touch or
      mimic).
+   - **Lazy expansion (no user prompt).** If a tool's output ends with a cliff/rails note reporting a
+     high-scoring tail beyond the cut AND the task looks broad, you MAY re-call the tool once with a
+     higher ceiling (pass `top_k=<bigger>`), then merge. Do this silently — never pause to ask the user.
    - **Test exemplars (optional — when `search_codebase` surfaced concrete symbols).** One extra
      `search_codebase("<how the task's area is tested — fixtures/mocks for the feature>", include_tests=True)`
      on the same `branch` — a targeted *test* query (how the area is tested), not the code query with
      the flag flipped, so it surfaces the testing pattern the TDD hand-off should mimic. Snippets are
-     line-numbered like the code retrieval → cite `path:line` directly. Apply the same Step 4 rank-based
-     filter (≤3 test files/symbols). Fail-open: no tests surfaced / a `(ничего не найдено)` note / an
-     error → omit the `## Test exemplars` brief section; the default code retrieval
-     (`include_tests=False`) is unchanged.
+     line-numbered like the code retrieval → cite `path:line` directly. Apply the same Step 4 adaptive
+     relevance filter (every directly-informing test file/symbol, no fixed cap). Fail-open: no tests
+     surfaced / a `(ничего не найдено)` note / an error → omit the `## Test exemplars` brief section;
+     the default code retrieval (`include_tests=False`) is unchanged.
    - **Deepen via the code graph (optional — when `search_codebase` surfaced concrete symbols).**
      `search_codebase` chunks are headed by `path#fqn (path:start-end)`; feed those `node_id`s to the
      session-less graph tools to sharpen the brief. The default `search_codebase` (code retrieval,
@@ -159,17 +162,19 @@ Use the session-less tools above.
 4. **Distill the solution brief.** Write a structured markdown brief whose only job is to seed
    `brainstorming` — compact, scannable, nothing the implementer won't act on.
 
-   **Relevance filter (rank-based, no absolute score cutoff).** `search_tasks` returns a per-result
-   `score`, but it is an RRF rank score (`SUM(1/(60+rank))`, ≈0.016–0.033) — NOT comparable across
-   queries, so never gate on an absolute value. `search_codebase` exposes no score at all, only
-   result order. Therefore:
+   **Relevance filter (adaptive — retrieval is already bounded server-side).** Server-side cliff
+   (`search_codebase`) and rails (`search_tasks`) already cap retrieval adaptively per task — and
+   `search_tasks`'s `score` is an RRF rank score (`SUM(1/(60+rank))`, ≈0.016–0.033), NOT comparable
+   across queries, so never gate on an absolute value (`search_codebase` exposes no score at all,
+   only result order). So DO NOT re-truncate to a fixed number and DO NOT pad artificially: include
+   EVERY returned item that *directly informs* the implementation. The keep/drop judgment stays
+   binary (directly-informs), and end each section with `(dropped N: reason)`.
    - **Order** candidates by result rank (tasks: rank/score; code: rank).
-   - **Caps (ceilings — take fewer if that's enough):** ≤3 related tasks · ≤5 files/symbols in
-     Relevant code · ≤3 test files/symbols in Test exemplars. Expand the graph
-     (`related_symbols`/`callers`/`definition`) only for the few symbols central to the task.
+   - **No fixed ceilings.** Take exactly the directly-informing items the tools returned. Related
+     tasks are bounded by the search rails; the brief lists those that directly inform. Expand the
+     graph (`related_symbols`/`callers`/`definition`) only for the few symbols central to the task.
    - **Keep/drop is a binary judgment** — include an item ONLY if it *directly informs the
-     implementation*. Rank/score only sets review order and breaks ties at the cap; it is not a
-     numeric gate.
+     implementation*. Rank/score only sets review order; it is not a numeric gate.
      - ✅ INCLUDE: a symbol/file you will edit or mimic; a task whose PR shows a concrete pattern to
        follow; a constraint that narrows the approach.
      - ❌ EXCLUDE: a task in the same area but a different mechanism; a file the search surfaced that
@@ -178,7 +183,7 @@ Use the session-less tools above.
      `(dropped N: reason)`.
    - **Dedup related sources by key (linked ∪ similar).** «Related work» draws from
      `get_task_context` (linked) and `search_tasks` (similar). Deduplicate by canonical task key
-     BEFORE the ≤3 cap, matching `PRI-N`↔`ID-N` via `aliases` (one task, two codes). On collision
+     before inclusion, matching `PRI-N`↔`ID-N` via `aliases` (one task, two codes). On collision
      keep the linked entry (richer — carries PR/graph context) and drop the similar duplicate, so a
      task never appears twice in the brief.
 
@@ -187,10 +192,10 @@ Use the session-less tools above.
    ```
    # Brief — <KEY> <title>
    ## Task — key/title/requirements/criteria (or the user's formulation in board-less mode). ≤~6 lines.
-   ## Related work — ≤3 tasks, one line each: «KEY — what to reuse / follow». (dropped N: …)
+   ## Related work — every directly-informing task, one line each: «KEY — what to reuse / follow». (dropped N: …)
    ## Subsystems — ≤8 relevant subsystems, one line: «cluster_key — gist of summary». (omit if prior empty)
-   ## Relevant code — ≤5 files/symbols, one line: «path:line — why» (+ blast radius from the graph). (dropped N: …)
-   ## Test exemplars — ≤3 test files/symbols, one line: «path:line — what's mocked / which pattern». (omit if none; dropped N: …)
+   ## Relevant code — every directly-informing file/symbol, one line: «path:line — why» (+ blast radius from the graph). (dropped N: …)
+   ## Test exemplars — every directly-informing test file/symbol, one line: «path:line — what's mocked / which pattern». (omit if none; dropped N: …)
    ## Constraints / open questions — terse bullets: limits, unknowns, context gaps (e.g. "board unavailable", "task corpus empty").
    ```
 
@@ -204,7 +209,19 @@ Use the session-less tools above.
      matching `key_pattern` (e.g. `PRI-163`, NOT the normalized store key `ID-163`) and `slug` is a
      short ASCII kebab of the title. **Board-less** (no key): `YYYY-MM-DD-<slug>.md` (slug from the
      user's formulation). `YYYY-MM-DD` = today's date.
-   - **Idempotency:** before writing, glob `docs/superpowers/briefs/<date>-<KEY>-*.md` and overwrite
+   - **Check for existing artifacts (warn, don't block).** Before writing the brief, scan the
+     three artifact directories for files matching this task key (case-insensitive):
+     - `docs/superpowers/briefs/*<KEY>*`
+     - `docs/superpowers/specs/*<key>*-design.md`
+     - `docs/superpowers/plans/*<key>*.md`
+     Use case-insensitive matching (e.g., try both `PRI-176` and `pri-176` globs, or lowercase
+     file names before matching). If any artifacts are found, warn the user (in Russian):
+     > "⚠️ Похожие артефакты уже существуют: briefs/PRI-176-..., specs/pri-176-...-design.md,
+     > plans/pri-176-....md. Продолжить? [Y/n]"
+     Do **not** block — continue unless the user explicitly says no. If the user continues (or
+     auto-permission mode leaves no choice), list the found artifacts under `## Constraints` with
+     the tag `[existing_artifacts]`.
+   - **Idempotency:** before writing, glob `docs/superpowers/briefs/*-<KEY>-*.md` and overwrite
      the match if any (slug drift between runs must not spawn duplicates); board-less → exact name.
    - **Content:** the distilled brief verbatim (the `# Brief — <KEY> <title>` skeleton); add the
      task `url` on the line below the heading when available, for grep-by-key.

@@ -202,6 +202,32 @@ def test_fetch_nodes_at_returns_only_given_ref():
 
 
 @pytest.mark.integration
+def test_hybrid_search_surfaces_ann_distance_and_bm25_hit():
+    """hybrid_search заполняет ann_distance/bm25_hit (PRI-202) для каждого результата."""
+    s = Settings()
+    store = ChunkStore(s.pg_dsn)
+    store.init_schema()
+    store.clear()
+    d = s.embedding_dim
+    vec = [0.0] * d
+    vec[0] = 1.0
+    store.upsert([
+        _row("base", "a.py", "f_login", "def f_login(): login token verify", vec),
+        _row("base", "b.py", "f_other", "def f_other(): pass", [0.0] * d),
+    ])
+    hits = store.hybrid_search(
+        "a/x", query_text="login token verify", query_embedding=vec,
+        overlay_ref="pr:0", changed_paths=[], top_k=10, candidates=10,
+    )
+    assert hits
+    for h in hits:
+        assert (h.ann_distance is None) or isinstance(h.ann_distance, float)
+        assert isinstance(h.bm25_hit, bool)
+    # хотя бы один лексически совпавший чанк помечен bm25_hit
+    assert any(h.bm25_hit for h in hits)
+
+
+@pytest.mark.integration
 def test_two_branch_isolation():
     """hybrid_search с разными base_ref изолирует ветки одного репо."""
     s = Settings()

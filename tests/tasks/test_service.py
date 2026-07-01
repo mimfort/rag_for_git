@@ -48,7 +48,7 @@ class _FakeStore:
 
 
 class _FakeGraph:
-    def __init__(self, context=None, raise_on=(), pr_keys=(), keys=()):
+    def __init__(self, context=None, raise_on=(), pr_keys=(), keys=(), count=0):
         self.tasks = []
         self.links = []
         self.pr_links = []
@@ -57,9 +57,11 @@ class _FakeGraph:
         self._raise_on = set(raise_on)
         self._pr_keys = set(pr_keys)
         self._keys = set(keys)
+        self._count = count
         self.task_context_project = "unset"
         self.list_keys_project = "unset"
         self.keys_with_prs_project = "unset"
+        self.count_project = "unset"
 
     def upsert_task(self, key, aliases, title, status, url, project=""):
         if "upsert_task" in self._raise_on:
@@ -96,6 +98,12 @@ class _FakeGraph:
             raise RuntimeError("neo4j down")
         self.deleted_tasks.extend(keys)
         return len(list(keys))
+
+    def count(self, project=""):
+        if "count" in self._raise_on:
+            raise RuntimeError("neo4j down")
+        self.count_project = project
+        return self._count
 
 
 class _FakeEmbedder:
@@ -498,3 +506,19 @@ def test_get_task_returns_attachments():
     svc = TaskService(_FakeStore(rows=[row]), _FakeGraph(), _FakeEmbedder())
     out = svc.get_task("ID-2")
     assert out["attachments"] == atts
+
+
+def test_count_tasks_delegates_scoped():
+    store, graph, emb = _FakeStore(), _FakeGraph(count=7), _FakeEmbedder()
+    assert TaskService(store, graph, emb).count_tasks("PRI") == 7
+    assert graph.count_project == "PRI"
+
+
+def test_count_tasks_zero_when_no_graph():
+    store, emb = _FakeStore(), _FakeEmbedder()
+    assert TaskService(store, None, emb).count_tasks("PRI") == 0
+
+
+def test_count_tasks_fail_soft_on_graph_error():
+    store, graph, emb = _FakeStore(), _FakeGraph(raise_on=("count",)), _FakeEmbedder()
+    assert TaskService(store, graph, emb).count_tasks() == 0

@@ -107,3 +107,11 @@ def test_blank_text_renders_header_only():
                            store=BlankStore(), repo="a/b", branch="main",
                            overlay_ref=None, changed_paths=[], empty_msg="x")
     assert out == "// a.py#f (a.py:7) [CALLS]"
+
+
+def test_format_neighbors_respects_cap_param():
+    neighbors = [{"id": f"a.py#f{i}", "rel": "CALLS"} for i in range(10)]
+    out = format_neighbors(neighbors, store=None, repo="a/x", branch="dev",
+                           overlay_ref="__none__", changed_paths=[], empty_msg="—", cap=3)
+    assert out.count("// ") == 3
+    assert "(…ещё 7, усечено)" in out

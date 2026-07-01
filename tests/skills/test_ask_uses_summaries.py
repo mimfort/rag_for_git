@@ -48,3 +48,10 @@ def test_solve_task_marks_summary_prior_only():
     # а не из текста summary (зеркало ask/SKILL.md). Критерий приёмки PRI-161.
     text = SOLVE.read_text(encoding="utf-8")
     assert "never from the summary text" in text
+
+
+def test_ask_lazy_expansion_present():
+    """PRI-202: ленивый перевызов search_codebase с большим top_k под cliff/rails-хвост."""
+    text = ASK.read_text(encoding="utf-8")
+    assert "Lazy expansion (no user prompt)" in text  # шаг присутствует, без интеррапта
+    assert "top_k=" in text                           # перевызов с большим потолком

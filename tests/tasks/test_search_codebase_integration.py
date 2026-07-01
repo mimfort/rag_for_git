@@ -46,7 +46,7 @@ def test_search_codebase_finds_base_chunk():
             text=text, embedding=emb.embed_documents([text])[0])])
 
         r = Retriever(store, graph=None, embedder=emb, reranker=None, max_context_chars=8000)
-        ctx = r.search_base("t/x", _MARKER, top_k=5).as_context()
+        ctx = r.search_base("t/x", _MARKER, ceiling_override=5).as_context()
         assert f"{_TEST_PATH}#logout" in ctx
     finally:
         store.delete_paths("t/x", "base", [_TEST_PATH])
