@@ -163,6 +163,17 @@ class TaskGraph:
                 "MATCH (t:Task) RETURN t.key AS key")
         return {r["key"] for r in records}
 
+    def count(self, project: str = "") -> int:
+        """Число :Task проекта (синкнутые; стабы без project не в счёт). project='' → все.
+
+        Read-only COUNT — не ходит на доску. Единый запрос с OR-скоупом: при project=''
+        условие вырождается во «все узлы» (PRI-170)."""
+        records, _, _ = self._driver.execute_query(
+            "MATCH (t:Task) WHERE ($project = '' OR t.project = $project) "
+            "RETURN count(t) AS n",
+            project=project)
+        return int(records[0]["n"]) if records else 0
+
     def delete_tasks(self, keys: list[str]) -> int:
         """Удалить :Task-узлы с рёбрами DETACH DELETE. :PR/:Symbol не трогает."""
         if not keys:

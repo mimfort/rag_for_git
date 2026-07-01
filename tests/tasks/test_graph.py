@@ -163,6 +163,27 @@ def test_keys_with_prs_scoped_by_project():
     assert "t.project = $project" in query
 
 
+def test_count_scoped_by_project():
+    d = _FakeDriver(records=[{"n": 5}])
+    n = TaskGraph(d).count(project="PRI")
+    assert n == 5
+    query, params = d.calls[0]
+    assert params["project"] == "PRI"
+    assert "t.project = $project" in query
+    assert "count(t)" in query
+
+
+def test_count_all_when_no_project():
+    d = _FakeDriver(records=[{"n": 12}])
+    assert TaskGraph(d).count() == 12
+    _query, params = d.calls[0]
+    assert params["project"] == ""
+
+
+def test_count_zero_when_empty():
+    assert TaskGraph(_FakeDriver(records=[])).count() == 0
+
+
 @pytest.mark.integration
 def test_link_pr_scopes_touched_symbol_by_repo(task_graph, graph_store):
     """TOUCHES создаёт :Symbol с repo=pr.repo — изоляция по репозиторию работает."""

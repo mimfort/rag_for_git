@@ -88,7 +88,7 @@ def _make_mcp_service(number: int = 7) -> MCPReviewService:
 # ---------------------------------------------------------------------------
 
 def test_server_registers_all_tools() -> None:
-    """create_server регистрирует ровно 30 ожидаемых MCP-тулов."""
+    """create_server регистрирует ровно 31 ожидаемых MCP-тулов."""
     from reviewer.entrypoints.mcp_server import create_server
 
     server = create_server(_make_mcp_service())
@@ -110,6 +110,7 @@ def test_server_registers_all_tools() -> None:
         "search_tasks",
         "get_task_context",
         "get_task",
+        "count_tasks",
         "get_board_config",
         "publish_review",
         "submit_findings",

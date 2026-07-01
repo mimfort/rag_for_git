@@ -187,3 +187,13 @@ def test_get_task_tool_forwards_key():
     server = create_server(svc)
     asyncio.run(server.call_tool("get_task", {"key": "PRI-1"}))
     svc.get_task.assert_called_once_with("PRI-1", project=None)
+
+
+def test_count_tasks_tool_forwards_project():
+    import asyncio
+
+    svc = _service()
+    svc.count_tasks.return_value = {"count": 42}
+    server = create_server(svc)
+    asyncio.run(server.call_tool("count_tasks", {"project": "PRI"}))
+    svc.count_tasks.assert_called_once_with(project="PRI")

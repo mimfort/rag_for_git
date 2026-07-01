@@ -16,7 +16,7 @@ log = logging.getLogger(__name__)
 
 
 def create_server(service: MCPReviewService) -> FastMCP:
-    """Создать и вернуть сконфигурированный FastMCP-сервер с 29 тулами.
+    """Создать и вернуть сконфигурированный FastMCP-сервер с 30 тулами.
 
     Все тулы — обычные def (sync), а не async: сервис не потокобезопасен
     и рассчитан на последовательное исполнение sync-тулов FastMCP в event loop.
@@ -135,6 +135,13 @@ def create_server(service: MCPReviewService) -> FastMCP:
         Returns null if the task is not in the store (caller falls back to the board).
         For linked tasks / PRs / touched code, use get_task_context instead."""
         return service.get_task(key, project=project)
+
+    @mcp.tool()
+    def count_tasks(project: str | None = None) -> dict:
+        """Count indexed :Task nodes in the task graph, scoped to a board project
+        (code prefix, e.g. PRI); empty/None = all projects. Read-only, no board call.
+        Returns {"count": int}; 0 when the graph is unavailable (caller falls back)."""
+        return service.count_tasks(project=project)
 
     @mcp.tool()
     def get_board_config() -> dict:
