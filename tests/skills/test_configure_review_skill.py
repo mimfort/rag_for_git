@@ -67,9 +67,23 @@ def test_skill_asks_before_writing_ignore():
     assert "never write it silently" in text       # ignore — суждение, спросить
 
 
-def test_skill_is_standalone_no_mcp():
+def test_skill_standalone_baseline_with_optional_count_tasks():
     text = SKILL.read_text(encoding="utf-8")
-    assert "no reviewer MCP" in text
+    assert "no reviewer MCP" in text                 # baseline остаётся автономным
+    assert "count_tasks" in text                     # ...кроме опционального замера доски
+    assert "falls back to asking" in text            # и явного фолбэка на вопрос
+
+
+def test_skill_recommends_context_limits_profiles():
+    text = SKILL.read_text(encoding="utf-8")
+    assert "context_limits" in text
+    for profile in ("tiny-util", "standard", "large / monorepo"):
+        assert profile in text, f"скилл не описывает профиль {profile}"
+
+
+def test_skill_context_limits_needs_no_rebuild():
+    text = SKILL.read_text(encoding="utf-8")
+    assert "no rebuild needed" in text
 
 
 def test_skill_suggests_rebuilds_without_running():
