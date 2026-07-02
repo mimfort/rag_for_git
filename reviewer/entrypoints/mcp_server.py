@@ -16,7 +16,7 @@ log = logging.getLogger(__name__)
 
 
 def create_server(service: MCPReviewService) -> FastMCP:
-    """Создать и вернуть сконфигурированный FastMCP-сервер с 32 тулами.
+    """Создать и вернуть сконфигурированный FastMCP-сервер с 33 тулами.
 
     Все тулы — обычные def (sync), а не async: сервис не потокобезопасен
     и рассчитан на последовательное исполнение sync-тулов FastMCP в event loop.
@@ -112,6 +112,18 @@ def create_server(service: MCPReviewService) -> FastMCP:
         Incremental via a per-(type,board) timestamp watermark; --limit disables purge
         and cursor advance. Returns a compact counts summary with by_board breakdown."""
         return service.sync_board(board, limit, purge_orphaned, keep_with_prs, board_type)
+
+    @mcp.tool()
+    def finish_task(key: str, pr_url: str, note: str | None = None,
+                    mark_done: bool = True, board_type: str | None = None,
+                    done_state: str | None = None) -> dict:
+        """Close a task on the board after its PR is created (server-side write):
+        idempotently append the PR link to the description and mark it done, so the
+        task's last-modified bumps and the next sync_board re-indexes the updated task.
+        board_type and done_state come from the repo's .review.yml (YouGile ignores
+        done_state — it has a boolean completed; YouTrack sets State via command,
+        default 'Fixed'). Credentials come from env; fail-soft."""
+        return service.finish_task(key, pr_url, note, mark_done, board_type, done_state)
 
     @mcp.tool()
     def search_tasks(query: str, top_k: int | None = None, project: str | None = None) -> str:

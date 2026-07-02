@@ -28,6 +28,7 @@ from reviewer.services.review_service import (
     PreparedReview,
     ReviewService,
 )
+from reviewer.tasks.boards import make_board_provider
 from reviewer.tasks.graph import PRRef
 from reviewer.tools.code_tools import ToolContext, make_tools
 from reviewer.tools.graph_format import format_neighbors
@@ -317,6 +318,38 @@ class MCPReviewService:
         except Exception as e:
             log.warning("sync_board: сбой синка", exc_info=True)
             return {"status": "error", "reason": f"{type(e).__name__}: {e}"}
+
+    def finish_task(self, key: str, pr_url: str, note: str | None = None,
+                    mark_done: bool = True, board_type: str | None = None,
+                    done_state: str | None = None) -> dict:
+        """Закрыть задачу на доске (server-side write): пометить done + дописать
+        PR-ссылку в описание. Резолвит провайдера по board_type (или единственному
+        настроенному), fail-soft. Креды из env; наружу не отдаются."""
+        types = self.settings.configured_board_types()
+        if board_type is None:
+            if len(types) == 1:
+                board_type = types[0]
+            else:
+                return {"status": "error",
+                        "reason": f"board_type required (configured: {types or 'none'})"}
+        if board_type not in types:
+            return {"status": "error",
+                    "reason": f"board '{board_type}' not configured (have: {types or 'none'})"}
+        provider = make_board_provider(self.settings, board_type)
+        if provider is None:
+            return {"status": "error", "reason": f"board '{board_type}' not configured"}
+        try:
+            result = provider.finish(key, pr_url, note=note, mark_done=mark_done,
+                                     done_state=done_state)
+        except Exception as e:  # fail-soft: PR уже создан, доска — вторичный эффект
+            log.warning("finish_task: сбой записи в доску", exc_info=True)
+            return {"status": "error", "reason": f"{type(e).__name__}: {e}"}
+        finally:
+            try:
+                provider.close()
+            except Exception:
+                pass
+        return {"status": "ok", "board_type": board_type, **result}
 
     def _resolve_repo_branch(self, repo: str, branch: str | None) -> tuple[str, str] | str:
         """Резолв (repo, ветка) для session-less тулов.
