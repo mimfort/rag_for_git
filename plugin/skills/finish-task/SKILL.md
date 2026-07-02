@@ -29,9 +29,13 @@ in Russian.
 3. **Resolve the PR URL.** `gh pr view --json url -q .url` (GitHub) or `glab mr view` (GitLab).
    If none is found, ask the user for the PR URL.
 
-4. **Offer + confirm.** Show what will be written — the PR link + "mark done" + any optional note —
-   and ask the user to **confirm** before writing. Ask whether they want to add an optional note
-   (details under the task). **Never write to the board silently.**
+4. **Offer + confirm.** Show what will be written — the PR link + the **resolved done target, named
+   explicitly** (not a generic "mark done"): for yougile «перенесу задачу в колонку „<done_column>“ +
+   отмечу completed» (or just «отмечу completed» when `done_column` is unset); for youtrack «выставлю
+   <status_field> = <done_state>» — plus any optional note. Ask the user to **confirm** before writing,
+   and whether they want to add an optional note (details under the task). **Never write to the board
+   silently** — the move / mark-done happens **only after explicit confirmation**, even when the values
+   are already set in `.review.yml`.
 
 5. **Write.** Call `finish_task(key=<key>, pr_url=<url>, note=<note or null>, board_type=<type>,
    done_state=<done_state or null>, status_field=<status_field or null>,

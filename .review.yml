@@ -11,7 +11,12 @@ task_board:
   key_pattern: 'PRI-\d+'              # коды задач проекта PRI (напр. PRI-4, PRI-170)
   url_template: 'https://ru.yougile.com/team/686c049c8af8/#{code}'  # {code} = проектный код PRI-N
   project: PRI                        # PRI-170: скоуп синка/выдачи задач этим проектом (префикс кода)
-  # done_state: Fixed                 # YouTrack: значение State для «выполнено» в finish-task (дефолт Fixed); YouGile игнорирует
+  # --- done-цель для finish-task (закрытие задачи после PR) ---
+  done_column: Готово                 # YouGile: колонка, куда finish-task переносит выполненную задачу (+ completed:true)
+  # Ключи ниже — только для YouTrack-досок; наша доска YouGile их игнорирует:
+  # status_field: State               # YouTrack: имя кастом-поля статуса, на котором построена доска (дефолт State;
+  #                                   #   действует И на чтение статуса при синке, И на команду finish — чинит доски на кастом-поле типа Stage)
+  # done_state: Fixed                 # YouTrack: целевое значение status_field для «выполнено» (дефолт Fixed)
 
 # --- Скилл solve-task ---
 

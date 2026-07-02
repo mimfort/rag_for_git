@@ -20,6 +20,7 @@ from reviewer.tasks.boards.base import RawTask, project_prefix
 log = logging.getLogger(__name__)
 
 _PAGE = 200
+_SAMPLE = 200  # число задач в выборке для fallback-агрегации значений полей статуса
 
 _FIELDS = (
     "idReadable,summary,description,updated,"
@@ -277,3 +278,90 @@ class YouTrackBoard:
                 "pr_link_added": pr_link_added,
                 "already_closed": not pr_link_added and not done_set,
                 "warnings": warnings}
+
+    def fetch_one(self, key: str) -> RawTask | None:
+        """Один RawTask по idReadable — write-through после finish.
+
+        GET /issues/{key} с богатым `fields` (_FIELDS) → _issue_to_raw. Имя поля
+        статуса — self._status_field (per-repo). fail-soft: сбой/пусто → None."""
+        try:
+            r = self._client.get(f"/issues/{quote(key, safe='')}",
+                                  params={"fields": _FIELDS})
+            r.raise_for_status()
+            issue = r.json()
+        except Exception:
+            log.warning("youtrack: fetch_one(%s) не удался", key, exc_info=True)
+            return None
+        if not issue:
+            return None
+        return _issue_to_raw(issue, self._status_field)
+
+    def list_done_targets(self, project: str | None) -> dict:
+        """Поля статуса + значения (read-only, fail-soft). Try admin customFields;
+        при недоступности — агрегация distinct значений из выборки задач проекта.
+        НИКОГДА не бросает."""
+        warnings: list[str] = []
+        try:
+            fields = self._admin_status_fields(project)
+            if fields:
+                return {"status_fields": fields, "source": "admin", "warnings": warnings}
+        except Exception:
+            log.warning("youtrack: admin customFields недоступны — fallback", exc_info=True)
+            warnings.append("admin customFields недоступны (нет прав?) — "
+                            "значения собраны из задач")
+        try:
+            fields = self._sampled_status_fields(project)
+        except Exception:
+            log.warning("youtrack: discovery полей из выборки не удался", exc_info=True)
+            warnings.append("не удалось собрать поля статуса из задач")
+            fields = []
+        return {"status_fields": fields, "source": "sample", "warnings": warnings}
+
+    def _admin_status_fields(self, project: str | None) -> list[dict]:
+        """Bundle-поля (state/enum) проекта из admin API + их значения. [] если project пуст
+        или проект не найден. Бросает при ошибке HTTP — вызывающий ловит и фолбэкает."""
+        if not project:
+            return []
+        pr = self._client.get("/admin/projects",
+                              params={"fields": "id,shortName", "query": project})
+        pr.raise_for_status()
+        pid = next((p["id"] for p in (pr.json() or [])
+                    if p.get("shortName") == project), None)
+        if not pid:
+            return []
+        r = self._client.get(
+            f"/admin/projects/{quote(str(pid), safe='')}/customFields",
+            params={"fields": "field(name),$type,bundle(values(name,$type))"})
+        r.raise_for_status()
+        out: list[dict] = []
+        for pcf in (r.json() or []):
+            bundle = pcf.get("bundle") or {}
+            values = [v.get("name") for v in (bundle.get("values") or []) if v.get("name")]
+            if not values:
+                continue  # не bundle-поле — не кандидат статуса
+            name = (pcf.get("field") or {}).get("name")
+            if name:
+                out.append({"field": name, "values": values, "$type": pcf.get("$type")})
+        return out
+
+    def _sampled_status_fields(self, project: str | None) -> list[dict]:
+        """Distinct значения single-value кастом-полей из выборки задач проекта.
+        Бросает при ошибке HTTP — вызывающий ловит."""
+        params: dict = {"fields": "customFields(name,value(name),$type)", "$top": _SAMPLE}
+        if project:
+            params["query"] = f"project: {project}"
+        r = self._client.get("/issues", params=params)
+        r.raise_for_status()
+        agg: dict[str, dict] = {}  # field name -> {"values": [...], "$type": ...}
+        for issue in (r.json() or []):
+            for cf in issue.get("customFields") or []:
+                name = cf.get("name")
+                val = cf.get("value")
+                vname = val.get("name") if isinstance(val, dict) else None
+                if not name or not vname:
+                    continue
+                slot = agg.setdefault(name, {"values": [], "$type": cf.get("$type")})
+                if vname not in slot["values"]:
+                    slot["values"].append(vname)
+        return [{"field": n, "values": s["values"], "$type": s["$type"]}
+                for n, s in agg.items()]

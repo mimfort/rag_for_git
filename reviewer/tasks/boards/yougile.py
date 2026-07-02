@@ -248,6 +248,40 @@ class YougileBoard:
         return normalize_yougile(raw, self._key_pattern, self._url_template,
                                  subtask_titles, attachments=attachments)
 
+    def fetch_one(self, key: str) -> RawTask | None:
+        """Один RawTask по ключу (проектный/компанийный код) — write-through после finish.
+
+        GET /tasks/{key} (тот же вызов, что и в finish); title колонки резолвится
+        best-effort через GET /columns/{columnId}. fail-soft: сбой/404 → None."""
+        try:
+            r = self._client.get(f"/tasks/{quote(key, safe='')}")
+            r.raise_for_status()
+            t = r.json()
+        except Exception:
+            log.warning("yougile: fetch_one(%s) не удался", key, exc_info=True)
+            return None
+        status = None
+        col_id = t.get("columnId")
+        if col_id:
+            try:
+                rc = self._client.get(f"/columns/{quote(str(col_id), safe='')}")
+                rc.raise_for_status()
+                status = rc.json().get("title")
+            except Exception:
+                log.warning("yougile: колонка задачи %s недоступна — status=None",
+                            key, exc_info=True)
+        return RawTask(
+            key=t.get("idTaskCommon") or t.get("id") or key,
+            project_code=t.get("idTaskProject", "") or "",
+            title=t.get("title", "") or "",
+            description=t.get("description", "") or "",
+            status=status,
+            subtask_ids=list(t.get("subtasks", []) or []),
+            timestamp=int(t.get("timestamp", 0) or 0),
+            board_id=t.get("id") or key,
+            completed=bool(t.get("completed", False)),
+        )
+
     def _resolve_column_id(self, current_col_id: str, title: str) -> str | None:
         """id колонки с заданным title на той же доске, что и current_col_id.
 
@@ -318,3 +352,47 @@ class YougileBoard:
         return {"key": key, "board_id": uuid, "done_set": done_set,
                 "pr_link_added": pr_link_added, "column_moved": column_moved,
                 "already_closed": not payload, "warnings": warnings}
+
+    def list_done_targets(self, project: str | None) -> dict:
+        """Колонки досок проекта (read-only, fail-soft). project — код-префикс задач
+        (напр. PRI): доска включается, если на ней есть хоть одна задача проекта. Пустой
+        project → все доски всех проектов. НИКОГДА не бросает."""
+        warnings: list[str] = []
+        boards: list[dict] = []           # [{board_id, board_title, columns:[{id,title}]}]
+        hosts: set[str] = set()           # board_id, где встречена задача проекта
+        scanned = 0
+        _CAP = 500                        # предохранитель на число просканированных задач
+        try:
+            for proj in self._get_all("/projects"):
+                for brd in self._get_all("/boards", {"projectId": proj["id"]}):
+                    bid = brd["id"]
+                    cols = [{"id": c["id"], "title": c.get("title", "")}
+                            for c in self._get_all("/columns", {"boardId": bid})]
+                    boards.append({"board_id": bid, "board_title": brd.get("title", ""),
+                                   "columns": cols})
+                    if not project:
+                        continue
+                    for c in cols:
+                        if scanned >= _CAP:
+                            break
+                        hit = False
+                        for t in self._get_all("/tasks", {"columnId": c["id"]}):
+                            scanned += 1
+                            if project_prefix(t.get("idTaskProject", "")) == project:
+                                hit = True
+                                break
+                            if scanned >= _CAP:
+                                break
+                        if hit:
+                            hosts.add(bid)
+                            break
+        except Exception:
+            log.warning("yougile: discovery колонок не удался", exc_info=True)
+            warnings.append("не удалось перечислить колонки доски")
+        kept = boards if not project else [b for b in boards if b["board_id"] in hosts]
+        columns = [{"title": col["title"], "id": col["id"],
+                    "board_id": b["board_id"], "board_title": b["board_title"]}
+                   for b in kept for col in b["columns"]]
+        if project and not hosts and not warnings:
+            warnings.append(f"колонки для проекта {project!r} не найдены")
+        return {"columns": columns, "warnings": warnings}
