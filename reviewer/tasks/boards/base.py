@@ -68,3 +68,13 @@ class TaskBoardProvider(Protocol):
         {key, board_id, done_set, pr_link_added, already_closed, warnings};
         YouGile дополнительно кладёт `column_moved: bool` (доска-специфичное поле)."""
         ...
+
+    def list_done_targets(self, project: str | None) -> dict:
+        """Кандидаты done-цели доски (read-only, fail-soft, НИКОГДА не бросает).
+
+        YouGile → {"columns": [{"title", "id", "board_id", "board_title"}], "warnings": [...]}
+        YouTrack → {"status_fields": [{"field", "values": [...], "$type"?}],
+                    "source": "admin"|"sample", "warnings": [...]}
+
+        Ошибка/нет прав/сеть → пустой список + warnings (скилл откатывается на ручной ввод)."""
+        ...

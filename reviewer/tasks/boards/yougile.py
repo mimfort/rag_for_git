@@ -318,3 +318,47 @@ class YougileBoard:
         return {"key": key, "board_id": uuid, "done_set": done_set,
                 "pr_link_added": pr_link_added, "column_moved": column_moved,
                 "already_closed": not payload, "warnings": warnings}
+
+    def list_done_targets(self, project: str | None) -> dict:
+        """Колонки досок проекта (read-only, fail-soft). project — код-префикс задач
+        (напр. PRI): доска включается, если на ней есть хоть одна задача проекта. Пустой
+        project → все доски всех проектов. НИКОГДА не бросает."""
+        warnings: list[str] = []
+        boards: list[dict] = []           # [{board_id, board_title, columns:[{id,title}]}]
+        hosts: set[str] = set()           # board_id, где встречена задача проекта
+        scanned = 0
+        _CAP = 500                        # предохранитель на число просканированных задач
+        try:
+            for proj in self._get_all("/projects"):
+                for brd in self._get_all("/boards", {"projectId": proj["id"]}):
+                    bid = brd["id"]
+                    cols = [{"id": c["id"], "title": c.get("title", "")}
+                            for c in self._get_all("/columns", {"boardId": bid})]
+                    boards.append({"board_id": bid, "board_title": brd.get("title", ""),
+                                   "columns": cols})
+                    if not project:
+                        continue
+                    for c in cols:
+                        if scanned >= _CAP:
+                            break
+                        hit = False
+                        for t in self._get_all("/tasks", {"columnId": c["id"]}):
+                            scanned += 1
+                            if project_prefix(t.get("idTaskProject", "")) == project:
+                                hit = True
+                                break
+                            if scanned >= _CAP:
+                                break
+                        if hit:
+                            hosts.add(bid)
+                            break
+        except Exception:
+            log.warning("yougile: discovery колонок не удался", exc_info=True)
+            warnings.append("не удалось перечислить колонки доски")
+        kept = boards if not project else [b for b in boards if b["board_id"] in hosts]
+        columns = [{"title": col["title"], "id": col["id"],
+                    "board_id": b["board_id"], "board_title": b["board_title"]}
+                   for b in kept for col in b["columns"]]
+        if project and not hosts and not warnings:
+            warnings.append(f"колонки для проекта {project!r} не найдены")
+        return {"columns": columns, "warnings": warnings}
