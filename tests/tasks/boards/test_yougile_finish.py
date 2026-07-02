@@ -90,3 +90,46 @@ def test_yougile_finish_encodes_key_in_path():
                                                  "completed": False})})
     b.finish("../users", PR)
     assert any(c[1] == "/tasks/..%2Fusers" for c in b._client.calls if c[0] == "GET")
+
+
+def test_yougile_finish_moves_to_done_column():
+    # задача в колонке col-cur (доска brd-1); done-колонка «Готово» = col-done.
+    routes = {
+        "/tasks/PRI-10": _Resp(200, {"id": "u1", "description": "", "completed": False,
+                                     "columnId": "col-cur"}),
+        "/columns/col-cur": _Resp(200, {"boardId": "brd-1"}),
+        "/columns": _Resp(200, {"content": [
+            {"id": "col-cur", "title": "В работе"},
+            {"id": "col-done", "title": "Готово"}]}),
+    }
+    b = _board(routes)
+    res = b.finish("PRI-10", PR, done_column="Готово")
+    assert res["column_moved"] is True
+    put = next(c for c in b._client.calls if c[0] == "PUT")
+    assert put[2]["columnId"] == "col-done"
+    assert put[2]["completed"] is True
+
+
+def test_yougile_finish_column_not_found_failsoft():
+    routes = {
+        "/tasks/PRI-10": _Resp(200, {"id": "u1", "description": "", "completed": False,
+                                     "columnId": "col-cur"}),
+        "/columns/col-cur": _Resp(200, {"boardId": "brd-1"}),
+        "/columns": _Resp(200, {"content": [{"id": "col-cur", "title": "В работе"}]}),
+    }
+    b = _board(routes)
+    res = b.finish("PRI-10", PR, done_column="Нет такой")
+    assert res["column_moved"] is False
+    assert res["warnings"]                 # предупреждение о ненайденной колонке
+    assert res["done_set"] is True         # completed всё равно выставлен
+    put = next(c for c in b._client.calls if c[0] == "PUT")
+    assert "columnId" not in put[2]
+
+
+def test_yougile_finish_no_done_column_unchanged():
+    routes = {"/tasks/PRI-10": _Resp(200, {"id": "u1", "description": "",
+                                           "completed": False, "columnId": "col-cur"})}
+    b = _board(routes)
+    res = b.finish("PRI-10", PR)  # done_column не задан
+    assert res["column_moved"] is False
+    assert not any(c[1] == "/columns/col-cur" for c in b._client.calls)  # резолва нет

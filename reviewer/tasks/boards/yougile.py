@@ -248,22 +248,43 @@ class YougileBoard:
         return normalize_yougile(raw, self._key_pattern, self._url_template,
                                  subtask_titles, attachments=attachments)
 
-    def finish(self, key: str, pr_url: str, *, note: str | None = None,
-               mark_done: bool = True, done_state: str | None = None) -> dict:
-        """Закрыть задачу YouGile: completed:true + PR-ссылка в описание (идемпотентно).
+    def _resolve_column_id(self, current_col_id: str, title: str) -> str | None:
+        """id колонки с заданным title на той же доске, что и current_col_id.
 
-        GET /tasks/{key} резолвит проектный/компанийный код в объект (+ uuid). PUT
-        обновляет задачу — двигает её timestamp (watermark синка). done_state не
-        применим (у YouGile булев completed).
-        """
+        GET /columns/{cur} → boardId; GET /columns?boardId=… → match по title.
+        fail-soft: сетевой сбой/не найдено → None (задачу не двигаем)."""
+        try:
+            r = self._client.get(f"/columns/{quote(str(current_col_id), safe='')}")
+            r.raise_for_status()
+            board_id = r.json().get("boardId")
+            if not board_id:
+                return None
+            for col in self._get_all("/columns", {"boardId": board_id}):
+                if col.get("title") == title:
+                    return col.get("id")
+        except Exception:
+            log.warning("yougile: резолв колонки '%s' не удался", title, exc_info=True)
+        return None
+
+    def finish(self, key: str, pr_url: str, *, note: str | None = None,
+               mark_done: bool = True, done_state: str | None = None,
+               done_column: str | None = None) -> dict:
+        """Закрыть задачу YouGile: completed:true + PR-ссылка в описание (идемпотентно)
+        + опциональный перенос в done-колонку (done_column).
+
+        GET /tasks/{key} резолвит проектный/компанийный код в объект (+ uuid, columnId).
+        PUT обновляет задачу — двигает её timestamp (watermark синка). done_state не
+        применим (у YouGile булев completed)."""
         r = self._client.get(f"/tasks/{quote(key, safe='')}")
         r.raise_for_status()
         task = r.json()
         uuid = task.get("id") or key
         desc = task.get("description", "") or ""
         completed = bool(task.get("completed", False))
+        cur_col = task.get("columnId")
 
         payload: dict = {}
+        warnings: list[str] = []
         pr_link_added = False
         # PR-ссылка и note уходят в HTML-описание доски — экранируем во избежание
         # HTML/XSS-инъекции (note приходит от пользователя). Idempotency-проверка
@@ -275,6 +296,16 @@ class YougileBoard:
                 block += f"\n<div>{html.escape(note)}</div>"
             payload["description"] = desc + block
             pr_link_added = True
+
+        column_moved = False
+        if done_column and cur_col:
+            target = self._resolve_column_id(cur_col, done_column)
+            if target is None:
+                warnings.append(f"колонка '{done_column}' не найдена — задача не перенесена")
+            elif target != cur_col:
+                payload["columnId"] = target
+                column_moved = True
+
         done_set = False
         if mark_done and not completed:
             payload["completed"] = True
@@ -284,5 +315,5 @@ class YougileBoard:
             rr = self._client.put(f"/tasks/{quote(str(uuid), safe='')}", json=payload)
             rr.raise_for_status()
         return {"key": key, "board_id": uuid, "done_set": done_set,
-                "pr_link_added": pr_link_added, "already_closed": not payload,
-                "warnings": []}
+                "pr_link_added": pr_link_added, "column_moved": column_moved,
+                "already_closed": not payload, "warnings": warnings}
