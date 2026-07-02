@@ -22,16 +22,26 @@ class FakeProvider:
                 "description": raw.description, "criteria": [], "status": raw.status,
                 "url": None, "links": []}
 
+    def normalize_meta(self, raw):
+        return {"key": raw.key, "aliases": [raw.project_code], "title": raw.title,
+                "status": raw.status, "url": None,
+                "project": raw.project_code.split("-")[0]}
+
 
 class FakeTaskService:
     def __init__(self):
         self.indexed = []
         self.purged_with = None
+        self.meta_refreshed = []
 
     def index_batch(self, tasks):
         self.indexed.append([t["key"] for t in tasks])
         return [{"key": t["key"], "embedded": True, "links_upserted": 0,
                  "prs_linked": 0, "warnings": []} for t in tasks]
+
+    def refresh_meta_batch(self, metas):
+        self.meta_refreshed.append([m["key"] for m in metas])
+        return {"meta_refreshed": len(metas), "warnings": []}
 
     def purge_orphaned_tasks(self, active_keys, *, keep_with_prs=True, project=None):
         self.purged_with = (sorted(active_keys), keep_with_prs, project)
@@ -64,6 +74,8 @@ def test_first_sync_indexes_all_and_advances_cursor():
     assert summary["embedded"] == 2
     assert summary["cursor_advanced"] is True
     assert meta.store[("", "tasks:fake:*")] == "200"
+    assert summary["meta_refreshed"] == 0        # все changed, unchanged нет
+    assert ts.meta_refreshed == []
 
 
 def test_watermark_skips_unchanged():
@@ -74,6 +86,8 @@ def test_watermark_skips_unchanged():
     assert ts.indexed == [["ID-2"]]
     assert summary["changed"] == 1 and summary["unchanged"] == 1
     assert meta.store[("", "tasks:fake:*")] == "200"
+    assert summary["meta_refreshed"] == 1        # ID-1 (ниже курсора) meta-refreshнут
+    assert ts.meta_refreshed == [["ID-1"]]
 
 
 def test_no_changes_does_not_advance_cursor():
@@ -84,6 +98,9 @@ def test_no_changes_does_not_advance_cursor():
     assert ts.indexed == []
     assert summary["changed"] == 0 and summary["unchanged"] == 2
     assert summary["cursor_advanced"] is False
+    assert summary["meta_refreshed"] == 2        # обе задачи ниже курсора
+    assert ts.meta_refreshed == [["ID-1", "ID-2"]]
+    assert summary["cursor_advanced"] is False   # meta-refresh курсор НЕ двигает
 
 
 def test_purge_uses_full_active_keys():
@@ -209,3 +226,12 @@ def test_sync_run_resets_youtrack_status_field():
     assert yt._status_field == "Stage"
     svc.run(board_type="youtrack")           # без status_field → сброс к State
     assert yt._status_field == "State"
+
+
+def test_by_board_includes_meta_refreshed():
+    prov = FakeProvider([_raw("ID-1", 100), _raw("ID-2", 200)], board_type="yougile")
+    meta = FakeMeta({("", "tasks:yougile:*"): "150"})   # ID-1 ниже курсора
+    ts = FakeTaskService()
+    result = SyncService([prov], ts, meta).run()
+    assert result["meta_refreshed"] == 1
+    assert result["by_board"][0]["meta_refreshed"] == 1
