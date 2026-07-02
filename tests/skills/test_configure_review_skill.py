@@ -107,3 +107,17 @@ def test_skill_asks_for_project_scope():
     assert "project" in text
     # предупреждение про пустой project (тянет все проекты)
     assert "все проект" in text.lower() or "all project" in text.lower()
+
+
+def test_skill_uses_server_side_done_target_discovery():
+    text = SKILL.read_text(encoding="utf-8")
+    assert "get_board_targets" in text            # server-side discovery тул
+    assert "pick-list" in text                    # предъявляет список кандидатов
+    # больше не зависит от клиентского yougile-MCP
+    assert "get_columns" not in text
+
+
+def test_skill_done_target_discovery_falls_back_to_asking():
+    text = SKILL.read_text(encoding="utf-8")
+    # тул отсутствует/пусто/ошибка → спросить пользователя (fail-open)
+    assert "fall back to asking" in text

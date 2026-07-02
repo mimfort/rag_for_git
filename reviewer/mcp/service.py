@@ -342,9 +342,21 @@ class MCPReviewService:
         provider = make_board_provider(self.settings, board_type, status_field=status_field)
         if provider is None:
             return {"status": "error", "reason": f"board '{board_type}' not configured"}
+        reindexed = False
         try:
             result = provider.finish(key, pr_url, note=note, mark_done=mark_done,
                                      done_state=done_state, done_column=done_column)
+            # Write-through: сразу переиндексировать закрытую задачу в стор reviewer
+            # (fetch_one → normalize → index_task), чтобы get_task/search_tasks/граф
+            # отразили done+PR без гонки с watermark инкрементального sync_board
+            # (тот пропускает задачи с timestamp <= курсор). Best-effort, fail-soft.
+            try:
+                raw = provider.fetch_one(key)
+                if raw is not None:
+                    self.components.task_service.index_task(provider.normalize(raw))
+                    reindexed = True
+            except Exception:
+                log.warning("finish_task: write-through реиндекс не удался", exc_info=True)
         except Exception as e:  # fail-soft: PR уже создан, доска — вторичный эффект
             log.warning("finish_task: сбой записи в доску", exc_info=True)
             return {"status": "error", "reason": f"{type(e).__name__}: {e}"}
@@ -353,7 +365,40 @@ class MCPReviewService:
                 provider.close()
             except Exception:
                 pass
-        return {"status": "ok", "board_type": board_type, **result}
+        return {"status": "ok", "board_type": board_type, "reindexed": reindexed,
+                **result}
+
+    def get_board_targets(self, board_type: str | None = None,
+                          project: str | None = None) -> dict:
+        """Кандидаты done-цели доски для configure-review (read-only, server-side).
+
+        Резолвит провайдера по board_type (или единственному настроенному), зовёт
+        list_done_targets(project) fail-soft. YouGile → columns; YouTrack → status_fields
+        (+source). Креды из env; наружу НЕ отдаются."""
+        types = self.settings.configured_board_types()
+        if board_type is None:
+            if len(types) == 1:
+                board_type = types[0]
+            else:
+                return {"status": "error",
+                        "reason": f"board_type required (configured: {types or 'none'})"}
+        if board_type not in types:
+            return {"status": "error",
+                    "reason": f"board '{board_type}' not configured (have: {types or 'none'})"}
+        provider = make_board_provider(self.settings, board_type)
+        if provider is None:
+            return {"status": "error", "reason": f"board '{board_type}' not configured"}
+        try:
+            targets = provider.list_done_targets(project)
+        except Exception as e:  # fail-soft: discovery — вторичная функция
+            log.warning("get_board_targets: сбой discovery", exc_info=True)
+            return {"status": "error", "reason": f"{type(e).__name__}: {e}"}
+        finally:
+            try:
+                provider.close()
+            except Exception:
+                pass
+        return {"board_type": board_type, "project": project, **targets}
 
     def _resolve_repo_branch(self, repo: str, branch: str | None) -> tuple[str, str] | str:
         """Резолв (repo, ветка) для session-less тулов.
