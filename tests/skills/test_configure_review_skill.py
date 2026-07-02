@@ -62,6 +62,14 @@ def test_skill_manages_task_board_block():
     assert "YOUTRACK_TOKEN" in text or "env деплоя" in text
 
 
+def test_skill_manages_finish_task_done_target():
+    # done-цель finish-task настраивается скиллом: yougile-колонка + youtrack поле/значение.
+    text = SKILL.read_text(encoding="utf-8")
+    assert "done_column" in text                    # yougile: колонка «выполнено»
+    assert "status_field" in text                   # youtrack: имя поля статуса
+    assert "done_state" in text                     # youtrack: целевое значение
+
+
 def test_skill_asks_before_writing_ignore():
     text = SKILL.read_text(encoding="utf-8")
     assert "never write it silently" in text       # ignore — суждение, спросить

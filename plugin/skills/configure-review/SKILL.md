@@ -26,9 +26,11 @@ Edit **only** these keys of `.review.yml`:
 - `paths.ignore` — only for **tracked** noisy paths (eval, fixtures, generated, vendored, migrations, data).
 - `context_limits` — per-repo retrieval breadth (search_codebase / search_tasks / graph limits,
   PRI-202), recommended from a **repo profile**. Written as a full documented block.
-- `task_board` — which board THIS repo uses (`type: yougile|youtrack`), plus `key_pattern` and (yougile only)
-  `url_template`. **NEVER** write credentials here — board API keys live only in the reviewer deploy env
-  (`YOUGILE_API_KEY` / `YOUTRACK_TOKEN` + `YOUTRACK_BASE_URL`). An empty `task_board:` disables the board for the repo.
+- `task_board` — which board THIS repo uses (`type: yougile|youtrack`), plus `key_pattern`, (yougile only)
+  `url_template`, `project`, and the **finish-task done target**: `done_column` (yougile) or
+  `status_field` + `done_state` (youtrack). **NEVER** write credentials here — board API keys live only in
+  the reviewer deploy env (`YOUGILE_API_KEY` / `YOUTRACK_TOKEN` + `YOUTRACK_BASE_URL`). An empty
+  `task_board:` disables the board for the repo.
 
 Do NOT touch any other key (`categories`, `severity_threshold`, `max_comments`, `min_confidence`, …). Do NOT run a
 reindex/resummarize. Do NOT walk the filesystem or try to detect untracked junk: `.venv`,
@@ -119,6 +121,19 @@ Parse from $ARGUMENTS (all optional):
    если `project` пуст — и синк, и выдача/граф затянут **все проекты** аккаунта/инстанса вперемешку
    (напр. чужой `TES-1` всплывёт в связях задачи `PRI`); один аккаунт с несколькими проектами без
    `project` смешивает их. Пустой `task_board.project` = текущее глобальное поведение.
+
+   **Then ask the finish-task done target** (closing a task after its PR — skill `/reviewer_finish-task`
+   moves the finished task into the board's "done" cell). Write only the key(s) matching the board type;
+   comment out the other board's keys with a one-line note (mirror the root `.review.yml`). All are optional
+   and fail-soft — a wrong/absent column or value only warns, the PR link is still written:
+   - **yougile** → `done_column`: the exact column **title** finish-task moves the finished task into (plus
+     `completed:true`). If the reviewer/yougile MCP is connected you MAY list the board's columns
+     (`get_columns`) and let the user pick the done column by title; otherwise ask for the title. Not set →
+     finish-task only flips `completed:true` without moving the card.
+   - **youtrack** → `status_field` (name of the custom field the board is built on — default `State`; it
+     **also** governs status reading on sync, so set it when the board runs on a custom field like `Stage`)
+     and `done_state` (target value of that field — default `Fixed`). YouTrack-only; a yougile board ignores
+     them.
 
    **Never write credentials.** Remind the user (in Russian): ключи доски (`YOUTRACK_TOKEN`/
    `YOUTRACK_BASE_URL` для youtrack, `YOUGILE_API_KEY` для yougile) задаются в env деплоя reviewer-mcp,
