@@ -221,9 +221,11 @@ class TaskService:
     def refresh_meta_batch(self, metas: list[dict]) -> dict:
         """Дешёвый self-healing meta-refresh (PRI-207): backfill плоских
         метаданных (project/title/status/url/aliases) для задач ниже watermark.
-        Стор — один батч update_meta_batch; граф — upsert_task per-task (fail-soft).
-        НИКОГДА не эмбедит и не upsert-ит полную строку (не воскрешает задачу,
-        отсутствующую в сторе) и не линкует PR. metas — как из normalize_meta."""
+        Стор — один батч update_meta_batch (UPDATE по key: 0 строк, если задачи
+        нет — НЕ воскрешает её в сторе); граф — upsert_task per-task (MERGE: узел
+        :Task создаётся при отсутствии — заживляет прежний fail-soft пропуск графа),
+        fail-soft. НИКОГДА не эмбедит и не upsert-ит полную строку в стор и не
+        линкует PR. metas — как из normalize_meta."""
         metas = [m for m in metas if isinstance(m, dict) and m.get("key")]
         if not metas:
             return {"meta_refreshed": 0, "warnings": []}

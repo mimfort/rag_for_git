@@ -97,10 +97,9 @@ def test_no_changes_does_not_advance_cursor():
     summary = SyncService([prov], ts, meta).run()
     assert ts.indexed == []
     assert summary["changed"] == 0 and summary["unchanged"] == 2
-    assert summary["cursor_advanced"] is False
+    assert summary["cursor_advanced"] is False   # meta-refresh курсор НЕ двигает
     assert summary["meta_refreshed"] == 2        # обе задачи ниже курсора
     assert ts.meta_refreshed == [["ID-1", "ID-2"]]
-    assert summary["cursor_advanced"] is False   # meta-refresh курсор НЕ двигает
 
 
 def test_purge_uses_full_active_keys():
