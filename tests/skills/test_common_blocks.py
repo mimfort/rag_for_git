@@ -13,6 +13,7 @@ def test_all_common_files_exist_nonempty():
         "findings-schema.md",
         "anti-hallucination.md",
         "tool-usage.md",
+        "reviewer-grounding.md",
         "branch-selection.md",
         "dimension-scope.md",
         "dimension-output-tail.md",
@@ -88,3 +89,16 @@ def test_branch_selection_has_review_branches_logic():
     text = _read("branch-selection.md")
     assert "REVIEW_BRANCHES" in text
     assert "git branch --show-current" in text
+
+
+def test_reviewer_grounding_has_core_rules():
+    text = _read("reviewer-grounding.md")
+    assert "Reviewer grounding (optional, fail-open)" in text  # заголовок блока
+    assert "reviewer status" in text and "drift == 0" in text  # freshness-check
+    # session-less тулы перечислены
+    assert "search_codebase" in text and "callers" in text \
+        and "related_symbols" in text and "definition" in text
+    assert "grep" in text.lower()                              # fail-open в grep
+    assert "3 RPM" in text                                     # политика «точечно» (Voyage rate-limit)
+    assert "base:<branch>" in text                             # честность WIP vs base
+    assert "<!-- include:" not in text                         # без вложенных include
