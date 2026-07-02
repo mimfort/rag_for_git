@@ -56,3 +56,12 @@ class TaskBoardProvider(Protocol):
         """RawTask → TaskBrief dict {key, aliases, title, description,
         criteria, status, url, links, attachments}."""
         ...
+
+    def finish(self, key: str, pr_url: str, *, note: str | None = None,
+               mark_done: bool = True, done_state: str | None = None) -> dict:
+        """Закрыть задачу: пометить done + идемпотентно дописать PR-ссылку в описание.
+        Любая правка двигает last-modified (timestamp/updated) → инкрементальный синк
+        переиндексирует обновлённую задачу. done_state — целевое состояние (YouTrack;
+        YouGile игнорирует, у него булев completed). Возвращает
+        {key, board_id, done_set, pr_link_added, already_closed, warnings}."""
+        ...
