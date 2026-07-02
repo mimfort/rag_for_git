@@ -173,6 +173,17 @@ def create_server(service: MCPReviewService) -> FastMCP:
         return service.board_config()
 
     @mcp.tool()
+    def get_board_targets(board_type: str | None = None,
+                          project: str | None = None) -> dict:
+        """Discover done-target candidates for a repo's board, server-side (read-only).
+        YouGile → board columns; YouTrack → status fields + their values (bundle via the
+        admin API, else aggregated from a sample of project issues). board_type and
+        project come from the repo's .review.yml task_board block. Credentials are NEVER
+        returned; fail-soft — empty list + warnings when the board/creds/permissions are
+        unavailable, so configure-review can fall back to asking."""
+        return service.get_board_targets(board_type, project)
+
+    @mcp.tool()
     def search_codebase(repo: str, query: str, top_k: int | None = None,
                         branch: str | None = None,
                         include_tests: bool = False) -> str:

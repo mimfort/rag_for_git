@@ -355,6 +355,38 @@ class MCPReviewService:
                 pass
         return {"status": "ok", "board_type": board_type, **result}
 
+    def get_board_targets(self, board_type: str | None = None,
+                          project: str | None = None) -> dict:
+        """Кандидаты done-цели доски для configure-review (read-only, server-side).
+
+        Резолвит провайдера по board_type (или единственному настроенному), зовёт
+        list_done_targets(project) fail-soft. YouGile → columns; YouTrack → status_fields
+        (+source). Креды из env; наружу НЕ отдаются."""
+        types = self.settings.configured_board_types()
+        if board_type is None:
+            if len(types) == 1:
+                board_type = types[0]
+            else:
+                return {"status": "error",
+                        "reason": f"board_type required (configured: {types or 'none'})"}
+        if board_type not in types:
+            return {"status": "error",
+                    "reason": f"board '{board_type}' not configured (have: {types or 'none'})"}
+        provider = make_board_provider(self.settings, board_type)
+        if provider is None:
+            return {"status": "error", "reason": f"board '{board_type}' not configured"}
+        try:
+            targets = provider.list_done_targets(project)
+        except Exception as e:  # fail-soft: discovery — вторичная функция
+            log.warning("get_board_targets: сбой discovery", exc_info=True)
+            return {"status": "error", "reason": f"{type(e).__name__}: {e}"}
+        finally:
+            try:
+                provider.close()
+            except Exception:
+                pass
+        return {"board_type": board_type, "project": project, **targets}
+
     def _resolve_repo_branch(self, repo: str, branch: str | None) -> tuple[str, str] | str:
         """Резолв (repo, ветка) для session-less тулов.
 
