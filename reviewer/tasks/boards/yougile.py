@@ -258,6 +258,7 @@ class YougileBoard:
             r.raise_for_status()
             board_id = r.json().get("boardId")
             if not board_id:
+                log.warning("yougile: не определить доску колонки '%s' — задачу не двигаем", title)
                 return None
             for col in self._get_all("/columns", {"boardId": board_id}):
                 if col.get("title") == title:

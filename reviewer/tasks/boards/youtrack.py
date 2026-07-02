@@ -196,11 +196,14 @@ class YouTrackBoard:
     def finish(self, key: str, pr_url: str, *, note: str | None = None,
                mark_done: bool = True, done_state: str | None = None,
                done_column: str | None = None) -> dict:
-        """Закрыть задачу YouTrack: правка описания (PR-ссылка) + команда State.
+        """Закрыть задачу YouTrack: правка описания (PR-ссылка) + команда смены статуса.
 
         POST /issues/{key} правит описание (двигает `updated` — watermark синка).
-        POST /commands шлёт `State <done_state or 'Fixed'>` — YouTrack сам резолвит
-        значение в проекте; неуспех команды fail-soft (warnings, без краха).
+        POST /commands шлёт `<self._status_field> {<done_state>}` — имя поля берётся
+        из `self._status_field` (дефолт «State»), значение — из `done_state` (дефолт
+        «Fixed»); YouTrack сам резолвит его в проекте, неуспех команды fail-soft
+        (warnings, без краха). `done_column` принимается ради совместимости с Protocol
+        и игнорируется (у YouTrack нет колонок).
         """
         safe_key = quote(key, safe="")
         r = self._client.get(f"/issues/{safe_key}", params={"fields": "description"})

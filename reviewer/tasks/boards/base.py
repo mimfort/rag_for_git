@@ -65,5 +65,6 @@ class TaskBoardProvider(Protocol):
         переиндексирует обновлённую задачу. done_state — целевое состояние (YouTrack;
         YouGile игнорирует, у него булев completed). done_column — целевая колонка
         (YouGile: перенос задачи; YouTrack игнорирует). Возвращает
-        {key, board_id, done_set, pr_link_added, already_closed, warnings}."""
+        {key, board_id, done_set, pr_link_added, already_closed, warnings};
+        YouGile дополнительно кладёт `column_moved: bool` (доска-специфичное поле)."""
         ...
