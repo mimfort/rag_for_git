@@ -101,7 +101,7 @@ def normalize_yougile(
         "title": raw.title,
         "description": raw.description,
         "criteria": [],
-        "status": raw.status,
+        "status": "done" if raw.completed else raw.status,
         "url": url,
         "links": links,
         "project": project_prefix(raw.project_code or key),
@@ -174,6 +174,7 @@ class YougileBoard:
                             subtask_ids=list(t.get("subtasks", []) or []),
                             timestamp=int(t.get("timestamp", 0) or 0),
                             board_id=t["id"],
+                            completed=bool(t.get("completed", False)),
                         )
                         count += 1
                         if limit and count >= limit:

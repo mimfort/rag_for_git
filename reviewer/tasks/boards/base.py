@@ -37,6 +37,7 @@ class RawTask:
     # (youtrack: name/mime/size/url inline из _FIELDS; yougile: пусто, фетчится в normalize)
     board_id: str = ""  # внутренний id задачи у провайдера (yougile UUID для чат-эндпоинта;
     # youtrack не использует — там везде idReadable)
+    completed: bool = False  # YouGile: булев чекбокс «выполнено» (мапится в status="done")
 
 
 class TaskBoardProvider(Protocol):
