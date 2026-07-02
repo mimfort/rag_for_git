@@ -58,10 +58,13 @@ class TaskBoardProvider(Protocol):
         ...
 
     def finish(self, key: str, pr_url: str, *, note: str | None = None,
-               mark_done: bool = True, done_state: str | None = None) -> dict:
+               mark_done: bool = True, done_state: str | None = None,
+               done_column: str | None = None) -> dict:
         """Закрыть задачу: пометить done + идемпотентно дописать PR-ссылку в описание.
         Любая правка двигает last-modified (timestamp/updated) → инкрементальный синк
         переиндексирует обновлённую задачу. done_state — целевое состояние (YouTrack;
-        YouGile игнорирует, у него булев completed). Возвращает
-        {key, board_id, done_set, pr_link_added, already_closed, warnings}."""
+        YouGile игнорирует, у него булев completed). done_column — целевая колонка
+        (YouGile: перенос задачи; YouTrack игнорирует). Возвращает
+        {key, board_id, done_set, pr_link_added, already_closed, warnings};
+        YouGile дополнительно кладёт `column_moved: bool` (доска-специфичное поле)."""
         ...

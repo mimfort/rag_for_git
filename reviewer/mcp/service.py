@@ -298,11 +298,13 @@ class MCPReviewService:
 
     def sync_board(self, board: str | None = None, limit: int | None = None,
                    purge_orphaned: bool = False, keep_with_prs: bool = True,
-                   board_type: str | None = None) -> dict:
+                   board_type: str | None = None,
+                   status_field: str | None = None) -> dict:
         """Server-side ETL: перечислить доску по REST, нормализовать, проиндексировать.
 
         board_type ограничивает синк одним типом доски (yougile|youtrack); board —
-        проектом (префикс кода). Доска/ключ не настроены → error-summary (fail-soft).
+        проектом (префикс кода). status_field — имя YouTrack-поля статуса из .review.yml
+        (чтобы синк читал верное поле). Доска/ключ не настроены → error-summary (fail-soft).
         """
         sync = getattr(self.components, "sync_service", None)
         if sync is None:
@@ -314,17 +316,19 @@ class MCPReviewService:
         try:
             return sync.run(board=board, board_type=board_type, limit=limit,
                             purge_orphaned=purge_orphaned,
-                            keep_with_prs=keep_with_prs)
+                            keep_with_prs=keep_with_prs, status_field=status_field)
         except Exception as e:
             log.warning("sync_board: сбой синка", exc_info=True)
             return {"status": "error", "reason": f"{type(e).__name__}: {e}"}
 
     def finish_task(self, key: str, pr_url: str, note: str | None = None,
                     mark_done: bool = True, board_type: str | None = None,
-                    done_state: str | None = None) -> dict:
+                    done_state: str | None = None, status_field: str | None = None,
+                    done_column: str | None = None) -> dict:
         """Закрыть задачу на доске (server-side write): пометить done + дописать
         PR-ссылку в описание. Резолвит провайдера по board_type (или единственному
-        настроенному), fail-soft. Креды из env; наружу не отдаются."""
+        настроенному), fail-soft. status_field/done_state — YouTrack (поле+значение);
+        done_column — YouGile (колонка). Креды из env; наружу не отдаются."""
         types = self.settings.configured_board_types()
         if board_type is None:
             if len(types) == 1:
@@ -335,12 +339,12 @@ class MCPReviewService:
         if board_type not in types:
             return {"status": "error",
                     "reason": f"board '{board_type}' not configured (have: {types or 'none'})"}
-        provider = make_board_provider(self.settings, board_type)
+        provider = make_board_provider(self.settings, board_type, status_field=status_field)
         if provider is None:
             return {"status": "error", "reason": f"board '{board_type}' not configured"}
         try:
             result = provider.finish(key, pr_url, note=note, mark_done=mark_done,
-                                     done_state=done_state)
+                                     done_state=done_state, done_column=done_column)
         except Exception as e:  # fail-soft: PR уже создан, доска — вторичный эффект
             log.warning("finish_task: сбой записи в доску", exc_info=True)
             return {"status": "error", "reason": f"{type(e).__name__}: {e}"}

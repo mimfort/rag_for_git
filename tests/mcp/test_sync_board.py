@@ -23,25 +23,37 @@ def test_sync_board_delegates_to_sync_service():
             self.called_with = None
 
         def run(self, board=None, limit=None, purge_orphaned=False,
-                keep_with_prs=True, board_type=None):
-            self.called_with = (board, limit, purge_orphaned, keep_with_prs, board_type)
+                keep_with_prs=True, board_type=None, status_field=None):
+            self.called_with = (board, limit, purge_orphaned, keep_with_prs,
+                                board_type, status_field)
             return {"enumerated": 3, "changed": 1, "warnings": []}
 
     fake = FakeSync()
     out = _Svc(fake).sync_board(board="B", board_type="yougile", limit=5)
     assert out["enumerated"] == 3 and out["changed"] == 1
-    assert fake.called_with == ("B", 5, False, True, "yougile")
+    assert fake.called_with == ("B", 5, False, True, "yougile", None)
 
 
 def test_sync_board_threads_board_type():
     class FakeSync:
         def run(self, board=None, limit=None, purge_orphaned=False,
-                keep_with_prs=True, board_type=None):
+                keep_with_prs=True, board_type=None, status_field=None):
             self.called_with = (board, board_type)
             return {"enumerated": 1, "warnings": []}
     fake = FakeSync()
     _Svc(fake).sync_board(board="PRI", board_type="yougile")
     assert fake.called_with == ("PRI", "yougile")
+
+
+def test_sync_board_threads_status_field():
+    class FakeSync:
+        def run(self, board=None, limit=None, purge_orphaned=False,
+                keep_with_prs=True, board_type=None, status_field=None):
+            self.called_with = status_field
+            return {"enumerated": 1, "warnings": []}
+    fake = FakeSync()
+    _Svc(fake).sync_board(board="TES", board_type="youtrack", status_field="Stage")
+    assert fake.called_with == "Stage"
 
 
 def test_sync_board_failsoft_on_exception():

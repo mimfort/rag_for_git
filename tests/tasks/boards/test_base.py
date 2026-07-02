@@ -69,3 +69,28 @@ def test_make_providers_empty_when_nothing_configured():
     s = Settings(_env_file=None, yougile_api_key="", youtrack_token="",
                  task_board_api_key="")
     assert make_board_providers(s) == []
+
+
+def test_make_board_provider_threads_status_field(monkeypatch):
+    import reviewer.tasks.boards as boards
+
+    captured = {}
+
+    class _FakeYT:
+        board_type = "youtrack"
+
+        def __init__(self, *, token, base_url, key_pattern, status_field="State", **kw):
+            captured["status_field"] = status_field
+
+    monkeypatch.setattr("reviewer.tasks.boards.youtrack.YouTrackBoard", _FakeYT)
+
+    settings = type("S", (), {
+        "board_creds": staticmethod(lambda t: ("tok", "https://yt/api")),
+        "task_board_key_pattern": r"TES-\d+",
+        "task_board_url_template": "",
+        "task_attachment_max_bytes": 1,
+        "task_attachment_timeout": 1.0,
+        "task_attachment_store_chars": 1,
+    })()
+    boards.make_board_provider(settings, "youtrack", status_field="Stage")
+    assert captured["status_field"] == "Stage"
