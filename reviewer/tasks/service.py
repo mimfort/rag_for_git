@@ -218,6 +218,35 @@ class TaskService:
 
         return results
 
+    def refresh_meta_batch(self, metas: list[dict]) -> dict:
+        """Дешёвый self-healing meta-refresh (PRI-207): backfill плоских
+        метаданных (project/title/status/url/aliases) для задач ниже watermark.
+        Стор — один батч update_meta_batch; граф — upsert_task per-task (fail-soft).
+        НИКОГДА не эмбедит и не upsert-ит полную строку (не воскрешает задачу,
+        отсутствующую в сторе) и не линкует PR. metas — как из normalize_meta."""
+        metas = [m for m in metas if isinstance(m, dict) and m.get("key")]
+        if not metas:
+            return {"meta_refreshed": 0, "warnings": []}
+        warnings: list[str] = []
+        try:
+            self._store.update_meta_batch(metas)
+        except Exception as e:
+            log.warning("refresh_meta_batch: сбой update_meta_batch", exc_info=True)
+            warnings.append(f"store: {type(e).__name__}: {e}")
+        if self._graph is None:
+            warnings.append("graph unavailable: task projects not refreshed in graph")
+        else:
+            for m in metas:
+                try:
+                    self._graph.upsert_task(
+                        m["key"], m.get("aliases") or [], m.get("title") or "",
+                        m.get("status"), m.get("url"), m.get("project") or "")
+                except Exception as e:
+                    log.warning("refresh_meta_batch: сбой графа для %s",
+                                m["key"], exc_info=True)
+                    warnings.append(f"graph {m['key']}: {type(e).__name__}: {e}")
+        return {"meta_refreshed": len(metas), "warnings": warnings}
+
     def search_tasks(self, query: str, top_k: int | None = None,
                      project: str | None = None) -> str:
         """Похожие задачи (RRF, без реранкера) с рельсой ceiling (PRI-202).
