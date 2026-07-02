@@ -7,8 +7,12 @@ __all__ = ["RawTask", "TaskBoardProvider", "project_prefix", "make_board_provide
            "make_board_providers"]
 
 
-def make_board_provider(settings, type_: str) -> TaskBoardProvider | None:
+def make_board_provider(settings, type_: str, *,
+                        status_field: str | None = None) -> TaskBoardProvider | None:
     """Сконструировать провайдер доски заданного типа из его кредов (board_creds).
+
+    status_field — имя YouTrack-поля статуса из .review.yml (дефолт «State»);
+    YouGile его игнорирует (статус = колонка).
 
     None, если у типа нет API-ключа (доска этого типа не настроена) или тип
     неизвестен — server-side синк для него недоступен.
@@ -34,6 +38,7 @@ def make_board_provider(settings, type_: str) -> TaskBoardProvider | None:
             token=api_key,
             base_url=api_base,
             key_pattern=key_pattern,
+            status_field=status_field or "State",
             attachment_max_bytes=settings.task_attachment_max_bytes,
             attachment_timeout=settings.task_attachment_timeout,
             attachment_store_chars=settings.task_attachment_store_chars,
