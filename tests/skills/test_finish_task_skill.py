@@ -38,3 +38,10 @@ def test_finish_task_reads_status_field_and_done_column():
     t = SKILL.read_text(encoding="utf-8")
     assert "status_field" in t     # читает имя поля YouTrack из .review.yml
     assert "done_column" in t       # читает done-колонку YouGile из .review.yml
+
+
+def test_finish_task_names_resolved_done_target():
+    t = SKILL.read_text(encoding="utf-8")
+    assert "resolved done target" in t   # шаг 4 явно называет цель, не обобщённое mark done
+    # гейт подтверждения не регрессирует
+    assert "only after explicit confirmation" in t
