@@ -28,11 +28,16 @@ _FIELDS = (
     "attachments(name,size,mimeType,extension,url)"
 )
 
-# Имя поля статуса идёт в команду YouTrack голым токеном (позиция команды, не {…}),
-# поэтому должно быть безопасным одиночным идентификатором: буква/подчёркивание в начале,
-# далее word-символы (Unicode-буквы, включая кириллицу, цифры, _) или дефис. Пробелы,
-# кавычки, скобки, ';' и прочая DSL-пунктуация запрещены — иначе можно вклинить лишнюю команду.
-_STATUS_FIELD_RE = re.compile(r"[^\W\d][\w-]{0,63}")
+# Тип элемента бандла по типу кастом-поля YouTrack — нужен, когда текущее значение
+# поля null (нельзя вывести `$type` элемента из value). Если тип поля не в маппинге —
+# значение уходит без `$type` (YouTrack часто резолвит элемент по имени).
+_FIELD_TO_ELEMENT = {
+    "StateIssueCustomField": "StateBundleElement",
+    "SingleEnumIssueCustomField": "EnumBundleElement",
+    "SingleVersionIssueCustomField": "VersionBundleElement",
+    "SingleBuildIssueCustomField": "BuildBundleElement",
+    "SingleOwnedIssueCustomField": "OwnedBundleElement",
+}
 
 
 def _state_of(issue: dict, field: str = "State") -> str | None:
@@ -202,23 +207,34 @@ class YouTrackBoard:
     def finish(self, key: str, pr_url: str, *, note: str | None = None,
                mark_done: bool = True, done_state: str | None = None,
                done_column: str | None = None) -> dict:
-        """Закрыть задачу YouTrack: правка описания (PR-ссылка) + команда смены статуса.
+        """Закрыть задачу YouTrack: правка описания (PR-ссылка) + структурная смена статуса.
 
-        POST /issues/{key} правит описание (двигает `updated` — watermark синка).
-        POST /commands шлёт `<self._status_field> {<done_state>}` — имя поля берётся
-        из `self._status_field` (дефолт «State»), значение — из `done_state` (дефолт
-        «Fixed»); YouTrack сам резолвит его в проекте, неуспех команды fail-soft
-        (warnings, без краха). Имя поля попадает в DSL голым токеном, поэтому валидируется
-        как безопасный одиночный идентификатор (`_STATUS_FIELD_RE`); небезопасное имя
-        (пробелы/кавычки/скобки — вектор command-injection) отклоняется fail-soft: команда
-        не шлётся, добавляется warning, `done_set=False` (PR-ссылка уже дописана выше).
-        `done_column` принимается ради совместимости с Protocol и игнорируется (у YouTrack
-        нет колонок).
+        Первый GET тянет `description` и `customFields` (с типами). PR-ссылка дописывается
+        отдельным `POST /issues/{key}` json={"description": …} (идемпотентный append,
+        двигает `updated` — watermark синка).
+
+        Смена статуса — **структурное REST-обновление кастом-поля**, а не command-DSL:
+        `POST /issues/{key}` json={"customFields": [{"name": <status_field>, "$type": …,
+        "value": {"name": <done_state>, …}}]}. Имя поля берётся из `self._status_field`
+        (дефолт «State»), значение — из `done_state` (дефолт «Fixed»). YouTrack матчит
+        значение по имени против существующих элементов бандла. **DSL здесь нет вообще**,
+        поэтому инъекция через `done_state`/`status_field` структурно невозможна (значения
+        идут в JSON, не в командную строку), а многословные имена полей («Kanban State»)
+        и статусов («Готово к сдаче») работают без экранирования.
+
+        Fail-soft: если поле `status_field` не найдено на задаче — warning, `done_set=False`,
+        поле не трогаем; если REST-обновление вернуло ошибку (невалидное значение) — warning,
+        `done_set=False`. PR-ссылка в любом случае уже записана. `done_column` принимается
+        ради совместимости с Protocol и игнорируется (у YouTrack нет колонок).
         """
         safe_key = quote(key, safe="")
-        r = self._client.get(f"/issues/{safe_key}", params={"fields": "description"})
+        r = self._client.get(
+            f"/issues/{safe_key}",
+            params={"fields": "description,customFields(name,$type,value($type,name))"})
         r.raise_for_status()
-        desc = r.json().get("description", "") or ""
+        body = r.json()
+        desc = body.get("description", "") or ""
+        custom_fields = body.get("customFields") or []
 
         pr_link_added = False
         if pr_url and pr_url not in desc:
@@ -231,24 +247,29 @@ class YouTrackBoard:
         warnings: list[str] = []
         done_set = False
         if mark_done:
-            # done_state И имя поля приходят из .review.yml → чужой командной строкой
-            # в DSL YouTrack не должны становиться (command-injection). Значение (state)
-            # безопасно: оно внутри {…} и с вырезанными скобками — вырваться не может, поэтому
-            # многословные статусы («In Progress»/«Готово к сдаче») работают. Имя поля же идёт
-            # голым токеном в позиции команды, поэтому валидируется строгим allowlist: небезопасное
-            # имя (пробел + DSL-ключевое слово → лишняя команда) отклоняется fail-soft.
-            state = (done_state or "Fixed").replace("{", "").replace("}", "")
-            field = self._status_field
-            if not _STATUS_FIELD_RE.fullmatch(field):
+            field = next(
+                (cf for cf in custom_fields if cf.get("name") == self._status_field), None)
+            if field is None:
                 warnings.append(
-                    f"имя поля статуса {field!r} небезопасно для команды YouTrack — статус не изменён")
+                    f"поле статуса {self._status_field!r} не найдено на задаче {key} — "
+                    "статус не изменён")
             else:
-                cmd = self._client.post(
-                    "/commands",
-                    json={"query": f"{field} {{{state}}}", "issues": [{"idReadable": key}]})
-                if getattr(cmd, "status_code", 200) >= 400:
+                state = done_state or "Fixed"
+                cur = field.get("value")
+                # тип элемента бандла: из текущего value, иначе из маппинга по типу поля
+                value_type = (cur.get("$type") if isinstance(cur, dict) and cur.get("$type")
+                              else _FIELD_TO_ELEMENT.get(field.get("$type")))
+                value_obj: dict = {"name": state}
+                if value_type:
+                    value_obj["$type"] = value_type
+                payload = {"name": self._status_field, "$type": field.get("$type"),
+                           "value": value_obj}
+                resp = self._client.post(
+                    f"/issues/{safe_key}", json={"customFields": [payload]})
+                if getattr(resp, "status_code", 200) >= 400:
                     warnings.append(
-                        f"команда '{field} {state}' не выполнена: HTTP {cmd.status_code}")
+                        f"не удалось установить {self._status_field}={state} на {key}: "
+                        f"HTTP {resp.status_code}")
                 else:
                     done_set = True
 
