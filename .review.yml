@@ -11,6 +11,7 @@ task_board:
   key_pattern: 'PRI-\d+'              # коды задач проекта PRI (напр. PRI-4, PRI-170)
   url_template: 'https://ru.yougile.com/team/686c049c8af8/#{code}'  # {code} = проектный код PRI-N
   project: PRI                        # PRI-170: скоуп синка/выдачи задач этим проектом (префикс кода)
+  # done_state: Fixed                 # YouTrack: значение State для «выполнено» в finish-task (дефолт Fixed); YouGile игнорирует
 
 # --- Скилл solve-task ---
 
@@ -30,6 +31,7 @@ paths:
   ignore:
     - eval                           # эвал-харнес агента: не продакшн-код, не нужен в ревью-индексе
     - reviewer/graph/scip_pb2.py     # сгенерированный protobuf-файл
+    - sync_chunk.py                  # ручная утилита синка задач YouGile; не продакшн-код, дублирует reviewer/tasks/sync.py
 
 # Глубина кластеризации сводок подсистем (число сегментов пути). Дефолт из env (2).
 summary_cluster_depth: 2
