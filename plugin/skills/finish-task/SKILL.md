@@ -30,7 +30,7 @@ in Russian.
    If none is found, ask the user for the PR URL.
 
 4. **Offer + confirm.** Show what will be written — the PR link + the **resolved done target, named
-   explicitly** (not a generic "mark done"): for yougile «перенесу задачу в колонку „<done_column>" +
+   explicitly** (not a generic "mark done"): for yougile «перенесу задачу в колонку „<done_column>“ +
    отмечу completed» (or just «отмечу completed» when `done_column` is unset); for youtrack «выставлю
    <status_field> = <done_state>» — plus any optional note. Ask the user to **confirm** before writing,
    and whether they want to add an optional note (details under the task). **Never write to the board
