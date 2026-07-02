@@ -112,6 +112,14 @@ MCP-сессия (PreparedReview + ToolContext) живёт в процессе `
 - **Плагин** находится в `plugin/` в корне репозитория — это корень Claude Code-плагина для скилла `/rag-reviewer:reviewer_review-pr`.
 - **Общие reference-блоки промптов** вынесены в `plugin/skills/_common/` (единый источник: `findings-schema.md`, `anti-hallucination.md`, `tool-usage.md`, `branch-selection.md`). Скиллы и reference-промпты подключают их маркером `<!-- include: _common/<file>.md -->` (путь от `plugin/skills/`), который LLM-оркестратор разворачивает verbatim при сборке промпта субагента; скилл-специфичные части остаются в самих скиллах. Соответствие findings-schema ↔ `Finding` (`reviewer/vcs/base.py`) и корректность сборки промптов охраняют guard-тесты в `tests/skills/`.
 - **Мульти-платформа VCS (GitHub + GitLab).** Тип провайдера — свойство репо, не PR. `reviewer index` определяет платформу из `git remote` (`derive_vcs_from_remote`) и пишет в таблицу `repo_vcs(repo→provider,base_url)`. При ревью (API-only движок) `_create_vcs_provider` читает `repo_vcs` ДО любого API-вызова и выбирает `GitHubProvider`/`GitLabProvider`; токен — из ENV по платформе (`GITHUB_TOKEN`/`GITLAB_TOKEN`, `GITLAB_URL` для self-hosted). Фолбэк при пустом `repo_vcs` — `VCS_PROVIDER` (дефолт github), что сохраняет обратную совместимость. Секретов в `.review.yml` нет (нет блока `vcs:`).
+- **Закрытие задачи после PR (`finish_task`).** Скилл `/reviewer_finish-task` после создания PR
+  предлагает закрыть задачу на доске: идемпотентно дописывает PR-ссылку в описание и помечает
+  выполненной через server-side MCP-тул `finish_task` (креды в env, портируется во все клиенты).
+  YouGile — `completed:true` (+ `normalize_yougile` мапит `completed→status="done"`); YouTrack —
+  команда `State <done_state>` (`task_board.done_state` в `.review.yml`, дефолт `Fixed`). Любая
+  правка двигает last-modified (`timestamp`/`updated`) → следующий `sync_board` сохраняет
+  обновлённую задачу. **Это расширяет разворот инварианта «reviewer Python не трогает доску»:
+  теперь Python пишет в доску не только болк-синком, но и одиночным `finish_task`.**
 
 ## Соглашения
 

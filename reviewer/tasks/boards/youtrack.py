@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 import re
 from collections.abc import Iterable
-from urllib.parse import urljoin, urlsplit
+from urllib.parse import quote, urljoin, urlsplit
 
 import httpx
 
@@ -182,3 +182,44 @@ class YouTrackBoard:
                 max_bytes=self._att_max_bytes, store_chars=self._att_store_chars))
         return normalize_youtrack(raw, self._key_pattern, self._base,
                                   attachments=contents)
+
+    def finish(self, key: str, pr_url: str, *, note: str | None = None,
+               mark_done: bool = True, done_state: str | None = None) -> dict:
+        """Закрыть задачу YouTrack: правка описания (PR-ссылка) + команда State.
+
+        POST /issues/{key} правит описание (двигает `updated` — watermark синка).
+        POST /commands шлёт `State <done_state or 'Fixed'>` — YouTrack сам резолвит
+        значение в проекте; неуспех команды fail-soft (warnings, без краха).
+        """
+        safe_key = quote(key, safe="")
+        r = self._client.get(f"/issues/{safe_key}", params={"fields": "description"})
+        r.raise_for_status()
+        desc = r.json().get("description", "") or ""
+
+        pr_link_added = False
+        if pr_url and pr_url not in desc:
+            block = f"\n\nPR: {pr_url}" + (f"\n\n{note}" if note else "")
+            new_desc = desc + block if desc else block.lstrip("\n")
+            rr = self._client.post(f"/issues/{safe_key}", json={"description": new_desc})
+            rr.raise_for_status()
+            pr_link_added = True
+
+        warnings: list[str] = []
+        done_set = False
+        if mark_done:
+            # done_state приходит из .review.yml → чужой командной строкой в DSL YouTrack
+            # не должен становиться (command-injection). Убираем фигурные скобки и
+            # оборачиваем значение в {…} — YouTrack трактует его как единый State-литерал.
+            state = (done_state or "Fixed").replace("{", "").replace("}", "")
+            cmd = self._client.post(
+                "/commands",
+                json={"query": f"State {{{state}}}", "issues": [{"idReadable": key}]})
+            if getattr(cmd, "status_code", 200) >= 400:
+                warnings.append(f"команда 'State {state}' не выполнена: HTTP {cmd.status_code}")
+            else:
+                done_set = True
+
+        return {"key": key, "board_id": key, "done_set": done_set,
+                "pr_link_added": pr_link_added,
+                "already_closed": not pr_link_added and not done_set,
+                "warnings": warnings}

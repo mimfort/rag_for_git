@@ -234,6 +234,10 @@ Use the session-less tools above.
    From there the normal cycle takes over (brainstorming → writing-plans →
    subagent-driven-development/TDD). Your job ends at the handoff — do NOT plan or implement here.
 
+   **After the PR is created (later in the dev cycle):** offer to close the task with the
+   `/reviewer_finish-task` skill — it appends the PR link to the task and marks it done (bumping
+   last-modified so the sync re-indexes the closed task). Skip in board-less mode (no task key).
+
 ## Failure handling (fail-open)
 
 - No `task_board` / board MCP not connected / task not found → board-less: build the brief from

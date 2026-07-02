@@ -37,6 +37,7 @@ class RawTask:
     # (youtrack: name/mime/size/url inline из _FIELDS; yougile: пусто, фетчится в normalize)
     board_id: str = ""  # внутренний id задачи у провайдера (yougile UUID для чат-эндпоинта;
     # youtrack не использует — там везде idReadable)
+    completed: bool = False  # YouGile: булев чекбокс «выполнено» (мапится в status="done")
 
 
 class TaskBoardProvider(Protocol):
@@ -54,4 +55,13 @@ class TaskBoardProvider(Protocol):
     def normalize(self, raw: RawTask) -> dict:
         """RawTask → TaskBrief dict {key, aliases, title, description,
         criteria, status, url, links, attachments}."""
+        ...
+
+    def finish(self, key: str, pr_url: str, *, note: str | None = None,
+               mark_done: bool = True, done_state: str | None = None) -> dict:
+        """Закрыть задачу: пометить done + идемпотентно дописать PR-ссылку в описание.
+        Любая правка двигает last-modified (timestamp/updated) → инкрементальный синк
+        переиндексирует обновлённую задачу. done_state — целевое состояние (YouTrack;
+        YouGile игнорирует, у него булев completed). Возвращает
+        {key, board_id, done_set, pr_link_added, already_closed, warnings}."""
         ...

@@ -13,7 +13,7 @@ import html
 import logging
 import re
 from collections.abc import Iterable
-from urllib.parse import unquote, urlsplit
+from urllib.parse import quote, unquote, urlsplit
 
 import httpx
 
@@ -101,7 +101,7 @@ def normalize_yougile(
         "title": raw.title,
         "description": raw.description,
         "criteria": [],
-        "status": raw.status,
+        "status": "done" if raw.completed else raw.status,
         "url": url,
         "links": links,
         "project": project_prefix(raw.project_code or key),
@@ -174,6 +174,7 @@ class YougileBoard:
                             subtask_ids=list(t.get("subtasks", []) or []),
                             timestamp=int(t.get("timestamp", 0) or 0),
                             board_id=t["id"],
+                            completed=bool(t.get("completed", False)),
                         )
                         count += 1
                         if limit and count >= limit:
@@ -246,3 +247,42 @@ class YougileBoard:
         attachments = self._collect_attachments(raw.description, raw.board_id)
         return normalize_yougile(raw, self._key_pattern, self._url_template,
                                  subtask_titles, attachments=attachments)
+
+    def finish(self, key: str, pr_url: str, *, note: str | None = None,
+               mark_done: bool = True, done_state: str | None = None) -> dict:
+        """Закрыть задачу YouGile: completed:true + PR-ссылка в описание (идемпотентно).
+
+        GET /tasks/{key} резолвит проектный/компанийный код в объект (+ uuid). PUT
+        обновляет задачу — двигает её timestamp (watermark синка). done_state не
+        применим (у YouGile булев completed).
+        """
+        r = self._client.get(f"/tasks/{quote(key, safe='')}")
+        r.raise_for_status()
+        task = r.json()
+        uuid = task.get("id") or key
+        desc = task.get("description", "") or ""
+        completed = bool(task.get("completed", False))
+
+        payload: dict = {}
+        pr_link_added = False
+        # PR-ссылка и note уходят в HTML-описание доски — экранируем во избежание
+        # HTML/XSS-инъекции (note приходит от пользователя). Idempotency-проверка
+        # сравнивает с экранированной формой (для обычных URL совпадает с сырой).
+        safe_url = html.escape(pr_url, quote=True)
+        if pr_url and safe_url not in desc:
+            block = f'\n<div>PR: <a href="{safe_url}">{safe_url}</a></div>'
+            if note:
+                block += f"\n<div>{html.escape(note)}</div>"
+            payload["description"] = desc + block
+            pr_link_added = True
+        done_set = False
+        if mark_done and not completed:
+            payload["completed"] = True
+            done_set = True
+
+        if payload:
+            rr = self._client.put(f"/tasks/{quote(str(uuid), safe='')}", json=payload)
+            rr.raise_for_status()
+        return {"key": key, "board_id": uuid, "done_set": done_set,
+                "pr_link_added": pr_link_added, "already_closed": not payload,
+                "warnings": []}

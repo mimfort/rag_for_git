@@ -223,3 +223,13 @@ def test_yougile_normalize_skips_offhost_description_href():
     brief = board.normalize(_raw(board_id=UUID, description=desc, subtask_ids=[]))
     assert brief["attachments"] == []
     assert "https://evil.example.com/user-data/x/leak.md" not in board._client.requested
+
+
+def test_normalize_completed_maps_to_done_status():
+    b = normalize_yougile(_raw(status="In progress", completed=True), KP, URL)
+    assert b["status"] == "done"
+
+
+def test_normalize_not_completed_keeps_column_status():
+    b = normalize_yougile(_raw(status="In progress", completed=False), KP, URL)
+    assert b["status"] == "In progress"
