@@ -28,6 +28,12 @@ _FIELDS = (
     "attachments(name,size,mimeType,extension,url)"
 )
 
+# Имя поля статуса идёт в команду YouTrack голым токеном (позиция команды, не {…}),
+# поэтому должно быть безопасным одиночным идентификатором: буква/подчёркивание в начале,
+# далее word-символы (Unicode-буквы, включая кириллицу, цифры, _) или дефис. Пробелы,
+# кавычки, скобки, ';' и прочая DSL-пунктуация запрещены — иначе можно вклинить лишнюю команду.
+_STATUS_FIELD_RE = re.compile(r"[^\W\d][\w-]{0,63}")
+
 
 def _state_of(issue: dict, field: str = "State") -> str | None:
     """Статус задачи — кастом-поле `field` (дефолт «State»), его value.name."""
@@ -202,8 +208,12 @@ class YouTrackBoard:
         POST /commands шлёт `<self._status_field> {<done_state>}` — имя поля берётся
         из `self._status_field` (дефолт «State»), значение — из `done_state` (дефолт
         «Fixed»); YouTrack сам резолвит его в проекте, неуспех команды fail-soft
-        (warnings, без краха). `done_column` принимается ради совместимости с Protocol
-        и игнорируется (у YouTrack нет колонок).
+        (warnings, без краха). Имя поля попадает в DSL голым токеном, поэтому валидируется
+        как безопасный одиночный идентификатор (`_STATUS_FIELD_RE`); небезопасное имя
+        (пробелы/кавычки/скобки — вектор command-injection) отклоняется fail-soft: команда
+        не шлётся, добавляется warning, `done_set=False` (PR-ссылка уже дописана выше).
+        `done_column` принимается ради совместимости с Protocol и игнорируется (у YouTrack
+        нет колонок).
         """
         safe_key = quote(key, safe="")
         r = self._client.get(f"/issues/{safe_key}", params={"fields": "description"})
@@ -222,17 +232,25 @@ class YouTrackBoard:
         done_set = False
         if mark_done:
             # done_state И имя поля приходят из .review.yml → чужой командной строкой
-            # в DSL YouTrack не должны становиться (command-injection). Убираем фигурные
-            # скобки и оборачиваем значение в {…} — YouTrack трактует его как единый литерал.
-            field = self._status_field.replace("{", "").replace("}", "")
+            # в DSL YouTrack не должны становиться (command-injection). Значение (state)
+            # безопасно: оно внутри {…} и с вырезанными скобками — вырваться не может, поэтому
+            # многословные статусы («In Progress»/«Готово к сдаче») работают. Имя поля же идёт
+            # голым токеном в позиции команды, поэтому валидируется строгим allowlist: небезопасное
+            # имя (пробел + DSL-ключевое слово → лишняя команда) отклоняется fail-soft.
             state = (done_state or "Fixed").replace("{", "").replace("}", "")
-            cmd = self._client.post(
-                "/commands",
-                json={"query": f"{field} {{{state}}}", "issues": [{"idReadable": key}]})
-            if getattr(cmd, "status_code", 200) >= 400:
-                warnings.append(f"команда '{field} {state}' не выполнена: HTTP {cmd.status_code}")
+            field = self._status_field
+            if not _STATUS_FIELD_RE.fullmatch(field):
+                warnings.append(
+                    f"имя поля статуса {field!r} небезопасно для команды YouTrack — статус не изменён")
             else:
-                done_set = True
+                cmd = self._client.post(
+                    "/commands",
+                    json={"query": f"{field} {{{state}}}", "issues": [{"idReadable": key}]})
+                if getattr(cmd, "status_code", 200) >= 400:
+                    warnings.append(
+                        f"команда '{field} {state}' не выполнена: HTTP {cmd.status_code}")
+                else:
+                    done_set = True
 
         return {"key": key, "board_id": key, "done_set": done_set,
                 "pr_link_added": pr_link_added,

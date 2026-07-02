@@ -107,13 +107,26 @@ def test_youtrack_finish_uses_configured_status_field():
     assert cmd[2]["query"] == "Stage {Готово}"
 
 
-def test_youtrack_finish_status_field_injection_neutralized():
+def test_youtrack_finish_rejects_unsafe_status_field():
+    # Имя поля идёт в DSL голым токеном; небезопасное (скобки + пробелы = попытка вклинить
+    # команду) отклоняется fail-soft: /commands НЕ вызывается, warning есть, done_set=False.
     b = _board({"/issues/TES-1": _Resp(200, {"description": ""})})
     b._status_field = "Stage} tag x {"  # попытка DSL-инъекции через имя поля
-    b.finish("TES-1", PR, done_state="Готово")
+    res = b.finish("TES-1", PR, done_state="Готово")
+    assert not any(c[1] == "/commands" for c in b._client.calls)  # команда не отправлена
+    assert res["done_set"] is False
+    assert res["warnings"]  # предупреждение о небезопасном имени поля
+
+
+def test_youtrack_finish_allows_cyrillic_status_field():
+    # Кириллическое одиночное имя поля валидно (Unicode \w); многословное значение
+    # в {…} сохраняется целиком.
+    b = _board({"/issues/TES-1": _Resp(200, {"description": ""})})
+    b._status_field = "Готовность"
+    res = b.finish("TES-1", PR, done_state="Готово к сдаче")
     cmd = next(c for c in b._client.calls if c[1] == "/commands")
-    assert "}" not in cmd[2]["query"][:-1]  # нет закрывающей скобки внутри
-    assert cmd[2]["query"].endswith("{Готово}")
+    assert cmd[2]["query"] == "Готовность {Готово к сдаче}"
+    assert res["done_set"] is True
 
 
 def test_youtrack_set_status_field_defaults_to_state():
