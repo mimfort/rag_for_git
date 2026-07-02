@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 import re
 from collections.abc import Iterable
-from urllib.parse import urljoin, urlsplit
+from urllib.parse import quote, urljoin, urlsplit
 
 import httpx
 
@@ -191,7 +191,8 @@ class YouTrackBoard:
         POST /commands шлёт `State <done_state or 'Fixed'>` — YouTrack сам резолвит
         значение в проекте; неуспех команды fail-soft (warnings, без краха).
         """
-        r = self._client.get(f"/issues/{key}", params={"fields": "description"})
+        safe_key = quote(key, safe="")
+        r = self._client.get(f"/issues/{safe_key}", params={"fields": "description"})
         r.raise_for_status()
         desc = r.json().get("description", "") or ""
 
@@ -199,17 +200,20 @@ class YouTrackBoard:
         if pr_url and pr_url not in desc:
             block = f"\n\nPR: {pr_url}" + (f"\n\n{note}" if note else "")
             new_desc = desc + block if desc else block.lstrip("\n")
-            rr = self._client.post(f"/issues/{key}", json={"description": new_desc})
+            rr = self._client.post(f"/issues/{safe_key}", json={"description": new_desc})
             rr.raise_for_status()
             pr_link_added = True
 
         warnings: list[str] = []
         done_set = False
         if mark_done:
-            state = done_state or "Fixed"
+            # done_state приходит из .review.yml → чужой командной строкой в DSL YouTrack
+            # не должен становиться (command-injection). Убираем фигурные скобки и
+            # оборачиваем значение в {…} — YouTrack трактует его как единый State-литерал.
+            state = (done_state or "Fixed").replace("{", "").replace("}", "")
             cmd = self._client.post(
                 "/commands",
-                json={"query": f"State {state}", "issues": [{"idReadable": key}]})
+                json={"query": f"State {{{state}}}", "issues": [{"idReadable": key}]})
             if getattr(cmd, "status_code", 200) >= 400:
                 warnings.append(f"команда 'State {state}' не выполнена: HTTP {cmd.status_code}")
             else:

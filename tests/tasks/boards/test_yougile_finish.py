@@ -70,3 +70,23 @@ def test_yougile_finish_note_appended():
     b.finish("PRI-10", PR, note="закрыто автоматически")
     put = next(c for c in b._client.calls if c[0] == "PUT")
     assert "закрыто автоматически" in put[2]["description"]
+
+
+def test_yougile_finish_escapes_html_in_note():
+    # note приходит от пользователя и уходит в HTML-описание доски → экранируем
+    # (иначе stored XSS у любого, кто откроет задачу в вебе YouGile).
+    b = _board({"/tasks/PRI-10": _Resp(200, {"id": "u1", "description": "",
+                                             "completed": False})})
+    b.finish("PRI-10", PR, note="<script>alert(1)</script>")
+    put = next(c for c in b._client.calls if c[0] == "PUT")
+    desc = put[2]["description"]
+    assert "<script>" not in desc
+    assert "&lt;script&gt;" in desc
+
+
+def test_yougile_finish_encodes_key_in_path():
+    # ключ с путевым сегментом не должен выходить за /tasks/ (path traversal).
+    b = _board({"/tasks/..%2Fusers": _Resp(200, {"id": "u1", "description": "",
+                                                 "completed": False})})
+    b.finish("../users", PR)
+    assert any(c[1] == "/tasks/..%2Fusers" for c in b._client.calls if c[0] == "GET")

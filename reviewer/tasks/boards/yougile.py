@@ -13,7 +13,7 @@ import html
 import logging
 import re
 from collections.abc import Iterable
-from urllib.parse import unquote, urlsplit
+from urllib.parse import quote, unquote, urlsplit
 
 import httpx
 
@@ -256,7 +256,7 @@ class YougileBoard:
         обновляет задачу — двигает её timestamp (watermark синка). done_state не
         применим (у YouGile булев completed).
         """
-        r = self._client.get(f"/tasks/{key}")
+        r = self._client.get(f"/tasks/{quote(key, safe='')}")
         r.raise_for_status()
         task = r.json()
         uuid = task.get("id") or key
@@ -265,10 +265,14 @@ class YougileBoard:
 
         payload: dict = {}
         pr_link_added = False
-        if pr_url and pr_url not in desc:
-            block = f'\n<div>PR: <a href="{pr_url}">{pr_url}</a></div>'
+        # PR-ссылка и note уходят в HTML-описание доски — экранируем во избежание
+        # HTML/XSS-инъекции (note приходит от пользователя). Idempotency-проверка
+        # сравнивает с экранированной формой (для обычных URL совпадает с сырой).
+        safe_url = html.escape(pr_url, quote=True)
+        if pr_url and safe_url not in desc:
+            block = f'\n<div>PR: <a href="{safe_url}">{safe_url}</a></div>'
             if note:
-                block += f"\n<div>{note}</div>"
+                block += f"\n<div>{html.escape(note)}</div>"
             payload["description"] = desc + block
             pr_link_added = True
         done_set = False
@@ -277,7 +281,7 @@ class YougileBoard:
             done_set = True
 
         if payload:
-            rr = self._client.put(f"/tasks/{uuid}", json=payload)
+            rr = self._client.put(f"/tasks/{quote(str(uuid), safe='')}", json=payload)
             rr.raise_for_status()
         return {"key": key, "board_id": uuid, "done_set": done_set,
                 "pr_link_added": pr_link_added, "already_closed": not payload,

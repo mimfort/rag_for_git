@@ -49,7 +49,7 @@ def test_youtrack_finish_edits_desc_and_runs_state_command():
     edit = next(c for c in posts if c[1] == "/issues/TES-1")
     assert PR in edit[2]["description"]
     cmd = next(c for c in posts if c[1] == "/commands")
-    assert cmd[2]["query"] == "State Fixed"
+    assert cmd[2]["query"] == "State {Fixed}"  # значение в {…}: анти-DSL-инъекция
     assert cmd[2]["issues"] == [{"idReadable": "TES-1"}]
 
 
@@ -57,7 +57,24 @@ def test_youtrack_finish_default_state_fixed():
     b = _board({"/issues/TES-1": _Resp(200, {"description": ""})})
     b.finish("TES-1", PR)  # done_state не задан
     cmd = next(c for c in b._client.calls if c[1] == "/commands")
-    assert cmd[2]["query"] == "State Fixed"
+    assert cmd[2]["query"] == "State {Fixed}"
+
+
+def test_youtrack_finish_state_command_injection_neutralized():
+    # done_state с попыткой дописать команду в DSL: фигурные скобки убраны,
+    # значение обёрнуто в единый {…} — доп. команды не выполнятся.
+    b = _board({"/issues/TES-1": _Resp(200, {"description": ""})})
+    b.finish("TES-1", PR, done_state="Fixed} tag urgent {")
+    cmd = next(c for c in b._client.calls if c[1] == "/commands")
+    assert cmd[2]["query"] == "State {Fixed tag urgent }"
+    assert "}" not in cmd[2]["query"][:-1]  # нет закрывающей скобки внутри значения
+
+
+def test_youtrack_finish_encodes_key_in_path():
+    # ключ с путевыми сегментами не должен выходить за /issues/ (path traversal).
+    b = _board({"/issues/..%2Fadmin": _Resp(200, {"description": ""})})
+    b.finish("../admin", PR, mark_done=False)
+    assert any(c[1] == "/issues/..%2Fadmin" for c in b._client.calls)
 
 
 def test_youtrack_finish_command_failsoft():
