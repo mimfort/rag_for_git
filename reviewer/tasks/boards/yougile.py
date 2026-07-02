@@ -248,6 +248,40 @@ class YougileBoard:
         return normalize_yougile(raw, self._key_pattern, self._url_template,
                                  subtask_titles, attachments=attachments)
 
+    def fetch_one(self, key: str) -> RawTask | None:
+        """Один RawTask по ключу (проектный/компанийный код) — write-through после finish.
+
+        GET /tasks/{key} (тот же вызов, что и в finish); title колонки резолвится
+        best-effort через GET /columns/{columnId}. fail-soft: сбой/404 → None."""
+        try:
+            r = self._client.get(f"/tasks/{quote(key, safe='')}")
+            r.raise_for_status()
+            t = r.json()
+        except Exception:
+            log.warning("yougile: fetch_one(%s) не удался", key, exc_info=True)
+            return None
+        status = None
+        col_id = t.get("columnId")
+        if col_id:
+            try:
+                rc = self._client.get(f"/columns/{quote(str(col_id), safe='')}")
+                rc.raise_for_status()
+                status = rc.json().get("title")
+            except Exception:
+                log.warning("yougile: колонка задачи %s недоступна — status=None",
+                            key, exc_info=True)
+        return RawTask(
+            key=t.get("idTaskCommon") or t.get("id") or key,
+            project_code=t.get("idTaskProject", "") or "",
+            title=t.get("title", "") or "",
+            description=t.get("description", "") or "",
+            status=status,
+            subtask_ids=list(t.get("subtasks", []) or []),
+            timestamp=int(t.get("timestamp", 0) or 0),
+            board_id=t.get("id") or key,
+            completed=bool(t.get("completed", False)),
+        )
+
     def _resolve_column_id(self, current_col_id: str, title: str) -> str | None:
         """id колонки с заданным title на той же доске, что и current_col_id.
 

@@ -279,6 +279,23 @@ class YouTrackBoard:
                 "already_closed": not pr_link_added and not done_set,
                 "warnings": warnings}
 
+    def fetch_one(self, key: str) -> RawTask | None:
+        """Один RawTask по idReadable — write-through после finish.
+
+        GET /issues/{key} с богатым `fields` (_FIELDS) → _issue_to_raw. Имя поля
+        статуса — self._status_field (per-repo). fail-soft: сбой/пусто → None."""
+        try:
+            r = self._client.get(f"/issues/{quote(key, safe='')}",
+                                  params={"fields": _FIELDS})
+            r.raise_for_status()
+            issue = r.json()
+        except Exception:
+            log.warning("youtrack: fetch_one(%s) не удался", key, exc_info=True)
+            return None
+        if not issue:
+            return None
+        return _issue_to_raw(issue, self._status_field)
+
     def list_done_targets(self, project: str | None) -> dict:
         """Поля статуса + значения (read-only, fail-soft). Try admin customFields;
         при недоступности — агрегация distinct значений из выборки задач проекта.

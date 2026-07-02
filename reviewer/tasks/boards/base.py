@@ -69,6 +69,15 @@ class TaskBoardProvider(Protocol):
         YouGile дополнительно кладёт `column_moved: bool` (доска-специфичное поле)."""
         ...
 
+    def fetch_one(self, key: str) -> RawTask | None:
+        """Один RawTask по ключу задачи — для write-through после finish.
+
+        После finish закрытую задачу надо сразу переиндексировать в стор reviewer,
+        не дожидаясь инкрементального sync_board (тот отсекает задачи с
+        timestamp <= watermark-курсор). fail-soft: сетевой сбой / 404 / нет задачи
+        → None (write-through пропускается, стор догонит обычным синком)."""
+        ...
+
     def list_done_targets(self, project: str | None) -> dict:
         """Кандидаты done-цели доски (read-only, fail-soft, НИКОГДА не бросает).
 
