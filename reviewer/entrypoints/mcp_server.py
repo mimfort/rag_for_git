@@ -104,26 +104,34 @@ def create_server(service: MCPReviewService) -> FastMCP:
     @mcp.tool()
     def sync_board(board: str | None = None, limit: int | None = None,
                    purge_orphaned: bool = False, keep_with_prs: bool = True,
-                   board_type: str | None = None) -> dict:
+                   board_type: str | None = None,
+                   status_field: str | None = None) -> dict:
         """Server-side ETL: enumerate the configured task board via REST, normalize,
         and index it (vector store + task graph). board_type limits sync to one board
         type (yougile|youtrack) — take it from task_board.type in the repo's .review.yml,
         not from the deploy env. board limits to one project/board by name (e.g. PRI).
+        status_field is the YouTrack status field name from the repo's .review.yml
+        (so sync reads the right field; ignored by YouGile).
         Incremental via a per-(type,board) timestamp watermark; --limit disables purge
         and cursor advance. Returns a compact counts summary with by_board breakdown."""
-        return service.sync_board(board, limit, purge_orphaned, keep_with_prs, board_type)
+        return service.sync_board(board, limit, purge_orphaned, keep_with_prs,
+                                  board_type, status_field)
 
     @mcp.tool()
     def finish_task(key: str, pr_url: str, note: str | None = None,
                     mark_done: bool = True, board_type: str | None = None,
-                    done_state: str | None = None) -> dict:
+                    done_state: str | None = None, status_field: str | None = None,
+                    done_column: str | None = None) -> dict:
         """Close a task on the board after its PR is created (server-side write):
         idempotently append the PR link to the description and mark it done, so the
         task's last-modified bumps and the next sync_board re-indexes the updated task.
         board_type and done_state come from the repo's .review.yml (YouGile ignores
         done_state — it has a boolean completed; YouTrack sets State via command,
-        default 'Fixed'). Credentials come from env; fail-soft."""
-        return service.finish_task(key, pr_url, note, mark_done, board_type, done_state)
+        default 'Fixed'). status_field/done_column also come from .review.yml —
+        YouTrack status field name / YouGile done column name. Credentials come from
+        env; fail-soft."""
+        return service.finish_task(key, pr_url, note, mark_done, board_type,
+                                   done_state, status_field, done_column)
 
     @mcp.tool()
     def search_tasks(query: str, top_k: int | None = None, project: str | None = None) -> str:

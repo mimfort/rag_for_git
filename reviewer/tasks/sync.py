@@ -79,7 +79,7 @@ class SyncService:
         }
 
     def run(self, board=None, limit=None, purge_orphaned=False,
-            keep_with_prs=True, board_type=None) -> dict:
+            keep_with_prs=True, board_type=None, status_field=None) -> dict:
         agg = {"enumerated": 0, "changed": 0, "embedded": 0, "refreshed": 0,
                "unchanged": 0, "failed": 0, "warnings": [], "cursor_advanced": False}
         # PRI-170: scoped-синк из репо — только один тип доски (board_type), а не все.
@@ -89,6 +89,11 @@ class SyncService:
             if not providers:
                 agg["warnings"].append(
                     f"тип доски '{board_type}' не настроен на сервере")
+        # per-repo имя поля статуса YouTrack (из .review.yml). Провайдер синка —
+        # singleton; выставляем детерминированно каждый run (None → сброс к «State»).
+        for p in providers:
+            if getattr(p, "board_type", None) == "youtrack" and hasattr(p, "set_status_field"):
+                p.set_status_field(status_field)
         all_active: list[str] = []
         by_board: list[dict] = []
         for provider in providers:

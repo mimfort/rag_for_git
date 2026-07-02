@@ -185,3 +185,27 @@ def test_unknown_board_type_warns_and_indexes_nothing():
     summary = SyncService([a], ts, meta).run(board_type="jira")
     assert summary["enumerated"] == 0
     assert any("jira" in w for w in summary["warnings"])
+
+
+def test_sync_run_resets_youtrack_status_field():
+    class _YT:
+        board_type = "youtrack"
+
+        def __init__(self):
+            self._status_field = "State"
+
+        def set_status_field(self, f):
+            self._status_field = f or "State"
+
+        def iter_raw(self, board, limit):
+            return iter([])
+
+    yt = _YT()
+    meta = type("M", (), {"get_index_meta": lambda *a: None,
+                          "set_index_meta": lambda *a: None})()
+    tasks = type("T", (), {"index_batch": staticmethod(lambda x: [])})()
+    svc = SyncService([yt], tasks, meta)
+    svc.run(board_type="youtrack", status_field="Stage")
+    assert yt._status_field == "Stage"
+    svc.run(board_type="youtrack")           # без status_field → сброс к State
+    assert yt._status_field == "State"
