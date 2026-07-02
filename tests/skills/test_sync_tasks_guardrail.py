@@ -32,3 +32,7 @@ def test_skill_passes_project_and_board_type():
 def test_skill_shows_by_board_breakdown():
     text = SKILL.read_text(encoding="utf-8")
     assert "by_board" in text          # обрабатывает per-board breakdown
+
+
+def test_sync_tasks_reads_status_field():
+    assert "status_field" in SKILL.read_text(encoding="utf-8")
