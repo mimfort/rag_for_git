@@ -1,5 +1,5 @@
 ---
-name: finish-task
+name: reviewer_finish-task
 description: After a task's PR is created, offer to close the task on the board — append the PR link to the task description and mark it done — so the reviewer's incremental sync re-indexes the updated task. Use when the user says the PR is up / asks to close/finish the task ("закрой задачу", "PR готов", "finish the task", "mark task done", "заверши задачу"). Server-side write via the reviewer MCP tool finish_task (works in any client). Requires the reviewer MCP server + a configured board.
 ---
 
