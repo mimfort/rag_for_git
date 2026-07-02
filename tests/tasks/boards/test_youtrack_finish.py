@@ -1,4 +1,4 @@
-from reviewer.tasks.boards.youtrack import YouTrackBoard
+from reviewer.tasks.boards.youtrack import YouTrackBoard, _state_of
 
 PR = "https://github.com/o/r/pull/7"
 
@@ -37,6 +37,7 @@ class _Client:
 def _board(get_routes, post_status=None):
     b = YouTrackBoard.__new__(YouTrackBoard)  # обойти httpx.Client в __init__
     b._client = _Client(get_routes, post_status)
+    b._status_field = "State"
     return b
 
 
@@ -90,3 +91,34 @@ def test_youtrack_finish_idempotent_pr_link():
     res = b.finish("TES-1", PR, mark_done=False)
     assert res["pr_link_added"] is False
     assert not [c for c in b._client.calls if c[1] == "/issues/TES-1" and c[0] == "POST"]
+
+
+def test_state_of_reads_custom_field():
+    issue = {"customFields": [{"name": "Stage", "value": {"name": "Готово"}}]}
+    assert _state_of(issue, "Stage") == "Готово"
+    assert _state_of(issue) is None  # дефолт State — поля нет
+
+
+def test_youtrack_finish_uses_configured_status_field():
+    b = _board({"/issues/TES-1": _Resp(200, {"description": ""})})
+    b._status_field = "Stage"  # как выставит make_board_provider/set_status_field
+    b.finish("TES-1", PR, done_state="Готово")
+    cmd = next(c for c in b._client.calls if c[1] == "/commands")
+    assert cmd[2]["query"] == "Stage {Готово}"
+
+
+def test_youtrack_finish_status_field_injection_neutralized():
+    b = _board({"/issues/TES-1": _Resp(200, {"description": ""})})
+    b._status_field = "Stage} tag x {"  # попытка DSL-инъекции через имя поля
+    b.finish("TES-1", PR, done_state="Готово")
+    cmd = next(c for c in b._client.calls if c[1] == "/commands")
+    assert "}" not in cmd[2]["query"][:-1]  # нет закрывающей скобки внутри
+    assert cmd[2]["query"].endswith("{Готово}")
+
+
+def test_youtrack_set_status_field_defaults_to_state():
+    b = _board({"/issues/TES-1": _Resp(200, {"description": ""})})
+    b.set_status_field(None)
+    b.finish("TES-1", PR, done_state="Fixed")
+    cmd = next(c for c in b._client.calls if c[1] == "/commands")
+    assert cmd[2]["query"] == "State {Fixed}"

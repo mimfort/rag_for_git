@@ -29,10 +29,10 @@ _FIELDS = (
 )
 
 
-def _state_of(issue: dict) -> str | None:
-    """Статус задачи — кастом-поле «State» (его value.name)."""
+def _state_of(issue: dict, field: str = "State") -> str | None:
+    """Статус задачи — кастом-поле `field` (дефолт «State»), его value.name."""
     for cf in issue.get("customFields") or []:
-        if cf.get("name") == "State":
+        if cf.get("name") == field:
             val = cf.get("value")
             return val.get("name") if isinstance(val, dict) else None
     return None
@@ -69,7 +69,7 @@ def _origin(base_url: str) -> str:
     return f"{p.scheme}://{p.netloc}"
 
 
-def _issue_to_raw(issue: dict) -> RawTask:
+def _issue_to_raw(issue: dict, status_field: str = "State") -> RawTask:
     """YouTrack issue JSON → RawTask. Чистая: без I/O."""
     key = issue.get("idReadable", "")
     return RawTask(
@@ -77,7 +77,7 @@ def _issue_to_raw(issue: dict) -> RawTask:
         project_code=key,                       # один счётчик idReadable, второго кода нет
         title=issue.get("summary", "") or "",
         description=issue.get("description", "") or "",
-        status=_state_of(issue),
+        status=_state_of(issue, status_field),
         subtask_ids=[],
         timestamp=int(issue.get("updated", 0) or 0),
         links=_links_of(issue),
@@ -123,6 +123,7 @@ class YouTrackBoard:
     board_type = "youtrack"
 
     def __init__(self, *, token: str, base_url: str, key_pattern: str,
+                 status_field: str = "State",
                  attachment_max_bytes: int = 10 * 1024 * 1024,
                  attachment_timeout: float = 10.0,
                  attachment_store_chars: int = 200000) -> None:
@@ -135,6 +136,7 @@ class YouTrackBoard:
         — код *не добавляет* «perm:» самостоятельно (иначе вышло бы ``Bearer perm:perm:...``).
         """
         self._key_pattern = key_pattern
+        self._status_field = status_field or "State"
         self._base = base_url.rstrip("/")
         self._att_domains = (_registrable_domain(urlsplit(self._base).netloc.split("@")[-1].split(":")[0]),)
         self._att_max_bytes = attachment_max_bytes
@@ -149,6 +151,14 @@ class YouTrackBoard:
     def close(self) -> None:
         self._client.close()
 
+    def set_status_field(self, field: str | None) -> None:
+        """Переустановить имя поля статуса (per-repo из .review.yml) для синка.
+
+        Провайдер синка — долгоживущий singleton; SyncService выставляет поле
+        перед iter_raw и сбрасывает к «State» при отсутствии конфига.
+        """
+        self._status_field = field or "State"
+
     def iter_raw(self, board: str | None, limit: int | None) -> Iterable[RawTask]:
         count = 0
         skip = 0
@@ -160,7 +170,7 @@ class YouTrackBoard:
             r.raise_for_status()
             page = r.json()
             for issue in page:
-                yield _issue_to_raw(issue)
+                yield _issue_to_raw(issue, self._status_field)
                 count += 1
                 if limit and count >= limit:
                     return
@@ -184,7 +194,8 @@ class YouTrackBoard:
                                   attachments=contents)
 
     def finish(self, key: str, pr_url: str, *, note: str | None = None,
-               mark_done: bool = True, done_state: str | None = None) -> dict:
+               mark_done: bool = True, done_state: str | None = None,
+               done_column: str | None = None) -> dict:
         """Закрыть задачу YouTrack: правка описания (PR-ссылка) + команда State.
 
         POST /issues/{key} правит описание (двигает `updated` — watermark синка).
@@ -207,15 +218,16 @@ class YouTrackBoard:
         warnings: list[str] = []
         done_set = False
         if mark_done:
-            # done_state приходит из .review.yml → чужой командной строкой в DSL YouTrack
-            # не должен становиться (command-injection). Убираем фигурные скобки и
-            # оборачиваем значение в {…} — YouTrack трактует его как единый State-литерал.
+            # done_state И имя поля приходят из .review.yml → чужой командной строкой
+            # в DSL YouTrack не должны становиться (command-injection). Убираем фигурные
+            # скобки и оборачиваем значение в {…} — YouTrack трактует его как единый литерал.
+            field = self._status_field.replace("{", "").replace("}", "")
             state = (done_state or "Fixed").replace("{", "").replace("}", "")
             cmd = self._client.post(
                 "/commands",
-                json={"query": f"State {{{state}}}", "issues": [{"idReadable": key}]})
+                json={"query": f"{field} {{{state}}}", "issues": [{"idReadable": key}]})
             if getattr(cmd, "status_code", 200) >= 400:
-                warnings.append(f"команда 'State {state}' не выполнена: HTTP {cmd.status_code}")
+                warnings.append(f"команда '{field} {state}' не выполнена: HTTP {cmd.status_code}")
             else:
                 done_set = True
 
