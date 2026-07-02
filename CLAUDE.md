@@ -117,3 +117,14 @@ MCP-сессия (PreparedReview + ToolContext) живёт в процессе `
 
 - Внешние сервисы (GitHub, Voyage, Postgres, Neo4j) изолированы за интерфейсами и мокаются в unit-тестах; реальные вызовы — только в integration/E2E.
 - Коммиты: **без self-attribution** (никаких `Co-Authored-By`/упоминаний Claude). Стиль сообщений — Conventional Commits на русском (`feat(agent): …`, `fix(index): …`).
+
+## Грунтовка reviewer в фазах план/ревью (опционально)
+
+Догфуд PRI-203. В фазах планирования/ревью, если reviewer-MCP подключён и его base-индекс
+свеж (`reviewer status --json` -> `drift == 0`), предпочитай session-less тулы reviewer
+голому grep для кросс-файловых фактов: `search_codebase` (релевантный код), `callers`
+(blast-radius сигнатуры, которую собираешься менять), `related_symbols`, `definition`.
+Точечно — пропускай мелкие/знакомые правки и файлы, уже в контексте (Voyage 3 RPM / 10K TPM).
+Base-индекс отслеживает целевую ветку, не рабочее дерево: грунтовка надёжна для существующего
+кода, но слепа к символам, только что правленным локально — их проверяй через Read. Если
+reviewer недоступен или индекс устарел — откат в grep/Read.

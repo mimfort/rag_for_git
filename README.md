@@ -26,6 +26,7 @@
 - [Installation](#installation)
 - [Configuration reference](#configuration-reference)
 - [CLI reference](#cli-reference)
+- [Reviewer grounding in plan/review phases](#reviewer-grounding-in-planreview-phases-optional)
 - [Skills reference](#skills-reference)
 - [MCP tools reference](#mcp-tools-reference)
 - [Plugin usage](#plugin-usage)
@@ -533,6 +534,26 @@ reviewer-mcp env rather than duplicated in each repo's `.review.yml`. See
 > "Настроить") → **API** → create/copy the key. REST: get `companyId` (`Ctrl + Alt + Q`, or
 > `POST /api-v2/auth/companies {login,password}`), then `POST /api-v2/auth/keys {login,password,companyId}`.
 > The key belongs **only** in the reviewer-mcp env (`~/.config/rag-reviewer/.env`), not in a chat or a client config.
+
+---
+
+## Reviewer grounding in plan/review phases (optional)
+
+The reviewer MCP tools are available in every phase, not only inside a PR review. If you
+run a plan/review workflow (e.g. Superpowers' writing-plans, or any code-review step), you
+can have the agent ground its work in the RAG + code graph instead of raw grep. This is
+opt-in: paste the block below into your agent context file (CLAUDE.md / AGENTS.md /
+GEMINI.md / .cursorrules — whichever your client uses).
+
+> **Reviewer grounding (plan/review, optional, fail-open).** When the reviewer MCP is
+> connected and its base index is fresh (`reviewer status --json` -> `drift == 0`), prefer the
+> session-less reviewer tools over grep to ground cross-file facts during planning and review:
+> `search_codebase` (relevant code), `callers` (blast-radius of a signature you are about to
+> change), `related_symbols`, `definition`. Be targeted — skip small/familiar edits and files
+> already in context (Voyage is rate-limited). The base index tracks the target branch, not
+> your working tree: grounding is reliable for existing code but blind to symbols you just
+> edited locally — verify those with Read. If reviewer is absent or the index is stale, fall
+> back to grep/Read.
 
 ---
 

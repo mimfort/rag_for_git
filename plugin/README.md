@@ -36,6 +36,13 @@
 
 Или локально для разработки: `claude --plugin-dir /path/to/rag_for_git`.
 
+## Грунтовка в план/ревью (опц.)
+
+Reviewer-тулы доступны не только в ревью PR — их можно включить в фазах планирования/ревью
+(writing-plans и т.п.), вставив opt-in блок в свой контекст-файл. См.
+[README.md](../README.md#reviewer-grounding-in-planreview-phases-optional) (EN) /
+[README.ru.md](../README.ru.md#грунтовка-reviewer-в-фазах-планревью-опционально) (RU).
+
 ## Headless
 
 ```bash
