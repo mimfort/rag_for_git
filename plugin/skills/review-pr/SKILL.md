@@ -97,9 +97,11 @@ blocks.
      `submit_findings` with category `requirements`.
    - blast-radius: dispatch one subagent with `references/blast-radius-prompt.md`, the diffs of
      all units (path + patch), each unit's `commentable_right`/`commentable_left` (the line numbers
-     where inline comments are allowed), the PR `title`/`body`, the repo/pr identifiers (so it can
-     call the reviewer MCP tools, including `get_impact`), and the target output language. It
-     submits findings via `submit_findings` with category `correctness`.
+     where inline comments are allowed), the PR `title`/`body`, the repo/pr identifiers, and the
+     target output language. It runs two checks — changed signatures breaking callers (via
+     `get_impact`) and interface expansion (a changed `Protocol`/ABC whose implementations must all
+     be updated, via `get_related_symbols`/`search_code`) — and submits findings via
+     `submit_findings` with category `correctness`.
    Give the performance/maintainability subagents: the diffs of all units (path + patch), the
    repo/pr identifiers so they can call the reviewer MCP tools, and the target output language.
    They must submit findings via `submit_findings` (category `performance` / `maintainability`).
