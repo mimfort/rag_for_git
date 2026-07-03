@@ -93,8 +93,11 @@ brief to `superpowers:brainstorming` (which leads to writing-plans → subagent-
   session model, or offer the escape-hatch «switch model / run it yourself» in the spirit of the
   preflight «Прогрею сам» option (Step 0.4). Note in the report that the brief was built inline.
 - **Existing-artifacts warn** (Step 4, user-facing «warn, don't block»): the **orchestrator** runs
-  that scan-and-warn **before dispatch** (a subagent must not prompt the user); the idempotency
-  overwrite-glob stays inside the subagent's persist.
+  that scan-and-warn **before dispatch** (a subagent must not prompt the user). It derives the task
+  KEY itself — the same `$ARGUMENTS`-vs-`key_pattern` regex match Step 2 opens with (no `get_task`
+  needed) — so the KEY-based artifact globs run pre-dispatch. When Steps 2–4 run in a subagent, the
+  Step 4 warn is thus **orchestrator-only**; only the idempotency overwrite-glob stays inside the
+  subagent's persist.
 - After the unit returns, the orchestrator **appends a marker line to the brief**:
   `Собран на: <tier/модель>, режим: subagent | inline` — records which model built the brief. The
   `brief_cost` token block is best-effort and may miss subagent sidechain tokens (documented limitation).

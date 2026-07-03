@@ -565,7 +565,7 @@ RAG + граф кода и передаёт в **полный цикл superpowe
 
 - **Аргументы:** ключ задачи (напр. `PRI-4`, по `key_pattern`) **или** свободное описание (напр.
   «add a logout endpoint»). Board-less режим: описание + поиск по коду.
-- **MCP-тулы:** `get_board_config`, `index_task`, `get_task_context`, `search_tasks`,
+- **MCP-тулы:** `get_board_config`, `get_subsystem_summaries`, `get_task`, `index_task`, `get_task_context`, `search_tasks`,
   `search_codebase`, `related_symbols`, `callers`, `definition`, `get_pr_diff`; плюс подключённая
   доска (`mcp__<board>__*`) для чтения задачи.
 - **Поток:** preflight: проверка свежести индекса → прогрев корпуса задач через `sync_board` →
