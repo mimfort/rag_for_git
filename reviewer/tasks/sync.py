@@ -40,6 +40,7 @@ class SyncService:
 
         active_keys: list[str] = []
         changed: list[dict] = []
+        meta_refresh: list[dict] = []
         max_ts = cursor
         unchanged = 0
         for raw in provider.iter_raw(board, limit):
@@ -47,6 +48,11 @@ class SyncService:
             max_ts = max(max_ts, raw.timestamp)
             if raw.timestamp <= cursor:
                 unchanged += 1
+                try:
+                    meta_refresh.append(provider.normalize_meta(raw))
+                except Exception as e:
+                    log.warning("sync: сбой normalize_meta %s", raw.key, exc_info=True)
+                    warnings.append(f"normalize_meta {raw.key}: {type(e).__name__}: {e}")
                 continue
             try:
                 changed.append(provider.normalize(raw))
@@ -62,6 +68,12 @@ class SyncService:
         for r in results:
             warnings.extend(r.get("warnings") or [])
 
+        meta_refreshed = 0
+        if meta_refresh:
+            mr = self._tasks.refresh_meta_batch(meta_refresh)
+            meta_refreshed = mr.get("meta_refreshed", 0)
+            warnings.extend(mr.get("warnings") or [])
+
         cursor_advanced = False
         if limit:
             warnings.append("курсор не продвинут: задан limit (частичный обход)")
@@ -75,13 +87,15 @@ class SyncService:
         return active_keys, {
             "enumerated": len(active_keys), "changed": len(changed),
             "embedded": embedded, "refreshed": refreshed, "unchanged": unchanged,
+            "meta_refreshed": meta_refreshed,
             "failed": failed, "warnings": warnings, "cursor_advanced": cursor_advanced,
         }
 
     def run(self, board=None, limit=None, purge_orphaned=False,
             keep_with_prs=True, board_type=None, status_field=None) -> dict:
         agg = {"enumerated": 0, "changed": 0, "embedded": 0, "refreshed": 0,
-               "unchanged": 0, "failed": 0, "warnings": [], "cursor_advanced": False}
+               "unchanged": 0, "failed": 0, "meta_refreshed": 0,
+               "warnings": [], "cursor_advanced": False}
         # PRI-170: scoped-синк из репо — только один тип доски (board_type), а не все.
         providers = self._providers
         if board_type is not None:
@@ -100,7 +114,7 @@ class SyncService:
             active, one = self._sync_provider(provider, board, limit)
             all_active.extend(active)
             for k in ("enumerated", "changed", "embedded", "refreshed",
-                      "unchanged", "failed"):
+                      "unchanged", "failed", "meta_refreshed"):
                 agg[k] += one[k]
             agg["warnings"].extend(one["warnings"])
             agg["cursor_advanced"] = agg["cursor_advanced"] or one["cursor_advanced"]
@@ -108,7 +122,8 @@ class SyncService:
                 "board_type": provider.board_type,
                 "board": board or "*",
                 **{k: one[k] for k in ("enumerated", "changed", "embedded",
-                                        "refreshed", "unchanged", "failed")},
+                                        "refreshed", "unchanged", "failed",
+                                        "meta_refreshed")},
             })
 
         partial = bool(limit)

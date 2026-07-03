@@ -205,6 +205,11 @@ class YouTrackBoard:
         return normalize_youtrack(raw, self._key_pattern, self._base,
                                   attachments=contents)
 
+    def normalize_meta(self, raw: RawTask) -> dict:
+        """Дешёвая нормализация без I/O (PRI-207): чистый normalize_youtrack без
+        резолва вложений. Плоские поля (project/url/status) корректны."""
+        return normalize_youtrack(raw, self._key_pattern, self._base)
+
     def finish(self, key: str, pr_url: str, *, note: str | None = None,
                mark_done: bool = True, done_state: str | None = None,
                done_column: str | None = None) -> dict:

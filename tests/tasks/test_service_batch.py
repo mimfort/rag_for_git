@@ -8,6 +8,7 @@ class _FakeStore:
         self._hashes = hashes or {}
         self.upserted = []
         self.meta_updates = []
+        self.meta_batch = None
 
     def existing_hash(self, key):
         return self._hashes.get(key)
@@ -17,6 +18,9 @@ class _FakeStore:
 
     def update_meta(self, key, title, status, url, aliases, project=""):
         self.meta_updates.append((key, title, status, url, aliases, project))
+
+    def update_meta_batch(self, metas):
+        self.meta_batch = list(metas)
 
 
 class _FakeGraph:
@@ -222,3 +226,44 @@ def test_index_batch_passes_attachments_to_row():
     task = _brief(attachments=attachments)
     TaskService(store, graph, emb).index_batch([task])
     assert store.upserted[-1].attachments == attachments
+
+
+def test_refresh_meta_batch_stamps_project_store_and_graph():
+    store, graph = _FakeStore(), _FakeGraph()
+    metas = [{"key": "ID-1", "aliases": ["PRI-1"], "title": "T", "status": "Open",
+              "url": "u", "project": "PRI"}]
+    res = TaskService(store, graph, _FakeEmbedder()).refresh_meta_batch(metas)
+    assert res["meta_refreshed"] == 1
+    assert store.meta_batch == metas               # батч ушёл в стор
+    assert graph.tasks == ["ID-1"]
+    assert graph.task_projects == ["PRI"]          # project достиг графа
+
+
+def test_refresh_meta_batch_never_embeds_or_upserts():
+    store, graph, emb = _FakeStore(), _FakeGraph(), _FakeEmbedder()
+    TaskService(store, graph, emb).refresh_meta_batch([{"key": "ID-1", "project": "PRI"}])
+    assert emb.doc_calls == []                     # НИКОГДА не эмбедит
+    assert store.upserted == []                    # и не upsert-ит (не воскрешает задачу)
+
+
+def test_refresh_meta_batch_empty():
+    store = _FakeStore()
+    res = TaskService(store, _FakeGraph(), _FakeEmbedder()).refresh_meta_batch([])
+    assert res == {"meta_refreshed": 0, "warnings": []}
+    assert store.meta_batch is None
+
+
+def test_refresh_meta_batch_graph_none_warns():
+    store = _FakeStore()
+    res = TaskService(store, None, _FakeEmbedder()).refresh_meta_batch(
+        [{"key": "ID-1", "project": "PRI"}])
+    assert res["meta_refreshed"] == 1
+    assert any("graph unavailable" in w for w in res["warnings"])
+
+
+def test_refresh_meta_batch_graph_failsoft():
+    store, graph = _FakeStore(), _FakeGraph(raise_on=("upsert_task",))
+    res = TaskService(store, graph, _FakeEmbedder()).refresh_meta_batch(
+        [{"key": "ID-1", "project": "PRI"}])
+    assert res["meta_refreshed"] == 1              # store прошёл, граф — fail-soft
+    assert any("graph" in w for w in res["warnings"])

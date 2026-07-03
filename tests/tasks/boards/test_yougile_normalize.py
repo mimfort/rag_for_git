@@ -233,3 +233,28 @@ def test_normalize_completed_maps_to_done_status():
 def test_normalize_not_completed_keeps_column_status():
     b = normalize_yougile(_raw(status="In progress", completed=False), KP, URL)
     assert b["status"] == "In progress"
+
+
+class _BoomClient:
+    """httpx-заглушка: любой сетевой вызов = ошибка (доказывает отсутствие I/O)."""
+
+    def get(self, *a, **k):
+        raise AssertionError("normalize_meta не должен делать сетевые вызовы")
+
+    def close(self):
+        pass
+
+
+def test_normalize_meta_no_io_yougile():
+    b = YougileBoard(api_key="k", api_base="https://yougile.com/api-v2",
+                     key_pattern=KP, url_template=URL)
+    b._client = _BoomClient()
+    # подзадачи и related-ссылки есть — дорогой normalize полез бы в сеть, meta — нет
+    raw = _raw(subtask_ids=["u1"], description="связано с PRI-96")
+    meta = b.normalize_meta(raw)
+    assert meta["key"] == "ID-10"
+    assert meta["aliases"] == ["PRI-10"]
+    assert meta["status"] == "Backlog"
+    assert meta["url"] == "https://ru.yougile.com/team/T/#PRI-10"
+    assert meta["project"] == "PRI"
+    assert meta["criteria"] == [] and meta["attachments"] == []
