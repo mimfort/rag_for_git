@@ -52,6 +52,7 @@ def test_blast_radius_assembled_has_tooling_and_confidence_tail():
     assert "Interface expansion" in b             # новая секция измерения
     assert "Protocol" in b                         # триггер интерфейс-правки
     assert "abstract" in b.lower()                 # ABC / abstractmethod триггер
+    assert "all implementations are covered" in b   # guard: fail-open lower-bound для interface-expansion
 
 
 def test_verify_keeps_verdicts_schema_and_tools():

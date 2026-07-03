@@ -64,7 +64,9 @@ Confidence & graph completeness (mandatory):
   - 0.8–0.9 — the caller was read via `read_file` AND confirmed NOT updated via
     `get_changed_file_diff`, AND the break is unambiguous (a new REQUIRED parameter
     with no default, a removed/renamed parameter, or a changed parameter order that
-    breaks positional/keyword callers).
+    breaks positional/keyword callers); or, for check B, an implementation was read
+    via `read_file` and unambiguously LACKS the new/changed method AND was confirmed
+    NOT updated via `get_changed_file_diff`.
   - 0.5–0.6 — the break type is unambiguous, but you did NOT read every listed caller,
     OR you read it and the impact is context-dependent (the caller may already pass
     the argument).
