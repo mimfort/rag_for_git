@@ -57,6 +57,13 @@ class TaskBoardProvider(Protocol):
         criteria, status, url, links, attachments}."""
         ...
 
+    def normalize_meta(self, raw: RawTask) -> dict:
+        """Дешёвый TaskBrief из RawTask БЕЗ I/O (PRI-207): только плоские
+        метаданные (key, aliases, title, status, url, project). Подзадачи и
+        вложения НЕ резолвятся (criteria=[], attachments=[]). Для self-healing
+        meta-refresh задач ниже watermark — не дёргает сеть на задачу."""
+        ...
+
     def finish(self, key: str, pr_url: str, *, note: str | None = None,
                mark_done: bool = True, done_state: str | None = None,
                done_column: str | None = None) -> dict:

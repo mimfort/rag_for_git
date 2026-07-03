@@ -622,7 +622,7 @@ Orchestrates the three-stage pipeline (`prepare_review` → subagents → `publi
   Task reads are scoped via `project=<task_board.project>` passed to `get_task`/`get_task_context`/`search_tasks` (PRI-170).
 - **Flow:** prepare (PR + policy + units + board config) → fan out one analysis subagent per file →
   parallel **performance** / **maintainability** dimensions (+ **requirements** if a `TaskBrief`
-  exists) + **blast-radius** (impact analysis via `get_impact`) → **verify** pass (drops `is_real=false` findings) → publish (gate/grounding/dedup/assemble).
+  exists) + **blast-radius** (impact analysis via `get_impact`, plus shared-interface conformance: a changed `Protocol`/ABC → enumerate implementations and confirm all are updated) → **verify** pass (drops `is_real=false` findings) → publish (gate/grounding/dedup/assemble).
   If `prepare_review` returns `status:"skipped"` (target branch not tracked) it stops; draft PRs are
   skipped unless `REVIEW_SKIP_DRAFTS=false`.
 

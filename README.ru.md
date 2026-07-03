@@ -550,7 +550,7 @@ Claude Code (`/rag-reviewer:` — namespace плагина; в других кл
   `index_task` / `get_task_context` / `search_tasks`, если подключена доска.
 - **Поток:** prepare (PR + политика + units + конфиг доски) → fan-out одного субагента на файл →
   параллельно dimension-проходы **performance** / **maintainability** (+ **requirements**, если есть
-  `TaskBrief`) + **blast-radius** (impact-анализ через `get_impact`) → **verify** (отсев находок с `is_real=false`) → publish (gate/grounding/dedup/assemble).
+  `TaskBrief`) + **blast-radius** (impact-анализ через `get_impact`, плюс конформность общих интерфейсов: правка `Protocol`/ABC → перечислить реализации и подтвердить, что все обновлены) → **verify** (отсев находок с `is_real=false`) → publish (gate/grounding/dedup/assemble).
   Если `prepare_review` вернул `status:"skipped"` (ветка вне `REVIEW_BRANCHES`) — стоп; draft-PR
   пропускаются, если не `REVIEW_SKIP_DRAFTS=false`.
   Чтение задач скоупится через `project=<task_board.project>`, передаваемый в `get_task`/`get_task_context`/`search_tasks` (PRI-170).

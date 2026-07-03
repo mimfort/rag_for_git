@@ -168,6 +168,23 @@ class TaskStore:
             )
             conn.commit()
 
+    def update_meta_batch(self, metas: list[dict]) -> None:
+        """Батч-обновление плоских метаданных (PRI-207 meta-refresh): один
+        executemany-UPDATE. Задача не в сторе → 0 строк (no-op, не создаёт
+        неполных строк, не трогает embedding). Пустой батч → no-op."""
+        rows = [(m.get("title") or "", m.get("status"), m.get("url"),
+                 m.get("aliases") or [], m.get("project") or "", m["key"])
+                for m in metas if isinstance(m, dict) and m.get("key")]
+        if not rows:
+            return
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.executemany(
+                "UPDATE tasks SET title=%s, status=%s, url=%s, aliases=%s, "
+                "project=%s WHERE key=%s",
+                rows,
+            )
+            conn.commit()
+
     def list_keys(self, project: str | None = None) -> list[str]:
         """Ключи задач; при project — только этого проекта (для scoped purge)."""
         sql = "SELECT key FROM tasks"

@@ -203,3 +203,25 @@ def test_youtrack_selfhosted_with_port_allows_own_attachment():
     brief = board.normalize(raw)
     assert board._client.requested == [url]            # свой хост — скачан
     assert brief["attachments"][0]["content_text"] == "ТЗ"
+
+
+class _BoomClient:
+    """httpx-заглушка: любой сетевой вызов = ошибка (доказывает отсутствие I/O)."""
+
+    def get(self, *a, **k):
+        raise AssertionError("normalize_meta не должен делать сетевые вызовы")
+
+    def close(self):
+        pass
+
+
+def test_normalize_meta_no_io_youtrack():
+    b = YouTrackBoard(token="perm:x", base_url=BASE, key_pattern=KP)
+    b._client = _BoomClient()
+    raw = _issue_to_raw(_issue(idReadable="PRJ-7", description="связано с ABC-1"))
+    meta = b.normalize_meta(raw)
+    assert meta["key"] == "PRJ-7"
+    assert meta["status"] == "In Progress"
+    assert meta["url"] == "https://c.youtrack.cloud/issue/PRJ-7"
+    assert meta["project"] == "PRJ"
+    assert meta["criteria"] == [] and meta["attachments"] == []

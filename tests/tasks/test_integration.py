@@ -219,6 +219,29 @@ def test_purge_no_keep_with_prs_deletes_all(store, graph):
     assert store.list_keys() == []
 
 
+def test_update_meta_batch_backfills_project(store):
+    emb = _FakeEmbedder()
+    text = build_task_text("T1", "d1", [])
+    store.upsert_task(TaskRow(
+        key="ID-1", aliases=["PRI-1"], title="T1", description="d1",
+        status="Open", url=None, content_hash=task_content_hash(text),
+        text=text, embedding=emb.embed_documents([text])[0], project=""))
+    assert store.get_task("ID-1").project == ""
+
+    store.update_meta_batch([{"key": "ID-1", "title": "T1", "status": "Done",
+                              "url": "u", "aliases": ["PRI-1"], "project": "PRI"}])
+    row = store.get_task("ID-1")
+    assert row.project == "PRI"
+    assert row.status == "Done"
+
+    # задача не в сторе → no-op, ничего не создаётся
+    store.update_meta_batch([{"key": "ID-404", "project": "PRI"}])
+    assert store.get_task("ID-404") is None
+
+    # пустой батч → без ошибок
+    store.update_meta_batch([])
+
+
 def test_taskstore_get_task_by_key_and_alias(store):
     emb = _FakeEmbedder()
     text = build_task_text("Add logout", "Clear the session on logout", [])

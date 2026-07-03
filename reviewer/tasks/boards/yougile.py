@@ -248,6 +248,11 @@ class YougileBoard:
         return normalize_yougile(raw, self._key_pattern, self._url_template,
                                  subtask_titles, attachments=attachments)
 
+    def normalize_meta(self, raw: RawTask) -> dict:
+        """Дешёвая нормализация без I/O (PRI-207): чистый normalize_yougile без
+        резолва подзадач/вложений. Плоские поля (project/url/status) корректны."""
+        return normalize_yougile(raw, self._key_pattern, self._url_template)
+
     def fetch_one(self, key: str) -> RawTask | None:
         """Один RawTask по ключу (проектный/компанийный код) — write-through после finish.
 
