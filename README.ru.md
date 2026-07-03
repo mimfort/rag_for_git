@@ -577,6 +577,11 @@ RAG + граф кода и передаёт в **полный цикл superpowe
   → **полный superpowers-цикл**: brainstorming → writing-plans → subagent-driven-development →
   executing-plans → finishing-a-development-branch.
   `project=<task_board.project>` на всех task-тулах.
+- **Дешевле модель под бриф (кросс-CLI).** Перед сборкой брифа `solve-task` спрашивает, на каком
+  tier'е модели его собрать (по tier'ам — cheap / mid / premium, а не по имени модели, чтобы работало
+  в разных CLI) и рекомендует mid (Sonnet-класс) по умолчанию: сбор и распил брифа — лёгкий reasoning,
+  топ-модель избыточна. Где харнесс умеет per-subagent override — сборка брифа идёт на выбранной
+  модели; иначе — inline.
 
 ### `reviewer_sync-codebase` — построить/обновить base-индекс
 
