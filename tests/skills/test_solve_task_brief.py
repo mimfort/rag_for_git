@@ -77,3 +77,34 @@ def test_solve_task_warns_on_existing_artifacts():
     assert "[Y/n]" in text                       # предупреждение с выбором
     assert "[existing_artifacts]" in text        # тег в Constraints
     assert "Do NOT block" in text or "not block" in text  # не блокировка
+
+
+def test_solve_task_asks_brief_model_choice():
+    """Новый Step 1.5 должен спрашивать у юзера tier модели для сборки брифа."""
+    text = SOLVE.read_text(encoding="utf-8")
+    assert "Ask the user which model tier to use for building the brief" in text, (
+        "нет шага выбора модели для брифа (уникальная фраза шага удалена)"
+    )
+    # Рекомендация-дефолт — mid/Sonnet-класс
+    assert "mid tier (Sonnet-class)" in text, (
+        "скилл не рекомендует mid/Sonnet-класс как дефолт"
+    )
+
+
+def test_solve_task_dispatches_brief_subagent_on_chosen_model():
+    """Путь A: шаги 2–4 диспатчатся сабагентом на выбранной модели; путь B — inline-фолбэк."""
+    text = SOLVE.read_text(encoding="utf-8")
+    assert "dispatch a subagent on the chosen model" in text, (
+        "нет диспатча сабагента на выбранной модели (путь A)"
+    )
+    assert "per-subagent model override unavailable" in text, (
+        "нет inline-фолбэка для CLI без per-subagent override (путь B)"
+    )
+
+
+def test_solve_task_records_brief_model_marker():
+    """Оркестратор дописывает в бриф строку-маркер «Собран на: …»."""
+    text = SOLVE.read_text(encoding="utf-8")
+    assert "Собран на" in text, (
+        "нет строки-маркера «Собран на: <tier/модель>» (наблюдаемость выбора)"
+    )
