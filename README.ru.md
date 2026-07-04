@@ -565,7 +565,7 @@ RAG + граф кода и передаёт в **полный цикл superpowe
 
 - **Аргументы:** ключ задачи (напр. `PRI-4`, по `key_pattern`) **или** свободное описание (напр.
   «add a logout endpoint»). Board-less режим: описание + поиск по коду.
-- **MCP-тулы:** `get_board_config`, `index_task`, `get_task_context`, `search_tasks`,
+- **MCP-тулы:** `get_board_config`, `get_subsystem_summaries`, `get_task`, `index_task`, `get_task_context`, `search_tasks`,
   `search_codebase`, `related_symbols`, `callers`, `definition`, `get_pr_diff`; плюс подключённая
   доска (`mcp__<board>__*`) для чтения задачи.
 - **Поток:** preflight: проверка свежести индекса → прогрев корпуса задач через `sync_board` →
@@ -577,6 +577,11 @@ RAG + граф кода и передаёт в **полный цикл superpowe
   → **полный superpowers-цикл**: brainstorming → writing-plans → subagent-driven-development →
   executing-plans → finishing-a-development-branch.
   `project=<task_board.project>` на всех task-тулах.
+- **Дешевле модель под бриф (кросс-CLI).** Перед сборкой брифа `solve-task` спрашивает, на каком
+  tier'е модели его собрать (по tier'ам — cheap / mid / premium, а не по имени модели, чтобы работало
+  в разных CLI) и рекомендует mid (Sonnet-класс) по умолчанию: сбор и распил брифа — лёгкий reasoning,
+  топ-модель избыточна. Где харнесс умеет per-subagent override — сборка брифа идёт на выбранной
+  модели; иначе — inline.
 
 ### `reviewer_sync-codebase` — построить/обновить base-индекс
 
