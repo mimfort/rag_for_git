@@ -869,6 +869,13 @@ class MCPReviewService:
         summary: str,
         dry_run: bool = False,
         task_key: str | None = None,
+        *,
+        model: str | None = None,
+        model_verify: str | None = None,
+        usage: dict | None = None,
+        total_cost: float | None = None,
+        started_at: datetime | str | None = None,
+        steps: list[dict] | None = None,
     ) -> dict:
         """Детерминированный хвост ревью: verify-фильтр → grounding → gate →
         dedup → assemble → публикация → история → очистка overlay/сессии.
@@ -882,10 +889,15 @@ class MCPReviewService:
         При указании task_key и успешной публикации (не dry_run) линкует
         PR↔задача↔код в граф задач (рёбра IMPLEMENTED_BY + TOUCHES).
 
+        PRI-209: метаданные LLM-прохода (model, usage, total_cost, steps) и
+        started_at передаются клиентом в publish_review и сохраняются в истории.
+
         Returns:
             Отчёт со счётчиками (posted/invalid/verify_rejected/dropped_by_gate/
             deduped/already_posted/moved_to_summary/capped) и inline.
         """
+        if isinstance(started_at, str):
+            started_at = datetime.fromisoformat(started_at)
         from reviewer.services.repo_id import normalize_repo
         repo = normalize_repo(repo)
         s = self._session(repo, pr)
@@ -980,6 +992,12 @@ class MCPReviewService:
             verify_rejected=verify_rejected,
             dry_run=dry_run, posted=posted, error=error,
             session=s,
+            model=model,
+            model_verify=model_verify,
+            usage=usage,
+            total_cost=total_cost,
+            started_at=started_at,
+            steps=steps,
         )
         self._cleanup(repo, pr)
 
@@ -1033,23 +1051,28 @@ class MCPReviewService:
         posted: bool,
         error: str,
         session: _Session | None = None,
+        model: str | None = None,
+        model_verify: str | None = None,
+        usage: dict | None = None,
+        total_cost: float | None = None,
+        started_at: datetime | None = None,
+        steps: list[dict] | None = None,
     ) -> int | None:
         """Записать прогон в историю (fail-soft).
 
         Гейтится ``settings.review_history``. Любая ошибка истории не валит
-        publish — возвращаем None. Стоимость/usage недоступны на этом этапе
-        (LLM-вызовы прошли вне сервиса), пишем None. При сбое публикации
-        (status=error) находки записываются с published=False — как в
-        review_service._record_history.
+        publish — возвращаем None. При сбое публикации (status=error) находки
+        записываются с published=False — как в review_service._record_history.
+
+        PRI-209: метаданные LLM-прохода (model, usage, total_cost, steps) и
+        started_at приходят из publish_review / сессии и сохраняются в истории.
         """
         try:
             history = self._review_service._ensure_history()
             if history is None:
                 return None
             now = datetime.now(timezone.utc)
-            started = now
-            if session is not None:
-                started = session.started_at
+            started = started_at or (session.started_at if session is not None else None) or now
             if started.tzinfo is None:
                 started = started.replace(tzinfo=timezone.utc)
             duration_ms = max(0, int((now - started).total_seconds() * 1000))
@@ -1058,13 +1081,18 @@ class MCPReviewService:
             # PRI-156: analyzed — все candidates (до verify-фильтра); грунтовка строк
             # выполнена только для survived, не для отвергнутых candidates.
             findings_analyzed = len({f.fingerprint() for f in analyzed})
+            all_steps = None
+            if session is not None:
+                all_steps = session.steps + (steps or [])
+            elif steps:
+                all_steps = steps
             run = {
                 "repo": repo,
                 "pr_number": pr,
                 "base_sha": p.prq.base_sha,
                 "head_sha": p.prq.head_sha,
-                "model": "claude-code",
-                "model_verify": None,
+                "model": model or "claude-code",
+                "model_verify": model_verify,
                 "dry_run": dry_run,
                 "started_at": started,
                 "finished_at": now,
@@ -1084,15 +1112,15 @@ class MCPReviewService:
                 "comments_summary": sum(
                     1 for r in asm.findings_rows if r["published"] and not r["inline"]
                 ),
-                "usage": None,
-                "total_cost": None,
+                "usage": usage,
+                "total_cost": total_cost,
                 "error_text": error or None,
             }
             rows = (
                 [dict(r, published=False) for r in asm.findings_rows]
                 if status == "error" else asm.findings_rows
             )
-            return history.record_run(run, rows, steps=None)
+            return history.record_run(run, rows, steps=all_steps or None)
         except Exception:
             log.warning("Не удалось сохранить историю прогона", exc_info=True)
             return None

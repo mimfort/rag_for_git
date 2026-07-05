@@ -9,6 +9,7 @@ publish_review в .published; фейковая history собирает прог
 """
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
 from reviewer.config.settings import Settings
@@ -171,13 +172,14 @@ def _make_mcp_service_with_publish(
 
 
 def _submit_then_publish(svc, repo, pr, findings, *, summary="s", dry_run=False,
-                         verdicts=None, task_key=None):
+                         verdicts=None, task_key=None, **publish_kwargs):
     """PRI-156: вместо publish_review(findings=...) — submit + publish из сессии."""
     if findings:
         svc.submit_findings(repo, pr, findings)
     if verdicts:
         svc.submit_verdicts(repo, pr, verdicts)
-    return svc.publish_review(repo, pr, summary=summary, dry_run=dry_run, task_key=task_key)
+    return svc.publish_review(repo, pr, summary=summary, dry_run=dry_run,
+                              task_key=task_key, **publish_kwargs)
 
 
 # ---------------------------------------------------------------------------
@@ -424,3 +426,45 @@ def test_publish_keeps_finding_without_verdict(_ov, _ch) -> None:
     report = _submit_then_publish(svc, "o/r", 7, [RAW], dry_run=True)  # без verdicts
     assert report["verify_rejected"] == 0
     assert report["inline"][0]["line"] == 2
+
+
+@patch("reviewer.services.review_service.chunk_python", side_effect=_fake_chunk)
+@patch("reviewer.services.review_service.build_overlay")
+def test_publish_records_real_metadata(_ov, _ch) -> None:
+    """PRI-209: без override метаданные берутся из сессии/дефолтов."""
+    svc, _, history = _make_mcp_service_with_publish()
+    svc.prepare_review("o/r", 7)
+    started = datetime.now(timezone.utc) - timedelta(seconds=2)
+    report = _submit_then_publish(svc, "o/r", 7, [RAW], dry_run=True,
+                                  started_at=started)
+    run = history.runs[0]
+    assert run["model"] == "claude-code"
+    assert run["duration_ms"] >= 0
+    assert run["usage"] is None
+    assert run["total_cost"] is None
+
+
+@patch("reviewer.services.review_service.chunk_python", side_effect=_fake_chunk)
+@patch("reviewer.services.review_service.build_overlay")
+def test_publish_accepts_metadata_override(_ov, _ch) -> None:
+    """PRI-209: клиент может передать метаданные LLM-прохода в publish_review."""
+    svc, _, history = _make_mcp_service_with_publish()
+    svc.prepare_review("o/r", 7)
+    svc.submit_findings("o/r", 7, [RAW])
+    started_iso = (datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat()
+    report = svc.publish_review(
+        "o/r", 7, summary="s", dry_run=True,
+        model="custom-model",
+        model_verify="verify-model",
+        usage={"input_tokens": 100, "output_tokens": 50},
+        total_cost=0.00123,
+        started_at=started_iso,
+        steps=[{"tool": "step1"}],
+    )
+    assert report["posted"] is False
+    run = history.runs[0]
+    assert run["model"] == "custom-model"
+    assert run["model_verify"] == "verify-model"
+    assert run["usage"] == {"input_tokens": 100, "output_tokens": 50}
+    assert run["total_cost"] == 0.00123
+    assert run["duration_ms"] >= 0
