@@ -268,6 +268,33 @@ class ReviewHistory:
             log.warning("Не удалось получить трейс прогона %s: %s", run_id, exc)
             return []
 
+    def days_since_last_run(self, repo: str) -> int | None:
+        """Вернуть количество дней с последнего прогона для репозитория.
+
+        Args:
+            repo: полное имя репозитория (owner/name).
+
+        Returns:
+            Целое число дней или ``None``, если прогонов не было или запрос
+            к БД завершился ошибкой (fail-soft).
+        """
+        try:
+            sql = """
+            SELECT DATE_PART('day', now() - MAX(created_at))
+            FROM review_runs
+            WHERE repo = %(repo)s
+            """
+            with self._connect() as conn:
+                row = conn.execute(sql, {"repo": repo}).fetchone()
+            if row is None or row[0] is None:
+                return None
+            return int(row[0])
+        except Exception as exc:  # noqa: BLE001
+            log.warning(
+                "Не удалось получить дату последнего прогона для %s: %s", repo, exc
+            )
+            return None
+
     def stats(self, days: int = 30) -> dict:
         """Агрегированная статистика за последние ``days`` дней.
 

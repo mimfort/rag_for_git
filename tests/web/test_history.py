@@ -12,6 +12,7 @@ from unittest.mock import patch
 
 import pytest
 
+from reviewer.config.settings import Settings
 from reviewer.web.history import ReviewHistory
 
 
@@ -318,3 +319,14 @@ def test_get_trace_unknown_run_id():
 
     trace = history.get_trace(999_999_998)
     assert trace == []
+
+
+@pytest.mark.integration
+def test_days_since_last_run():
+    pg_dsn = Settings().pg_dsn
+    history = ReviewHistory(pg_dsn)
+    history.init_schema()
+    run = _sample_run()
+    history.record_run(run, _sample_findings())
+    assert history.days_since_last_run(run["repo"]) == 0
+    assert history.days_since_last_run("nonexistent/repo") is None

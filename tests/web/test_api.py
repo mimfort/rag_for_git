@@ -165,6 +165,11 @@ class FakeHistory:
     def stats(self, days: int = 30) -> dict:
         return _FAKE_STATS
 
+    def days_since_last_run(self, repo: str) -> int | None:
+        if any(r["repo"] == repo for r in self.list_runs(repo=repo)):
+            return 0
+        return None
+
 
 # ---------------------------------------------------------------------------
 # Фикстура: TestClient с фейковым стором
@@ -432,6 +437,14 @@ def test_auth_enabled_correct_credentials_returns_200(client_with_auth):
     assert "runs" in data
 
 
+def test_get_history_gap(client):
+    response = client.get("/api/runs/gap?repo=test/repo")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["repo"] == "test/repo"
+    assert data["days_since_last_run"] is None or isinstance(data["days_since_last_run"], int)
+
+
 def test_auth_enabled_applies_to_all_endpoints(client_with_auth):
     """Все /api/* эндпоинты защищены auth."""
     endpoints = [
@@ -439,6 +452,7 @@ def test_auth_enabled_applies_to_all_endpoints(client_with_auth):
         "/api/runs/1",
         "/api/runs/1/trace",
         "/api/stats",
+        "/api/runs/gap?repo=owner/repo",
     ]
     for endpoint in endpoints:
         resp_no_auth = client_with_auth.get(endpoint)
