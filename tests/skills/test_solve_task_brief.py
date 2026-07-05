@@ -82,7 +82,9 @@ def test_solve_task_warns_on_existing_artifacts():
 def test_solve_task_step_1_5_handles_auto_permission_mode():
     text = SKILL_PATH.read_text(encoding="utf-8")
     lower = text.lower()
-    assert "auto permission mode" in lower
-    assert "mid tier" in lower or "sonnet-class" in lower
-    # Ensure the skill does not unconditionally ask the user.
-    assert "ask the user" not in lower or "auto permission mode" in lower
+    # Auto-mode branch exists.
+    assert "if auto permission mode is active" in lower
+    assert "silently choose" in lower
+    # Manual branch exists.
+    assert "otherwise" in lower
+    assert "ask the user" in lower
