@@ -58,6 +58,8 @@ class _Session:
     # перезапуск процесса посреди ревью теряет прогресс, как и раньше).
     candidates: dict[str, Finding] = field(default_factory=dict)
     verdicts: dict[str, bool] = field(default_factory=dict)
+    steps: list[dict] = field(default_factory=list)
+    started_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     _seq: int = 0
 
 
@@ -104,7 +106,9 @@ class MCPReviewService:
             return {"status": "skipped",
                     "reason": f"branch '{e.branch}' not tracked (REVIEW_BRANCHES)"}
         ctx = self._tool_context(prepared)
-        self._sessions[(repo, pr)] = _Session(prepared, ctx)
+        self._sessions[(repo, pr)] = _Session(
+            prepared, ctx, started_at=datetime.now(timezone.utc)
+        )
         store = self._ensure_session_store()
         if store is not None:
             store.save(repo, pr, to_payload(prepared))

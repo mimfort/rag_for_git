@@ -119,6 +119,22 @@ def _make_mcp_service(number: int = 7) -> MCPReviewService:
 
 @patch("reviewer.services.review_service.chunk_python", side_effect=_fake_chunk)
 @patch("reviewer.services.review_service.build_overlay")
+def test_prepare_review_sets_session_started_at(
+    _ov: MagicMock,
+    _ch: MagicMock,
+) -> None:
+    svc = _make_mcp_service()
+    svc.prepare_review("o/r", 7)
+    s = svc._sessions[("o/r", 7)]
+    assert s.started_at is not None
+    from datetime import datetime, timezone
+
+    assert isinstance(s.started_at, datetime)
+    assert s.started_at.tzinfo is not None
+
+
+@patch("reviewer.services.review_service.chunk_python", side_effect=_fake_chunk)
+@patch("reviewer.services.review_service.build_overlay")
 def test_prepare_review_returns_units_and_caches_session(
     _mock_overlay: MagicMock,
     _mock_chunk: MagicMock,
