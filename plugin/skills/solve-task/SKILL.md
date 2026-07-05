@@ -103,7 +103,7 @@ brief to `superpowers:brainstorming` (which leads to writing-plans → subagent-
    (fewer LLM tokens, fewer external deps). The board-MCP fallback stays for misses and for boards
    without a REST provider.
 
-1.5. **Choose the brief model (cross-CLI).** Building the brief (Steps 2–4: gather + distill) is a
+1.5. **Choose the brief model (cross-CLI).** Building the brief (Steps 3–4: gather + distill) is a
    light reasoning task over session-less retrieval tools — a top-tier model is overkill and burns
    tokens. **If auto permission mode is active, silently choose the mid tier (Sonnet-class)** and
    continue without asking the user. Otherwise, **Ask the user which model tier to use for building
@@ -112,7 +112,7 @@ brief to `superpowers:brainstorming` (which leads to writing-plans → subagent-
    (Sonnet-class) as the default** (do not recommend Fable — a coarse tier is fine but the brief
    still needs sound judgment). Talk to the user in Russian. Remember the choice for this run.
    Fail-open: no answer, a decline, or inability to detect auto mode → use the default tier (or,
-   on Path B below, the session model inline). Never block.
+   the session model inline). Never block.
 
 3. **Gather context (best-effort, fail-open).** Any tool returning a "(… unavailable)" / "(ничего не
    найдено)" note or an error is non-fatal — continue.
