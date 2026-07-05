@@ -497,3 +497,18 @@ def test_publish_ignores_malformed_started_at(_ov, _ch) -> None:
     run = history.runs[0]
     assert run["duration_ms"] >= 0
     assert run["started_at"] is not None
+
+
+@patch("reviewer.services.review_service.chunk_python", side_effect=_fake_chunk)
+@patch("reviewer.services.review_service.build_overlay")
+def test_publish_merges_server_and_client_steps(_ov, _ch) -> None:
+    svc, vcs, history = _make_mcp_service_with_publish()
+    svc.prepare_review("o/r", 7)
+    svc.search_code("o/r", 7, "token check")
+    client_steps = [{"stage": "synthesize", "unit": "(summary)", "seq": 0, "kind": "llm_call", "name": "summary", "text": "ok", "tool_calls": None, "tokens": 10, "cost": 0.01}]
+    svc.publish_review("o/r", 7, summary="s", dry_run=True, steps=client_steps)
+    recorded = history.steps[0]
+    assert any(step["name"] == "search_code" for step in recorded)
+    assert any(step["name"] == "summary" for step in recorded)
+    seqs = [step["seq"] for step in recorded]
+    assert seqs == sorted(seqs)

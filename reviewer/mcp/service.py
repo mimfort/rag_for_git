@@ -212,12 +212,9 @@ class MCPReviewService:
             f"Сессия для {repo}#{pr} не найдена или истекла — вызови prepare_review заново"
         )
 
-    def _tool_stage(self, name: str) -> str:
-        """Классифицировать вызов MCP-инструмента по фазе ревью."""
-        if name in {"get_candidate_findings", "submit_verdicts"}:
-            return "verify"
-        if name == "publish_review":
-            return "synthesize"
+    @staticmethod
+    def _tool_stage(name: str) -> str:
+        """Классификация этапа для тул-вызова (сейчас все analyze-тулы)."""
         return "analyze"
 
     def _invoke_tool(self, repo: str, pr: int, name: str, args: dict) -> str:
