@@ -26,33 +26,38 @@ def human_tokens(n: int) -> str:
     return f"{text}{unit}"
 
 
+def _format_bucket(model: str, b: dict) -> list[str]:
+    """Строки описания одной модели из бакета токенов."""
+    return [
+        f"Модель: {model}",
+        (
+            f"fresh-in {human_tokens(b['fresh_in'])} · "
+            f"out {human_tokens(b['output'])} · "
+            f"cache-write {human_tokens(b['cache_write'])} · "
+            f"cache-read {human_tokens(b['cache_read'])}"
+        ),
+    ]
+
+
+def _bucket_total(b: dict) -> int:
+    return b["fresh_in"] + b["output"] + b["cache_write"] + b["cache_read"]
+
+
 def render_block(by_model: dict, sidechain: dict | None = None) -> str:
     """Текст блока «## Токены (этап solve-task)» (без хвостового перевода строки)."""
     lines = [HEADER]
     total = 0
     for model, b in by_model.items():
-        lines.append(f"Модель: {model}")
-        lines.append(
-            f"fresh-in {human_tokens(b['fresh_in'])} · "
-            f"out {human_tokens(b['output'])} · "
-            f"cache-write {human_tokens(b['cache_write'])} · "
-            f"cache-read {human_tokens(b['cache_read'])}"
-        )
-        total += b["fresh_in"] + b["output"] + b["cache_write"] + b["cache_read"]
+        lines.extend(_format_bucket(model, b))
+        total += _bucket_total(b)
     lines.append(f"Всего: {human_tokens(total)} токенов")
     if sidechain:
         side_total = 0
         lines.append("")
         lines.append("В т.ч. sidechain-сабагент:")
         for model, b in sidechain.items():
-            lines.append(f"Модель: {model}")
-            lines.append(
-                f"fresh-in {human_tokens(b['fresh_in'])} · "
-                f"out {human_tokens(b['output'])} · "
-                f"cache-write {human_tokens(b['cache_write'])} · "
-                f"cache-read {human_tokens(b['cache_read'])}"
-            )
-            side_total += b["fresh_in"] + b["output"] + b["cache_write"] + b["cache_read"]
+            lines.extend(_format_bucket(model, b))
+            side_total += _bucket_total(b)
         lines.append(f"Sidechain всего: {human_tokens(side_total)} токенов")
     return "\n".join(lines)
 

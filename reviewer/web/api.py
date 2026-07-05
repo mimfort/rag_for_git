@@ -8,7 +8,7 @@ import base64
 import hmac
 import logging
 
-from fastapi import APIRouter, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import JSONResponse
 
 from reviewer.config.settings import Settings
@@ -39,7 +39,7 @@ def make_router(history: ReviewHistory, settings: Settings | None = None) -> API
         if not settings.web_admin_user or not settings.web_admin_password:
             return
         auth_header = request.headers.get("Authorization")
-        if auth_header is None or not auth_header.startswith("Basic "):
+        if auth_header is None or not auth_header.lower().startswith("basic "):
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Требуется аутентификация",
@@ -73,18 +73,16 @@ def make_router(history: ReviewHistory, settings: Settings | None = None) -> API
                 headers={"WWW-Authenticate": "Basic"},
             )
 
-    router = APIRouter()
+    router = APIRouter(dependencies=[Depends(_require_auth)])
 
     @router.get("/api/runs")
     def list_runs(
-        request: Request,
         repo: str | None = Query(default=None, description="Фильтр по репозиторию"),
         status: str | None = Query(default=None, description="Фильтр по статусу (ok/error/draft_skip)"),
         limit: int = Query(default=50, ge=1, le=500, description="Кол-во записей"),
         offset: int = Query(default=0, ge=0, description="Смещение (пагинация)"),
     ) -> JSONResponse:
         """Список прогонов ревью (без находок), последние первыми."""
-        _require_auth(request)
         try:
             runs = history.list_runs(repo=repo, status=status, limit=limit, offset=offset)
             return JSONResponse({"runs": runs, "limit": limit, "offset": offset})
@@ -93,9 +91,8 @@ def make_router(history: ReviewHistory, settings: Settings | None = None) -> API
             raise HTTPException(status_code=500, detail="Внутренняя ошибка сервера") from exc
 
     @router.get("/api/runs/gap")
-    def get_history_gap(repo: str, request: Request) -> JSONResponse:
+    def get_history_gap(repo: str) -> JSONResponse:
         """Дней с последнего прогона ревью для указанного репозитория."""
-        _require_auth(request)
         try:
             days = history.days_since_last_run(repo)
         except Exception as exc:
@@ -106,9 +103,8 @@ def make_router(history: ReviewHistory, settings: Settings | None = None) -> API
         return JSONResponse({"repo": repo, "days_since_last_run": days})
 
     @router.get("/api/runs/{run_id}")
-    def get_run(run_id: int, request: Request) -> JSONResponse:
+    def get_run(run_id: int) -> JSONResponse:
         """Прогон вместе с находками. 404, если прогон не найден."""
-        _require_auth(request)
         try:
             run = history.get_run(run_id)
         except Exception as exc:
@@ -119,13 +115,12 @@ def make_router(history: ReviewHistory, settings: Settings | None = None) -> API
         return JSONResponse(run)
 
     @router.get("/api/runs/{run_id}/trace")
-    def get_trace(run_id: int, request: Request) -> JSONResponse:
+    def get_trace(run_id: int) -> JSONResponse:
         """Пошаговый трейс прогона, упорядоченный по seq.
 
         Загружается по требованию (отдельно от /api/runs/{run_id}, т.к. трейс крупный).
         Возвращает пустой список для прогонов без трейса (старые прогоны).
         """
-        _require_auth(request)
         try:
             steps = history.get_trace(run_id)
             return JSONResponse({"steps": steps})
@@ -135,11 +130,9 @@ def make_router(history: ReviewHistory, settings: Settings | None = None) -> API
 
     @router.get("/api/stats")
     def get_stats(
-        request: Request,
         days: int = Query(default=30, ge=1, le=365, description="Период статистики в днях"),
     ) -> JSONResponse:
         """Агрегированная статистика за последние N дней."""
-        _require_auth(request)
         try:
             data = history.stats(days=days)
             return JSONResponse(data)

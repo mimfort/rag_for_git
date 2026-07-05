@@ -437,6 +437,18 @@ def test_auth_enabled_correct_credentials_returns_200(client_with_auth):
     assert "runs" in data
 
 
+def test_auth_enabled_case_insensitive_scheme(client_with_auth):
+    """Схема Authorization воспринимается без учёта регистра."""
+    import base64
+    credentials = base64.b64encode(b"admin:secret").decode("ascii")
+    resp = client_with_auth.get(
+        "/api/runs",
+        headers={"Authorization": f"basic {credentials}"},
+    )
+    assert resp.status_code == 200
+    assert "runs" in resp.json()
+
+
 def test_get_history_gap(client):
     response = client.get("/api/runs/gap?repo=test/repo")
     assert response.status_code == 200

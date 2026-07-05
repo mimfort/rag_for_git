@@ -43,6 +43,10 @@ log = logging.getLogger(__name__)
 
 WALKTHROUGH_MARKER = "<!-- ai-walkthrough -->"
 
+# PRI-209: ограничиваем размер трейса сессии в памяти, чтобы избежать
+# неограниченного роста при длинных прогонах с большим числом tool calls.
+_MAX_SESSION_STEPS = 1000
+
 
 @dataclass
 class _Session:
@@ -63,6 +67,17 @@ class _Session:
     # PRI-209: момент начала сессии review (для duration_ms в истории).
     started_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     _seq: int = 0
+
+
+@dataclass
+class _RunMetadata:
+    """Метаданные LLM-прохода, передаваемые из publish_review в _record_history."""
+    model: str | None = None
+    model_verify: str | None = None
+    usage: dict | None = None
+    total_cost: float | None = None
+    started_at: datetime | str | None = None
+    steps: list[dict] | None = None
 
 
 class MCPReviewService:
@@ -212,11 +227,6 @@ class MCPReviewService:
             f"Сессия для {repo}#{pr} не найдена или истекла — вызови prepare_review заново"
         )
 
-    @staticmethod
-    def _tool_stage(name: str) -> str:
-        """Классификация этапа для тул-вызова (сейчас все analyze-тулы)."""
-        return "analyze"
-
     def _invoke_tool(self, repo: str, pr: int, name: str, args: dict) -> str:
         """Вызов инструмента с per-вызов пересозданием make_tools.
 
@@ -229,17 +239,18 @@ class MCPReviewService:
         s = self._session(repo, pr)
         tools = {t.name: t for t in make_tools(s.ctx)}
         result = tools[name].invoke(args)
-        s.steps.append({
-            "stage": self._tool_stage(name),
-            "unit": args.get("path") or args.get("node_id") or args.get("symbol") or "",
-            "seq": len(s.steps),
-            "kind": "tool_call",
-            "name": name,
-            "text": result[:500] if isinstance(result, str) else None,
-            "tool_calls": [{"name": name, "args": args}],
-            "tokens": 0,
-            "cost": 0.0,
-        })
+        if len(s.steps) < _MAX_SESSION_STEPS:
+            s.steps.append({
+                "stage": "analyze",
+                "unit": args.get("path") or args.get("node_id") or args.get("symbol") or "",
+                "seq": len(s.steps),
+                "kind": "tool_call",
+                "name": name,
+                "text": result[:500] if isinstance(result, str) else None,
+                "tool_calls": [{"name": name, "args": args}],
+                "tokens": 0,
+                "cost": 0.0,
+            })
         return result
 
     def search_code(self, repo: str, pr: int, query: str) -> str:
@@ -1009,17 +1020,20 @@ class MCPReviewService:
 
         # 6) История (fail-soft) и очистка overlay/сессии (ВСЕГДА).
         dropped_by_gate = len(parsed) - len(kept)
-        run_id = self._record_history(
-            repo, pr, p, list(s.candidates.values()), deduped, asm,
-            verify_rejected=verify_rejected,
-            dry_run=dry_run, posted=posted, error=error,
-            session=s,
+        metadata = _RunMetadata(
             model=model,
             model_verify=model_verify,
             usage=usage,
             total_cost=total_cost,
             started_at=started_at,
             steps=steps,
+        )
+        run_id = self._record_history(
+            repo, pr, p, list(s.candidates.values()), deduped, asm,
+            verify_rejected=verify_rejected,
+            dry_run=dry_run, posted=posted, error=error,
+            session=s,
+            metadata=metadata,
         )
         self._cleanup(repo, pr)
 
@@ -1073,12 +1087,7 @@ class MCPReviewService:
         posted: bool,
         error: str,
         session: _Session | None = None,
-        model: str | None = None,
-        model_verify: str | None = None,
-        usage: dict | None = None,
-        total_cost: float | None = None,
-        started_at: datetime | None = None,
-        steps: list[dict] | None = None,
+        metadata: _RunMetadata | None = None,
     ) -> int | None:
         """Записать прогон в историю (fail-soft).
 
@@ -1087,14 +1096,23 @@ class MCPReviewService:
         записываются с published=False — как в review_service._record_history.
 
         PRI-209: метаданные LLM-прохода (model, usage, total_cost, steps) и
-        started_at приходят из publish_review / сессии и сохраняются в истории.
+        started_at приходят через ``metadata`` из publish_review / сессии и
+        сохраняются в истории.
         """
+        metadata = metadata or _RunMetadata()
         try:
             history = self._review_service._ensure_history()
             if history is None:
                 return None
             now = datetime.now(timezone.utc)
+            started_at = metadata.started_at
             started = started_at or (session.started_at if session is not None else None) or now
+            if isinstance(started, str):
+                try:
+                    started = datetime.fromisoformat(started)
+                except ValueError:
+                    log.warning("Некорректный формат started_at: %r — игнорируем", started)
+                    started = session.started_at if session is not None else now
             if started.tzinfo is None:
                 started = started.replace(tzinfo=timezone.utc)
             duration_ms = max(0, int((now - started).total_seconds() * 1000))
@@ -1103,12 +1121,17 @@ class MCPReviewService:
             # PRI-156: analyzed — все candidates (до verify-фильтра); грунтовка строк
             # выполнена только для survived, не для отвергнутых candidates.
             findings_analyzed = len({f.fingerprint() for f in analyzed})
+            steps = metadata.steps
             all_steps = None
             if session is not None:
                 all_steps = session.steps + (steps or [])
             elif steps:
                 all_steps = steps
             if all_steps:
+                # PRI-209: ограничиваем размер трейса, чтобы не писать огромные
+                # JSONB в БД и не копировать их в памяти без нужды.
+                if len(all_steps) > _MAX_SESSION_STEPS:
+                    all_steps = all_steps[-_MAX_SESSION_STEPS:]
                 # Не мутируем шаги клиента/сессии — копируем перед нормализацией seq.
                 all_steps = [{**step, "seq": i} for i, step in enumerate(all_steps)]
             run = {
@@ -1116,8 +1139,8 @@ class MCPReviewService:
                 "pr_number": pr,
                 "base_sha": p.prq.base_sha,
                 "head_sha": p.prq.head_sha,
-                "model": model or "claude-code",
-                "model_verify": model_verify,
+                "model": metadata.model or "claude-code",
+                "model_verify": metadata.model_verify,
                 "dry_run": dry_run,
                 "started_at": started,
                 "finished_at": now,
@@ -1137,8 +1160,8 @@ class MCPReviewService:
                 "comments_summary": sum(
                     1 for r in asm.findings_rows if r["published"] and not r["inline"]
                 ),
-                "usage": usage,
-                "total_cost": total_cost,
+                "usage": metadata.usage,
+                "total_cost": metadata.total_cost,
                 "error_text": error or None,
             }
             rows = (
