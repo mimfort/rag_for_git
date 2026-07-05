@@ -305,7 +305,15 @@ def create_server(service: MCPReviewService) -> FastMCP:
         Находки берутся из сессии (накоплены через submit_findings/submit_verdicts).
         When task_key is set and the review is really published, the PR is linked
         to that task in the task graph (IMPLEMENTED_BY + TOUCHES changed code).
-        With dry_run=true nothing is posted; the full report is returned."""
+        With dry_run=true nothing is posted; the full report is returned.
+
+        Args:
+            model: Модель LLM, использованная для основного прохода ревью.
+            model_verify: Модель LLM, использованная для verify-прохода.
+            usage: Статистика использования токенов, например {"input_tokens": N}.
+            total_cost: Общая стоимость LLM-вызовов в условных единицах.
+            started_at: Время начала ревью в формате ISO 8601 (строка).
+            steps: Список выполненных шагов/инструментов для трассировки ревью."""
         return service.publish_review(
             repo, pr, summary, dry_run, task_key,
             model=model, model_verify=model_verify, usage=usage,
