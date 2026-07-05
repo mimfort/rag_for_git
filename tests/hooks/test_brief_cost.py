@@ -87,7 +87,7 @@ def test_find_window_start_absent_returns_minus_one():
     assert bc.find_window_start(lines) == -1
 
 
-def test_aggregate_usage_sums_per_model_skips_sidechain():
+def test_aggregate_usage_splits_main_and_sidechain():
     lines = [
         {"type": "user", "message": {
             "content": "Base directory for this skill: skills/solve-task"}},
@@ -100,11 +100,50 @@ def test_aggregate_usage_sums_per_model_skips_sidechain():
             "input_tokens": 1, "output_tokens": 2,
             "cache_creation_input_tokens": 3, "cache_read_input_tokens": 4}}},
     ]
-    by_model = bc.aggregate_usage(lines, 0)
+    by_model, sidechain = bc.aggregate_usage(lines, 0)
     assert by_model["claude-opus-4-8"] == {
         "fresh_in": 100, "output": 200, "cache_write": 300, "cache_read": 400}
     assert by_model["claude-haiku-4-5"] == {
         "fresh_in": 1, "output": 2, "cache_write": 3, "cache_read": 4}
+    assert sidechain["claude-opus-4-8"] == {
+        "fresh_in": 999, "output": 0, "cache_write": 0, "cache_read": 0}
+
+
+def test_aggregate_usage_counts_sidechain_solve_task_tokens():
+    lines = [
+        {"type": "user", "message": {
+            "content": "Base directory for this skill: skills/solve-task"}},
+        {"type": "assistant", "message": {"model": "main-model", "usage": {
+            "input_tokens": 10, "output_tokens": 20,
+            "cache_creation_input_tokens": 30, "cache_read_input_tokens": 40}}},
+        {"type": "assistant", "isSidechain": True, "message": {
+            "model": "side-model", "usage": {
+                "input_tokens": 100, "output_tokens": 200,
+                "cache_creation_input_tokens": 300, "cache_read_input_tokens": 400}}},
+        {"type": "assistant", "isSidechain": True, "message": {
+            "model": "side-model", "usage": {"input_tokens": 50, "output_tokens": 60}}},
+    ]
+    by_model, sidechain = bc.aggregate_usage(lines, 0)
+    assert by_model == {
+        "main-model": {"fresh_in": 10, "output": 20, "cache_write": 30, "cache_read": 40}}
+    assert sidechain == {
+        "side-model": {"fresh_in": 150, "output": 260, "cache_write": 300, "cache_read": 400}}
+
+
+def test_render_block_shows_sidechain():
+    by_model = {
+        "main-model": {"fresh_in": 1000, "output": 2000,
+                       "cache_write": 0, "cache_read": 0},
+    }
+    sidechain = {
+        "side-model": {"fresh_in": 500, "output": 600,
+                       "cache_write": 100, "cache_read": 200},
+    }
+    block = bc.render_block(by_model, sidechain)
+    assert "## Токены (этап solve-task)" in block
+    assert "В т.ч. sidechain-сабагент:" in block
+    assert "Модель: side-model" in block
+    assert "Sidechain всего: 1.4K токенов" in block
 
 
 def test_read_flag_true_only_when_set():
