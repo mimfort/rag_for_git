@@ -482,7 +482,7 @@ def test_publish_accepts_metadata_override(_ov, _ch) -> None:
     assert run["usage"] == {"input_tokens": 100, "output_tokens": 50}
     assert run["total_cost"] == 0.00123
     assert run["duration_ms"] >= 0
-    assert history.steps[0] == [{"tool": "step1"}]
+    assert history.steps[0] == [{"tool": "step1", "seq": 0}]
 
 
 @patch("reviewer.services.review_service.chunk_python", side_effect=_fake_chunk)
@@ -505,10 +505,15 @@ def test_publish_merges_server_and_client_steps(_ov, _ch) -> None:
     svc, vcs, history = _make_mcp_service_with_publish()
     svc.prepare_review("o/r", 7)
     svc.search_code("o/r", 7, "token check")
-    client_steps = [{"stage": "synthesize", "unit": "(summary)", "seq": 0, "kind": "llm_call", "name": "summary", "text": "ok", "tool_calls": None, "tokens": 10, "cost": 0.01}]
+    svc.get_related_symbols("o/r", 7, "a.py#f")
+    client_steps = [
+        {"stage": "synthesize", "unit": "(summary)", "seq": 0, "kind": "llm_call", "name": "summary", "text": "ok", "tool_calls": None, "tokens": 10, "cost": 0.01},
+        {"stage": "synthesize", "unit": "(summary)", "seq": 1, "kind": "llm_call", "name": "summary2", "text": "ok2", "tool_calls": None, "tokens": 5, "cost": 0.005},
+    ]
     svc.publish_review("o/r", 7, summary="s", dry_run=True, steps=client_steps)
     recorded = history.steps[0]
     assert any(step["name"] == "search_code" for step in recorded)
+    assert any(step["name"] == "get_related_symbols" for step in recorded)
     assert any(step["name"] == "summary" for step in recorded)
     seqs = [step["seq"] for step in recorded]
-    assert seqs == sorted(seqs)
+    assert seqs == list(range(len(recorded)))

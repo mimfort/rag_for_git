@@ -1108,6 +1108,9 @@ class MCPReviewService:
                 all_steps = session.steps + (steps or [])
             elif steps:
                 all_steps = steps
+            if all_steps:
+                # Не мутируем шаги клиента/сессии — копируем перед нормализацией seq.
+                all_steps = [{**step, "seq": i} for i, step in enumerate(all_steps)]
             run = {
                 "repo": repo,
                 "pr_number": pr,
