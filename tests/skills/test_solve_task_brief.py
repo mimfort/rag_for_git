@@ -77,3 +77,12 @@ def test_solve_task_warns_on_existing_artifacts():
     assert "[Y/n]" in text                       # предупреждение с выбором
     assert "[existing_artifacts]" in text        # тег в Constraints
     assert "Do NOT block" in text or "not block" in text  # не блокировка
+
+
+def test_solve_task_step_1_5_handles_auto_permission_mode():
+    text = SOLVE.read_text(encoding="utf-8")
+    lower = text.lower()
+    assert "auto permission mode" in lower
+    assert "mid tier" in lower or "sonnet-class" in lower
+    # Ensure the skill does not unconditionally ask the user.
+    assert "if auto permission mode" in lower or "silently choose" in lower
