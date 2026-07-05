@@ -133,10 +133,12 @@ class _FakeHistory:
     def __init__(self) -> None:
         self.runs: list[dict] = []
         self.findings: list[list[dict]] = []
+        self.steps: list[list[dict] | None] = []
 
     def record_run(self, run: dict, findings: list[dict], steps=None) -> int:
         self.runs.append(run)
         self.findings.append(findings)
+        self.steps.append(steps)
         return len(self.runs)
 
 
@@ -437,6 +439,7 @@ def test_publish_records_real_metadata(_ov, _ch) -> None:
     started = datetime.now(timezone.utc) - timedelta(seconds=2)
     report = _submit_then_publish(svc, "o/r", 7, [RAW], dry_run=True,
                                   started_at=started)
+    assert report["posted"] is False
     run = history.runs[0]
     assert run["model"] == "claude-code"
     assert run["duration_ms"] >= 0
@@ -468,3 +471,4 @@ def test_publish_accepts_metadata_override(_ov, _ch) -> None:
     assert run["usage"] == {"input_tokens": 100, "output_tokens": 50}
     assert run["total_cost"] == 0.00123
     assert run["duration_ms"] >= 0
+    assert history.steps[0] == [{"tool": "step1"}]

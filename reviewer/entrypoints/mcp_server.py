@@ -293,6 +293,12 @@ def create_server(service: MCPReviewService) -> FastMCP:
         summary: str,
         dry_run: bool = False,
         task_key: str | None = None,
+        model: str | None = None,
+        model_verify: str | None = None,
+        usage: dict | None = None,
+        total_cost: float | None = None,
+        started_at: str | None = None,
+        steps: list[dict] | None = None,
     ) -> dict:
         """Опубликовать ревью: verify-фильтр/gate/dedup/assemble из сессии (PRI-156).
 
@@ -300,7 +306,11 @@ def create_server(service: MCPReviewService) -> FastMCP:
         When task_key is set and the review is really published, the PR is linked
         to that task in the task graph (IMPLEMENTED_BY + TOUCHES changed code).
         With dry_run=true nothing is posted; the full report is returned."""
-        return service.publish_review(repo, pr, summary, dry_run, task_key)
+        return service.publish_review(
+            repo, pr, summary, dry_run, task_key,
+            model=model, model_verify=model_verify, usage=usage,
+            total_cost=total_cost, started_at=started_at, steps=steps,
+        )
 
     @mcp.tool()
     def submit_findings(repo: str, pr: int, findings: list[FindingIn]) -> dict:

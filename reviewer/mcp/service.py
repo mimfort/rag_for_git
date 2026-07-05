@@ -897,7 +897,11 @@ class MCPReviewService:
             deduped/already_posted/moved_to_summary/capped) и inline.
         """
         if isinstance(started_at, str):
-            started_at = datetime.fromisoformat(started_at)
+            try:
+                started_at = datetime.fromisoformat(started_at)
+            except ValueError:
+                log.warning("Некорректный формат started_at: %r — игнорируем", started_at)
+                started_at = None
         from reviewer.services.repo_id import normalize_repo
         repo = normalize_repo(repo)
         s = self._session(repo, pr)
