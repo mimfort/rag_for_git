@@ -212,17 +212,38 @@ class MCPReviewService:
             f"Сессия для {repo}#{pr} не найдена или истекла — вызови prepare_review заново"
         )
 
+    def _tool_stage(self, name: str) -> str:
+        """Классифицировать вызов MCP-инструмента по фазе ревью."""
+        if name in {"get_candidate_findings", "submit_verdicts"}:
+            return "verify"
+        if name == "publish_review":
+            return "synthesize"
+        return "analyze"
+
     def _invoke_tool(self, repo: str, pr: int, name: str, args: dict) -> str:
         """Вызов инструмента с per-вызов пересозданием make_tools.
 
         seen-дедуп сбрасывается на каждый вызов (повтор отдаёт результат из
         ctx.cache, а не заглушку «повтор»); сам кэш живёт всю сессию.
+        После вызова добавляем шаг в session.steps для трассировки.
         """
         from reviewer.services.repo_id import normalize_repo
         repo = normalize_repo(repo)
         s = self._session(repo, pr)
         tools = {t.name: t for t in make_tools(s.ctx)}
-        return tools[name].invoke(args)
+        result = tools[name].invoke(args)
+        s.steps.append({
+            "stage": self._tool_stage(name),
+            "unit": args.get("path") or args.get("node_id") or args.get("symbol") or "",
+            "seq": len(s.steps),
+            "kind": "tool_call",
+            "name": name,
+            "text": result[:500] if isinstance(result, str) else None,
+            "tool_calls": [{"name": name, "args": args}],
+            "tokens": 0,
+            "cost": 0.0,
+        })
+        return result
 
     def search_code(self, repo: str, pr: int, query: str) -> str:
         """Семантико-лексический поиск кода по индексу PR."""

@@ -330,6 +330,19 @@ def test_prepare_review_payload_enabled_only_default_empty(
 
 @patch("reviewer.services.review_service.chunk_python", side_effect=_fake_chunk)
 @patch("reviewer.services.review_service.build_overlay")
+def test_invoke_tool_logs_steps(_ov, _ch) -> None:
+    svc = _make_mcp_service()
+    svc.prepare_review("o/r", 7)
+    svc.search_code("o/r", 7, "token check")
+    s = svc._sessions[("o/r", 7)]
+    assert len(s.steps) >= 1
+    assert s.steps[0]["name"] == "search_code"
+    assert s.steps[0]["kind"] == "tool_call"
+    assert s.steps[0]["stage"] == "analyze"
+
+
+@patch("reviewer.services.review_service.chunk_python", side_effect=_fake_chunk)
+@patch("reviewer.services.review_service.build_overlay")
 def test_search_code_repeated_call_returns_result_not_stub(
     _mock_overlay: MagicMock,
     _mock_chunk: MagicMock,

@@ -449,6 +449,17 @@ def test_publish_records_real_metadata(_ov, _ch) -> None:
 
 @patch("reviewer.services.review_service.chunk_python", side_effect=_fake_chunk)
 @patch("reviewer.services.review_service.build_overlay")
+def test_publish_records_server_steps(_ov, _ch) -> None:
+    svc, vcs, history = _make_mcp_service_with_publish()
+    svc.prepare_review("o/r", 7)
+    svc.search_code("o/r", 7, "token check")
+    _submit_then_publish(svc, "o/r", 7, [RAW], dry_run=True)
+    assert len(history.steps[0]) >= 1
+    assert any(step["name"] == "search_code" for step in history.steps[0])
+
+
+@patch("reviewer.services.review_service.chunk_python", side_effect=_fake_chunk)
+@patch("reviewer.services.review_service.build_overlay")
 def test_publish_accepts_metadata_override(_ov, _ch) -> None:
     """PRI-209: клиент может передать метаданные LLM-прохода в publish_review."""
     svc, _, history = _make_mcp_service_with_publish()
