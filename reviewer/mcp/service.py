@@ -60,6 +60,7 @@ class _Session:
     verdicts: dict[str, bool] = field(default_factory=dict)
     # PRI-209: шаги тул-лупа агента (для трассировки/метрик сессии).
     steps: list[dict] = field(default_factory=list)
+    # PRI-209: момент начала сессии review (для duration_ms в истории).
     started_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     _seq: int = 0
 
