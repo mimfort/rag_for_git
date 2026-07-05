@@ -5,6 +5,7 @@
 """
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -124,13 +125,14 @@ def test_prepare_review_sets_session_started_at(
     _ch: MagicMock,
 ) -> None:
     svc = _make_mcp_service()
+    before = datetime.now(timezone.utc)
     svc.prepare_review("o/r", 7)
+    after = datetime.now(timezone.utc)
     s = svc._sessions[("o/r", 7)]
     assert s.started_at is not None
-    from datetime import datetime, timezone
-
     assert isinstance(s.started_at, datetime)
-    assert s.started_at.tzinfo is not None
+    assert s.started_at.tzinfo == timezone.utc
+    assert before <= s.started_at <= after
 
 
 @patch("reviewer.services.review_service.chunk_python", side_effect=_fake_chunk)

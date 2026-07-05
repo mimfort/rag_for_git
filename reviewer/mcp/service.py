@@ -58,6 +58,7 @@ class _Session:
     # перезапуск процесса посреди ревью теряет прогресс, как и раньше).
     candidates: dict[str, Finding] = field(default_factory=dict)
     verdicts: dict[str, bool] = field(default_factory=dict)
+    # PRI-209: шаги тул-лупа агента (для трассировки/метрик сессии).
     steps: list[dict] = field(default_factory=list)
     started_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     _seq: int = 0
@@ -188,6 +189,8 @@ class MCPReviewService:
             log.warning("Регидрация сессии %s#%s не удалась", repo, pr, exc_info=True)
             return None
         ctx = self._tool_context(prepared)
+        # При регидратации started_at и steps сбрасываются — восстановленная
+        # сессия начинает новый отсчёт времени жизни и не тащит чужую трассировку.
         return _Session(prepared, ctx)
 
     def _session(self, repo: str, pr: int) -> _Session:
@@ -975,6 +978,7 @@ class MCPReviewService:
             repo, pr, p, list(s.candidates.values()), deduped, asm,
             verify_rejected=verify_rejected,
             dry_run=dry_run, posted=posted, error=error,
+            session=s,
         )
         self._cleanup(repo, pr)
 
@@ -1027,6 +1031,7 @@ class MCPReviewService:
         dry_run: bool,
         posted: bool,
         error: str,
+        session: _Session | None = None,
     ) -> int | None:
         """Записать прогон в историю (fail-soft).
 
@@ -1041,6 +1046,12 @@ class MCPReviewService:
             if history is None:
                 return None
             now = datetime.now(timezone.utc)
+            started = now
+            if session is not None:
+                started = session.started_at
+            if started.tzinfo is None:
+                started = started.replace(tzinfo=timezone.utc)
+            duration_ms = max(0, int((now - started).total_seconds() * 1000))
             status = "error" if (error and not dry_run) else "ok"
             comments_inline = len(asm.inline_comments)
             # PRI-156: analyzed — все candidates (до verify-фильтра); грунтовка строк
@@ -1054,9 +1065,9 @@ class MCPReviewService:
                 "model": "claude-code",
                 "model_verify": None,
                 "dry_run": dry_run,
-                "started_at": now,
+                "started_at": started,
                 "finished_at": now,
-                "duration_ms": 0,
+                "duration_ms": duration_ms,
                 "status": status,
                 "files_reviewed": len(p.units),
                 "files_skipped": len(p.skipped_paths or []),
