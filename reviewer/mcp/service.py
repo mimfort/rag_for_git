@@ -71,12 +71,16 @@ class _Session:
 
 @dataclass
 class _RunMetadata:
-    """Метаданные LLM-прохода, передаваемые из publish_review в _record_history."""
+    """Метаданные LLM-прохода, передаваемые из publish_review в _record_history.
+
+    started_at нормализуется в publish_review (str → datetime), поэтому
+    _record_history ожидает здесь ``datetime | None``.
+    """
     model: str | None = None
     model_verify: str | None = None
     usage: dict | None = None
     total_cost: float | None = None
-    started_at: datetime | str | None = None
+    started_at: datetime | None = None
     steps: list[dict] | None = None
 
 
@@ -240,6 +244,8 @@ class MCPReviewService:
         tools = {t.name: t for t in make_tools(s.ctx)}
         result = tools[name].invoke(args)
         if len(s.steps) < _MAX_SESSION_STEPS:
+            # PRI-209: сервер не знает реальных затрат токенов на tool call
+            # (LLM-вызовы происходят в клиенте), поэтому tokens/cost не пишем.
             s.steps.append({
                 "stage": "analyze",
                 "unit": args.get("path") or args.get("node_id") or args.get("symbol") or "",
@@ -248,8 +254,6 @@ class MCPReviewService:
                 "name": name,
                 "text": result[:500] if isinstance(result, str) else None,
                 "tool_calls": [{"name": name, "args": args}],
-                "tokens": 0,
-                "cost": 0.0,
             })
         return result
 
@@ -1097,7 +1101,8 @@ class MCPReviewService:
 
         PRI-209: метаданные LLM-прохода (model, usage, total_cost, steps) и
         started_at приходят через ``metadata`` из publish_review / сессии и
-        сохраняются в истории.
+        сохраняются в истории. started_at уже нормализован в publish_review
+        (str → datetime), поэтому здесь работаем только с datetime или None.
         """
         metadata = metadata or _RunMetadata()
         try:
@@ -1107,12 +1112,6 @@ class MCPReviewService:
             now = datetime.now(timezone.utc)
             started_at = metadata.started_at
             started = started_at or (session.started_at if session is not None else None) or now
-            if isinstance(started, str):
-                try:
-                    started = datetime.fromisoformat(started)
-                except ValueError:
-                    log.warning("Некорректный формат started_at: %r — игнорируем", started)
-                    started = session.started_at if session is not None else now
             if started.tzinfo is None:
                 started = started.replace(tzinfo=timezone.utc)
             duration_ms = max(0, int((now - started).total_seconds() * 1000))
@@ -1124,14 +1123,16 @@ class MCPReviewService:
             steps = metadata.steps
             all_steps = None
             if session is not None:
-                all_steps = session.steps + (steps or [])
+                client_steps = steps or []
+                # PRI-209: не даём клиентскому списку шагов вызвать пиковое O(N)
+                # выделение памяти при слиянии с session.steps.
+                max_client = max(0, _MAX_SESSION_STEPS - len(session.steps))
+                if len(client_steps) > max_client:
+                    client_steps = client_steps[-max_client:]
+                all_steps = session.steps + client_steps
             elif steps:
-                all_steps = steps
+                all_steps = steps[-_MAX_SESSION_STEPS:] if len(steps) > _MAX_SESSION_STEPS else steps
             if all_steps:
-                # PRI-209: ограничиваем размер трейса, чтобы не писать огромные
-                # JSONB в БД и не копировать их в памяти без нужды.
-                if len(all_steps) > _MAX_SESSION_STEPS:
-                    all_steps = all_steps[-_MAX_SESSION_STEPS:]
                 # Не мутируем шаги клиента/сессии — копируем перед нормализацией seq.
                 all_steps = [{**step, "seq": i} for i, step in enumerate(all_steps)]
             run = {
