@@ -80,6 +80,7 @@ def test_solve_task_warns_on_existing_artifacts():
 
 
 def test_solve_task_step_1_5_handles_auto_permission_mode():
+    """PRI-209: в auto permission mode выбор модели брифа происходит silently, иначе — спрашиваем."""
     text = SKILL_PATH.read_text(encoding="utf-8")
     lower = text.lower()
     # Auto-mode branch exists.
@@ -88,3 +89,34 @@ def test_solve_task_step_1_5_handles_auto_permission_mode():
     # Manual branch exists.
     assert "otherwise" in lower
     assert "ask the user" in lower
+
+
+def test_solve_task_asks_brief_model_choice():
+    """PRI-208: Step 1.5 спрашивает у юзера tier модели для сборки брифа."""
+    text = SKILL_PATH.read_text(encoding="utf-8")
+    assert "Ask the user which model tier to use for building the brief" in text, (
+        "нет шага выбора модели для брифа (уникальная фраза шага удалена)"
+    )
+    # Рекомендация-дефолт — mid/Sonnet-класс
+    assert "mid tier (Sonnet-class)" in text, (
+        "скилл не рекомендует mid/Sonnet-класс как дефолт"
+    )
+
+
+def test_solve_task_dispatches_brief_subagent_on_chosen_model():
+    """Путь A: шаги 2–4 диспатчатся сабагентом на выбранной модели; путь B — inline-фолбэк."""
+    text = SKILL_PATH.read_text(encoding="utf-8")
+    assert "dispatch a subagent on the chosen model" in text, (
+        "нет диспатча сабагента на выбранной модели (путь A)"
+    )
+    assert "per-subagent model override unavailable" in text, (
+        "нет inline-фолбэка для CLI без per-subagent override (путь B)"
+    )
+
+
+def test_solve_task_records_brief_model_marker():
+    """Оркестратор дописывает в бриф строку-маркер «Собран на: …»."""
+    text = SKILL_PATH.read_text(encoding="utf-8")
+    assert "Собран на" in text, (
+        "нет строки-маркера «Собран на: <tier/модель>» (наблюдаемость выбора)"
+    )

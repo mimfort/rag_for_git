@@ -646,6 +646,11 @@ and enters brainstorming. It disciplines context-gathering — it does **not** w
   `docs/superpowers/briefs/` (`ГГГГ-ММ-ДД-<KEY>-<slug>.md`, survives context compaction) → hand off to
   `superpowers:brainstorming` with the brief file path as seed → **full superpowers cycle**: brainstorming →
   writing-plans → subagent-driven-development → executing-plans → finishing-a-development-branch.
+- **Cheaper model for the brief (cross-CLI).** Before building the brief, `solve-task` asks which
+  model tier to run it on (by tier — cheap / mid / premium — not by model name, so it works across
+  CLIs) and recommends a mid (Sonnet-class) default: gathering and distilling the brief is light
+  reasoning, so a top-tier model is overkill. Where the harness supports per-subagent model override
+  it dispatches the brief-building on the chosen model; otherwise it builds inline.
 
 ### `reviewer_sync-codebase` — build/update the base index
 
