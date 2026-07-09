@@ -43,6 +43,10 @@ log = logging.getLogger(__name__)
 
 WALKTHROUGH_MARKER = "<!-- ai-walkthrough -->"
 
+# PRI-209: ограничиваем размер трейса сессии в памяти, чтобы избежать
+# неограниченного роста при длинных прогонах с большим числом tool calls.
+_MAX_SESSION_STEPS = 1000
+
 
 @dataclass
 class _Session:
@@ -58,7 +62,26 @@ class _Session:
     # перезапуск процесса посреди ревью теряет прогресс, как и раньше).
     candidates: dict[str, Finding] = field(default_factory=dict)
     verdicts: dict[str, bool] = field(default_factory=dict)
+    # PRI-209: шаги тул-лупа агента (для трассировки/метрик сессии).
+    steps: list[dict] = field(default_factory=list)
+    # PRI-209: момент начала сессии review (для duration_ms в истории).
+    started_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     _seq: int = 0
+
+
+@dataclass
+class _RunMetadata:
+    """Метаданные LLM-прохода, передаваемые из publish_review в _record_history.
+
+    started_at нормализуется в publish_review (str → datetime), поэтому
+    _record_history ожидает здесь ``datetime | None``.
+    """
+    model: str | None = None
+    model_verify: str | None = None
+    usage: dict | None = None
+    total_cost: float | None = None
+    started_at: datetime | None = None
+    steps: list[dict] | None = None
 
 
 class MCPReviewService:
@@ -104,6 +127,8 @@ class MCPReviewService:
             return {"status": "skipped",
                     "reason": f"branch '{e.branch}' not tracked (REVIEW_BRANCHES)"}
         ctx = self._tool_context(prepared)
+        # started_at проставляет default_factory поля _Session.started_at
+        # (datetime.now(timezone.utc)) — явный аргумент здесь был бы дублем.
         self._sessions[(repo, pr)] = _Session(prepared, ctx)
         store = self._ensure_session_store()
         if store is not None:
@@ -184,6 +209,8 @@ class MCPReviewService:
             log.warning("Регидрация сессии %s#%s не удалась", repo, pr, exc_info=True)
             return None
         ctx = self._tool_context(prepared)
+        # При регидратации started_at и steps сбрасываются — восстановленная
+        # сессия начинает новый отсчёт времени жизни и не тащит чужую трассировку.
         return _Session(prepared, ctx)
 
     def _session(self, repo: str, pr: int) -> _Session:
@@ -209,12 +236,26 @@ class MCPReviewService:
 
         seen-дедуп сбрасывается на каждый вызов (повтор отдаёт результат из
         ctx.cache, а не заглушку «повтор»); сам кэш живёт всю сессию.
+        После вызова добавляем шаг в session.steps для трассировки.
         """
         from reviewer.services.repo_id import normalize_repo
         repo = normalize_repo(repo)
         s = self._session(repo, pr)
         tools = {t.name: t for t in make_tools(s.ctx)}
-        return tools[name].invoke(args)
+        result = tools[name].invoke(args)
+        if len(s.steps) < _MAX_SESSION_STEPS:
+            # PRI-209: сервер не знает реальных затрат токенов на tool call
+            # (LLM-вызовы происходят в клиенте), поэтому tokens/cost не пишем.
+            s.steps.append({
+                "stage": "analyze",
+                "unit": args.get("path") or args.get("node_id") or args.get("symbol") or "",
+                "seq": len(s.steps),
+                "kind": "tool_call",
+                "name": name,
+                "text": result[:500] if isinstance(result, str) else None,
+                "tool_calls": [{"name": name, "args": args}],
+            })
+        return result
 
     def search_code(self, repo: str, pr: int, query: str) -> str:
         """Семантико-лексический поиск кода по индексу PR."""
@@ -861,6 +902,13 @@ class MCPReviewService:
         summary: str,
         dry_run: bool = False,
         task_key: str | None = None,
+        *,
+        model: str | None = None,
+        model_verify: str | None = None,
+        usage: dict | None = None,
+        total_cost: float | None = None,
+        started_at: datetime | str | None = None,
+        steps: list[dict] | None = None,
     ) -> dict:
         """Детерминированный хвост ревью: verify-фильтр → grounding → gate →
         dedup → assemble → публикация → история → очистка overlay/сессии.
@@ -874,10 +922,19 @@ class MCPReviewService:
         При указании task_key и успешной публикации (не dry_run) линкует
         PR↔задача↔код в граф задач (рёбра IMPLEMENTED_BY + TOUCHES).
 
+        PRI-209: метаданные LLM-прохода (model, usage, total_cost, steps) и
+        started_at передаются клиентом в publish_review и сохраняются в истории.
+
         Returns:
             Отчёт со счётчиками (posted/invalid/verify_rejected/dropped_by_gate/
             deduped/already_posted/moved_to_summary/capped) и inline.
         """
+        if isinstance(started_at, str):
+            try:
+                started_at = datetime.fromisoformat(started_at)
+            except ValueError:
+                log.warning("Некорректный формат started_at: %r — игнорируем", started_at)
+                started_at = None
         from reviewer.services.repo_id import normalize_repo
         repo = normalize_repo(repo)
         s = self._session(repo, pr)
@@ -967,10 +1024,20 @@ class MCPReviewService:
 
         # 6) История (fail-soft) и очистка overlay/сессии (ВСЕГДА).
         dropped_by_gate = len(parsed) - len(kept)
+        metadata = _RunMetadata(
+            model=model,
+            model_verify=model_verify,
+            usage=usage,
+            total_cost=total_cost,
+            started_at=started_at,
+            steps=steps,
+        )
         run_id = self._record_history(
             repo, pr, p, list(s.candidates.values()), deduped, asm,
             verify_rejected=verify_rejected,
             dry_run=dry_run, posted=posted, error=error,
+            session=s,
+            metadata=metadata,
         )
         self._cleanup(repo, pr)
 
@@ -1023,36 +1090,63 @@ class MCPReviewService:
         dry_run: bool,
         posted: bool,
         error: str,
+        session: _Session,
+        metadata: _RunMetadata | None = None,
     ) -> int | None:
         """Записать прогон в историю (fail-soft).
 
         Гейтится ``settings.review_history``. Любая ошибка истории не валит
-        publish — возвращаем None. Стоимость/usage недоступны на этом этапе
-        (LLM-вызовы прошли вне сервиса), пишем None. При сбое публикации
-        (status=error) находки записываются с published=False — как в
-        review_service._record_history.
+        publish — возвращаем None. При сбое публикации (status=error) находки
+        записываются с published=False — как в review_service._record_history.
+
+        PRI-209: метаданные LLM-прохода (model, usage, total_cost, steps) и
+        started_at приходят через ``metadata`` из publish_review / сессии и
+        сохраняются в истории. started_at уже нормализован в publish_review
+        (str → datetime), поэтому здесь работаем только с datetime или None.
         """
+        metadata = metadata or _RunMetadata()
         try:
             history = self._review_service._ensure_history()
             if history is None:
                 return None
             now = datetime.now(timezone.utc)
+            started = metadata.started_at or session.started_at or now
+            if started.tzinfo is None:
+                started = started.replace(tzinfo=timezone.utc)
+            duration_ms = max(0, int((now - started).total_seconds() * 1000))
             status = "error" if (error and not dry_run) else "ok"
             comments_inline = len(asm.inline_comments)
             # PRI-156: analyzed — все candidates (до verify-фильтра); грунтовка строк
             # выполнена только для survived, не для отвергнутых candidates.
             findings_analyzed = len({f.fingerprint() for f in analyzed})
+            # PRI-209: сливаем серверные шаги сессии с клиентскими. session всегда
+            # задан (publish_review → _session, который либо возвращает сессию, либо
+            # бросает ValueError), поэтому ветки на session is None здесь нет.
+            client_steps = metadata.steps or []
+            # Не даём клиентскому списку раздуть слияние с session.steps (пиковое
+            # O(N)-выделение). При заполненной сессии max_client == 0 → отбрасываем
+            # клиентские шаги ЦЕЛИКОМ: срез client_steps[-0:] вернул бы весь список
+            # (отрицательный ноль == ноль), и кэп бы не сработал.
+            max_client = max(0, _MAX_SESSION_STEPS - len(session.steps))
+            if max_client == 0:
+                client_steps = []
+            elif len(client_steps) > max_client:
+                client_steps = client_steps[-max_client:]
+            all_steps = session.steps + client_steps
+            if all_steps:
+                # Не мутируем шаги клиента/сессии — копируем перед нормализацией seq.
+                all_steps = [{**step, "seq": i} for i, step in enumerate(all_steps)]
             run = {
                 "repo": repo,
                 "pr_number": pr,
                 "base_sha": p.prq.base_sha,
                 "head_sha": p.prq.head_sha,
-                "model": "claude-code",
-                "model_verify": None,
+                "model": metadata.model or "claude-code",
+                "model_verify": metadata.model_verify,
                 "dry_run": dry_run,
-                "started_at": now,
+                "started_at": started,
                 "finished_at": now,
-                "duration_ms": 0,
+                "duration_ms": duration_ms,
                 "status": status,
                 "files_reviewed": len(p.units),
                 "files_skipped": len(p.skipped_paths or []),
@@ -1068,15 +1162,15 @@ class MCPReviewService:
                 "comments_summary": sum(
                     1 for r in asm.findings_rows if r["published"] and not r["inline"]
                 ),
-                "usage": None,
-                "total_cost": None,
+                "usage": metadata.usage,
+                "total_cost": metadata.total_cost,
                 "error_text": error or None,
             }
             rows = (
                 [dict(r, published=False) for r in asm.findings_rows]
                 if status == "error" else asm.findings_rows
             )
-            return history.record_run(run, rows, steps=None)
+            return history.record_run(run, rows, steps=all_steps or None)
         except Exception:
             log.warning("Не удалось сохранить историю прогона", exc_info=True)
             return None

@@ -9,10 +9,11 @@ publish_review в .published; фейковая history собирает прог
 """
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
 from reviewer.config.settings import Settings
-from reviewer.mcp.service import MCPReviewService
+from reviewer.mcp.service import _MAX_SESSION_STEPS, MCPReviewService
 from reviewer.vcs.base import Finding, PullRequest
 
 # Исходник a.py: строка `x = 1` стоит на строке 2.
@@ -132,10 +133,12 @@ class _FakeHistory:
     def __init__(self) -> None:
         self.runs: list[dict] = []
         self.findings: list[list[dict]] = []
+        self.steps: list[list[dict] | None] = []
 
     def record_run(self, run: dict, findings: list[dict], steps=None) -> int:
         self.runs.append(run)
         self.findings.append(findings)
+        self.steps.append(steps)
         return len(self.runs)
 
 
@@ -171,13 +174,14 @@ def _make_mcp_service_with_publish(
 
 
 def _submit_then_publish(svc, repo, pr, findings, *, summary="s", dry_run=False,
-                         verdicts=None, task_key=None):
+                         verdicts=None, task_key=None, **publish_kwargs):
     """PRI-156: вместо publish_review(findings=...) — submit + publish из сессии."""
     if findings:
         svc.submit_findings(repo, pr, findings)
     if verdicts:
         svc.submit_verdicts(repo, pr, verdicts)
-    return svc.publish_review(repo, pr, summary=summary, dry_run=dry_run, task_key=task_key)
+    return svc.publish_review(repo, pr, summary=summary, dry_run=dry_run,
+                              task_key=task_key, **publish_kwargs)
 
 
 # ---------------------------------------------------------------------------
@@ -424,3 +428,115 @@ def test_publish_keeps_finding_without_verdict(_ov, _ch) -> None:
     report = _submit_then_publish(svc, "o/r", 7, [RAW], dry_run=True)  # без verdicts
     assert report["verify_rejected"] == 0
     assert report["inline"][0]["line"] == 2
+
+
+@patch("reviewer.services.review_service.chunk_python", side_effect=_fake_chunk)
+@patch("reviewer.services.review_service.build_overlay")
+def test_publish_records_real_metadata(_ov, _ch) -> None:
+    """PRI-209: без override метаданные берутся из сессии/дефолтов."""
+    svc, _, history = _make_mcp_service_with_publish()
+    svc.prepare_review("o/r", 7)
+    started = datetime.now(timezone.utc) - timedelta(seconds=2)
+    report = _submit_then_publish(svc, "o/r", 7, [RAW], dry_run=True,
+                                  started_at=started)
+    assert report["posted"] is False
+    run = history.runs[0]
+    assert run["model"] == "claude-code"
+    assert run["duration_ms"] >= 0
+    assert run["usage"] is None
+    assert run["total_cost"] is None
+
+
+@patch("reviewer.services.review_service.chunk_python", side_effect=_fake_chunk)
+@patch("reviewer.services.review_service.build_overlay")
+def test_publish_records_server_steps(_ov, _ch) -> None:
+    svc, vcs, history = _make_mcp_service_with_publish()
+    svc.prepare_review("o/r", 7)
+    svc.search_code("o/r", 7, "token check")
+    _submit_then_publish(svc, "o/r", 7, [RAW], dry_run=True)
+    assert len(history.steps[0]) >= 1
+    assert any(step["name"] == "search_code" for step in history.steps[0])
+
+
+@patch("reviewer.services.review_service.chunk_python", side_effect=_fake_chunk)
+@patch("reviewer.services.review_service.build_overlay")
+def test_publish_accepts_metadata_override(_ov, _ch) -> None:
+    """PRI-209: клиент может передать метаданные LLM-прохода в publish_review."""
+    svc, _, history = _make_mcp_service_with_publish()
+    svc.prepare_review("o/r", 7)
+    svc.submit_findings("o/r", 7, [RAW])
+    started_iso = (datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat()
+    report = svc.publish_review(
+        "o/r", 7, summary="s", dry_run=True,
+        model="custom-model",
+        model_verify="verify-model",
+        usage={"input_tokens": 100, "output_tokens": 50},
+        total_cost=0.00123,
+        started_at=started_iso,
+        steps=[{"tool": "step1"}],
+    )
+    assert report["posted"] is False
+    run = history.runs[0]
+    assert run["model"] == "custom-model"
+    assert run["model_verify"] == "verify-model"
+    assert run["usage"] == {"input_tokens": 100, "output_tokens": 50}
+    assert run["total_cost"] == 0.00123
+    assert run["duration_ms"] >= 0
+    assert history.steps[0] == [{"tool": "step1", "seq": 0}]
+
+
+@patch("reviewer.services.review_service.chunk_python", side_effect=_fake_chunk)
+@patch("reviewer.services.review_service.build_overlay")
+def test_publish_caps_client_steps_when_session_full(_ov, _ch) -> None:
+    """PRI-209: при заполненной сессии (session.steps == _MAX_SESSION_STEPS)
+    клиентские шаги отбрасываются целиком.
+
+    Регрессия на баг «отрицательного нуля»: при max_client == 0 срез
+    client_steps[-0:] раньше возвращал ВЕСЬ список клиента, и кэп не срабатывал.
+    """
+    svc, _, history = _make_mcp_service_with_publish()
+    svc.prepare_review("o/r", 7)
+    s = svc._session("o/r", 7)
+    s.steps = [{"stage": "analyze", "seq": i} for i in range(_MAX_SESSION_STEPS)]
+    svc.submit_findings("o/r", 7, [RAW])
+    svc.publish_review(
+        "o/r", 7, summary="s", dry_run=True,
+        steps=[{"tool": "client"} for _ in range(5)],
+    )
+    # Клиентские шаги отброшены целиком: в истории только серверные _MAX_SESSION_STEPS.
+    assert len(history.steps[0]) == _MAX_SESSION_STEPS
+    assert all(step.get("tool") != "client" for step in history.steps[0])
+
+
+@patch("reviewer.services.review_service.chunk_python", side_effect=_fake_chunk)
+@patch("reviewer.services.review_service.build_overlay")
+def test_publish_ignores_malformed_started_at(_ov, _ch) -> None:
+    svc, vcs, history = _make_mcp_service_with_publish()
+    svc.prepare_review("o/r", 7)
+    report = svc.publish_review(
+        "o/r", 7, summary="s", dry_run=True, started_at="not-a-timestamp",
+    )
+    assert report is not None
+    run = history.runs[0]
+    assert run["duration_ms"] >= 0
+    assert run["started_at"] is not None
+
+
+@patch("reviewer.services.review_service.chunk_python", side_effect=_fake_chunk)
+@patch("reviewer.services.review_service.build_overlay")
+def test_publish_merges_server_and_client_steps(_ov, _ch) -> None:
+    svc, vcs, history = _make_mcp_service_with_publish()
+    svc.prepare_review("o/r", 7)
+    svc.search_code("o/r", 7, "token check")
+    svc.get_related_symbols("o/r", 7, "a.py#f")
+    client_steps = [
+        {"stage": "synthesize", "unit": "(summary)", "seq": 0, "kind": "llm_call", "name": "summary", "text": "ok", "tool_calls": None, "tokens": 10, "cost": 0.01},
+        {"stage": "synthesize", "unit": "(summary)", "seq": 1, "kind": "llm_call", "name": "summary2", "text": "ok2", "tool_calls": None, "tokens": 5, "cost": 0.005},
+    ]
+    svc.publish_review("o/r", 7, summary="s", dry_run=True, steps=client_steps)
+    recorded = history.steps[0]
+    assert any(step["name"] == "search_code" for step in recorded)
+    assert any(step["name"] == "get_related_symbols" for step in recorded)
+    assert any(step["name"] == "summary" for step in recorded)
+    seqs = [step["seq"] for step in recorded]
+    assert seqs == list(range(len(recorded)))

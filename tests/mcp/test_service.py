@@ -5,6 +5,7 @@
 """
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -116,6 +117,23 @@ def _make_mcp_service(number: int = 7) -> MCPReviewService:
 # ---------------------------------------------------------------------------
 # Тесты prepare_review
 # ---------------------------------------------------------------------------
+
+@patch("reviewer.services.review_service.chunk_python", side_effect=_fake_chunk)
+@patch("reviewer.services.review_service.build_overlay")
+def test_prepare_review_sets_session_started_at(
+    _ov: MagicMock,
+    _ch: MagicMock,
+) -> None:
+    svc = _make_mcp_service()
+    before = datetime.now(timezone.utc)
+    svc.prepare_review("o/r", 7)
+    after = datetime.now(timezone.utc)
+    s = svc._sessions[("o/r", 7)]
+    assert s.started_at is not None
+    assert isinstance(s.started_at, datetime)
+    assert s.started_at.tzinfo == timezone.utc
+    assert before <= s.started_at <= after
+
 
 @patch("reviewer.services.review_service.chunk_python", side_effect=_fake_chunk)
 @patch("reviewer.services.review_service.build_overlay")
@@ -308,6 +326,19 @@ def test_prepare_review_payload_enabled_only_default_empty(
     assert out["policy"]["enabled_only"] == [], (
         "enabled_only по умолчанию должен быть пустым списком"
     )
+
+
+@patch("reviewer.services.review_service.chunk_python", side_effect=_fake_chunk)
+@patch("reviewer.services.review_service.build_overlay")
+def test_invoke_tool_logs_steps(_ov, _ch) -> None:
+    svc = _make_mcp_service()
+    svc.prepare_review("o/r", 7)
+    svc.search_code("o/r", 7, "token check")
+    s = svc._sessions[("o/r", 7)]
+    assert len(s.steps) >= 1
+    assert s.steps[0]["name"] == "search_code"
+    assert s.steps[0]["kind"] == "tool_call"
+    assert s.steps[0]["stage"] == "analyze"
 
 
 @patch("reviewer.services.review_service.chunk_python", side_effect=_fake_chunk)

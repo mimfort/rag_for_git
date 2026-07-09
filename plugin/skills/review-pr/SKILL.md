@@ -118,8 +118,10 @@ blocks.
    requested but unavailable (no key, board MCP not connected, task not found), say so briefly.
    Mention files that were not analyzed: failed subagents and `skipped_paths`
    from the prepare payload. Call `publish_review(repo, pr, summary, dry_run, task_key)`
-   where `task_key` is the canonical `TaskBrief.key` if a task was read (else omit / null). When
-   published, this links the PR to the task in the graph for future reviews. Report to the user:
+   where `task_key` is the canonical `TaskBrief.key` if a task was read (else omit / null). If the
+   CLI provides model/usage/cost metadata, pass them via the optional keyword arguments `model`,
+   `usage`, and `total_cost` to `publish_review`. When published, this links the PR to the task in
+   the graph for future reviews. Report to the user:
    posted/dry-run, inline count, and the report counters
    (dropped_by_gate/deduped/invalid/already_posted/moved_to_summary/capped/verify_rejected), run_id.
 

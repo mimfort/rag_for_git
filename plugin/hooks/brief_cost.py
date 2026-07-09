@@ -26,20 +26,44 @@ def human_tokens(n: int) -> str:
     return f"{text}{unit}"
 
 
-def render_block(by_model: dict) -> str:
-    """Текст блока «## Токены (этап solve-task)» (без хвостового перевода строки)."""
-    lines = [HEADER]
-    total = 0
-    for model, b in by_model.items():
-        lines.append(f"Модель: {model}")
-        lines.append(
+def _format_bucket(model: str, b: dict) -> list[str]:
+    """Строки описания одной модели из бакета токенов."""
+    return [
+        f"Модель: {model}",
+        (
             f"fresh-in {human_tokens(b['fresh_in'])} · "
             f"out {human_tokens(b['output'])} · "
             f"cache-write {human_tokens(b['cache_write'])} · "
             f"cache-read {human_tokens(b['cache_read'])}"
-        )
-        total += b["fresh_in"] + b["output"] + b["cache_write"] + b["cache_read"]
+        ),
+    ]
+
+
+def _bucket_total(b: dict) -> int:
+    return b["fresh_in"] + b["output"] + b["cache_write"] + b["cache_read"]
+
+
+def render_block(by_model: dict, sidechain: dict | None = None) -> str:
+    """Текст блока «## Токены (этап solve-task)» (без хвостового перевода строки)."""
+    lines = [HEADER]
+    total = 0
+    for model, b in by_model.items():
+        lines.extend(_format_bucket(model, b))
+        total += _bucket_total(b)
+    # «Всего» — грандтотал этапа (главный агент + sidechain-сабагент), чтобы
+    # подпись «В т.ч. sidechain-сабагент» ниже была корректной: sidechain
+    # действительно входит в «Всего», а не идёт отдельной, не учтённой суммой.
+    if sidechain:
+        total += sum(_bucket_total(b) for b in sidechain.values())
     lines.append(f"Всего: {human_tokens(total)} токенов")
+    if sidechain:
+        side_total = 0
+        lines.append("")
+        lines.append("В т.ч. sidechain-сабагент:")
+        for model, b in sidechain.items():
+            lines.extend(_format_bucket(model, b))
+            side_total += _bucket_total(b)
+        lines.append(f"Sidechain всего: {human_tokens(side_total)} токенов")
     return "\n".join(lines)
 
 
@@ -97,22 +121,38 @@ def find_window_start(lines: list) -> int:
     return start
 
 
-def aggregate_usage(lines: list, start_idx: int) -> dict:
-    """Сумма 4 бакетов токенов по model для assistant-ходов после start_idx."""
-    by_model: dict = {}
-    for line in lines[start_idx + 1:]:
-        if line.get("type") != "assistant" or line.get("isSidechain"):
-            continue
-        message = line.get("message") or {}
-        usage = message.get("usage") or {}
-        model = message.get("model") or "unknown"
-        bucket = by_model.setdefault(
-            model, {"fresh_in": 0, "output": 0, "cache_write": 0, "cache_read": 0})
+def aggregate_usage(lines: list, start_idx: int) -> tuple[dict, dict]:
+    """Сумма 4 бакетов токенов по model для assistant-ходов после start_idx.
+
+    Returns:
+        (main_by_model, sidechain_by_model). Sidechain включает только
+        assistant-ходы с isSidechain=True.
+    """
+    def _add(bucket: dict, usage: dict) -> None:
         bucket["fresh_in"] += int(usage.get("input_tokens") or 0)
         bucket["output"] += int(usage.get("output_tokens") or 0)
         bucket["cache_write"] += int(usage.get("cache_creation_input_tokens") or 0)
         bucket["cache_read"] += int(usage.get("cache_read_input_tokens") or 0)
-    return {m: b for m, b in by_model.items() if any(b.values())}
+
+    by_model: dict = {}
+    sidechain: dict = {}
+    for line in lines[start_idx + 1:]:
+        if line.get("type") != "assistant":
+            continue
+        message = line.get("message") or {}
+        usage = message.get("usage") or {}
+        model = message.get("model") or "unknown"
+        if line.get("isSidechain"):
+            bucket = sidechain.setdefault(
+                model, {"fresh_in": 0, "output": 0, "cache_write": 0, "cache_read": 0})
+        else:
+            bucket = by_model.setdefault(
+                model, {"fresh_in": 0, "output": 0, "cache_write": 0, "cache_read": 0})
+        _add(bucket, usage)
+    return (
+        {m: b for m, b in by_model.items() if any(b.values())},
+        {m: b for m, b in sidechain.items() if any(b.values())},
+    )
 
 
 def read_flag(text) -> bool:
@@ -230,13 +270,13 @@ def run(payload: dict) -> int:
         start = find_window_start(lines)
         if start < 0:
             return 0
-        by_model = aggregate_usage(lines, start)
-        if not by_model:
+        by_model, sidechain = aggregate_usage(lines, start)
+        if not by_model and not sidechain:
             return 0
         brief = _read_text(file_path)
         if brief is None:
             return 0
-        _write_text(file_path, upsert_block(brief, render_block(by_model)))
+        _write_text(file_path, upsert_block(brief, render_block(by_model, sidechain)))
     except Exception:
         return 0
     return 0

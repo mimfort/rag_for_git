@@ -75,12 +75,8 @@ brief to `superpowers:brainstorming` (which leads to writing-plans → subagent-
 
 1.5. **Choose the brief model (cross-CLI).** Building the brief (Steps 2–4: gather + distill) is a
    light reasoning task over session-less retrieval tools — a top-tier model is overkill and burns
-   tokens. Before building it, **Ask the user which model tier to use for building the brief**,
-   phrasing the choice by **tier (cheap / mid / premium)** — not by concrete model names — so it
-   works across CLIs (Claude Code, Codex, Gemini, Cursor, …). **Recommend a mid tier (Sonnet-class)
-   as the default** (do not recommend Fable — a coarse tier is fine but the brief still needs sound
-   judgment). Talk to the user in Russian. Remember the choice for this run. Fail-open: no answer or
-   a decline → use the default tier (or, on Path B below, the session model inline). Never block.
+   tokens. **If auto permission mode is active, silently choose the mid tier (Sonnet-class)** and
+   continue without asking the user. Otherwise, **Ask the user which model tier to use for building the brief**, phrasing the choice by **tier (cheap / mid / premium)** — not by concrete model names — so it works across CLIs (Claude Code, Codex, Gemini, Cursor, …). **Recommend a mid tier (Sonnet-class) as the default** (do not recommend Fable — a coarse tier is fine but the brief still needs sound judgment). Talk to the user in Russian. Remember the choice for this run. Fail-open: no answer, a decline, or inability to detect auto mode → use the default tier (or, on Path B below, the session model inline). Never block.
 
 **Brief-building unit (Steps 2–4) runs on the chosen model.** Steps 2–4 (identify → gather → distill
 → persist) are non-interactive; run them on the model chosen in Step 1.5:

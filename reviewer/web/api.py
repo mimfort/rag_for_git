@@ -4,58 +4,17 @@
 """
 from __future__ import annotations
 
+import base64
 import hmac
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import JSONResponse
-from fastapi.security import HTTPBasic, HTTPBasicCredentials
 
 from reviewer.config.settings import Settings
 from reviewer.web.history import ReviewHistory
 
 log = logging.getLogger(__name__)
-
-
-def _make_auth_dependency(settings: Settings):
-    """Создать зависимость FastAPI для HTTP Basic Auth.
-
-    Если учётные данные не заданы — возвращает пустую зависимость,
-    которая пропускает все запросы.
-    """
-    if not settings.web_admin_user or not settings.web_admin_password:
-        return lambda: None
-
-    security = HTTPBasic(auto_error=False)
-
-    def _require_auth(
-        credentials: HTTPBasicCredentials | None = Depends(security),
-    ) -> HTTPBasicCredentials | None:
-        if credentials is None:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Требуется аутентификация",
-                headers={"WWW-Authenticate": "Basic"},
-            )
-        # constant-time сравнение обоих полей: обычный != short-circuit'ит на первом
-        # несовпадении и протекает по таймингу — даёт подбор логина/пароля.
-        user_ok = hmac.compare_digest(
-            credentials.username.encode("utf-8"),
-            settings.web_admin_user.encode("utf-8"),
-        )
-        pass_ok = hmac.compare_digest(
-            credentials.password.encode("utf-8"),
-            settings.web_admin_password.encode("utf-8"),
-        )
-        if not (user_ok and pass_ok):
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Неверные учётные данные",
-                headers={"WWW-Authenticate": "Basic"},
-            )
-        return credentials
-
-    return _require_auth
 
 
 def make_router(history: ReviewHistory, settings: Settings | None = None) -> APIRouter:
@@ -69,10 +28,52 @@ def make_router(history: ReviewHistory, settings: Settings | None = None) -> API
     Routes:
         GET /api/runs            — список прогонов с пагинацией.
         GET /api/runs/{run_id}   — прогон + находки (404 если не найден).
+        GET /api/runs/{run_id}/trace — трейс прогона.
         GET /api/stats           — агрегированная статистика.
+        GET /api/runs/gap        — дней с последнего прогона по репо.
     """
-    auth_dep = _make_auth_dependency(settings or Settings())
-    router = APIRouter(dependencies=[Depends(auth_dep)])
+    settings = settings or Settings()
+
+    def _require_auth(request: Request) -> None:
+        """Проверить HTTP Basic Auth, если настроены учётные данные."""
+        if not settings.web_admin_user or not settings.web_admin_password:
+            return
+        auth_header = request.headers.get("Authorization")
+        if auth_header is None or not auth_header.lower().startswith("basic "):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Требуется аутентификация",
+                headers={"WWW-Authenticate": "Basic"},
+            )
+        try:
+            decoded = base64.b64decode(auth_header[6:], validate=True).decode("utf-8")
+            username, sep, password = decoded.partition(":")
+            if sep != ":":
+                raise ValueError
+        except Exception:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Неверные учётные данные",
+                headers={"WWW-Authenticate": "Basic"},
+            ) from None
+        # constant-time сравнение обоих полей: обычный != short-circuit'ит на первом
+        # несовпадении и протекает по таймингу — даёт подбор логина/пароля.
+        user_ok = hmac.compare_digest(
+            username.encode("utf-8"),
+            settings.web_admin_user.encode("utf-8"),
+        )
+        pass_ok = hmac.compare_digest(
+            password.encode("utf-8"),
+            settings.web_admin_password.encode("utf-8"),
+        )
+        if not (user_ok and pass_ok):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Неверные учётные данные",
+                headers={"WWW-Authenticate": "Basic"},
+            )
+
+    router = APIRouter(dependencies=[Depends(_require_auth)])
 
     @router.get("/api/runs")
     def list_runs(
@@ -88,6 +89,18 @@ def make_router(history: ReviewHistory, settings: Settings | None = None) -> API
         except Exception as exc:
             log.error("Ошибка при получении списка прогонов: %s", exc, exc_info=True)
             raise HTTPException(status_code=500, detail="Внутренняя ошибка сервера") from exc
+
+    @router.get("/api/runs/gap")
+    def get_history_gap(repo: str) -> JSONResponse:
+        """Дней с последнего прогона ревью для указанного репозитория."""
+        try:
+            days = history.days_since_last_run(repo)
+        except Exception as exc:
+            log.error(
+                "Ошибка при получении исторического разрыва для %s: %s", repo, exc, exc_info=True
+            )
+            raise HTTPException(status_code=500, detail="Внутренняя ошибка сервера") from exc
+        return JSONResponse({"repo": repo, "days_since_last_run": days})
 
     @router.get("/api/runs/{run_id}")
     def get_run(run_id: int) -> JSONResponse:

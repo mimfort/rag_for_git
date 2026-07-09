@@ -31,6 +31,7 @@ CREATE TABLE IF NOT EXISTS review_runs (
 
 CREATE INDEX IF NOT EXISTS review_runs_created_at ON review_runs (created_at DESC);
 CREATE INDEX IF NOT EXISTS review_runs_repo ON review_runs (repo);
+CREATE INDEX IF NOT EXISTS review_runs_repo_created_at ON review_runs (repo, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS review_findings (
     id          BIGSERIAL    PRIMARY KEY,
