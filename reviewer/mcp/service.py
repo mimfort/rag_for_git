@@ -127,9 +127,9 @@ class MCPReviewService:
             return {"status": "skipped",
                     "reason": f"branch '{e.branch}' not tracked (REVIEW_BRANCHES)"}
         ctx = self._tool_context(prepared)
-        self._sessions[(repo, pr)] = _Session(
-            prepared, ctx, started_at=datetime.now(timezone.utc)
-        )
+        # started_at проставляет default_factory поля _Session.started_at
+        # (datetime.now(timezone.utc)) — явный аргумент здесь был бы дублем.
+        self._sessions[(repo, pr)] = _Session(prepared, ctx)
         store = self._ensure_session_store()
         if store is not None:
             store.save(repo, pr, to_payload(prepared))
@@ -1090,7 +1090,7 @@ class MCPReviewService:
         dry_run: bool,
         posted: bool,
         error: str,
-        session: _Session | None = None,
+        session: _Session,
         metadata: _RunMetadata | None = None,
     ) -> int | None:
         """Записать прогон в историю (fail-soft).
@@ -1110,8 +1110,7 @@ class MCPReviewService:
             if history is None:
                 return None
             now = datetime.now(timezone.utc)
-            started_at = metadata.started_at
-            started = started_at or (session.started_at if session is not None else None) or now
+            started = metadata.started_at or session.started_at or now
             if started.tzinfo is None:
                 started = started.replace(tzinfo=timezone.utc)
             duration_ms = max(0, int((now - started).total_seconds() * 1000))
@@ -1120,18 +1119,20 @@ class MCPReviewService:
             # PRI-156: analyzed — все candidates (до verify-фильтра); грунтовка строк
             # выполнена только для survived, не для отвергнутых candidates.
             findings_analyzed = len({f.fingerprint() for f in analyzed})
-            steps = metadata.steps
-            all_steps = None
-            if session is not None:
-                client_steps = steps or []
-                # PRI-209: не даём клиентскому списку шагов вызвать пиковое O(N)
-                # выделение памяти при слиянии с session.steps.
-                max_client = max(0, _MAX_SESSION_STEPS - len(session.steps))
-                if len(client_steps) > max_client:
-                    client_steps = client_steps[-max_client:]
-                all_steps = session.steps + client_steps
-            elif steps:
-                all_steps = steps[-_MAX_SESSION_STEPS:] if len(steps) > _MAX_SESSION_STEPS else steps
+            # PRI-209: сливаем серверные шаги сессии с клиентскими. session всегда
+            # задан (publish_review → _session, который либо возвращает сессию, либо
+            # бросает ValueError), поэтому ветки на session is None здесь нет.
+            client_steps = metadata.steps or []
+            # Не даём клиентскому списку раздуть слияние с session.steps (пиковое
+            # O(N)-выделение). При заполненной сессии max_client == 0 → отбрасываем
+            # клиентские шаги ЦЕЛИКОМ: срез client_steps[-0:] вернул бы весь список
+            # (отрицательный ноль == ноль), и кэп бы не сработал.
+            max_client = max(0, _MAX_SESSION_STEPS - len(session.steps))
+            if max_client == 0:
+                client_steps = []
+            elif len(client_steps) > max_client:
+                client_steps = client_steps[-max_client:]
+            all_steps = session.steps + client_steps
             if all_steps:
                 # Не мутируем шаги клиента/сессии — копируем перед нормализацией seq.
                 all_steps = [{**step, "seq": i} for i, step in enumerate(all_steps)]

@@ -50,6 +50,11 @@ def render_block(by_model: dict, sidechain: dict | None = None) -> str:
     for model, b in by_model.items():
         lines.extend(_format_bucket(model, b))
         total += _bucket_total(b)
+    # «Всего» — грандтотал этапа (главный агент + sidechain-сабагент), чтобы
+    # подпись «В т.ч. sidechain-сабагент» ниже была корректной: sidechain
+    # действительно входит в «Всего», а не идёт отдельной, не учтённой суммой.
+    if sidechain:
+        total += sum(_bucket_total(b) for b in sidechain.values())
     lines.append(f"Всего: {human_tokens(total)} токенов")
     if sidechain:
         side_total = 0
