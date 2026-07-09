@@ -144,6 +144,9 @@ def test_render_block_shows_sidechain():
     assert "В т.ч. sidechain-сабагент:" in block
     assert "Модель: side-model" in block
     assert "Sidechain всего: 1.4K токенов" in block
+    # «Всего» — грандтотал: main (1000+2000) + sidechain (500+600+100+200) = 4400.
+    # Подпись «В т.ч.» ниже верна только если sidechain входит в «Всего».
+    assert "Всего: 4.4K токенов" in block
 
 
 def test_read_flag_true_only_when_set():

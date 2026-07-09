@@ -13,7 +13,7 @@ from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
 from reviewer.config.settings import Settings
-from reviewer.mcp.service import MCPReviewService
+from reviewer.mcp.service import _MAX_SESSION_STEPS, MCPReviewService
 from reviewer.vcs.base import Finding, PullRequest
 
 # Исходник a.py: строка `x = 1` стоит на строке 2.
@@ -483,6 +483,29 @@ def test_publish_accepts_metadata_override(_ov, _ch) -> None:
     assert run["total_cost"] == 0.00123
     assert run["duration_ms"] >= 0
     assert history.steps[0] == [{"tool": "step1", "seq": 0}]
+
+
+@patch("reviewer.services.review_service.chunk_python", side_effect=_fake_chunk)
+@patch("reviewer.services.review_service.build_overlay")
+def test_publish_caps_client_steps_when_session_full(_ov, _ch) -> None:
+    """PRI-209: при заполненной сессии (session.steps == _MAX_SESSION_STEPS)
+    клиентские шаги отбрасываются целиком.
+
+    Регрессия на баг «отрицательного нуля»: при max_client == 0 срез
+    client_steps[-0:] раньше возвращал ВЕСЬ список клиента, и кэп не срабатывал.
+    """
+    svc, _, history = _make_mcp_service_with_publish()
+    svc.prepare_review("o/r", 7)
+    s = svc._session("o/r", 7)
+    s.steps = [{"stage": "analyze", "seq": i} for i in range(_MAX_SESSION_STEPS)]
+    svc.submit_findings("o/r", 7, [RAW])
+    svc.publish_review(
+        "o/r", 7, summary="s", dry_run=True,
+        steps=[{"tool": "client"} for _ in range(5)],
+    )
+    # Клиентские шаги отброшены целиком: в истории только серверные _MAX_SESSION_STEPS.
+    assert len(history.steps[0]) == _MAX_SESSION_STEPS
+    assert all(step.get("tool") != "client" for step in history.steps[0])
 
 
 @patch("reviewer.services.review_service.chunk_python", side_effect=_fake_chunk)
