@@ -12,7 +12,8 @@ import re
 import threading
 from dataclasses import dataclass, field
 
-from pgvector.psycopg import Vector, register_vector
+from pgvector import Vector
+from pgvector.psycopg import register_vector
 from psycopg_pool import ConnectionPool
 
 _BM25_STRIP = re.compile(r"[^\w\s]")

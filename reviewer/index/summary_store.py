@@ -9,7 +9,8 @@ import threading
 from datetime import datetime
 
 import psycopg.errors
-from pgvector.psycopg import Vector, register_vector
+from pgvector import Vector
+from pgvector.psycopg import register_vector
 from psycopg_pool import ConnectionPool
 
 
