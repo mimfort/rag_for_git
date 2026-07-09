@@ -4,7 +4,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 import re
-from pgvector.psycopg import register_vector, Vector
+from pgvector import Vector
+from pgvector.psycopg import register_vector
 from psycopg_pool import ConnectionPool
 
 _BM25_STRIP = re.compile(r"[^\w\s]")
