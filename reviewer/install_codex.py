@@ -239,38 +239,76 @@ def _json_result(runner: Runner, argv: tuple[str, ...], phase: str) -> dict:
     return data
 
 
+def _required_object_array(data: dict, field: str, phase: str) -> list[dict]:
+    if field not in data:
+        raise RuntimeError(f"{phase}: missing field {field}")
+    value = data[field]
+    if not isinstance(value, list):
+        raise RuntimeError(f"{phase}: {field} must be an array")
+    for index, item in enumerate(value):
+        if not isinstance(item, dict):
+            raise RuntimeError(f"{phase}: {field}[{index}] must be an object")
+    return value
+
+
+def _required_string(item: dict, field: str, label: str) -> str:
+    if field not in item:
+        raise RuntimeError(f"{label} missing field {field}")
+    value = item[field]
+    if not isinstance(value, str):
+        raise RuntimeError(f"{label}.{field} must be a string")
+    return value
+
+
+def _required_boolean(item: dict, field: str, label: str) -> bool:
+    if field not in item:
+        raise RuntimeError(f"{label} missing field {field}")
+    value = item[field]
+    if not isinstance(value, bool):
+        raise RuntimeError(f"{label}.{field} must be a boolean")
+    return value
+
+
 def read_codex_state(executable: Path, runner: Runner) -> CodexPluginState:
     exe = str(executable)
-    marketplaces = _json_result(
+    marketplace_data = _json_result(
         runner, (exe, "plugin", "marketplace", "list", "--json"), "marketplace list"
-    ).get("marketplaces", [])
-    installed = _json_result(
+    )
+    marketplaces = _required_object_array(
+        marketplace_data, "marketplaces", "marketplace list"
+    )
+    plugin_data = _json_result(
         runner, (exe, "plugin", "list", "--available", "--json"), "plugin list"
-    ).get("installed", [])
+    )
+    installed = _required_object_array(plugin_data, "installed", "plugin list")
     marketplace: MarketplaceState | None = None
-    for item in marketplaces:
-        if item.get("name") == MARKETPLACE_NAME:
-            if not item.get("root"):
+    for index, item in enumerate(marketplaces):
+        label = f"marketplace list: marketplaces[{index}]"
+        name = _required_string(item, "name", label)
+        root = _required_string(item, "root", label)
+        source = item.get("source")
+        if source is not None and not isinstance(source, str):
+            raise RuntimeError(f"{label}.source must be a string")
+        if name == MARKETPLACE_NAME and marketplace is None:
+            if not root:
                 raise RuntimeError("marketplace list: rag-reviewer root отсутствует")
-            marketplace = MarketplaceState(
-                MARKETPLACE_NAME, Path(item["root"]), item.get("source")
-            )
-            break
+            marketplace = MarketplaceState(MARKETPLACE_NAME, Path(root), source)
     plugin: PluginState | None = None
-    for item in installed:
-        if item.get("name") == PLUGIN_NAME:
-            required = ("marketplaceName", "version", "installed", "enabled")
-            missing = [key for key in required if key not in item]
-            if missing:
-                raise RuntimeError(f"plugin list: missing fields {missing}")
+    for index, item in enumerate(installed):
+        label = f"plugin list: installed[{index}]"
+        name = _required_string(item, "name", label)
+        marketplace_name = _required_string(item, "marketplaceName", label)
+        version = _required_string(item, "version", label)
+        is_installed = _required_boolean(item, "installed", label)
+        enabled = _required_boolean(item, "enabled", label)
+        if name == PLUGIN_NAME and plugin is None:
             plugin = PluginState(
                 PLUGIN_NAME,
-                str(item["marketplaceName"]),
-                str(item["version"]),
-                bool(item["installed"]),
-                bool(item["enabled"]),
+                marketplace_name,
+                version,
+                is_installed,
+                enabled,
             )
-            break
     return CodexPluginState(executable, marketplace, plugin)
 
 
