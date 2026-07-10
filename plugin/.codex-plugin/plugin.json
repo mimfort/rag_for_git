@@ -15,7 +15,7 @@
     "mcp",
     "pr-review"
   ],
-  "skills": "./plugin/skills/",
+  "skills": "./skills/",
   "interface": {
     "displayName": "RAG Reviewer",
     "shortDescription": "RAG + code graph PR review pipeline",
@@ -31,7 +31,7 @@
       "Solve task PRI-4",
       "Sync tasks from the board"
     ],
-    "composerIcon": "./plugin/assets/icon.svg",
+    "composerIcon": "./assets/icon.svg",
     "brandColor": "#3B82F6"
   }
 }

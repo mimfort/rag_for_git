@@ -2,6 +2,7 @@
 import importlib.util
 import json
 import pathlib
+import sys
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 HOOK_PATH = ROOT / "plugin" / "hooks" / "brief_cost.py"
@@ -10,11 +11,21 @@ HOOK_PATH = ROOT / "plugin" / "hooks" / "brief_cost.py"
 def _load():
     spec = importlib.util.spec_from_file_location("brief_cost", HOOK_PATH)
     mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
+    previous = sys.dont_write_bytecode
+    sys.dont_write_bytecode = True
+    try:
+        spec.loader.exec_module(mod)
+    finally:
+        sys.dont_write_bytecode = previous
     return mod
 
 
 bc = _load()
+
+
+def test_hook_import_does_not_create_bytecode_cache():
+    cache = HOOK_PATH.parent / "__pycache__"
+    assert not list(cache.glob("brief_cost*.pyc"))
 
 
 def test_human_tokens_formats_k_and_m():
