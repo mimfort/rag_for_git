@@ -37,9 +37,12 @@ def payload_digest(plugin_root: Path) -> str:
         rel = path.relative_to(plugin_root)
         if any(part in _FORBIDDEN_PAYLOAD_PARTS for part in rel.parts):
             raise ValueError(f"forbidden payload path: {rel.as_posix()}")
-        digest.update(rel.as_posix().encode())
-        digest.update(b"\0")
-        digest.update(_payload_bytes(path, plugin_root))
+        rel_bytes = rel.as_posix().encode()
+        payload_bytes = _payload_bytes(path, plugin_root)
+        digest.update(len(rel_bytes).to_bytes(8, "big"))
+        digest.update(rel_bytes)
+        digest.update(len(payload_bytes).to_bytes(8, "big"))
+        digest.update(payload_bytes)
     return digest.hexdigest()[:12]
 
 
@@ -60,16 +63,31 @@ def _canonical_json(data: dict) -> str:
     return json.dumps(data, indent=2, ensure_ascii=False) + "\n"
 
 
+def _checked_json(path: Path, label: str, errors: list[str]) -> dict | None:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        errors.append(f"{label} is missing")
+        return None
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        errors.append(f"{label} is invalid")
+        return None
+    if not isinstance(data, dict):
+        errors.append(f"{label} is invalid")
+        return None
+    return data
+
+
 def sync_plugin_metadata(repo_root: Path, *, check: bool) -> list[str]:
     plugin_root = repo_root / "plugin"
     canonical_path = plugin_root / ".codex-plugin" / "plugin.json"
     project_path = repo_root / ".codex-plugin" / "plugin.json"
     payload_icon = plugin_root / "assets" / "icon.svg"
     source_icon = repo_root / "assets" / "icon.svg"
-    canonical = json.loads(canonical_path.read_text(encoding="utf-8"))
-    canonical.pop("mcpServers", None)
-    payload_icon.parent.mkdir(parents=True, exist_ok=True)
     if not check:
+        canonical = json.loads(canonical_path.read_text(encoding="utf-8"))
+        canonical.pop("mcpServers", None)
+        payload_icon.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(source_icon, payload_icon)
         canonical["version"] = project_version(repo_root)
         canonical_path.write_text(_canonical_json(canonical), encoding="utf-8")
@@ -81,15 +99,26 @@ def sync_plugin_metadata(repo_root: Path, *, check: bool) -> list[str]:
         return []
 
     errors: list[str] = []
-    expected = expected_plugin_version(repo_root)
-    if canonical.get("version") != expected:
-        errors.append(f"manifest version {canonical.get('version')!r} != {expected!r}")
-    if "mcpServers" in canonical:
-        errors.append("Codex manifest must not declare mcpServers")
-    if payload_icon.read_bytes() != source_icon.read_bytes():
-        errors.append("plugin/assets/icon.svg differs from assets/icon.svg")
-    projected = project_manifest_from(canonical)
-    actual_project = json.loads(project_path.read_text(encoding="utf-8"))
-    if actual_project != projected:
-        errors.append("root Codex manifest is not the canonical path projection")
+    canonical = _checked_json(canonical_path, "canonical Codex manifest", errors)
+    actual_project = _checked_json(project_path, "root Codex manifest", errors)
+    if canonical is not None:
+        expected = expected_plugin_version(repo_root)
+        if canonical.get("version") != expected:
+            errors.append(f"manifest version {canonical.get('version')!r} != {expected!r}")
+        if "mcpServers" in canonical:
+            errors.append("Codex manifest must not declare mcpServers")
+        if (
+            actual_project is not None
+            and actual_project != project_manifest_from(canonical)
+        ):
+            errors.append("root Codex manifest is not the canonical path projection")
+    try:
+        actual_icon = payload_icon.read_bytes()
+    except FileNotFoundError:
+        errors.append("plugin/assets/icon.svg is missing")
+    except OSError:
+        errors.append("plugin/assets/icon.svg is invalid")
+    else:
+        if actual_icon != source_icon.read_bytes():
+            errors.append("plugin/assets/icon.svg differs from assets/icon.svg")
     return errors

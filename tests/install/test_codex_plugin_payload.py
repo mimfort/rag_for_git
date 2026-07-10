@@ -11,6 +11,28 @@ from reviewer.install_codex import (
 ROOT = Path(__file__).resolve().parents[2]
 
 
+def _synced_repo(tmp_path: Path) -> Path:
+    (tmp_path / "pyproject.toml").write_text('[project]\nversion = "1.2.3"\n')
+    source_icon = tmp_path / "assets" / "icon.svg"
+    source_icon.parent.mkdir()
+    source_icon.write_text("icon")
+    manifest = tmp_path / "plugin" / ".codex-plugin" / "plugin.json"
+    manifest.parent.mkdir(parents=True)
+    manifest.write_text(
+        json.dumps(
+            {
+                "name": "rag-reviewer",
+                "version": "0.1.0",
+                "skills": "./skills/",
+                "interface": {"composerIcon": "./assets/icon.svg"},
+            }
+        )
+    )
+    (tmp_path / ".codex-plugin").mkdir()
+    assert sync_plugin_metadata(tmp_path, check=False) == []
+    return tmp_path
+
+
 def test_project_manifest_rewrites_only_payload_relative_paths():
     canonical = {
         "name": "rag-reviewer",
@@ -36,6 +58,65 @@ def test_payload_digest_ignores_only_manifest_version(tmp_path):
     assert payload_digest(plugin) == first
     (plugin / "skills" / "ask" / "SKILL.md").write_text("changed")
     assert payload_digest(plugin) != first
+
+
+def test_payload_digest_frames_file_boundaries(tmp_path):
+    one_file = tmp_path / "one-file"
+    one_file.mkdir()
+    (one_file / "a").write_bytes(b"firstb\0second")
+    two_files = tmp_path / "two-files"
+    two_files.mkdir()
+    (two_files / "a").write_bytes(b"first")
+    (two_files / "b").write_bytes(b"second")
+
+    assert payload_digest(one_file) != payload_digest(two_files)
+
+
+def test_check_rejects_canonical_manifest_with_mcp_servers(tmp_path):
+    repo = _synced_repo(tmp_path)
+    manifest = repo / "plugin" / ".codex-plugin" / "plugin.json"
+    canonical = json.loads(manifest.read_text())
+    canonical["mcpServers"] = "./.mcp.json"
+    manifest.write_text(json.dumps(canonical))
+
+    assert "Codex manifest must not declare mcpServers" in sync_plugin_metadata(
+        repo, check=True
+    )
+
+
+def test_check_is_observational_and_reports_missing_projection_artifacts(tmp_path):
+    repo = _synced_repo(tmp_path)
+    payload_assets = repo / "plugin" / "assets"
+    (payload_assets / "icon.svg").unlink()
+    payload_assets.rmdir()
+    (repo / ".codex-plugin" / "plugin.json").unlink()
+
+    errors = sync_plugin_metadata(repo, check=True)
+
+    assert "plugin/assets/icon.svg is missing" in errors
+    assert "root Codex manifest is missing" in errors
+    assert not payload_assets.exists()
+
+
+def test_check_reports_missing_canonical_manifest(tmp_path):
+    repo = _synced_repo(tmp_path)
+    (repo / "plugin" / ".codex-plugin" / "plugin.json").unlink()
+
+    assert "canonical Codex manifest is missing" in sync_plugin_metadata(repo, check=True)
+
+
+def test_check_reports_invalid_canonical_manifest(tmp_path):
+    repo = _synced_repo(tmp_path)
+    (repo / "plugin" / ".codex-plugin" / "plugin.json").write_text("{")
+
+    assert "canonical Codex manifest is invalid" in sync_plugin_metadata(repo, check=True)
+
+
+def test_check_reports_invalid_root_manifest(tmp_path):
+    repo = _synced_repo(tmp_path)
+    (repo / ".codex-plugin" / "plugin.json").write_text("{")
+
+    assert "root Codex manifest is invalid" in sync_plugin_metadata(repo, check=True)
 
 
 def test_repo_codex_payload_is_synchronized():
