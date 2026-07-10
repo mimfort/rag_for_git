@@ -1,4 +1,5 @@
 import json
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -86,12 +87,49 @@ def test_plan_codex_toml_append(fake_uvx, tmp_path):
     assert '"rag-reviewer@latest"' in plan.content
 
 
-def test_plan_codex_idempotent(fake_uvx, tmp_path):
+def test_plan_codex_updates_existing_reviewer_and_preserves_other_toml(fake_uvx, tmp_path):
     cfg = tmp_path / "config.toml"
-    cfg.write_text("[mcp_servers.reviewer]\ncommand = \"old\"\n")
+    original_other = "# keep\n[other]\npath = 'C:\\\\Program Files\\\\Tool'\n\n"
+    cfg.write_text(
+        original_other
+        + "[mcp_servers.reviewer]\ncommand = \"old\"\nargs = [\"old\"]\n"
+        + "[mcp_servers.reviewer.env]\nOLD = \"1\"\n"
+        + "[tail]\nvalue = 3\n"
+    )
     plan = inst.build_plan(inst.CLIENTS["codex"], path_override=str(cfg))
     assert plan.already is True
-    assert plan.content.count("[mcp_servers.reviewer]") == 1      # не дублируем
+    assert plan.content.startswith(original_other)
+    assert plan.content.count("[mcp_servers.reviewer]") == 1
+    assert "command = \"/fake/bin/uvx\"" in plan.content
+    assert "[mcp_servers.reviewer.env]" not in plan.content
+    assert "[tail]\nvalue = 3\n" in plan.content
+    assert tomllib.loads(plan.content)["mcp_servers"]["reviewer"]["command"] == "/fake/bin/uvx"
+
+
+def test_plan_codex_rejects_inline_reviewer_table(fake_uvx, tmp_path):
+    cfg = tmp_path / "config.toml"
+    cfg.write_text('mcp_servers = { reviewer = { command = "old" } }\n')
+    with pytest.raises(ValueError, match="inline"):
+        inst.build_plan(inst.CLIENTS["codex"], path_override=str(cfg))
+
+
+def test_plan_codex_rejects_invalid_toml(fake_uvx, tmp_path):
+    cfg = tmp_path / "config.toml"
+    cfg.write_text("[broken\n")
+    with pytest.raises(ValueError, match="невалидный TOML"):
+        inst.build_plan(inst.CLIENTS["codex"], path_override=str(cfg))
+
+
+def test_codex_client_path_honors_codex_home(monkeypatch, tmp_path):
+    codex_home = tmp_path / "Codex Home"
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+    assert inst.CLIENTS["codex"].path_fn("Windows") == codex_home / "config.toml"
+
+
+def test_launch_command_requires_uvx_or_uv(monkeypatch):
+    monkeypatch.setattr(inst.shutil, "which", lambda name: None)
+    with pytest.raises(RuntimeError, match="uvx/uv не найден"):
+        inst.launch_command("latest")
 
 
 @pytest.mark.parametrize("system,expected", [

@@ -15,7 +15,9 @@ from __future__ import annotations
 import json
 import os
 import platform
+import re
 import shutil
+import tomllib
 from dataclasses import dataclass, field as _field
 from pathlib import Path
 from typing import Callable
@@ -413,7 +415,9 @@ def launch_command(version: str = "latest") -> tuple[str, list[str]]:
     uv = shutil.which("uv")
     if uv:
         return uv, ["tool", "run", *tail]
-    return "uvx", tail  # fallback: надеемся на PATH
+    raise RuntimeError(
+        "uvx/uv не найден; установите uv и повторите reviewer install"
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -421,6 +425,11 @@ def launch_command(version: str = "latest") -> tuple[str, list[str]]:
 # --------------------------------------------------------------------------- #
 def _home() -> Path:
     return Path.home()
+
+
+def codex_home_path() -> Path:
+    configured = os.environ.get("CODEX_HOME")
+    return Path(configured).expanduser() if configured else _home() / ".codex"
 
 
 def _appdata() -> Path:
@@ -496,7 +505,7 @@ CLIENTS: dict[str, Client] = {
                     "в ~/.kimi-code/config.toml"),
         Client("trae", "Trae IDE", "mcpServers", _trae_path),
         Client("codex", "Codex CLI", "codex",
-               lambda s: _home() / ".codex" / "config.toml"),
+               lambda s: codex_home_path() / "config.toml"),
     ]
 }
 
@@ -522,6 +531,52 @@ def _render_codex(command: str, args: list[str]) -> str:
         f"command = {json.dumps(command)}\n"
         f"args = [{args_toml}]\n"
     )
+
+
+_TOML_TABLE_RE = re.compile(r"^\s*\[([^\[\]]+)]\s*(?:#.*)?$")
+
+
+def _toml_table_name(line: str) -> str | None:
+    match = _TOML_TABLE_RE.match(line.rstrip("\r\n"))
+    return match.group(1).strip() if match else None
+
+
+def _is_reviewer_table(name: str) -> bool:
+    return name == "mcp_servers.reviewer" or name.startswith("mcp_servers.reviewer.")
+
+
+def _replace_codex_reviewer_tables(raw: str, rendered: str) -> tuple[str, bool]:
+    try:
+        parsed = tomllib.loads(raw) if raw.strip() else {}
+    except tomllib.TOMLDecodeError as exc:
+        raise ValueError(f"невалидный TOML: {exc}") from exc
+    lines = raw.splitlines(keepends=True)
+    output: list[str] = []
+    insert_at: int | None = None
+    removed = False
+    index = 0
+    while index < len(lines):
+        name = _toml_table_name(lines[index])
+        if name is not None and _is_reviewer_table(name):
+            if insert_at is None:
+                insert_at = len(output)
+            removed = True
+            index += 1
+            while index < len(lines) and _toml_table_name(lines[index]) is None:
+                index += 1
+            continue
+        output.append(lines[index])
+        index += 1
+    existing = parsed.get("mcp_servers") if isinstance(parsed, dict) else None
+    has_inline = isinstance(existing, dict) and "reviewer" in existing and not removed
+    if has_inline:
+        raise ValueError("inline mcp_servers.reviewer нельзя безопасно обновить")
+    block = rendered.lstrip("\n")
+    if insert_at is None:
+        content = "".join(output).rstrip("\n")
+        return content + ("\n" if content else "") + block, False
+    output.insert(insert_at, block)
+    return "".join(output), True
 
 
 @dataclass
@@ -558,9 +613,7 @@ def build_plan(
     raw = path.read_text(encoding="utf-8") if existed else ""
 
     if client.dialect == "codex":
-        already = f"[mcp_servers.{SERVER_NAME}]" in raw
-        content = raw if already else (raw.rstrip("\n") + ("\n" if raw.strip() else "")
-                                       + _render_codex(command, args))
+        content, already = _replace_codex_reviewer_tables(raw, _render_codex(command, args))
         return InstallPlan(client, path, content, command, args, not existed, already)
 
     cfg = json.loads(raw) if raw.strip() else {}
