@@ -202,7 +202,8 @@ codex plugin marketplace add mimfort/rag_for_git
 
 ### Варианты
 
-- `reviewer install codex --no-skills` — только MCP plan; Codex plugin команды не вызываются.
+- `reviewer install codex --no-skills` — только MCP plan; Codex executable и plugin
+  capabilities не требуются, plugin команды не вызываются.
 - `reviewer install codex --dry-run` — local read-only discovery и печать MCP/marketplace/plugin
   plan; add/upgrade/install и сетевые вызовы запрещены.
 - `reviewer install-skills codex` — тот же plugin lifecycle без MCP mutation.
@@ -267,8 +268,8 @@ installed selection должна оставаться рабочей. Marketplac
 post-verification не прошла, восстановление `config.toml` возвращает прежнюю selection; inert
 cache/snapshot не удаляется напрямую.
 
-Legacy migration выполняется последней. Поэтому rollback основного lifecycle не должен
-восстанавливать перемещённые skills.
+Legacy migration выполняется последней и имеет собственную мини-транзакцию. Поэтому основной
+rollback никогда не пересекается с перемещением skills.
 
 ## Legacy migration
 
@@ -291,6 +292,11 @@ $CODEX_HOME/reviewer-legacy-backups/<UTC-timestamp>/skills/<name>/
 
 Перемещение начинается только после полной plugin/MCP verification. Финальный вывод содержит
 backup root и команду/инструкцию возврата. Никакие каталоги не удаляются.
+
+Если одно из перемещений завершается ошибкой, уже перемещённые в этом запуске каталоги
+возвращаются на исходные места. Проверенный plugin и MCP остаются установленными, команда
+завершается успешно с заметным предупреждением: legacy cleanup является безопасным post-step,
+а не условием работоспособности нового plugin.
 
 ## Release identity и cachebuster
 
@@ -333,11 +339,12 @@ CI guard проверяет:
 - plugin add failure;
 - post-install verification failure;
 - config rollback failure;
-- ambiguous legacy skills.
+- ambiguous legacy skills;
+- legacy migration I/O failure.
 
-Первые девять состояний, кроме ambiguous legacy skills, дают non-zero. Неоднозначные legacy
-копии являются предупреждением: новый plugin уже установлен и проверен, а пользовательские файлы
-сохранены.
+Ошибки до завершения plugin/MCP verification и config rollback failure дают non-zero.
+Неоднозначные legacy-копии и восстановленная ошибка post-step migration являются
+предупреждениями: новый plugin уже установлен и проверен, а пользовательские файлы сохранены.
 
 ## Тестирование
 
@@ -368,9 +375,10 @@ Dry-run тест отдельно запрещает любые network/mutating
 ### Failure matrix
 
 Инъекция ошибок выполняется на marketplace add/upgrade, snapshot verification, MCP write,
-plugin add, post-verification, config restore и legacy migration. После каждого сценария
-проверяются исходный config, прежняя plugin selection, отсутствие преждевременной migration,
-non-zero exit и actionable recovery output.
+plugin add, post-verification, config restore и legacy migration. Для main lifecycle проверяются
+исходный config, прежняя plugin selection, отсутствие преждевременной migration, non-zero exit и
+actionable recovery output. Для migration проверяются обратный перенос уже обработанных
+каталогов, сохранение проверенного plugin/MCP и warning без ложного общего failure.
 
 ### Packaging/CI
 
