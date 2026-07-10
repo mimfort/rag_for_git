@@ -4,8 +4,11 @@ import copy
 import hashlib
 import json
 import shutil
+import subprocess
 import tomllib
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable, Literal, Protocol
 
 PLUGIN_NAME = "rag-reviewer"
 MARKETPLACE_NAME = "rag-reviewer"
@@ -122,3 +125,192 @@ def sync_plugin_metadata(repo_root: Path, *, check: bool) -> list[str]:
         if actual_icon != source_icon.read_bytes():
             errors.append("plugin/assets/icon.svg differs from assets/icon.svg")
     return errors
+
+
+@dataclass(frozen=True)
+class CommandResult:
+    argv: tuple[str, ...]
+    returncode: int
+    stdout: str
+    stderr: str
+
+
+class Runner(Protocol):
+    def __call__(self, argv: tuple[str, ...]) -> CommandResult:
+        raise NotImplementedError
+
+
+@dataclass(frozen=True)
+class CodexCapabilities:
+    executable: Path
+
+
+@dataclass(frozen=True)
+class MarketplaceState:
+    name: str
+    root: Path
+    source: str | None = None
+
+
+@dataclass(frozen=True)
+class PluginState:
+    name: str
+    marketplace: str
+    version: str
+    installed: bool
+    enabled: bool
+
+
+@dataclass(frozen=True)
+class CodexPluginState:
+    executable: Path
+    marketplace: MarketplaceState | None
+    plugin: PluginState | None
+
+
+@dataclass(frozen=True)
+class CodexInstallOptions:
+    dry_run: bool = False
+    include_mcp: bool = True
+    mcp_version: str = "latest"
+    mcp_path: Path | None = None
+    codex_home: Path | None = None
+
+
+@dataclass(frozen=True)
+class CodexPluginPlan:
+    state: CodexPluginState
+    options: CodexInstallOptions
+    marketplace_action: Literal["add", "upgrade"]
+    marketplace_argv: tuple[str, ...]
+    plugin_argv: tuple[str, ...]
+
+
+def subprocess_runner(argv: tuple[str, ...]) -> CommandResult:
+    completed = subprocess.run(argv, capture_output=True, text=True, check=False)
+    return CommandResult(argv, completed.returncode, completed.stdout, completed.stderr)
+
+
+def find_codex_executable(
+    which: Callable[[str], str | None] = shutil.which,
+) -> Path:
+    found = which("codex")
+    if not found:
+        raise RuntimeError("Codex CLI не найден; установите или обновите Codex")
+    return Path(found).resolve()
+
+
+def _require_help(runner: Runner, argv: tuple[str, ...], tokens: tuple[str, ...]) -> None:
+    response = runner(argv)
+    text = response.stdout + response.stderr
+    missing = [token for token in tokens if token not in text]
+    if response.returncode or missing:
+        raise RuntimeError(f"Codex CLI не поддерживает {argv[2:]}: отсутствуют {missing}")
+
+
+def detect_codex_capabilities(executable: Path, runner: Runner) -> CodexCapabilities:
+    exe = str(executable)
+    _require_help(runner, (exe, "plugin", "--help"), ("add", "marketplace", "list"))
+    _require_help(
+        runner,
+        (exe, "plugin", "marketplace", "add", "--help"),
+        ("--json", "--sparse", "--ref"),
+    )
+    _require_help(
+        runner, (exe, "plugin", "marketplace", "upgrade", "--help"), ("--json",)
+    )
+    _require_help(runner, (exe, "plugin", "add", "--help"), ("--json",))
+    _require_help(
+        runner, (exe, "plugin", "list", "--help"), ("--json", "--available")
+    )
+    return CodexCapabilities(executable)
+
+
+def _json_result(runner: Runner, argv: tuple[str, ...], phase: str) -> dict:
+    response = runner(argv)
+    if response.returncode:
+        raise RuntimeError(f"{phase}: {response.stderr.strip()}")
+    try:
+        data = json.loads(response.stdout)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"{phase}: invalid JSON: {exc}") from exc
+    if not isinstance(data, dict):
+        raise RuntimeError(f"{phase}: expected JSON object")
+    return data
+
+
+def read_codex_state(executable: Path, runner: Runner) -> CodexPluginState:
+    exe = str(executable)
+    marketplaces = _json_result(
+        runner, (exe, "plugin", "marketplace", "list", "--json"), "marketplace list"
+    ).get("marketplaces", [])
+    installed = _json_result(
+        runner, (exe, "plugin", "list", "--available", "--json"), "plugin list"
+    ).get("installed", [])
+    marketplace: MarketplaceState | None = None
+    for item in marketplaces:
+        if item.get("name") == MARKETPLACE_NAME:
+            if not item.get("root"):
+                raise RuntimeError("marketplace list: rag-reviewer root отсутствует")
+            marketplace = MarketplaceState(
+                MARKETPLACE_NAME, Path(item["root"]), item.get("source")
+            )
+            break
+    plugin: PluginState | None = None
+    for item in installed:
+        if item.get("name") == PLUGIN_NAME:
+            required = ("marketplaceName", "version", "installed", "enabled")
+            missing = [key for key in required if key not in item]
+            if missing:
+                raise RuntimeError(f"plugin list: missing fields {missing}")
+            plugin = PluginState(
+                PLUGIN_NAME,
+                str(item["marketplaceName"]),
+                str(item["version"]),
+                bool(item["installed"]),
+                bool(item["enabled"]),
+            )
+            break
+    return CodexPluginState(executable, marketplace, plugin)
+
+
+def build_codex_plugin_plan(
+    state: CodexPluginState, options: CodexInstallOptions
+) -> CodexPluginPlan:
+    exe = str(state.executable)
+    if state.marketplace is None:
+        marketplace_action: Literal["add", "upgrade"] = "add"
+        marketplace_argv = (
+            exe,
+            "plugin",
+            "marketplace",
+            "add",
+            MARKETPLACE_SOURCE,
+            "--ref",
+            MARKETPLACE_REF,
+            "--sparse",
+            MARKETPLACE_SPARSE[0],
+            "--sparse",
+            MARKETPLACE_SPARSE[1],
+            "--json",
+        )
+    else:
+        marketplace_action = "upgrade"
+        marketplace_argv = (
+            exe,
+            "plugin",
+            "marketplace",
+            "upgrade",
+            MARKETPLACE_NAME,
+            "--json",
+        )
+    plugin_argv = (
+        exe,
+        "plugin",
+        "add",
+        f"{PLUGIN_NAME}@{MARKETPLACE_NAME}",
+        "--json",
+    )
+    return CodexPluginPlan(
+        state, options, marketplace_action, marketplace_argv, plugin_argv
+    )
