@@ -139,6 +139,66 @@ def test_read_state_accepts_extra_json_fields(tmp_path):
 
 
 @pytest.mark.parametrize(
+    "legacy_extra",
+    [
+        pytest.param({}, id="missing-current-metadata"),
+        pytest.param(
+            {"ref": "main", "sparsePaths": [".agents/plugins", "plugin"]},
+            id="forged-top-level-ref-sparse",
+        ),
+    ],
+)
+def test_legacy_marketplace_source_never_authorizes_upgrade(tmp_path, legacy_extra):
+    exe = tmp_path / "codex"
+    marketplace = {
+        "name": "rag-reviewer",
+        "root": str(tmp_path),
+        "source": "mimfort/rag_for_git",
+        **legacy_extra,
+    }
+    state = read_codex_state(
+        exe,
+        state_runner(
+            exe,
+            {"marketplaces": [marketplace]},
+            {"installed": []},
+        ),
+    )
+
+    assert state.marketplace is not None
+    assert state.marketplace.source == "mimfort/rag_for_git"
+    assert state.marketplace.ref is None
+    assert state.marketplace.sparse_paths is None
+    assert marketplace_is_owned(state.marketplace) is False
+    with pytest.raises(RuntimeError, match="source/ref/sparse"):
+        build_codex_plugin_plan(state, CodexInstallOptions())
+
+
+def test_read_state_rejects_explicit_null_marketplace_source(tmp_path):
+    exe = tmp_path / "codex"
+    with pytest.raises(RuntimeError) as exc_info:
+        read_codex_state(
+            exe,
+            state_runner(
+                exe,
+                {
+                    "marketplaces": [
+                        {
+                            "name": "rag-reviewer",
+                            "root": str(tmp_path),
+                            "marketplaceSource": None,
+                        }
+                    ]
+                },
+                {"installed": []},
+            ),
+        )
+    assert str(exc_info.value) == (
+        "marketplace list: marketplaces[0].marketplaceSource must be an object"
+    )
+
+
+@pytest.mark.parametrize(
     ("marketplace_data", "plugin_data", "message"),
     [
         ({}, {"installed": []}, "marketplace list: missing field marketplaces"),
@@ -723,6 +783,50 @@ def test_snapshot_requires_canonical_skills_path(tmp_path):
 
     with pytest.raises(RuntimeError, match="skills must be ./skills/"):
         verify_marketplace_snapshot(tmp_path, "0.2.27")
+
+
+@pytest.mark.parametrize(
+    "icon_kind",
+    ["existing-hooks-file", "absolute-in-root", "embedded-nul", "non-string"],
+)
+def test_snapshot_requires_canonical_composer_icon(tmp_path, icon_kind):
+    plugin = make_snapshot(tmp_path, "0.2.27+codex.initial")
+    icon_values = {
+        "existing-hooks-file": "./hooks/hooks.json",
+        "absolute-in-root": str(plugin / "assets/icon.svg"),
+        "embedded-nul": "./assets/icon.svg\0suffix",
+        "non-string": ["./assets/icon.svg"],
+    }
+    manifest_path = plugin / ".codex-plugin/plugin.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["interface"]["composerIcon"] = icon_values[icon_kind]
+    manifest_path.write_text(json.dumps(manifest))
+    finalize_snapshot(plugin)
+
+    with pytest.raises(RuntimeError) as exc_info:
+        verify_marketplace_snapshot(tmp_path, "0.2.27")
+    assert str(exc_info.value) == (
+        "Codex manifest composerIcon must be ./assets/icon.svg"
+    )
+
+
+def test_snapshot_normalizes_path_resolution_failure(tmp_path, monkeypatch):
+    plugin = make_snapshot(tmp_path, "0.2.27+codex.initial")
+    finalize_snapshot(plugin)
+    real_resolve = Path.resolve
+
+    def resolve_with_failure(path, *args, **kwargs):
+        if path == plugin:
+            raise OSError("resolution denied")
+        return real_resolve(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "resolve", resolve_with_failure)
+
+    with pytest.raises(RuntimeError) as exc_info:
+        verify_marketplace_snapshot(tmp_path, "0.2.27")
+    assert str(exc_info.value) == (
+        "plugin source: cannot resolve path: resolution denied"
+    )
 
 
 def test_snapshot_rejects_non_object_interface_with_runtime_error(tmp_path):

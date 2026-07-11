@@ -352,13 +352,9 @@ def _optional_string_tuple(item: dict, field: str, label: str) -> tuple[str, ...
 def _marketplace_metadata(
     item: dict, label: str
 ) -> tuple[str | None, str | None, tuple[str, ...] | None]:
-    configured = item.get("marketplaceSource")
-    if configured is None:
-        return (
-            _optional_string(item, "source", label),
-            _optional_string(item, "ref", label),
-            _optional_string_tuple(item, "sparsePaths", label),
-        )
+    if "marketplaceSource" not in item:
+        return _optional_string(item, "source", label), None, None
+    configured = item["marketplaceSource"]
     if not isinstance(configured, dict):
         raise RuntimeError(f"{label}.marketplaceSource must be an object")
     source_label = f"{label}.marketplaceSource"
@@ -425,8 +421,11 @@ def _read_json(path: Path, label: str) -> dict:
 
 
 def _inside(root: Path, relative: str, label: str) -> Path:
-    candidate = (root / relative).resolve()
-    resolved_root = root.resolve()
+    try:
+        candidate = (root / relative).resolve()
+        resolved_root = root.resolve()
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise RuntimeError(f"{label}: cannot resolve path: {exc}") from exc
     if candidate != resolved_root and resolved_root not in candidate.parents:
         raise RuntimeError(f"{label}: path leaves marketplace root")
     return candidate
@@ -476,8 +475,8 @@ def verify_marketplace_snapshot(root: Path, expected_base_version: str) -> Snaps
     if not isinstance(interface, dict):
         raise RuntimeError("Codex manifest interface must be an object")
     icon_rel = interface.get("composerIcon")
-    if not isinstance(icon_rel, str):
-        raise RuntimeError("Codex manifest composerIcon must be a string")
+    if icon_rel != "./assets/icon.svg":
+        raise RuntimeError("Codex manifest composerIcon must be ./assets/icon.svg")
     prefix = f"{expected_base_version}+codex."
     if not version.startswith(prefix) or version.count("+codex.") != 1:
         raise RuntimeError(f"plugin version {version!r} does not match {prefix!r}")
