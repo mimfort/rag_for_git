@@ -15,11 +15,10 @@ from __future__ import annotations
 import json
 import os
 import platform
-import re
 import shutil
 import tomllib
 from dataclasses import dataclass, field as _field
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Callable
 
 PACKAGE = "rag-reviewer"
@@ -399,6 +398,13 @@ def claude_user_settings_path() -> Path:
 # --------------------------------------------------------------------------- #
 # команда запуска
 # --------------------------------------------------------------------------- #
+def _absolute_launcher_path(found: str) -> str:
+    path = Path(found)
+    if path.is_absolute() or PureWindowsPath(found).is_absolute():
+        return found
+    return str(path.resolve())
+
+
 def launch_command(version: str = "latest") -> tuple[str, list[str]]:
     """(command, args) для запуска reviewer-mcp.
 
@@ -411,10 +417,10 @@ def launch_command(version: str = "latest") -> tuple[str, list[str]]:
     tail = ["--from", spec, "reviewer-mcp"]
     uvx = shutil.which("uvx")
     if uvx:
-        return uvx, tail
+        return _absolute_launcher_path(uvx), tail
     uv = shutil.which("uv")
     if uv:
-        return uv, ["tool", "run", *tail]
+        return _absolute_launcher_path(uv), ["tool", "run", *tail]
     raise RuntimeError(
         "uvx/uv не найден; установите uv и повторите reviewer install"
     )
@@ -524,25 +530,180 @@ def _entry(dialect: str, command: str, args: list[str]) -> dict:
     raise ValueError(f"неизвестный диалект: {dialect}")
 
 
+def _toml_string(value: str) -> str:
+    escapes = {
+        '"': r'\"',
+        "\\": r"\\",
+        "\b": r"\b",
+        "\t": r"\t",
+        "\n": r"\n",
+        "\f": r"\f",
+        "\r": r"\r",
+    }
+    encoded: list[str] = []
+    for char in value:
+        codepoint = ord(char)
+        if 0xD800 <= codepoint <= 0xDFFF:
+            raise ValueError("TOML-строка содержит недопустимый Unicode surrogate")
+        if char in escapes:
+            encoded.append(escapes[char])
+        elif codepoint < 0x20 or 0x7F <= codepoint <= 0x9F:
+            encoded.append(f"\\u{codepoint:04X}")
+        else:
+            encoded.append(char)
+    return f'"{"".join(encoded)}"'
+
+
 def _render_codex(command: str, args: list[str]) -> str:
-    args_toml = ", ".join(json.dumps(a) for a in args)
+    args_toml = ", ".join(_toml_string(a) for a in args)
     return (
         f"\n[mcp_servers.{SERVER_NAME}]\n"
-        f"command = {json.dumps(command)}\n"
+        f"command = {_toml_string(command)}\n"
         f"args = [{args_toml}]\n"
     )
 
 
-_TOML_TABLE_RE = re.compile(r"^\s*\[([^\[\]]+)]\s*(?:#.*)?$")
+def _toml_key_path(source: str) -> tuple[str, ...] | None:
+    try:
+        parsed = tomllib.loads(f"{source} = 0\n")
+    except tomllib.TOMLDecodeError:
+        return None
+    path: list[str] = []
+    node: object = parsed
+    while isinstance(node, dict) and len(node) == 1:
+        key, node = next(iter(node.items()))
+        path.append(key)
+    return tuple(path) if path and node == 0 else None
+
+
+def _toml_table_header(line: str) -> tuple[tuple[str, ...], bool] | None:
+    text = line.rstrip("\r\n")
+    index = len(text) - len(text.lstrip(" \t"))
+    array = text.startswith("[[", index)
+    opener = 2 if array else 1
+    if not text.startswith("[" * opener, index):
+        return None
+    index += opener
+    start = index
+    quote: str | None = None
+    escaped = False
+    closer = "]" * opener
+    while index < len(text):
+        char = text[index]
+        if quote == '"':
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                quote = None
+        elif quote == "'":
+            if char == "'":
+                quote = None
+        elif char in ('"', "'"):
+            quote = char
+        elif text.startswith(closer, index):
+            path = _toml_key_path(text[start:index])
+            remainder = text[index + opener:].lstrip(" \t")
+            if path is not None and (not remainder or remainder.startswith("#")):
+                return path, array
+            return None
+        index += 1
+    return None
+
+
+def _toml_lex_state(
+    line: str,
+    multiline: str | None,
+    array_depth: int,
+) -> tuple[str | None, int]:
+    index = 0
+    quote: str | None = None
+    while index < len(line):
+        if multiline == '"""':
+            if line[index] == "\\":
+                index += 2
+            elif line.startswith(multiline, index):
+                multiline = None
+                while index < len(line) and line[index] == '"':
+                    index += 1
+            else:
+                index += 1
+        elif multiline == "'''":
+            if line.startswith(multiline, index):
+                multiline = None
+                while index < len(line) and line[index] == "'":
+                    index += 1
+            else:
+                index += 1
+        elif quote == '"':
+            if line[index] == "\\":
+                index += 2
+            elif line[index] == '"':
+                quote = None
+                index += 1
+            else:
+                index += 1
+        elif quote == "'":
+            if line[index] == "'":
+                quote = None
+            index += 1
+        elif line[index] == "#":
+            break
+        elif line.startswith('"""', index):
+            multiline = '"""'
+            index += 3
+        elif line.startswith("'''", index):
+            multiline = "'''"
+            index += 3
+        elif line[index] in ('"', "'"):
+            quote = line[index]
+            index += 1
+        elif line[index] == "[":
+            array_depth += 1
+            index += 1
+        elif line[index] == "]":
+            array_depth -= 1
+            index += 1
+        else:
+            index += 1
+    return multiline, array_depth
+
+
+def _toml_table_headers(
+    lines: list[str],
+) -> dict[int, tuple[tuple[str, ...], bool]]:
+    headers: dict[int, tuple[tuple[str, ...], bool]] = {}
+    multiline: str | None = None
+    array_depth = 0
+    for index, line in enumerate(lines):
+        if multiline is None and array_depth == 0:
+            header = _toml_table_header(line)
+            if header is not None:
+                headers[index] = header
+        multiline, array_depth = _toml_lex_state(line, multiline, array_depth)
+    return headers
+
+
+def _toml_source_lines(raw: str) -> list[str]:
+    chunks = raw.split("\n")
+    lines = [chunk + "\n" for chunk in chunks[:-1]]
+    if chunks[-1]:
+        lines.append(chunks[-1])
+    return lines
 
 
 def _toml_table_name(line: str) -> str | None:
-    match = _TOML_TABLE_RE.match(line.rstrip("\r\n"))
-    return match.group(1).strip() if match else None
+    header = _toml_table_header(line)
+    return ".".join(header[0]) if header is not None else None
 
 
 def _is_reviewer_table(name: str) -> bool:
     return name == "mcp_servers.reviewer" or name.startswith("mcp_servers.reviewer.")
+
+
+def _is_reviewer_path(path: tuple[str, ...]) -> bool:
+    return len(path) >= 2 and path[:2] == ("mcp_servers", "reviewer")
 
 
 def _replace_codex_reviewer_tables(raw: str, rendered: str) -> tuple[str, bool]:
@@ -550,33 +711,50 @@ def _replace_codex_reviewer_tables(raw: str, rendered: str) -> tuple[str, bool]:
         parsed = tomllib.loads(raw) if raw.strip() else {}
     except tomllib.TOMLDecodeError as exc:
         raise ValueError(f"невалидный TOML: {exc}") from exc
-    lines = raw.splitlines(keepends=True)
+    lines = _toml_source_lines(raw)
+    headers = _toml_table_headers(lines)
     output: list[str] = []
     insert_at: int | None = None
     removed = False
     index = 0
     while index < len(lines):
-        name = _toml_table_name(lines[index])
-        if name is not None and _is_reviewer_table(name):
+        header = headers.get(index)
+        if header is not None and _is_reviewer_path(header[0]):
+            if header[1]:
+                raise ValueError(
+                    "mcp_servers.reviewer нельзя безопасно обновить: "
+                    "массив TOML-таблиц не поддерживается"
+                )
             if insert_at is None:
                 insert_at = len(output)
             removed = True
             index += 1
-            while index < len(lines) and _toml_table_name(lines[index]) is None:
+            while index < len(lines) and index not in headers:
                 index += 1
             continue
         output.append(lines[index])
         index += 1
     existing = parsed.get("mcp_servers") if isinstance(parsed, dict) else None
+    if existing is not None and not isinstance(existing, dict):
+        raise ValueError("mcp_servers должен быть TOML-таблицей")
     has_inline = isinstance(existing, dict) and "reviewer" in existing and not removed
     if has_inline:
         raise ValueError("inline mcp_servers.reviewer нельзя безопасно обновить")
     block = rendered.lstrip("\n")
     if insert_at is None:
-        content = "".join(output).rstrip("\n")
-        return content + ("\n" if content else "") + block, False
-    output.insert(insert_at, block)
-    return "".join(output), True
+        content = "".join(output)
+        separator = "" if not content or content.endswith(("\n", "\r")) else "\n"
+        content += separator + block
+    else:
+        output.insert(insert_at, block)
+        content = "".join(output)
+    try:
+        tomllib.loads(content)
+    except tomllib.TOMLDecodeError as exc:
+        raise ValueError(
+            f"mcp_servers нельзя безопасно обновить: {exc}"
+        ) from exc
+    return content, removed
 
 
 @dataclass
@@ -610,7 +788,7 @@ def build_plan(
     path = Path(path_override).expanduser() if path_override else client.path_fn(system)
     command, args = launch_command(version)
     existed = path.exists()
-    raw = path.read_text(encoding="utf-8") if existed else ""
+    raw = path.read_bytes().decode("utf-8") if existed else ""
 
     if client.dialect == "codex":
         content, already = _replace_codex_reviewer_tables(raw, _render_codex(command, args))
@@ -666,15 +844,16 @@ def _write_with_backup(path: Path, content: str) -> Path | None:
     бэкапит, если содержимое не изменилось.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
+    encoded = content.encode("utf-8")
     if path.exists():
-        existing = path.read_text(encoding="utf-8")
-        if existing == content:
+        existing = path.read_bytes()
+        if existing == encoded:
             return None
         backup = path.with_suffix(path.suffix + ".bak")
-        backup.write_text(existing, encoding="utf-8")
-        path.write_text(content, encoding="utf-8")
+        backup.write_bytes(existing)
+        path.write_bytes(encoded)
         return backup
-    path.write_text(content, encoding="utf-8")
+    path.write_bytes(encoded)
     return None
 
 
