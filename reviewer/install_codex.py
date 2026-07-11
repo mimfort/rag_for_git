@@ -3,7 +3,9 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import os
 import shutil
+import stat
 import subprocess
 import tomllib
 from dataclasses import dataclass
@@ -17,6 +19,54 @@ MARKETPLACE_REF = "main"
 MARKETPLACE_SPARSE = (".agents/plugins", "plugin")
 _NORMALIZED_VERSION = "0.0.0+codex.normalized"
 _FORBIDDEN_PAYLOAD_PARTS = {".git", ".env", ".venv", "__pycache__", "build", "dist"}
+_WINDOWS_REPARSE_POINT = 0x400
+
+
+def _link_kind(path: Path, label: str) -> str | None:
+    try:
+        status = path.lstat()
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        raise RuntimeError(f"{label}: cannot inspect {path}: {exc}") from exc
+    if stat.S_ISLNK(status.st_mode):
+        return "symlink"
+    attributes = getattr(status, "st_file_attributes", 0)
+    if attributes & _WINDOWS_REPARSE_POINT:
+        return "reparse point"
+    return None
+
+
+def _reject_symlink_path(path: Path, label: str) -> Path:
+    absolute = Path(os.path.abspath(path))
+    for candidate in (*reversed(absolute.parents), absolute):
+        link_kind = _link_kind(candidate, label)
+        if link_kind is not None:
+            raise RuntimeError(f"{label}: {link_kind} is forbidden: {candidate}")
+    return absolute
+
+
+def _reject_symlink_tree(root: Path, label: str) -> Path:
+    absolute = _reject_symlink_path(root, label)
+    if not absolute.is_dir():
+        raise RuntimeError(f"{label}: directory is missing: {absolute}")
+    pending = [absolute]
+    while pending:
+        current = pending.pop()
+        try:
+            entries = tuple(current.iterdir())
+        except OSError as exc:
+            raise RuntimeError(f"{label}: cannot read {current}: {exc}") from exc
+        for entry in entries:
+            try:
+                link_kind = _link_kind(entry, label)
+                if link_kind is not None:
+                    raise RuntimeError(f"{label}: {link_kind} is forbidden: {entry}")
+                if entry.is_dir():
+                    pending.append(entry)
+            except OSError as exc:
+                raise RuntimeError(f"{label}: cannot inspect {entry}: {exc}") from exc
+    return absolute
 
 
 def project_version(repo_root: Path) -> str:
@@ -34,6 +84,7 @@ def _payload_bytes(path: Path, plugin_root: Path) -> bytes:
 
 
 def payload_digest(plugin_root: Path) -> str:
+    _reject_symlink_tree(plugin_root, "plugin payload")
     digest = hashlib.sha256()
     files = sorted(path for path in plugin_root.rglob("*") if path.is_file())
     for path in files:
@@ -150,6 +201,16 @@ class MarketplaceState:
     name: str
     root: Path
     source: str | None = None
+    ref: str | None = None
+    sparse_paths: tuple[str, ...] | None = None
+
+
+@dataclass(frozen=True)
+class SnapshotVerification:
+    root: Path
+    plugin_root: Path
+    version: str
+    skills: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -269,6 +330,47 @@ def _required_boolean(item: dict, field: str, label: str) -> bool:
     return value
 
 
+def _optional_string(item: dict, field: str, label: str) -> str | None:
+    value = item.get(field)
+    if value is not None and not isinstance(value, str):
+        raise RuntimeError(f"{label}.{field} must be a string")
+    return value
+
+
+def _optional_string_tuple(item: dict, field: str, label: str) -> tuple[str, ...] | None:
+    value = item.get(field)
+    if value is None:
+        return None
+    if not isinstance(value, list):
+        raise RuntimeError(f"{label}.{field} must be an array")
+    for index, entry in enumerate(value):
+        if not isinstance(entry, str):
+            raise RuntimeError(f"{label}.{field}[{index}] must be a string")
+    return tuple(value)
+
+
+def _marketplace_metadata(
+    item: dict, label: str
+) -> tuple[str | None, str | None, tuple[str, ...] | None]:
+    configured = item.get("marketplaceSource")
+    if configured is None:
+        return (
+            _optional_string(item, "source", label),
+            _optional_string(item, "ref", label),
+            _optional_string_tuple(item, "sparsePaths", label),
+        )
+    if not isinstance(configured, dict):
+        raise RuntimeError(f"{label}.marketplaceSource must be an object")
+    source_label = f"{label}.marketplaceSource"
+    source_type = _optional_string(configured, "sourceType", source_label)
+    source = _optional_string(configured, "source", source_label)
+    ref = _optional_string(configured, "ref", source_label)
+    sparse_paths = _optional_string_tuple(configured, "sparsePaths", source_label)
+    if source_type != "git":
+        source = None
+    return source, ref, sparse_paths
+
+
 def read_codex_state(executable: Path, runner: Runner) -> CodexPluginState:
     exe = str(executable)
     marketplace_data = _json_result(
@@ -286,13 +388,13 @@ def read_codex_state(executable: Path, runner: Runner) -> CodexPluginState:
         label = f"marketplace list: marketplaces[{index}]"
         name = _required_string(item, "name", label)
         root = _required_string(item, "root", label)
-        source = item.get("source")
-        if source is not None and not isinstance(source, str):
-            raise RuntimeError(f"{label}.source must be a string")
+        source, ref, sparse_paths = _marketplace_metadata(item, label)
         if name == MARKETPLACE_NAME and marketplace is None:
             if not root:
                 raise RuntimeError("marketplace list: rag-reviewer root отсутствует")
-            marketplace = MarketplaceState(MARKETPLACE_NAME, Path(root), source)
+            marketplace = MarketplaceState(
+                MARKETPLACE_NAME, Path(root), source, ref, sparse_paths
+            )
     plugin: PluginState | None = None
     for index, item in enumerate(installed):
         label = f"plugin list: installed[{index}]"
@@ -312,9 +414,113 @@ def read_codex_state(executable: Path, runner: Runner) -> CodexPluginState:
     return CodexPluginState(executable, marketplace, plugin)
 
 
+def _read_json(path: Path, label: str) -> dict:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise RuntimeError(f"{label}: {exc}") from exc
+    if not isinstance(data, dict):
+        raise RuntimeError(f"{label}: expected JSON object")
+    return data
+
+
+def _inside(root: Path, relative: str, label: str) -> Path:
+    candidate = (root / relative).resolve()
+    resolved_root = root.resolve()
+    if candidate != resolved_root and resolved_root not in candidate.parents:
+        raise RuntimeError(f"{label}: path leaves marketplace root")
+    return candidate
+
+
+def marketplace_is_owned(state: MarketplaceState) -> bool:
+    return (
+        state.name == MARKETPLACE_NAME
+        and state.source == MARKETPLACE_SOURCE
+        and state.ref == MARKETPLACE_REF
+        and state.sparse_paths == MARKETPLACE_SPARSE
+    )
+
+
+def verify_marketplace_snapshot(root: Path, expected_base_version: str) -> SnapshotVerification:
+    snapshot_root = _reject_symlink_path(root, "marketplace root")
+    metadata_root = _reject_symlink_tree(snapshot_root / ".agents/plugins", "marketplace metadata")
+    marketplace_path = metadata_root / "marketplace.json"
+    marketplace = _read_json(marketplace_path, "marketplace")
+    if marketplace.get("name") != MARKETPLACE_NAME:
+        raise RuntimeError("marketplace name mismatch")
+    entries = marketplace.get("plugins")
+    if not isinstance(entries, list) or len(entries) != 1:
+        raise RuntimeError("marketplace must contain exactly one plugin")
+    entry = entries[0]
+    if not isinstance(entry, dict):
+        raise RuntimeError("marketplace plugin entry must be an object")
+    if entry.get("name") != PLUGIN_NAME:
+        raise RuntimeError("marketplace plugin name mismatch")
+    source = entry.get("source")
+    if source != {"source": "local", "path": "./plugin"}:
+        raise RuntimeError("marketplace source must be relative ./plugin")
+    _reject_symlink_tree(snapshot_root / "plugin", "plugin payload")
+    plugin_root = _inside(snapshot_root, "plugin", "plugin source")
+    manifest = _read_json(plugin_root / ".codex-plugin/plugin.json", "Codex manifest")
+    if manifest.get("name") != PLUGIN_NAME:
+        raise RuntimeError("plugin name mismatch")
+    if "mcpServers" in manifest:
+        raise RuntimeError("Codex manifest must not declare mcpServers")
+    version = manifest.get("version")
+    if not isinstance(version, str):
+        raise RuntimeError("plugin version must be a string")
+    skills_rel = manifest.get("skills")
+    if skills_rel != "./skills/":
+        raise RuntimeError("Codex manifest skills must be ./skills/")
+    interface = manifest.get("interface")
+    if not isinstance(interface, dict):
+        raise RuntimeError("Codex manifest interface must be an object")
+    icon_rel = interface.get("composerIcon")
+    if not isinstance(icon_rel, str):
+        raise RuntimeError("Codex manifest composerIcon must be a string")
+    prefix = f"{expected_base_version}+codex."
+    if not version.startswith(prefix) or version.count("+codex.") != 1:
+        raise RuntimeError(f"plugin version {version!r} does not match {prefix!r}")
+    try:
+        actual_digest = payload_digest(plugin_root)
+    except (OSError, UnicodeError, json.JSONDecodeError, ValueError) as exc:
+        raise RuntimeError(f"plugin payload: {exc}") from exc
+    if version.removeprefix(prefix) != actual_digest:
+        raise RuntimeError("plugin payload hash does not match manifest version")
+    skills_root = _inside(plugin_root, skills_rel, "skills")
+    if not skills_root.is_dir():
+        raise RuntimeError("plugin skills directory is missing")
+    try:
+        skill_entries = tuple(skills_root.iterdir())
+    except OSError as exc:
+        raise RuntimeError(f"plugin skills directory cannot be read: {exc}") from exc
+    skills = tuple(
+        sorted(
+            path.name for path in skill_entries if path.is_dir() and (path / "SKILL.md").is_file()
+        )
+    )
+    if not skills:
+        raise RuntimeError("plugin contains no registered skills")
+    common = skills_root / "_common"
+    if not common.is_dir() or (common / "SKILL.md").exists():
+        raise RuntimeError("_common must be delivered but not registered as a skill")
+    if not _inside(plugin_root, icon_rel, "icon").is_file():
+        raise RuntimeError("declared composerIcon is missing")
+    if not (plugin_root / "hooks/hooks.json").is_file():
+        raise RuntimeError("plugin hooks payload is missing")
+    return SnapshotVerification(root, plugin_root, version, skills)
+
+
 def build_codex_plugin_plan(
     state: CodexPluginState, options: CodexInstallOptions
 ) -> CodexPluginPlan:
+    if state.marketplace is not None and not marketplace_is_owned(state.marketplace):
+        raise RuntimeError(
+            f"marketplace {MARKETPLACE_NAME!r} уже связан с другим source/root "
+            "или неполным source/ref/sparse: "
+            f"source={state.marketplace.source!r}, ref={state.marketplace.ref!r}, "
+            f"sparse={state.marketplace.sparse_paths!r}, root={state.marketplace.root}"
+        )
     exe = str(state.executable)
     if state.marketplace is None:
         marketplace_action: Literal["add", "upgrade"] = "add"
