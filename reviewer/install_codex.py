@@ -9,8 +9,9 @@ import stat
 import subprocess
 import tomllib
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable, Literal, Protocol
+from typing import Any, Callable, Literal, Protocol
 
 PLUGIN_NAME = "rag-reviewer"
 MARKETPLACE_NAME = "rag-reviewer"
@@ -557,3 +558,185 @@ def build_codex_plugin_plan(
     return CodexPluginPlan(
         state, options, marketplace_action, marketplace_argv, plugin_argv
     )
+
+
+class CodexInstallError(RuntimeError):
+    def __init__(self, phase: str, argv: tuple[str, ...], detail: str):
+        self.phase = phase
+        self.argv = argv
+        self.detail = detail
+        rendered_argv = " ".join(argv) if argv else "<none>"
+        super().__init__(f"{phase}: {detail}; argv={rendered_argv}")
+
+
+@dataclass(frozen=True)
+class ConfigSnapshot:
+    path: Path
+    existed: bool
+    content: bytes
+    backup_path: Path
+
+
+@dataclass(frozen=True)
+class LegacyMigrationResult:
+    backup_root: Path | None
+    moved: tuple[str, ...]
+    warnings: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class CodexInstallResult:
+    plan: CodexPluginPlan
+    verification: SnapshotVerification | None
+    config_backup: Path | None
+    migration: LegacyMigrationResult
+    warnings: tuple[str, ...]
+    mcp_preview: str | None = None
+
+
+def _checked(runner: Runner, argv: tuple[str, ...], phase: str) -> dict:
+    response = runner(argv)
+    if response.returncode:
+        raise CodexInstallError(phase, argv, response.stderr.strip())
+    try:
+        data: Any = json.loads(response.stdout)
+    except json.JSONDecodeError as exc:
+        raise CodexInstallError(phase, argv, f"invalid JSON: {exc}") from exc
+    if not isinstance(data, dict):
+        raise CodexInstallError(phase, argv, "expected JSON object")
+    return data
+
+
+def _snapshot_config(path: Path) -> ConfigSnapshot:
+    existed = path.exists()
+    content = path.read_bytes() if existed else b""
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    backup = path.with_name(path.name + f".rag-reviewer.{stamp}.bak")
+    backup.parent.mkdir(parents=True, exist_ok=True)
+    backup.write_bytes(content)
+    return ConfigSnapshot(path, existed, content, backup)
+
+
+def _restore_config(snapshot: ConfigSnapshot) -> None:
+    if snapshot.existed:
+        snapshot.path.parent.mkdir(parents=True, exist_ok=True)
+        snapshot.path.write_bytes(snapshot.content)
+    elif snapshot.path.exists():
+        snapshot.path.unlink()
+
+
+def _codex_home(options: CodexInstallOptions) -> Path:
+    if options.codex_home is not None:
+        return options.codex_home
+    configured = os.environ.get("CODEX_HOME")
+    return Path(configured).expanduser() if configured else Path.home() / ".codex"
+
+
+def _verified_installed(state: CodexPluginState, expected_version: str) -> None:
+    plugin = state.plugin
+    if plugin is None:
+        raise RuntimeError("plugin list: rag-reviewer не установлен")
+    if plugin.marketplace != MARKETPLACE_NAME:
+        raise RuntimeError(f"plugin установлен из {plugin.marketplace!r}")
+    if not plugin.installed or not plugin.enabled:
+        raise RuntimeError("plugin должен быть installed и enabled")
+    if plugin.version != expected_version:
+        raise RuntimeError(
+            f"installed version {plugin.version!r} != {expected_version!r}"
+        )
+
+
+def run_codex_install(
+    options: CodexInstallOptions,
+    *,
+    runner: Runner = subprocess_runner,
+    which: Callable[[str], str | None] = shutil.which,
+    legacy_migrator: Callable[[Path, Path], LegacyMigrationResult] | None = None,
+) -> CodexInstallResult:
+    from reviewer import install as generic
+
+    executable = find_codex_executable(which)
+    detect_codex_capabilities(executable, runner)
+    state = read_codex_state(executable, runner)
+    plan = build_codex_plugin_plan(state, options)
+    empty_migration = LegacyMigrationResult(None, (), ())
+    codex_home = _codex_home(options)
+    config_path = options.mcp_path or (codex_home / "config.toml")
+    mcp_preview = None
+    if options.include_mcp:
+        mcp_preview = generic.build_plan(
+            generic.CLIENTS["codex"],
+            version=options.mcp_version,
+            path_override=str(config_path),
+        ).content
+    if options.dry_run:
+        return CodexInstallResult(plan, None, None, empty_migration, (), mcp_preview)
+
+    snapshot = _snapshot_config(config_path)
+    try:
+        _checked(runner, plan.marketplace_argv, f"marketplace {plan.marketplace_action}")
+        refreshed = read_codex_state(executable, runner)
+        if refreshed.marketplace is None or not marketplace_is_owned(
+            refreshed.marketplace
+        ):
+            raise CodexInstallError(
+                "marketplace ownership verification",
+                plan.marketplace_argv,
+                "marketplace rag-reviewer после mutation имеет неполные или чужие "
+                "source/ref/sparse metadata",
+            )
+        try:
+            verification = verify_marketplace_snapshot(
+                refreshed.marketplace.root, generic.current_pkg_version()
+            )
+        except RuntimeError as exc:
+            raise CodexInstallError(
+                "snapshot verification", plan.marketplace_argv, str(exc)
+            ) from exc
+        if options.include_mcp:
+            try:
+                mcp_plan = generic.build_plan(
+                    generic.CLIENTS["codex"],
+                    version=options.mcp_version,
+                    path_override=str(config_path),
+                )
+                generic.apply_plan(mcp_plan)
+            except (OSError, ValueError) as exc:
+                raise CodexInstallError("MCP config update", (), str(exc)) from exc
+        _checked(runner, plan.plugin_argv, "plugin add")
+        installed = read_codex_state(executable, runner)
+        try:
+            _verified_installed(installed, verification.version)
+        except RuntimeError as exc:
+            raise CodexInstallError(
+                "post-install verification",
+                (str(executable), "plugin", "list", "--available", "--json"),
+                str(exc),
+            ) from exc
+        migration = (
+            legacy_migrator(codex_home / "skills", verification.plugin_root)
+            if legacy_migrator is not None
+            else empty_migration
+        )
+        return CodexInstallResult(
+            plan,
+            verification,
+            snapshot.backup_path,
+            migration,
+            migration.warnings,
+            mcp_preview,
+        )
+    except Exception as original_error:
+        try:
+            _restore_config(snapshot)
+            rolled_back = read_codex_state(executable, runner)
+            if rolled_back.plugin != state.plugin:
+                raise RuntimeError(
+                    "config rollback не восстановил предыдущую plugin selection; "
+                    f"backup: {snapshot.backup_path}"
+                )
+        except Exception as restore_error:
+            raise RuntimeError(
+                f"config rollback failed; backup: {snapshot.backup_path}: {restore_error}"
+            ) from restore_error
+        raise original_error

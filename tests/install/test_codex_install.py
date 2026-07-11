@@ -6,18 +6,22 @@ from types import SimpleNamespace
 import pytest
 
 from reviewer.install_codex import (
+    CodexInstallError,
     CodexInstallOptions,
     CodexPluginState,
     CommandResult,
     MarketplaceState,
+    PluginState,
     build_codex_plugin_plan,
     detect_codex_capabilities,
     find_codex_executable,
     marketplace_is_owned,
     payload_digest,
     read_codex_state,
+    run_codex_install,
     verify_marketplace_snapshot,
 )
+from tests.install.fake_codex import FakeCodex
 
 
 class MappingRunner:
@@ -868,3 +872,294 @@ def test_snapshot_rejects_missing_skills_directory_with_runtime_error(tmp_path):
 
     with pytest.raises(RuntimeError, match="skills directory is missing"):
         verify_marketplace_snapshot(tmp_path, "0.2.27")
+
+
+def test_run_codex_install_fresh_updates_mcp_and_plugin(tmp_path, monkeypatch):
+    repo = Path(__file__).resolve().parents[2]
+    fake = FakeCodex(tmp_path / "bin/codex", repo)
+    codex_home = tmp_path / "Codex Home"
+    config = codex_home / "config.toml"
+    config.parent.mkdir(parents=True)
+    config.write_text("[other]\nvalue = 1\n")
+    monkeypatch.setattr(
+        "reviewer.install.shutil.which",
+        lambda name: "C:/Program Files/uv/uvx.exe" if name == "uvx" else None,
+    )
+    result = run_codex_install(
+        CodexInstallOptions(codex_home=codex_home),
+        runner=fake,
+        which=lambda name: str(fake.executable),
+    )
+    assert result.verification is not None
+    assert result.verification.skills
+    assert "[other]" in config.read_text()
+    assert "C:/Program Files/uv/uvx.exe" in config.read_text()
+    assert fake.installed is not None and fake.installed["enabled"] is True
+
+
+def test_run_codex_install_dry_run_has_no_mutating_calls(tmp_path, monkeypatch):
+    repo = Path(__file__).resolve().parents[2]
+    fake = FakeCodex(tmp_path / "codex", repo)
+    monkeypatch.setattr("reviewer.install.shutil.which", lambda name: "/opt/uvx")
+    result = run_codex_install(
+        CodexInstallOptions(dry_run=True, codex_home=tmp_path / "home"),
+        runner=fake,
+        which=lambda name: str(fake.executable),
+    )
+    assert result.verification is None
+    assert result.mcp_preview is not None
+    assert "[mcp_servers.reviewer]" in result.mcp_preview
+    mutating = []
+    for call in fake.calls:
+        tail = call[1:]
+        if tail[-1:] == ("--help",):
+            continue
+        if tail[:3] in {
+            ("plugin", "marketplace", "add"),
+            ("plugin", "marketplace", "upgrade"),
+        } or tail[:2] == ("plugin", "add"):
+            mutating.append(call)
+    assert mutating == []
+
+
+def test_plugin_add_failure_restores_exact_config(tmp_path, monkeypatch):
+    repo = Path(__file__).resolve().parents[2]
+    fake = FakeCodex(tmp_path / "codex", repo)
+    fake.fail = ("plugin", "add")
+    codex_home = tmp_path / "home"
+    config = codex_home / "config.toml"
+    config.parent.mkdir(parents=True)
+    original = "# exact\n[other]\nvalue = 'keep'\n"
+    config.write_text(original)
+    monkeypatch.setattr("reviewer.install.shutil.which", lambda name: "/opt/uvx")
+    with pytest.raises(RuntimeError, match="plugin add"):
+        run_codex_install(
+            CodexInstallOptions(codex_home=codex_home),
+            runner=fake,
+            which=lambda name: str(fake.executable),
+        )
+    assert config.read_text() == original
+    assert list(codex_home.glob("config.toml.rag-reviewer.*.bak"))
+
+
+def test_invalid_marketplace_snapshot_restores_config(tmp_path, monkeypatch):
+    empty_snapshot = tmp_path / "invalid snapshot"
+    empty_snapshot.mkdir()
+    fake = FakeCodex(tmp_path / "codex", empty_snapshot)
+    codex_home = tmp_path / "home"
+    config = codex_home / "config.toml"
+    config.parent.mkdir(parents=True)
+    original = "[other]\nvalue = 1\n"
+    config.write_text(original)
+    monkeypatch.setattr("reviewer.install.shutil.which", lambda name: "/opt/uvx")
+    with pytest.raises(RuntimeError, match="snapshot verification"):
+        run_codex_install(
+            CodexInstallOptions(codex_home=codex_home),
+            runner=fake,
+            which=lambda name: str(fake.executable),
+        )
+    assert config.read_text() == original
+
+
+def test_marketplace_add_failure_restores_config(tmp_path, monkeypatch):
+    repo = Path(__file__).resolve().parents[2]
+    fake = FakeCodex(tmp_path / "codex", repo)
+    fake.fail = ("plugin", "marketplace", "add")
+    codex_home = tmp_path / "home"
+    config = codex_home / "config.toml"
+    config.parent.mkdir(parents=True)
+    original = "[other]\nvalue = 1\n"
+    config.write_text(original)
+    monkeypatch.setattr("reviewer.install.shutil.which", lambda name: "/opt/uvx")
+    with pytest.raises(RuntimeError, match="marketplace add"):
+        run_codex_install(
+            CodexInstallOptions(codex_home=codex_home),
+            runner=fake,
+            which=lambda name: str(fake.executable),
+        )
+    assert config.read_text() == original
+
+
+def test_mcp_write_failure_restores_config_and_skips_plugin_add(tmp_path, monkeypatch):
+    repo = Path(__file__).resolve().parents[2]
+    fake = FakeCodex(tmp_path / "codex", repo)
+    codex_home = tmp_path / "home"
+    config = codex_home / "config.toml"
+    config.parent.mkdir(parents=True)
+    original = "[other]\nvalue = 1\n"
+    config.write_text(original)
+    monkeypatch.setattr("reviewer.install.shutil.which", lambda name: "/opt/uvx")
+    monkeypatch.setattr(
+        "reviewer.install.apply_plan",
+        lambda plan: (_ for _ in ()).throw(OSError("disk full")),
+    )
+    with pytest.raises(RuntimeError, match="MCP config update"):
+        run_codex_install(
+            CodexInstallOptions(codex_home=codex_home),
+            runner=fake,
+            which=lambda name: str(fake.executable),
+        )
+    assert config.read_text() == original
+    assert not any(
+        call[1:3] == ("plugin", "add") and call[-1:] != ("--help",)
+        for call in fake.calls
+    )
+
+
+def test_post_verification_failure_restores_previous_selection(tmp_path, monkeypatch):
+    repo = Path(__file__).resolve().parents[2]
+    exe = tmp_path / "codex"
+    fake = FakeCodex(exe, repo)
+    fake.marketplace = True
+    codex_home = tmp_path / "home"
+    config = codex_home / "config.toml"
+    config.parent.mkdir(parents=True)
+    original = "[plugins]\nselected = 'old'\n"
+    config.write_text(original)
+    marketplace = MarketplaceState(
+        "rag-reviewer",
+        repo,
+        "mimfort/rag_for_git",
+        "main",
+        (".agents/plugins", "plugin"),
+    )
+    old_plugin = PluginState(
+        "rag-reviewer", "rag-reviewer", "0.2.26+codex.old", True, True
+    )
+    wrong_plugin = PluginState(
+        "rag-reviewer", "rag-reviewer", "wrong-version", True, True
+    )
+    states = iter(
+        [
+            CodexPluginState(exe, marketplace, old_plugin),
+            CodexPluginState(exe, marketplace, old_plugin),
+            CodexPluginState(exe, marketplace, wrong_plugin),
+            CodexPluginState(exe, marketplace, old_plugin),
+        ]
+    )
+    monkeypatch.setattr(
+        "reviewer.install_codex.read_codex_state",
+        lambda executable, runner: next(states),
+    )
+    monkeypatch.setattr("reviewer.install.shutil.which", lambda name: "/opt/uvx")
+    with pytest.raises(RuntimeError, match="installed version"):
+        run_codex_install(
+            CodexInstallOptions(codex_home=codex_home),
+            runner=fake,
+            which=lambda name: str(exe),
+        )
+    assert config.read_text() == original
+
+
+def test_ambiguous_refreshed_marketplace_stops_before_mcp_and_plugin(
+    tmp_path, monkeypatch
+):
+    repo = Path(__file__).resolve().parents[2]
+    fake = FakeCodex(tmp_path / "codex", repo)
+    codex_home = tmp_path / "home"
+    config = codex_home / "config.toml"
+    config.parent.mkdir(parents=True)
+    original = b"[other]\nvalue = 1\n"
+    config.write_bytes(original)
+    applied = []
+
+    def ambiguous_runner(argv: tuple[str, ...]) -> CommandResult:
+        response = fake(argv)
+        if fake.marketplace and argv[1:] == (
+            "plugin",
+            "marketplace",
+            "list",
+            "--json",
+        ):
+            response = CommandResult(
+                argv,
+                0,
+                json.dumps(
+                    {
+                        "marketplaces": [
+                            {
+                                "name": "rag-reviewer",
+                                "root": str(repo),
+                                "source": "mimfort/rag_for_git",
+                            }
+                        ]
+                    }
+                ),
+                "",
+            )
+        return response
+
+    monkeypatch.setattr("reviewer.install.shutil.which", lambda name: "/opt/uvx")
+    monkeypatch.setattr(
+        "reviewer.install.apply_plan", lambda plan: applied.append(plan)
+    )
+
+    with pytest.raises(CodexInstallError) as exc_info:
+        run_codex_install(
+            CodexInstallOptions(codex_home=codex_home),
+            runner=ambiguous_runner,
+            which=lambda name: str(fake.executable),
+        )
+
+    error = exc_info.value
+    assert error.phase == "marketplace ownership verification"
+    assert error.argv[1:4] == ("plugin", "marketplace", "add")
+    assert "неполные или чужие source/ref/sparse metadata" in error.detail
+    assert config.read_bytes() == original
+    assert applied == []
+    assert not any(
+        call[1:3] == ("plugin", "add") and call[-1:] != ("--help",)
+        for call in fake.calls
+    )
+
+
+def test_rollback_state_mismatch_reports_backup(tmp_path, monkeypatch):
+    repo = Path(__file__).resolve().parents[2]
+    exe = tmp_path / "codex"
+    fake = FakeCodex(exe, repo)
+    fake.marketplace = True
+    fake.fail = ("plugin", "add")
+    codex_home = tmp_path / "home"
+    config = codex_home / "config.toml"
+    config.parent.mkdir(parents=True)
+    original = b"# exact bytes\n[plugins]\nselected = 'old'\n"
+    config.write_bytes(original)
+    marketplace = MarketplaceState(
+        "rag-reviewer",
+        repo,
+        "mimfort/rag_for_git",
+        "main",
+        (".agents/plugins", "plugin"),
+    )
+    old_plugin = PluginState(
+        "rag-reviewer", "rag-reviewer", "0.2.26+codex.old", True, True
+    )
+    wrong_plugin = PluginState(
+        "rag-reviewer", "rag-reviewer", "wrong-version", True, True
+    )
+    states = iter(
+        [
+            CodexPluginState(exe, marketplace, old_plugin),
+            CodexPluginState(exe, marketplace, old_plugin),
+            CodexPluginState(exe, marketplace, wrong_plugin),
+        ]
+    )
+    monkeypatch.setattr(
+        "reviewer.install_codex.read_codex_state",
+        lambda executable, runner: next(states),
+    )
+    monkeypatch.setattr("reviewer.install.shutil.which", lambda name: "/opt/uvx")
+
+    with pytest.raises(RuntimeError) as exc_info:
+        run_codex_install(
+            CodexInstallOptions(codex_home=codex_home),
+            runner=fake,
+            which=lambda name: str(exe),
+        )
+
+    message = str(exc_info.value)
+    assert "config rollback failed" in message
+    assert "config rollback не восстановил предыдущую plugin selection" in message
+    assert "config.toml.rag-reviewer." in message
+    assert ".bak" in message
+    assert config.read_bytes() == original
