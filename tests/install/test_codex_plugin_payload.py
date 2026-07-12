@@ -126,3 +126,25 @@ def test_repo_codex_payload_is_synchronized():
     )
     assert canonical["version"] == expected_plugin_version(ROOT)
     assert "mcpServers" not in canonical
+
+
+def test_real_payload_registers_every_skill_directory_dynamically():
+    skills_root = ROOT / "plugin/skills"
+    expected = sorted(
+        path.name for path in skills_root.iterdir()
+        if path.is_dir() and (path / "SKILL.md").is_file()
+    )
+    assert "finish-task" in expected
+    assert "_common" not in expected
+    assert (skills_root / "_common").is_dir()
+    manifest = json.loads(
+        (ROOT / "plugin/.codex-plugin/plugin.json").read_text(encoding="utf-8")
+    )
+    assert manifest["skills"] == "./skills/"
+    assert len(expected) == len(list(skills_root.glob("*/SKILL.md")))
+    english = (ROOT / "README.md").read_text(encoding="utf-8")
+    russian = (ROOT / "README.ru.md").read_text(encoding="utf-8")
+    for name in expected:
+        marker = f"reviewer_{name}"
+        assert marker in english
+        assert marker in russian

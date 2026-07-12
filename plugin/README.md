@@ -1,19 +1,23 @@
-# rag-reviewer — Claude Code plugin
+# rag-reviewer — Claude Code and Codex plugin payload
 
 Корень Claude Code-плагина для скиллов `/rag-reviewer:reviewer_*`. Полная документация
 проекта — в корневых [README.md](../README.md) (англ.) и [README.ru.md](../README.ru.md) (рус.).
 
 ## Что внутри
 
-- **MCP-сервер** `reviewer` (`reviewer-mcp`, 31 тул) — конфиг в `.mcp.json`.
-- **10 скиллов** (`plugin/skills/*/SKILL.md`):
+- **MCP-сервер** `reviewer` (`reviewer-mcp`, 31 тул) — конфиг в `.mcp.json` для Claude Code.
+- Каждый каталог `plugin/skills/` с файлом `SKILL.md` регистрируется в namespace `rag-reviewer`.
+  `_common` и вложенные references доставляются как вспомогательные файлы, но не регистрируются как
+  скиллы.
+- Скиллы (`plugin/skills/*/SKILL.md`):
   `/rag-reviewer:reviewer_review-pr` · `/rag-reviewer:reviewer_solve-task` ·
   `/rag-reviewer:reviewer_sync-codebase` · `/rag-reviewer:reviewer_sync-tasks` ·
   `/rag-reviewer:reviewer_performance-review` · `/rag-reviewer:reviewer_maintainability-review` ·
   `/rag-reviewer:reviewer_ask` ·
   `/rag-reviewer:reviewer_pr-walkthrough` ·
   `/rag-reviewer:reviewer_configure-review` ·
-  `/rag-reviewer:reviewer_summarize-subsystems`.
+  `/rag-reviewer:reviewer_summarize-subsystems` ·
+  `/rag-reviewer:reviewer_finish-task`.
 
 ## Требования
 
@@ -35,6 +39,30 @@
 ```
 
 Или локально для разработки: `claude --plugin-dir /path/to/rag_for_git`.
+
+## Codex CLI
+
+```bash
+uvx --from rag-reviewer@latest reviewer install codex
+uvx --from rag-reviewer@latest reviewer install codex --dry-run
+uvx --from rag-reviewer@latest reviewer install codex --no-skills
+uvx --from rag-reviewer@latest reviewer install-skills codex
+```
+
+Первая команда управляет одним глобальным MCP `reviewer` и namespaced plugin
+`rag-reviewer`; повторный запуск обновляет marketplace/plugin. `--dry-run` ничего не пишет и не
+ходит в сеть, а `install-skills codex` не трогает MCP.
+
+```bash
+codex plugin list --json
+codex mcp list
+```
+
+Успех означает, что `rag-reviewer` установлен и включён, а `codex mcp list` содержит ровно один
+`reviewer`. Идентифицированные legacy skills перемещаются в
+`$CODEX_HOME/reviewer-legacy-backups/<timestamp>`; изменённые и неоднозначные копии остаются на
+месте. При ошибке печатается путь к backup конфига. После установки откройте New Chat/new CLI
+session; в IDE также выполните Reload Window.
 
 ## Грунтовка в план/ревью (опц.)
 
