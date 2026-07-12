@@ -333,7 +333,7 @@ The MCP entry format by tool (macOS/Linux — use `reviewer install` on Windows)
 }
 ```
 
-**Kimi Code / Cursor / Gemini CLI / Codex CLI / Trae / Claude Desktop / Windsurf / Antigravity** (standard `mcpServers` JSON):
+**Kimi Code / Cursor / Gemini CLI / Trae / Claude Desktop / Windsurf / Antigravity** (standard `mcpServers` JSON):
 ```json
 {
   "mcpServers": {
@@ -357,14 +357,17 @@ The MCP entry format by tool (macOS/Linux — use `reviewer install` on Windows)
 }
 ```
 
-**Codex CLI** (`~/.codex/config.toml`):
-```toml
-[mcp_servers.reviewer]
-command = "/bin/bash"
-args = ["-lc", "uvx --from rag-reviewer@latest reviewer-mcp"]
+**Codex CLI**: install with the canonical commands in [AGENTS.md](AGENTS.md), then verify:
+```bash
+codex plugin list --json
+codex mcp list
 ```
 
-After adding, restart the tool — `reviewer` will appear alongside other MCP servers.
+Success means `rag-reviewer` is installed and enabled and `codex mcp list` contains exactly one
+`reviewer`. Identified legacy skills are moved to
+`$CODEX_HOME/reviewer-legacy-backups/<timestamp>`; modified or ambiguous copies stay untouched.
+Failures print the config backup path. Open a New Chat/new CLI session after installation; in an
+IDE, also use Reload Window.
 
 ### Claude Code (plugin marketplace)
 
@@ -377,11 +380,12 @@ Two commands, from any project:
 
 You get:
 
-- **Skills (10):** `/rag-reviewer:reviewer_review-pr`, `/rag-reviewer:reviewer_solve-task`,
+- **Skills:** `/rag-reviewer:reviewer_review-pr`, `/rag-reviewer:reviewer_solve-task`,
   `/rag-reviewer:reviewer_sync-codebase`, `/rag-reviewer:reviewer_sync-tasks`,
   `/rag-reviewer:reviewer_performance-review`, `/rag-reviewer:reviewer_maintainability-review`,
   `/rag-reviewer:reviewer_ask`, `/rag-reviewer:reviewer_pr-walkthrough`,
-  `/rag-reviewer:reviewer_configure-review`, `/rag-reviewer:reviewer_summarize-subsystems`
+  `/rag-reviewer:reviewer_configure-review`, `/rag-reviewer:reviewer_summarize-subsystems`,
+  `/rag-reviewer:reviewer_finish-task`
   (see [Skills reference](#skills-reference)).
 - **MCP server** `reviewer` exposing the 31 tools in [MCP tools reference](#mcp-tools-reference).
 
@@ -389,7 +393,9 @@ You get:
 
 ### Install skills globally (optional)
 
-The 10 skills wrap the MCP tools into guided flows. Without them you can still call MCP tools
+Every directory under `plugin/skills/` that contains `SKILL.md` is registered under the
+`rag-reviewer` namespace. `_common` and nested references are delivered as supporting files but are
+not registered as skills. These skills wrap the MCP tools into guided flows. Without them you can still call MCP tools
 directly, but the skills are the intended entry point.
 
 **`reviewer install` already installs them** for clients that support file-based skills (Gemini,

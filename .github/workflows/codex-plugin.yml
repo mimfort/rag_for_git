@@ -1,0 +1,60 @@
+name: Codex Plugin
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      live_smoke:
+        description: Run the real networked Codex marketplace smoke test
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  codex-plugin:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.11"
+      - run: pip install -e ".[dev]"
+      - run: python scripts/update_codex_plugin_manifest.py --check
+      - run: >-
+          pytest
+          tests/install/test_codex_plugin_payload.py
+          tests/install/test_codex_install.py
+          tests/install/test_codex_cli.py
+          tests/install/test_install.py
+          -v
+
+  live-smoke:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.live_smoke }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.11"
+      - run: pip install -e ".[dev]"
+      - run: pip install uv
+      - run: npm install -g @openai/codex
+      - run: reviewer install codex
+        env:
+          CODEX_HOME: ${{ runner.temp }}/codex-home
+      - run: codex plugin list --json
+        env:
+          CODEX_HOME: ${{ runner.temp }}/codex-home
+      - run: codex mcp list
+        env:
+          CODEX_HOME: ${{ runner.temp }}/codex-home

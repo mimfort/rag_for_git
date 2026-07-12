@@ -2,6 +2,7 @@ from __future__ import annotations
 import logging
 import platform as _platform
 import shutil as _shutil
+from typing import TYPE_CHECKING
 
 import click
 import httpx
@@ -18,6 +19,9 @@ from reviewer.index.refs import base_ref
 from reviewer.policy.policy import ReviewPolicy
 from reviewer.index.store import ChunkStore
 from reviewer.services.status import build_status_report, render_status, render_status_json
+
+if TYPE_CHECKING:
+    from reviewer.install_codex import CodexInstallResult
 
 log = logging.getLogger(__name__)
 
@@ -39,6 +43,56 @@ def _resolve_repo(repo_opt: str | None, path: str, settings) -> str:
 
 @click.group()
 def cli() -> None: ...
+
+
+def _run_codex_target(
+    *,
+    include_mcp: bool,
+    dry_run: bool,
+    version: str = "latest",
+    path_opt: str | None = None,
+) -> "CodexInstallResult":
+    from pathlib import Path
+
+    from reviewer import install_codex
+
+    if path_opt and include_mcp:
+        raise click.ClickException(
+            "Codex plugin lifecycle несовместим с --path; используйте --no-skills"
+        )
+    options = install_codex.CodexInstallOptions(
+        include_mcp=include_mcp,
+        dry_run=dry_run,
+        mcp_version=version,
+        mcp_path=Path(path_opt).expanduser() if path_opt else None,
+    )
+    try:
+        return install_codex.run_codex_install(
+            options, legacy_migrator=install_codex.migrate_legacy_skills
+        )
+    except Exception as exc:
+        raise click.ClickException(str(exc)) from exc
+
+
+def _print_codex_result(result) -> None:
+    if result.plan.options.dry_run:
+        if result.mcp_preview is not None:
+            click.echo("# Codex MCP config preview")
+            click.echo(result.mcp_preview)
+        click.echo(f"# Codex marketplace: {result.plan.marketplace_action}")
+        click.echo("# " + " ".join(result.plan.marketplace_argv))
+        click.echo("# " + " ".join(result.plan.plugin_argv))
+        click.echo("# legacy migration: scan after verified plugin install")
+        return
+    click.echo(f"✓ Codex plugin: {result.verification.version}")
+    click.echo(f"  skills: {len(result.verification.skills)}")
+    if result.config_backup:
+        click.echo(f"  config backup: {result.config_backup}")
+    if result.migration.backup_root:
+        click.echo(f"  legacy backup: {result.migration.backup_root}")
+    for warning in result.warnings:
+        click.echo(f"  предупреждение: {warning}")
+    click.echo("Откройте New Chat/new CLI session; в IDE выполните Reload Window.")
 
 
 @cli.command()
@@ -330,6 +384,8 @@ def install(client: str | None, all_clients: bool, list_clients: bool,
         raise click.ClickException(
             "Укажите клиент (reviewer install <client>), либо --all / --list.")
 
+    codex_errors: list[str] = []
+    codex_mcp_only = no_skills and any(c.key == "codex" for c in targets)
     tar_cache: list[tuple[bytes, str | None]] = []  # тарбол+ETag качаем один раз
 
     def _ensure_skills(c) -> None:
@@ -353,6 +409,20 @@ def install(client: str | None, all_clients: bool, list_clients: bool,
             click.echo(f"  скилы: пропуск ({exc})")
 
     for c in targets:
+        if c.key == "codex" and not no_skills:
+            try:
+                result = _run_codex_target(
+                    include_mcp=True,
+                    dry_run=dry_run,
+                    version=version,
+                    path_opt=path_opt,
+                )
+                _print_codex_result(result)
+            except click.ClickException as exc:
+                if not all_clients:
+                    raise
+                codex_errors.append(f"Codex CLI: {exc.format_message()}")
+            continue
         plan = inst.build_plan(c, version=version, path_override=path_opt)
         if dry_run:
             click.echo(f"# {c.label} → {plan.path}")
@@ -365,9 +435,7 @@ def install(client: str | None, all_clients: bool, list_clients: bool,
                 click.echo(f"# {c.label} скилы → {c.skills_fn(_platform.system())}")
             continue
         backup = inst.apply_plan(plan)
-        if plan.already and c.dialect == "codex":
-            status = "запись уже есть (TOML не трогаю — правьте вручную при необходимости)"
-        elif plan.already:
+        if plan.already:
             status = "обновлена запись"
         elif plan.created:
             status = "создан конфиг"
@@ -393,6 +461,11 @@ def install(client: str | None, all_clients: bool, list_clients: bool,
                 click.echo(f"  бэкап: {al_backup}")
         _ensure_skills(c)
 
+    if codex_errors:
+        raise click.ClickException("; ".join(codex_errors))
+    if not dry_run and codex_mcp_only:
+        click.echo("Codex MCP обновлён. Откройте New Chat/new CLI session; "
+                   "в IDE выполните Reload Window.")
     if not dry_run:
         click.echo("Готово. Перезапустите клиент. Ключи: reviewer init && reviewer check.")
 
@@ -435,6 +508,12 @@ def init(path_opt: str | None, yes: bool) -> None:
         click.echo("Запустите: reviewer check")
     else:
         click.echo("Готово. Запустите: reviewer check")
+
+    if not yes and _shutil.which("codex") and click.confirm(
+        "\nУстановить или обновить rag-reviewer для Codex?", default=True
+    ):
+        result = _run_codex_target(include_mcp=True, dry_run=False)
+        _print_codex_result(result)
 
 
 @cli.command()
@@ -529,23 +608,27 @@ def update() -> None:
               help="показать клиенты с поддержкой файловых скилов")
 @click.option("--path", "path_opt", default=None,
               help="переопределить каталог скилов")
+@click.option("--dry-run", is_flag=True,
+              help="показать plugin plan без записи и сети")
 def install_skills(client: str | None, all_clients: bool,
-                   list_clients: bool, path_opt: str | None) -> None:
+                   list_clients: bool, path_opt: str | None, dry_run: bool) -> None:
     """Установить скилы (review-pr, solve-task и др.) в каталог клиента."""
     from pathlib import Path
     from reviewer import install as inst
 
     capable = [c for c in inst.CLIENTS.values() if c.skills_fn]
     if list_clients:
-        click.echo("Клиенты с файловыми скилами:")
+        click.echo("Клиенты со скилами:")
         for c in capable:
             click.echo(f"  {c.key:<15} {c.label} → {c.skills_fn(_platform.system())}")
-        click.echo("Прочие клиенты подхватывают скилы из плагина "
-                   "(/plugin marketplace add mimfort/rag_for_git).")
+        click.echo("  codex           Codex CLI → plugin marketplace")
         return
 
     if all_clients:
-        targets = [c for c in inst.detect_installed() if c.skills_fn]
+        targets = [
+            c for c in inst.detect_installed()
+            if c.skills_fn is not None or c.key == "codex"
+        ]
         if not targets:
             raise click.ClickException(
                 "Не обнаружено клиентов со скилами. Укажите явно или см. --list.")
@@ -554,18 +637,28 @@ def install_skills(client: str | None, all_clients: bool,
         if key not in inst.CLIENTS:
             raise click.ClickException(
                 f"Неизвестный клиент {client!r}. Список: reviewer install-skills --list")
-        c = inst.CLIENTS[key]
-        if c.skills_fn is None:
-            raise click.ClickException(
-                f"{c.label}: файловые скилы не поддерживаются (используйте плагин).")
-        targets = [c]
+        targets = [inst.CLIENTS[key]]
     else:
         raise click.ClickException(
             "Укажите клиент (reviewer install-skills <client>), либо --all / --list.")
 
+    if path_opt and any(c.key == "codex" for c in targets):
+        raise click.ClickException("Codex plugin не поддерживает --path")
+    if dry_run and any(c.key != "codex" for c in targets):
+        raise click.ClickException("install-skills --dry-run поддерживается только для codex")
+
+    for c in [target for target in targets if target.key == "codex"]:
+        result = _run_codex_target(include_mcp=False, dry_run=dry_run)
+        _print_codex_result(result)
+
+    file_targets = [target for target in targets if target.key != "codex"]
+    if not file_targets:
+        return
     click.echo("Скачиваю скилы с GitHub…")
     tar, etag = inst.fetch_skills_archive()
-    for c in targets:
+    for c in file_targets:
+        if c.skills_fn is None:
+            raise click.ClickException(f"{c.label}: файловые скилы не поддерживаются")
         dest = Path(path_opt).expanduser() if path_opt else c.skills_fn(_platform.system())
         names = inst.extract_skills(tar, dest)
         inst.stamp_skills_dir(dest, source_etag=etag)
