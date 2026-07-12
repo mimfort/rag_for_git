@@ -27,7 +27,3 @@ def test_common_dir_extracted_and_hashed(tmp_path):
     hashes = inst._skill_file_hashes(tmp_path)
     assert "_common" in hashes
     assert hashes["_common"].startswith("sha256:")
-
-
-def test_common_registered_in_skill_names():
-    assert "_common" in inst.SKILL_NAMES

@@ -17,7 +17,9 @@ from reviewer.install_codex import (
     build_codex_plugin_plan,
     detect_codex_capabilities,
     find_codex_executable,
+    find_owned_legacy_skills,
     marketplace_is_owned,
+    migrate_legacy_skills,
     payload_digest,
     read_codex_state,
     run_codex_install,
@@ -1365,3 +1367,68 @@ def test_snapshot_backup_names_are_unique_and_exclusive(tmp_path):
     assert first.backup_path != second.backup_path
     assert first.backup_path.read_bytes() == b"first backup sentinel"
     assert second.backup_path.read_bytes() == original
+
+
+def copy_skill(plugin_root: Path, skills_root: Path, name: str) -> None:
+    import shutil
+
+    shutil.copytree(plugin_root / "skills" / name, skills_root / name)
+
+
+def test_legacy_candidates_require_stamp_or_exact_payload(tmp_path):
+    repo = Path(__file__).resolve().parents[2]
+    plugin = repo / "plugin"
+    skills = tmp_path / "skills"
+    skills.mkdir()
+    copy_skill(plugin, skills, "ask")
+    copy_skill(plugin, skills, "solve-task")
+    (skills / "solve-task/SKILL.md").write_text("locally modified")
+
+    candidates = find_owned_legacy_skills(skills, plugin)
+
+    assert [(item.name, item.reason) for item in candidates] == [
+        ("ask", "exact payload match")
+    ]
+    assert (skills / "solve-task").is_dir()
+
+
+def test_legacy_migration_moves_owned_and_keeps_ambiguous(tmp_path):
+    repo = Path(__file__).resolve().parents[2]
+    plugin = repo / "plugin"
+    skills = tmp_path / "skills"
+    skills.mkdir()
+    copy_skill(plugin, skills, "ask")
+    copy_skill(plugin, skills, "solve-task")
+    (skills / "solve-task/SKILL.md").write_text("modified")
+
+    result = migrate_legacy_skills(skills, plugin)
+
+    assert result.moved == ("ask",)
+    assert result.backup_root is not None
+    assert (result.backup_root / "skills/ask/SKILL.md").is_file()
+    assert (skills / "solve-task/SKILL.md").read_text() == "modified"
+    assert result.warnings
+
+
+def test_legacy_migration_restores_already_moved_directories(tmp_path, monkeypatch):
+    repo = Path(__file__).resolve().parents[2]
+    plugin = repo / "plugin"
+    skills = tmp_path / "skills"
+    skills.mkdir()
+    copy_skill(plugin, skills, "ask")
+    copy_skill(plugin, skills, "finish-task")
+    original_replace = Path.replace
+
+    def flaky_replace(self: Path, target: Path) -> Path:
+        if self.parent == skills and self.name == "finish-task":
+            raise OSError("injected move failure")
+        return original_replace(self, target)
+
+    monkeypatch.setattr(Path, "replace", flaky_replace)
+
+    result = migrate_legacy_skills(skills, plugin)
+
+    assert result.moved == ()
+    assert (skills / "ask/SKILL.md").is_file()
+    assert (skills / "finish-task/SKILL.md").is_file()
+    assert any("восстановлена" in warning for warning in result.warnings)

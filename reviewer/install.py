@@ -32,11 +32,6 @@ REVIEWER_PERMISSION_RULE = "mcp__reviewer__*"
 # Скилы лежат в репозитории (plugin/skills) и в wheel не пакуются — тянем их
 # тарболом с GitHub (кроссплатформенно, без клона).
 SKILLS_TARBALL = "https://github.com/mimfort/rag_for_git/archive/refs/heads/main.tar.gz"
-SKILL_NAMES = (
-    "review-pr", "solve-task", "sync-codebase",
-    "sync-tasks", "performance-review", "maintainability-review",
-    "_common",  # общий каталог reference-блоков (без своего SKILL.md), PRI-142
-)
 
 # Шаблон .env (встроен, чтобы `reviewer init` работал из published-wheel без
 # упаковки файла). Все остальные переменные имеют дефолты в settings.py.

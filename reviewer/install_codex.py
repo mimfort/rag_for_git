@@ -590,6 +590,115 @@ class LegacyMigrationResult:
 
 
 @dataclass(frozen=True)
+class LegacySkillCandidate:
+    name: str
+    source: Path
+    reason: str
+
+
+def _directory_files(root: Path) -> dict[str, bytes]:
+    if not root.is_dir():
+        return {}
+    return {
+        path.relative_to(root).as_posix(): path.read_bytes()
+        for path in sorted(root.rglob("*"))
+        if path.is_file()
+    }
+
+
+def _stamp_owned(skills_root: Path, name: str, source: Path) -> bool:
+    stamp_path = skills_root / ".reviewer-skills.json"
+    try:
+        stamp = json.loads(stamp_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    if not isinstance(stamp, dict):
+        return False
+    source_url = stamp.get("source_url")
+    skills = stamp.get("skills")
+    if not isinstance(source_url, str) or not isinstance(skills, dict):
+        return False
+    expected_hash = skills.get(name)
+    if "mimfort/rag_for_git" not in source_url or not isinstance(expected_hash, str):
+        return False
+    digest = hashlib.sha256()
+    for relative, content in _directory_files(source).items():
+        digest.update(relative.encode())
+        digest.update(b"\0")
+        digest.update(content)
+    return expected_hash == "sha256:" + digest.hexdigest()
+
+
+def find_owned_legacy_skills(
+    skills_root: Path, plugin_root: Path
+) -> tuple[LegacySkillCandidate, ...]:
+    payload_skills = plugin_root / "skills"
+    candidates: list[LegacySkillCandidate] = []
+    if not skills_root.is_dir():
+        return ()
+    for source in sorted(path for path in skills_root.iterdir() if path.is_dir()):
+        expected = payload_skills / source.name
+        if not expected.is_dir():
+            continue
+        if _stamp_owned(skills_root, source.name, source):
+            candidates.append(
+                LegacySkillCandidate(source.name, source, "valid installer stamp")
+            )
+        elif _directory_files(source) == _directory_files(expected):
+            candidates.append(
+                LegacySkillCandidate(source.name, source, "exact payload match")
+            )
+    return tuple(candidates)
+
+
+def migrate_legacy_skills(skills_root: Path, plugin_root: Path) -> LegacyMigrationResult:
+    candidates = find_owned_legacy_skills(skills_root, plugin_root)
+    payload_names = {
+        path.name for path in (plugin_root / "skills").iterdir() if path.is_dir()
+    }
+    candidate_names = {item.name for item in candidates}
+    ambiguous = (
+        tuple(
+            sorted(
+                path.name
+                for path in skills_root.iterdir()
+                if path.is_dir()
+                and path.name in payload_names
+                and path.name not in candidate_names
+            )
+        )
+        if skills_root.is_dir()
+        else ()
+    )
+    warnings = [
+        f"legacy skill {name!r} изменён/неполон — оставлен на месте"
+        for name in ambiguous
+    ]
+    if not candidates:
+        return LegacyMigrationResult(None, (), tuple(warnings))
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    backup_root = skills_root.parent / "reviewer-legacy-backups" / stamp
+    moved: list[tuple[Path, Path]] = []
+    try:
+        for item in candidates:
+            target = backup_root / "skills" / item.name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            item.source.replace(target)
+            moved.append((item.source, target))
+    except OSError as exc:
+        for source, target in reversed(moved):
+            source.parent.mkdir(parents=True, exist_ok=True)
+            target.replace(source)
+        warnings.append(f"legacy migration отменена и восстановлена: {exc}")
+        return LegacyMigrationResult(None, (), tuple(warnings))
+    return LegacyMigrationResult(
+        backup_root,
+        tuple(source.name for source, target in moved),
+        tuple(warnings),
+    )
+
+
+@dataclass(frozen=True)
 class CodexInstallResult:
     plan: CodexPluginPlan
     verification: SnapshotVerification | None
@@ -820,11 +929,8 @@ def run_codex_install(
             ) from exc
         if options.include_mcp:
             _verify_mcp_config(generic, mcp_config, options.mcp_version)
-        migration = (
-            legacy_migrator(codex_home / "skills", verification.plugin_root)
-            if legacy_migrator is not None
-            else empty_migration
-        )
+        migrator = legacy_migrator or migrate_legacy_skills
+        migration = migrator(codex_home / "skills", verification.plugin_root)
         return CodexInstallResult(
             plan,
             verification,
