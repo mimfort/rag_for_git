@@ -333,7 +333,7 @@ The MCP entry format by tool (macOS/Linux — use `reviewer install` on Windows)
 }
 ```
 
-**Kimi Code / Cursor / Gemini CLI / Codex CLI / Trae / Claude Desktop / Windsurf / Antigravity** (standard `mcpServers` JSON):
+**Kimi Code / Cursor / Gemini CLI / Trae / Claude Desktop / Windsurf / Antigravity** (standard `mcpServers` JSON):
 ```json
 {
   "mcpServers": {
