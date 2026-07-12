@@ -88,7 +88,10 @@ def _payload_bytes(path: Path, plugin_root: Path) -> bytes:
 def payload_digest(plugin_root: Path) -> str:
     _reject_symlink_tree(plugin_root, "plugin payload")
     digest = hashlib.sha256()
-    files = sorted(path for path in plugin_root.rglob("*") if path.is_file())
+    files = sorted(
+        (path for path in plugin_root.rglob("*") if path.is_file()),
+        key=lambda path: path.relative_to(plugin_root).parts,
+    )
     for path in files:
         rel = path.relative_to(plugin_root)
         if any(part in _FORBIDDEN_PAYLOAD_PARTS for part in rel.parts):

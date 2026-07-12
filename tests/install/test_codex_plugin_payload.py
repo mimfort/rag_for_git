@@ -1,5 +1,7 @@
+import hashlib
 import json
-from pathlib import Path
+import subprocess
+from pathlib import Path, PurePosixPath
 
 from reviewer.install_codex import (
     expected_plugin_version,
@@ -70,6 +72,78 @@ def test_payload_digest_frames_file_boundaries(tmp_path):
     (two_files / "b").write_bytes(b"second")
 
     assert payload_digest(one_file) != payload_digest(two_files)
+
+
+def test_payload_digest_orders_files_by_relative_path_parts(tmp_path, monkeypatch):
+    plugin = tmp_path / "plugin"
+    plugin.mkdir()
+
+    class WindowsComparablePath:
+        def __init__(self, relative: str, content: bytes):
+            self.relative = PurePosixPath(relative)
+            self.content = content
+
+        def is_file(self):
+            return True
+
+        def relative_to(self, root):
+            assert root == plugin
+            return self.relative
+
+        def read_bytes(self):
+            return self.content
+
+        def __lt__(self, other):
+            return self.relative.as_posix().casefold() < other.relative.as_posix().casefold()
+
+    files = [
+        WindowsComparablePath(".claude/settings.json", b"settings"),
+        WindowsComparablePath(".claude-plugin/plugin.json", b"plugin"),
+        WindowsComparablePath("README.md", b"readme"),
+        WindowsComparablePath("assets/icon.svg", b"icon"),
+    ]
+
+    def rglob(self, pattern):
+        assert self == plugin
+        assert pattern == "*"
+        return files
+
+    monkeypatch.setattr(Path, "rglob", rglob)
+
+    digest = hashlib.sha256()
+    for relative, content in (
+        (".claude/settings.json", b"settings"),
+        (".claude-plugin/plugin.json", b"plugin"),
+        ("README.md", b"readme"),
+        ("assets/icon.svg", b"icon"),
+    ):
+        relative_bytes = relative.encode()
+        digest.update(len(relative_bytes).to_bytes(8, "big"))
+        digest.update(relative_bytes)
+        digest.update(len(content).to_bytes(8, "big"))
+        digest.update(content)
+
+    assert payload_digest(plugin) == digest.hexdigest()[:12]
+
+
+def test_real_payload_declares_lf_checkout_policy():
+    paths = (
+        "assets/icon.svg",
+        "plugin/.codex-plugin/plugin.json",
+        "plugin/README.md",
+        "plugin/assets/icon.svg",
+        "plugin/hooks/brief_cost.py",
+    )
+
+    result = subprocess.run(
+        ("git", "check-attr", "eol", "--", *paths),
+        cwd=ROOT,
+        capture_output=True,
+        check=True,
+        text=True,
+    )
+
+    assert result.stdout.splitlines() == [f"{path}: eol: lf" for path in paths]
 
 
 def test_check_rejects_canonical_manifest_with_mcp_servers(tmp_path):
