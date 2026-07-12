@@ -1,9 +1,11 @@
 import json
+import os
 import shutil
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+import reviewer.install_codex as codex_install
 
 from reviewer.install_codex import (
     CodexInstallError,
@@ -876,8 +878,8 @@ def test_snapshot_rejects_missing_skills_directory_with_runtime_error(tmp_path):
 
 def test_run_codex_install_fresh_updates_mcp_and_plugin(tmp_path, monkeypatch):
     repo = Path(__file__).resolve().parents[2]
-    fake = FakeCodex(tmp_path / "bin/codex", repo)
     codex_home = tmp_path / "Codex Home"
+    fake = FakeCodex(tmp_path / "bin/codex", repo, codex_home)
     config = codex_home / "config.toml"
     config.parent.mkdir(parents=True)
     config.write_text("[other]\nvalue = 1\n")
@@ -899,10 +901,11 @@ def test_run_codex_install_fresh_updates_mcp_and_plugin(tmp_path, monkeypatch):
 
 def test_run_codex_install_dry_run_has_no_mutating_calls(tmp_path, monkeypatch):
     repo = Path(__file__).resolve().parents[2]
-    fake = FakeCodex(tmp_path / "codex", repo)
+    codex_home = tmp_path / "home"
+    fake = FakeCodex(tmp_path / "codex", repo, codex_home)
     monkeypatch.setattr("reviewer.install.shutil.which", lambda name: "/opt/uvx")
     result = run_codex_install(
-        CodexInstallOptions(dry_run=True, codex_home=tmp_path / "home"),
+        CodexInstallOptions(dry_run=True, codex_home=codex_home),
         runner=fake,
         which=lambda name: str(fake.executable),
     )
@@ -924,9 +927,9 @@ def test_run_codex_install_dry_run_has_no_mutating_calls(tmp_path, monkeypatch):
 
 def test_plugin_add_failure_restores_exact_config(tmp_path, monkeypatch):
     repo = Path(__file__).resolve().parents[2]
-    fake = FakeCodex(tmp_path / "codex", repo)
-    fake.fail = ("plugin", "add")
     codex_home = tmp_path / "home"
+    fake = FakeCodex(tmp_path / "codex", repo, codex_home)
+    fake.fail = ("plugin", "add")
     config = codex_home / "config.toml"
     config.parent.mkdir(parents=True)
     original = "# exact\n[other]\nvalue = 'keep'\n"
@@ -945,8 +948,8 @@ def test_plugin_add_failure_restores_exact_config(tmp_path, monkeypatch):
 def test_invalid_marketplace_snapshot_restores_config(tmp_path, monkeypatch):
     empty_snapshot = tmp_path / "invalid snapshot"
     empty_snapshot.mkdir()
-    fake = FakeCodex(tmp_path / "codex", empty_snapshot)
     codex_home = tmp_path / "home"
+    fake = FakeCodex(tmp_path / "codex", empty_snapshot, codex_home)
     config = codex_home / "config.toml"
     config.parent.mkdir(parents=True)
     original = "[other]\nvalue = 1\n"
@@ -963,9 +966,9 @@ def test_invalid_marketplace_snapshot_restores_config(tmp_path, monkeypatch):
 
 def test_marketplace_add_failure_restores_config(tmp_path, monkeypatch):
     repo = Path(__file__).resolve().parents[2]
-    fake = FakeCodex(tmp_path / "codex", repo)
-    fake.fail = ("plugin", "marketplace", "add")
     codex_home = tmp_path / "home"
+    fake = FakeCodex(tmp_path / "codex", repo, codex_home)
+    fake.fail = ("plugin", "marketplace", "add")
     config = codex_home / "config.toml"
     config.parent.mkdir(parents=True)
     original = "[other]\nvalue = 1\n"
@@ -982,8 +985,8 @@ def test_marketplace_add_failure_restores_config(tmp_path, monkeypatch):
 
 def test_mcp_write_failure_restores_config_and_skips_plugin_add(tmp_path, monkeypatch):
     repo = Path(__file__).resolve().parents[2]
-    fake = FakeCodex(tmp_path / "codex", repo)
     codex_home = tmp_path / "home"
+    fake = FakeCodex(tmp_path / "codex", repo, codex_home)
     config = codex_home / "config.toml"
     config.parent.mkdir(parents=True)
     original = "[other]\nvalue = 1\n"
@@ -1009,9 +1012,8 @@ def test_mcp_write_failure_restores_config_and_skips_plugin_add(tmp_path, monkey
 def test_post_verification_failure_restores_previous_selection(tmp_path, monkeypatch):
     repo = Path(__file__).resolve().parents[2]
     exe = tmp_path / "codex"
-    fake = FakeCodex(exe, repo)
-    fake.marketplace = True
     codex_home = tmp_path / "home"
+    fake = FakeCodex(exe, repo, codex_home)
     config = codex_home / "config.toml"
     config.parent.mkdir(parents=True)
     original = "[plugins]\nselected = 'old'\n"
@@ -1055,8 +1057,8 @@ def test_ambiguous_refreshed_marketplace_stops_before_mcp_and_plugin(
     tmp_path, monkeypatch
 ):
     repo = Path(__file__).resolve().parents[2]
-    fake = FakeCodex(tmp_path / "codex", repo)
     codex_home = tmp_path / "home"
+    fake = FakeCodex(tmp_path / "codex", repo, codex_home)
     config = codex_home / "config.toml"
     config.parent.mkdir(parents=True)
     original = b"[other]\nvalue = 1\n"
@@ -1116,10 +1118,9 @@ def test_ambiguous_refreshed_marketplace_stops_before_mcp_and_plugin(
 def test_rollback_state_mismatch_reports_backup(tmp_path, monkeypatch):
     repo = Path(__file__).resolve().parents[2]
     exe = tmp_path / "codex"
-    fake = FakeCodex(exe, repo)
-    fake.marketplace = True
-    fake.fail = ("plugin", "add")
     codex_home = tmp_path / "home"
+    fake = FakeCodex(exe, repo, codex_home)
+    fake.fail = ("plugin", "add")
     config = codex_home / "config.toml"
     config.parent.mkdir(parents=True)
     original = b"# exact bytes\n[plugins]\nselected = 'old'\n"
@@ -1163,3 +1164,204 @@ def test_rollback_state_mismatch_reports_backup(tmp_path, monkeypatch):
     assert "config.toml.rag-reviewer." in message
     assert ".bak" in message
     assert config.read_bytes() == original
+
+
+def test_default_runner_receives_effective_codex_home_without_global_mutation(
+    tmp_path, monkeypatch
+):
+    ambient_home = tmp_path / "ambient"
+    effective_home = tmp_path / "effective"
+    captured: list[dict[str, object]] = []
+
+    def fake_run(argv, **kwargs):
+        captured.append(kwargs)
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setenv("CODEX_HOME", str(ambient_home))
+    monkeypatch.setattr("reviewer.install_codex.subprocess.run", fake_run)
+
+    runner = codex_install._runner_for_codex_home(
+        codex_install.subprocess_runner, effective_home
+    )
+    runner(("codex", "plugin", "--help"))
+
+    assert captured[0]["env"] is not os.environ
+    assert captured[0]["env"]["CODEX_HOME"] == str(effective_home)
+    assert os.environ["CODEX_HOME"] == str(ambient_home)
+
+
+def test_distinct_mcp_target_and_effective_home_restore_exact_bytes(
+    tmp_path, monkeypatch
+):
+    repo = Path(__file__).resolve().parents[2]
+    effective_home = tmp_path / "effective-home"
+    effective_config = effective_home / "config.toml"
+    mcp_path = tmp_path / "mcp-only.toml"
+    effective_original = b"[other]\nvalue = 'effective'\n"
+    mcp_original = b"[other]\nvalue = 'mcp'\n"
+    effective_home.mkdir()
+    effective_config.write_bytes(effective_original)
+    mcp_path.write_bytes(mcp_original)
+    fake = FakeCodex(tmp_path / "codex", repo, effective_home)
+    fake.fail = ("plugin", "add")
+    monkeypatch.setattr("reviewer.install.shutil.which", lambda name: "/opt/uvx")
+
+    with pytest.raises(CodexInstallError, match="plugin add"):
+        run_codex_install(
+            CodexInstallOptions(codex_home=effective_home, mcp_path=mcp_path),
+            runner=fake,
+            which=lambda name: str(fake.executable),
+        )
+
+    assert effective_config.read_bytes() == effective_original
+    assert mcp_path.read_bytes() == mcp_original
+    assert list(effective_home.glob("config.toml.rag-reviewer.*.bak"))
+    assert list(tmp_path.glob("mcp-only.toml.rag-reviewer.*.bak"))
+
+
+def test_distinct_mcp_target_exposes_both_transaction_backups(tmp_path, monkeypatch):
+    repo = Path(__file__).resolve().parents[2]
+    effective_home = tmp_path / "effective-home"
+    effective_config = effective_home / "config.toml"
+    mcp_path = tmp_path / "mcp-only.toml"
+    effective_original = b"[other]\nvalue = 'effective'\n"
+    mcp_original = b"[other]\nvalue = 'mcp'\n"
+    effective_home.mkdir()
+    effective_config.write_bytes(effective_original)
+    mcp_path.write_bytes(mcp_original)
+    fake = FakeCodex(tmp_path / "codex", repo, effective_home)
+    monkeypatch.setattr("reviewer.install.shutil.which", lambda name: "/opt/uvx")
+
+    result = run_codex_install(
+        CodexInstallOptions(codex_home=effective_home, mcp_path=mcp_path),
+        runner=fake,
+        which=lambda name: str(fake.executable),
+    )
+
+    assert result.config_backup == result.config_backups[0]
+    assert len(result.config_backups) == 2
+    assert {path.read_bytes() for path in result.config_backups} == {
+        effective_original,
+        mcp_original,
+    }
+
+
+def test_plugin_mcp_clobber_is_verified_and_rolled_back(tmp_path, monkeypatch):
+    repo = Path(__file__).resolve().parents[2]
+    codex_home = tmp_path / "home"
+    config = codex_home / "config.toml"
+    codex_home.mkdir()
+    original = b"[other]\nvalue = 1\n"
+    config.write_bytes(original)
+    fake = FakeCodex(tmp_path / "codex", repo, codex_home)
+    fake.clobber_mcp_on_plugin_add = True
+    monkeypatch.setattr("reviewer.install.shutil.which", lambda name: "/opt/uvx")
+
+    with pytest.raises(CodexInstallError) as exc_info:
+        run_codex_install(
+            CodexInstallOptions(codex_home=codex_home),
+            runner=fake,
+            which=lambda name: str(fake.executable),
+        )
+
+    assert exc_info.value.phase == "MCP config verification"
+    assert config.read_bytes() == original
+    assert any(
+        call[1:3] == ("plugin", "add") and call[-1:] != ("--help",)
+        for call in fake.calls
+    )
+
+
+@pytest.mark.parametrize("mode", ("noop", "partial"))
+def test_rollback_rejects_nonexact_config_restore(tmp_path, monkeypatch, mode):
+    repo = Path(__file__).resolve().parents[2]
+    codex_home = tmp_path / "home"
+    config = codex_home / "config.toml"
+    codex_home.mkdir()
+    original = b"[other]\nvalue = 1\n"
+    config.write_bytes(original)
+    fake = FakeCodex(tmp_path / "codex", repo, codex_home)
+    fake.fail = ("plugin", "add")
+    monkeypatch.setattr("reviewer.install.shutil.which", lambda name: "/opt/uvx")
+
+    def incomplete_restore(snapshot):
+        if mode == "partial":
+            snapshot.path.write_bytes(snapshot.content + b"# partial restore\n")
+
+    monkeypatch.setattr("reviewer.install_codex._restore_config", incomplete_restore)
+
+    with pytest.raises(RuntimeError, match="config rollback failed") as exc_info:
+        run_codex_install(
+            CodexInstallOptions(codex_home=codex_home, include_mcp=False),
+            runner=fake,
+            which=lambda name: str(fake.executable),
+        )
+
+    assert "config.toml.rag-reviewer." in str(exc_info.value)
+
+
+def test_rollback_removes_new_effective_and_mcp_config_files(tmp_path, monkeypatch):
+    repo = Path(__file__).resolve().parents[2]
+    effective_home = tmp_path / "effective-home"
+    mcp_path = tmp_path / "mcp-only.toml"
+    fake = FakeCodex(tmp_path / "codex", repo, effective_home)
+    fake.fail = ("plugin", "add")
+    monkeypatch.setattr("reviewer.install.shutil.which", lambda name: "/opt/uvx")
+
+    with pytest.raises(CodexInstallError, match="plugin add"):
+        run_codex_install(
+            CodexInstallOptions(codex_home=effective_home, mcp_path=mcp_path),
+            runner=fake,
+            which=lambda name: str(fake.executable),
+        )
+
+    assert not (effective_home / "config.toml").exists()
+    assert not mcp_path.exists()
+
+
+def test_malformed_refreshed_marketplace_has_ownership_error_phase(
+    tmp_path, monkeypatch
+):
+    repo = Path(__file__).resolve().parents[2]
+    codex_home = tmp_path / "home"
+    config = codex_home / "config.toml"
+    codex_home.mkdir()
+    original = b"[other]\nvalue = 1\n"
+    config.write_bytes(original)
+    fake = FakeCodex(tmp_path / "codex", repo, codex_home)
+    fake.malformed_marketplace_after_mutation = True
+    applied = []
+    monkeypatch.setattr("reviewer.install.shutil.which", lambda name: "/opt/uvx")
+    monkeypatch.setattr("reviewer.install.apply_plan", lambda plan: applied.append(plan))
+
+    with pytest.raises(CodexInstallError) as exc_info:
+        run_codex_install(
+            CodexInstallOptions(codex_home=codex_home),
+            runner=fake,
+            which=lambda name: str(fake.executable),
+        )
+
+    error = exc_info.value
+    assert error.phase == "marketplace ownership verification"
+    assert error.argv[1:4] == ("plugin", "marketplace", "add")
+    assert "marketplaceSource must be an object" in error.detail
+    assert config.read_bytes() == original
+    assert applied == []
+    assert not any(
+        call[1:3] == ("plugin", "add") and call[-1:] != ("--help",)
+        for call in fake.calls
+    )
+
+
+def test_snapshot_backup_names_are_unique_and_exclusive(tmp_path):
+    config = tmp_path / "config.toml"
+    original = b"# original bytes\n"
+    config.write_bytes(original)
+
+    first = codex_install._snapshot_config(config)
+    first.backup_path.write_bytes(b"first backup sentinel")
+    second = codex_install._snapshot_config(config)
+
+    assert first.backup_path != second.backup_path
+    assert first.backup_path.read_bytes() == b"first backup sentinel"
+    assert second.backup_path.read_bytes() == original

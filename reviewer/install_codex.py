@@ -8,6 +8,7 @@ import shutil
 import stat
 import subprocess
 import tomllib
+from uuid import uuid4
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -248,8 +249,12 @@ class CodexPluginPlan:
     plugin_argv: tuple[str, ...]
 
 
-def subprocess_runner(argv: tuple[str, ...]) -> CommandResult:
-    completed = subprocess.run(argv, capture_output=True, text=True, check=False)
+def subprocess_runner(
+    argv: tuple[str, ...], *, env: dict[str, str] | None = None
+) -> CommandResult:
+    completed = subprocess.run(
+        argv, capture_output=True, text=True, check=False, env=env
+    )
     return CommandResult(argv, completed.returncode, completed.stdout, completed.stderr)
 
 
@@ -592,6 +597,7 @@ class CodexInstallResult:
     migration: LegacyMigrationResult
     warnings: tuple[str, ...]
     mcp_preview: str | None = None
+    config_backups: tuple[Path, ...] = ()
 
 
 def _checked(runner: Runner, argv: tuple[str, ...], phase: str) -> dict:
@@ -611,9 +617,23 @@ def _snapshot_config(path: Path) -> ConfigSnapshot:
     existed = path.exists()
     content = path.read_bytes() if existed else b""
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    backup = path.with_name(path.name + f".rag-reviewer.{stamp}.bak")
-    backup.parent.mkdir(parents=True, exist_ok=True)
-    backup.write_bytes(content)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    while True:
+        backup = path.with_name(
+            path.name + f".rag-reviewer.{stamp}.{uuid4().hex}.bak"
+        )
+        try:
+            with backup.open("xb") as backup_file:
+                backup_file.write(content)
+        except FileExistsError:
+            continue
+        break
+    try:
+        backup_content = backup.read_bytes()
+    except OSError as exc:
+        raise RuntimeError(f"config backup cannot be verified: {backup}") from exc
+    if backup_content != content:
+        raise RuntimeError(f"config backup bytes do not match: {backup}")
     return ConfigSnapshot(path, existed, content, backup)
 
 
@@ -621,15 +641,86 @@ def _restore_config(snapshot: ConfigSnapshot) -> None:
     if snapshot.existed:
         snapshot.path.parent.mkdir(parents=True, exist_ok=True)
         snapshot.path.write_bytes(snapshot.content)
-    elif snapshot.path.exists():
+    else:
+        try:
+            snapshot.path.lstat()
+        except FileNotFoundError:
+            return
         snapshot.path.unlink()
+
+
+def _restore_configs(snapshots: tuple[ConfigSnapshot, ...]) -> None:
+    for snapshot in reversed(snapshots):
+        _restore_config(snapshot)
+
+
+def _verify_restored_configs(snapshots: tuple[ConfigSnapshot, ...]) -> None:
+    for snapshot in snapshots:
+        if snapshot.existed:
+            try:
+                actual = snapshot.path.read_bytes()
+            except OSError as exc:
+                raise RuntimeError(
+                    f"config rollback cannot read {snapshot.path}"
+                ) from exc
+            if actual != snapshot.content:
+                raise RuntimeError(
+                    f"config rollback bytes do not match {snapshot.path}"
+                )
+            continue
+        try:
+            snapshot.path.lstat()
+        except FileNotFoundError:
+            continue
+        raise RuntimeError(f"config rollback must remove {snapshot.path}")
+
+
+def _backup_paths(snapshots: tuple[ConfigSnapshot, ...]) -> str:
+    return ", ".join(str(snapshot.backup_path) for snapshot in snapshots)
 
 
 def _codex_home(options: CodexInstallOptions) -> Path:
     if options.codex_home is not None:
-        return options.codex_home
+        return Path(os.path.abspath(options.codex_home.expanduser()))
     configured = os.environ.get("CODEX_HOME")
-    return Path(configured).expanduser() if configured else Path.home() / ".codex"
+    home = Path(configured).expanduser() if configured else Path.home() / ".codex"
+    return Path(os.path.abspath(home))
+
+
+def _mcp_config_path(options: CodexInstallOptions, effective_config: Path) -> Path:
+    if not options.include_mcp or options.mcp_path is None:
+        return effective_config
+    return Path(os.path.abspath(options.mcp_path.expanduser()))
+
+
+def _runner_for_codex_home(runner: Runner, codex_home: Path) -> Runner:
+    if runner is not subprocess_runner:
+        return runner
+    environment = dict(os.environ)
+    environment["CODEX_HOME"] = str(codex_home)
+
+    def effective_runner(argv: tuple[str, ...]) -> CommandResult:
+        return subprocess_runner(argv, env=environment)
+
+    return effective_runner
+
+
+def _verify_mcp_config(
+    generic: Any, config_path: Path, version: str
+) -> None:
+    try:
+        final_plan = generic.build_plan(
+            generic.CLIENTS["codex"], version=version, path_override=str(config_path)
+        )
+        actual = final_plan.path.read_bytes()
+    except (OSError, UnicodeError, ValueError) as exc:
+        raise CodexInstallError("MCP config verification", (), str(exc)) from exc
+    if actual != final_plan.content.encode("utf-8"):
+        raise CodexInstallError(
+            "MCP config verification",
+            (),
+            "reviewer MCP table is missing or differs from canonical configuration",
+        )
 
 
 def _verified_installed(state: CodexPluginState, expected_version: str) -> None:
@@ -655,27 +746,41 @@ def run_codex_install(
 ) -> CodexInstallResult:
     from reviewer import install as generic
 
+    codex_home = _codex_home(options)
+    effective_runner = _runner_for_codex_home(runner, codex_home)
     executable = find_codex_executable(which)
-    detect_codex_capabilities(executable, runner)
-    state = read_codex_state(executable, runner)
+    detect_codex_capabilities(executable, effective_runner)
+    state = read_codex_state(executable, effective_runner)
     plan = build_codex_plugin_plan(state, options)
     empty_migration = LegacyMigrationResult(None, (), ())
-    codex_home = _codex_home(options)
-    config_path = options.mcp_path or (codex_home / "config.toml")
+    effective_config = codex_home / "config.toml"
+    mcp_config = _mcp_config_path(options, effective_config)
     mcp_preview = None
     if options.include_mcp:
         mcp_preview = generic.build_plan(
             generic.CLIENTS["codex"],
             version=options.mcp_version,
-            path_override=str(config_path),
+            path_override=str(mcp_config),
         ).content
     if options.dry_run:
         return CodexInstallResult(plan, None, None, empty_migration, (), mcp_preview)
 
-    snapshot = _snapshot_config(config_path)
+    snapshot_paths = [effective_config]
+    if options.include_mcp and mcp_config != effective_config:
+        snapshot_paths.append(mcp_config)
+    snapshots = tuple(_snapshot_config(path) for path in snapshot_paths)
     try:
-        _checked(runner, plan.marketplace_argv, f"marketplace {plan.marketplace_action}")
-        refreshed = read_codex_state(executable, runner)
+        _checked(
+            effective_runner,
+            plan.marketplace_argv,
+            f"marketplace {plan.marketplace_action}",
+        )
+        try:
+            refreshed = read_codex_state(executable, effective_runner)
+        except Exception as exc:
+            raise CodexInstallError(
+                "marketplace ownership verification", plan.marketplace_argv, str(exc)
+            ) from exc
         if refreshed.marketplace is None or not marketplace_is_owned(
             refreshed.marketplace
         ):
@@ -698,13 +803,13 @@ def run_codex_install(
                 mcp_plan = generic.build_plan(
                     generic.CLIENTS["codex"],
                     version=options.mcp_version,
-                    path_override=str(config_path),
+                    path_override=str(mcp_config),
                 )
                 generic.apply_plan(mcp_plan)
-            except (OSError, ValueError) as exc:
+            except (OSError, UnicodeError, ValueError) as exc:
                 raise CodexInstallError("MCP config update", (), str(exc)) from exc
-        _checked(runner, plan.plugin_argv, "plugin add")
-        installed = read_codex_state(executable, runner)
+        _checked(effective_runner, plan.plugin_argv, "plugin add")
+        installed = read_codex_state(executable, effective_runner)
         try:
             _verified_installed(installed, verification.version)
         except RuntimeError as exc:
@@ -713,6 +818,8 @@ def run_codex_install(
                 (str(executable), "plugin", "list", "--available", "--json"),
                 str(exc),
             ) from exc
+        if options.include_mcp:
+            _verify_mcp_config(generic, mcp_config, options.mcp_version)
         migration = (
             legacy_migrator(codex_home / "skills", verification.plugin_root)
             if legacy_migrator is not None
@@ -721,22 +828,25 @@ def run_codex_install(
         return CodexInstallResult(
             plan,
             verification,
-            snapshot.backup_path,
+            snapshots[0].backup_path,
             migration,
             migration.warnings,
             mcp_preview,
+            tuple(snapshot.backup_path for snapshot in snapshots),
         )
-    except Exception as original_error:
+    except Exception:
         try:
-            _restore_config(snapshot)
-            rolled_back = read_codex_state(executable, runner)
+            _restore_configs(snapshots)
+            _verify_restored_configs(snapshots)
+            rolled_back = read_codex_state(executable, effective_runner)
             if rolled_back.plugin != state.plugin:
                 raise RuntimeError(
                     "config rollback не восстановил предыдущую plugin selection; "
-                    f"backup: {snapshot.backup_path}"
+                    f"backups: {_backup_paths(snapshots)}"
                 )
         except Exception as restore_error:
             raise RuntimeError(
-                f"config rollback failed; backup: {snapshot.backup_path}: {restore_error}"
+                "config rollback failed; "
+                f"backups: {_backup_paths(snapshots)}: {restore_error}"
             ) from restore_error
-        raise original_error
+        raise
