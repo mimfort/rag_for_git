@@ -3,8 +3,11 @@ import tomllib
 from pathlib import Path
 
 import pytest
+from click.testing import CliRunner
 
+import reviewer.entrypoints.cli as cli_module
 from reviewer import install as inst
+from reviewer.entrypoints.cli import cli
 
 
 def _write_text(path: Path, content: str) -> None:
@@ -438,6 +441,158 @@ def _make_tarball(members: dict[str, bytes]) -> bytes:
             info.size = len(data)
             tf.addfile(info, io.BytesIO(data))
     return buf.getvalue()
+
+
+def test_install_all_clients_registry_preserves_configs_and_skills(monkeypatch, tmp_path):
+    """Каждый конфиговый клиент сохраняет диалект и чужие настройки."""
+    home = tmp_path / "home"
+    system = "Linux"
+    fake_uvx = str((tmp_path / "bin" / "uvx").resolve())
+    fake_claude = str((tmp_path / "bin" / "claude").resolve())
+    generic = [
+        client
+        for client in inst.CLIENTS.values()
+        if client.scope == "user" and client.key != "codex"
+    ]
+    top_keys = {
+        "mcpServers": "mcpServers",
+        "vscode": "servers",
+        "mimo": "mcp",
+        "opencode": "mcp",
+    }
+    paths: dict[str, Path] = {}
+
+    monkeypatch.setattr(inst, "_home", lambda: home)
+    monkeypatch.setattr(inst.platform, "system", lambda: system)
+    for client in generic:
+        path = client.path_fn(system)
+        paths[client.key] = path
+        path.parent.mkdir(parents=True)
+        top_key = top_keys[client.dialect]
+        if client.dialect == "mimo":
+            other = {"type": "local", "command": ["other"], "enabled": False}
+        elif client.dialect == "opencode":
+            other = {"type": "local", "command": ["other"]}
+        else:
+            other = {"command": "other"}
+        _write_text(
+            path,
+            json.dumps(
+                {"unrelated": {"owner": client.key}, top_key: {"other": other}}
+            ),
+        )
+
+    def which(name: str) -> str | None:
+        if name == "uvx":
+            return fake_uvx
+        if name == "claude":
+            return fake_claude
+        return None
+
+    claude_calls: list[dict[str, object]] = []
+    codex_calls: list[dict[str, object]] = []
+    allowlist_calls: list[dict[str, object]] = []
+    fetched: list[None] = []
+    skills_tarball = _make_tarball(
+        {
+            "rag_for_git-main/plugin/skills/review-pr/SKILL.md": b"# review\n",
+            "rag_for_git-main/plugin/skills/review-pr/references/info.md": b"info\n",
+        }
+    )
+    monkeypatch.setattr(
+        inst,
+        "detect_installed",
+        lambda: [*generic, inst.CLIENTS["codex"]],
+    )
+    monkeypatch.setattr(inst.shutil, "which", which)
+    monkeypatch.setattr(
+        cli_module,
+        "_run_claude_target",
+        lambda **kwargs: claude_calls.append(kwargs) or object(),
+    )
+    monkeypatch.setattr(cli_module, "_print_claude_result", lambda result: None)
+    monkeypatch.setattr(
+        cli_module,
+        "_apply_claude_allowlist",
+        lambda *args, **kwargs: allowlist_calls.append(kwargs),
+    )
+    monkeypatch.setattr(
+        cli_module,
+        "_run_codex_target",
+        lambda **kwargs: codex_calls.append(kwargs) or object(),
+    )
+    monkeypatch.setattr(cli_module, "_print_codex_result", lambda result: None)
+
+    def fetch_archive():
+        fetched.append(None)
+        return skills_tarball, '"test-etag"'
+
+    monkeypatch.setattr(inst, "fetch_skills_archive", fetch_archive)
+
+    runner = CliRunner()
+    first = runner.invoke(cli, ["install", "--all"])
+    assert first.exit_code == 0, first.output
+    first_contents = {key: path.read_bytes() for key, path in paths.items()}
+
+    second = runner.invoke(cli, ["install", "--all"])
+    assert second.exit_code == 0, second.output
+    assert {key: path.read_bytes() for key, path in paths.items()} == first_contents
+
+    assert claude_calls == [{"dry_run": False}, {"dry_run": False}]
+    assert allowlist_calls == [{"dry_run": False}, {"dry_run": False}]
+    assert codex_calls == [
+        {"include_mcp": True, "dry_run": False, "version": "latest", "path_opt": None},
+        {"include_mcp": True, "dry_run": False, "version": "latest", "path_opt": None},
+    ]
+    assert len(fetched) == 2
+
+    expected_args = ["--from", "rag-reviewer@latest", "reviewer-mcp"]
+    for client in generic:
+        raw = paths[client.key].read_text(encoding="utf-8")
+        data = json.loads(raw)
+        section = data[top_keys[client.dialect]]
+        assert raw.count('"reviewer"') == 1
+        assert data["unrelated"] == {"owner": client.key}
+        assert section["other"]["command"] == (
+            ["other"] if client.dialect in {"mimo", "opencode"} else "other"
+        )
+        assert list(section).count("reviewer") == 1
+        if client.dialect in {"mcpServers", "vscode"}:
+            assert section["reviewer"] == {
+                "command": fake_uvx,
+                "args": expected_args,
+            }
+        elif client.dialect == "mimo":
+            assert section["reviewer"] == {
+                "type": "local",
+                "command": [fake_uvx, *expected_args],
+                "enabled": True,
+            }
+        else:
+            assert section["reviewer"] == {
+                "type": "local",
+                "command": [fake_uvx, *expected_args],
+            }
+
+    cursor_path = paths["cursor"]
+    vscode_path = paths["vscode"]
+    mimo_path = paths["mimo"]
+    opencode_path = paths["opencode"]
+    assert json.loads(cursor_path.read_text())["mcpServers"]["reviewer"]["args"][-1] == (
+        "reviewer-mcp"
+    )
+    assert json.loads(vscode_path.read_text())["servers"]["reviewer"]["command"] == (
+        fake_uvx
+    )
+    assert json.loads(mimo_path.read_text())["mcp"]["reviewer"]["enabled"] is True
+    assert json.loads(opencode_path.read_text())["mcp"]["reviewer"]["type"] == "local"
+
+    for key in ("gemini", "mimo", "opencode", "kimi"):
+        client = inst.CLIENTS[key]
+        assert client.skills_fn is not None
+        skills_dir = client.skills_fn(system)
+        assert (skills_dir / "review-pr" / "SKILL.md").is_file()
+        assert inst.read_skills_stamp(skills_dir)["source_etag"] == '"test-etag"'
 
 
 def test_extract_skills_basic(tmp_path):
