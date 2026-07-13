@@ -309,14 +309,17 @@ uv tool upgrade rag-reviewer
 }
 ```
 
-**Codex CLI** (`~/.codex/config.toml`):
-```toml
-[mcp_servers.reviewer]
-command = "/bin/bash"
-args = ["-lc", "uvx --from rag-reviewer@latest reviewer-mcp"]
+**Codex CLI**: установите через канонические команды в [AGENTS.md](AGENTS.md), затем проверьте:
+```bash
+codex plugin list --json
+codex mcp list
 ```
 
-После добавления перезапустите инструмент — `reviewer` появится рядом с другими MCP-серверами.
+Успех означает, что `rag-reviewer` установлен и включён, а `codex mcp list` содержит ровно один
+`reviewer`. Идентифицированные legacy skills перемещаются в
+`$CODEX_HOME/reviewer-legacy-backups/<timestamp>`; изменённые и неоднозначные копии остаются на
+месте. При ошибке печатается путь к backup конфига. После установки откройте New Chat/new CLI
+session; в IDE также выполните Reload Window.
 
 #### Claude Code (marketplace)
 
@@ -336,13 +339,16 @@ args = ["-lc", "uvx --from rag-reviewer@latest reviewer-mcp"]
 - `/rag-reviewer:reviewer_pr-walkthrough` — гид по PR для живого ревьюера
 - `/rag-reviewer:reviewer_configure-review` — настройка `.review.yml` и доски задач
 - `/rag-reviewer:reviewer_summarize-subsystems` — построение сводок подсистем (GraphRAG)
+- `/rag-reviewer:reviewer_finish-task` — закрытие задачи после PR
 - **MCP-сервер** `reviewer` с 31 тулом (см. [справочник MCP-тулов](#mcp-тулы-справочник)).
 
 > Команда `/plugin` покажет, что `rag-reviewer` установлен и включён.
 
 #### Глобальная установка скиллов (опционально)
 
-10 скиллов оборачивают MCP-тулы в управляемый сценарий. Без них можно вызывать тулы напрямую,
+Каждый каталог `plugin/skills/` с файлом `SKILL.md` регистрируется в namespace `rag-reviewer`.
+`_common` и вложенные references доставляются как вспомогательные файлы, но не регистрируются как
+скиллы. Эти скиллы оборачивают MCP-тулы в управляемый сценарий. Без них можно вызывать тулы напрямую,
 но скиллы — основная точка входа.
 
 **`reviewer install` уже ставит их** для клиентов с файловыми скиллами (Gemini, Mimo, Kimi, OpenCode).

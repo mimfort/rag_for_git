@@ -35,6 +35,7 @@ htmlcov/
 
 # Superpowers transient
 .superpowers/
+.worktrees/
 
 # Data / artifacts
 *.scip

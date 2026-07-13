@@ -17,7 +17,7 @@ from psycopg_pool import ConnectionPool
 
 log = logging.getLogger(__name__)
 
-_SCHEMA = Path(__file__).with_name("session_store.sql").read_text()
+_SCHEMA = Path(__file__).with_name("session_store.sql").read_text(encoding="utf-8")
 
 
 class SessionStore:

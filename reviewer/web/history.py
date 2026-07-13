@@ -15,7 +15,7 @@ from psycopg_pool import ConnectionPool
 
 log = logging.getLogger(__name__)
 
-_SCHEMA = Path(__file__).with_name("schema.sql").read_text()
+_SCHEMA = Path(__file__).with_name("schema.sql").read_text(encoding="utf-8")
 
 
 class ReviewHistory:

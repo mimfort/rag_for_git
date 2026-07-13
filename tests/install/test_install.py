@@ -1,4 +1,5 @@
 import json
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -6,16 +7,22 @@ import pytest
 from reviewer import install as inst
 
 
+def _write_text(path: Path, content: str) -> None:
+    path.write_text(content, encoding="utf-8", newline="\n")
+
+
 @pytest.fixture
 def fake_uvx(monkeypatch):
     """Детерминированный uvx-путь, чтобы команда запуска не зависела от машины."""
+    path = str(Path("/fake/bin/uvx").resolve())
     monkeypatch.setattr(inst.shutil, "which",
-                        lambda name: "/fake/bin/uvx" if name == "uvx" else None)
+                        lambda name: path if name == "uvx" else None)
+    return path
 
 
 def test_launch_command_latest(fake_uvx):
     cmd, args = inst.launch_command("latest")
-    assert cmd == "/fake/bin/uvx"
+    assert cmd == fake_uvx
     assert args == ["--from", "rag-reviewer@latest", "reviewer-mcp"]
 
 
@@ -25,28 +32,42 @@ def test_launch_command_no_pin(fake_uvx):
 
 
 def test_launch_command_uv_fallback(monkeypatch):
+    path = str(Path("/fake/bin/uv").resolve())
     monkeypatch.setattr(inst.shutil, "which",
-                        lambda name: "/fake/bin/uv" if name == "uv" else None)
+                        lambda name: path if name == "uv" else None)
     cmd, args = inst.launch_command("latest")
-    assert cmd == "/fake/bin/uv"
+    assert cmd == path
     assert args == ["tool", "run", "--from", "rag-reviewer@latest", "reviewer-mcp"]
+
+
+def test_launch_command_makes_relative_which_result_absolute(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        inst.shutil,
+        "which",
+        lambda name: "bin/uvx" if name == "uvx" else None,
+    )
+
+    command, _ = inst.launch_command("latest")
+
+    assert command == str((tmp_path / "bin" / "uvx").resolve())
 
 
 def test_plan_mcpservers_preserves_other(fake_uvx, tmp_path):
     cfg = tmp_path / "mcp.json"
-    cfg.write_text(json.dumps({"mcpServers": {"other": {"command": "x"}}}))
+    _write_text(cfg, json.dumps({"mcpServers": {"other": {"command": "x"}}}))
     plan = inst.build_plan(inst.CLIENTS["cursor"], path_override=str(cfg))
     data = json.loads(plan.content)
     assert data["mcpServers"]["other"] == {"command": "x"}        # чужое сохранено
     entry = data["mcpServers"]["reviewer"]
-    assert entry["command"] == "/fake/bin/uvx"
+    assert entry["command"] == fake_uvx
     assert entry["args"] == ["--from", "rag-reviewer@latest", "reviewer-mcp"]
     assert plan.already is False
 
 
 def test_plan_marks_already(fake_uvx, tmp_path):
     cfg = tmp_path / "mcp.json"
-    cfg.write_text(json.dumps({"mcpServers": {"reviewer": {"command": "old"}}}))
+    _write_text(cfg, json.dumps({"mcpServers": {"reviewer": {"command": "old"}}}))
     plan = inst.build_plan(inst.CLIENTS["cursor"], path_override=str(cfg))
     assert plan.already is True
 
@@ -56,7 +77,7 @@ def test_plan_vscode_uses_servers_key(fake_uvx, tmp_path):
     plan = inst.build_plan(inst.CLIENTS["vscode"], path_override=str(cfg))
     data = json.loads(plan.content)
     assert "servers" in data and "mcpServers" not in data
-    assert data["servers"]["reviewer"]["command"] == "/fake/bin/uvx"
+    assert data["servers"]["reviewer"]["command"] == fake_uvx
 
 
 def test_plan_mimo_array_command(fake_uvx, tmp_path):
@@ -65,7 +86,7 @@ def test_plan_mimo_array_command(fake_uvx, tmp_path):
     entry = json.loads(plan.content)["mcp"]["reviewer"]
     assert entry["type"] == "local"
     assert entry["enabled"] is True
-    assert entry["command"] == ["/fake/bin/uvx", "--from", "rag-reviewer@latest", "reviewer-mcp"]
+    assert entry["command"] == [fake_uvx, "--from", "rag-reviewer@latest", "reviewer-mcp"]
 
 
 def test_plan_opencode_no_enabled(fake_uvx, tmp_path):
@@ -78,20 +99,248 @@ def test_plan_opencode_no_enabled(fake_uvx, tmp_path):
 
 def test_plan_codex_toml_append(fake_uvx, tmp_path):
     cfg = tmp_path / "config.toml"
-    cfg.write_text("[other]\nx = 1\n")
+    _write_text(cfg, "[other]\nx = 1\n")
     plan = inst.build_plan(inst.CLIENTS["codex"], path_override=str(cfg))
     assert "[other]" in plan.content                              # чужое сохранено
     assert "[mcp_servers.reviewer]" in plan.content
-    assert 'command = "/fake/bin/uvx"' in plan.content
+    assert tomllib.loads(plan.content)["mcp_servers"]["reviewer"]["command"] == fake_uvx
     assert '"rag-reviewer@latest"' in plan.content
 
 
-def test_plan_codex_idempotent(fake_uvx, tmp_path):
+def test_render_codex_round_trips_windows_path_and_non_bmp_unicode():
+    command = "C:\\Program Files\\😀\\uvx.exe"
+    args = ["--from", "rag-reviewer@latest", "reviewer-mcp"]
+
+    parsed = tomllib.loads(inst._render_codex(command, args))
+
+    assert parsed["mcp_servers"]["reviewer"] == {
+        "command": command,
+        "args": args,
+    }
+
+
+def test_plan_codex_updates_existing_reviewer_and_preserves_other_toml(fake_uvx, tmp_path):
     cfg = tmp_path / "config.toml"
-    cfg.write_text("[mcp_servers.reviewer]\ncommand = \"old\"\n")
+    original_other = "# keep\n[other]\npath = 'C:\\\\Program Files\\\\Tool'\n\n"
+    _write_text(
+        cfg,
+        original_other
+        + "[mcp_servers.reviewer]\ncommand = \"old\"\nargs = [\"old\"]\n"
+        + "[mcp_servers.reviewer.env]\nOLD = \"1\"\n"
+        + "[tail]\nvalue = 3\n"
+    )
     plan = inst.build_plan(inst.CLIENTS["codex"], path_override=str(cfg))
     assert plan.already is True
-    assert plan.content.count("[mcp_servers.reviewer]") == 1      # не дублируем
+    assert plan.content.startswith(original_other)
+    assert plan.content.count("[mcp_servers.reviewer]") == 1
+    assert tomllib.loads(plan.content)["mcp_servers"]["reviewer"]["command"] == fake_uvx
+    assert "[mcp_servers.reviewer.env]" not in plan.content
+    assert "[tail]\nvalue = 3\n" in plan.content
+
+
+def test_plan_codex_ignores_table_like_lines_in_multiline_strings(fake_uvx, tmp_path):
+    cfg = tmp_path / "config.toml"
+    unrelated = (
+        '[other]\ntext = """\n[mcp_servers.reviewer]\ncommand = "not a table"\n'
+        '[inside]\n"""\n'
+    )
+    _write_text(
+        cfg,
+        unrelated
+        + '[mcp_servers.reviewer]\ncommand = "old"\n'
+        + '[tail]\nvalue = 3\n'
+    )
+
+    plan = inst.build_plan(inst.CLIENTS["codex"], path_override=str(cfg))
+
+    assert plan.content.startswith(unrelated)
+    assert tomllib.loads(plan.content)["other"]["text"].startswith(
+        "[mcp_servers.reviewer]\n"
+    )
+    assert tomllib.loads(plan.content)["tail"] == {"value": 3}
+
+
+def test_plan_codex_handles_four_quote_multiline_string_terminator(fake_uvx, tmp_path):
+    cfg = tmp_path / "config.toml"
+    _write_text(
+        cfg,
+        'values = ["""quoted""""]\n'
+        '[mcp_servers.reviewer]\ncommand = "old"\n'
+    )
+
+    plan = inst.build_plan(inst.CLIENTS["codex"], path_override=str(cfg))
+
+    parsed = tomllib.loads(plan.content)
+    assert parsed["values"] == ['quoted"']
+    assert parsed["mcp_servers"]["reviewer"]["command"] == fake_uvx
+
+
+def test_plan_codex_ignores_brackets_and_table_headers_in_comments(fake_uvx, tmp_path):
+    cfg = tmp_path / "config.toml"
+    unrelated = (
+        "[other]\n"
+        "value = 1  # unmatched [ must not open an array\n"
+        "# [mcp_servers.reviewer]\n"
+    )
+    _write_text(
+        cfg,
+        unrelated
+        + '[mcp_servers.reviewer]\ncommand = "old"\n'
+        + "[tail]\nvalue = 3\n"
+    )
+
+    plan = inst.build_plan(inst.CLIENTS["codex"], path_override=str(cfg))
+
+    assert plan.content.startswith(unrelated)
+    assert tomllib.loads(plan.content)["tail"] == {"value": 3}
+
+
+@pytest.mark.parametrize("separator", ["\u0085", "\u2028", "\u2029"])
+def test_plan_codex_does_not_split_unicode_comment_separators(
+    fake_uvx, tmp_path, separator
+):
+    cfg = tmp_path / "config.toml"
+    original = (
+        f"# retain{separator}[mcp_servers.reviewer]\n"
+        "[other]\n"
+        "value = 1\n"
+    )
+    _write_text(cfg, original)
+
+    plan = inst.build_plan(inst.CLIENTS["codex"], path_override=str(cfg))
+
+    parsed = tomllib.loads(plan.content)
+    assert plan.already is False
+    assert plan.content.startswith(original)
+    assert "command" not in parsed
+    assert parsed["mcp_servers"]["reviewer"]["command"] == fake_uvx
+
+
+def test_plan_codex_stops_reviewer_range_at_array_table(fake_uvx, tmp_path):
+    cfg = tmp_path / "config.toml"
+    unrelated = '[[other]]\nname = "keep"\n'
+    _write_text(cfg, '[mcp_servers.reviewer]\ncommand = "old"\n' + unrelated)
+
+    plan = inst.build_plan(inst.CLIENTS["codex"], path_override=str(cfg))
+
+    assert plan.content.endswith(unrelated)
+    assert tomllib.loads(plan.content)["other"] == [{"name": "keep"}]
+
+
+def test_plan_codex_rejects_reviewer_array_of_tables(fake_uvx, tmp_path):
+    cfg = tmp_path / "config.toml"
+    _write_text(
+        cfg,
+        '[[mcp_servers.reviewer]]\ncommand = "old"\n'
+        '[[tail]]\nname = "keep"\n'
+    )
+
+    with pytest.raises(ValueError, match="массив TOML-таблиц"):
+        inst.build_plan(inst.CLIENTS["codex"], path_override=str(cfg))
+
+
+def test_plan_codex_ignores_nested_array_lines_as_table_headers(fake_uvx, tmp_path):
+    cfg = tmp_path / "config.toml"
+    _write_text(
+        cfg,
+        "[mcp_servers.reviewer]\n"
+        "values = [\n"
+        "  [[1]]\n"
+        "]\n"
+        "[tail]\n"
+        'name = "keep"\n'
+    )
+
+    plan = inst.build_plan(inst.CLIENTS["codex"], path_override=str(cfg))
+
+    parsed = tomllib.loads(plan.content)
+    assert "values" not in parsed["mcp_servers"]["reviewer"]
+    assert parsed["tail"] == {"name": "keep"}
+
+
+def test_plan_codex_removes_spaced_dotted_reviewer_child(fake_uvx, tmp_path):
+    cfg = tmp_path / "config.toml"
+    _write_text(
+        cfg,
+        '[mcp_servers.reviewer]\ncommand = "old"\n'
+        + '[mcp_servers . reviewer . env]\nOLD = "1"\n'
+        + '[tail]\nvalue = 3\n'
+    )
+
+    plan = inst.build_plan(inst.CLIENTS["codex"], path_override=str(cfg))
+
+    assert "OLD" not in plan.content
+    assert tomllib.loads(plan.content)["mcp_servers"]["reviewer"] == {
+        "command": fake_uvx,
+        "args": ["--from", "rag-reviewer@latest", "reviewer-mcp"],
+    }
+
+
+def test_plan_codex_replaces_quoted_reviewer_key_paths(fake_uvx, tmp_path):
+    cfg = tmp_path / "config.toml"
+    _write_text(
+        cfg,
+        '["mcp_servers" . "reviewer"]\ncommand = "old"\n'
+        + "['mcp_servers' . 'reviewer' . 'env']\nOLD = \"1\"\n"
+        + '[tail]\nvalue = 3\n'
+    )
+
+    plan = inst.build_plan(inst.CLIENTS["codex"], path_override=str(cfg))
+
+    assert plan.already is True
+    assert "OLD" not in plan.content
+    assert tomllib.loads(plan.content)["tail"] == {"value": 3}
+
+
+def test_plan_codex_rejects_inline_reviewer_table(fake_uvx, tmp_path):
+    cfg = tmp_path / "config.toml"
+    _write_text(cfg, 'mcp_servers = { reviewer = { command = "old" } }\n')
+    with pytest.raises(ValueError, match="inline"):
+        inst.build_plan(inst.CLIENTS["codex"], path_override=str(cfg))
+
+
+@pytest.mark.parametrize("raw", [
+    'mcp_servers = { other = { command = "keep" } }\n',
+    "mcp_servers = {}\n",
+    "mcp_servers = []\n",
+    'mcp_servers = "sealed"\n',
+])
+def test_plan_codex_rejects_incompatible_mcp_servers_parent(fake_uvx, tmp_path, raw):
+    cfg = tmp_path / "config.toml"
+    _write_text(cfg, raw)
+
+    with pytest.raises(ValueError, match="mcp_servers"):
+        inst.build_plan(inst.CLIENTS["codex"], path_override=str(cfg))
+
+
+def test_plan_codex_extends_regular_mcp_servers_table(fake_uvx, tmp_path):
+    cfg = tmp_path / "config.toml"
+    _write_text(cfg, '[mcp_servers.other]\ncommand = "keep"\n')
+
+    plan = inst.build_plan(inst.CLIENTS["codex"], path_override=str(cfg))
+
+    parsed = tomllib.loads(plan.content)["mcp_servers"]
+    assert parsed["other"] == {"command": "keep"}
+    assert parsed["reviewer"]["command"] == fake_uvx
+
+
+def test_plan_codex_rejects_invalid_toml(fake_uvx, tmp_path):
+    cfg = tmp_path / "config.toml"
+    _write_text(cfg, "[broken\n")
+    with pytest.raises(ValueError, match="невалидный TOML"):
+        inst.build_plan(inst.CLIENTS["codex"], path_override=str(cfg))
+
+
+def test_codex_client_path_honors_codex_home(monkeypatch, tmp_path):
+    codex_home = tmp_path / "Codex Home"
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+    assert inst.CLIENTS["codex"].path_fn("Windows") == codex_home / "config.toml"
+
+
+def test_launch_command_requires_uvx_or_uv(monkeypatch):
+    monkeypatch.setattr(inst.shutil, "which", lambda name: None)
+    with pytest.raises(RuntimeError, match="uvx/uv не найден"):
+        inst.launch_command("latest")
 
 
 @pytest.mark.parametrize("system,expected", [
@@ -100,13 +349,13 @@ def test_plan_codex_idempotent(fake_uvx, tmp_path):
 ])
 def test_vscode_path_per_os(system, expected):
     p = inst.CLIENTS["vscode"].path_fn(system)
-    assert str(p).endswith(expected)
+    assert p.as_posix().endswith(expected)
 
 
 def test_vscode_path_windows(monkeypatch):
     monkeypatch.setenv("APPDATA", "C:\\Users\\u\\AppData\\Roaming")
     p = inst.CLIENTS["vscode"].path_fn("Windows")
-    assert "Code" in str(p) and str(p).endswith("mcp.json")
+    assert "Code" in p.parts and p.name == "mcp.json"
 
 
 def test_no_latest_in_plan(fake_uvx, tmp_path):
@@ -118,12 +367,44 @@ def test_no_latest_in_plan(fake_uvx, tmp_path):
 
 def test_apply_plan_writes_and_backs_up(fake_uvx, tmp_path):
     cfg = tmp_path / "mcp.json"
-    cfg.write_text(json.dumps({"mcpServers": {"other": {"command": "x"}}}))
+    _write_text(cfg, json.dumps({"mcpServers": {"other": {"command": "x"}}}))
     plan = inst.build_plan(inst.CLIENTS["cursor"], path_override=str(cfg))
     backup = inst.apply_plan(plan)
     assert backup is not None and backup.exists()
     written = json.loads(cfg.read_text())
     assert "reviewer" in written["mcpServers"] and "other" in written["mcpServers"]
+
+
+def test_apply_plan_codex_preserves_mixed_newlines_and_backup_bytes(fake_uvx, tmp_path):
+    cfg = tmp_path / "config.toml"
+    prefix = b"# keep\r\n[other]\r\nvalue = 1\n\r\n"
+    reviewer = b'[mcp_servers.reviewer]\r\ncommand = "old"\n'
+    suffix = b'[[tail]]\nname = "keep"\r\n\r\n'
+    original = prefix + reviewer + suffix
+    cfg.write_bytes(original)
+
+    plan = inst.build_plan(inst.CLIENTS["codex"], path_override=str(cfg))
+    backup = inst.apply_plan(plan)
+    written = cfg.read_bytes()
+
+    assert backup is not None
+    assert backup.read_bytes() == original
+    assert written.startswith(prefix)
+    assert written.endswith(suffix)
+    assert tomllib.loads(written.decode("utf-8"))["tail"] == [{"name": "keep"}]
+
+
+def test_apply_plan_codex_preserves_trailing_blank_bytes_when_appending(fake_uvx, tmp_path):
+    cfg = tmp_path / "config.toml"
+    original = b"# keep\r\n[other]\r\nvalue = 1\r\n\r\n\r\n"
+    cfg.write_bytes(original)
+
+    plan = inst.build_plan(inst.CLIENTS["codex"], path_override=str(cfg))
+    backup = inst.apply_plan(plan)
+
+    assert backup is not None
+    assert backup.read_bytes() == original
+    assert cfg.read_bytes().startswith(original)
 
 
 def test_apply_plan_creates_parent(fake_uvx, tmp_path):
