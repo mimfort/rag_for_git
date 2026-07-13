@@ -73,7 +73,10 @@ second reviewer entry or corrupt unrelated keys.
 All real-client testing uses temporary `HOME`, `CODEX_HOME`, and
 `CLAUDE_CONFIG_DIR`; no test changes a developer's live profile. The installer
 uses only the documented public CLI commands. It verifies each native CLI
-mutation from fresh state rather than parsing private cache files.
+mutation from fresh public CLI state: JSON where the CLI offers JSON, and the
+documented human-readable `claude mcp get reviewer` output for Claude's
+MCP-only mode, whose command has no JSON option. It never parses private cache
+files.
 
 The Claude CLI owns its marketplace/cache mutation. The reviewer wrapper does
 not delete a marketplace or plugin on a failed update because the public CLI
@@ -93,6 +96,11 @@ A registry-level generic install test creates all supported config parents in
 a temporary profile, invokes `--all`, parses every written config, and checks
 exactly one correct reviewer entry plus expected skills locations. Existing
 client-specific tests remain as format-level coverage.
+
+The repository's current Ruff baseline is repaired with small
+behavior-preserving formatting/import cleanups in the affected production and
+test files. Final acceptance requires `uv run ruff check .` to pass, rather
+than suppressing or reporting those pre-existing violations.
 
 The final acceptance check runs the real Claude and Codex CLIs from an outside
 directory with fresh temporary profiles. It verifies an enabled
