@@ -113,6 +113,7 @@ def _print_claude_result(result) -> None:
     if result.plan.options.dry_run:
         click.echo("# Claude Code marketplace")
         click.echo("# " + " ".join(result.plan.marketplace_argv))
+        click.echo("# " + " ".join(result.plan.marketplace_update_argv))
         click.echo("# " + " ".join(result.plan.plugin_argv))
         return
     if result.plugin is None:

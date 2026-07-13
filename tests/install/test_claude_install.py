@@ -97,13 +97,17 @@ def test_run_claude_install_adds_canonical_global_plugin(tmp_path):
     mutations = [
         call
         for call in fake.calls
-        if call[1:4]
-        in {
-            ("plugin", "marketplace", "add"),
-            ("plugin", "install", "rag-reviewer@rag-reviewer-marketplace"),
-        }
+        if call[-1:] != ("--help",)
+        and (
+            call[1:4]
+            in {
+                ("plugin", "marketplace", "add"),
+                ("plugin", "marketplace", "update"),
+            }
+            or call[1:3] in {("plugin", "install"), ("plugin", "update")}
+        )
     ]
-    assert mutations[-2:] == [
+    assert mutations == [
         (
             str(fake.executable),
             "plugin",
@@ -115,6 +119,13 @@ def test_run_claude_install_adds_canonical_global_plugin(tmp_path):
             "--sparse",
             ".claude-plugin",
             "plugin",
+        ),
+        (
+            str(fake.executable),
+            "plugin",
+            "marketplace",
+            "update",
+            CLAUDE_MARKETPLACE_NAME,
         ),
         (
             str(fake.executable),
@@ -131,6 +142,7 @@ def test_run_claude_install_adds_canonical_global_plugin(tmp_path):
     assert result.marketplace.url == CLAUDE_MARKETPLACE_SOURCE
     assert result.plugin is not None
     assert result.plugin.enabled is True
+    assert fake.marketplace_scope == "user"
     assert fake.config_path.is_file()
 
 
@@ -147,30 +159,102 @@ def test_run_claude_install_is_repeatable(tmp_path):
 
     assert first.plugin is not None and second.plugin is not None
     assert second.plugin == first.plugin
-    assert (
-        str(fake.executable),
-        "plugin",
-        "marketplace",
-        "update",
-        CLAUDE_MARKETPLACE_NAME,
-    ) in fake.calls
-    assert (
-        str(fake.executable),
-        "plugin",
-        "update",
-        CLAUDE_PLUGIN_ID,
-        "--scope",
-        "user",
-    ) in fake.calls
-    assert not any(
-        call[1:4] == ("plugin", "marketplace", "add")
-        and call[-1:] != ("--help",)
+    assert [
+        call
         for call in fake.calls
+        if call[-1:] != ("--help",)
+        and (
+            call[1:4]
+            in {
+                ("plugin", "marketplace", "add"),
+                ("plugin", "marketplace", "update"),
+            }
+            or call[1:3] in {("plugin", "install"), ("plugin", "update")}
+        )
+    ] == [
+        (
+            str(fake.executable),
+            "plugin",
+            "marketplace",
+            "add",
+            CLAUDE_MARKETPLACE_SOURCE,
+            "--scope",
+            "user",
+            "--sparse",
+            ".claude-plugin",
+            "plugin",
+        ),
+        (
+            str(fake.executable),
+            "plugin",
+            "marketplace",
+            "update",
+            CLAUDE_MARKETPLACE_NAME,
+        ),
+        (
+            str(fake.executable),
+            "plugin",
+            "update",
+            CLAUDE_PLUGIN_ID,
+            "--scope",
+            "user",
+        ),
+    ]
+
+
+def test_run_claude_install_migrates_canonical_local_marketplace_to_user_scope(
+    tmp_path,
+):
+    fake = FakeClaude(tmp_path / "claude", tmp_path / "claude-config")
+    fake.marketplace = {
+        "name": CLAUDE_MARKETPLACE_NAME,
+        "source": "git",
+        "url": CLAUDE_MARKETPLACE_SOURCE,
+    }
+    fake.marketplace_scope = "local"
+    fake.plugin = {"id": CLAUDE_PLUGIN_ID, "scope": "user", "enabled": True}
+
+    result = run_claude_install(
+        ClaudeInstallOptions(), runner=fake, which=lambda name: str(fake.executable)
     )
-    assert not any(
-        call[1:3] == ("plugin", "install") and call[-1:] != ("--help",)
+
+    mutations = [
+        call
         for call in fake.calls
-    )
+        if call[-1:] != ("--help",)
+        and (
+            call[1:4]
+            in {
+                ("plugin", "marketplace", "add"),
+                ("plugin", "marketplace", "update"),
+            }
+            or call[1:3] in {("plugin", "install"), ("plugin", "update")}
+        )
+    ]
+    assert mutations[:2] == [
+        (
+            str(fake.executable),
+            "plugin",
+            "marketplace",
+            "add",
+            CLAUDE_MARKETPLACE_SOURCE,
+            "--scope",
+            "user",
+            "--sparse",
+            ".claude-plugin",
+            "plugin",
+        ),
+        (
+            str(fake.executable),
+            "plugin",
+            "marketplace",
+            "update",
+            CLAUDE_MARKETPLACE_NAME,
+        ),
+    ]
+    assert mutations[2][1:3] == ("plugin", "update")
+    assert fake.marketplace_scope == "user"
+    assert result.plugin is not None and result.plugin.scope == "user"
 
 
 def test_run_claude_install_installs_a_user_plugin_when_only_project_scope_exists(tmp_path):
@@ -180,12 +264,25 @@ def test_run_claude_install_installs_a_user_plugin_when_only_project_scope_exist
         "source": "git",
         "url": CLAUDE_MARKETPLACE_SOURCE,
     }
+    fake.marketplace_scope = "project"
     fake.plugin = {"id": CLAUDE_PLUGIN_ID, "scope": "project", "enabled": True}
 
     result = run_claude_install(
         ClaudeInstallOptions(), runner=fake, which=lambda name: str(fake.executable)
     )
 
+    assert (
+        str(fake.executable),
+        "plugin",
+        "marketplace",
+        "add",
+        CLAUDE_MARKETPLACE_SOURCE,
+        "--scope",
+        "user",
+        "--sparse",
+        ".claude-plugin",
+        "plugin",
+    ) in fake.calls
     assert (
         str(fake.executable),
         "plugin",
@@ -259,6 +356,11 @@ def test_run_claude_install_rejects_noncanonical_marketplace_after_mutation(
 
     assert exc_info.value.phase == "marketplace ownership verification"
     assert exc_info.value.argv[1:4] == ("plugin", "marketplace", "add")
+    assert not any(
+        call[1:4] == ("plugin", "marketplace", "update")
+        and call[-1:] != ("--help",)
+        for call in fake.calls
+    )
     assert not any(
         call[1:3] == ("plugin", "install") and call[-1:] != ("--help",)
         for call in fake.calls
@@ -397,6 +499,13 @@ def test_run_claude_install_dry_run_does_not_mutate(tmp_path):
 
     assert result.plugin is None
     assert result.plan.marketplace_argv[4] == CLAUDE_MARKETPLACE_SOURCE
+    assert result.plan.marketplace_update_argv == (
+        str(fake.executable),
+        "plugin",
+        "marketplace",
+        "update",
+        CLAUDE_MARKETPLACE_NAME,
+    )
     assert result.plan.plugin_argv[3] == CLAUDE_PLUGIN_ID
     assert not fake.config_path.exists()
     assert fake.calls == []

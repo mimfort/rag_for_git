@@ -23,7 +23,7 @@ class FakeClaude:
 
     def _state(self) -> dict[str, object]:
         if not self.config_path.exists():
-            return {"marketplace": None, "plugin": None}
+            return {"marketplace": None, "marketplace_scope": None, "plugin": None}
         data = json.loads(self.config_path.read_text(encoding="utf-8"))
         if not isinstance(data, dict):
             raise TypeError("fake Claude state must be an object")
@@ -46,6 +46,17 @@ class FakeClaude:
     @marketplace.setter
     def marketplace(self, value: dict[str, object] | None) -> None:
         self._write_state(marketplace=value)
+
+    @property
+    def marketplace_scope(self) -> str | None:
+        value = self._state().get("marketplace_scope")
+        if value is not None and not isinstance(value, str):
+            raise TypeError("fake Claude marketplace scope must be a string")
+        return value
+
+    @marketplace_scope.setter
+    def marketplace_scope(self, value: str | None) -> None:
+        self._write_state(marketplace_scope=value)
 
     @property
     def plugin(self) -> dict[str, object] | None:
@@ -83,15 +94,17 @@ class FakeClaude:
             return CommandResult(argv, 0, json.dumps(rows), "")
         if tail[:3] == ("plugin", "marketplace", "add"):
             source = tail[3]
+            scope = tail[tail.index("--scope") + 1]
             self.marketplace = self.marketplace_after_add or {
                 "name": "rag-reviewer-marketplace",
                 "source": "git",
                 "url": source,
             }
+            self.marketplace_scope = scope
             return CommandResult(argv, 0, "Marketplace added", "")
         if tail[:3] == ("plugin", "marketplace", "update"):
-            if self.marketplace is None:
-                return CommandResult(argv, 1, "", "marketplace is not installed")
+            if self.marketplace is None or self.marketplace_scope != "user":
+                return CommandResult(argv, 1, "", "user marketplace is not installed")
             self.marketplace = self.marketplace_after_update or self.marketplace
             return CommandResult(argv, 0, "Marketplace updated", "")
         if tail[:2] == ("plugin", "install"):

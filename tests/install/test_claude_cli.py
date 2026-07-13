@@ -30,7 +30,25 @@ def _plugin_result(tmp_path: Path, options: ClaudeInstallOptions) -> ClaudeInsta
     plan = ClaudeInstallPlan(
         ClaudeInstallState(executable, marketplace, plugin),
         options,
-        (str(executable), "plugin", "marketplace", "add", CLAUDE_MARKETPLACE_SOURCE),
+        (
+            str(executable),
+            "plugin",
+            "marketplace",
+            "add",
+            CLAUDE_MARKETPLACE_SOURCE,
+            "--scope",
+            "user",
+            "--sparse",
+            ".claude-plugin",
+            "plugin",
+        ),
+        (
+            str(executable),
+            "plugin",
+            "marketplace",
+            "update",
+            CLAUDE_MARKETPLACE_NAME,
+        ),
         (str(executable), "plugin", "install", CLAUDE_PLUGIN_ID),
     )
     return ClaudeInstallResult(plan, marketplace, plugin)
@@ -164,6 +182,9 @@ def test_install_claude_plugin_dry_run_has_no_config_write(monkeypatch, tmp_path
 
         assert result.exit_code == 0, result.output
         assert captured == [ClaudeInstallOptions(dry_run=True)]
+        assert "plugin marketplace add" in result.output
+        assert "plugin marketplace update" in result.output
+        assert "plugin install" in result.output
         assert not Path(".mcp.json").exists()
         assert not (home / ".claude" / "settings.json").exists()
 

@@ -56,6 +56,7 @@ class ClaudeInstallPlan:
     state: ClaudeInstallState
     options: ClaudeInstallOptions
     marketplace_argv: tuple[str, ...]
+    marketplace_update_argv: tuple[str, ...]
     plugin_argv: tuple[str, ...]
 
 
@@ -243,26 +244,24 @@ def build_claude_install_plan(
     state: ClaudeInstallState, options: ClaudeInstallOptions
 ) -> ClaudeInstallPlan:
     exe = str(state.executable)
-    if marketplace_is_owned(state.marketplace):
-        marketplace_argv = (
-            exe,
-            "plugin",
-            "marketplace",
-            "update",
-            CLAUDE_MARKETPLACE_NAME,
-        )
-    else:
-        marketplace_argv = (
-            exe,
-            "plugin",
-            "marketplace",
-            "add",
-            CLAUDE_MARKETPLACE_SOURCE,
-            "--scope",
-            "user",
-            "--sparse",
-            *CLAUDE_SPARSE,
-        )
+    marketplace_argv = (
+        exe,
+        "plugin",
+        "marketplace",
+        "add",
+        CLAUDE_MARKETPLACE_SOURCE,
+        "--scope",
+        "user",
+        "--sparse",
+        *CLAUDE_SPARSE,
+    )
+    marketplace_update_argv = (
+        exe,
+        "plugin",
+        "marketplace",
+        "update",
+        CLAUDE_MARKETPLACE_NAME,
+    )
     plugin_action = "update" if state.plugin is not None else "install"
     plugin_argv = (
         exe,
@@ -272,7 +271,13 @@ def build_claude_install_plan(
         "--scope",
         "user",
     )
-    return ClaudeInstallPlan(state, options, marketplace_argv, plugin_argv)
+    return ClaudeInstallPlan(
+        state,
+        options,
+        marketplace_argv,
+        marketplace_update_argv,
+        plugin_argv,
+    )
 
 
 def _checked(runner: Runner, argv: tuple[str, ...], phase: str) -> None:
@@ -335,14 +340,22 @@ def run_claude_install(
     detect_claude_capabilities(executable, runner)
     state = read_claude_state(executable, runner)
     plan = build_claude_install_plan(state, options)
-    _checked(runner, plan.marketplace_argv, f"marketplace {plan.marketplace_argv[3]}")
+    _checked(runner, plan.marketplace_argv, "marketplace add")
+    try:
+        added_marketplace = read_claude_state(executable, runner)
+    except ClaudeInstallError as exc:
+        raise ClaudeInstallError(
+            "marketplace ownership verification", exc.argv, exc.detail
+        ) from exc
+    _verify_marketplace(added_marketplace, plan.marketplace_argv)
+    _checked(runner, plan.marketplace_update_argv, "marketplace update")
     try:
         refreshed_marketplace = read_claude_state(executable, runner)
     except ClaudeInstallError as exc:
         raise ClaudeInstallError(
             "marketplace ownership verification", exc.argv, exc.detail
         ) from exc
-    _verify_marketplace(refreshed_marketplace, plan.marketplace_argv)
+    _verify_marketplace(refreshed_marketplace, plan.marketplace_update_argv)
     _checked(runner, plan.plugin_argv, f"plugin {plan.plugin_argv[2]}")
     try:
         refreshed = read_claude_state(executable, runner)
