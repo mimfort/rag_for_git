@@ -901,6 +901,19 @@ def test_run_codex_install_fresh_updates_mcp_and_plugin(tmp_path, monkeypatch):
     assert fake.installed is not None and fake.installed["enabled"] is True
 
 
+def test_fake_codex_state_writes_lf_when_text_output_is_translated(tmp_path, monkeypatch):
+    fake = FakeCodex(tmp_path / "bin/codex", tmp_path, tmp_path / "home")
+
+    def write_text_with_crlf(path, data, encoding=None, errors=None, newline=None):
+        path.write_bytes(data.replace("\n", "\r\n").encode(encoding or "utf-8"))
+
+    monkeypatch.setattr(Path, "write_text", write_text_with_crlf)
+
+    fake.marketplace = True
+
+    assert b"\r\n" not in fake.config_path.read_bytes()
+
+
 def test_run_codex_install_dry_run_has_no_mutating_calls(tmp_path, monkeypatch):
     repo = Path(__file__).resolve().parents[2]
     codex_home = tmp_path / "home"

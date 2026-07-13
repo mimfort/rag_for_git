@@ -63,7 +63,7 @@ class FakeCodex:
                 raise TypeError(f"unsupported fake Codex state: {key}={value!r}")
             lines.append(f"{key} = {rendered}")
         self.config_path.parent.mkdir(parents=True, exist_ok=True)
-        self.config_path.write_text(content + "\n".join(lines) + "\n", encoding="utf-8")
+        self.config_path.write_bytes((content + "\n".join(lines) + "\n").encode("utf-8"))
 
     @property
     def marketplace(self) -> bool:
@@ -94,8 +94,8 @@ class FakeCodex:
         if not self.config_path.exists():
             return
         raw = self.config_path.read_text(encoding="utf-8")
-        self.config_path.write_text(
-            self._without_table(raw, "[mcp_servers.reviewer]"), encoding="utf-8"
+        self.config_path.write_bytes(
+            self._without_table(raw, "[mcp_servers.reviewer]").encode("utf-8")
         )
 
     def __call__(self, argv: tuple[str, ...]) -> CommandResult:
