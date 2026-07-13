@@ -148,14 +148,25 @@ def test_read_state_accepts_extra_json_fields(tmp_path):
     assert state.plugin is not None and state.plugin.enabled is True
 
 
-def test_read_state_hydrates_codex_marketplace_metadata_from_global_config(tmp_path):
+@pytest.mark.parametrize(
+    "configured_source",
+    [
+        pytest.param(
+            "https://github.com/mimfort/rag_for_git.git", id="canonical-https"
+        ),
+        pytest.param("mimfort/rag_for_git", id="github-shorthand"),
+    ],
+)
+def test_read_state_hydrates_codex_marketplace_metadata_from_global_config(
+    tmp_path, configured_source
+):
     exe = tmp_path / "codex"
     config = tmp_path / "home" / "config.toml"
     config.parent.mkdir()
     config.write_text(
         "[marketplaces.rag-reviewer]\n"
         'source_type = "git"\n'
-        'source = "https://github.com/mimfort/rag_for_git.git"\n'
+        f"source = {json.dumps(configured_source)}\n"
         'ref = "main"\n'
         'sparse_paths = [".agents/plugins", "plugin"]\n',
         encoding="utf-8",
@@ -282,7 +293,7 @@ def test_run_codex_install_uses_global_marketplace_metadata_with_real_list_shape
             "https://github.com/someone/else.git",
             "main",
             (".agents/plugins", "plugin"),
-            "conflicts with public marketplace source",
+            "canonical git source/ref/sparse",
             id="foreign-url",
         ),
         pytest.param(
@@ -560,47 +571,76 @@ def test_run_codex_install_rejects_non_git_public_metadata_without_toml_before_m
     )
 
 
-def test_read_state_keeps_public_metadata_when_toml_disagrees(tmp_path):
-    exe = tmp_path / "codex"
-    config = tmp_path / "home" / "config.toml"
+@pytest.mark.parametrize(
+    "configured",
+    [
+        pytest.param(
+            'source = "https://github.com/foreign/rag_for_git.git"\n'
+            'ref = "main"\n'
+            'sparse_paths = [".agents/plugins", "plugin"]\n',
+            id="foreign-source",
+        ),
+        pytest.param(
+            'source = "https://github.com/mimfort/rag_for_git.git"\n'
+            'ref = "stale"\n'
+            'sparse_paths = [".agents/plugins", "plugin"]\n',
+            id="stale-ref",
+        ),
+        pytest.param(
+            'source = "https://github.com/mimfort/rag_for_git.git"\n'
+            'ref = "main"\n'
+            'sparse_paths = ["plugin", ".agents/plugins"]\n',
+            id="reversed-sparse-paths",
+        ),
+    ],
+)
+def test_run_codex_install_rejects_noncanonical_configured_marketplace_before_mutations(
+    tmp_path, monkeypatch, configured
+):
+    repo = Path(__file__).resolve().parents[2]
+    codex_home = tmp_path / "home"
+    config = codex_home / "config.toml"
     config.parent.mkdir()
     config.write_text(
+        "[fake_codex]\n"
+        "marketplace = true\n\n"
         "[marketplaces.rag-reviewer]\n"
         'source_type = "git"\n'
-        'source = "https://github.com/mimfort/rag_for_git.git"\n'
-        'ref = "stale"\n'
-        'sparse_paths = ["plugin", ".agents/plugins"]\n',
+        f"{configured}",
         encoding="utf-8",
     )
-
-    state = read_codex_state(
-        exe,
-        state_runner(
-            exe,
-            {
-                "marketplaces": [
-                    {
-                        "name": "rag-reviewer",
-                        "root": str(tmp_path),
-                        "marketplaceSource": {
-                            "sourceType": "git",
-                            "source": "mimfort/rag_for_git",
-                            "ref": "main",
-                            "sparsePaths": [".agents/plugins", "plugin"],
-                        },
-                    }
-                ]
-            },
-            {"installed": []},
-        ),
-        config_path=config,
+    original = config.read_bytes()
+    fake = FakeCodex(tmp_path / "codex", repo, codex_home)
+    fake.marketplace_json_ref = "main"
+    fake.marketplace_json_sparse_paths = (".agents/plugins", "plugin")
+    applied = []
+    monkeypatch.setattr("reviewer.install.shutil.which", lambda name: "/opt/uvx")
+    monkeypatch.setattr(
+        "reviewer.install.apply_plan", lambda plan: applied.append(plan)
     )
 
-    assert state.marketplace is not None
-    assert state.marketplace.source == "mimfort/rag_for_git"
-    assert state.marketplace.ref == "main"
-    assert state.marketplace.sparse_paths == (".agents/plugins", "plugin")
-    assert marketplace_is_owned(state.marketplace)
+    with pytest.raises(RuntimeError, match="canonical git source/ref/sparse"):
+        run_codex_install(
+            CodexInstallOptions(codex_home=codex_home),
+            runner=fake,
+            which=lambda name: str(fake.executable),
+        )
+
+    assert config.read_bytes() == original
+    assert applied == []
+    assert not any(
+        call[1:4]
+        in {
+            ("plugin", "marketplace", "add"),
+            ("plugin", "marketplace", "upgrade"),
+        }
+        and call[-1:] != ("--help",)
+        for call in fake.calls
+    )
+    assert not any(
+        call[1:3] == ("plugin", "add") and call[-1:] != ("--help",)
+        for call in fake.calls
+    )
 
 
 @pytest.mark.parametrize(

@@ -407,6 +407,15 @@ def _configured_marketplace_metadata(
             f"{label}.marketplaces.{MARKETPLACE_NAME} must be a complete git "
             "source/ref/sparse tuple"
         )
+    if (
+        _canonical_marketplace_source(source) != MARKETPLACE_GIT_SOURCE
+        or ref != MARKETPLACE_REF
+        or sparse_paths != MARKETPLACE_SPARSE
+    ):
+        raise RuntimeError(
+            f"{label}.marketplaces.{MARKETPLACE_NAME} must be the canonical git "
+            "source/ref/sparse tuple"
+        )
     return MarketplaceMetadata(source_type, source, ref, sparse_paths)
 
 
