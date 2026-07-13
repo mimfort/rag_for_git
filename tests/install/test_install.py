@@ -545,27 +545,12 @@ def test_claude_user_settings_path_is_global():
     assert p == inst._home() / ".claude" / "settings.json"
 
 
-def test_cli_install_claude_code_writes_global_allowlist(monkeypatch, tmp_path):
-    from click.testing import CliRunner
-
-    from reviewer.entrypoints.cli import cli
-
+def test_claude_code_is_a_native_global_target(monkeypatch, tmp_path):
     home = tmp_path / "home"
     monkeypatch.setattr(inst, "_home", lambda: home)
-    monkeypatch.setattr(inst.shutil, "which",
-                        lambda name: "/fake/bin/uvx" if name == "uvx" else None)
-    runner = CliRunner()
-    with runner.isolated_filesystem():
-        result = runner.invoke(cli, ["install", "claude-code"])
-        assert result.exit_code == 0, result.output
-        # .mcp.json остаётся проектным (в CWD), allowlist — глобальным (в HOME)
-        assert Path(".mcp.json").exists()
-        assert not Path(".claude/settings.json").exists()
-        global_settings = home / ".claude" / "settings.json"
-        settings = json.loads(global_settings.read_text())
-        assert "mcp__reviewer__*" in settings["permissions"]["allow"]
-        # идемпотентность: повторный запуск не плодит дубли
-        result2 = runner.invoke(cli, ["install", "claude-code"])
-        assert result2.exit_code == 0, result2.output
-        settings2 = json.loads(global_settings.read_text())
-        assert settings2["permissions"]["allow"].count("mcp__reviewer__*") == 1
+
+    client = inst.CLIENTS["claude-code"]
+
+    assert client.scope == "native"
+    assert client.dialect == "native"
+    assert client.path_fn("Linux") != Path(".mcp.json")
