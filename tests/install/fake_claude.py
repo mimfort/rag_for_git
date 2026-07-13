@@ -14,6 +14,8 @@ class FakeClaude:
         self.fail: tuple[str, ...] | None = None
         self.marketplace_after_add: dict[str, object] | None = None
         self.plugin_after_install: dict[str, object] | None = None
+        self.marketplace_after_update: dict[str, object] | None = None
+        self.plugin_after_update: dict[str, object] | None = None
 
     @property
     def config_path(self) -> Path:
@@ -61,9 +63,13 @@ class FakeClaude:
         tail = argv[1:]
         if tail == ("plugin", "marketplace", "add", "--help"):
             return CommandResult(argv, 0, "--scope --sparse", "")
+        if tail == ("plugin", "marketplace", "update", "--help"):
+            return CommandResult(argv, 0, "Update marketplace", "")
         if tail == ("plugin", "marketplace", "list", "--help"):
             return CommandResult(argv, 0, "--json", "")
         if tail == ("plugin", "install", "--help"):
+            return CommandResult(argv, 0, "--scope", "")
+        if tail == ("plugin", "update", "--help"):
             return CommandResult(argv, 0, "--scope", "")
         if tail == ("plugin", "list", "--help"):
             return CommandResult(argv, 0, "--json", "")
@@ -83,12 +89,34 @@ class FakeClaude:
                 "url": source,
             }
             return CommandResult(argv, 0, "Marketplace added", "")
+        if tail[:3] == ("plugin", "marketplace", "update"):
+            if self.marketplace is None:
+                return CommandResult(argv, 1, "", "marketplace is not installed")
+            self.marketplace = self.marketplace_after_update or self.marketplace
+            return CommandResult(argv, 0, "Marketplace updated", "")
         if tail[:2] == ("plugin", "install"):
             plugin_id = tail[2]
+            existing = self.plugin
+            if (
+                existing is not None
+                and existing.get("id") == plugin_id
+                and existing.get("scope") == "user"
+            ):
+                return CommandResult(argv, 0, "Plugin already installed", "")
             self.plugin = self.plugin_after_install or {
                 "id": plugin_id,
                 "scope": "user",
                 "enabled": True,
             }
             return CommandResult(argv, 0, "Plugin installed", "")
+        if tail[:2] == ("plugin", "update"):
+            existing = self.plugin
+            if (
+                existing is None
+                or existing.get("id") != tail[2]
+                or existing.get("scope") != "user"
+            ):
+                return CommandResult(argv, 1, "", "plugin is not installed for user scope")
+            self.plugin = self.plugin_after_update or self.plugin
+            return CommandResult(argv, 0, "Plugin updated", "")
         return CommandResult(argv, 2, "", f"unexpected argv: {argv}")
