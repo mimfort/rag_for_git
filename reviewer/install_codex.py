@@ -393,8 +393,6 @@ def _configured_marketplace_metadata(
     source = _optional_string(configured, "source", label)
     ref = _optional_string(configured, "ref", label)
     sparse_paths = _optional_string_tuple(configured, "sparse_paths", label)
-    if source_type != "git":
-        return MarketplaceMetadata(source_type, None, None, None)
     return MarketplaceMetadata(source_type, source, ref, sparse_paths)
 
 
@@ -431,27 +429,31 @@ def _merge_marketplace_metadata(
     if configured is None:
         return public.source, public.ref, public.sparse_paths
 
-    configured_source = configured.source if configured.source_type == "git" else None
-    if public.source is not None and configured_source is not None:
+    if public.source is not None and configured.source is not None:
         if _canonical_marketplace_source(public.source) != _canonical_marketplace_source(
-            configured_source
+            configured.source
         ):
             raise RuntimeError(
                 f"Codex config {config_path} source conflicts with public "
                 "marketplace source"
             )
 
+    configured_source = configured.source if configured.source_type == "git" else None
+    configured_ref = configured.ref if configured.source_type == "git" else None
+    configured_sparse_paths = (
+        configured.sparse_paths if configured.source_type == "git" else None
+    )
     if public.source_type not in (None, "git"):
         source = None
     elif public.source is not None:
         source = public.source
     else:
         source = configured_source
-    ref = public.ref if public.ref is not None else configured.ref
+    ref = public.ref if public.ref is not None else configured_ref
     sparse_paths = (
         public.sparse_paths
         if public.sparse_paths is not None
-        else configured.sparse_paths
+        else configured_sparse_paths
     )
     return source, ref, sparse_paths
 

@@ -28,6 +28,8 @@ class FakeCodex:
         self.clobber_marketplace_metadata_on_plugin_add = False
         self.malformed_marketplace_after_mutation = False
         self.marketplace_json_source = "https://github.com/mimfort/rag_for_git.git"
+        self.marketplace_json_ref: str | None = None
+        self.marketplace_json_sparse_paths: tuple[str, ...] | None = None
 
     @property
     def config_path(self) -> Path:
@@ -138,14 +140,21 @@ class FakeCodex:
                     }
                 ]
             elif self.marketplace:
+                marketplace_source: dict[str, object] = {
+                    "sourceType": "git",
+                    "source": self.marketplace_json_source,
+                }
+                if self.marketplace_json_ref is not None:
+                    marketplace_source["ref"] = self.marketplace_json_ref
+                if self.marketplace_json_sparse_paths is not None:
+                    marketplace_source["sparsePaths"] = list(
+                        self.marketplace_json_sparse_paths
+                    )
                 rows = [
                     {
                         "name": "rag-reviewer",
                         "root": str(self.marketplace_root),
-                        "marketplaceSource": {
-                            "sourceType": "git",
-                            "source": self.marketplace_json_source,
-                        },
+                        "marketplaceSource": marketplace_source,
                     }
                 ]
             else:
