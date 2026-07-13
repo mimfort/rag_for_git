@@ -551,6 +551,10 @@ def install(client: str | None, all_clients: bool, list_clients: bool,
             raise click.ClickException(
                 "Не обнаружено установленных клиентов. Укажите явно: reviewer install <client> "
                 "(список: reviewer install --list).")
+        if path_opt and any(c.key == "claude-code" for c in targets):
+            raise click.ClickException(
+                "Claude Code global lifecycle несовместим с --path"
+            )
         path_opt = None  # --path несовместим с --all
     elif client:
         key = client.lower()

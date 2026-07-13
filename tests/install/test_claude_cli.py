@@ -182,6 +182,47 @@ def test_install_claude_rejects_path_for_all_native_modes(monkeypatch, tmp_path)
         assert "--path" in result.output
 
 
+def test_install_all_rejects_path_before_any_target_when_claude_is_detected(
+    monkeypatch, tmp_path
+):
+    native_calls: list[dict[str, object]] = []
+    allowlist_calls: list[dict[str, object]] = []
+    generic_calls: list[tuple[object, ...]] = []
+    monkeypatch.setattr(
+        generic_install,
+        "detect_installed",
+        lambda: [generic_install.CLIENTS["cursor"]],
+    )
+    monkeypatch.setattr(cli_module._shutil, "which", _which_with_claude(tmp_path))
+    monkeypatch.setattr(
+        cli_module,
+        "_run_claude_target",
+        lambda **kwargs: native_calls.append(kwargs) or object(),
+    )
+    monkeypatch.setattr(cli_module, "_print_claude_result", lambda result: None)
+    monkeypatch.setattr(
+        cli_module,
+        "_apply_claude_allowlist",
+        lambda *args, **kwargs: allowlist_calls.append(kwargs),
+    )
+    monkeypatch.setattr(
+        generic_install,
+        "build_plan",
+        lambda *args, **kwargs: generic_calls.append(args)
+        or (_ for _ in ()).throw(AssertionError("generic target reached")),
+    )
+
+    result = CliRunner().invoke(
+        cli, ["install", "--all", "--path", str(tmp_path / "mcp.json")]
+    )
+
+    assert result.exit_code != 0
+    assert "--path" in result.output
+    assert native_calls == []
+    assert allowlist_calls == []
+    assert generic_calls == []
+
+
 @pytest.mark.parametrize(
     "extra",
     [pytest.param(["--pin", "1.2.3"], id="pin"), pytest.param(["--no-latest"], id="no-latest")],
