@@ -68,7 +68,8 @@ def chunks_by_path_for(repo_files: dict[str, str]) -> dict[str, list]:
 
 def run_scip_python(repo: str, project_name: str = "repo") -> bytes:
     """Запустить индексер; вернуть содержимое index.scip. Требует npm @sourcegraph/scip-python и активный venv."""
-    import subprocess, pathlib
+    import pathlib
+    import subprocess
     subprocess.run(["scip-python", "index", ".", f"--project-name={project_name}"],
                    cwd=repo, check=True, capture_output=True)
     return pathlib.Path(repo, "index.scip").read_bytes()

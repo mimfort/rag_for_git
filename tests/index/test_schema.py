@@ -1,4 +1,5 @@
-import psycopg, pytest
+import psycopg
+import pytest
 from reviewer.config.settings import Settings
 from reviewer.index.store import ChunkStore
 
