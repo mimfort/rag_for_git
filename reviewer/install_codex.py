@@ -217,6 +217,7 @@ class MarketplaceMetadata:
     source: str | None
     ref: str | None
     sparse_paths: tuple[str, ...] | None
+    legacy_source: bool = False
 
 
 @dataclass(frozen=True)
@@ -401,7 +402,7 @@ def _marketplace_metadata(
 ) -> MarketplaceMetadata:
     if "marketplaceSource" not in item:
         return MarketplaceMetadata(
-            None, _optional_string(item, "source", label), None, None
+            None, _optional_string(item, "source", label), None, None, True
         )
     configured = item["marketplaceSource"]
     if not isinstance(configured, dict):
@@ -426,24 +427,24 @@ def _merge_marketplace_metadata(
     *,
     config_path: Path | None,
 ) -> tuple[str | None, str | None, tuple[str, ...] | None]:
-    if configured is None:
-        return public.source, public.ref, public.sparse_paths
+    configured_source = None
+    configured_ref = None
+    configured_sparse_paths = None
+    if configured is not None:
+        if public.source is not None and configured.source is not None:
+            if _canonical_marketplace_source(
+                public.source
+            ) != _canonical_marketplace_source(configured.source):
+                raise RuntimeError(
+                    f"Codex config {config_path} source conflicts with public "
+                    "marketplace source"
+                )
+        if configured.source_type == "git":
+            configured_source = configured.source
+            configured_ref = configured.ref
+            configured_sparse_paths = configured.sparse_paths
 
-    if public.source is not None and configured.source is not None:
-        if _canonical_marketplace_source(public.source) != _canonical_marketplace_source(
-            configured.source
-        ):
-            raise RuntimeError(
-                f"Codex config {config_path} source conflicts with public "
-                "marketplace source"
-            )
-
-    configured_source = configured.source if configured.source_type == "git" else None
-    configured_ref = configured.ref if configured.source_type == "git" else None
-    configured_sparse_paths = (
-        configured.sparse_paths if configured.source_type == "git" else None
-    )
-    if public.source_type not in (None, "git"):
+    if public.source_type != "git" and not public.legacy_source:
         source = None
     elif public.source is not None:
         source = public.source

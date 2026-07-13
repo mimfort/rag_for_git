@@ -448,6 +448,53 @@ def test_run_codex_install_rejects_foreign_non_git_toml_source_before_mutations(
     )
 
 
+@pytest.mark.parametrize(
+    "source_type",
+    [pytest.param("local", id="local"), pytest.param(None, id="typeless")],
+)
+def test_run_codex_install_rejects_non_git_public_metadata_without_toml_before_mutations(
+    tmp_path, monkeypatch, source_type
+):
+    repo = Path(__file__).resolve().parents[2]
+    codex_home = tmp_path / "home"
+    config = codex_home / "config.toml"
+    codex_home.mkdir()
+    config.write_text("[fake_codex]\nmarketplace = true\n", encoding="utf-8")
+    original = config.read_bytes()
+    fake = FakeCodex(tmp_path / "codex", repo, codex_home)
+    fake.marketplace_json_source_type = source_type
+    fake.marketplace_json_ref = "main"
+    fake.marketplace_json_sparse_paths = (".agents/plugins", "plugin")
+    applied = []
+    monkeypatch.setattr("reviewer.install.shutil.which", lambda name: "/opt/uvx")
+    monkeypatch.setattr(
+        "reviewer.install.apply_plan", lambda plan: applied.append(plan)
+    )
+
+    with pytest.raises(RuntimeError, match="source/ref/sparse"):
+        run_codex_install(
+            CodexInstallOptions(codex_home=codex_home),
+            runner=fake,
+            which=lambda name: str(fake.executable),
+        )
+
+    assert config.read_bytes() == original
+    assert applied == []
+    assert not any(
+        call[1:4]
+        in {
+            ("plugin", "marketplace", "add"),
+            ("plugin", "marketplace", "upgrade"),
+        }
+        and call[-1:] != ("--help",)
+        for call in fake.calls
+    )
+    assert not any(
+        call[1:3] == ("plugin", "add") and call[-1:] != ("--help",)
+        for call in fake.calls
+    )
+
+
 def test_read_state_keeps_public_metadata_when_toml_disagrees(tmp_path):
     exe = tmp_path / "codex"
     config = tmp_path / "home" / "config.toml"

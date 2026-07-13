@@ -27,6 +27,7 @@ class FakeCodex:
         self.clobber_mcp_on_plugin_add = False
         self.clobber_marketplace_metadata_on_plugin_add = False
         self.malformed_marketplace_after_mutation = False
+        self.marketplace_json_source_type: str | None = "git"
         self.marketplace_json_source = "https://github.com/mimfort/rag_for_git.git"
         self.marketplace_json_ref: str | None = None
         self.marketplace_json_sparse_paths: tuple[str, ...] | None = None
@@ -141,9 +142,10 @@ class FakeCodex:
                 ]
             elif self.marketplace:
                 marketplace_source: dict[str, object] = {
-                    "sourceType": "git",
                     "source": self.marketplace_json_source,
                 }
+                if self.marketplace_json_source_type is not None:
+                    marketplace_source["sourceType"] = self.marketplace_json_source_type
                 if self.marketplace_json_ref is not None:
                     marketplace_source["ref"] = self.marketplace_json_ref
                 if self.marketplace_json_sparse_paths is not None:
