@@ -189,6 +189,10 @@ def test_run_claude_install_rejects_noncanonical_marketplace_after_mutation(
 
     assert exc_info.value.phase == "marketplace ownership verification"
     assert exc_info.value.argv[1:4] == ("plugin", "marketplace", "add")
+    assert not any(
+        call[1:3] == ("plugin", "install") and call[-1:] != ("--help",)
+        for call in fake.calls
+    )
 
 
 @pytest.mark.parametrize(
@@ -254,15 +258,7 @@ def test_run_claude_install_dry_run_does_not_mutate(tmp_path):
     assert result.plan.marketplace_argv[4] == CLAUDE_MARKETPLACE_SOURCE
     assert result.plan.plugin_argv[3] == CLAUDE_PLUGIN_ID
     assert not fake.config_path.exists()
-    assert not any(
-        call[1:4] == ("plugin", "marketplace", "add")
-        and call[-1:] != ("--help",)
-        for call in fake.calls
-    )
-    assert not any(
-        call[1:3] == ("plugin", "install") and call[-1:] != ("--help",)
-        for call in fake.calls
-    )
+    assert fake.calls == []
 
 
 def test_run_claude_install_requires_an_executable():

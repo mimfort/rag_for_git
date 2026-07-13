@@ -299,13 +299,23 @@ def run_claude_install(
     which: Callable[[str], str | None] = shutil.which,
 ) -> ClaudeInstallResult:
     executable = find_claude_executable(which)
+    if options.dry_run:
+        plan = build_claude_install_plan(
+            ClaudeInstallState(executable, None, None), options
+        )
+        return ClaudeInstallResult(plan, None, None)
+
     detect_claude_capabilities(executable, runner)
     state = read_claude_state(executable, runner)
     plan = build_claude_install_plan(state, options)
-    if options.dry_run:
-        return ClaudeInstallResult(plan, state.marketplace, state.plugin)
-
     _checked(runner, plan.marketplace_argv, "marketplace add")
+    try:
+        refreshed_marketplace = read_claude_state(executable, runner)
+    except ClaudeInstallError as exc:
+        raise ClaudeInstallError(
+            "marketplace ownership verification", exc.argv, exc.detail
+        ) from exc
+    _verify_marketplace(refreshed_marketplace, plan.marketplace_argv)
     _checked(runner, plan.plugin_argv, "plugin install")
     try:
         refreshed = read_claude_state(executable, runner)
