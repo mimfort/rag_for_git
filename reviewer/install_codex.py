@@ -394,6 +394,19 @@ def _configured_marketplace_metadata(
     source = _optional_string(configured, "source", label)
     ref = _optional_string(configured, "ref", label)
     sparse_paths = _optional_string_tuple(configured, "sparse_paths", label)
+    if (
+        source_type != "git"
+        or not source
+        or not source.strip()
+        or not ref
+        or not ref.strip()
+        or not sparse_paths
+        or any(not path.strip() for path in sparse_paths)
+    ):
+        raise RuntimeError(
+            f"{label}.marketplaces.{MARKETPLACE_NAME} must be a complete git "
+            "source/ref/sparse tuple"
+        )
     return MarketplaceMetadata(source_type, source, ref, sparse_paths)
 
 
