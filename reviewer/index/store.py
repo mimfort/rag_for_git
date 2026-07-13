@@ -14,7 +14,7 @@ def _bm25_query(text: str) -> str:
     cleaned = _BM25_STRIP.sub(" ", text).strip()
     return cleaned or "____nomatch____"
 
-_SCHEMA = Path(__file__).with_name("schema.sql").read_text()
+_SCHEMA = Path(__file__).with_name("schema.sql").read_text(encoding="utf-8")
 
 
 @dataclass
