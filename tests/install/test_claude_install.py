@@ -265,6 +265,40 @@ def test_run_claude_install_rejects_noncanonical_marketplace_after_mutation(
     )
 
 
+def test_run_claude_install_rejects_noncanonical_marketplace_after_update(
+    tmp_path,
+):
+    fake = FakeClaude(tmp_path / "claude", tmp_path / "claude-config")
+    fake.marketplace = {
+        "name": CLAUDE_MARKETPLACE_NAME,
+        "source": "git",
+        "url": CLAUDE_MARKETPLACE_SOURCE,
+    }
+    fake.plugin = {"id": CLAUDE_PLUGIN_ID, "scope": "user", "enabled": True}
+    fake.marketplace_after_update = {
+        "name": CLAUDE_MARKETPLACE_NAME,
+        "source": "directory",
+        "url": CLAUDE_MARKETPLACE_SOURCE,
+    }
+
+    with pytest.raises(ClaudeInstallError) as exc_info:
+        run_claude_install(
+            ClaudeInstallOptions(), runner=fake, which=lambda name: str(fake.executable)
+        )
+
+    assert exc_info.value.phase == "marketplace ownership verification"
+    assert exc_info.value.argv[1:] == (
+        "plugin",
+        "marketplace",
+        "update",
+        CLAUDE_MARKETPLACE_NAME,
+    )
+    assert not any(
+        call[1:3] == ("plugin", "update") and call[-1:] != ("--help",)
+        for call in fake.calls
+    )
+
+
 @pytest.mark.parametrize(
     "after_install",
     [
