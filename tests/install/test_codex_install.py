@@ -1,10 +1,12 @@
 import json
 import os
 import shutil
+import tomllib
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+import reviewer.install as generic_install
 import reviewer.install_codex as codex_install
 
 from reviewer.install_codex import (
@@ -144,6 +146,206 @@ def test_read_state_accepts_extra_json_fields(tmp_path):
     assert state.marketplace.ref == "main"
     assert state.marketplace.sparse_paths == (".agents/plugins", "plugin")
     assert state.plugin is not None and state.plugin.enabled is True
+
+
+def test_read_state_hydrates_codex_marketplace_metadata_from_global_config(tmp_path):
+    exe = tmp_path / "codex"
+    config = tmp_path / "home" / "config.toml"
+    config.parent.mkdir()
+    config.write_text(
+        "[marketplaces.rag-reviewer]\n"
+        'source_type = "git"\n'
+        'source = "https://github.com/mimfort/rag_for_git.git"\n'
+        'ref = "main"\n'
+        'sparse_paths = [".agents/plugins", "plugin"]\n',
+        encoding="utf-8",
+    )
+
+    state = read_codex_state(
+        exe,
+        state_runner(
+            exe,
+            {
+                "marketplaces": [
+                    {
+                        "name": "rag-reviewer",
+                        "root": str(tmp_path),
+                        "marketplaceSource": {
+                            "sourceType": "git",
+                            "source": "https://github.com/mimfort/rag_for_git.git",
+                        },
+                    }
+                ]
+            },
+            {"installed": []},
+        ),
+        config_path=config,
+    )
+
+    assert state.marketplace is not None
+    assert marketplace_is_owned(state.marketplace)
+
+
+def test_read_state_keeps_complete_json_metadata_without_global_marketplace_entry(tmp_path):
+    exe = tmp_path / "codex"
+    config = tmp_path / "home" / "config.toml"
+    config.parent.mkdir()
+    config.write_text("[other]\nvalue = true\n", encoding="utf-8")
+
+    state = read_codex_state(
+        exe,
+        state_runner(
+            exe,
+            {
+                "marketplaces": [
+                    {
+                        "name": "rag-reviewer",
+                        "root": str(tmp_path),
+                        "marketplaceSource": {
+                            "sourceType": "git",
+                            "source": "https://github.com/mimfort/rag_for_git.git",
+                            "ref": "main",
+                            "sparsePaths": [".agents/plugins", "plugin"],
+                        },
+                    }
+                ]
+            },
+            {"installed": []},
+        ),
+        config_path=config,
+    )
+
+    assert state.marketplace is not None
+    assert marketplace_is_owned(state.marketplace)
+
+
+def test_run_codex_install_uses_global_marketplace_metadata_with_real_list_shape(
+    tmp_path, monkeypatch
+):
+    repo = Path(__file__).resolve().parents[2]
+    codex_home = tmp_path / "home"
+    fake = FakeCodex(tmp_path / "codex", repo, codex_home)
+    monkeypatch.setattr("reviewer.install.shutil.which", lambda name: "/opt/uvx")
+
+    result = run_codex_install(
+        CodexInstallOptions(codex_home=codex_home),
+        runner=fake,
+        which=lambda name: str(fake.executable),
+    )
+
+    assert result.verification is not None
+    assert fake.installed is not None
+    assert fake.installed["marketplaceName"] == "rag-reviewer"
+    assert (
+        str(fake.executable),
+        "plugin",
+        "add",
+        "rag-reviewer@rag-reviewer",
+        "--json",
+    ) in fake.calls
+    assert tomllib.loads(codex_home.joinpath("config.toml").read_text(encoding="utf-8"))[
+        "marketplaces"
+    ]["rag-reviewer"] == {
+        "source_type": "git",
+        "source": "https://github.com/mimfort/rag_for_git.git",
+        "ref": "main",
+        "sparse_paths": [".agents/plugins", "plugin"],
+    }
+    marketplace_list = fake(
+        (str(fake.executable), "plugin", "marketplace", "list", "--json")
+    )
+    assert json.loads(marketplace_list.stdout)["marketplaces"] == [
+        {
+            "name": "rag-reviewer",
+            "root": str(repo),
+            "marketplaceSource": {
+                "sourceType": "git",
+                "source": "https://github.com/mimfort/rag_for_git.git",
+            },
+        }
+    ]
+
+
+@pytest.mark.parametrize(
+    ("source_type", "source", "ref", "sparse_paths"),
+    [
+        pytest.param(
+            "local",
+            "https://github.com/mimfort/rag_for_git.git",
+            "main",
+            (".agents/plugins", "plugin"),
+            id="non-git-source-type",
+        ),
+        pytest.param(
+            "git",
+            "https://github.com/someone/else.git",
+            "main",
+            (".agents/plugins", "plugin"),
+            id="foreign-url",
+        ),
+        pytest.param(
+            "git",
+            "https://github.com/mimfort/rag_for_git.git",
+            "other",
+            (".agents/plugins", "plugin"),
+            id="wrong-ref",
+        ),
+        pytest.param(
+            "git",
+            "https://github.com/mimfort/rag_for_git.git",
+            "main",
+            ("plugin", ".agents/plugins"),
+            id="reversed-sparse-paths",
+        ),
+    ],
+)
+def test_run_codex_install_rejects_unowned_global_marketplace_metadata_before_mcp_and_plugin_add(
+    tmp_path, monkeypatch, source_type, source, ref, sparse_paths
+):
+    repo = Path(__file__).resolve().parents[2]
+    codex_home = tmp_path / "home"
+    config = codex_home / "config.toml"
+    config.parent.mkdir()
+    config.write_text(
+        "[fake_codex]\n"
+        "marketplace = true\n\n"
+        "[marketplaces.rag-reviewer]\n"
+        f"source_type = {json.dumps(source_type)}\n"
+        f"source = {json.dumps(source)}\n"
+        f"ref = {json.dumps(ref)}\n"
+        f"sparse_paths = {json.dumps(list(sparse_paths))}\n",
+        encoding="utf-8",
+    )
+    original = config.read_bytes()
+    fake = FakeCodex(tmp_path / "codex", repo, codex_home)
+    applied = []
+    monkeypatch.setattr("reviewer.install.shutil.which", lambda name: "/opt/uvx")
+    monkeypatch.setattr(
+        "reviewer.install.apply_plan", lambda plan: applied.append(plan)
+    )
+
+    with pytest.raises(RuntimeError, match="source/ref/sparse"):
+        run_codex_install(
+            CodexInstallOptions(codex_home=codex_home),
+            runner=fake,
+            which=lambda name: str(fake.executable),
+        )
+
+    assert config.read_bytes() == original
+    assert applied == []
+    assert not any(
+        call[1:4]
+        in {
+            ("plugin", "marketplace", "add"),
+            ("plugin", "marketplace", "upgrade"),
+        }
+        and call[-1:] != ("--help",)
+        for call in fake.calls
+    )
+    assert not any(
+        call[1:3] == ("plugin", "add") and call[-1:] != ("--help",)
+        for call in fake.calls
+    )
 
 
 @pytest.mark.parametrize(
@@ -914,6 +1116,27 @@ def test_fake_codex_state_writes_lf_when_text_output_is_translated(tmp_path, mon
     assert b"\r\n" not in fake.config_path.read_bytes()
 
 
+def test_fake_codex_writes_and_removes_global_marketplace_metadata(tmp_path):
+    fake = FakeCodex(tmp_path / "bin/codex", tmp_path, tmp_path / "home")
+
+    fake.marketplace = True
+
+    configured = tomllib.loads(fake.config_path.read_text(encoding="utf-8"))
+    assert configured["fake_codex"] == {"marketplace": True}
+    assert configured["marketplaces"]["rag-reviewer"] == {
+        "source_type": "git",
+        "source": "https://github.com/mimfort/rag_for_git.git",
+        "ref": "main",
+        "sparse_paths": [".agents/plugins", "plugin"],
+    }
+
+    fake.marketplace = False
+
+    configured = tomllib.loads(fake.config_path.read_text(encoding="utf-8"))
+    assert configured["fake_codex"] == {"marketplace": False}
+    assert "marketplaces" not in configured
+
+
 def test_run_codex_install_dry_run_has_no_mutating_calls(tmp_path, monkeypatch):
     repo = Path(__file__).resolve().parents[2]
     codex_home = tmp_path / "home"
@@ -1056,7 +1279,7 @@ def test_post_verification_failure_restores_previous_selection(tmp_path, monkeyp
     )
     monkeypatch.setattr(
         "reviewer.install_codex.read_codex_state",
-        lambda executable, runner: next(states),
+        lambda executable, runner, **kwargs: next(states),
     )
     monkeypatch.setattr("reviewer.install.shutil.which", lambda name: "/opt/uvx")
     with pytest.raises(RuntimeError, match="installed version"):
@@ -1088,6 +1311,12 @@ def test_ambiguous_refreshed_marketplace_stops_before_mcp_and_plugin(
             "list",
             "--json",
         ):
+            fake.config_path.write_bytes(
+                fake._without_table(
+                    fake.config_path.read_text(encoding="utf-8"),
+                    fake._MARKETPLACE_HEADER,
+                ).encode("utf-8")
+            )
             response = CommandResult(
                 argv,
                 0,
@@ -1162,7 +1391,7 @@ def test_rollback_state_mismatch_reports_backup(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(
         "reviewer.install_codex.read_codex_state",
-        lambda executable, runner: next(states),
+        lambda executable, runner, **kwargs: next(states),
     )
     monkeypatch.setattr("reviewer.install.shutil.which", lambda name: "/opt/uvx")
 
@@ -1285,6 +1514,67 @@ def test_plugin_mcp_clobber_is_verified_and_rolled_back(tmp_path, monkeypatch):
         call[1:3] == ("plugin", "add") and call[-1:] != ("--help",)
         for call in fake.calls
     )
+
+
+def test_mcp_verification_tolerates_codex_plugin_table_spacing(tmp_path):
+    """Codex `plugin add` keeps MCP settings but inserts a blank separator."""
+    config = tmp_path / "config.toml"
+    plan = generic_install.build_plan(
+        generic_install.CLIENTS["codex"], path_override=str(config)
+    )
+    config.write_text(
+        plan.content
+        + '\n[plugins."rag-reviewer@rag-reviewer"]\n'
+        + "enabled = true\n",
+        encoding="utf-8",
+    )
+
+    codex_install._verify_mcp_config(generic_install, config, "latest")
+
+
+def test_mcp_verification_preserves_additive_reviewer_options(tmp_path):
+    config = tmp_path / "config.toml"
+    plan = generic_install.build_plan(
+        generic_install.CLIENTS["codex"], path_override=str(config)
+    )
+    config.write_text(
+        plan.content
+        + "startup_timeout_sec = 30.0\n\n"
+        + "[mcp_servers.reviewer.tools]\n"
+        + 'approval_mode = "approve"\n',
+        encoding="utf-8",
+    )
+
+    codex_install._verify_mcp_config(generic_install, config, "latest")
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ("command", "args", "disabled"),
+    ids=("command", "args", "disabled"),
+)
+def test_mcp_verification_rejects_unusable_reviewer_entry(tmp_path, mutation):
+    config = tmp_path / "config.toml"
+    plan = generic_install.build_plan(
+        generic_install.CLIENTS["codex"], path_override=str(config)
+    )
+    expected = tomllib.loads(plan.content)["mcp_servers"]["reviewer"]
+    if mutation == "command":
+        content = (
+            '[mcp_servers.reviewer]\ncommand = "wrong"\n'
+            f"args = {json.dumps(expected['args'])}\n"
+        )
+    elif mutation == "args":
+        content = (
+            f"[mcp_servers.reviewer]\ncommand = {json.dumps(expected['command'])}\n"
+            'args = ["--from", "rag-reviewer@latest", "wrong-mcp"]\n'
+        )
+    else:
+        content = plan.content + "enabled = false\n"
+    config.write_text(content, encoding="utf-8")
+
+    with pytest.raises(CodexInstallError, match="missing or differs"):
+        codex_install._verify_mcp_config(generic_install, config, "latest")
 
 
 @pytest.mark.parametrize("mode", ("noop", "partial"))

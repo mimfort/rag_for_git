@@ -9,6 +9,14 @@ class FakeCodex:
     """Файловый Codex fake: его состояние живёт в config.toml effective home."""
 
     _STATE_HEADER = "[fake_codex]"
+    _MARKETPLACE_HEADER = "[marketplaces.rag-reviewer]"
+    _MARKETPLACE_CONFIG = (
+        "[marketplaces.rag-reviewer]\n"
+        'source_type = "git"\n'
+        'source = "https://github.com/mimfort/rag_for_git.git"\n'
+        'ref = "main"\n'
+        'sparse_paths = [".agents/plugins", "plugin"]\n'
+    )
 
     def __init__(self, executable: Path, marketplace_root: Path, codex_home: Path):
         self.executable = executable
@@ -65,6 +73,16 @@ class FakeCodex:
         self.config_path.parent.mkdir(parents=True, exist_ok=True)
         self.config_path.write_bytes((content + "\n".join(lines) + "\n").encode("utf-8"))
 
+    def _set_marketplace_metadata(self, present: bool) -> None:
+        raw = self.config_path.read_text(encoding="utf-8") if self.config_path.exists() else ""
+        content = self._without_table(raw, self._MARKETPLACE_HEADER)
+        if present:
+            if content and not content.endswith("\n"):
+                content += "\n"
+            content += self._MARKETPLACE_CONFIG
+        self.config_path.parent.mkdir(parents=True, exist_ok=True)
+        self.config_path.write_bytes(content.encode("utf-8"))
+
     @property
     def marketplace(self) -> bool:
         return self._state().get("marketplace") is True
@@ -72,6 +90,7 @@ class FakeCodex:
     @marketplace.setter
     def marketplace(self, value: bool) -> None:
         self._set_state(marketplace=value)
+        self._set_marketplace_metadata(value)
 
     @property
     def installed(self) -> dict[str, object] | None:
@@ -123,9 +142,7 @@ class FakeCodex:
                         "root": str(self.marketplace_root),
                         "marketplaceSource": {
                             "sourceType": "git",
-                            "source": "mimfort/rag_for_git",
-                            "ref": "main",
-                            "sparsePaths": [".agents/plugins", "plugin"],
+                            "source": "https://github.com/mimfort/rag_for_git.git",
                         },
                     }
                 ]
