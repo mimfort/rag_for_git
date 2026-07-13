@@ -269,6 +269,53 @@ def test_install_all_rejects_path_before_detection_without_claude(monkeypatch, t
     assert generic_calls == []
 
 
+def test_install_all_path_conflict_precedes_list_handling(monkeypatch, tmp_path):
+    detected: list[object] = []
+    native_calls: list[dict[str, object]] = []
+    allowlist_calls: list[dict[str, object]] = []
+    generic_calls: list[tuple[object, ...]] = []
+    monkeypatch.setattr(
+        generic_install,
+        "detect_installed",
+        lambda: detected.append(object())
+        or (_ for _ in ()).throw(AssertionError("target detection reached")),
+    )
+    monkeypatch.setattr(
+        cli_module._shutil,
+        "which",
+        lambda name: (_ for _ in ()).throw(AssertionError("executable detection reached")),
+    )
+    monkeypatch.setattr(
+        cli_module,
+        "_run_claude_target",
+        lambda **kwargs: native_calls.append(kwargs) or object(),
+    )
+    monkeypatch.setattr(
+        cli_module,
+        "_apply_claude_allowlist",
+        lambda *args, **kwargs: allowlist_calls.append(kwargs),
+    )
+    monkeypatch.setattr(
+        generic_install,
+        "build_plan",
+        lambda *args, **kwargs: generic_calls.append(args)
+        or (_ for _ in ()).throw(AssertionError("generic target reached")),
+    )
+
+    result = CliRunner().invoke(
+        cli,
+        ["install", "--all", "--path", str(tmp_path / "mcp.json"), "--list"],
+    )
+
+    assert result.exit_code != 0
+    assert "--path" in result.output
+    assert "Поддерживаемые клиенты" not in result.output
+    assert detected == []
+    assert native_calls == []
+    assert allowlist_calls == []
+    assert generic_calls == []
+
+
 @pytest.mark.parametrize(
     "extra",
     [pytest.param(["--pin", "1.2.3"], id="pin"), pytest.param(["--no-latest"], id="no-latest")],
@@ -342,6 +389,27 @@ class _FakeClaudeMcp:
         if tail == ("mcp", "get", "reviewer"):
             if self.state == "missing":
                 return CommandResult(argv, 1, "", 'No MCP server named "reviewer".')
+            if self.state == "missing-with-configured-servers":
+                return CommandResult(
+                    argv,
+                    1,
+                    "",
+                    'No MCP server named "reviewer". Configured servers: plugin:rag-reviewer:reviewer',
+                )
+            if self.state == "missing-with-extra-stream":
+                return CommandResult(
+                    argv,
+                    1,
+                    "Claude configuration is malformed",
+                    'No MCP server named "reviewer".',
+                )
+            if self.state == "prefixed-diagnostic":
+                return CommandResult(
+                    argv,
+                    1,
+                    "",
+                    'No MCP server named "reviewer". backend is unavailable',
+                )
             if self.state == "broken-get":
                 return CommandResult(argv, 1, "", "Claude configuration is malformed")
             return CommandResult(argv, 0, self._status(), "")
@@ -361,7 +429,7 @@ class _FakeClaudeMcp:
             "rag-reviewer@latest",
             "reviewer-mcp",
         ):
-            assert self.state == "missing"
+            assert self.state in {"missing", "missing-with-configured-servers"}
             self.state = "canonical"
             return CommandResult(argv, 0, "Added", "")
         return CommandResult(argv, 2, "", f"unexpected argv: {argv}")
@@ -424,8 +492,50 @@ def test_claude_mcp_only_adds_a_missing_public_user_server(tmp_path):
     ]
 
 
+def test_claude_mcp_only_accepts_missing_server_with_configured_servers_suffix(tmp_path):
+    fake = _FakeClaudeMcp(tmp_path / "claude", "missing-with-configured-servers")
+
+    result = cli_module._run_claude_mcp_target(
+        dry_run=False,
+        version="latest",
+        runner=fake,
+        which=lambda name: str(fake.executable),
+    )
+
+    assert result.created is True
+    assert fake.calls[1][1:3] == ("mcp", "add")
+
+
 def test_claude_mcp_only_stops_on_an_unexpected_get_failure(tmp_path):
     fake = _FakeClaudeMcp(tmp_path / "claude", "broken-get")
+
+    with pytest.raises(click.ClickException, match="Claude Code MCP get"):
+        cli_module._run_claude_mcp_target(
+            dry_run=False,
+            version="latest",
+            runner=fake,
+            which=lambda name: str(fake.executable),
+        )
+
+    assert fake.calls == [(str(fake.executable), "mcp", "get", "reviewer")]
+
+
+def test_claude_mcp_only_rejects_a_prefixed_unexpected_get_diagnostic(tmp_path):
+    fake = _FakeClaudeMcp(tmp_path / "claude", "prefixed-diagnostic")
+
+    with pytest.raises(click.ClickException, match="Claude Code MCP get"):
+        cli_module._run_claude_mcp_target(
+            dry_run=False,
+            version="latest",
+            runner=fake,
+            which=lambda name: str(fake.executable),
+        )
+
+    assert fake.calls == [(str(fake.executable), "mcp", "get", "reviewer")]
+
+
+def test_claude_mcp_only_rejects_missing_response_with_an_extra_diagnostic_stream(tmp_path):
+    fake = _FakeClaudeMcp(tmp_path / "claude", "missing-with-extra-stream")
 
     with pytest.raises(click.ClickException, match="Claude Code MCP get"):
         cli_module._run_claude_mcp_target(

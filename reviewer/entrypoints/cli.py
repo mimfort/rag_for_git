@@ -2,6 +2,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import logging
 import platform as _platform
+import re
 import shutil as _shutil
 from typing import TYPE_CHECKING
 
@@ -162,7 +163,9 @@ def _checked_claude_mcp_command(runner, argv: tuple[str, ...], phase: str) -> No
         raise click.ClickException(f"{phase}: {detail}; argv={' '.join(argv)}")
 
 
-_CLAUDE_MCP_NOT_FOUND_PREFIX = 'No MCP server named "reviewer".'
+_CLAUDE_MCP_NOT_FOUND_RESPONSE = re.compile(
+    r'No MCP server named "reviewer"\.(?: Configured servers: [^\r\n]*)?'
+)
 
 
 def _run_claude_mcp_target(
@@ -205,8 +208,16 @@ def _run_claude_mcp_target(
 
     status = runner(get_argv)
     if status.returncode:
-        detail = status.stderr.strip() or status.stdout.strip() or "command failed"
-        if not detail.startswith(_CLAUDE_MCP_NOT_FOUND_PREFIX):
+        messages = tuple(
+            message
+            for message in (status.stderr.strip(), status.stdout.strip())
+            if message
+        )
+        if (
+            len(messages) != 1
+            or _CLAUDE_MCP_NOT_FOUND_RESPONSE.fullmatch(messages[0]) is None
+        ):
+            detail = "\n".join(messages) or "command failed"
             raise click.ClickException(
                 f"Claude Code MCP get: {detail}; argv={' '.join(get_argv)}"
             )
@@ -545,6 +556,9 @@ def install(client: str | None, all_clients: bool, list_clients: bool,
     """Прописать MCP-сервер reviewer (и скилы) в конфиг AI-CLI/IDE (кроссплатформенно)."""
     from reviewer import install as inst
 
+    if all_clients and path_opt:
+        raise click.ClickException("--path несовместим с --all")
+
     if list_clients:
         click.echo("Поддерживаемые клиенты (reviewer install <client>):")
         for c in inst.CLIENTS.values():
@@ -552,9 +566,6 @@ def install(client: str | None, all_clients: bool, list_clients: bool,
             skills = " +скилы" if c.skills_fn else ""
             click.echo(f"  {c.key:<15} {c.label}{tag}{skills}")
         return
-
-    if all_clients and path_opt:
-        raise click.ClickException("--path несовместим с --all")
 
     version = "" if no_latest else (pin or "latest")
     if all_clients:
