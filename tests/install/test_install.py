@@ -461,6 +461,7 @@ def test_install_all_clients_registry_preserves_configs_and_skills(monkeypatch, 
         "opencode": "mcp",
     }
     paths: dict[str, Path] = {}
+    expected_other: dict[str, dict] = {}
 
     monkeypatch.setattr(inst, "_home", lambda: home)
     monkeypatch.setattr(inst.platform, "system", lambda: system)
@@ -475,6 +476,7 @@ def test_install_all_clients_registry_preserves_configs_and_skills(monkeypatch, 
             other = {"type": "local", "command": ["other"]}
         else:
             other = {"command": "other"}
+        expected_other[client.key] = other
         _write_text(
             path,
             json.dumps(
@@ -533,6 +535,13 @@ def test_install_all_clients_registry_preserves_configs_and_skills(monkeypatch, 
     first = runner.invoke(cli, ["install", "--all"])
     assert first.exit_code == 0, first.output
     first_contents = {key: path.read_bytes() for key, path in paths.items()}
+    first_configs = {
+        key: json.loads(path.read_text(encoding="utf-8")) for key, path in paths.items()
+    }
+    for client in generic:
+        assert first_configs[client.key][top_keys[client.dialect]]["other"] == (
+            expected_other[client.key]
+        )
 
     second = runner.invoke(cli, ["install", "--all"])
     assert second.exit_code == 0, second.output
@@ -553,9 +562,7 @@ def test_install_all_clients_registry_preserves_configs_and_skills(monkeypatch, 
         section = data[top_keys[client.dialect]]
         assert raw.count('"reviewer"') == 1
         assert data["unrelated"] == {"owner": client.key}
-        assert section["other"]["command"] == (
-            ["other"] if client.dialect in {"mimo", "opencode"} else "other"
-        )
+        assert section["other"] == expected_other[client.key]
         assert list(section).count("reviewer") == 1
         if client.dialect in {"mcpServers", "vscode"}:
             assert section["reviewer"] == {
