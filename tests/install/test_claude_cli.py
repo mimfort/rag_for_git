@@ -396,6 +396,13 @@ class _FakeClaudeMcp:
                     "",
                     'No MCP server named "reviewer". Configured servers: plugin:rag-reviewer:reviewer',
                 )
+            if self.state == "missing-with-add-guidance":
+                return CommandResult(
+                    argv,
+                    1,
+                    "",
+                    'No MCP server named "reviewer". Run `claude mcp add` to add one.',
+                )
             if self.state == "missing-with-extra-stream":
                 return CommandResult(
                     argv,
@@ -429,7 +436,11 @@ class _FakeClaudeMcp:
             "rag-reviewer@latest",
             "reviewer-mcp",
         ):
-            assert self.state in {"missing", "missing-with-configured-servers"}
+            assert self.state in {
+                "missing",
+                "missing-with-configured-servers",
+                "missing-with-add-guidance",
+            }
             self.state = "canonical"
             return CommandResult(argv, 0, "Added", "")
         return CommandResult(argv, 2, "", f"unexpected argv: {argv}")
@@ -494,6 +505,20 @@ def test_claude_mcp_only_adds_a_missing_public_user_server(tmp_path):
 
 def test_claude_mcp_only_accepts_missing_server_with_configured_servers_suffix(tmp_path):
     fake = _FakeClaudeMcp(tmp_path / "claude", "missing-with-configured-servers")
+
+    result = cli_module._run_claude_mcp_target(
+        dry_run=False,
+        version="latest",
+        runner=fake,
+        which=lambda name: str(fake.executable),
+    )
+
+    assert result.created is True
+    assert fake.calls[1][1:3] == ("mcp", "add")
+
+
+def test_claude_mcp_only_accepts_missing_server_with_add_guidance(tmp_path):
+    fake = _FakeClaudeMcp(tmp_path / "claude", "missing-with-add-guidance")
 
     result = cli_module._run_claude_mcp_target(
         dry_run=False,

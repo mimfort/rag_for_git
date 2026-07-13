@@ -164,7 +164,10 @@ def _checked_claude_mcp_command(runner, argv: tuple[str, ...], phase: str) -> No
 
 
 _CLAUDE_MCP_NOT_FOUND_RESPONSE = re.compile(
-    r'No MCP server named "reviewer"\.(?: Configured servers: [^\r\n]*)?'
+    r'No MCP server named "reviewer"\.(?:'
+    r' Configured servers: [^\r\n]*'
+    r'| Run `claude mcp add` to add one\.'
+    r')?'
 )
 
 
