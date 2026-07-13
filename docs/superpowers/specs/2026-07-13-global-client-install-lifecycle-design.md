@@ -44,7 +44,7 @@ Linux.
 the official `claude mcp add --scope user` path to configure the global
 `reviewer` stdio server and writes the same allowlist. `--dry-run` only shows
 the intended Claude commands and configuration changes; it does not invoke
-network-backed marketplace commands or write state.
+the Claude CLI, read native state, or write state.
 
 If Claude is explicitly requested but unavailable or lacks a required
 capability, the command fails with an actionable error. In `--all`, a Claude

@@ -13,7 +13,7 @@
 - Claude source is exactly `https://github.com/mimfort/rag_for_git.git`; never use GitHub shorthand because it selects SSH.
 - Claude marketplace and plugin scopes are `user`; sparse paths are exactly `.claude-plugin` and `plugin`.
 - Native state verification uses public CLI JSON where available; Claude MCP-only verification parses the public `claude mcp get reviewer` text because that command has no JSON option. Never parse private caches.
-- `--dry-run` performs no marketplace/plugin mutations and no config writes.
+- `--dry-run` performs no native CLI invocation, marketplace/plugin mutation, or config write; it only renders intended commands from static constants.
 - Real CLI tests use unique temporary `HOME`, `CODEX_HOME`, and `CLAUDE_CONFIG_DIR` from an outside-repository CWD.
 - Native failures must be collected and reported by `--all`, never silently masked as success.
 - Repair the current 11 repository-wide Ruff violations only in `reviewer/graph/scip.py`, `reviewer/vcs/diff.py`, `tests/graph/test_scip.py`, `tests/index/test_schema.py`, `tests/index/test_store_hybrid.py`, and `tests/integration/test_pipeline.py`; do not make unrelated refactors.
@@ -28,6 +28,8 @@
 - Create: `tests/install/fake_claude.py`
 - Create: `tests/install/test_claude_install.py`
 - Modify: `plugin/.mcp.json`
+- Modify: `plugin/.codex-plugin/plugin.json`
+- Modify: `.codex-plugin/plugin.json`
 
 **Interfaces:**
 
@@ -75,7 +77,7 @@ CLAUDE_MARKETPLACE_SOURCE = "https://github.com/mimfort/rag_for_git.git"
 CLAUDE_SPARSE = (".claude-plugin", "plugin")
 ```
 
-Feature-detect `plugin marketplace add/list` and `plugin install/list` help. On a real run execute marketplace add, then plugin install, then require exact HTTPS marketplace ownership plus installed/enabled user-scope plugin from fresh JSON. Raise `ClaudeInstallError(phase, argv, detail)` for any command or verification error. On dry-run return the intended argv without mutation. Change `plugin/.mcp.json` to the direct `uvx` entry asserted above.
+Feature-detect `plugin marketplace add/list` and `plugin install/list` help. On a real run execute marketplace add, refresh and require exact HTTPS marketplace ownership, then install the plugin and require the installed/enabled user-scope plugin from fresh JSON. Retain final combined verification. Raise `ClaudeInstallError(phase, argv, detail)` for any command or verification error. On dry-run return the intended argv without invoking the runner. Change `plugin/.mcp.json` to the direct `uvx` entry asserted above.
 
 - [ ] **Step 4: Verify GREEN**
 
@@ -89,7 +91,7 @@ uv run ruff check reviewer/install_claude.py tests/install/fake_claude.py tests/
 - [ ] **Step 5: Commit Task 1**
 
 ```bash
-git add reviewer/install_claude.py tests/install/fake_claude.py tests/install/test_claude_install.py plugin/.mcp.json
+git add reviewer/install_claude.py tests/install/fake_claude.py tests/install/test_claude_install.py plugin/.mcp.json plugin/.codex-plugin/plugin.json .codex-plugin/plugin.json
 git commit -m "feat(install): add Claude Code plugin lifecycle"
 ```
 
