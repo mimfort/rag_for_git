@@ -162,6 +162,9 @@ def _checked_claude_mcp_command(runner, argv: tuple[str, ...], phase: str) -> No
         raise click.ClickException(f"{phase}: {detail}; argv={' '.join(argv)}")
 
 
+_CLAUDE_MCP_NOT_FOUND_PREFIX = 'No MCP server named "reviewer".'
+
+
 def _run_claude_mcp_target(
     *,
     dry_run: bool,
@@ -201,7 +204,15 @@ def _run_claude_mcp_target(
         )
 
     status = runner(get_argv)
-    fields = _claude_mcp_fields(status.stdout) if not status.returncode else {}
+    if status.returncode:
+        detail = status.stderr.strip() or status.stdout.strip() or "command failed"
+        if not detail.startswith(_CLAUDE_MCP_NOT_FOUND_PREFIX):
+            raise click.ClickException(
+                f"Claude Code MCP get: {detail}; argv={' '.join(get_argv)}"
+            )
+        fields = {}
+    else:
+        fields = _claude_mcp_fields(status.stdout)
     if _claude_mcp_is_canonical(fields, version):
         return _ClaudeMcpInstallResult(
             executable, get_argv, None, add_argv, False, False, False
@@ -542,6 +553,9 @@ def install(client: str | None, all_clients: bool, list_clients: bool,
             click.echo(f"  {c.key:<15} {c.label}{tag}{skills}")
         return
 
+    if all_clients and path_opt:
+        raise click.ClickException("--path несовместим с --all")
+
     version = "" if no_latest else (pin or "latest")
     if all_clients:
         targets = [c for c in inst.detect_installed() if c.key != "claude-code"]
@@ -551,10 +565,6 @@ def install(client: str | None, all_clients: bool, list_clients: bool,
             raise click.ClickException(
                 "Не обнаружено установленных клиентов. Укажите явно: reviewer install <client> "
                 "(список: reviewer install --list).")
-        if path_opt and any(c.key == "claude-code" for c in targets):
-            raise click.ClickException(
-                "Claude Code global lifecycle несовместим с --path"
-            )
         path_opt = None  # --path несовместим с --all
     elif client:
         key = client.lower()
