@@ -25,7 +25,9 @@ class FakeCodex:
         self.calls: list[tuple[str, ...]] = []
         self.fail: tuple[str, ...] | None = None
         self.clobber_mcp_on_plugin_add = False
+        self.clobber_marketplace_metadata_on_plugin_add = False
         self.malformed_marketplace_after_mutation = False
+        self.marketplace_json_source = "https://github.com/mimfort/rag_for_git.git"
 
     @property
     def config_path(self) -> Path:
@@ -142,7 +144,7 @@ class FakeCodex:
                         "root": str(self.marketplace_root),
                         "marketplaceSource": {
                             "sourceType": "git",
-                            "source": "https://github.com/mimfort/rag_for_git.git",
+                            "source": self.marketplace_json_source,
                         },
                     }
                 ]
@@ -172,5 +174,7 @@ class FakeCodex:
             )
             if self.clobber_mcp_on_plugin_add:
                 self._clobber_reviewer_mcp()
+            if self.clobber_marketplace_metadata_on_plugin_add:
+                self._set_marketplace_metadata(False)
             return CommandResult(argv, 0, json.dumps(self.installed), "")
         return CommandResult(argv, 2, "", f"unexpected argv: {argv}")
