@@ -240,7 +240,7 @@ reviewer init
 # 3) Register the MCP server (and skills) in your editor/CLI
 reviewer install --all        # auto-detect installed clients + install skills
 #    or a specific one: reviewer install cursor|vscode|claude-code|claude-desktop|windsurf|gemini|antigravity|mimo|opencode|kimi|trae|codex
-#    skills go to clients that support them (Gemini/Mimo/Kimi); add --no-skills to skip
+#    file-based skills go to Gemini/Mimo/OpenCode/Kimi; --no-skills skips skills
 
 # 4) Verify
 reviewer check
@@ -255,12 +255,12 @@ uv tool upgrade rag-reviewer
 > `reviewer install` or set `"command": "uvx"` with `"args": ["--from",
 > "rag-reviewer@latest", "reviewer-mcp"]` directly.
 
-> **Claude Code: tools work out of the box.** `reviewer install claude-code` also
-> writes an allowlist rule `mcp__reviewer__*` into your global
-> `~/.claude/settings.json` (`permissions.allow`), so the reviewer MCP tools run in
-> **every** project without hitting the `auto`-mode safety classifier — no manual
-> settings edits. Being global, it also covers the plugin (marketplace) install,
-> where the server is available everywhere but ships no permission grants.
+> **Claude Code is global by default.** `reviewer install claude-code` manages the
+> user-scope `rag-reviewer` plugin from the canonical HTTPS marketplace source, so it
+> works from any current directory and in every project. It also writes the global
+> `mcp__reviewer__*` allowlist rule in `~/.claude/settings.json` (`permissions.allow`).
+> Use `reviewer install claude-code --no-skills` when you need only a global MCP server
+> and no plugin skills.
 
 > **Where keys are read from.** The reviewer resolves its `.env` from a fixed
 > location, **not** the current working directory — MCP clients launch the server
@@ -287,7 +287,7 @@ Each AI coding tool has its own config file. Pick yours:
 
 | Tool | Global config file | Project config | Install guide |
 |---|---|---|---|
-| **Claude Code** | `/plugin marketplace add` (see below) | `.claude-plugin/` ✓ | — |
+| **Claude Code** | user-scope plugin marketplace (`reviewer install claude-code`) | `.claude-plugin/` ✓ | — |
 | **Cursor** | `~/.cursor/mcp.json` | `.cursor/mcp.json` ✓ | — |
 | **Windsurf** | `~/.codeium/windsurf/mcp_config.json` | — | — |
 | **Claude Desktop** | macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`; Windows: `%APPDATA%\Claude\claude_desktop_config.json` | — | — |
@@ -302,7 +302,8 @@ Each AI coding tool has its own config file. Pick yours:
 
 Files marked ✓ are already present in this repo — if you open rag_for_git as a project in
 that tool, the MCP server auto-connects. For a **global install** (works from any project),
-add the entry to the corresponding global config file.
+add the entry to the corresponding global config file. For Claude Code, use the user-scope
+plugin command below instead of a project-local MCP file.
 
 The MCP entry format by tool (macOS/Linux — use `reviewer install` on Windows):
 
@@ -369,13 +370,41 @@ Success means `rag-reviewer` is installed and enabled and `codex mcp list` conta
 Failures print the config backup path. Open a New Chat/new CLI session after installation; in an
 IDE, also use Reload Window.
 
-### Claude Code (plugin marketplace)
+### Claude Code (global plugin marketplace)
 
-Two commands, from any project:
+Install or update it from any directory:
 
-```text
-/plugin marketplace add mimfort/rag_for_git
-/plugin install rag-reviewer@rag-reviewer-marketplace
+```bash
+uvx --from rag-reviewer@latest reviewer install claude-code
+```
+
+The command manages the user-scope `rag-reviewer` plugin through the canonical HTTPS
+source `https://github.com/mimfort/rag_for_git.git`; it does not depend on the current
+project. Verify the installed plugin with the public CLI:
+
+```bash
+claude plugin list --json
+# optional: confirm the canonical marketplace source too
+claude plugin marketplace list --json
+```
+
+`plugin list` should contain an enabled `rag-reviewer@rag-reviewer-marketplace` entry with
+`"scope": "user"`. The optional marketplace listing should report `"source": "git"` and
+the exact HTTPS URL above. Open a New Chat/new CLI session afterwards; in an IDE, use Reload
+Window as well.
+
+To register only the global MCP server and intentionally skip plugin skills, run:
+
+```bash
+uvx --from rag-reviewer@latest reviewer install claude-code --no-skills
+```
+
+**Manual fallback** (only if the installer cannot be used):
+
+```bash
+claude plugin marketplace add https://github.com/mimfort/rag_for_git.git \
+  --scope user --sparse .claude-plugin plugin
+claude plugin install rag-reviewer@rag-reviewer-marketplace --scope user
 ```
 
 You get:

@@ -17,6 +17,7 @@ from typing import Any, Callable, Literal, Protocol
 PLUGIN_NAME = "rag-reviewer"
 MARKETPLACE_NAME = "rag-reviewer"
 MARKETPLACE_SOURCE = "mimfort/rag_for_git"
+MARKETPLACE_GIT_SOURCE = "https://github.com/mimfort/rag_for_git.git"
 MARKETPLACE_REF = "main"
 MARKETPLACE_SPARSE = (".agents/plugins", "plugin")
 _NORMALIZED_VERSION = "0.0.0+codex.normalized"
@@ -211,6 +212,15 @@ class MarketplaceState:
 
 
 @dataclass(frozen=True)
+class MarketplaceMetadata:
+    source_type: str | None
+    source: str | None
+    ref: str | None
+    sparse_paths: tuple[str, ...] | None
+    legacy_source: bool = False
+
+
+@dataclass(frozen=True)
 class SnapshotVerification:
     root: Path
     plugin_root: Path
@@ -358,11 +368,64 @@ def _optional_string_tuple(item: dict, field: str, label: str) -> tuple[str, ...
     return tuple(value)
 
 
+def _configured_marketplace_metadata(
+    config_path: Path,
+) -> MarketplaceMetadata | None:
+    label = f"Codex config {config_path}"
+    try:
+        data = tomllib.loads(config_path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return None
+    except (OSError, UnicodeError, tomllib.TOMLDecodeError) as exc:
+        raise RuntimeError(f"{label}: {exc}") from exc
+    marketplaces = data.get("marketplaces")
+    if marketplaces is None:
+        return None
+    if not isinstance(marketplaces, dict):
+        raise RuntimeError(f"{label}.marketplaces must be an object")
+    configured = marketplaces.get(MARKETPLACE_NAME)
+    if configured is None:
+        return None
+    if not isinstance(configured, dict):
+        raise RuntimeError(
+            f"{label}.marketplaces.{MARKETPLACE_NAME} must be an object"
+        )
+    source_type = _optional_string(configured, "source_type", label)
+    source = _optional_string(configured, "source", label)
+    ref = _optional_string(configured, "ref", label)
+    sparse_paths = _optional_string_tuple(configured, "sparse_paths", label)
+    if (
+        source_type != "git"
+        or not source
+        or not source.strip()
+        or not ref
+        or not ref.strip()
+        or not sparse_paths
+        or any(not path.strip() for path in sparse_paths)
+    ):
+        raise RuntimeError(
+            f"{label}.marketplaces.{MARKETPLACE_NAME} must be a complete git "
+            "source/ref/sparse tuple"
+        )
+    if (
+        _canonical_marketplace_source(source) != MARKETPLACE_GIT_SOURCE
+        or ref != MARKETPLACE_REF
+        or sparse_paths != MARKETPLACE_SPARSE
+    ):
+        raise RuntimeError(
+            f"{label}.marketplaces.{MARKETPLACE_NAME} must be the canonical git "
+            "source/ref/sparse tuple"
+        )
+    return MarketplaceMetadata(source_type, source, ref, sparse_paths)
+
+
 def _marketplace_metadata(
     item: dict, label: str
-) -> tuple[str | None, str | None, tuple[str, ...] | None]:
+) -> MarketplaceMetadata:
     if "marketplaceSource" not in item:
-        return _optional_string(item, "source", label), None, None
+        return MarketplaceMetadata(
+            None, _optional_string(item, "source", label), None, None, True
+        )
     configured = item["marketplaceSource"]
     if not isinstance(configured, dict):
         raise RuntimeError(f"{label}.marketplaceSource must be an object")
@@ -371,18 +434,68 @@ def _marketplace_metadata(
     source = _optional_string(configured, "source", source_label)
     ref = _optional_string(configured, "ref", source_label)
     sparse_paths = _optional_string_tuple(configured, "sparsePaths", source_label)
-    if source_type != "git":
+    return MarketplaceMetadata(source_type, source, ref, sparse_paths)
+
+
+def _canonical_marketplace_source(source: str | None) -> str | None:
+    if source == MARKETPLACE_SOURCE:
+        return MARKETPLACE_GIT_SOURCE
+    return source
+
+
+def _merge_marketplace_metadata(
+    public: MarketplaceMetadata,
+    configured: MarketplaceMetadata | None,
+    *,
+    config_path: Path | None,
+) -> tuple[str | None, str | None, tuple[str, ...] | None]:
+    configured_source = None
+    configured_ref = None
+    configured_sparse_paths = None
+    if configured is not None:
+        if public.source is not None and configured.source is not None:
+            if _canonical_marketplace_source(
+                public.source
+            ) != _canonical_marketplace_source(configured.source):
+                raise RuntimeError(
+                    f"Codex config {config_path} source conflicts with public "
+                    "marketplace source"
+                )
+        if configured.source_type == "git":
+            configured_source = configured.source
+            configured_ref = configured.ref
+            configured_sparse_paths = configured.sparse_paths
+
+    if public.source_type != "git" and not public.legacy_source:
         source = None
+    elif public.source is not None:
+        source = public.source
+    else:
+        source = configured_source
+    ref = public.ref if public.ref is not None else configured_ref
+    sparse_paths = (
+        public.sparse_paths
+        if public.sparse_paths is not None
+        else configured_sparse_paths
+    )
     return source, ref, sparse_paths
 
 
-def read_codex_state(executable: Path, runner: Runner) -> CodexPluginState:
+def read_codex_state(
+    executable: Path,
+    runner: Runner,
+    *,
+    config_path: Path | None = None,
+) -> CodexPluginState:
     exe = str(executable)
     marketplace_data = _json_result(
         runner, (exe, "plugin", "marketplace", "list", "--json"), "marketplace list"
     )
     marketplaces = _required_object_array(
         marketplace_data, "marketplaces", "marketplace list"
+    )
+    configured_metadata = (
+        _configured_marketplace_metadata(config_path) if config_path is not None else None
     )
     plugin_data = _json_result(
         runner, (exe, "plugin", "list", "--available", "--json"), "plugin list"
@@ -393,10 +506,13 @@ def read_codex_state(executable: Path, runner: Runner) -> CodexPluginState:
         label = f"marketplace list: marketplaces[{index}]"
         name = _required_string(item, "name", label)
         root = _required_string(item, "root", label)
-        source, ref, sparse_paths = _marketplace_metadata(item, label)
+        metadata = _marketplace_metadata(item, label)
         if name == MARKETPLACE_NAME and marketplace is None:
             if not root:
                 raise RuntimeError("marketplace list: rag-reviewer root отсутствует")
+            source, ref, sparse_paths = _merge_marketplace_metadata(
+                metadata, configured_metadata, config_path=config_path
+            )
             marketplace = MarketplaceState(
                 MARKETPLACE_NAME, Path(root), source, ref, sparse_paths
             )
@@ -441,9 +557,10 @@ def _inside(root: Path, relative: str, label: str) -> Path:
 
 
 def marketplace_is_owned(state: MarketplaceState) -> bool:
+    source = _canonical_marketplace_source(state.source)
     return (
         state.name == MARKETPLACE_NAME
-        and state.source == MARKETPLACE_SOURCE
+        and source == MARKETPLACE_GIT_SOURCE
         and state.ref == MARKETPLACE_REF
         and state.sparse_paths == MARKETPLACE_SPARSE
     )
@@ -824,10 +941,31 @@ def _verify_mcp_config(
         final_plan = generic.build_plan(
             generic.CLIENTS["codex"], version=version, path_override=str(config_path)
         )
-        actual = final_plan.path.read_bytes()
+        actual = tomllib.loads(final_plan.path.read_text(encoding="utf-8"))
+        expected = tomllib.loads(final_plan.content)
     except (OSError, UnicodeError, ValueError) as exc:
         raise CodexInstallError("MCP config verification", (), str(exc)) from exc
-    if actual != final_plan.content.encode("utf-8"):
+    actual_servers = actual.get("mcp_servers")
+    expected_servers = expected.get("mcp_servers")
+    actual_reviewer = (
+        actual_servers.get("reviewer") if isinstance(actual_servers, dict) else None
+    )
+    expected_reviewer = (
+        expected_servers.get("reviewer") if isinstance(expected_servers, dict) else None
+    )
+    matches_canonical_entry = (
+        isinstance(actual_reviewer, dict)
+        and isinstance(expected_reviewer, dict)
+        and all(
+            key in actual_reviewer
+            and key in expected_reviewer
+            and type(actual_reviewer[key]) is type(expected_reviewer[key])
+            and actual_reviewer[key] == expected_reviewer[key]
+            for key in ("command", "args")
+        )
+        and actual_reviewer.get("enabled", True) is True
+    )
+    if not matches_canonical_entry:
         raise CodexInstallError(
             "MCP config verification",
             (),
@@ -849,6 +987,18 @@ def _verified_installed(state: CodexPluginState, expected_version: str) -> None:
         )
 
 
+def _verify_marketplace_ownership(
+    state: CodexPluginState, argv: tuple[str, ...]
+) -> None:
+    if state.marketplace is None or not marketplace_is_owned(state.marketplace):
+        raise CodexInstallError(
+            "marketplace ownership verification",
+            argv,
+            "marketplace rag-reviewer после mutation имеет неполные или чужие "
+            "source/ref/sparse metadata",
+        )
+
+
 def run_codex_install(
     options: CodexInstallOptions,
     *,
@@ -859,13 +1009,13 @@ def run_codex_install(
     from reviewer import install as generic
 
     codex_home = _codex_home(options)
+    effective_config = codex_home / "config.toml"
     effective_runner = _runner_for_codex_home(runner, codex_home)
     executable = find_codex_executable(which)
     detect_codex_capabilities(executable, effective_runner)
-    state = read_codex_state(executable, effective_runner)
+    state = read_codex_state(executable, effective_runner, config_path=effective_config)
     plan = build_codex_plugin_plan(state, options)
     empty_migration = LegacyMigrationResult(None, (), ())
-    effective_config = codex_home / "config.toml"
     mcp_config = _mcp_config_path(options, effective_config)
     mcp_preview = None
     if options.include_mcp:
@@ -888,20 +1038,14 @@ def run_codex_install(
             f"marketplace {plan.marketplace_action}",
         )
         try:
-            refreshed = read_codex_state(executable, effective_runner)
+            refreshed = read_codex_state(
+                executable, effective_runner, config_path=effective_config
+            )
         except Exception as exc:
             raise CodexInstallError(
                 "marketplace ownership verification", plan.marketplace_argv, str(exc)
             ) from exc
-        if refreshed.marketplace is None or not marketplace_is_owned(
-            refreshed.marketplace
-        ):
-            raise CodexInstallError(
-                "marketplace ownership verification",
-                plan.marketplace_argv,
-                "marketplace rag-reviewer после mutation имеет неполные или чужие "
-                "source/ref/sparse metadata",
-            )
+        _verify_marketplace_ownership(refreshed, plan.marketplace_argv)
         try:
             verification = verify_marketplace_snapshot(
                 refreshed.marketplace.root, generic.current_pkg_version()
@@ -921,7 +1065,15 @@ def run_codex_install(
             except (OSError, UnicodeError, ValueError) as exc:
                 raise CodexInstallError("MCP config update", (), str(exc)) from exc
         _checked(effective_runner, plan.plugin_argv, "plugin add")
-        installed = read_codex_state(executable, effective_runner)
+        try:
+            installed = read_codex_state(
+                executable, effective_runner, config_path=effective_config
+            )
+        except Exception as exc:
+            raise CodexInstallError(
+                "marketplace ownership verification", plan.plugin_argv, str(exc)
+            ) from exc
+        _verify_marketplace_ownership(installed, plan.plugin_argv)
         try:
             _verified_installed(installed, verification.version)
         except RuntimeError as exc:
@@ -947,7 +1099,9 @@ def run_codex_install(
         try:
             _restore_configs(snapshots)
             _verify_restored_configs(snapshots)
-            rolled_back = read_codex_state(executable, effective_runner)
+            rolled_back = read_codex_state(
+                executable, effective_runner, config_path=effective_config
+            )
             if rolled_back.plugin != state.plugin:
                 raise RuntimeError(
                     "config rollback не восстановил предыдущую plugin selection; "

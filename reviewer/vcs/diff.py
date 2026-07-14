@@ -18,9 +18,13 @@ def commentable_lines(patch: str | None) -> dict[str, set[int]]:
             continue
         tag = line[0]
         if tag == "+":
-            right.add(new_ln); new_ln += 1
+            right.add(new_ln)
+            new_ln += 1
         elif tag == "-":
-            left.add(old_ln); old_ln += 1
+            left.add(old_ln)
+            old_ln += 1
         elif tag == " ":
-            right.add(new_ln); old_ln += 1; new_ln += 1
+            right.add(new_ln)
+            old_ln += 1
+            new_ln += 1
     return {"RIGHT": right, "LEFT": left}

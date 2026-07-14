@@ -13,7 +13,9 @@ def test_index_then_hybrid_retrieve_finds_relevant_symbol(tmp_path):
               ["git","-c","user.email=t@t","-c","user.name=t","commit","-qm","c"]):
         subprocess.run(a, cwd=tmp_path, check=True)
     s = Settings()
-    c = build_components(s, connect=False); c.store.init_schema(); c.store.clear()
+    c = build_components(s, connect=False)
+    c.store.init_schema()
+    c.store.clear()
     from reviewer.gitutil import list_python_files, file_at_ref
     files = list_python_files(str(tmp_path), "HEAD")
     update_base(c.store, c.embedder, "t/x", "HEAD", files,

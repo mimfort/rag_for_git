@@ -468,9 +468,9 @@ def _trae_path(system: str) -> Path:
 class Client:
     key: str
     label: str
-    dialect: str  # mcpServers | vscode | mimo | opencode | codex
+    dialect: str  # mcpServers | vscode | mimo | opencode | codex | native
     path_fn: Callable[[str], Path]
-    scope: str = "user"  # user | project
+    scope: str = "user"  # user | project | native
     note: str = ""
     # каталог глобальных скилов клиента (None — файловые скилы не поддерживаются)
     skills_fn: Callable[[str], Path] | None = None
@@ -481,10 +481,9 @@ CLIENTS: dict[str, Client] = {
     for c in [
         Client("cursor", "Cursor", "mcpServers", lambda s: _home() / ".cursor" / "mcp.json"),
         Client("claude-desktop", "Claude Desktop", "mcpServers", _claude_desktop_path),
-        Client("claude-code", "Claude Code", "mcpServers",
-               lambda s: Path(".mcp.json"), scope="project",
-               note="проектный .mcp.json в текущем каталоге; либо ставьте плагин "
-                    "через /plugin marketplace add mimfort/rag_for_git"),
+        Client("claude-code", "Claude Code", "native",
+               lambda s: claude_user_settings_path(), scope="native",
+               note="глобальный plugin marketplace через Claude Code CLI"),
         Client("vscode", "VS Code", "vscode", _vscode_path),
         Client("windsurf", "Windsurf", "mcpServers",
                lambda s: _home() / ".codeium" / "windsurf" / "mcp_config.json"),
@@ -863,16 +862,16 @@ def apply_allowlist_plan(plan: AllowlistPlan) -> Path | None:
 
 
 def detect_installed(system: str | None = None) -> list[Client]:
-    """Клиенты, которые, похоже, установлены (есть каталог конфига/приложения).
+    """Клиенты с конфигами, которые, похоже, установлены.
 
-    Эвристика: существует родительский каталог конфига. claude-code (проектный)
-    из автодетекта исключён — он всегда «доступен», но писать .mcp.json в CWD
-    по умолчанию не нужно.
+    Эвристика: существует родительский каталог конфига. Project- и native-
+    клиенты исключены: Claude Code определяется по доступности своего публичного
+    CLI в entrypoints.cli, а не по каталогу текущего проекта.
     """
     system = system or platform.system()
     found: list[Client] = []
     for client in CLIENTS.values():
-        if client.scope == "project":
+        if client.scope != "user":
             continue
         if client.path_fn(system).parent.exists():
             found.append(client)
