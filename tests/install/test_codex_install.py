@@ -44,6 +44,12 @@ def result(argv: tuple[str, ...], stdout: str = "", returncode: int = 0) -> Comm
     return CommandResult(argv, returncode, stdout, "failure" if returncode else "")
 
 
+@pytest.fixture
+def stub_uvx(monkeypatch):
+    """Подменяет поиск uvx: launch_command не должен зависеть от PATH раннера."""
+    monkeypatch.setattr("reviewer.install.shutil.which", lambda name: "/opt/uvx")
+
+
 def state_runner(exe, marketplace_data: object, plugin_data: object) -> MappingRunner:
     marketplace_argv = (str(exe), "plugin", "marketplace", "list", "--json")
     plugin_argv = (str(exe), "plugin", "list", "--available", "--json")
@@ -1841,7 +1847,7 @@ def test_plugin_marketplace_metadata_clobber_is_verified_and_rolled_back(
     )
 
 
-def test_mcp_verification_tolerates_codex_plugin_table_spacing(tmp_path):
+def test_mcp_verification_tolerates_codex_plugin_table_spacing(tmp_path, stub_uvx):
     """Codex `plugin add` keeps MCP settings but inserts a blank separator."""
     config = tmp_path / "config.toml"
     plan = generic_install.build_plan(
@@ -1857,7 +1863,7 @@ def test_mcp_verification_tolerates_codex_plugin_table_spacing(tmp_path):
     codex_install._verify_mcp_config(generic_install, config, "latest")
 
 
-def test_mcp_verification_preserves_additive_reviewer_options(tmp_path):
+def test_mcp_verification_preserves_additive_reviewer_options(tmp_path, stub_uvx):
     config = tmp_path / "config.toml"
     plan = generic_install.build_plan(
         generic_install.CLIENTS["codex"], path_override=str(config)
@@ -1878,7 +1884,7 @@ def test_mcp_verification_preserves_additive_reviewer_options(tmp_path):
     ("command", "args", "disabled"),
     ids=("command", "args", "disabled"),
 )
-def test_mcp_verification_rejects_unusable_reviewer_entry(tmp_path, mutation):
+def test_mcp_verification_rejects_unusable_reviewer_entry(tmp_path, mutation, stub_uvx):
     config = tmp_path / "config.toml"
     plan = generic_install.build_plan(
         generic_install.CLIENTS["codex"], path_override=str(config)
