@@ -6,6 +6,7 @@ prepare_review (ДРУГОГО PR) обязан подчистить осиро�
 """
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
 from reviewer.config.settings import Settings
@@ -24,7 +25,13 @@ def _settings() -> Settings:
     s = Settings()
     s.voyage_api_key = "test"
     s.github_token = "test"
-    s.review_session_persist = False   # не трогаем реальный Postgres
+    # review_session_persist=True — мы ХОТИМ, чтобы _ensure_session_store() отдавал
+    # инжектированный _FakeSessionStore по флагу, а не только потому, что
+    # _session_store уже не None (это раньше маскировало проверку флага —
+    # _ensure_session_store возвращает уже заданный self._session_store ДО чтения
+    # settings.review_session_persist). Реальный Postgres всё равно не трогаем:
+    # _session_store инжектирован ниже, конструктор SessionStore не вызывается.
+    s.review_session_persist = True
     return s
 
 
@@ -45,6 +52,9 @@ class _FakeSessionStore:
     """
 
     def save(self, repo: str, pr: int, payload: dict) -> None:
+        pass
+
+    def delete(self, repo: str, pr: int) -> None:
         pass
 
     def live_keys(self, ttl_hours: int) -> set[tuple[str, int]]:
@@ -79,11 +89,36 @@ def test_prepare_keeps_overlay_of_active_in_memory_session(_to_payload):
     """Overlay ревью, живущего в памяти процесса, не трогаем (параллельное ревью)."""
     c = _components()
     svc = _service(c)
-    svc._sessions[("a/x", 7)] = MagicMock()   # ревью PR 7 идёт прямо сейчас
+    live_session = MagicMock()
+    live_session.started_at = datetime.now(timezone.utc)   # ревью PR 7 идёт прямо сейчас
+    svc._sessions[("a/x", 7)] = live_session
 
     svc.prepare_review("a/x", 8)
 
     assert "pr:7" not in c.store.deleted_refs
+
+
+@_PATCH_TO_PAYLOAD
+def test_prepare_purges_overlay_of_stale_in_memory_session_past_ttl(_to_payload):
+    """C4: in-memory-сессия без TTL-отсечки делает overlay бессмертным.
+
+    _sessions чистится ТОЛЬКО в _cleanup (путь publish) — самый частый сценарий
+    брошенного ревью (пользователь отменил скилл, процесс reviewer-mcp жив)
+    никогда там не оказывается. Запись держится в _sessions, но её started_at
+    старше TTL — GC обязан признать overlay сиротой, а не хранить вечно.
+    """
+    c = _components()
+    svc = _service(c)
+    stale_session = MagicMock()
+    stale_session.started_at = (
+        datetime.now(timezone.utc)
+        - timedelta(hours=svc.settings.review_session_ttl_hours + 1)
+    )
+    svc._sessions[("a/x", 7)] = stale_session   # брошено больше TTL назад
+
+    svc.prepare_review("a/x", 8)
+
+    assert "pr:7" in c.store.deleted_refs
 
 
 @_PATCH_TO_PAYLOAD
@@ -94,3 +129,29 @@ def test_gc_failure_does_not_break_prepare(_to_payload):
     svc = _service(c)
 
     assert svc.prepare_review("a/x", 8) == {"status": "ok"}   # не бросил
+
+
+@_PATCH_TO_PAYLOAD
+def test_prepare_reserves_session_before_building_overlay(_to_payload):
+    """C2: резервация session_store.save() должна произойти ДО ReviewService.prepare.
+
+    prepare() строит overlay изнутри (через несколько секунд GitHub round-trip'ов).
+    Если резервация переедет ПОСЛЕ prepare (или пропадёт), окно между появлением
+    overlay и записью «свидетельства о жизни» остаётся незащищённым — GC другого
+    процесса reviewer-mcp сочтёт overlay сиротой и снесёт его посреди идущего ревью.
+    """
+    c = _components()
+    svc = _service(c)
+    calls: list[str] = []
+    svc._session_store.save = MagicMock(
+        side_effect=lambda *a, **k: calls.append("session_store.save")
+    )
+    svc._review_service.prepare = MagicMock(
+        side_effect=lambda *a, **k: calls.append("review_service.prepare") or MagicMock()
+    )
+
+    svc.prepare_review("a/x", 9)
+
+    assert calls, "ни save, ни prepare не были вызваны"
+    assert calls[0] == "session_store.save"
+    assert "review_service.prepare" in calls
