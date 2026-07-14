@@ -3,6 +3,8 @@ import json
 import subprocess
 from pathlib import Path, PurePosixPath
 
+import pytest
+
 from reviewer.install_codex import (
     expected_plugin_version,
     payload_digest,
@@ -30,6 +32,9 @@ def _synced_repo(tmp_path: Path) -> Path:
             }
         )
     )
+    claude_manifest = tmp_path / "plugin" / ".claude-plugin" / "plugin.json"
+    claude_manifest.parent.mkdir(parents=True)
+    claude_manifest.write_text(json.dumps({"name": "rag-reviewer", "version": "0.1.0"}))
     (tmp_path / ".codex-plugin").mkdir()
     assert sync_plugin_metadata(tmp_path, check=False) == []
     return tmp_path
@@ -60,6 +65,33 @@ def test_payload_digest_ignores_only_manifest_version(tmp_path):
     assert payload_digest(plugin) == first
     (plugin / "skills" / "ask" / "SKILL.md").write_text("changed")
     assert payload_digest(plugin) != first
+
+
+def test_payload_digest_ignores_python_bytecode_artifacts(tmp_path):
+    """Хуки плагина при запуске оставляют __pycache__ — payload от этого не меняется."""
+    plugin = tmp_path / "plugin"
+    hooks = plugin / "hooks"
+    hooks.mkdir(parents=True)
+    (hooks / "brief_cost.py").write_text("print('cost')\n")
+    clean = payload_digest(plugin)
+
+    cache = hooks / "__pycache__"
+    cache.mkdir()
+    (cache / "brief_cost.cpython-313.pyc").write_bytes(b"\x00bytecode")
+    (hooks / "stray.pyc").write_bytes(b"\x00stray")
+
+    assert payload_digest(plugin) == clean
+
+
+@pytest.mark.parametrize("part", (".git", ".env", ".venv", "build", "dist"))
+def test_payload_digest_still_rejects_forbidden_paths(tmp_path, part):
+    """Секреты и артефакты сборки в payload остаются жёсткой ошибкой."""
+    plugin = tmp_path / "plugin"
+    plugin.mkdir()
+    (plugin / part).write_text("secret")
+
+    with pytest.raises(ValueError, match="forbidden payload path"):
+        payload_digest(plugin)
 
 
 def test_payload_digest_frames_file_boundaries(tmp_path):
@@ -191,6 +223,37 @@ def test_check_reports_invalid_root_manifest(tmp_path):
     (repo / ".codex-plugin" / "plugin.json").write_text("{")
 
     assert "root Codex manifest is invalid" in sync_plugin_metadata(repo, check=True)
+
+
+def test_sync_writes_project_version_into_claude_manifest(tmp_path):
+    """Бамп версии в pyproject доводится до Claude-манифеста, а не только до Codex."""
+    repo = _synced_repo(tmp_path)
+
+    claude = json.loads(
+        (repo / "plugin" / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8")
+    )
+    assert claude["version"] == "1.2.3"
+    assert claude["name"] == "rag-reviewer"
+    assert sync_plugin_metadata(repo, check=True) == []
+
+
+def test_check_reports_claude_manifest_version_drift(tmp_path):
+    repo = _synced_repo(tmp_path)
+    manifest_path = repo / "plugin" / ".claude-plugin" / "plugin.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["version"] = "0.3.0"
+    manifest_path.write_text(json.dumps(manifest))
+
+    assert "Claude manifest version '0.3.0' != '1.2.3'" in sync_plugin_metadata(
+        repo, check=True
+    )
+
+
+def test_check_reports_missing_claude_manifest(tmp_path):
+    repo = _synced_repo(tmp_path)
+    (repo / "plugin" / ".claude-plugin" / "plugin.json").unlink()
+
+    assert "Claude manifest is missing" in sync_plugin_metadata(repo, check=True)
 
 
 def test_repo_codex_payload_is_synchronized():
