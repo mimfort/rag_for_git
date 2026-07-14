@@ -20,6 +20,8 @@ from reviewer.index.pathfilter import is_ignored
 from reviewer.index.refs import base_ref
 from reviewer.policy.policy import ReviewPolicy
 from reviewer.index.store import ChunkStore
+from reviewer.mcp.session_store import SessionStore
+from reviewer.services.gc import purge_orphaned_overlays
 from reviewer.services.status import build_status_report, render_status, render_status_json
 
 if TYPE_CHECKING:
@@ -528,6 +530,34 @@ def status(path: str, repo_tag: str | None, branch_opt: str | None,
     backend = ("scip-python (точный)" if _shutil.which("scip-python")
                else "tree-sitter (fallback, scip-python не найден)")
     click.echo(render_status(report, backend))
+
+
+@cli.command()
+def gc() -> None:
+    """Вычистить осиротевшие overlay pr:N и просроченные сессии ревью.
+
+    Overlay брошенного ревью (prepare_review без publish_review) не убирает никто:
+    _cleanup срабатывает только после реальной публикации. Эта команда — явная
+    уборка; та же логика оппортунистически работает при каждом prepare_review.
+    """
+    s = Settings()
+    store = ChunkStore(s.pg_dsn, min_size=s.pg_pool_min_size, max_size=s.pg_pool_max_size)
+    session_store = SessionStore(
+        s.pg_dsn, min_size=s.pg_pool_min_size, max_size=s.pg_pool_max_size
+    )
+    try:
+        report = purge_orphaned_overlays(store, session_store, s.review_session_ttl_hours)
+    except psycopg.OperationalError as e:
+        raise click.ClickException(f"Postgres недоступен: {e}")
+    finally:
+        store.close()
+        session_store.close()
+    for ref in report["purged"]:
+        click.echo(f"удалён осиротевший overlay: {ref}")
+    click.echo(
+        f"Overlay: удалено {len(report['purged'])}, оставлено живых {report['kept']}; "
+        f"просроченных сессий удалено: {report['sessions_deleted']}"
+    )
 
 
 @cli.command()
