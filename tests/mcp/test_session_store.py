@@ -48,3 +48,38 @@ def test_session_store_save_load_delete_ttl() -> None:
     store.delete(repo, pr)
     assert store.load(repo, pr, 24) is None
     store.close()
+
+
+def test_live_keys_raises_when_db_unavailable(monkeypatch) -> None:
+    """live_keys НЕ fail-soft: «не знаю живых» ≠ «живых нет».
+
+    Тихий пустой ответ при сбое БД заставил бы GC счесть сиротой overlay
+    идущего прямо сейчас ревью и удалить его.
+    """
+    store = SessionStore("postgresql://invalid/none")
+
+    def boom():
+        raise RuntimeError("db down")
+
+    monkeypatch.setattr(store, "_connect", boom)
+    with pytest.raises(RuntimeError):
+        store.live_keys(24)
+
+
+@pytest.mark.integration
+def test_live_keys_and_delete_expired() -> None:
+    """live_keys видит только непросроченные; delete_expired сносит просроченные."""
+    pg_dsn = Settings().pg_dsn
+    store = SessionStore(pg_dsn)
+    store.init_schema()
+    repo, pr = "owner/gc-test", 998
+    store.delete(repo, pr)  # чистый старт
+    store.save(repo, pr, {"repo": repo})
+
+    assert (repo, pr) in store.live_keys(24)
+    # TTL=0 → строка мгновенно просрочена
+    assert (repo, pr) not in store.live_keys(0)
+
+    assert store.delete_expired(0) >= 1
+    assert store.load(repo, pr, 24) is None   # строка физически удалена
+    store.close()
