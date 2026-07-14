@@ -23,6 +23,7 @@ from reviewer.index.refs import base_ref
 from reviewer.mcp.session_serde import from_payload, to_payload
 from reviewer.mcp.session_store import SessionStore
 from reviewer.retrieval.retriever import ContextPack
+from reviewer.services.gc import purge_orphaned_overlays
 from reviewer.services.review_service import (
     BranchNotTrackedError,
     PreparedReview,
@@ -117,6 +118,7 @@ class MCPReviewService:
         from reviewer.services.repo_id import normalize_repo
         repo = normalize_repo(repo)
         owner, name = repo.split("/", 1)
+        self._gc_overlays()
         old = self._sessions.get((repo, pr))
         vcs = self._vcs_factory(owner, name) if self._vcs_factory else None
         try:
@@ -1195,6 +1197,27 @@ class MCPReviewService:
         store = self._ensure_session_store()
         if store is not None:
             store.delete(repo, pr)
+
+    def _gc_overlays(self) -> None:
+        """Оппортунистический GC осиротевших overlay (fail-soft, никогда не бросает).
+
+        Вызывается на каждом prepare_review. _cleanup убирает overlay только когда
+        publish_review реально состоялся; если ревью брошено между prepare и publish,
+        убрать его больше некому — этот вызов и есть уборщик. Активные сессии процесса
+        передаются как живые: их overlay неприкосновенен, даже если persist сессии
+        упал fail-soft.
+
+        Сбой GC не должен мешать ревью — любая ошибка уходит в лог.
+        """
+        try:
+            purge_orphaned_overlays(
+                self.components.store,
+                self._ensure_session_store(),
+                self.settings.review_session_ttl_hours,
+                active_keys=set(self._sessions),
+            )
+        except Exception:
+            log.warning("GC осиротевших overlay не удался", exc_info=True)
 
     def _prepared_payload(self, p: PreparedReview) -> dict:
         """Сериализовать PreparedReview в dict для передачи MCP-клиенту."""
