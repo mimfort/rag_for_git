@@ -199,7 +199,7 @@ reviewer init
 # 3) Прописать MCP-сервер (и скиллы) в ваш редактор/CLI
 reviewer install --all        # автодетект клиентов + установка скиллов
 #    или конкретный: reviewer install cursor|vscode|claude-code|claude-desktop|windsurf|gemini|antigravity|mimo|opencode|kimi|trae|codex
-#    скиллы ставятся в клиенты, которые их поддерживают (Gemini/Mimo/Kimi); --no-skills чтобы пропустить
+#    файловые скиллы ставятся в Gemini/Mimo/OpenCode/Kimi; --no-skills чтобы пропустить
 
 # 4) Проверить
 reviewer check
@@ -213,12 +213,11 @@ uv tool upgrade rag-reviewer
 > `bash -lc` только для macOS/Linux; на Windows используйте `reviewer install` или указывайте
 > `"command": "uvx"` с `"args": ["--from", "rag-reviewer@latest", "reviewer-mcp"]` напрямую.
 
-> **Claude Code: тулы работают из коробки.** `reviewer install claude-code` дополнительно
-> прописывает allowlist-правило `mcp__reviewer__*` в **глобальный** `~/.claude/settings.json`
-> (`permissions.allow`), поэтому тулы reviewer MCP работают **во всех проектах** без обращения
-> к safety-classifier `auto`-режима — без ручного редактирования настроек. Глобальное правило
-> покрывает и установку плагином (marketplace): там сервер доступен везде, но плагин не раздаёт
-> разрешений.
+> **Claude Code глобален по умолчанию.** `reviewer install claude-code` управляет
+> user-scope плагином `rag-reviewer` из канонического HTTPS marketplace, поэтому он работает из
+> любого текущего каталога и во всех проектах. Команда также прописывает глобальное allowlist-правило
+> `mcp__reviewer__*` в `~/.claude/settings.json` (`permissions.allow`). Если нужен только глобальный
+> MCP-сервер без скиллов плагина, используйте `reviewer install claude-code --no-skills`.
 
 > **Откуда читаются ключи.** `.env` резолвится из фиксированного места, **не** из текущего каталога —
 > MCP-клиенты запускают сервер с произвольным CWD, поэтому проектный `./.env` ненадёжен. Порядок
@@ -239,7 +238,7 @@ uv tool upgrade rag-reviewer
 
 | Инструмент | Глобальный конфиг | Проектный конфиг | Инструкция |
 |---|---|---|---|
-| **Claude Code** | `/plugin marketplace add` (см. ниже) | `.claude-plugin/` ✓ | — |
+| **Claude Code** | user-scope plugin marketplace (`reviewer install claude-code`) | `.claude-plugin/` ✓ | — |
 | **Cursor** | `~/.cursor/mcp.json` | `.cursor/mcp.json` ✓ | — |
 | **Windsurf** | `~/.codeium/windsurf/mcp_config.json` | — | — |
 | **Claude Desktop** | macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`; Windows: `%APPDATA%\Claude\claude_desktop_config.json` | — | — |
@@ -254,7 +253,8 @@ uv tool upgrade rag-reviewer
 
 Файлы, помеченные ✓, уже есть в этом репозитории — если открыть `rag_for_git` как проект
 в соответствующем инструменте, MCP-сервер подключится автоматически. Для **глобальной установки**
-(работает из любого проекта) добавьте запись в глобальный конфиг-файл.
+(работает из любого проекта) добавьте запись в глобальный конфиг-файл. Для Claude Code вместо
+проектного MCP-файла используйте user-scope команду плагина ниже.
 
 Формат записи (macOS/Linux — на Windows используйте `reviewer install`):
 
@@ -321,13 +321,41 @@ codex mcp list
 месте. При ошибке печатается путь к backup конфига. После установки откройте New Chat/new CLI
 session; в IDE также выполните Reload Window.
 
-#### Claude Code (marketplace)
+#### Claude Code (глобальный plugin marketplace)
 
-Из любого проекта двумя командами:
+Установите или обновите из любого каталога:
 
-```text
-/plugin marketplace add mimfort/rag_for_git
-/plugin install rag-reviewer@rag-reviewer-marketplace
+```bash
+uvx --from rag-reviewer@latest reviewer install claude-code
+```
+
+Команда управляет user-scope плагином `rag-reviewer` через канонический HTTPS-источник
+`https://github.com/mimfort/rag_for_git.git`; текущий проект ей не нужен. Проверьте плагин
+публичным CLI:
+
+```bash
+claude plugin list --json
+# необязательно: также проверить канонический источник marketplace
+claude plugin marketplace list --json
+```
+
+В `plugin list` должна быть включённая запись `rag-reviewer@rag-reviewer-marketplace` с
+`"scope": "user"`. В необязательном списке marketplace ожидаются `"source": "git"` и точный
+HTTPS URL выше. После установки откройте New Chat/new CLI session; в IDE также выполните Reload
+Window.
+
+Чтобы зарегистрировать только глобальный MCP-сервер и намеренно пропустить скиллы плагина:
+
+```bash
+uvx --from rag-reviewer@latest reviewer install claude-code --no-skills
+```
+
+**Ручной fallback** (только если нельзя использовать installer):
+
+```bash
+claude plugin marketplace add https://github.com/mimfort/rag_for_git.git \
+  --scope user --sparse .claude-plugin plugin
+claude plugin install rag-reviewer@rag-reviewer-marketplace --scope user
 ```
 
 Вы получаете:

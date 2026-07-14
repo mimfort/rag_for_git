@@ -11,10 +11,12 @@ def _row(ref, path, fqn, text, vec, repo="a/x"):
 @pytest.mark.integration
 def test_overlay_shadows_base_for_changed_paths():
     s = Settings()
-    store = ChunkStore(s.pg_dsn); store.init_schema()
+    store = ChunkStore(s.pg_dsn)
+    store.init_schema()
     store.clear()
     d = s.embedding_dim
-    base_vec = [0.0]*d; base_vec[0] = 1.0
+    base_vec = [0.0]*d
+    base_vec[0] = 1.0
     store.upsert([
         _row("base", "a.py", "f_a", "def f_a(): return parse_token()", base_vec),
         _row("base", "b.py", "f_b", "def f_b(): pass", [0.0]*d),

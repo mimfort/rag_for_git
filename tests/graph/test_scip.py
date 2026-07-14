@@ -1,5 +1,5 @@
 from reviewer.graph import scip
-from reviewer.graph.scip_pb2 import Index, Document, Occurrence, SymbolInformation
+from reviewer.graph.scip_pb2 import Index, Document, Occurrence
 
 DEF = 0x1
 

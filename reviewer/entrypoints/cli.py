@@ -1,6 +1,8 @@
 from __future__ import annotations
+from dataclasses import dataclass
 import logging
 import platform as _platform
+import re
 import shutil as _shutil
 from typing import TYPE_CHECKING
 
@@ -21,6 +23,7 @@ from reviewer.index.store import ChunkStore
 from reviewer.services.status import build_status_report, render_status, render_status_json
 
 if TYPE_CHECKING:
+    from reviewer.install_claude import ClaudeInstallResult
     from reviewer.install_codex import CodexInstallResult
 
 log = logging.getLogger(__name__)
@@ -93,6 +96,205 @@ def _print_codex_result(result) -> None:
     for warning in result.warnings:
         click.echo(f"  предупреждение: {warning}")
     click.echo("Откройте New Chat/new CLI session; в IDE выполните Reload Window.")
+
+
+def _run_claude_target(*, dry_run: bool) -> "ClaudeInstallResult":
+    from reviewer import install_claude
+
+    try:
+        return install_claude.run_claude_install(
+            install_claude.ClaudeInstallOptions(dry_run=dry_run)
+        )
+    except Exception as exc:
+        raise click.ClickException(str(exc)) from exc
+
+
+def _print_claude_result(result) -> None:
+    if result.plan.options.dry_run:
+        click.echo("# Claude Code marketplace")
+        click.echo("# " + " ".join(result.plan.marketplace_argv))
+        click.echo("# " + " ".join(result.plan.marketplace_update_argv))
+        click.echo("# " + " ".join(result.plan.plugin_argv))
+        return
+    if result.plugin is None:
+        raise click.ClickException("Claude Code plugin не прошёл post-install verification")
+    click.echo(f"✓ Claude Code plugin: {result.plugin.plugin_id}")
+    click.echo(f"  scope: {result.plugin.scope}; enabled: {result.plugin.enabled}")
+    click.echo("Откройте New Chat/new CLI session; в IDE выполните Reload Window.")
+
+
+@dataclass(frozen=True)
+class _ClaudeMcpInstallResult:
+    executable: str
+    get_argv: tuple[str, ...]
+    remove_argv: tuple[str, ...] | None
+    add_argv: tuple[str, ...]
+    dry_run: bool
+    created: bool
+    replaced: bool
+
+
+def _claude_mcp_fields(output: str) -> dict[str, str]:
+    """Parse only documented human-readable ``claude mcp get`` fields."""
+    fields: dict[str, str] = {}
+    for raw_line in output.splitlines():
+        line = raw_line.strip()
+        for name in ("Scope", "Command", "Args"):
+            prefix = f"{name}:"
+            if line.startswith(prefix):
+                if name in fields:
+                    return {}
+                fields[name] = line[len(prefix):].strip()
+    return fields
+
+
+def _claude_mcp_is_canonical(fields: dict[str, str], version: str) -> bool:
+    package = f"rag-reviewer@{version}" if version else "rag-reviewer"
+    return (
+        fields.get("Scope", "").startswith("User config")
+        and fields.get("Command") == "uvx"
+        and fields.get("Args") == f"--from {package} reviewer-mcp"
+    )
+
+
+def _checked_claude_mcp_command(runner, argv: tuple[str, ...], phase: str) -> None:
+    response = runner(argv)
+    if response.returncode:
+        detail = response.stderr.strip() or response.stdout.strip() or "command failed"
+        raise click.ClickException(f"{phase}: {detail}; argv={' '.join(argv)}")
+
+
+_CLAUDE_MCP_NOT_FOUND_RESPONSE = re.compile(
+    r'No MCP server named "reviewer"\.(?:'
+    r' Configured servers: [^\r\n]*'
+    r'| Run `claude mcp add` to add one\.'
+    r')?'
+)
+
+
+def _run_claude_mcp_target(
+    *,
+    dry_run: bool,
+    version: str,
+    runner=None,
+    which=None,
+) -> _ClaudeMcpInstallResult:
+    """Ensure the public user-scope Claude MCP entry without reading private state."""
+    from reviewer import install_claude
+    from reviewer.install_codex import subprocess_runner
+
+    runner = subprocess_runner if runner is None else runner
+    which = _shutil.which if which is None else which
+    try:
+        executable = str(install_claude.find_claude_executable(which))
+    except Exception as exc:
+        raise click.ClickException(str(exc)) from exc
+    package = f"rag-reviewer@{version}" if version else "rag-reviewer"
+    get_argv = (executable, "mcp", "get", "reviewer")
+    remove_argv = (executable, "mcp", "remove", "reviewer", "--scope", "user")
+    add_argv = (
+        executable,
+        "mcp",
+        "add",
+        "--scope",
+        "user",
+        "reviewer",
+        "--",
+        "uvx",
+        "--from",
+        package,
+        "reviewer-mcp",
+    )
+    if dry_run:
+        return _ClaudeMcpInstallResult(
+            executable, get_argv, remove_argv, add_argv, True, False, False
+        )
+
+    status = runner(get_argv)
+    if status.returncode:
+        messages = tuple(
+            message
+            for message in (status.stderr.strip(), status.stdout.strip())
+            if message
+        )
+        if (
+            len(messages) != 1
+            or _CLAUDE_MCP_NOT_FOUND_RESPONSE.fullmatch(messages[0]) is None
+        ):
+            detail = "\n".join(messages) or "command failed"
+            raise click.ClickException(
+                f"Claude Code MCP get: {detail}; argv={' '.join(get_argv)}"
+            )
+        fields = {}
+    else:
+        fields = _claude_mcp_fields(status.stdout)
+    if _claude_mcp_is_canonical(fields, version):
+        return _ClaudeMcpInstallResult(
+            executable, get_argv, None, add_argv, False, False, False
+        )
+
+    replaced = fields.get("Scope", "").startswith("User config")
+    if replaced:
+        _checked_claude_mcp_command(runner, remove_argv, "Claude Code MCP remove")
+    _checked_claude_mcp_command(runner, add_argv, "Claude Code MCP add")
+
+    verified = runner(get_argv)
+    verification = _claude_mcp_fields(verified.stdout) if not verified.returncode else {}
+    if not _claude_mcp_is_canonical(verification, version):
+        raise click.ClickException(
+            "Claude Code MCP verification failed: expected user-scope "
+            f"uvx --from {package} reviewer-mcp; argv={' '.join(get_argv)}"
+        )
+    return _ClaudeMcpInstallResult(
+        executable,
+        get_argv,
+        remove_argv if replaced else None,
+        add_argv,
+        False,
+        not replaced,
+        replaced,
+    )
+
+
+def _print_claude_mcp_result(result: _ClaudeMcpInstallResult) -> None:
+    if result.dry_run:
+        click.echo("# Claude Code MCP (user scope)")
+        click.echo("# " + " ".join(result.get_argv))
+        if result.remove_argv is not None:
+            click.echo("# " + " ".join(result.remove_argv))
+        click.echo("# " + " ".join(result.add_argv))
+        return
+    if result.replaced:
+        status = "заменена неканоническая запись"
+    elif result.created:
+        status = "добавлена запись"
+    else:
+        status = "запись уже актуальна"
+    click.echo(f"✓ Claude Code MCP (user scope): {status}")
+
+
+def _apply_claude_allowlist(inst, *, dry_run: bool) -> None:
+    try:
+        plan = inst.build_allowlist_plan(inst.claude_user_settings_path())
+        if dry_run:
+            click.echo("# Claude Code allowlist (глобально, для всех проектов) → " f"{plan.path}")
+            click.echo(plan.content)
+            return
+        backup = inst.apply_allowlist_plan(plan)
+    except Exception as exc:
+        raise click.ClickException(f"Claude Code allowlist: {exc}") from exc
+    if plan.already:
+        status = "правило уже есть"
+    elif plan.created:
+        status = "создан settings.json"
+    else:
+        status = "добавлено правило"
+    click.echo(
+        "  allowlist (глобально, для всех проектов): "
+        f"{status} → {plan.path} ({inst.REVIEWER_PERMISSION_RULE})"
+    )
+    if backup:
+        click.echo(f"  бэкап: {backup}")
 
 
 @cli.command()
@@ -358,6 +560,9 @@ def install(client: str | None, all_clients: bool, list_clients: bool,
     """Прописать MCP-сервер reviewer (и скилы) в конфиг AI-CLI/IDE (кроссплатформенно)."""
     from reviewer import install as inst
 
+    if all_clients and path_opt:
+        raise click.ClickException("--path несовместим с --all")
+
     if list_clients:
         click.echo("Поддерживаемые клиенты (reviewer install <client>):")
         for c in inst.CLIENTS.values():
@@ -368,7 +573,9 @@ def install(client: str | None, all_clients: bool, list_clients: bool,
 
     version = "" if no_latest else (pin or "latest")
     if all_clients:
-        targets = inst.detect_installed()
+        targets = [c for c in inst.detect_installed() if c.key != "claude-code"]
+        if _shutil.which("claude"):
+            targets.insert(0, inst.CLIENTS["claude-code"])
         if not targets:
             raise click.ClickException(
                 "Не обнаружено установленных клиентов. Укажите явно: reviewer install <client> "
@@ -384,8 +591,9 @@ def install(client: str | None, all_clients: bool, list_clients: bool,
         raise click.ClickException(
             "Укажите клиент (reviewer install <client>), либо --all / --list.")
 
-    codex_errors: list[str] = []
+    native_errors: list[str] = []
     codex_mcp_only = no_skills and any(c.key == "codex" for c in targets)
+    claude_mcp_only = no_skills and any(c.key == "claude-code" for c in targets)
     tar_cache: list[tuple[bytes, str | None]] = []  # тарбол+ETag качаем один раз
 
     def _ensure_skills(c) -> None:
@@ -409,6 +617,32 @@ def install(client: str | None, all_clients: bool, list_clients: bool,
             click.echo(f"  скилы: пропуск ({exc})")
 
     for c in targets:
+        if c.key == "claude-code":
+            try:
+                if path_opt:
+                    raise click.ClickException(
+                        "Claude Code global lifecycle несовместим с --path"
+                    )
+                if no_skills:
+                    result = _run_claude_mcp_target(
+                        dry_run=dry_run,
+                        version=version,
+                    )
+                    _print_claude_mcp_result(result)
+                else:
+                    if no_latest or (pin is not None and pin != "latest"):
+                        raise click.ClickException(
+                            "Claude Code plugin использует версию из bundled manifest; "
+                            "--pin и --no-latest доступны только с --no-skills"
+                        )
+                    result = _run_claude_target(dry_run=dry_run)
+                    _print_claude_result(result)
+                _apply_claude_allowlist(inst, dry_run=dry_run)
+            except click.ClickException as exc:
+                if not all_clients:
+                    raise
+                native_errors.append(f"Claude Code CLI: {exc.format_message()}")
+            continue
         if c.key == "codex" and not no_skills:
             try:
                 result = _run_codex_target(
@@ -421,16 +655,12 @@ def install(client: str | None, all_clients: bool, list_clients: bool,
             except click.ClickException as exc:
                 if not all_clients:
                     raise
-                codex_errors.append(f"Codex CLI: {exc.format_message()}")
+                native_errors.append(f"Codex CLI: {exc.format_message()}")
             continue
         plan = inst.build_plan(c, version=version, path_override=path_opt)
         if dry_run:
             click.echo(f"# {c.label} → {plan.path}")
             click.echo(plan.content)
-            if c.key == "claude-code":
-                al_plan = inst.build_allowlist_plan(inst.claude_user_settings_path())
-                click.echo(f"# {c.label} allowlist (глобально, для всех проектов) → {al_plan.path}")
-                click.echo(al_plan.content)
             if c.skills_fn and not no_skills:
                 click.echo(f"# {c.label} скилы → {c.skills_fn(_platform.system())}")
             continue
@@ -446,25 +676,15 @@ def install(client: str | None, all_clients: bool, list_clients: bool,
             click.echo(f"  бэкап: {backup}")
         if c.note:
             click.echo(f"  прим.: {c.note}")
-        if c.key == "claude-code":
-            al_plan = inst.build_allowlist_plan(inst.claude_user_settings_path())
-            al_backup = inst.apply_allowlist_plan(al_plan)
-            if al_plan.already:
-                al_status = "правило уже есть"
-            elif al_plan.created:
-                al_status = "создан settings.json"
-            else:
-                al_status = "добавлено правило"
-            click.echo(f"  allowlist (глобально, для всех проектов): {al_status} → "
-                       f"{al_plan.path} ({inst.REVIEWER_PERMISSION_RULE})")
-            if al_backup:
-                click.echo(f"  бэкап: {al_backup}")
         _ensure_skills(c)
 
-    if codex_errors:
-        raise click.ClickException("; ".join(codex_errors))
+    if native_errors:
+        raise click.ClickException("; ".join(native_errors))
     if not dry_run and codex_mcp_only:
         click.echo("Codex MCP обновлён. Откройте New Chat/new CLI session; "
+                   "в IDE выполните Reload Window.")
+    if not dry_run and claude_mcp_only:
+        click.echo("Claude Code MCP обновлён. Откройте New Chat/new CLI session; "
                    "в IDE выполните Reload Window.")
     if not dry_run:
         click.echo("Готово. Перезапустите клиент. Ключи: reviewer init && reviewer check.")

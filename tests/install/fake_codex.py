@@ -9,6 +9,14 @@ class FakeCodex:
     """Файловый Codex fake: его состояние живёт в config.toml effective home."""
 
     _STATE_HEADER = "[fake_codex]"
+    _MARKETPLACE_HEADER = "[marketplaces.rag-reviewer]"
+    _MARKETPLACE_CONFIG = (
+        "[marketplaces.rag-reviewer]\n"
+        'source_type = "git"\n'
+        'source = "https://github.com/mimfort/rag_for_git.git"\n'
+        'ref = "main"\n'
+        'sparse_paths = [".agents/plugins", "plugin"]\n'
+    )
 
     def __init__(self, executable: Path, marketplace_root: Path, codex_home: Path):
         self.executable = executable
@@ -17,7 +25,12 @@ class FakeCodex:
         self.calls: list[tuple[str, ...]] = []
         self.fail: tuple[str, ...] | None = None
         self.clobber_mcp_on_plugin_add = False
+        self.clobber_marketplace_metadata_on_plugin_add = False
         self.malformed_marketplace_after_mutation = False
+        self.marketplace_json_source_type: str | None = "git"
+        self.marketplace_json_source = "https://github.com/mimfort/rag_for_git.git"
+        self.marketplace_json_ref: str | None = None
+        self.marketplace_json_sparse_paths: tuple[str, ...] | None = None
 
     @property
     def config_path(self) -> Path:
@@ -65,6 +78,16 @@ class FakeCodex:
         self.config_path.parent.mkdir(parents=True, exist_ok=True)
         self.config_path.write_bytes((content + "\n".join(lines) + "\n").encode("utf-8"))
 
+    def _set_marketplace_metadata(self, present: bool) -> None:
+        raw = self.config_path.read_text(encoding="utf-8") if self.config_path.exists() else ""
+        content = self._without_table(raw, self._MARKETPLACE_HEADER)
+        if present:
+            if content and not content.endswith("\n"):
+                content += "\n"
+            content += self._MARKETPLACE_CONFIG
+        self.config_path.parent.mkdir(parents=True, exist_ok=True)
+        self.config_path.write_bytes(content.encode("utf-8"))
+
     @property
     def marketplace(self) -> bool:
         return self._state().get("marketplace") is True
@@ -72,6 +95,7 @@ class FakeCodex:
     @marketplace.setter
     def marketplace(self, value: bool) -> None:
         self._set_state(marketplace=value)
+        self._set_marketplace_metadata(value)
 
     @property
     def installed(self) -> dict[str, object] | None:
@@ -117,16 +141,22 @@ class FakeCodex:
                     }
                 ]
             elif self.marketplace:
+                marketplace_source: dict[str, object] = {
+                    "source": self.marketplace_json_source,
+                }
+                if self.marketplace_json_source_type is not None:
+                    marketplace_source["sourceType"] = self.marketplace_json_source_type
+                if self.marketplace_json_ref is not None:
+                    marketplace_source["ref"] = self.marketplace_json_ref
+                if self.marketplace_json_sparse_paths is not None:
+                    marketplace_source["sparsePaths"] = list(
+                        self.marketplace_json_sparse_paths
+                    )
                 rows = [
                     {
                         "name": "rag-reviewer",
                         "root": str(self.marketplace_root),
-                        "marketplaceSource": {
-                            "sourceType": "git",
-                            "source": "mimfort/rag_for_git",
-                            "ref": "main",
-                            "sparsePaths": [".agents/plugins", "plugin"],
-                        },
+                        "marketplaceSource": marketplace_source,
                     }
                 ]
             else:
@@ -155,5 +185,7 @@ class FakeCodex:
             )
             if self.clobber_mcp_on_plugin_add:
                 self._clobber_reviewer_mcp()
+            if self.clobber_marketplace_metadata_on_plugin_add:
+                self._set_marketplace_metadata(False)
             return CommandResult(argv, 0, json.dumps(self.installed), "")
         return CommandResult(argv, 2, "", f"unexpected argv: {argv}")
