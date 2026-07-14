@@ -106,7 +106,15 @@ MCP-сессия (PreparedReview + ToolContext) живёт в процессе `
 - **Мульти-репо через `repo`-дискриминатор**: один деплой обслуживает N репозиториев через `repo` (`owner/name`) в Postgres (`chunks`/`index_meta`) и Neo4j (`:Symbol.repo`, составная уникальность `(repo, branch, id)`). Индексация: `reviewer index --repo owner/name` (или derive из git remote `origin` / `DEFAULT_REPO`). Граф задач `:Task` глобален — задача может покрывать несколько микросервисных репозиториев. Каждое ревью изолировано в рамках своего репо (без кросс-репо ретрива).
 - **`reviewer check`** проверяет готовность окружения (ключи, Postgres, Neo4j, GitHub) без трат квот Voyage.
 - **Глубина кластеризации сводок (`SUMMARY_CLUSTER_DEPTH`, дефолт 2)** — env-настройка деплоя для `/summarize-subsystems`: до скольких сегментов пути обрезается `cluster_key` подсистемы. Per-repo override — ключ `summary_cluster_depth` в `.review.yml` целевой ветки (резолвится server-side в `list_subsystem_clusters`/`index_subsystem_summary`). Смена depth меняет `cluster_key` → **полный пересбор всех сводок**; осиротевшие сводки старого depth вычищаются `prune_subsystem_summaries` на полном (uncapped) прогоне скилла (PRI-166).
-- **Overlay удаляется автоматически** (`store.delete_ref("pr:N")`) — после `publish_review` эфемерный ref не остаётся в Postgres. При сбое prepare также чистится (fail-soft).
+- **Overlay удаляется автоматически** (`store.delete_ref("pr:N")`) — после `publish_review` эфемерный
+  ref не остаётся в Postgres. При сбое prepare также чистится (fail-soft). Но если ревью **брошено**
+  между `prepare_review` и `publish_review` (пользователь отменил, оркестрирующая LLM-сессия упала),
+  публикация не вызывается вовсе — такой overlay собирает **GC** (`reviewer/services/gc.py`):
+  оппортунистически при каждом `prepare_review` и по команде `reviewer gc`. Сирота = `pr:N` без
+  непросроченной строки в `review_sessions` (TTL `review_session_ttl_hours`) и вне активных сессий
+  процесса. GC никогда не трогает `base:<branch>`; при недоступной БД не удаляет ничего
+  («не знаю живых» ≠ «живых нет»). Гарантию даёт только сервер: скилл `review-pr` — это промпт,
+  а не `try/finally`.
 - **Наблюдаемость (`reviewer/web/`)**: каждый `publish_review` пишет в Postgres итоги прогона (`review_runs`/`review_findings`, гейт `REVIEW_HISTORY`) — fail-soft. Веб-админка (FastAPI `reviewer serve`) читает **ту же** БД.
 - **MCP-сессия живёт в процессе сервера** между `prepare_review` и `publish_review` одного PR: `_Session(prepared, ctx)` в `MCPReviewService._sessions`. При повторном `prepare_review` для того же (repo, pr) сессия перезаписывается, старый VCS-провайдер закрывается (fail-soft).
 - **Плагин** находится в `plugin/` в корне репозитория — это корень Claude Code-плагина для скилла `/rag-reviewer:reviewer_review-pr`.
