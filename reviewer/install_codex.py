@@ -11,7 +11,7 @@ import tomllib
 from uuid import uuid4
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePath, PurePosixPath
 from typing import Any, Callable, Literal, Protocol
 
 PLUGIN_NAME = "rag-reviewer"
@@ -21,7 +21,11 @@ MARKETPLACE_GIT_SOURCE = "https://github.com/mimfort/rag_for_git.git"
 MARKETPLACE_REF = "main"
 MARKETPLACE_SPARSE = (".agents/plugins", "plugin")
 _NORMALIZED_VERSION = "0.0.0+codex.normalized"
-_FORBIDDEN_PAYLOAD_PARTS = {".git", ".env", ".venv", "__pycache__", "build", "dist"}
+_FORBIDDEN_PAYLOAD_PARTS = {".git", ".env", ".venv", "build", "dist"}
+# Байткод — производное от .py, которые уже в digest: запуск хуков плагина не должен
+# ломать install (payload_digest падал на plugin/hooks/__pycache__/*.pyc).
+_IGNORED_PAYLOAD_PARTS = {"__pycache__"}
+_IGNORED_PAYLOAD_SUFFIXES = {".pyc", ".pyo"}
 _WINDOWS_REPARSE_POINT = 0x400
 
 
@@ -86,6 +90,12 @@ def _payload_bytes(path: Path, plugin_root: Path) -> bytes:
     return (json.dumps(data, sort_keys=True, ensure_ascii=False) + "\n").encode()
 
 
+def _is_ignored_payload(rel: PurePath) -> bool:
+    if any(part in _IGNORED_PAYLOAD_PARTS for part in rel.parts):
+        return True
+    return PurePosixPath(rel.as_posix()).suffix in _IGNORED_PAYLOAD_SUFFIXES
+
+
 def payload_digest(plugin_root: Path) -> str:
     _reject_symlink_tree(plugin_root, "plugin payload")
     digest = hashlib.sha256()
@@ -95,6 +105,8 @@ def payload_digest(plugin_root: Path) -> str:
     )
     for path in files:
         rel = path.relative_to(plugin_root)
+        if _is_ignored_payload(rel):
+            continue
         if any(part in _FORBIDDEN_PAYLOAD_PARTS for part in rel.parts):
             raise ValueError(f"forbidden payload path: {rel.as_posix()}")
         rel_bytes = rel.as_posix().encode()
@@ -142,15 +154,22 @@ def sync_plugin_metadata(repo_root: Path, *, check: bool) -> list[str]:
     plugin_root = repo_root / "plugin"
     canonical_path = plugin_root / ".codex-plugin" / "plugin.json"
     project_path = repo_root / ".codex-plugin" / "plugin.json"
+    claude_path = plugin_root / ".claude-plugin" / "plugin.json"
     payload_icon = plugin_root / "assets" / "icon.svg"
     source_icon = repo_root / "assets" / "icon.svg"
+    base_version = project_version(repo_root)
     if not check:
         canonical = json.loads(canonical_path.read_text(encoding="utf-8"))
         canonical.pop("mcpServers", None)
         payload_icon.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(source_icon, payload_icon)
-        canonical["version"] = project_version(repo_root)
+        canonical["version"] = base_version
         canonical_path.write_text(_canonical_json(canonical), encoding="utf-8")
+        claude = json.loads(claude_path.read_text(encoding="utf-8"))
+        claude["version"] = base_version
+        claude_path.write_text(_canonical_json(claude), encoding="utf-8")
+        # digest берётся после записи Claude-манифеста: он лежит внутри payload и,
+        # в отличие от Codex-манифеста, его версия не нормализуется.
         canonical["version"] = expected_plugin_version(repo_root)
         canonical_path.write_text(_canonical_json(canonical), encoding="utf-8")
         project_path.write_text(
@@ -161,6 +180,9 @@ def sync_plugin_metadata(repo_root: Path, *, check: bool) -> list[str]:
     errors: list[str] = []
     canonical = _checked_json(canonical_path, "canonical Codex manifest", errors)
     actual_project = _checked_json(project_path, "root Codex manifest", errors)
+    claude = _checked_json(claude_path, "Claude manifest", errors)
+    if claude is not None and claude.get("version") != base_version:
+        errors.append(f"Claude manifest version {claude.get('version')!r} != {base_version!r}")
     if canonical is not None:
         expected = expected_plugin_version(repo_root)
         if canonical.get("version") != expected:
