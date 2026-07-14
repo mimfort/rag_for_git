@@ -9,8 +9,11 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from reviewer.config.settings import Settings
 from reviewer.mcp.service import MCPReviewService
+from reviewer.services.review_service import BranchNotTrackedError
 
 # prepare_review персистит сессию через to_payload(prepared) (session_serde.py) —
 # он вызывает dataclasses.asdict() на prepared.prq/policy/units, а здесь
@@ -49,13 +52,20 @@ class _FakeSessionStore:
 
     save() нужен потому, что prepare_review персистит новую сессию
     (reviewer/mcp/service.py:133-135) — без него тест упал бы на AttributeError.
+
+    calls — журнал вызовов save()/delete() в порядке обращения ("save"/"delete",
+    repo, pr). Нужен тестам на снятие резервации ключа сессии (C2): без него
+    пришлось бы городить отдельную MagicMock-обвязку в каждом тесте.
     """
 
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str, int]] = []
+
     def save(self, repo: str, pr: int, payload: dict) -> None:
-        pass
+        self.calls.append(("save", repo, pr))
 
     def delete(self, repo: str, pr: int) -> None:
-        pass
+        self.calls.append(("delete", repo, pr))
 
     def live_keys(self, ttl_hours: int) -> set[tuple[str, int]]:
         return set()
@@ -155,3 +165,38 @@ def test_prepare_reserves_session_before_building_overlay(_to_payload):
     assert calls, "ни save, ни prepare не были вызваны"
     assert calls[0] == "session_store.save"
     assert "review_service.prepare" in calls
+
+
+@_PATCH_TO_PAYLOAD
+def test_prepare_releases_reservation_on_branch_not_tracked(_to_payload):
+    """C2: резервация снимается на раннем return при BranchNotTrackedError.
+
+    Без session_store.delete() на этом пути пустая строка-резервация
+    (repo, pr) провисела бы в review_sessions до TTL, хотя overlay даже не
+    начинал строиться (ReviewService.prepare упал раньше).
+    """
+    c = _components()
+    svc = _service(c)
+    svc._review_service.prepare = MagicMock(side_effect=BranchNotTrackedError("feature/zzz"))
+
+    out = svc.prepare_review("a/x", 9)
+
+    assert out["status"] == "skipped"
+    assert svc._session_store.calls == [("save", "a/x", 9), ("delete", "a/x", 9)]
+
+
+@_PATCH_TO_PAYLOAD
+def test_prepare_releases_reservation_and_reraises_on_prepare_failure(_to_payload):
+    """C2: резервация снимается при любом сбое prepare(), исходное исключение не глотается.
+
+    Иначе (а) пустая строка-резервация провиснет в review_sessions до TTL, и
+    (б) вызывающий MCP-клиент не узнает о реальной причине сбоя ReviewService.prepare.
+    """
+    c = _components()
+    svc = _service(c)
+    svc._review_service.prepare = MagicMock(side_effect=RuntimeError("github недоступен"))
+
+    with pytest.raises(RuntimeError, match="github недоступен"):
+        svc.prepare_review("a/x", 9)
+
+    assert svc._session_store.calls == [("save", "a/x", 9), ("delete", "a/x", 9)]
