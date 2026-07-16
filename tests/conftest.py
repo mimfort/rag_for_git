@@ -19,6 +19,7 @@ from tests.infrastructure_policy import (
 @dataclass(frozen=True)
 class _SocketPolicyState:
     socket_type: Any
+    socket_connect_defined: bool
     socket_connect: Any
     getaddrinfo: Any
     gethostbyname: Any
@@ -37,7 +38,8 @@ _SESSION_POLICIES: list[_SessionPolicyState] = []
 def _capture_socket_policy() -> _SocketPolicyState:
     return _SocketPolicyState(
         socket_type=socket.socket,
-        socket_connect=socket.socket.connect,
+        socket_connect_defined="connect" in socket.socket.__dict__,
+        socket_connect=socket.socket.__dict__.get("connect"),
         getaddrinfo=socket.getaddrinfo,
         gethostbyname=socket.gethostbyname,
     )
@@ -45,7 +47,10 @@ def _capture_socket_policy() -> _SocketPolicyState:
 
 def _restore_socket_policy(state: _SocketPolicyState) -> None:
     socket.socket = state.socket_type
-    socket.socket.connect = state.socket_connect
+    if state.socket_connect_defined:
+        socket.socket.connect = state.socket_connect
+    elif "connect" in socket.socket.__dict__:
+        delattr(socket.socket, "connect")
     socket.getaddrinfo = state.getaddrinfo
     socket.gethostbyname = state.gethostbyname
 

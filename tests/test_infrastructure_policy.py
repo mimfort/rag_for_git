@@ -109,6 +109,8 @@ from pytest_socket import SocketBlockedError
 def state():
     return (
         socket.socket,
+        "connect" in socket.socket.__dict__,
+        socket.socket.__dict__.get("connect"),
         psycopg.connect,
         psycopg.Connection.__dict__["connect"],
         ConnectionPool.__dict__["__init__"],
@@ -147,6 +149,8 @@ from psycopg_pool import ConnectionPool
 def state():
     return (
         socket.socket,
+        "connect" in socket.socket.__dict__,
+        socket.socket.__dict__.get("connect"),
         psycopg.connect,
         psycopg.Connection.__dict__["connect"],
         ConnectionPool.__dict__["__init__"],
@@ -355,6 +359,14 @@ def test_rejects_unsafe_neo4j_test_targets(overrides: dict[str, str]) -> None:
 def test_rejects_noncanonical_numeric_neo4j_host(host: str) -> None:
     test = _test_settings(neo4j_uri=f"neo4j://{host}:17687")
     production = _production_settings(neo4j_uri="neo4j://production.example:7687")
+
+    with pytest.raises(InfrastructureSafetyError, match="Non-canonical numeric host"):
+        validate_test_endpoints(test, production)
+
+
+def test_rejects_noncanonical_numeric_production_neo4j_host() -> None:
+    test = _test_settings(neo4j_uri="neo4j://localhost:17687")
+    production = _production_settings(neo4j_uri="neo4j://127.1:17687")
 
     with pytest.raises(InfrastructureSafetyError, match="Non-canonical numeric host"):
         validate_test_endpoints(test, production)

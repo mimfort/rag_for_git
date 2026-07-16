@@ -250,6 +250,8 @@ def validate_test_endpoints(
             production.neo4j_password,
             require_credentials=False,
         )
+    except InfrastructureSafetyError:
+        raise
     except ValueError:
         production_neo4j = None
     if production_neo4j is not None and neo4j.location == production_neo4j.location:
