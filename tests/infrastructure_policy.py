@@ -1,17 +1,19 @@
 from __future__ import annotations
 
-from contextlib import contextmanager
+from contextlib import contextmanager, ExitStack
 from dataclasses import dataclass, field
+from functools import wraps
+import ipaddress
 from typing import Any
 from urllib.parse import urlsplit
 
 import psycopg
 import pytest
 from neo4j import GraphDatabase
+from pydantic import Field
 from psycopg.conninfo import conninfo_to_dict
 from psycopg_pool import ConnectionPool, PoolTimeout
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from pytest_socket import disable_socket, enable_socket
 
 from reviewer.config.settings import Settings, _resolve_env_file
 
@@ -21,7 +23,6 @@ _ORIGINAL_POOL_INIT = ConnectionPool.__init__
 _ORIGINAL_POOL_CONNECTION = ConnectionPool.connection
 _ORIGINAL_GRAPH_DRIVER = GraphDatabase.driver.__func__
 
-_LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "::1"}
 _NEO4J_SCHEMES = {"bolt", "bolt+s", "bolt+ssc", "neo4j", "neo4j+s", "neo4j+ssc"}
 _START_TEST_SERVICES = (
     "docker compose --profile test up -d --wait paradedb-test neo4j-test"
@@ -33,13 +34,16 @@ class InfrastructureTestSettings(BaseSettings):
         env_file=_resolve_env_file(), env_prefix="TEST_", extra="ignore", frozen=True
     )
 
-    pg_dsn: str = (
-        "postgresql://reviewer_test:reviewer_test@localhost:55433/"
-        "reviewer_test?connect_timeout=2"
+    pg_dsn: str = Field(
+        default=(
+            "postgresql://reviewer_test:reviewer_test@localhost:55433/"
+            "reviewer_test?connect_timeout=2"
+        ),
+        repr=False,
     )
-    neo4j_uri: str = "neo4j://localhost:17687"
-    neo4j_user: str = "neo4j"
-    neo4j_password: str = "reviewer_test_pass"
+    neo4j_uri: str = Field(default="neo4j://localhost:17687", repr=False)
+    neo4j_user: str = Field(default="neo4j", repr=False)
+    neo4j_password: str = Field(default="reviewer_test_pass", repr=False)
 
 
 @dataclass(frozen=True)
@@ -87,7 +91,13 @@ class ValidatedTestEndpoints:
 
 def _normalize_host(host: str) -> str:
     normalized = host.strip().lower().strip("[]")
-    return "loopback" if normalized in _LOOPBACK_HOSTS else normalized
+    if normalized.rstrip(".") == "localhost":
+        return "loopback"
+    try:
+        address = ipaddress.ip_address(normalized)
+    except ValueError:
+        return normalized
+    return "loopback" if address.is_loopback else address.compressed
 
 
 def _conninfo_dict(conninfo: str, **kwargs: Any) -> dict[str, str]:
@@ -240,25 +250,27 @@ def apply_test_environment(
     monkeypatch.setenv("NEO4J_PASSWORD", test.neo4j_password)
 
 
+@wraps(_ORIGINAL_PSYCOPG_CONNECT)
 def _unit_postgres_blocked(*args: Any, **kwargs: Any) -> None:
     pytest.fail("Unit-тесту запрещено подключение к Postgres", pytrace=False)
 
 
+@wraps(_ORIGINAL_CONNECTION_CONNECT)
 def _unit_postgres_class_blocked(cls: type, *args: Any, **kwargs: Any) -> None:
     pytest.fail("Unit-тесту запрещено подключение к Postgres", pytrace=False)
 
 
+@wraps(_ORIGINAL_POOL_INIT)
 def _unit_pool_blocked(self: ConnectionPool, *args: Any, **kwargs: Any) -> None:
     pytest.fail("Unit-тесту запрещено создание пула Postgres", pytrace=False)
 
 
+@wraps(_ORIGINAL_GRAPH_DRIVER)
 def _unit_neo4j_blocked(cls: type, *args: Any, **kwargs: Any) -> None:
     pytest.fail("Unit-тесту запрещено подключение к Neo4j", pytrace=False)
 
 
-def install_unit_guards(monkeypatch: pytest.MonkeyPatch) -> None:
-    enable_socket()
-    disable_socket(allow_unix_socket=True)
+def install_unit_db_guards(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(psycopg, "connect", _unit_postgres_blocked)
     monkeypatch.setattr(
         psycopg.Connection, "connect", classmethod(_unit_postgres_class_blocked)
@@ -327,16 +339,19 @@ def install_integration_guards(
     postgres = endpoints.postgres
     neo4j = endpoints.neo4j
 
+    @wraps(_ORIGINAL_PSYCOPG_CONNECT)
     def guarded_connect(conninfo: str = "", **kwargs: Any):
         _assert_postgres_allowed(conninfo, postgres, _connection_params(kwargs))
         kwargs["connect_timeout"] = postgres.connect_timeout
         return _ORIGINAL_PSYCOPG_CONNECT(conninfo, **kwargs)
 
+    @wraps(_ORIGINAL_CONNECTION_CONNECT)
     def guarded_class_connect(cls: type, conninfo: str = "", **kwargs: Any):
         _assert_postgres_allowed(conninfo, postgres, _connection_params(kwargs))
         kwargs["connect_timeout"] = postgres.connect_timeout
         return _ORIGINAL_CONNECTION_CONNECT(cls, conninfo, **kwargs)
 
+    @wraps(_ORIGINAL_POOL_INIT)
     def guarded_pool_init(
         self: ConnectionPool, conninfo: str = "", *args: Any, **kwargs: Any
     ) -> None:
@@ -351,23 +366,25 @@ def install_integration_guards(
             kwargs.get("reconnect_timeout", postgres.connect_timeout),
             postgres.connect_timeout,
         )
-        try:
-            _ORIGINAL_POOL_INIT(self, conninfo, *args, **kwargs)
-        except PoolTimeout:
-            _pool_timeout()
+        _ORIGINAL_POOL_INIT(self, conninfo, *args, **kwargs)
 
+    @wraps(_ORIGINAL_POOL_CONNECTION)
     @contextmanager
     def guarded_pool_connection(self: ConnectionPool, timeout: float | None = None):
         capped = _capped_timeout(
             timeout if timeout is not None else postgres.connect_timeout,
             postgres.connect_timeout,
         )
-        try:
-            with _ORIGINAL_POOL_CONNECTION(self, timeout=capped) as connection:
-                yield connection
-        except PoolTimeout:
-            _pool_timeout()
+        with ExitStack() as stack:
+            try:
+                connection = stack.enter_context(
+                    _ORIGINAL_POOL_CONNECTION(self, timeout=capped)
+                )
+            except PoolTimeout:
+                _pool_timeout()
+            yield connection
 
+    @wraps(_ORIGINAL_GRAPH_DRIVER)
     def guarded_graph_driver(cls: type, uri: str, *, auth: Any = None, **config: Any):
         try:
             requested = _parse_neo4j(uri, *(auth if isinstance(auth, tuple) else ("", "")))
