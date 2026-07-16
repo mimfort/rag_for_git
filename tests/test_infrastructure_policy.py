@@ -14,6 +14,7 @@ import pytest
 import tests.infrastructure_policy as infrastructure_policy
 import yaml
 from neo4j import GraphDatabase
+from neo4j.exceptions import ConfigurationError
 from psycopg_pool import ConnectionPool, PoolTimeout
 from pytest_socket import SocketBlockedError
 
@@ -499,6 +500,67 @@ def test_rejects_production_neo4j_routing_uri_at_same_location() -> None:
 
     with pytest.raises(ValueError, match="production"):
         validate_test_endpoints(test, production)
+
+
+@pytest.mark.parametrize("scheme", ["neo4j", "neo4j+s", "neo4j+ssc"])
+def test_valid_production_routing_context_matches_driver_and_location(scheme: str) -> None:
+    uri = f"{scheme}://db.example:17687?region=eu"
+    driver = infrastructure_policy._ORIGINAL_GRAPH_DRIVER(
+        GraphDatabase, uri, auth=("user", "password")
+    )
+    driver.close()
+    test = _test_settings(neo4j_uri=f"{scheme}://db.example:17687")
+    production = _production_settings(neo4j_uri=uri)
+
+    with pytest.raises(ValueError, match="production"):
+        validate_test_endpoints(test, production)
+
+
+@pytest.mark.parametrize("scheme", ["bolt", "bolt+s", "bolt+ssc"])
+def test_production_direct_neo4j_query_matches_driver_rejection(scheme: str) -> None:
+    uri = f"{scheme}://db.example:17687?region=eu"
+
+    with pytest.raises(ConfigurationError):
+        infrastructure_policy._ORIGINAL_GRAPH_DRIVER(
+            GraphDatabase, uri, auth=("user", "password")
+        )
+    with pytest.raises(InfrastructureSafetyError):
+        validate_test_endpoints(
+            _test_settings(neo4j_uri=f"{scheme}://test.example:17687"),
+            _production_settings(neo4j_uri=uri),
+        )
+
+
+def test_duplicate_production_routing_keys_match_driver_rejection_without_secrets() -> None:
+    secret = "never-print-routing-secret"
+    uri = f"neo4j://db.example:17687?region={secret}&region=other"
+
+    with pytest.raises(ConfigurationError):
+        infrastructure_policy._ORIGINAL_GRAPH_DRIVER(
+            GraphDatabase, uri, auth=("user", "password")
+        )
+    with pytest.raises(InfrastructureSafetyError) as exc_info:
+        validate_test_endpoints(
+            _test_settings(neo4j_uri="neo4j://test.example:17687"),
+            _production_settings(neo4j_uri=uri),
+        )
+
+    assert secret not in str(exc_info.value)
+
+
+@pytest.mark.parametrize("query", ["region=", "region"])
+def test_blank_production_routing_values_match_driver_rejection(query: str) -> None:
+    uri = f"neo4j://db.example:17687?{query}"
+
+    with pytest.raises(ConfigurationError):
+        infrastructure_policy._ORIGINAL_GRAPH_DRIVER(
+            GraphDatabase, uri, auth=("user", "password")
+        )
+    with pytest.raises(InfrastructureSafetyError):
+        validate_test_endpoints(
+            _test_settings(neo4j_uri="neo4j://test.example:17687"),
+            _production_settings(neo4j_uri=uri),
+        )
 
 
 def test_malformed_production_neo4j_uri_fails_closed_without_secrets() -> None:

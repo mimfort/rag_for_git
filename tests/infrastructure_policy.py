@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from functools import wraps
 import ipaddress
 from typing import Any
-from urllib.parse import urlsplit
+from urllib.parse import parse_qsl, urlsplit
 
 import psycopg
 import pytest
@@ -23,7 +23,9 @@ _ORIGINAL_POOL_INIT = ConnectionPool.__init__
 _ORIGINAL_POOL_CONNECTION = ConnectionPool.connection
 _ORIGINAL_GRAPH_DRIVER = GraphDatabase.driver.__func__
 
-_NEO4J_SCHEMES = {"bolt", "bolt+s", "bolt+ssc", "neo4j", "neo4j+s", "neo4j+ssc"}
+_NEO4J_ROUTING_SCHEMES = {"neo4j", "neo4j+s", "neo4j+ssc"}
+_NEO4J_DIRECT_SCHEMES = {"bolt", "bolt+s", "bolt+ssc"}
+_NEO4J_SCHEMES = _NEO4J_ROUTING_SCHEMES | _NEO4J_DIRECT_SCHEMES
 _START_TEST_SERVICES = (
     "docker compose --profile test up -d --wait paradedb-test neo4j-test"
 )
@@ -233,8 +235,9 @@ def _parse_production_neo4j_location(uri: str) -> tuple[str, int]:
     except ValueError:
         raise InfrastructureSafetyError("Malformed production Neo4j URI") from None
 
+    scheme = parsed.scheme.lower()
     if (
-        parsed.scheme.lower() not in _NEO4J_SCHEMES
+        scheme not in _NEO4J_SCHEMES
         or not hostname
         or parsed.username is not None
         or parsed.password is not None
@@ -244,7 +247,29 @@ def _parse_production_neo4j_location(uri: str) -> tuple[str, int]:
     ):
         raise InfrastructureSafetyError("Malformed production Neo4j URI")
 
+    _validate_production_neo4j_query(scheme, parsed.query)
     return _normalize_host(hostname), port
+
+
+def _validate_production_neo4j_query(scheme: str, query: str) -> None:
+    if not query:
+        return
+    if scheme not in _NEO4J_ROUTING_SCHEMES:
+        raise InfrastructureSafetyError("Invalid production Neo4j routing context")
+    try:
+        pairs = parse_qsl(query, keep_blank_values=True, strict_parsing=True)
+    except ValueError:
+        raise InfrastructureSafetyError(
+            "Invalid production Neo4j routing context"
+        ) from None
+
+    seen: set[str] = set()
+    for key, value in pairs:
+        if not value or key in seen:
+            raise InfrastructureSafetyError(
+                "Invalid production Neo4j routing context"
+            )
+        seen.add(key)
 
 
 def validate_test_endpoints(
