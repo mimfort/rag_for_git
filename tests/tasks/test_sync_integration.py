@@ -4,6 +4,8 @@
 TaskService/ChunkStore/TaskGraph из build_components. Нужны Postgres/Neo4j +
 ключ Voyage. Точечная очистка только тестовых ключей — реальный корпус не трогаем.
 """
+from contextlib import ExitStack
+
 import pytest
 
 from reviewer.app import build_components
@@ -14,6 +16,7 @@ from reviewer.tasks.sync import SyncService
 pytestmark = pytest.mark.integration
 
 _KEYS = ["ZID-901", "ZID-902"]
+_PR_ID = "o/r#7"
 _REF = "tasks:fake:ztest"
 
 
@@ -42,26 +45,48 @@ def _cleanup(comps):
     comps.task_store.delete_tasks(_KEYS)
     if comps.task_graph is not None:
         comps.task_graph.delete_tasks(_KEYS)
+        comps.graph.driver.execute_query(
+            "MATCH (p:PR {id: $id}) "
+            "WHERE NOT EXISTS { MATCH (:Task)-[:IMPLEMENTED_BY]->(p) } "
+            "DETACH DELETE p",
+            id=_PR_ID,
+        )
     comps.store.set_index_meta("", _REF, "0")
 
 
 def test_sync_idempotent_and_pr_edge():
-    comps = build_components(Settings(), connect=True)
-    _cleanup(comps)  # детерминированный старт
-    try:
-        raws = [_raw("ZID-901", 1000),
-                _raw("ZID-902", 1000, desc="impl https://github.com/o/r/pull/7")]
-        svc = SyncService([FakeProvider(raws)], comps.task_service, comps.store)
+    with ExitStack() as stack:
+        comps = build_components(Settings(), connect=True)
+        stack.callback(comps.store.close)
+        stack.callback(comps.task_store.close)
+        stack.callback(comps.summary_store.close)
+        if comps.graph is not None:
+            stack.callback(comps.graph.close)
 
-        first = svc.run(board="ztest")
-        assert first["changed"] == 2 and first["embedded"] == 2
-        assert first["cursor_advanced"] is True
+        comps.store.init_schema()
+        if comps.graph is not None:
+            comps.graph.init_schema()
+        _cleanup(comps)  # детерминированный старт
+        try:
+            raws = [_raw("ZID-901", 1000),
+                    _raw("ZID-902", 1000, desc="impl https://github.com/o/r/pull/7")]
+            svc = SyncService([FakeProvider(raws)], comps.task_service, comps.store)
 
-        second = svc.run(board="ztest")
-        assert second["changed"] == 0 and second["unchanged"] == 2
-        assert second["cursor_advanced"] is False
+            first = svc.run(board="ztest")
+            assert first["changed"] == 2 and first["embedded"] == 2
+            assert first["cursor_advanced"] is True
 
-        if comps.task_graph is not None:
-            assert "ZID-902" in set(comps.task_graph.keys_with_prs())
-    finally:
-        _cleanup(comps)
+            second = svc.run(board="ztest")
+            assert second["changed"] == 0 and second["unchanged"] == 2
+            assert second["cursor_advanced"] is False
+
+            if comps.task_graph is not None:
+                assert "ZID-902" in set(comps.task_graph.keys_with_prs())
+        finally:
+            _cleanup(comps)
+
+        if comps.graph is not None:
+            records, _, _ = comps.graph.driver.execute_query(
+                "MATCH (p:PR {id: $id}) RETURN count(p) AS n", id=_PR_ID
+            )
+            assert records[0]["n"] == 0
