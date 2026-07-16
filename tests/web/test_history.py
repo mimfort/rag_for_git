@@ -2,7 +2,7 @@
 
 Unit fail-soft мокает `_connect`; integration проверяет запись/чтение
 в изолированном профиле:
-`docker compose --profile test up -d --wait paradedb-test neo4j-test`.
+`docker compose --profile test up -d --wait paradedb-test`.
 """
 from __future__ import annotations
 

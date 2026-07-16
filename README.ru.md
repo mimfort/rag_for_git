@@ -1011,7 +1011,7 @@ docker compose --profile test rm -sfv paradedb-test neo4j-test
 
 DB integration-тесты используют `TEST_PG_DSN`, `TEST_NEO4J_URI`, `TEST_NEO4J_USER` и
 `TEST_NEO4J_PASSWORD`. Значения `TEST_*` никогда не должны совпадать с эндпоинтами dev- или
-production-сред. Сервисы Compose для dev/production и тестов различаются портами, учётными данными
+production-сред. Сервисы Compose для разработки и тестов различаются портами, учётными данными
 и хранилищем. Тестовые данные хранятся в `tmpfs`, а образы тестовых сервисов зафиксированы по digest.
 
 Никогда не используйте `docker compose --profile test down -v`: тестовые сервисы и сервисы
@@ -1050,21 +1050,11 @@ Issues и PR приветствуются. Для локальной работ�
 git clone https://github.com/mimfort/rag_for_git
 cd rag_for_git
 python -m venv .venv && .venv/bin/pip install -e ".[dev]"
-# unit: без Postgres, Neo4j, localhost-сервисов и внешней сети
-.venv/bin/pytest -q
-# изолированная инфраструктура integration-тестов
-docker compose --profile test up -d --wait paradedb-test neo4j-test
-# integration; пайплайну также нужен VOYAGE_API_KEY
-.venv/bin/pytest -q -m integration
-# только безопасное удаление
-docker compose --profile test rm -sfv paradedb-test neo4j-test
-# линт (line-length 100, target py311)
-.venv/bin/ruff check .
 ```
 
-Правила безопасности и изолированная тестовая инфраструктура из раздела [Тесты](#тесты)
-действуют для каждого локального прогона. Сообщения коммитов оформляются по Conventional Commits.
-Архитектура детально описана в [README.md](README.md) (EN) и `CLAUDE.md`.
+Канонический порядок запуска и правила безопасности приведены в разделе [Тесты](#тесты).
+Сообщения коммитов оформляются по Conventional Commits. Архитектура детально описана в
+[README.md](README.md) (EN) и `CLAUDE.md`.
 
 ## Лицензия
 

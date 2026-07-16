@@ -1,7 +1,7 @@
 """Integration-тесты SummaryStore на изолированном ParadeDB.
 
 Инфраструктура запускается командой:
-`docker compose --profile test up -d --wait paradedb-test neo4j-test`.
+`docker compose --profile test up -d --wait paradedb-test`.
 """
 from __future__ import annotations
 

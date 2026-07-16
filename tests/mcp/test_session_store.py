@@ -2,7 +2,7 @@
 
 Unit fail-soft мокает `_connect` и не требует инфраструктуры.
 Integration проверяет save/load/delete/TTL в изолированном профиле:
-`docker compose --profile test up -d --wait paradedb-test neo4j-test`.
+`docker compose --profile test up -d --wait paradedb-test`.
 """
 from __future__ import annotations
 

@@ -1013,7 +1013,7 @@ that uses the real network must carry `@pytest.mark.integration`.
 
 Database integration tests use `TEST_PG_DSN`, `TEST_NEO4J_URI`, `TEST_NEO4J_USER`, and
 `TEST_NEO4J_PASSWORD`. These `TEST_*` values must never equal development or production endpoints.
-The production and test Compose services differ in ports, credentials, and storage. Test data uses
+The development and test Compose services differ in ports, credentials, and storage. Test data uses
 `tmpfs`, and the test service images are pinned by digest.
 
 Never use `docker compose --profile test down -v`: the test and development services share a
@@ -1058,21 +1058,11 @@ Issues and PRs are welcome. To work on the project locally:
 git clone https://github.com/mimfort/rag_for_git
 cd rag_for_git
 python -m venv .venv && .venv/bin/pip install -e ".[dev]"
-# unit: no Postgres, Neo4j, localhost service, or external network
-.venv/bin/pytest -q
-# isolated integration infra
-docker compose --profile test up -d --wait paradedb-test neo4j-test
-# integration; pipeline also needs VOYAGE_API_KEY
-.venv/bin/pytest -q -m integration
-# safe teardown only
-docker compose --profile test rm -sfv paradedb-test neo4j-test
-# lint (line-length 100, target py311)
-.venv/bin/ruff check .
 ```
 
-The safety rules and isolated test infrastructure described in [Tests](#tests) apply to every local
-contributor run. Commit messages follow Conventional Commits. The architecture is documented in
-depth in [README.ru.md](README.ru.md) (Russian) and `CLAUDE.md`.
+Run the canonical workflow and follow its safety rules in [Tests](#tests). Commit messages follow
+Conventional Commits. The architecture is documented in depth in [README.ru.md](README.ru.md)
+(Russian) and `CLAUDE.md`.
 
 ## License
 
