@@ -95,13 +95,10 @@ class ChunkStore:
             conn.execute(_SCHEMA)
             conn.commit()
 
-    def clear(self, repo: str | None = None) -> None:
-        """Удалить чанки репозитория (repo) или весь индекс (repo=None — для тестов)."""
+    def clear(self, repo: str) -> None:
+        """Удалить все чанки указанного репозитория ``repo``."""
         with self._connect() as conn:
-            if repo is None:
-                conn.execute("TRUNCATE chunks RESTART IDENTITY")
-            else:
-                conn.execute("DELETE FROM chunks WHERE repo = %s", (repo,))
+            conn.execute("DELETE FROM chunks WHERE repo = %s", (repo,))
             conn.commit()
 
     def upsert(self, rows: list[ChunkRow]) -> None:

@@ -21,8 +21,16 @@ docker compose up -d
 cp .env.example .env        # .env gitignored, ключи только локально
 
 # Тесты
-.venv/bin/pytest -q                                   # unit: быстрые, на фейках, внешние API не дёргают
-.venv/bin/pytest -m integration                       # integration: нужны поднятые Postgres/Neo4j + ключ Voyage
+# unit: без Postgres, Neo4j, localhost-сервисов и внешней сети
+.venv/bin/pytest -q
+# изолированная инфраструктура integration-тестов
+docker compose --profile test up -d --wait paradedb-test neo4j-test
+# integration; пайплайну также нужен VOYAGE_API_KEY
+.venv/bin/pytest -q -m integration
+# только безопасное удаление
+docker compose --profile test rm -sfv paradedb-test neo4j-test
+
+# Точечные прогоны
 .venv/bin/pytest tests/index/test_store_hybrid.py     # один файл
 .venv/bin/pytest tests/policy/test_policy.py::test_name -q   # один тест
 
@@ -51,7 +59,19 @@ reviewer-mcp                               # запустить MCP-сервер
 # На хосте (для разработки фронта): pip install -e ".[web]" && (cd web/frontend && npm install && npm run build) && reviewer serve
 ```
 
-`pytest` по умолчанию **исключает** integration-тесты (`addopts = -m 'not integration'` в `pyproject.toml`) — маркер `integration` помечает тесты, требующие поднятых Postgres/Neo4j.
+Обычный `pytest` не запускает инфраструктуру и по умолчанию **исключает** integration-тесты
+(`addopts = -m 'not integration'` в `pyproject.toml`). Unit-тестам запрещены внешние и
+localhost-сокеты. Любой тест с реальной сетью обязан иметь `@pytest.mark.integration`.
+
+DB integration-тесты используют `TEST_PG_DSN`, `TEST_NEO4J_URI`, `TEST_NEO4J_USER` и
+`TEST_NEO4J_PASSWORD`. Значения `TEST_*` никогда не должны совпадать с эндпоинтами dev- или
+production-сред. Сервисы Compose для разработки и тестов различаются портами, учётными данными
+и хранилищем. Тестовые данные хранятся в `tmpfs`, а образы тестовых сервисов зафиксированы по digest.
+
+Никогда не используй `docker compose --profile test down -v`: тестовые сервисы и сервисы разработки
+входят в один проект Compose, поэтому команда удалит контейнеры разработки и именованные тома.
+Безопасна только адресная команда
+`docker compose --profile test rm -sfv paradedb-test neo4j-test`.
 
 ## Архитектура
 

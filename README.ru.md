@@ -999,13 +999,33 @@ docker-compose.yml   ParadeDB (pgvector+pg_search) + Neo4j
 ## Тесты
 
 ```bash
-.venv/bin/pytest -q                 # unit (быстрые, на фейках; внешние API не дёргают)
-.venv/bin/pytest -m integration     # integration: нужны поднятые Postgres/Neo4j + ключ Voyage
-.venv/bin/ruff check .              # линт (line-length 100, target py311)
+# unit: без Postgres, Neo4j, localhost-сервисов и внешней сети
+.venv/bin/pytest -q
+# изолированная инфраструктура integration-тестов
+docker compose --profile test up -d --wait paradedb-test neo4j-test
+# integration; пайплайну также нужен VOYAGE_API_KEY
+.venv/bin/pytest -q -m integration
+# только безопасное удаление
+docker compose --profile test rm -sfv paradedb-test neo4j-test
 ```
 
-`pytest` по умолчанию исключает integration-тесты (`addopts = -m 'not integration'`). Внешние сервисы
-изолированы за интерфейсами и мокаются в unit-тестах; реальные вызовы — только в integration/E2E.
+Обычный `pytest` не запускает инфраструктуру и по умолчанию исключает integration-тесты
+(`addopts = -m 'not integration'`). Unit-тестам запрещены внешние и localhost-сокеты. Любой тест
+с реальной сетью обязан иметь `@pytest.mark.integration`.
+
+DB integration-тесты используют `TEST_PG_DSN`, `TEST_NEO4J_URI`, `TEST_NEO4J_USER` и
+`TEST_NEO4J_PASSWORD`. Значения `TEST_*` никогда не должны совпадать с эндпоинтами dev- или
+production-сред. Сервисы Compose для разработки и тестов различаются портами, учётными данными
+и хранилищем. Тестовые данные хранятся в `tmpfs`, а образы тестовых сервисов зафиксированы по digest.
+
+Никогда не используйте `docker compose --profile test down -v`: тестовые сервисы и сервисы
+разработки входят в один проект Compose, поэтому команда удалит контейнеры разработки и именованные
+тома. Безопасна только адресная команда
+`docker compose --profile test rm -sfv paradedb-test neo4j-test`.
+
+```bash
+.venv/bin/ruff check .              # линт (line-length 100, target py311)
+```
 
 ## Ограничения и заметки
 
@@ -1034,12 +1054,11 @@ Issues и PR приветствуются. Для локальной работ�
 git clone https://github.com/mimfort/rag_for_git
 cd rag_for_git
 python -m venv .venv && .venv/bin/pip install -e ".[dev]"
-docker compose up -d            # Postgres/ParadeDB (:5433) + Neo4j (:7687)
-.venv/bin/pytest -q             # unit-тесты — быстрые, на фейках, без внешних API
-.venv/bin/ruff check .          # линт (line-length 100, target py311)
 ```
 
-Внешние сервисы (GitHub, Voyage, Postgres, Neo4j) изолированы за интерфейсами и мокаются в unit-тестах; реальные вызовы — только в integration/E2E. Сообщения коммитов — Conventional Commits. Архитектура детально описана в [README.md](README.md) (EN) и `CLAUDE.md`.
+Канонический порядок запуска и правила безопасности приведены в разделе [Тесты](#тесты).
+Сообщения коммитов оформляются по Conventional Commits. Архитектура детально описана в
+[README.md](README.md) (EN) и `CLAUDE.md`.
 
 ## Лицензия
 
