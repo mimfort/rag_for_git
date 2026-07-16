@@ -71,8 +71,8 @@ class Neo4jTestEndpoint:
     password: str = field(repr=False)
 
     @property
-    def target(self) -> tuple[str, str, int]:
-        return self.scheme, self.host, self.port
+    def target(self) -> tuple[str, int]:
+        return self.host, self.port
 
 
 @dataclass(frozen=True)
@@ -104,6 +104,8 @@ def _parse_postgres(
     params = _conninfo_dict(conninfo, **(connection_kwargs or {}))
     if params.get("service"):
         raise ValueError("Postgres service DSNs are not allowed in tests")
+    if params.get("hostaddr"):
+        raise ValueError("Postgres hostaddr is not allowed in tests")
 
     host = params.get("host", "")
     port_text = params.get("port", "5432")

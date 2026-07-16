@@ -82,6 +82,10 @@ def test_test_endpoint_defaults_are_isolated() -> None:
         "host=localhost user=u password=p dbname=reviewer_test connect_timeout=6",
         "host=localhost port=0 user=u password=p dbname=reviewer_test connect_timeout=2",
         "host=localhost port=70000 user=u password=p dbname=reviewer_test connect_timeout=2",
+        (
+            "host=localhost hostaddr=127.0.0.2 user=u password=p "
+            "dbname=reviewer_test connect_timeout=2"
+        ),
     ],
 )
 def test_rejects_unsafe_postgres_test_targets(pg_dsn: str) -> None:
@@ -156,6 +160,14 @@ def test_rejects_neo4j_target_equal_to_production_after_loopback_normalization()
         validate_test_endpoints(test, production)
 
 
+def test_rejects_neo4j_target_equal_to_production_through_scheme_alias() -> None:
+    production = _production_settings(neo4j_uri="neo4j://localhost:17687")
+    test = _test_settings(neo4j_uri="bolt://127.0.0.1:17687")
+
+    with pytest.raises(ValueError, match="production"):
+        validate_test_endpoints(test, production)
+
+
 def test_rejects_neo4j_target_equal_to_production_without_production_credentials() -> None:
     production = _production_settings(
         neo4j_uri="neo4j://localhost:17687", neo4j_user="", neo4j_password=""
@@ -188,6 +200,26 @@ def test_integration_fixture_routes_settings_to_raw_test_settings(
     assert actual.neo4j_uri == infrastructure_test_settings.neo4j_uri
     assert actual.neo4j_user == infrastructure_test_settings.neo4j_user
     assert actual.neo4j_password == infrastructure_test_settings.neo4j_password
+
+
+@pytest.mark.integration
+def test_integration_psycopg_guard_rejects_hostaddr_override(
+    infrastructure_test_settings: InfrastructureTestSettings,
+) -> None:
+    with pytest.raises(pytest.fail.Exception, match="Postgres"):
+        psycopg.connect(infrastructure_test_settings.pg_dsn, hostaddr="127.0.0.2")
+
+
+@pytest.mark.integration
+def test_integration_pool_guard_rejects_hostaddr_override(
+    infrastructure_test_settings: InfrastructureTestSettings,
+) -> None:
+    with pytest.raises(pytest.fail.Exception, match="Postgres"):
+        ConnectionPool(
+            infrastructure_test_settings.pg_dsn,
+            kwargs={"hostaddr": "127.0.0.2"},
+            open=False,
+        )
 
 
 @pytest.mark.integration

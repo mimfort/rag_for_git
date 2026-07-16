@@ -88,8 +88,22 @@ def test_select_changed_files_respects_max_files():
 
 
 @pytest.fixture
-def runner() -> CliRunner:
+def runner(monkeypatch) -> CliRunner:
+    monkeypatch.setattr("reviewer.install.staleness_warnings", lambda: [])
+    response = MagicMock(status_code=200)
+    response.json.return_value = {"login": "testuser"}
+    monkeypatch.setattr(
+        "reviewer.entrypoints.cli.httpx.get", MagicMock(return_value=response)
+    )
     return CliRunner()
+
+
+def _assert_no_socket_warnings(recwarn) -> None:
+    assert not [
+        warning
+        for warning in recwarn
+        if "socket.getaddrinfo" in str(warning.message)
+    ]
 
 
 @pytest.fixture
@@ -343,7 +357,7 @@ def test_check_all_ok(
 @patch("reviewer.entrypoints.cli.ChunkStore")
 @patch("reviewer.entrypoints.cli.Settings")
 def test_check_fails_on_missing_keys(
-    mock_settings_cls, mock_chunk_cls, mock_graph_cls, runner
+    mock_settings_cls, mock_chunk_cls, mock_graph_cls, runner, recwarn
 ):
     """При отсутствии ключей check возвращает exit-код 1."""
     s = MagicMock()
@@ -361,13 +375,14 @@ def test_check_fails_on_missing_keys(
 
     assert result.exit_code == 1
     assert "VOYAGE_API_KEY" in result.output
+    _assert_no_socket_warnings(recwarn)
 
 
 @patch("reviewer.entrypoints.cli.GraphStore")
 @patch("reviewer.entrypoints.cli.ChunkStore")
 @patch("reviewer.entrypoints.cli.Settings")
 def test_check_fails_on_postgres_error(
-    mock_settings_cls, mock_chunk_cls, mock_graph_cls, runner
+    mock_settings_cls, mock_chunk_cls, mock_graph_cls, runner, recwarn
 ):
     """Ошибка подключения к Postgres даёт exit-код 1."""
     s = MagicMock()
@@ -388,13 +403,14 @@ def test_check_fails_on_postgres_error(
 
     assert result.exit_code == 1
     assert "Postgres" in result.output
+    _assert_no_socket_warnings(recwarn)
 
 
 @patch("reviewer.entrypoints.cli.GraphStore")
 @patch("reviewer.entrypoints.cli.ChunkStore")
 @patch("reviewer.entrypoints.cli.Settings")
 def test_check_fails_on_neo4j_error(
-    mock_settings_cls, mock_chunk_cls, mock_graph_cls, runner
+    mock_settings_cls, mock_chunk_cls, mock_graph_cls, runner, recwarn
 ):
     """Ошибка подключения к Neo4j даёт exit-код 1."""
     s = MagicMock()
@@ -419,6 +435,7 @@ def test_check_fails_on_neo4j_error(
 
     assert result.exit_code == 1
     assert "Neo4j" in result.output
+    _assert_no_socket_warnings(recwarn)
 
 
 @patch("reviewer.entrypoints.cli.httpx.get")
