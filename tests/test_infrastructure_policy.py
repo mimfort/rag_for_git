@@ -215,7 +215,6 @@ def test_compose_defines_isolated_test_profile_services() -> None:
     compose = yaml.safe_load((root / "docker-compose.yml").read_text(encoding="utf-8"))
 
     paradedb = compose["services"]["paradedb-test"]
-    assert paradedb["image"] == "paradedb/paradedb:latest"
     assert paradedb["profiles"] == ["test"]
     assert paradedb["environment"] == {
         "POSTGRES_USER": "reviewer_test",
@@ -229,10 +228,8 @@ def test_compose_defines_isolated_test_profile_services() -> None:
         "timeout": "2s",
         "retries": 30,
     }
-    assert "volumes" not in paradedb
 
     neo4j = compose["services"]["neo4j-test"]
-    assert neo4j["image"] == "neo4j:5"
     assert neo4j["profiles"] == ["test"]
     assert neo4j["environment"] == {"NEO4J_AUTH": "neo4j/reviewer_test_pass"}
     assert neo4j["ports"] == ["127.0.0.1:17474:7474", "127.0.0.1:17687:7687"]
@@ -245,7 +242,45 @@ def test_compose_defines_isolated_test_profile_services() -> None:
         "timeout": "3s",
         "retries": 30,
     }
+
+
+def test_compose_pins_only_test_service_images_by_digest() -> None:
+    root = Path(__file__).parents[1]
+    compose = yaml.safe_load((root / "docker-compose.yml").read_text(encoding="utf-8"))
+    services = compose["services"]
+
+    assert services["paradedb"]["image"] == "paradedb/paradedb:latest"
+    assert services["neo4j"]["image"] == "neo4j:5"
+    assert services["paradedb-test"]["image"].startswith("paradedb/paradedb@sha256:")
+    assert services["neo4j-test"]["image"].startswith("neo4j@sha256:")
+
+
+def test_compose_test_services_use_only_disposable_tmpfs() -> None:
+    root = Path(__file__).parents[1]
+    compose = yaml.safe_load((root / "docker-compose.yml").read_text(encoding="utf-8"))
+
+    paradedb = compose["services"]["paradedb-test"]
+    assert paradedb["tmpfs"] == ["/var/lib/postgresql"]
+    assert "volumes" not in paradedb
+
+    neo4j = compose["services"]["neo4j-test"]
+    assert neo4j["tmpfs"] == ["/data", "/logs"]
     assert "volumes" not in neo4j
+
+
+def test_compose_documents_only_safe_test_profile_teardown() -> None:
+    root = Path(__file__).parents[1]
+    compose_text = (root / "docker-compose.yml").read_text(encoding="utf-8")
+    normalized = "\n".join(line.lstrip() for line in compose_text.splitlines())
+
+    assert (
+        "# Безопасное удаление: docker compose --profile test rm -sfv "
+        "paradedb-test neo4j-test"
+    ) in normalized
+    assert (
+        "# НИКОГДА не используйте `docker compose --profile test down -v`: это остановит\n"
+        "# dev-сервисы и удалит production named volumes."
+    ) in normalized
 
 
 def test_env_example_documents_exact_test_endpoint_defaults() -> None:

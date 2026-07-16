@@ -14,25 +14,33 @@ services:
       NEO4J_AUTH: neo4j/reviewerpass
     ports: ["127.0.0.1:7474:7474", "127.0.0.1:7687:7687"]
     volumes: ["neo4j_data:/data"]
+  # ============================================================================
+  # ВАЖНО: test-profile использует общий Compose project с dev-сервисами.
+  # Безопасное удаление: docker compose --profile test rm -sfv paradedb-test neo4j-test
+  # НИКОГДА не используйте `docker compose --profile test down -v`: это остановит
+  # dev-сервисы и удалит production named volumes.
+  # ============================================================================
   paradedb-test:
-    image: paradedb/paradedb:latest
+    image: paradedb/paradedb@sha256:dbd64f0eb2716b8466afe54b91fec782f4107a8d0e6bd3660b89c88a1ded2ead
     profiles: ["test"]
     environment:
       POSTGRES_USER: reviewer_test
       POSTGRES_PASSWORD: reviewer_test
       POSTGRES_DB: reviewer_test
     ports: ["127.0.0.1:55433:5432"]
+    tmpfs: ["/var/lib/postgresql"]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U reviewer_test -d reviewer_test"]
       interval: 2s
       timeout: 2s
       retries: 30
   neo4j-test:
-    image: neo4j:5
+    image: neo4j@sha256:0b5d3ab6ec1b866890dbfb53bf4fe1cf039f9e03c96165599a403005b7e7bcc3
     profiles: ["test"]
     environment:
       NEO4J_AUTH: neo4j/reviewer_test_pass
     ports: ["127.0.0.1:17474:7474", "127.0.0.1:17687:7687"]
+    tmpfs: ["/data", "/logs"]
     healthcheck:
       test: ["CMD-SHELL", "cypher-shell -u neo4j -p reviewer_test_pass 'RETURN 1'"]
       interval: 2s

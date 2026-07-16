@@ -178,19 +178,15 @@ def test_env_template_mirrors_env_example():
     repo_root = Path(__file__).resolve().parents[2]
     example_keys = _keys_from_text((repo_root / ".env.example").read_text(encoding="utf-8"))
     template_keys = _keys_from_text(inst.ENV_TEMPLATE)
-    test_only_keys = {
-        "TEST_PG_DSN",
-        "TEST_NEO4J_URI",
-        "TEST_NEO4J_USER",
-        "TEST_NEO4J_PASSWORD",
-    }
-    assert example_keys - template_keys == test_only_keys, (
+    test_only = {key for key in example_keys if key.startswith("TEST_")}
+
+    assert template_keys.isdisjoint(test_only)
+    assert template_keys == example_keys - test_only, (
         f"ENV_TEMPLATE и .env.example разошлись:\n"
-        f"  только в .env.example: {sorted(example_keys - template_keys)}\n"
+        f"  test-only в .env.example: {sorted(test_only)}\n"
+        f"  прочие только в .env.example: "
+        f"{sorted(example_keys - test_only - template_keys)}\n"
         f"  только в ENV_TEMPLATE: {sorted(template_keys - example_keys)}"
-    )
-    assert not template_keys - example_keys, (
-        f"В .env.example нет ключей ENV_TEMPLATE: {sorted(template_keys - example_keys)}"
     )
 
 
