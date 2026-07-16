@@ -94,14 +94,13 @@ class ValidatedTestEndpoints:
 
 
 def _normalize_host(host: str) -> str:
-    normalized = host.strip().lower().strip("[]")
-    if normalized.rstrip(".") == "localhost":
+    normalized = host.strip().lower().strip("[]").rstrip(".")
+    if normalized == "localhost":
         return "loopback"
     try:
         address = ipaddress.ip_address(normalized)
     except ValueError:
-        candidate = normalized.rstrip(".").lower()
-        numeric_parts = candidate.split(".")
+        numeric_parts = normalized.split(".")
         if numeric_parts and all(
             (part.isascii() and part.isdecimal())
             or (
@@ -226,6 +225,28 @@ def _parse_neo4j(
     )
 
 
+def _parse_production_neo4j_location(uri: str) -> tuple[str, int]:
+    try:
+        parsed = urlsplit(uri)
+        hostname = parsed.hostname
+        port = 7687 if parsed.port is None else parsed.port
+    except ValueError:
+        raise InfrastructureSafetyError("Malformed production Neo4j URI") from None
+
+    if (
+        parsed.scheme.lower() not in _NEO4J_SCHEMES
+        or not hostname
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.path not in ("", "/")
+        or parsed.fragment
+        or not 1 <= port <= 65535
+    ):
+        raise InfrastructureSafetyError("Malformed production Neo4j URI")
+
+    return _normalize_host(hostname), port
+
+
 def validate_test_endpoints(
     test: InfrastructureTestSettings, production: Settings
 ) -> ValidatedTestEndpoints:
@@ -243,18 +264,8 @@ def validate_test_endpoints(
         raise ValueError("Postgres test target must differ from production")
 
     neo4j = _parse_neo4j(test.neo4j_uri, test.neo4j_user, test.neo4j_password)
-    try:
-        production_neo4j = _parse_neo4j(
-            production.neo4j_uri,
-            production.neo4j_user,
-            production.neo4j_password,
-            require_credentials=False,
-        )
-    except InfrastructureSafetyError:
-        raise
-    except ValueError:
-        production_neo4j = None
-    if production_neo4j is not None and neo4j.location == production_neo4j.location:
+    production_neo4j_location = _parse_production_neo4j_location(production.neo4j_uri)
+    if neo4j.location == production_neo4j_location:
         raise ValueError("Neo4j test target must differ from production")
 
     return ValidatedTestEndpoints(postgres=postgres, neo4j=neo4j)

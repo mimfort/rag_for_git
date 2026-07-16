@@ -397,6 +397,30 @@ def test_rejects_postgres_loopback_alias_equal_to_production() -> None:
         validate_test_endpoints(test, production)
 
 
+@pytest.mark.parametrize(
+    ("production_host", "test_host"),
+    [("db.example.", "db.example"), ("db.example", "db.example.")],
+)
+def test_rejects_postgres_root_dot_alias_equal_to_production(
+    production_host: str, test_host: str
+) -> None:
+    production = _production_settings(
+        pg_dsn=(
+            f"postgresql://prod:prod@{production_host}:55433/"
+            "shared_test?connect_timeout=2"
+        )
+    )
+    test = _test_settings(
+        pg_dsn=(
+            f"postgresql://test:test@{test_host}:55433/"
+            "shared_test?connect_timeout=2"
+        )
+    )
+
+    with pytest.raises(ValueError, match="production"):
+        validate_test_endpoints(test, production)
+
+
 def test_rejects_postgres_target_equal_to_production_without_production_credentials() -> None:
     production = _production_settings(
         pg_dsn="host=localhost port=55433 dbname=shared_test connect_timeout=2"
@@ -467,6 +491,29 @@ def test_rejects_noncanonical_numeric_production_neo4j_host() -> None:
         validate_test_endpoints(test, production)
 
 
+def test_rejects_production_neo4j_routing_uri_at_same_location() -> None:
+    test = _test_settings(neo4j_uri="neo4j://db.example:17687")
+    production = _production_settings(
+        neo4j_uri="neo4j://db.example:17687?region=eu"
+    )
+
+    with pytest.raises(ValueError, match="production"):
+        validate_test_endpoints(test, production)
+
+
+def test_malformed_production_neo4j_uri_fails_closed_without_secrets() -> None:
+    secret = "never-print-production-secret"
+    test = _test_settings(neo4j_uri="neo4j://test.example:17687")
+    production = _production_settings(
+        neo4j_uri=f"https://db.example:17687?token={secret}"
+    )
+
+    with pytest.raises(InfrastructureSafetyError) as exc_info:
+        validate_test_endpoints(test, production)
+
+    assert secret not in str(exc_info.value)
+
+
 def test_rejects_zero_neo4j_port_as_malformed() -> None:
     production = _production_settings(neo4j_uri="neo4j://production.example:7687")
 
@@ -495,6 +542,22 @@ def test_rejects_neo4j_target_equal_to_production_through_scheme_alias() -> None
 def test_rejects_neo4j_loopback_alias_equal_to_production() -> None:
     production = _production_settings(neo4j_uri="neo4j://LOCALHOST.:17687")
     test = _test_settings(neo4j_uri="bolt://[0:0:0:0:0:0:0:1]:17687")
+
+    with pytest.raises(ValueError, match="production"):
+        validate_test_endpoints(test, production)
+
+
+@pytest.mark.parametrize(
+    ("production_host", "test_host"),
+    [("db.example.", "db.example"), ("db.example", "db.example.")],
+)
+def test_rejects_neo4j_root_dot_alias_equal_to_production(
+    production_host: str, test_host: str
+) -> None:
+    production = _production_settings(
+        neo4j_uri=f"neo4j://{production_host}:17687"
+    )
+    test = _test_settings(neo4j_uri=f"neo4j://{test_host}:17687")
 
     with pytest.raises(ValueError, match="production"):
         validate_test_endpoints(test, production)
@@ -608,6 +671,33 @@ def test_integration_neo4j_guard_rejects_scheme_substitution_before_driver(
         )
 
     assert original_called is False
+
+
+@pytest.mark.integration
+def test_integration_neo4j_guard_allows_root_dot_alias(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    test = _test_settings(neo4j_uri="neo4j://db.example:17687")
+    production = _production_settings(
+        pg_dsn="postgresql://prod:prod@production.example:5432/reviewer",
+        neo4j_uri="neo4j://production.example:7687",
+    )
+    endpoints = validate_test_endpoints(test, production)
+    calls: list[str] = []
+
+    def original_driver(cls, uri, *, auth=None, **config):
+        calls.append(uri)
+        return object()
+
+    monkeypatch.setattr(infrastructure_policy, "_ORIGINAL_GRAPH_DRIVER", original_driver)
+    infrastructure_policy.install_integration_guards(monkeypatch, endpoints)
+
+    GraphDatabase.driver(
+        "neo4j://db.example.:17687",
+        auth=(test.neo4j_user, test.neo4j_password),
+    )
+
+    assert calls == ["neo4j://db.example.:17687"]
 
 
 @pytest.mark.integration
