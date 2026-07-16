@@ -997,14 +997,32 @@ A factual list of what this does and does not do today.
 ## Tests
 
 ```bash
-.venv/bin/pytest -q                 # unit: fast, on fakes; never hit external APIs
-.venv/bin/pytest -m integration     # integration: needs running Postgres/Neo4j + a Voyage key
-.venv/bin/ruff check .              # lint (line-length 100, target py311)
+# unit: no Postgres, Neo4j, localhost service, or external network
+.venv/bin/pytest -q
+# isolated integration infra
+docker compose --profile test up -d --wait paradedb-test neo4j-test
+# integration; pipeline also needs VOYAGE_API_KEY
+.venv/bin/pytest -q -m integration
+# safe teardown only
+docker compose --profile test rm -sfv paradedb-test neo4j-test
 ```
 
-`pytest` excludes integration tests by default (`addopts = -m 'not integration'`). External services
-(GitHub, Voyage, Postgres, Neo4j) are isolated behind interfaces and mocked in unit tests; real calls
-happen only in integration/E2E.
+Default `pytest` starts no infrastructure and excludes integration tests
+(`addopts = -m 'not integration'`). Unit tests cannot use external or localhost sockets. Any test
+that uses the real network must carry `@pytest.mark.integration`.
+
+Database integration tests use `TEST_PG_DSN`, `TEST_NEO4J_URI`, `TEST_NEO4J_USER`, and
+`TEST_NEO4J_PASSWORD`. These `TEST_*` values must never equal development or production endpoints.
+The production and test Compose services differ in ports, credentials, and storage. Test data uses
+`tmpfs`, and the test service images are pinned by digest.
+
+Never use `docker compose --profile test down -v`: the test and development services share a
+Compose project, so that command would remove development containers and named volumes. Only the
+targeted `docker compose --profile test rm -sfv paradedb-test neo4j-test` command is safe.
+
+```bash
+.venv/bin/ruff check .              # lint (line-length 100, target py311)
+```
 
 ## Project layout
 
@@ -1040,14 +1058,21 @@ Issues and PRs are welcome. To work on the project locally:
 git clone https://github.com/mimfort/rag_for_git
 cd rag_for_git
 python -m venv .venv && .venv/bin/pip install -e ".[dev]"
-docker compose up -d            # Postgres/ParadeDB (:5433) + Neo4j (:7687)
-.venv/bin/pytest -q             # unit tests — fast, on fakes, no external APIs
-.venv/bin/ruff check .          # lint (line-length 100, target py311)
+# unit: no Postgres, Neo4j, localhost service, or external network
+.venv/bin/pytest -q
+# isolated integration infra
+docker compose --profile test up -d --wait paradedb-test neo4j-test
+# integration; pipeline also needs VOYAGE_API_KEY
+.venv/bin/pytest -q -m integration
+# safe teardown only
+docker compose --profile test rm -sfv paradedb-test neo4j-test
+# lint (line-length 100, target py311)
+.venv/bin/ruff check .
 ```
 
-External services (GitHub, Voyage, Postgres, Neo4j) sit behind interfaces and are mocked in unit
-tests; real calls happen only in integration/E2E. Commit messages follow Conventional Commits. The
-architecture is documented in depth in [README.ru.md](README.ru.md) (Russian) and `CLAUDE.md`.
+The safety rules and isolated test infrastructure described in [Tests](#tests) apply to every local
+contributor run. Commit messages follow Conventional Commits. The architecture is documented in
+depth in [README.ru.md](README.ru.md) (Russian) and `CLAUDE.md`.
 
 ## License
 

@@ -1,9 +1,8 @@
-"""Тесты для reviewer.web.history.ReviewHistory.
+"""Тесты ReviewHistory.
 
-Integration-тесты (запись/чтение/агрегаты) помечены @pytest.mark.integration
-и требуют поднятого Postgres (docker compose up -d).
-
-Unit-тест fail-soft не требует инфраструктуры.
+Unit fail-soft мокает `_connect`; integration проверяет запись/чтение
+в изолированном профиле:
+`docker compose --profile test up -d --wait paradedb-test neo4j-test`.
 """
 from __future__ import annotations
 

@@ -1,8 +1,8 @@
 """Тесты SessionStore.
 
-Unit-тест fail-soft не требует инфраструктуры (мокаем _connect).
-Integration-тесты (save/load/delete/TTL) помечены @pytest.mark.integration
-и требуют поднятого Postgres (docker compose up -d).
+Unit fail-soft мокает `_connect` и не требует инфраструктуры.
+Integration проверяет save/load/delete/TTL в изолированном профиле:
+`docker compose --profile test up -d --wait paradedb-test neo4j-test`.
 """
 from __future__ import annotations
 

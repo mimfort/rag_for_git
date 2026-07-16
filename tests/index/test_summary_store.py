@@ -1,4 +1,8 @@
-"""Integration-тесты SummaryStore (PRI-167): требуют Postgres/pgvector на PG_DSN."""
+"""Integration-тесты SummaryStore на изолированном ParadeDB.
+
+Инфраструктура запускается командой:
+`docker compose --profile test up -d --wait paradedb-test neo4j-test`.
+"""
 from __future__ import annotations
 
 from uuid import uuid4
