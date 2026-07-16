@@ -124,6 +124,10 @@ A single PR review is three stages:
    suggestion invariants, fingerprint idempotency, comment cap) → post to GitHub → history record
    → overlay/session cleanup.
 
+If a review is abandoned between `prepare_review` and `publish_review` (user cancelled, orchestrating
+LLM session died), publish never runs — such an overlay is collected by GC: opportunistically on the
+next `prepare_review`, and via the `reviewer gc` command.
+
 > Status: working v1. Target analysis language is **Python**; VCS is **GitHub** (behind a
 > `VCSProvider` interface). Proven live: it catches real bugs and sees the impact on calling code
 > and existing tests.
@@ -608,6 +612,7 @@ All commands run via `uvx --from rag-reviewer <command>`, or after `uv tool inst
 | `index` | `<repo>` (path to local clone) | `--ref BRANCH` (git ref to read; default = primary branch), `--branch NAME` (storage key; default = `--ref`), `--repo OWNER/NAME` (default from git `origin`) | Build/update the base index of a branch (vectors + graph). Done once, then incremental. |
 | `search` | `<query>` | `--repo OWNER/NAME` (default `DEFAULT_REPO`), `--branch NAME` (default primary) | Diagnostic hybrid search over a branch's base index. |
 | `status` | `[path]` (default `.`) | `--repo OWNER/NAME` (default from git `origin`), `--branch NAME` (default: all `REVIEW_BRANCHES`), `--json` (machine-readable output) | Index health / freshness vs the clone's HEAD. Spends no Voyage quota. |
+| `gc` | — | — | Purge orphaned overlays (abandoned reviews) and expired sessions. |
 | `migrate-branches` | — | — | One-time: rename legacy `ref="base"` → `base:<primary>` after upgrading to multi-branch. |
 | `serve` | — | `--host HOST` (default `127.0.0.1`), `--port PORT` (default `8000`) | Run the observability web admin on the host. |
 | `reviewer-mcp` | — | — | MCP server (stdio transport). Started automatically by the plugin / editor. |

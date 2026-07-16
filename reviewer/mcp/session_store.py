@@ -113,3 +113,37 @@ class SessionStore:
                 conn.commit()
         except Exception as exc:  # noqa: BLE001
             log.warning("Не удалось удалить сессию %s#%s: %s", repo, pr, exc)
+
+    def live_keys(self, ttl_hours: int) -> set[tuple[str, int]]:
+        """Ключи (repo, pr_number) сессий, у которых не истёк TTL.
+
+        НЕ fail-soft осознанно: сбой БД пробрасывается. Для GC осиротевших
+        overlay (reviewer/services/gc.py) пустое множество означает «живых
+        сессий нет» — то есть «все overlay сироты». Молча вернуть его при
+        недоступной БД значило бы снести overlay идущего прямо сейчас ревью.
+        Вызывающий обязан отличить «живых нет» от «прочитать не удалось».
+        """
+        sql = """
+        SELECT repo, pr_number FROM review_sessions
+        WHERE created_at > now() - make_interval(hours => %s)
+        """
+        with self._connect() as conn:
+            rows = conn.execute(sql, (ttl_hours,)).fetchall()
+        return {(r[0], r[1]) for r in rows}
+
+    def delete_expired(self, ttl_hours: int) -> int:
+        """Удалить строки сессий с истёкшим TTL; вернуть их число.
+
+        До этого TTL применялся ТОЛЬКО как фильтр на чтении (см. load) —
+        просроченная строка становилась невидимой, но жила в таблице вечно.
+        Fail-soft: сбой только логируется (уборка не обязана ронять вызывающего).
+        """
+        sql = "DELETE FROM review_sessions WHERE created_at <= now() - make_interval(hours => %s)"
+        try:
+            with self._connect() as conn:
+                deleted = conn.execute(sql, (ttl_hours,)).rowcount
+                conn.commit()
+            return deleted
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Не удалось удалить просроченные сессии: %s", exc)
+            return 0

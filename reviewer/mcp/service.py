@@ -6,7 +6,7 @@
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING
 
 from reviewer.agent.assemble import (
@@ -23,6 +23,7 @@ from reviewer.index.refs import base_ref
 from reviewer.mcp.session_serde import from_payload, to_payload
 from reviewer.mcp.session_store import SessionStore
 from reviewer.retrieval.retriever import ContextPack
+from reviewer.services.gc import purge_orphaned_overlays
 from reviewer.services.review_service import (
     BranchNotTrackedError,
     PreparedReview,
@@ -113,26 +114,52 @@ class MCPReviewService:
         fail-soft закрывается — иначе httpx-клиент утёк бы в долгоживущем
         сервере. Жизненным циклом factory-созданных провайдеров владеет
         фабрика (vcs_factory test-only).
+
+        Ключ сессии резервируется в Postgres ДО вызова ReviewService.prepare
+        (который строит overlay) — см. комментарий у session_store.save ниже.
         """
         from reviewer.services.repo_id import normalize_repo
         repo = normalize_repo(repo)
         owner, name = repo.split("/", 1)
+        self._gc_overlays()
         old = self._sessions.get((repo, pr))
+        # Резервация ключа сессии ДО сборки overlay (prepare ниже строит его через
+        # ~секунды GitHub round-trip'ов — для PR из 20 файлов реально 2-6 секунд).
+        # Без резервации overlay в это окно существует без «свидетельства о
+        # жизни» в review_sessions, и GC ДРУГОГО процесса reviewer-mcp (общий
+        # Postgres, но каждый stdio-клиент — свой процесс) счёл бы его сиротой
+        # и снёс молча: ревью продолжится, но агент будет ретривить изменённые
+        # файлы из base-индекса, то есть ревьюить СТАРУЮ версию кода. Пустой
+        # payload безопасен как значение: _rehydrate_session трактует его как
+        # промах (`if not payload`), а настоящий save ниже перезатрёт строку.
+        session_store = self._ensure_session_store()
+        if session_store is not None:
+            session_store.save(repo, pr, {})
         vcs = self._vcs_factory(owner, name) if self._vcs_factory else None
         try:
             prepared = self._review_service.prepare(owner, name, pr, vcs_provider=vcs)
         except BranchNotTrackedError as e:
+            # Резервация не пригодилась (ранний skip, overlay не строился) —
+            # снимаем, иначе пустая строка провисит в review_sessions до TTL.
+            if session_store is not None:
+                session_store.delete(repo, pr)
             log.info("Ревью %s#%s пропущено: ветка '%s' не отслеживается",
                      repo, pr, e.branch)
             return {"status": "skipped",
                     "reason": f"branch '{e.branch}' not tracked (REVIEW_BRANCHES)"}
+        except Exception:
+            # Любой другой сбой prepare (в т.ч. недостроенный overlay, который
+            # ReviewService.prepare уже подчищает сам себе в своём except) —
+            # резервация тоже снимается, исходная ошибка пробрасывается как есть.
+            if session_store is not None:
+                session_store.delete(repo, pr)
+            raise
         ctx = self._tool_context(prepared)
         # started_at проставляет default_factory поля _Session.started_at
         # (datetime.now(timezone.utc)) — явный аргумент здесь был бы дублем.
         self._sessions[(repo, pr)] = _Session(prepared, ctx)
-        store = self._ensure_session_store()
-        if store is not None:
-            store.save(repo, pr, to_payload(prepared))
+        if session_store is not None:
+            session_store.save(repo, pr, to_payload(prepared))
         # Старую сессию прибираем ПОСЛЕ успешного prepare: при сбое повторной
         # подготовки старая сессия остаётся в _sessions, но её overlay уже удалён
         # self-healing'ом в начале prepare — последующие tool-вызовы по ней
@@ -1195,6 +1222,38 @@ class MCPReviewService:
         store = self._ensure_session_store()
         if store is not None:
             store.delete(repo, pr)
+
+    def _gc_overlays(self) -> None:
+        """Оппортунистический GC осиротевших overlay (fail-soft, никогда не бросает).
+
+        Вызывается на каждом prepare_review. _cleanup убирает overlay только когда
+        publish_review реально состоялся; если ревью брошено между prepare и publish,
+        убрать его больше некому — этот вызов и есть уборщик. Активные сессии процесса
+        передаются как живые: их overlay неприкосновенен, даже если persist сессии
+        упал fail-soft.
+
+        active_keys ограничены тем же TTL, что и персистнутые сессии (по
+        _Session.started_at), а не всем содержимым self._sessions. _sessions
+        вычищается ТОЛЬКО в _cleanup (путь publish) — самый частый сценарий
+        брошенного ревью (пользователь отменил скилл, а reviewer-mcp продолжает
+        жить) никогда туда не попадает, и без TTL-отсечки ключ оставался бы
+        «живым» для GC этого процесса вечно, делая overlay бессмертным.
+
+        Сбой GC не должен мешать ревью — любая ошибка уходит в лог.
+        """
+        try:
+            cutoff = datetime.now(timezone.utc) - timedelta(
+                hours=self.settings.review_session_ttl_hours
+            )
+            active = {k for k, s in self._sessions.items() if s.started_at > cutoff}
+            purge_orphaned_overlays(
+                self.components.store,
+                self._ensure_session_store(),
+                self.settings.review_session_ttl_hours,
+                active_keys=active,
+            )
+        except Exception:
+            log.warning("GC осиротевших overlay не удался", exc_info=True)
 
     def _prepared_payload(self, p: PreparedReview) -> dict:
         """Сериализовать PreparedReview в dict для передачи MCP-клиенту."""

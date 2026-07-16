@@ -20,6 +20,8 @@ from reviewer.index.pathfilter import is_ignored
 from reviewer.index.refs import base_ref
 from reviewer.policy.policy import ReviewPolicy
 from reviewer.index.store import ChunkStore
+from reviewer.mcp.session_store import SessionStore
+from reviewer.services.gc import purge_orphaned_overlays
 from reviewer.services.status import build_status_report, render_status, render_status_json
 
 if TYPE_CHECKING:
@@ -528,6 +530,52 @@ def status(path: str, repo_tag: str | None, branch_opt: str | None,
     backend = ("scip-python (точный)" if _shutil.which("scip-python")
                else "tree-sitter (fallback, scip-python не найден)")
     click.echo(render_status(report, backend))
+
+
+@cli.command()
+def gc() -> None:
+    """Вычистить осиротевшие overlay pr:N и просроченные сессии ревью.
+
+    Overlay брошенного ревью (prepare_review без publish_review) не убирает никто:
+    _cleanup срабатывает только после реальной публикации. Эта команда — явная
+    уборка; та же логика оппортунистически работает при каждом prepare_review.
+    """
+    s = Settings()
+    if not s.review_session_persist:
+        # MCP (_ensure_session_store) в этом случае молча уходит в no-op — сервер
+        # сам себя защищает. CLI-команда так не может: без review_sessions живость
+        # overlay определить нечем, а таблица (если персист выключен) не пишется
+        # никем — live_keys() вернул бы пустое множество, и GC счёл бы сиротами
+        # ВСЕ overlay деплоя, включая overlay идущих прямо сейчас ревью. Поэтому
+        # явно отказываем, а не тихо всё сносим.
+        raise click.ClickException(
+            "Персист сессий выключен (REVIEW_SESSION_PERSIST=false) — определить "
+            "живые ревью нечем, GC отказано. Включите REVIEW_SESSION_PERSIST=true "
+            "в конфиге reviewer-mcp и повторите."
+        )
+    store = ChunkStore(s.pg_dsn, min_size=s.pg_pool_min_size, max_size=s.pg_pool_max_size)
+    session_store = SessionStore(
+        s.pg_dsn, min_size=s.pg_pool_min_size, max_size=s.pg_pool_max_size
+    )
+    try:
+        report = purge_orphaned_overlays(store, session_store, s.review_session_ttl_hours)
+    except psycopg.OperationalError as e:
+        raise click.ClickException(f"Postgres недоступен: {e}")
+    except psycopg.errors.UndefinedTable:
+        raise click.ClickException(
+            "Таблица chunks не найдена — на этом деплое ещё ни разу не выполнялся "
+            "`reviewer index`. Проиндексируйте хотя бы одну ветку и повторите gc."
+        )
+    finally:
+        store.close()
+        session_store.close()
+    for ref in report["purged"]:
+        click.echo(f"удалён осиротевший overlay: {ref}")
+    click.echo(
+        f"Overlay: удалено {len(report['purged'])}, оставлено живых {report['kept']}, "
+        f"нераспознано {report['skipped']}; просроченных сессий удалено: "
+        f"{report['sessions_deleted']}"
+    )
 
 
 @cli.command()

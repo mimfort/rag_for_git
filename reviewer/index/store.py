@@ -255,6 +255,20 @@ class ChunkStore:
             ).fetchall()
         return [r[0] for r in rows]
 
+    def list_overlay_refs(self) -> list[tuple[str, str]]:
+        """Все overlay-ref (repo, ref) по ВСЕМ репозиториям: ref вида 'pr:<N>'.
+
+        Отличие от list_refs(repo): тот скоупится одним репо, а GC осиротевших
+        overlay (reviewer/services/gc.py) должен видеть базу целиком — брошенный
+        overlay может остаться в любом репо деплоя. base:<branch> не возвращается.
+        """
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT DISTINCT repo, ref FROM chunks WHERE ref LIKE 'pr:%%' "
+                "ORDER BY repo, ref"
+            ).fetchall()
+        return [(r[0], r[1]) for r in rows]
+
     def migrate_legacy_base(self, primary: str) -> int:
         """Перенести legacy ref='base' → 'base:<primary>' в chunks и index_meta.
 
