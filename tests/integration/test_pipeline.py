@@ -1,4 +1,5 @@
 import subprocess
+from uuid import uuid4
 
 import pytest
 
@@ -7,9 +8,6 @@ from reviewer.config.settings import Settings
 from reviewer.gitutil import file_at_ref, list_python_files
 from reviewer.index.freshness import update_base
 from reviewer.index.refs import base_ref
-
-
-_REPO = "test/pipeline"
 
 
 @pytest.mark.integration
@@ -24,22 +22,23 @@ def test_index_then_hybrid_retrieve_finds_relevant_symbol(tmp_path):
         subprocess.run(args, cwd=tmp_path, check=True)
 
     settings = Settings()
+    repo = f"test/pipeline-{uuid4().hex}"
     components = build_components(settings, connect=False)
     try:
         components.store.init_schema()
-        components.store.clear(_REPO)
+        components.store.clear(repo)
         files = list_python_files(str(tmp_path), "HEAD")
         update_base(
             components.store,
             components.embedder,
-            _REPO,
+            repo,
             "HEAD",
             files,
             read=lambda path: file_at_ref(str(tmp_path), path, "HEAD"),
         )
         query_vector = components.embedder.embed_query("token verification")
         hits = components.store.hybrid_search(
-            _REPO,
+            repo,
             query_text="token verification",
             query_embedding=query_vector,
             overlay_ref="",
@@ -50,11 +49,11 @@ def test_index_then_hybrid_retrieve_finds_relevant_symbol(tmp_path):
         assert any(hit.symbol_fqn == "verify_token" for hit in hits)
     finally:
         try:
-            components.store.clear(_REPO)
+            components.store.clear(repo)
         finally:
             try:
                 with components.store._connect() as conn:
-                    conn.execute("DELETE FROM index_meta WHERE repo=%s", (_REPO,))
+                    conn.execute("DELETE FROM index_meta WHERE repo=%s", (repo,))
                     conn.commit()
             finally:
                 try:
