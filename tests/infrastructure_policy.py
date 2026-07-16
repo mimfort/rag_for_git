@@ -265,7 +265,7 @@ def _validate_production_neo4j_query(scheme: str, query: str) -> None:
 
     seen: set[str] = set()
     for key, value in pairs:
-        if not value or key in seen:
+        if not key or key == "address" or not value or key in seen:
             raise InfrastructureSafetyError(
                 "Invalid production Neo4j routing context"
             )

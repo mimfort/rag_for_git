@@ -548,6 +548,42 @@ def test_duplicate_production_routing_keys_match_driver_rejection_without_secret
     assert secret not in str(exc_info.value)
 
 
+def test_reserved_production_routing_key_matches_driver_rejection_without_secrets() -> None:
+    secret = "never-print-reserved-routing-secret"
+    uri = f"neo4j://db.example:17687?address={secret}"
+
+    with pytest.raises(ConfigurationError):
+        infrastructure_policy._ORIGINAL_GRAPH_DRIVER(
+            GraphDatabase, uri, auth=("user", "password")
+        )
+    with pytest.raises(InfrastructureSafetyError) as exc_info:
+        validate_test_endpoints(
+            _test_settings(neo4j_uri="neo4j://test.example:17687"),
+            _production_settings(neo4j_uri=uri),
+        )
+
+    assert str(exc_info.value) == "Invalid production Neo4j routing context"
+    assert secret not in str(exc_info.value)
+
+
+def test_empty_production_routing_key_is_rejected_after_driver_accepts() -> None:
+    secret = "never-print-empty-routing-key-secret"
+    uri = f"neo4j://db.example:17687?={secret}"
+    driver = infrastructure_policy._ORIGINAL_GRAPH_DRIVER(
+        GraphDatabase, uri, auth=("user", "password")
+    )
+    driver.close()
+
+    with pytest.raises(InfrastructureSafetyError) as exc_info:
+        validate_test_endpoints(
+            _test_settings(neo4j_uri="neo4j://test.example:17687"),
+            _production_settings(neo4j_uri=uri),
+        )
+
+    assert str(exc_info.value) == "Invalid production Neo4j routing context"
+    assert secret not in str(exc_info.value)
+
+
 @pytest.mark.parametrize("query", ["region=", "region"])
 def test_blank_production_routing_values_match_driver_rejection(query: str) -> None:
     uri = f"neo4j://db.example:17687?{query}"
