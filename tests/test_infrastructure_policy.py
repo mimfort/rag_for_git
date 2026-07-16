@@ -4,6 +4,7 @@ import socket
 
 import psycopg
 import pytest
+import tests.infrastructure_policy as infrastructure_policy
 from neo4j import GraphDatabase
 from psycopg_pool import ConnectionPool
 from pytest_socket import SocketBlockedError
@@ -117,6 +118,21 @@ def test_rejects_postgres_target_equal_to_production_without_production_credenti
         validate_test_endpoints(test, production)
 
 
+def test_rejects_equal_production_target_when_production_uses_hostaddr() -> None:
+    production = _production_settings(
+        pg_dsn=(
+            "host=localhost hostaddr=127.0.0.1 port=55433 user=prod password=prod "
+            "dbname=shared_test connect_timeout=2"
+        )
+    )
+    test = _test_settings(
+        pg_dsn="postgresql://test:test@127.0.0.1:55433/shared_test?connect_timeout=2"
+    )
+
+    with pytest.raises(ValueError, match="production"):
+        validate_test_endpoints(test, production)
+
+
 def test_rejects_equal_production_target_with_a_long_production_timeout() -> None:
     production = _production_settings(
         pg_dsn="postgresql://prod:prod@localhost:55433/shared_test?connect_timeout=30"
@@ -220,6 +236,31 @@ def test_integration_pool_guard_rejects_hostaddr_override(
             kwargs={"hostaddr": "127.0.0.2"},
             open=False,
         )
+
+
+@pytest.mark.integration
+def test_integration_neo4j_guard_rejects_scheme_substitution_before_driver(
+    infrastructure_test_settings: InfrastructureTestSettings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original_called = False
+
+    def original_driver(*args, **kwargs):
+        nonlocal original_called
+        original_called = True
+
+    monkeypatch.setattr(infrastructure_policy, "_ORIGINAL_GRAPH_DRIVER", original_driver)
+
+    with pytest.raises(pytest.fail.Exception, match="Neo4j"):
+        GraphDatabase.driver(
+            "bolt://127.0.0.1:17687",
+            auth=(
+                infrastructure_test_settings.neo4j_user,
+                infrastructure_test_settings.neo4j_password,
+            ),
+        )
+
+    assert original_called is False
 
 
 @pytest.mark.integration

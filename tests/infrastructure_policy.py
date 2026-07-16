@@ -71,8 +71,12 @@ class Neo4jTestEndpoint:
     password: str = field(repr=False)
 
     @property
-    def target(self) -> tuple[str, int]:
+    def location(self) -> tuple[str, int]:
         return self.host, self.port
+
+    @property
+    def connection_identity(self) -> tuple[str, str, int]:
+        return self.scheme, self.host, self.port
 
 
 @dataclass(frozen=True)
@@ -100,18 +104,21 @@ def _parse_postgres(
     require_test_database: bool,
     require_timeout: bool,
     require_credentials: bool = True,
+    allow_hostaddr: bool = False,
 ) -> PostgresTestEndpoint:
     params = _conninfo_dict(conninfo, **(connection_kwargs or {}))
     if params.get("service"):
         raise ValueError("Postgres service DSNs are not allowed in tests")
-    if params.get("hostaddr"):
+    hostaddr = params.get("hostaddr", "")
+    if hostaddr and not allow_hostaddr:
         raise ValueError("Postgres hostaddr is not allowed in tests")
 
-    host = params.get("host", "")
+    declared_host = params.get("host", "")
+    host = hostaddr or declared_host
     port_text = params.get("port", "5432")
     if not host:
         raise ValueError("Postgres test DSN must include a host")
-    if "," in host or "," in port_text:
+    if "," in declared_host or "," in hostaddr or "," in port_text:
         raise ValueError("Multi-host Postgres DSNs are not allowed in tests")
 
     user = params.get("user", "")
@@ -197,16 +204,14 @@ def validate_test_endpoints(
     postgres = _parse_postgres(
         test.pg_dsn, require_test_database=True, require_timeout=True
     )
-    try:
-        production_postgres = _parse_postgres(
-            production.pg_dsn,
-            require_test_database=False,
-            require_timeout=False,
-            require_credentials=False,
-        )
-    except ValueError:
-        production_postgres = None
-    if production_postgres is not None and postgres.target == production_postgres.target:
+    production_postgres = _parse_postgres(
+        production.pg_dsn,
+        require_test_database=False,
+        require_timeout=False,
+        require_credentials=False,
+        allow_hostaddr=True,
+    )
+    if postgres.target == production_postgres.target:
         raise ValueError("Postgres test target must differ from production")
 
     neo4j = _parse_neo4j(test.neo4j_uri, test.neo4j_user, test.neo4j_password)
@@ -219,7 +224,7 @@ def validate_test_endpoints(
         )
     except ValueError:
         production_neo4j = None
-    if production_neo4j is not None and neo4j.target == production_neo4j.target:
+    if production_neo4j is not None and neo4j.location == production_neo4j.location:
         raise ValueError("Neo4j test target must differ from production")
 
     return ValidatedTestEndpoints(postgres=postgres, neo4j=neo4j)
@@ -368,7 +373,10 @@ def install_integration_guards(
             requested = _parse_neo4j(uri, *(auth if isinstance(auth, tuple) else ("", "")))
         except (TypeError, ValueError):
             _fail_wrong_neo4j_endpoint()
-        if requested.target != neo4j.target or auth != (neo4j.user, neo4j.password):
+        if (
+            requested.connection_identity != neo4j.connection_identity
+            or auth != (neo4j.user, neo4j.password)
+        ):
             _fail_wrong_neo4j_endpoint()
         config["connection_timeout"] = _capped_timeout(
             config.get("connection_timeout", postgres.connect_timeout),
