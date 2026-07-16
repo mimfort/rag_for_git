@@ -80,9 +80,18 @@ def _pr_count(comps):
     return records[0]["n"]
 
 
+def _delete_cursor(comps):
+    with comps.store._connect() as conn:
+        conn.execute(
+            "DELETE FROM index_meta WHERE repo=%s AND ref=%s",
+            ("", _REF),
+        )
+        conn.commit()
+
+
 def _cleanup(comps, keys):
     with ExitStack() as stack:
-        stack.callback(comps.store.set_index_meta, "", _REF, "0")
+        stack.callback(_delete_cursor, comps)
         if comps.task_graph is not None:
             stack.callback(_delete_orphan_pr, comps)
             stack.callback(comps.task_graph.delete_tasks, keys)
@@ -113,7 +122,7 @@ def components(request, monkeypatch):
     if comps.graph is not None:
         comps.graph.init_schema()
 
-    request.addfinalizer(partial(comps.store.set_index_meta, "", _REF, "0"))
+    request.addfinalizer(partial(_delete_cursor, comps))
     if comps.task_graph is not None:
         request.addfinalizer(partial(_delete_orphan_pr, comps))
         request.addfinalizer(partial(comps.task_graph.delete_tasks, _OWNED_TASK_KEYS))
@@ -146,6 +155,7 @@ def test_sync_idempotent_and_pr_edge(components):
         assert "ZID-902" in set(components.task_graph.keys_with_prs())
 
     _cleanup(components, _KEYS)
+    assert components.store.get_index_meta("", _REF) is None
     assert _orphan_pr_count(components) == 0
 
 
