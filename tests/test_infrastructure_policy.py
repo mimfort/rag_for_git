@@ -12,6 +12,7 @@ from types import MethodType
 import psycopg
 import pytest
 import tests.infrastructure_policy as infrastructure_policy
+import yaml
 from neo4j import GraphDatabase
 from psycopg_pool import ConnectionPool, PoolTimeout
 from pytest_socket import SocketBlockedError
@@ -207,6 +208,65 @@ def test_unit_stores_fail_fast_before_db_clients_start() -> None:
 
     with pytest.raises(pytest.fail.Exception, match="Neo4j"):
         GraphStore("neo4j://localhost:7687", "neo4j", "password")
+
+
+def test_compose_defines_isolated_test_profile_services() -> None:
+    root = Path(__file__).parents[1]
+    compose = yaml.safe_load((root / "docker-compose.yml").read_text(encoding="utf-8"))
+
+    paradedb = compose["services"]["paradedb-test"]
+    assert paradedb["image"] == "paradedb/paradedb:latest"
+    assert paradedb["profiles"] == ["test"]
+    assert paradedb["environment"] == {
+        "POSTGRES_USER": "reviewer_test",
+        "POSTGRES_PASSWORD": "reviewer_test",
+        "POSTGRES_DB": "reviewer_test",
+    }
+    assert paradedb["ports"] == ["127.0.0.1:55433:5432"]
+    assert paradedb["healthcheck"] == {
+        "test": ["CMD-SHELL", "pg_isready -U reviewer_test -d reviewer_test"],
+        "interval": "2s",
+        "timeout": "2s",
+        "retries": 30,
+    }
+    assert "volumes" not in paradedb
+
+    neo4j = compose["services"]["neo4j-test"]
+    assert neo4j["image"] == "neo4j:5"
+    assert neo4j["profiles"] == ["test"]
+    assert neo4j["environment"] == {"NEO4J_AUTH": "neo4j/reviewer_test_pass"}
+    assert neo4j["ports"] == ["127.0.0.1:17474:7474", "127.0.0.1:17687:7687"]
+    assert neo4j["healthcheck"] == {
+        "test": [
+            "CMD-SHELL",
+            "cypher-shell -u neo4j -p reviewer_test_pass 'RETURN 1'",
+        ],
+        "interval": "2s",
+        "timeout": "3s",
+        "retries": 30,
+    }
+    assert "volumes" not in neo4j
+
+
+def test_env_example_documents_exact_test_endpoint_defaults() -> None:
+    root = Path(__file__).parents[1]
+    values = {
+        key.strip(): value.strip()
+        for line in (root / ".env.example").read_text(encoding="utf-8").splitlines()
+        if line and not line.lstrip().startswith("#") and "=" in line
+        for key, value in [line.split("=", 1)]
+        if key.strip().startswith("TEST_")
+    }
+
+    assert values == {
+        "TEST_PG_DSN": (
+            "postgresql://reviewer_test:reviewer_test@localhost:55433/"
+            "reviewer_test?connect_timeout=2"
+        ),
+        "TEST_NEO4J_URI": "neo4j://localhost:17687",
+        "TEST_NEO4J_USER": "neo4j",
+        "TEST_NEO4J_PASSWORD": "reviewer_test_pass",
+    }
 
 
 def test_test_endpoint_defaults_are_isolated() -> None:

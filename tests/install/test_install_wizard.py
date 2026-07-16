@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from click.testing import CliRunner
 from reviewer import install as inst
 from reviewer.entrypoints.cli import cli
@@ -173,14 +175,22 @@ def test_init_yes_preserves_extra_keys(tmp_path, monkeypatch):
 
 
 def test_env_template_mirrors_env_example():
-    from pathlib import Path
     repo_root = Path(__file__).resolve().parents[2]
     example_keys = _keys_from_text((repo_root / ".env.example").read_text(encoding="utf-8"))
     template_keys = _keys_from_text(inst.ENV_TEMPLATE)
-    assert template_keys == example_keys, (
+    test_only_keys = {
+        "TEST_PG_DSN",
+        "TEST_NEO4J_URI",
+        "TEST_NEO4J_USER",
+        "TEST_NEO4J_PASSWORD",
+    }
+    assert example_keys - template_keys == test_only_keys, (
         f"ENV_TEMPLATE и .env.example разошлись:\n"
         f"  только в .env.example: {sorted(example_keys - template_keys)}\n"
         f"  только в ENV_TEMPLATE: {sorted(template_keys - example_keys)}"
+    )
+    assert not template_keys - example_keys, (
+        f"В .env.example нет ключей ENV_TEMPLATE: {sorted(template_keys - example_keys)}"
     )
 
 
