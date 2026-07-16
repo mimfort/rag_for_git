@@ -339,8 +339,12 @@ def test_check_all_ok(
     graph.close.assert_called_once()
 
 
+@patch("reviewer.entrypoints.cli.GraphStore")
+@patch("reviewer.entrypoints.cli.ChunkStore")
 @patch("reviewer.entrypoints.cli.Settings")
-def test_check_fails_on_missing_keys(mock_settings_cls, runner):
+def test_check_fails_on_missing_keys(
+    mock_settings_cls, mock_chunk_cls, mock_graph_cls, runner
+):
     """При отсутствии ключей check возвращает exit-код 1."""
     s = MagicMock()
     s.voyage_api_key = ""
@@ -350,6 +354,8 @@ def test_check_fails_on_missing_keys(mock_settings_cls, runner):
     s.neo4j_user = "u"
     s.neo4j_password = "p"
     mock_settings_cls.return_value = s
+    mock_chunk_cls.return_value = MagicMock()
+    mock_graph_cls.return_value = MagicMock()
 
     result = runner.invoke(cli, ["check"])
 

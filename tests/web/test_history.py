@@ -85,7 +85,10 @@ def _sample_findings() -> list[dict]:
 def test_record_run_fail_soft_on_bad_dsn():
     """record_run() возвращает None при ошибке подключения — не бросает исключение."""
     history = ReviewHistory("postgresql://bad:bad@localhost:1/nonexistent")
-    result = history.record_run(_sample_run(), _sample_findings())
+
+    with patch.object(history, "_connect", side_effect=OSError("database unavailable")):
+        result = history.record_run(_sample_run(), _sample_findings())
+
     assert result is None
 
 
@@ -103,7 +106,10 @@ def test_record_run_fail_soft_on_exception():
 def test_get_trace_fail_soft_on_bad_dsn():
     """get_trace() возвращает [] при недоступной БД — не бросает исключение."""
     history = ReviewHistory("postgresql://bad:bad@localhost:1/nonexistent")
-    result = history.get_trace(1)
+
+    with patch.object(history, "_connect", side_effect=OSError("database unavailable")):
+        result = history.get_trace(1)
+
     assert result == []
 
 
