@@ -1,8 +1,36 @@
+import ast
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
 
 from reviewer.index.store import ChunkStore
+
+
+_INTEGRATION_SOURCES = (
+    "tests/index/test_store_hybrid.py",
+    "tests/index/test_migrate_base.py",
+    "tests/integration/test_pipeline.py",
+)
+
+
+def test_integration_chunk_store_clear_calls_are_repo_scoped():
+    root = Path(__file__).parents[2]
+    offenders = []
+    for relative_path in _INTEGRATION_SOURCES:
+        source = (root / relative_path).read_text()
+        tree = ast.parse(source)
+        offenders.extend(
+            f"{relative_path}:{node.lineno}"
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "clear"
+            and not node.args
+            and not node.keywords
+        )
+
+    assert offenders == []
 
 
 def test_clear_deletes_only_requested_repo_and_commits():
