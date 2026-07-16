@@ -6,6 +6,7 @@ from pathlib import Path
 import socket
 import subprocess
 import sys
+import textwrap
 from types import MethodType
 
 import psycopg
@@ -19,6 +20,7 @@ from reviewer.config.settings import Settings
 from reviewer.graph.store import GraphStore
 from reviewer.index.store import ChunkStore
 from tests.infrastructure_policy import (
+    InfrastructureSafetyError,
     InfrastructureTestSettings,
     validate_test_endpoints,
 )
@@ -71,6 +73,105 @@ def test_collection_time_infrastructure_is_blocked(
 
     assert result.returncode != 0
     assert policy_message in result.stdout + result.stderr
+
+
+@pytest.mark.parametrize("outer_context", ["unit", "integration"])
+def test_nested_pytest_restores_outer_policy_and_originals(
+    tmp_path: Path, outer_context: str
+) -> None:
+    inner = tmp_path / "test_inner_session.py"
+    inner.write_text("def test_inner():\n    pass\n", encoding="utf-8")
+    outer = tmp_path / "test_outer_session.py"
+    marker = "@pytest.mark.integration\n" if outer_context == "integration" else ""
+    socket_check = (
+        "sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)\n"
+        "sock.close()\n"
+        "with pytest.raises(pytest.fail.Exception, match='Integration-тест'):\n"
+        "    psycopg.connect('not-a-conninfo')"
+        if outer_context == "integration"
+        else
+        "with pytest.warns(UserWarning, match='socket.socket'):\n"
+        "    with pytest.raises(SocketBlockedError):\n"
+        "        socket.socket(socket.AF_INET, socket.SOCK_STREAM)\n"
+        "with pytest.raises(pytest.fail.Exception, match='Unit-тесту'):\n"
+        "    psycopg.connect('not-a-conninfo')"
+    )
+    policy_body = textwrap.indent(socket_check, "    ")
+    outer.write_text(
+        f"""import socket
+
+import psycopg
+import pytest
+from neo4j import GraphDatabase
+from psycopg_pool import ConnectionPool
+from pytest_socket import SocketBlockedError
+
+def state():
+    return (
+        socket.socket,
+        psycopg.connect,
+        psycopg.Connection.__dict__["connect"],
+        ConnectionPool.__dict__["__init__"],
+        GraphDatabase.__dict__["driver"],
+    )
+
+def assert_policy():
+{policy_body}
+
+{marker}def test_outer_policy_survives_nested_session():
+    before = state()
+    assert_policy()
+    result = pytest.main([
+        "-q", "-p", "tests.conftest", {str(inner)!r}, "-m", "not integration"
+    ])
+    assert result == pytest.ExitCode.OK
+    assert state() == before
+    assert_policy()
+""",
+        encoding="utf-8",
+    )
+    driver = tmp_path / "nested_driver.py"
+    selection = "integration" if outer_context == "integration" else "not integration"
+    project_root = Path(__file__).parents[1]
+    driver.write_text(
+        f"""import socket
+import sys
+
+sys.path.insert(0, {str(project_root)!r})
+
+import psycopg
+import pytest
+from neo4j import GraphDatabase
+from psycopg_pool import ConnectionPool
+
+def state():
+    return (
+        socket.socket,
+        psycopg.connect,
+        psycopg.Connection.__dict__["connect"],
+        ConnectionPool.__dict__["__init__"],
+        GraphDatabase.__dict__["driver"],
+    )
+
+before = state()
+result = pytest.main([
+    "-q", "-p", "tests.conftest", {str(outer)!r}, "-m", {selection!r}
+])
+assert result == pytest.ExitCode.OK
+assert state() == before
+""",
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        [sys.executable, str(driver)],
+        cwd=project_root,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 def test_unit_test_cannot_create_python_socket() -> None:
@@ -160,6 +261,19 @@ def test_rejects_unsafe_postgres_test_targets(pg_dsn: str) -> None:
         validate_test_endpoints(_test_settings(pg_dsn=pg_dsn), _production_settings())
 
 
+@pytest.mark.parametrize("host", ["127.1", "2130706433", "0x7f000001"])
+def test_rejects_noncanonical_numeric_postgres_host(host: str) -> None:
+    test = _test_settings(
+        pg_dsn=f"postgresql://u:p@{host}:55433/reviewer_test?connect_timeout=2"
+    )
+    production = _production_settings(
+        pg_dsn="postgresql://prod:prod@production.example:5432/reviewer"
+    )
+
+    with pytest.raises(InfrastructureSafetyError, match="Non-canonical numeric host"):
+        validate_test_endpoints(test, production)
+
+
 def test_rejects_postgres_target_equal_to_production_after_loopback_normalization() -> None:
     production = _production_settings(
         pg_dsn="postgresql://prod:prod@localhost:55433/shared_test?connect_timeout=2"
@@ -235,6 +349,15 @@ def test_rejects_equal_production_target_with_a_long_production_timeout() -> Non
 def test_rejects_unsafe_neo4j_test_targets(overrides: dict[str, str]) -> None:
     with pytest.raises(ValueError):
         validate_test_endpoints(_test_settings(**overrides), _production_settings())
+
+
+@pytest.mark.parametrize("host", ["127.1", "2130706433", "0x7f000001"])
+def test_rejects_noncanonical_numeric_neo4j_host(host: str) -> None:
+    test = _test_settings(neo4j_uri=f"neo4j://{host}:17687")
+    production = _production_settings(neo4j_uri="neo4j://production.example:7687")
+
+    with pytest.raises(InfrastructureSafetyError, match="Non-canonical numeric host"):
+        validate_test_endpoints(test, production)
 
 
 def test_rejects_zero_neo4j_port_as_malformed() -> None:

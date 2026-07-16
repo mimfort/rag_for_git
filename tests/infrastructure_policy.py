@@ -29,6 +29,10 @@ _START_TEST_SERVICES = (
 )
 
 
+class InfrastructureSafetyError(ValueError):
+    pass
+
+
 class InfrastructureTestSettings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=_resolve_env_file(), env_prefix="TEST_", extra="ignore", frozen=True
@@ -96,6 +100,20 @@ def _normalize_host(host: str) -> str:
     try:
         address = ipaddress.ip_address(normalized)
     except ValueError:
+        candidate = normalized.rstrip(".").lower()
+        numeric_parts = candidate.split(".")
+        if numeric_parts and all(
+            (part.isascii() and part.isdecimal())
+            or (
+                part.startswith("0x")
+                and len(part) > 2
+                and all(char in "0123456789abcdef" for char in part[2:])
+            )
+            for part in numeric_parts
+        ):
+            raise InfrastructureSafetyError(
+                "Non-canonical numeric host is not allowed"
+            ) from None
         return normalized
     return "loopback" if address.is_loopback else address.compressed
 

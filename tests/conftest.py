@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+import socket
+from typing import Any
+
 import pytest
 from pytest_socket import disable_socket, enable_socket
 
@@ -12,23 +16,59 @@ from tests.infrastructure_policy import (
     validate_test_endpoints,
 )
 
-_SESSION_POLICY: pytest.MonkeyPatch | None = None
+@dataclass(frozen=True)
+class _SocketPolicyState:
+    socket_type: Any
+    socket_connect: Any
+    getaddrinfo: Any
+    gethostbyname: Any
+
+
+@dataclass(frozen=True)
+class _SessionPolicyState:
+    session: pytest.Session
+    monkeypatch: pytest.MonkeyPatch
+    sockets: _SocketPolicyState
+
+
+_SESSION_POLICIES: list[_SessionPolicyState] = []
+
+
+def _capture_socket_policy() -> _SocketPolicyState:
+    return _SocketPolicyState(
+        socket_type=socket.socket,
+        socket_connect=socket.socket.connect,
+        getaddrinfo=socket.getaddrinfo,
+        gethostbyname=socket.gethostbyname,
+    )
+
+
+def _restore_socket_policy(state: _SocketPolicyState) -> None:
+    socket.socket = state.socket_type
+    socket.socket.connect = state.socket_connect
+    socket.getaddrinfo = state.getaddrinfo
+    socket.gethostbyname = state.gethostbyname
 
 
 def pytest_sessionstart(session: pytest.Session) -> None:
-    global _SESSION_POLICY
-    _SESSION_POLICY = pytest.MonkeyPatch()
-    enable_socket()
+    monkeypatch = pytest.MonkeyPatch()
+    _SESSION_POLICIES.append(
+        _SessionPolicyState(
+            session=session,
+            monkeypatch=monkeypatch,
+            sockets=_capture_socket_policy(),
+        )
+    )
     disable_socket(allow_unix_socket=True)
-    install_unit_db_guards(_SESSION_POLICY)
+    install_unit_db_guards(monkeypatch)
 
 
 def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
-    global _SESSION_POLICY
-    if _SESSION_POLICY is not None:
-        _SESSION_POLICY.undo()
-        _SESSION_POLICY = None
-    enable_socket()
+    if not _SESSION_POLICIES or _SESSION_POLICIES[-1].session is not session:
+        raise RuntimeError("Нарушен LIFO-порядок pytest session policy")
+    state = _SESSION_POLICIES.pop()
+    state.monkeypatch.undo()
+    _restore_socket_policy(state.sockets)
 
 
 @pytest.hookimpl(hookwrapper=True, tryfirst=True)
