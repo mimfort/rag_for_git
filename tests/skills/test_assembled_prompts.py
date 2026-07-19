@@ -63,6 +63,18 @@ def test_verify_keeps_verdicts_schema_and_tools():
     assert "find_callers" in v                      # tool-usage подставлен
 
 
+def test_verify_prompt_instructs_reject_reason():
+    v = assemble("review-pr/references/verify-prompt.md")
+    lowered = v.lower()
+    # каждый assert должен падать, если убрать новую инструкцию про reason:
+    # "reason" появился в промпте только вместе с этой правкой (submit_verdicts
+    # и новый абзац), а две следующие фразы уникальны именно для нового абзаца
+    # (не встречаются больше нигде в файле — проверено grep'ом).
+    assert "reason" in lowered
+    assert "must include a short" in lowered
+    assert "naming which rule fired" in lowered
+
+
 def test_performance_assembled_schema_and_goal():
     p = assemble("performance-review/SKILL.md")
     assert '"category": "performance"' in p

@@ -540,3 +540,71 @@ def test_publish_merges_server_and_client_steps(_ov, _ch) -> None:
     assert any(step["name"] == "summary" for step in recorded)
     seqs = [step["seq"] for step in recorded]
     assert seqs == list(range(len(recorded)))
+
+
+def _outcomes(history):
+    """Список outcome по строкам первого прогона фейковой истории."""
+    return [r["outcome"] for r in history.findings[0]]
+
+
+@patch("reviewer.services.review_service.chunk_python", side_effect=_fake_chunk)
+@patch("reviewer.services.review_service.build_overlay")
+def test_publish_persists_verify_rejected_with_reason(_ov, _ch) -> None:
+    svc, _, history = _make_mcp_service_with_publish()
+    svc.prepare_review("o/r", 7)
+    report = _submit_then_publish(
+        svc, "o/r", 7, [RAW], dry_run=True,
+        verdicts=[{"id": "f1", "is_real": False, "reason": "line does not exist"}],
+    )
+    assert report["verify_rejected"] == 1
+    rows = history.findings[0]
+    assert len(rows) == 1
+    assert rows[0]["outcome"] == "verify_rejected"
+    assert rows[0]["reject_reason"] == "line does not exist"
+    assert rows[0]["published"] is False
+
+
+@patch("reviewer.services.review_service.chunk_python", side_effect=_fake_chunk)
+@patch("reviewer.services.review_service.build_overlay")
+def test_publish_persists_gate_dropped_with_reason(_ov, _ch) -> None:
+    svc, _, history = _make_mcp_service_with_publish()
+    svc.prepare_review("o/r", 7)
+    low = dict(RAW, severity="low")                  # ниже medium-порога
+    report = _submit_then_publish(svc, "o/r", 7, [low], dry_run=True)
+    assert report["dropped_by_gate"] == 1
+    rows = history.findings[0]
+    gate_rows = [r for r in rows if r["outcome"] == "gate_dropped"]
+    assert len(gate_rows) == 1
+    assert gate_rows[0]["reject_reason"].startswith("severity")
+
+
+@patch("reviewer.services.review_service.chunk_python", side_effect=_fake_chunk)
+@patch("reviewer.services.review_service.build_overlay")
+def test_publish_outcomes_sum_to_candidates(_ov, _ch) -> None:
+    """len(findings_rows) == число кандидатов (инвариант воронки)."""
+    svc, _, history = _make_mcp_service_with_publish()
+    svc.prepare_review("o/r", 7)
+    # 3 кандидата: 1 published_inline, 1 verify_rejected, 1 gate_dropped(low).
+    pack = [RAW,
+            dict(RAW, message="reject me"),
+            dict(RAW, severity="low", message="low sev")]
+    _submit_then_publish(svc, "o/r", 7, pack, dry_run=True,
+                         verdicts=[{"id": "f2", "is_real": False}])
+    rows = history.findings[0]
+    assert len(rows) == 3
+    assert sorted(_outcomes(history)) == [
+        "gate_dropped", "published_inline", "verify_rejected"]
+
+
+@patch("reviewer.services.review_service.chunk_python", side_effect=_fake_chunk)
+@patch("reviewer.services.review_service.build_overlay")
+def test_publish_error_keeps_outcome_but_unpublishes(_ov, _ch) -> None:
+    """При status=error published=False у всех строк, но outcome сохранён."""
+    svc, _, history = _make_mcp_service_with_publish(vcs_fails=True)
+    svc.prepare_review("o/r", 7)
+    _submit_then_publish(svc, "o/r", 7, [RAW])       # реальная публикация → VCS падает
+    rows = history.findings[0]
+    assert history.runs[0]["status"] == "error"
+    assert all(r["published"] is False for r in rows)
+    # Намеченный исход не затёрт: инлайновая находка осталась published_inline.
+    assert rows[0]["outcome"] == "published_inline"

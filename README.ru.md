@@ -919,6 +919,14 @@ reviewer check          # ✓/✗ по ключам, Postgres, Neo4j, GitHub; ex
 Админка (FastAPI + React/Vite SPA) показывает историю прогонов, агрегаты (% отсева gate, графики во
 времени, находки по категориям/severity) и детали каждого прогона с drill-down.
 
+`review_findings` персистит **каждого кандидата** (а не только опубликованные) с колонками
+`outcome` — терминальный исход воронки (`published_inline` / `published_summary` / `verify_rejected`
+/ `gate_dropped` / `deduped` / `already_posted`) — и `reject_reason` (причина отсева: текст
+верификатора при `verify_rejected`, сработавшее правило политики при `gate_dropped`, иначе `NULL`).
+Это позволяет мерить precision генерации и отличать «verify режет галлюцинацию» от «verify режет
+реальный баг». Колонки аддитивны и идемпотентны (`ADD COLUMN IF NOT EXISTS` + best-effort бэкфилл
+исторических опубликованных строк); старые `is_real`/`published`/`inline` заполняются как прежде.
+
 ```bash
 # На хосте — собрать фронт и запустить SPA + FastAPI:
 pip install -e ".[web]"
