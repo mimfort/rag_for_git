@@ -108,15 +108,25 @@ class ReviewPolicy:
             return category in self.enabled_only
         return self.categories.get(category, True)
 
-    def gate(self, finding) -> bool:
+    def gate_reason(self, finding) -> str | None:
+        """Причина отсева находки гейтом или None, если находка проходит.
+
+        Детерминированно возвращает первое сработавшее правило политики
+        (категория/severity/confidence/путь). Строки — со стабильными
+        префиксами (`category`/`severity`/`confidence`/`path`), пригодны
+        для группировки в наблюдаемости.
+        """
         if not self.category_enabled(finding.category):
-            return False
+            return f"category '{finding.category}' disabled"
         sev_f = _SEV.get(finding.severity)
         sev_t = _SEV.get(self.severity_threshold)
         if sev_f is None or sev_t is None or sev_f < sev_t:
-            return False
+            return f"severity '{finding.severity}' below threshold '{self.severity_threshold}'"
         if finding.confidence < self.min_confidence:
-            return False
+            return f"confidence {finding.confidence:.2f} below min {self.min_confidence:.2f}"
         if is_ignored(finding.file, self.ignore):
-            return False
-        return True
+            return f"path '{finding.file}' ignored"
+        return None
+
+    def gate(self, finding) -> bool:
+        return self.gate_reason(finding) is None
