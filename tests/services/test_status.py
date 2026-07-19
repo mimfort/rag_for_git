@@ -1,5 +1,6 @@
 import json
 from datetime import datetime
+from unittest.mock import MagicMock
 
 import reviewer.services.status as status_mod
 from reviewer.services.status import build_status_report, OverlayStatus, render_status, render_status_json, RepoStatus, BranchStatus
@@ -88,6 +89,8 @@ def test_status_command_smoke(monkeypatch):
         branches=[BranchStatus("main", "base:main", "abc1234", dt, 5, 3, 0)],
         overlays=[])
     monkeypatch.setattr(cli_mod, "build_status_report", lambda *a, **k: rep)
+    monkeypatch.setattr(cli_mod, "ChunkStore", MagicMock())
+    monkeypatch.setattr(cli_mod, "GraphStore", MagicMock())
     res = CliRunner().invoke(cli_mod.cli, ["status", ".", "--repo", "a/x"])
     assert res.exit_code == 0, res.output
     assert "Ветка main" in res.output
@@ -126,6 +129,8 @@ def test_status_command_json(monkeypatch):
         branches=[BranchStatus("main", "base:main", "abc1234567def", dt, 5, 3, 0)],
         overlays=[])
     monkeypatch.setattr(cli_mod, "build_status_report", lambda *a, **k: rep)
+    monkeypatch.setattr(cli_mod, "ChunkStore", MagicMock())
+    monkeypatch.setattr(cli_mod, "GraphStore", MagicMock())
     res = CliRunner().invoke(cli_mod.cli, ["status", ".", "--repo", "a/x", "--json"])
     assert res.exit_code == 0, res.output
     payload = json.loads(res.output)

@@ -10,7 +10,10 @@ class FakeReviewService:
 
 
 def test_prepare_review_returns_skip_payload(monkeypatch):
-    s = Settings(_env_file=None, review_branches="main,master")
+    # review_session_persist=False — unit-тест не трогает Postgres-таблицу сессий
+    # (иначе _ensure_session_store() поднимает настоящий SessionStore и делает
+    # save()/delete() по сети ещё до BranchNotTrackedError).
+    s = Settings(_env_file=None, review_branches="main,master", review_session_persist=False)
 
     class Comp:
         graph = None

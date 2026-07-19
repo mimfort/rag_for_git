@@ -95,13 +95,10 @@ class ChunkStore:
             conn.execute(_SCHEMA)
             conn.commit()
 
-    def clear(self, repo: str | None = None) -> None:
-        """Удалить чанки репозитория (repo) или весь индекс (repo=None — для тестов)."""
+    def clear(self, repo: str) -> None:
+        """Удалить все чанки указанного репозитория ``repo``."""
         with self._connect() as conn:
-            if repo is None:
-                conn.execute("TRUNCATE chunks RESTART IDENTITY")
-            else:
-                conn.execute("DELETE FROM chunks WHERE repo = %s", (repo,))
+            conn.execute("DELETE FROM chunks WHERE repo = %s", (repo,))
             conn.commit()
 
     def upsert(self, rows: list[ChunkRow]) -> None:
@@ -254,6 +251,20 @@ class ChunkStore:
                 "SELECT DISTINCT ref FROM chunks WHERE repo=%s ORDER BY ref", (repo,)
             ).fetchall()
         return [r[0] for r in rows]
+
+    def list_overlay_refs(self) -> list[tuple[str, str]]:
+        """Все overlay-ref (repo, ref) по ВСЕМ репозиториям: ref вида 'pr:<N>'.
+
+        Отличие от list_refs(repo): тот скоупится одним репо, а GC осиротевших
+        overlay (reviewer/services/gc.py) должен видеть базу целиком — брошенный
+        overlay может остаться в любом репо деплоя. base:<branch> не возвращается.
+        """
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT DISTINCT repo, ref FROM chunks WHERE ref LIKE 'pr:%%' "
+                "ORDER BY repo, ref"
+            ).fetchall()
+        return [(r[0], r[1]) for r in rows]
 
     def migrate_legacy_base(self, primary: str) -> int:
         """Перенести legacy ref='base' → 'base:<primary>' в chunks и index_meta.

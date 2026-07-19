@@ -1,7 +1,7 @@
-"""Integration: TaskStore + TaskGraph на живых Postgres+Neo4j (без Voyage).
+"""Integration-тесты изолированных TaskStore/TaskGraph с фейковым эмбеддером.
 
-Эмбеддер фейковый (детерминированный 1024-вектор) — проверяем SQL/Cypher, не Voyage.
-Требует docker compose up -d. Маркер integration (исключён из дефолтного прогона).
+Инфраструктура запускается командой:
+`docker compose --profile test up -d --wait paradedb-test neo4j-test`.
 """
 from __future__ import annotations
 
