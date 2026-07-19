@@ -194,15 +194,22 @@ def test_record_run_self_migrates_missing_columns():
         conn.execute("ALTER TABLE review_findings DROP COLUMN IF EXISTS reject_reason")
         conn.commit()
 
-    # 2) свежий инстанс: _schema_ready=False, init_schema вручную НЕ вызван.
-    history = ReviewHistory(dsn)
-    findings = [{**_sample_findings()[0], "outcome": "published_inline", "reject_reason": None}]
-    run_id = history.record_run(_sample_run(), findings)
+    try:
+        # 2) свежий инстанс: _schema_ready=False, init_schema вручную НЕ вызван.
+        history = ReviewHistory(dsn)
+        findings = [
+            {**_sample_findings()[0], "outcome": "published_inline", "reject_reason": None}
+        ]
+        run_id = history.record_run(_sample_run(), findings)
 
-    # 3) запись прошла (не fail-soft None) и исход читается → миграция применилась сама.
-    assert run_id is not None
-    result = history.get_run(run_id)
-    assert result["findings"][0]["outcome"] == "published_inline"
+        # 3) запись прошла (не fail-soft None) и исход читается → миграция применилась сама.
+        assert run_id is not None
+        result = history.get_run(run_id)
+        assert result["findings"][0]["outcome"] == "published_inline"
+    finally:
+        # Восстанавливаем схему независимо от исхода, чтобы падение теста не
+        # каскадировало на последующие integration-тесты (не полагаемся на self-heal).
+        ReviewHistory(dsn).init_schema()
 
 
 @pytest.mark.integration
