@@ -72,3 +72,25 @@ def test_verdict_in():
     assert v.id == "f3" and v.is_real is False
     with pytest.raises(Exception):
         VerdictIn.model_validate({"id": "f3"})   # is_real required
+
+
+def test_verdict_in_reason_optional_defaults_none():
+    from reviewer.mcp.schemas import VerdictIn
+    v = VerdictIn.model_validate({"id": "f1", "is_real": False})
+    assert v.reason is None
+
+
+def test_verdict_in_reason_accepted():
+    from reviewer.mcp.schemas import VerdictIn
+    v = VerdictIn.model_validate(
+        {"id": "f1", "is_real": False, "reason": "line does not exist"})
+    assert v.reason == "line does not exist"
+
+
+def test_verdict_in_reason_coercion_to_none():
+    # пустая/whitespace-only/нестроковая причина → None (валидатор _reason —
+    # единственное место коэрции: submit_verdicts фильтрует `if v.reason:`, а
+    # "   " в Python truthy, поэтому без валидатора whitespace-причина осела бы).
+    assert VerdictIn.model_validate({"id": "f1", "is_real": False, "reason": ""}).reason is None
+    assert VerdictIn.model_validate({"id": "f1", "is_real": False, "reason": "   "}).reason is None
+    assert VerdictIn.model_validate({"id": "f1", "is_real": False, "reason": 42}).reason is None

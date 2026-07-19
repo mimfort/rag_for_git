@@ -17,6 +17,7 @@ from reviewer.agent.assemble import (
 )
 from reviewer.agent.centrality import annotate_centrality
 from reviewer.agent.dedup import dedup_findings
+from reviewer.agent.outcomes import account_outcomes
 from reviewer.app import Components
 from reviewer.config.settings import Settings
 from reviewer.index.refs import base_ref
@@ -63,6 +64,9 @@ class _Session:
     # перезапуск процесса посреди ревью теряет прогресс, как и раньше).
     candidates: dict[str, Finding] = field(default_factory=dict)
     verdicts: dict[str, bool] = field(default_factory=dict)
+    # PRI: причины reject от верификатора (id → строка), параллельно verdicts.
+    # In-memory, как candidates/verdicts (регидрированная сессия стартует пустой).
+    verdict_reasons: dict[str, str] = field(default_factory=dict)
     # PRI-209: шаги тул-лупа агента (для трассировки/метрик сессии).
     steps: list[dict] = field(default_factory=list)
     # PRI-209: момент начала сессии review (для duration_ms в истории).
@@ -919,6 +923,8 @@ class MCPReviewService:
                 log.warning("submit_verdicts: неизвестный id %s (%s#%s)", v.id, repo, pr)
                 continue
             s.verdicts[v.id] = v.is_real
+            if v.reason:
+                s.verdict_reasons[v.id] = v.reason
             recorded += 1
         return {"recorded": recorded, "unknown_ids": unknown}
 
@@ -1065,6 +1071,8 @@ class MCPReviewService:
             dry_run=dry_run, posted=posted, error=error,
             session=s,
             metadata=metadata,
+            parsed=parsed,
+            kept=kept,
         )
         self._cleanup(repo, pr)
 
@@ -1119,12 +1127,20 @@ class MCPReviewService:
         error: str,
         session: _Session,
         metadata: _RunMetadata | None = None,
+        parsed: list[Finding] | None = None,
+        kept: list[Finding] | None = None,
     ) -> int | None:
         """Записать прогон в историю (fail-soft).
 
         Гейтится ``settings.review_history``. Любая ошибка истории не валит
         publish — возвращаем None. При сбое публикации (status=error) находки
         записываются с published=False — как в review_service._record_history.
+
+        ``parsed``/``kept`` (survived verify / прошедшие gate) вместе с
+        ``session.candidates``/``verdicts``/``verdict_reasons`` и ``deduped``
+        передаются в ``account_outcomes``, который строит строку review_findings
+        для КАЖДОГО кандидата (verify_rejected/gate_dropped/deduped/
+        already_posted/published_*) — воронка исходов полностью персистится.
 
         PRI-209: метаданные LLM-прохода (model, usage, total_cost, steps) и
         started_at приходят через ``metadata`` из publish_review / сессии и
@@ -1193,9 +1209,15 @@ class MCPReviewService:
                 "total_cost": metadata.total_cost,
                 "error_text": error or None,
             }
+            finding_rows = account_outcomes(
+                session.candidates, session.verdicts, session.verdict_reasons,
+                parsed or [], kept or [], deduped, asm, p.policy,
+            )
+            # При сбое публикации (status=error) фактически ничего не ушло:
+            # снимаем published, но намеченный outcome сохраняем (что хотели).
             rows = (
-                [dict(r, published=False) for r in asm.findings_rows]
-                if status == "error" else asm.findings_rows
+                [dict(r, published=False) for r in finding_rows]
+                if status == "error" else finding_rows
             )
             return history.record_run(run, rows, steps=all_steps or None)
         except Exception:

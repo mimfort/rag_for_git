@@ -223,3 +223,50 @@ def test_load_applies_context_limits_over_env_defaults():
     s = Settings(_env_file=None)
     p = ReviewPolicy.load(s, "context_limits:\n  graph:\n    hops: 2\n")
     assert p.context_limits.graph.hops == 2
+
+
+def test_gate_reason_none_when_passes():
+    p = ReviewPolicy(min_confidence=0.5, severity_threshold="medium")
+    assert p.gate_reason(F("correctness", "high", confidence=0.9)) is None
+
+
+def test_gate_reason_category_disabled():
+    p = ReviewPolicy.from_yaml("categories: {style: false}")
+    r = p.gate_reason(F("style", "high"))
+    assert r is not None and r.startswith("category")
+
+
+def test_gate_reason_low_severity():
+    p = ReviewPolicy(severity_threshold="high")
+    r = p.gate_reason(F("correctness", "low"))
+    assert r is not None and r.startswith("severity")
+
+
+def test_gate_reason_low_confidence():
+    p = ReviewPolicy(min_confidence=0.7)
+    r = p.gate_reason(F("correctness", "high", confidence=0.4))
+    assert r is not None and r.startswith("confidence")
+
+
+def test_gate_reason_ignored_path():
+    p = ReviewPolicy.from_yaml("paths: {ignore: ['vendor/**']}")
+    r = p.gate_reason(F("correctness", "high", file="vendor/x.py"))
+    assert r is not None and r.startswith("path")
+
+
+def test_gate_equivalent_to_gate_reason_is_none():
+    p = ReviewPolicy.from_yaml(
+        "categories: {correctness: true, style: false}\n"
+        "severity_threshold: medium\n"
+        "min_confidence: 0.5\n"
+        "paths: {ignore: ['vendor/**']}\n"
+    )
+    cases = [
+        F("correctness", "high", confidence=0.9),
+        F("style", "high"),
+        F("correctness", "low"),
+        F("correctness", "high", confidence=0.3),
+        F("correctness", "high", file="vendor/x.py"),
+    ]
+    for f in cases:
+        assert p.gate(f) == (p.gate_reason(f) is None)

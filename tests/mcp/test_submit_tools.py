@@ -45,3 +45,27 @@ def test_submit_verdicts_records_and_flags_unknown(_ov, _ch):
                                        {"id": "f9", "is_real": True}])
     assert r == {"recorded": 1, "unknown_ids": ["f9"]}
     assert svc._sessions[("o/r", 7)].verdicts == {"f1": False}
+
+
+@patch("reviewer.services.review_service.chunk_python", side_effect=_fake_chunk)
+@patch("reviewer.services.review_service.build_overlay")
+def test_submit_verdicts_records_reason(_ov, _ch):
+    svc, _, _ = _make_mcp_service_with_publish()
+    svc.prepare_review("o/r", 7)
+    svc.submit_findings("o/r", 7, [RAW])                     # → f1
+    svc.submit_verdicts("o/r", 7,
+                        [{"id": "f1", "is_real": False, "reason": "pre-existing"}])
+    sess = svc._sessions[("o/r", 7)]
+    assert sess.verdicts == {"f1": False}
+    assert sess.verdict_reasons == {"f1": "pre-existing"}
+
+
+@patch("reviewer.services.review_service.chunk_python", side_effect=_fake_chunk)
+@patch("reviewer.services.review_service.build_overlay")
+def test_submit_verdicts_no_reason_leaves_reasons_empty(_ov, _ch):
+    svc, _, _ = _make_mcp_service_with_publish()
+    svc.prepare_review("o/r", 7)
+    svc.submit_findings("o/r", 7, [RAW])                     # → f1
+    svc.submit_verdicts("o/r", 7, [{"id": "f1", "is_real": True}])
+    sess = svc._sessions[("o/r", 7)]
+    assert sess.verdict_reasons == {}

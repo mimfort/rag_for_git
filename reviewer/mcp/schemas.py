@@ -112,3 +112,10 @@ class VerdictIn(BaseModel):
 
     id: str
     is_real: bool
+    # PRI: причина reject (при is_real=false) для наблюдаемости; None = не указана.
+    reason: str | None = None
+
+    @field_validator("reason", mode="before")
+    @classmethod
+    def _reason(cls, v):
+        return v if isinstance(v, str) and v.strip() else None

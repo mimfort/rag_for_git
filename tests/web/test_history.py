@@ -123,6 +123,73 @@ def test_get_trace_fail_soft_on_exception():
     assert result == []
 
 
+def test_record_run_defaults_missing_outcome_keys():
+    """record_run не падает на находках без outcome/reject_reason (back-compat)."""
+    history = ReviewHistory("postgresql://bad:bad@localhost:1/nonexistent")
+    captured = {}
+
+    class _Cur:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def executemany(self, sql, rows): captured["rows"] = rows
+
+    class _Conn:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def execute(self, sql, row=None):
+            class _R:
+                def fetchone(self_inner): return (1,)
+            return _R()
+        def cursor(self): return _Cur()
+        def commit(self): pass
+
+    with patch.object(history, "_connect", return_value=_Conn()):
+        rid = history.record_run(_sample_run(), _sample_findings())
+    assert rid == 1
+    # _sample_findings() без outcome → в строках дефолт None по обоим ключам.
+    assert all(r["outcome"] is None and r["reject_reason"] is None
+               for r in captured["rows"])
+
+
+@pytest.mark.integration
+def test_record_and_get_run_persists_outcome():
+    """outcome/reject_reason пишутся и читаются обратно."""
+    from reviewer.config.settings import Settings
+    history = ReviewHistory(Settings().pg_dsn)
+    history.init_schema()
+
+    findings = [
+        {**_sample_findings()[0], "outcome": "published_inline", "reject_reason": None},
+        {"file": "reviewer/x.py", "line": 3, "category": "correctness",
+         "severity": "high", "confidence": 0.9, "is_real": False,
+         "published": False, "inline": False, "fingerprint": "rej1",
+         "message": "false positive", "outcome": "verify_rejected",
+         "reject_reason": "line does not exist"},
+    ]
+    run_id = history.record_run(_sample_run(), findings)
+    result = history.get_run(run_id)
+    by_outcome = {f["outcome"]: f for f in result["findings"]}
+    assert by_outcome["published_inline"]["reject_reason"] is None
+    assert by_outcome["verify_rejected"]["reject_reason"] == "line does not exist"
+
+
+@pytest.mark.integration
+def test_schema_idempotent_and_backfill():
+    """Повторный init_schema безопасен; бэкфилл проставляет исход старым published."""
+    from reviewer.config.settings import Settings
+    history = ReviewHistory(Settings().pg_dsn)
+    history.init_schema()
+    history.init_schema()   # второй раз не падает (ADD COLUMN IF NOT EXISTS)
+
+    # Строка без outcome (эмулируем legacy): published+inline → бэкфилл published_inline.
+    findings = [{**_sample_findings()[0]}]   # без ключа outcome → NULL при вставке
+    run_id = history.record_run(_sample_run(), findings)
+    # Бэкфилл проставляет исход опубликованным строкам при следующем init_schema.
+    history.init_schema()
+    result = history.get_run(run_id)
+    assert result["findings"][0]["outcome"] == "published_inline"
+
+
 # ---------------------------------------------------------------------------
 # Integration: запись и чтение прогона
 # ---------------------------------------------------------------------------
