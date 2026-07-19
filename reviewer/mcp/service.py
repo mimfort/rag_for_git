@@ -63,6 +63,9 @@ class _Session:
     # перезапуск процесса посреди ревью теряет прогресс, как и раньше).
     candidates: dict[str, Finding] = field(default_factory=dict)
     verdicts: dict[str, bool] = field(default_factory=dict)
+    # PRI: причины reject от верификатора (id → строка), параллельно verdicts.
+    # In-memory, как candidates/verdicts (регидрированная сессия стартует пустой).
+    verdict_reasons: dict[str, str] = field(default_factory=dict)
     # PRI-209: шаги тул-лупа агента (для трассировки/метрик сессии).
     steps: list[dict] = field(default_factory=list)
     # PRI-209: момент начала сессии review (для duration_ms в истории).
@@ -919,6 +922,8 @@ class MCPReviewService:
                 log.warning("submit_verdicts: неизвестный id %s (%s#%s)", v.id, repo, pr)
                 continue
             s.verdicts[v.id] = v.is_real
+            if v.reason:
+                s.verdict_reasons[v.id] = v.reason
             recorded += 1
         return {"recorded": recorded, "unknown_ids": unknown}
 

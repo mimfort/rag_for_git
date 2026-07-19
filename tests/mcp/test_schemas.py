@@ -72,3 +72,16 @@ def test_verdict_in():
     assert v.id == "f3" and v.is_real is False
     with pytest.raises(Exception):
         VerdictIn.model_validate({"id": "f3"})   # is_real required
+
+
+def test_verdict_in_reason_optional_defaults_none():
+    from reviewer.mcp.schemas import VerdictIn
+    v = VerdictIn.model_validate({"id": "f1", "is_real": False})
+    assert v.reason is None
+
+
+def test_verdict_in_reason_accepted():
+    from reviewer.mcp.schemas import VerdictIn
+    v = VerdictIn.model_validate(
+        {"id": "f1", "is_real": False, "reason": "line does not exist"})
+    assert v.reason == "line does not exist"
