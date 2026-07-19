@@ -31,6 +31,7 @@ class ReviewHistory:
         self._max_size = max_size
         self._pool: ConnectionPool | None = None
         self._init_lock = threading.Lock()
+        self._schema_ready = False
 
     def _ensure_pool(self) -> ConnectionPool:
         """Создать и открыть пул при первом обращении (thread-safe)."""
@@ -47,7 +48,14 @@ class ReviewHistory:
         return self._pool
 
     def _connect(self):
-        """Вернуть контекстный менеджер соединения из пула."""
+        """Вернуть соединение из пула, гарантировав наличие/актуальность схемы.
+
+        Схема применяется лениво при первом обращении (по образцу
+        ``mcp/session_store``): так запись истории на MCP-пути ``publish_review``
+        сама домигрирует БД (идемпотентно), не завися от запуска ``reviewer serve``.
+        """
+        if not self._schema_ready:
+            self.init_schema()
         return self._ensure_pool().connection()
 
     def close(self) -> None:
@@ -61,10 +69,15 @@ class ReviewHistory:
     # ------------------------------------------------------------------
 
     def init_schema(self) -> None:
-        """Создать таблицы review_runs и review_findings, если их нет."""
-        with self._connect() as conn:
+        """Создать/домигрировать таблицы истории (идемпотентно).
+
+        Берёт соединение из пула напрямую (не через ``_connect``), чтобы избежать
+        рекурсии с ленивым гардом ``_schema_ready``.
+        """
+        with self._ensure_pool().connection() as conn:
             conn.execute(_SCHEMA)
             conn.commit()
+        self._schema_ready = True
 
     # ------------------------------------------------------------------
     # Запись прогона
