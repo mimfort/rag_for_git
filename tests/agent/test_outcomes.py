@@ -143,3 +143,41 @@ def test_full_funnel_sums_to_candidates():
         "published_inline": 2, "published_summary": 1, "already_posted": 1,
         "verify_rejected": 1, "gate_dropped": 1, "deduped": 1,
     }
+
+
+def test_all_rows_share_identical_key_set():
+    """Каждая строка account_outcomes несёт одинаковый набор ключей.
+
+    Guard против дрейфа двух билдеров строк (outcomes._row vs assemble._row):
+    history.record_run дефолтит лишь run_id/outcome/reject_reason, а остальные
+    ключи (file/line/category/severity/confidence/is_real/published/inline/
+    fingerprint/message) обязаны присутствовать. Отсутствие любого → KeyError
+    в executemany → проглатывается fail-soft → тихая потеря истории всего прогона.
+    """
+    inline = F("real inline bug")
+    rejected = F("false positive")
+    gated = F("low sev", sev="low")
+    d_winner = F("dupe")
+    d_loser = F("dupe")
+    candidates = {"f1": inline, "f2": rejected, "f3": gated, "f4": d_winner, "f5": d_loser}
+    parsed = [inline, gated, d_winner, d_loser]        # rejected исключён
+    kept = [inline, d_winner, d_loser]                 # gated отсеян
+    deduped = [inline, d_winner]                       # d_loser схлопнут
+    asm = SimpleNamespace(findings_rows=[               # по строке на каждый deduped (1:1)
+        _asm_row(inline, published=True, inline=True),
+        _asm_row(d_winner, published=True, inline=True),
+    ])
+    rows = account_outcomes(
+        candidates, {"f2": False}, {"f2": "not a bug"},
+        parsed, kept, deduped, asm, ReviewPolicy(severity_threshold="medium"),
+    )
+    # все 5 кандидатов → 5 строк, покрыты verify_rejected/gate_dropped/deduped/published_inline
+    assert len(rows) == len(candidates)
+    reference = set(rows[0].keys())
+    mandatory = {
+        "file", "line", "category", "severity", "confidence", "is_real",
+        "published", "inline", "fingerprint", "message", "outcome", "reject_reason",
+    }
+    assert reference == mandatory
+    for r in rows:
+        assert set(r.keys()) == reference
