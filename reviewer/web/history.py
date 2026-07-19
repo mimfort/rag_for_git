@@ -107,10 +107,12 @@ class ReviewHistory:
             finding_sql = """
             INSERT INTO review_findings (
                 run_id, file, line, category, severity, confidence,
-                is_real, published, inline, fingerprint, message
+                is_real, published, inline, fingerprint, message,
+                outcome, reject_reason
             ) VALUES (
                 %(run_id)s, %(file)s, %(line)s, %(category)s, %(severity)s, %(confidence)s,
-                %(is_real)s, %(published)s, %(inline)s, %(fingerprint)s, %(message)s
+                %(is_real)s, %(published)s, %(inline)s, %(fingerprint)s, %(message)s,
+                %(outcome)s, %(reject_reason)s
             )
             """
             step_sql = """
@@ -130,7 +132,12 @@ class ReviewHistory:
                 row = conn.execute(run_sql, run_row).fetchone()
                 run_id: int = row[0]
                 if findings:
-                    rows = [{**f, "run_id": run_id} for f in findings]
+                    # Дефолты outcome/reject_reason для строк без этих ключей
+                    # (старые вызовы / тестовые фикстуры) — back-compat.
+                    rows = [
+                        {"outcome": None, "reject_reason": None, **f, "run_id": run_id}
+                        for f in findings
+                    ]
                     with conn.cursor() as cur:
                         cur.executemany(finding_sql, rows)
                 if steps:
@@ -223,7 +230,8 @@ class ReviewHistory:
         """
         finding_sql = """
         SELECT id, file, line, category, severity, confidence,
-               is_real, published, inline, fingerprint, message
+               is_real, published, inline, fingerprint, message,
+               outcome, reject_reason
         FROM review_findings WHERE run_id = %(run_id)s ORDER BY id
         """
         with self._connect() as conn:

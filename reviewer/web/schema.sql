@@ -46,8 +46,21 @@ CREATE TABLE IF NOT EXISTS review_findings (
     published   BOOL         NOT NULL DEFAULT false,
     inline      BOOL         NOT NULL DEFAULT false,
     fingerprint TEXT,
-    message     TEXT
+    message     TEXT,
+    outcome     TEXT,        -- терминальный исход воронки (PRI); NULL = legacy
+    reject_reason TEXT       -- причина reject (verify/gate); NULL = не отклонена/legacy
 );
+
+-- Идемпотентная миграция для БД, где таблица уже существовала без колонок исхода.
+ALTER TABLE review_findings ADD COLUMN IF NOT EXISTS outcome       TEXT;
+ALTER TABLE review_findings ADD COLUMN IF NOT EXISTS reject_reason TEXT;
+
+-- Best-effort бэкфилл: опубликованным историческим строкам ставим исход по флагам.
+-- NOT published (already_posted и находки error-прогонов) неоднозначны → NULL.
+UPDATE review_findings SET outcome = 'published_inline'
+    WHERE outcome IS NULL AND published AND inline;
+UPDATE review_findings SET outcome = 'published_summary'
+    WHERE outcome IS NULL AND published AND NOT inline;
 
 CREATE INDEX IF NOT EXISTS review_findings_run_id ON review_findings (run_id);
 
