@@ -174,6 +174,45 @@ def test_record_and_get_run_persists_outcome():
 
 
 @pytest.mark.integration
+def test_record_run_self_migrates_missing_columns():
+    """record_run сам применяет миграцию схемы на первом вызове (не зависит от serve).
+
+    Симулируем деплой, где review_findings существует со СТАРОЙ схемой (без
+    outcome/reject_reason). Свежий ReviewHistory (без явного init_schema — как на
+    MCP-пути publish_review) должен домигрировать и записать прогон, а не
+    свалиться в fail-soft.
+    """
+    import psycopg
+
+    from reviewer.config.settings import Settings
+    dsn = Settings().pg_dsn
+
+    # 1) гарантируем таблицу, затем откатываем к старой схеме (без новых колонок).
+    ReviewHistory(dsn).init_schema()
+    with psycopg.connect(dsn) as conn:
+        conn.execute("ALTER TABLE review_findings DROP COLUMN IF EXISTS outcome")
+        conn.execute("ALTER TABLE review_findings DROP COLUMN IF EXISTS reject_reason")
+        conn.commit()
+
+    try:
+        # 2) свежий инстанс: _schema_ready=False, init_schema вручную НЕ вызван.
+        history = ReviewHistory(dsn)
+        findings = [
+            {**_sample_findings()[0], "outcome": "published_inline", "reject_reason": None}
+        ]
+        run_id = history.record_run(_sample_run(), findings)
+
+        # 3) запись прошла (не fail-soft None) и исход читается → миграция применилась сама.
+        assert run_id is not None
+        result = history.get_run(run_id)
+        assert result["findings"][0]["outcome"] == "published_inline"
+    finally:
+        # Восстанавливаем схему независимо от исхода, чтобы падение теста не
+        # каскадировало на последующие integration-тесты (не полагаемся на self-heal).
+        ReviewHistory(dsn).init_schema()
+
+
+@pytest.mark.integration
 def test_schema_idempotent_and_backfill():
     """Повторный init_schema безопасен; бэкфилл проставляет исход старым published."""
     from reviewer.config.settings import Settings
