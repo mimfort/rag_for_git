@@ -33,12 +33,15 @@ _FRONTEND_DIST = Path(__file__).parent.parent.parent / "web" / "frontend" / "dis
 def create_app(settings: Settings) -> FastAPI:
     """Создать и настроить FastAPI-приложение.
 
-    - Инициализирует ReviewHistory и schema (fail-soft: если БД недоступна,
-      сервер всё равно стартует с предупреждением).
+    - Инициализирует ReviewHistory; схема создаётся на старте сервера в lifespan
+      (fail-soft: если БД недоступна, сервер всё равно стартует с предупреждением).
     - Монтирует API-роутер (/api/*).
     - Монтирует собранный SPA на / (если dist существует) или отдаёт заглушку.
     - Настраивает CORS для dev-сервера Vite (:5173).
     - При завершении работы закрывает пул соединений к Postgres.
+
+    Пул Postgres создаётся лениво (init_schema — в lifespan, не в теле фабрики),
+    поэтому простое конструирование приложения к БД не подключается.
     """
     history = ReviewHistory(
         settings.pg_dsn,
@@ -48,6 +51,16 @@ def create_app(settings: Settings) -> FastAPI:
 
     @asynccontextmanager
     async def _lifespan(app: FastAPI):
+        # История прогонов: инициализация схемы на старте (fail-soft).
+        try:
+            history.init_schema()
+        except Exception as exc:
+            log.warning(
+                "Не удалось инициализировать схему БД истории (%s). "
+                "Убедитесь, что Postgres запущен: docker compose up -d. "
+                "API-эндпоинты вернут ошибку 500 до подключения к БД.",
+                exc,
+            )
         yield
         history.close()
 
@@ -67,18 +80,7 @@ def create_app(settings: Settings) -> FastAPI:
         allow_headers=["*"],
     )
 
-    # История прогонов
-    try:
-        history.init_schema()
-    except Exception as exc:
-        log.warning(
-            "Не удалось инициализировать схему БД истории (%s). "
-            "Убедитесь, что Postgres запущен: docker compose up -d. "
-            "API-эндпоинты вернут ошибку 500 до подключения к БД.",
-            exc,
-        )
-
-    # API-роутер
+    # API-роутер (схема БД инициализируется в lifespan на старте сервера)
     app.include_router(make_router(history, settings))
 
     # Статика / SPA
