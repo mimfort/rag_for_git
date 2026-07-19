@@ -63,6 +63,16 @@ def test_verify_keeps_verdicts_schema_and_tools():
     assert "find_callers" in v                      # tool-usage подставлен
 
 
+def test_verify_prompt_instructs_reject_reason():
+    v = assemble("review-pr/references/verify-prompt.md")
+    lowered = v.lower()
+    # при is_real=false верификатор обязан дать краткую причину в reason
+    assert "reason" in lowered
+    assert "is_real=false" in lowered
+    # reason привязан именно к отклонению (kill/reject)
+    assert "kill" in lowered or "reject" in lowered
+
+
 def test_performance_assembled_schema_and_goal():
     p = assemble("performance-review/SKILL.md")
     assert '"category": "performance"' in p
