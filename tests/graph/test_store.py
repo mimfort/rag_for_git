@@ -114,6 +114,37 @@ def test_callers_detailed_returns_rel_and_id(graph_store):
 
 
 @pytest.mark.integration
+def test_implementations_detailed_returns_rel_and_id(graph_store):
+    graph_store.init_schema()
+    graph_store.clear()
+    graph_store.upsert_nodes(
+        "test/repo", ["base.py#Base", "impl.py#Sub", "impl.py#Other"])
+    graph_store.upsert_edges("test/repo", [
+        ("impl.py#Sub", "IMPLEMENTS", "base.py#Base"),
+        ("impl.py#Other", "IMPLEMENTS", "base.py#Base"),
+    ])
+    out = graph_store.implementations_detailed("test/repo", ["base.py#Base"])
+    assert out == [
+        {"id": "impl.py#Other", "rel": "IMPLEMENTS"},
+        {"id": "impl.py#Sub", "rel": "IMPLEMENTS"},
+    ]
+    # символ без наследников → пусто
+    assert graph_store.implementations_detailed("test/repo", ["impl.py#Sub"]) == []
+
+
+@pytest.mark.integration
+def test_implementations_detailed_method_overrides(graph_store):
+    graph_store.init_schema()
+    graph_store.clear()
+    graph_store.upsert_nodes("test/repo", ["base.py#Base.run", "impl.py#Sub.run"])
+    graph_store.upsert_edges("test/repo", [
+        ("impl.py#Sub.run", "IMPLEMENTS", "base.py#Base.run"),
+    ])
+    out = graph_store.implementations_detailed("test/repo", ["base.py#Base.run"])
+    assert out == [{"id": "impl.py#Sub.run", "rel": "IMPLEMENTS"}]
+
+
+@pytest.mark.integration
 def test_expand_detailed_rels_distance_and_self_excluded(graph_store):
     graph_store.init_schema()
     graph_store.clear()

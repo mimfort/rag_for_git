@@ -91,7 +91,7 @@ executing-plans → finishing). Единственный end-to-end пайпла
 | Индекс (RAG) | `reviewer/index/` | чанкинг (tree-sitter), эмбеддинги (Voyage), хранилище (pgvector+BM25), свежесть |
 | Граф кода | `reviewer/graph/` | построение рёбер `CALLS` + `IMPLEMENTS` (SCIP-бэкенд) или только `CALLS` (tree-sitter); оркестрация в `backend.py`; хранение и обход в Neo4j |
 | Ретрив | `reviewer/retrieval/` | гибрид (RRF) + graph-expansion + Voyage rerank → контекст |
-| Инструменты | `reviewer/tools/` | `search_code`, `get_related_symbols`, `read_file`, `get_definition`, `find_callers`, `get_changed_file_diff`; session-less `search_codebase`/`related_symbols`/`callers`/`definition` для Q&A |
+| Инструменты | `reviewer/tools/` | `search_code`, `get_related_symbols`, `read_file`, `get_definition`, `find_callers`, `get_changed_file_diff`; session-less `search_codebase`/`related_symbols`/`callers`/`definition`/`implementations` для Q&A |
 | Задачи/доски | `reviewer/tasks/` | нормализация в `TaskBrief`, REST-провайдеры досок (`TaskBoardProvider`, yougile — референс), `TaskService.index_batch` |
 | MCP-сервис | `reviewer/mcp/` | `MCPReviewService`: prepare/tool-вызовы/publish; управление сессиями PR |
 | Сервис | `reviewer/services/` | `ReviewService.prepare`: ingest PR, overlay, units |
@@ -601,7 +601,7 @@ RAG + граф кода и передаёт в **полный цикл superpowe
 - **Аргументы:** ключ задачи (напр. `PRI-4`, по `key_pattern`) **или** свободное описание (напр.
   «add a logout endpoint»). Board-less режим: описание + поиск по коду.
 - **MCP-тулы:** `get_board_config`, `get_subsystem_summaries`, `get_task`, `index_task`, `get_task_context`, `search_tasks`,
-  `search_codebase`, `related_symbols`, `callers`, `definition`, `get_pr_diff`; плюс подключённая
+  `search_codebase`, `related_symbols`, `callers`, `definition`, `implementations`, `get_pr_diff`; плюс подключённая
   доска (`mcp__<board>__*`) для чтения задачи.
 - **Поток:** preflight: проверка свежести индекса → прогрев корпуса задач через `sync_board` →
   резолв конфига доски → идентификация задачи (ключ vs текст) → subsystem prior через
@@ -676,7 +676,7 @@ RAG + граф кода и передаёт в **полный цикл superpowe
 
 - **Аргументы:** свободный вопрос (напр. «где аутентификация», «как работает свежесть индекса»,
   «объясни ретрив», «как устроено…»).
-- **MCP-тулы:** `search_codebase`, `related_symbols`, `callers`, `definition`; плюс harness
+- **MCP-тулы:** `search_codebase`, `related_symbols`, `callers`, `definition`, `implementations`; плюс harness
   `Read`/`Grep`/`Glob`.
 - **Поток:** при первом использовании за сессию — проверка свежести индекса `reviewer status` с
   предупреждением о дрейфе → резолв repo/branch → опционально: `get_subsystem_summaries` для
@@ -754,6 +754,7 @@ code_quote, message, suggestion, fix:{start_line,end_line,replacement}|null, con
 | `search_codebase` | `(repo, query, top_k=10, branch=None, include_tests=False)` | Гибрид-поиск по base-индексу репо; с номерами строк, дедуп, тесты исключены по умолчанию. |
 | `related_symbols` | `(repo, node_id, branch=None)` | Соседи графа (calls/implements/tests) символа. |
 | `callers` | `(repo, node_id, branch=None)` | Входящие `CALLS` узла `path#fqn`. |
+| `implementations` | `(repo, node_id, branch=None)` | Входящие `IMPLEMENTS` узла `path#fqn` — подклассы/override-ы. |
 | `definition` | `(repo, symbol, branch=None)` | Определение символа (граф → индекс → семантический фолбэк). |
 | `get_pr_diff` | `(repo, number: int)` | Unified diff любого (исторического) PR; кап, fail-soft. |
 | `get_task` | `(key: str, project: str \| None = None)` | Прочитать нормализованный `TaskBrief` из стора (`{key, aliases, title, description, status, url, criteria}`). Возвращает `null` если нет. |
@@ -813,7 +814,7 @@ reviewer index /tmp/REPO --ref master --repo ORG/REPO # опц. вторая в�
 > его base-индекс свеж (`reviewer status --json` -> `drift == 0`), в фазах планирования и ревью
 > предпочитай session-less тулы reviewer голому grep для кросс-файловых фактов: `search_codebase`
 > (релевантный код), `callers` (blast-radius сигнатуры, которую собираешься менять),
-> `related_symbols`, `definition`. Точечно — пропускай мелкие/знакомые правки и файлы, уже в
+> `related_symbols`, `definition`, `implementations` (directed subclasses/overrides). Точечно — пропускай мелкие/знакомые правки и файлы, уже в
 > контексте (Voyage rate-limited). Base-индекс отслеживает целевую ветку, не твоё рабочее дерево:
 > грунтовка надёжна для существующего кода, но слепа к символам, которые ты только что правил
 > локально — их проверяй через Read. Если reviewer недоступен или индекс устарел — откат в grep/Read.

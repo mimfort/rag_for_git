@@ -680,6 +680,30 @@ class MCPReviewService:
             overlay_ref=None, changed_paths=[], empty_msg="(вызовов не найдено)",
             cap=cl.graph.callers_topk)
 
+    def implementations(self, repo: str, node_id: str,
+                        branch: str | None = None) -> str:
+        """Кто реализует/наследует символ node_id ('path#fqn') — входящие
+        IMPLEMENTS, без PR-сессии. Класс → подклассы; метод → override-ы.
+        На элемент: file:line + строка определения + [IMPLEMENTS].
+        Точны после полного `reviewer index` с SCIP."""
+        rb = self._resolve_repo_branch(repo, branch)
+        if isinstance(rb, str):
+            return rb
+        repo, resolved = rb
+        if self.components.graph is None:
+            return "(граф недоступен)"
+        cl = self._resolve_context_limits(repo, resolved)
+        try:
+            found = self.components.graph.implementations_detailed(
+                repo, [node_id], branch=resolved)
+        except Exception:
+            log.warning("implementations: сбой графа", exc_info=True)
+            return "(implementations не найдены)"
+        return format_neighbors(
+            found, store=self.components.store, repo=repo, branch=resolved,
+            overlay_ref=None, changed_paths=[], empty_msg="(implementations не найдены)",
+            cap=cl.graph.callers_topk)
+
     def definition(self, repo: str, symbol: str,
                    branch: str | None = None) -> str:
         """Где определён символ + исходник (граф → индекс → семантический фолбэк),
