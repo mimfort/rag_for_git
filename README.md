@@ -128,6 +128,10 @@ If a review is abandoned between `prepare_review` and `publish_review` (user can
 LLM session died), publish never runs — such an overlay is collected by GC: opportunistically on the
 next `prepare_review`, and via the `reviewer gc` command.
 
+Session liveness is extended by activity (keepalive): review tool calls bump
+`last_seen_at`, so a review running longer than `review_session_ttl_hours` keeps its
+overlay; an idle review is still collected once the TTL elapses.
+
 > Status: working v1. Target analysis language is **Python**; VCS is **GitHub** (behind a
 > `VCSProvider` interface). Proven live: it catches real bugs and sees the impact on calling code
 > and existing tests.

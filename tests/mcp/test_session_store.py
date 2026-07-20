@@ -93,8 +93,8 @@ def test_live_keys_and_delete_expired() -> None:
 
         with store._connect() as conn:
             conn.execute(
-                "UPDATE review_sessions SET created_at = now() - interval '48 hours' "
-                "WHERE repo=%s AND pr_number=%s",
+                "UPDATE review_sessions SET created_at = now() - interval '48 hours', "
+                "last_seen_at = now() - interval '48 hours' WHERE repo=%s AND pr_number=%s",
                 (repo, pr),
             )
             conn.commit()
@@ -102,4 +102,73 @@ def test_live_keys_and_delete_expired() -> None:
         assert store.load(repo, pr, 24) is None   # строка физически удалена
     finally:
         store.delete(repo, pr)  # уборка своей строки (no-op, если уже удалена)
+        store.close()
+
+
+def test_touch_failsoft_without_db(monkeypatch) -> None:
+    """PRI-212: touch fail-soft — сбой БД не роняет tool call вызывающего."""
+    store = SessionStore("postgresql://invalid/none")
+
+    def boom():
+        raise RuntimeError("db down")
+
+    monkeypatch.setattr(store, "_connect", boom)
+    store.touch("o/r", 1)  # не бросает
+
+
+@pytest.mark.integration
+def test_touch_extends_liveness_unified_predicate() -> None:
+    """PRI-212: touch продлевает живость для ВСЕХ трёх предикатов сразу.
+
+    Строка с состаренным created_at и NULL last_seen_at (legacy-семантика)
+    невидима для live_keys/load и удаляема delete_expired; после touch —
+    жива везде. Back-date'им ТОЛЬКО свою строку и зовём delete_expired(24)
+    с прод-семантикой (см. предостережение в test_live_keys_and_delete_expired).
+    """
+    pg_dsn = Settings().pg_dsn
+    store = SessionStore(pg_dsn)
+    store.init_schema()
+    repo, pr = "owner/keepalive-test", 997
+    store.delete(repo, pr)
+    try:
+        store.save(repo, pr, {"repo": repo})
+        with store._connect() as conn:
+            conn.execute(
+                "UPDATE review_sessions SET created_at = now() - interval '48 hours', "
+                "last_seen_at = NULL WHERE repo=%s AND pr_number=%s",
+                (repo, pr),
+            )
+            conn.commit()
+        # legacy-строка (NULL last_seen_at): живость по created_at — просрочена
+        assert (repo, pr) not in store.live_keys(24)
+        assert store.load(repo, pr, 24) is None
+
+        store.touch(repo, pr)  # активность → строка снова жива везде
+        assert (repo, pr) in store.live_keys(24)
+        assert store.load(repo, pr, 24) is not None
+        store.delete_expired(24)  # не удаляет строку со свежим last_seen_at
+        assert store.load(repo, pr, 24) is not None
+    finally:
+        store.delete(repo, pr)
+        store.close()
+
+
+@pytest.mark.integration
+def test_touch_does_not_create_row() -> None:
+    """PRI-212: touch по несуществующему ключу — no-op, строка не создаётся.
+
+    Если персист упал ещё на save(), сессию страхует in-memory-путь
+    (active_keys в _gc_overlays) — touch не должен рожать строку-огрызок.
+    """
+    pg_dsn = Settings().pg_dsn
+    store = SessionStore(pg_dsn)
+    store.init_schema()
+    repo, pr = "owner/keepalive-test", 996
+    store.delete(repo, pr)
+    try:
+        store.touch(repo, pr)
+        assert store.load(repo, pr, 24) is None
+        assert (repo, pr) not in store.live_keys(24)
+    finally:
+        store.delete(repo, pr)
         store.close()

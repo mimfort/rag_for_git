@@ -67,6 +67,9 @@ class _FakeSessionStore:
     def delete(self, repo: str, pr: int) -> None:
         self.calls.append(("delete", repo, pr))
 
+    def touch(self, repo: str, pr: int) -> None:
+        self.calls.append(("touch", repo, pr))
+
     def live_keys(self, ttl_hours: int) -> set[tuple[str, int]]:
         return set()
 
@@ -101,6 +104,7 @@ def test_prepare_keeps_overlay_of_active_in_memory_session(_to_payload):
     svc = _service(c)
     live_session = MagicMock()
     live_session.started_at = datetime.now(timezone.utc)   # ревью PR 7 идёт прямо сейчас
+    live_session.last_seen_at = datetime.now(timezone.utc)  # и активность свежая
     svc._sessions[("a/x", 7)] = live_session
 
     svc.prepare_review("a/x", 8)
@@ -124,6 +128,7 @@ def test_prepare_purges_overlay_of_stale_in_memory_session_past_ttl(_to_payload)
         datetime.now(timezone.utc)
         - timedelta(hours=svc.settings.review_session_ttl_hours + 1)
     )
+    stale_session.last_seen_at = stale_session.started_at  # активности не было
     svc._sessions[("a/x", 7)] = stale_session   # брошено больше TTL назад
 
     svc.prepare_review("a/x", 8)
@@ -200,3 +205,27 @@ def test_prepare_releases_reservation_and_reraises_on_prepare_failure(_to_payloa
         svc.prepare_review("a/x", 9)
 
     assert svc._session_store.calls == [("save", "a/x", 9), ("delete", "a/x", 9)]
+
+
+@_PATCH_TO_PAYLOAD
+def test_prepare_keeps_overlay_of_long_running_active_session(_to_payload):
+    """PRI-212 (ядро задачи): активное ревью дольше TTL не теряет свой overlay.
+
+    started_at старше TTL (ревью началось давно), но last_seen_at свежий
+    (обращения к тулам продолжаются) — GC обязан считать сессию живой и не
+    трогать pr:7. До keepalive фильтр шёл по started_at и сносил overlay
+    прямо из-под работающего анализа.
+    """
+    c = _components()
+    svc = _service(c)
+    long_session = MagicMock()
+    long_session.started_at = (
+        datetime.now(timezone.utc)
+        - timedelta(hours=svc.settings.review_session_ttl_hours + 1)
+    )
+    long_session.last_seen_at = datetime.now(timezone.utc)  # активность прямо сейчас
+    svc._sessions[("a/x", 7)] = long_session
+
+    svc.prepare_review("a/x", 8)
+
+    assert "pr:7" not in c.store.deleted_refs
