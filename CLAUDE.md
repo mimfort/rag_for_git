@@ -131,8 +131,13 @@ MCP-сессия (PreparedReview + ToolContext) живёт в процессе `
   между `prepare_review` и `publish_review` (пользователь отменил, оркестрирующая LLM-сессия упала),
   публикация не вызывается вовсе — такой overlay собирает **GC** (`reviewer/services/gc.py`):
   оппортунистически при каждом `prepare_review` и по команде `reviewer gc`. Сирота = `pr:N` без
-  непросроченной строки в `review_sessions` (TTL `review_session_ttl_hours`) и вне активных сессий
-  процесса. GC никогда не трогает `base:<branch>`; при недоступной БД не удаляет ничего
+  живой строки в `review_sessions` и вне активных сессий процесса.
+  Живость — по последней активности (PRI-212, keepalive): обращения к сессии бампают
+  `last_seen_at` (in-memory всегда; в Postgres — `SessionStore.touch`, не чаще 60 с),
+  предикат везде `COALESCE(last_seen_at, created_at)` внутри TTL `review_session_ttl_hours`
+  (idle-таймаут, единый для GC, регидрации и `delete_expired`) — активное ревью дольше TTL
+  не теряет overlay, брошенное собирается как прежде.
+  GC никогда не трогает `base:<branch>`; при недоступной БД не удаляет ничего
   («не знаю живых» ≠ «живых нет»). Гарантию даёт только сервер: скилл `review-pr` — это промпт,
   а не `try/finally`.
 - **Наблюдаемость (`reviewer/web/`)**: каждый `publish_review` пишет в Postgres итоги прогона (`review_runs`/`review_findings`, гейт `REVIEW_HISTORY`) — fail-soft. Веб-админка (FastAPI `reviewer serve`) читает **ту же** БД.
