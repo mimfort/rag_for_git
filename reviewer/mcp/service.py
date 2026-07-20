@@ -49,6 +49,11 @@ WALKTHROUGH_MARKER = "<!-- ai-walkthrough -->"
 # неограниченного роста при длинных прогонах с большим числом tool calls.
 _MAX_SESSION_STEPS = 1000
 
+# PRI-212: DB-touch живости сессии (SessionStore.touch) — не чаще раза в
+# _TOUCH_INTERVAL_S. Тулы зовутся LLM-темпом; при TTL в часах минутная
+# гранулярность ничего не теряет и убирает бессмысленно частые UPDATE.
+_TOUCH_INTERVAL_S = 60
+
 
 @dataclass
 class _Session:
@@ -71,6 +76,12 @@ class _Session:
     steps: list[dict] = field(default_factory=list)
     # PRI-209: момент начала сессии review (для duration_ms в истории).
     started_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    # PRI-212: последняя активность сессии (keepalive) — бампается на каждом
+    # обращении через _session(); по ней _gc_overlays фильтрует active_keys.
+    # started_at остаётся чистым «моментом создания» (duration_ms в истории).
+    last_seen_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    # PRI-212: момент последнего DB-touch (троттлинг _TOUCH_INTERVAL_S).
+    db_touched_at: datetime | None = None
     _seq: int = 0
 
 
@@ -250,17 +261,35 @@ class MCPReviewService:
         При промахе in-memory кэша пробуем поднять персистнутую сессию; успех
         прогревает кэш. Полный промах (нет строки / истёк TTL / БД недоступна) —
         ValueError с recovery hint.
+
+        PRI-212 (keepalive): каждое обращение продлевает живость сессии —
+        in-memory всегда (last_seen_at), в Postgres не чаще _TOUCH_INTERVAL_S
+        (SessionStore.touch fail-soft: сбой БД не роняет обращение).
         """
         s = self._sessions.get((repo, pr))
-        if s is not None:
-            return s
-        rehydrated = self._rehydrate_session(repo, pr)
-        if rehydrated is not None:
-            self._sessions[(repo, pr)] = rehydrated
-            return rehydrated
-        raise ValueError(
-            f"Сессия для {repo}#{pr} не найдена или истекла — вызови prepare_review заново"
-        )
+        if s is None:
+            s = self._rehydrate_session(repo, pr)
+            if s is None:
+                raise ValueError(
+                    f"Сессия для {repo}#{pr} не найдена или истекла — вызови prepare_review заново"
+                )
+            self._sessions[(repo, pr)] = s
+        self._touch_session(repo, pr, s)
+        return s
+
+    def _touch_session(self, repo: str, pr: int, s: _Session) -> None:
+        """Продлить живость сессии активностью (PRI-212)."""
+        now = datetime.now(timezone.utc)
+        s.last_seen_at = now
+        if (
+            s.db_touched_at is not None
+            and (now - s.db_touched_at).total_seconds() < _TOUCH_INTERVAL_S
+        ):
+            return
+        store = self._ensure_session_store()
+        if store is not None:
+            store.touch(repo, pr)  # fail-soft внутри SessionStore
+        s.db_touched_at = now
 
     def _invoke_tool(self, repo: str, pr: int, name: str, args: dict) -> str:
         """Вызов инструмента с per-вызов пересозданием make_tools.
@@ -1255,7 +1284,8 @@ class MCPReviewService:
         упал fail-soft.
 
         active_keys ограничены тем же TTL, что и персистнутые сессии (по
-        _Session.started_at), а не всем содержимым self._sessions. _sessions
+        _Session.last_seen_at — последней активности, PRI-212), а не всем
+        содержимым self._sessions. _sessions
         вычищается ТОЛЬКО в _cleanup (путь publish) — самый частый сценарий
         брошенного ревью (пользователь отменил скилл, а reviewer-mcp продолжает
         жить) никогда туда не попадает, и без TTL-отсечки ключ оставался бы
@@ -1267,7 +1297,7 @@ class MCPReviewService:
             cutoff = datetime.now(timezone.utc) - timedelta(
                 hours=self.settings.review_session_ttl_hours
             )
-            active = {k for k, s in self._sessions.items() if s.started_at > cutoff}
+            active = {k for k, s in self._sessions.items() if s.last_seen_at > cutoff}
             purge_orphaned_overlays(
                 self.components.store,
                 self._ensure_session_store(),
