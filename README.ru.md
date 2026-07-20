@@ -91,7 +91,7 @@ executing-plans → finishing). Единственный end-to-end пайпла
 | Индекс (RAG) | `reviewer/index/` | чанкинг (tree-sitter), эмбеддинги (Voyage), хранилище (pgvector+BM25), свежесть |
 | Граф кода | `reviewer/graph/` | построение рёбер `CALLS` + `IMPLEMENTS` (SCIP-бэкенд) или только `CALLS` (tree-sitter); оркестрация в `backend.py`; хранение и обход в Neo4j |
 | Ретрив | `reviewer/retrieval/` | гибрид (RRF) + graph-expansion + Voyage rerank → контекст |
-| Инструменты | `reviewer/tools/` | `search_code`, `get_related_symbols`, `read_file`, `get_definition`, `find_callers`, `get_changed_file_diff`; session-less `search_codebase`/`related_symbols`/`callers`/`definition` для Q&A |
+| Инструменты | `reviewer/tools/` | `search_code`, `get_related_symbols`, `read_file`, `get_definition`, `find_callers`, `get_changed_file_diff`; session-less `search_codebase`/`related_symbols`/`callers`/`definition`/`implementations` для Q&A |
 | Задачи/доски | `reviewer/tasks/` | нормализация в `TaskBrief`, REST-провайдеры досок (`TaskBoardProvider`, yougile — референс), `TaskService.index_batch` |
 | MCP-сервис | `reviewer/mcp/` | `MCPReviewService`: prepare/tool-вызовы/publish; управление сессиями PR |
 | Сервис | `reviewer/services/` | `ReviewService.prepare`: ingest PR, overlay, units |
@@ -601,7 +601,7 @@ RAG + граф кода и передаёт в **полный цикл superpowe
 - **Аргументы:** ключ задачи (напр. `PRI-4`, по `key_pattern`) **или** свободное описание (напр.
   «add a logout endpoint»). Board-less режим: описание + поиск по коду.
 - **MCP-тулы:** `get_board_config`, `get_subsystem_summaries`, `get_task`, `index_task`, `get_task_context`, `search_tasks`,
-  `search_codebase`, `related_symbols`, `callers`, `definition`, `get_pr_diff`; плюс подключённая
+  `search_codebase`, `related_symbols`, `callers`, `definition`, `implementations`, `get_pr_diff`; плюс подключённая
   доска (`mcp__<board>__*`) для чтения задачи.
 - **Поток:** preflight: проверка свежести индекса → прогрев корпуса задач через `sync_board` →
   резолв конфига доски → идентификация задачи (ключ vs текст) → subsystem prior через

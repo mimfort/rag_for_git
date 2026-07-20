@@ -592,7 +592,8 @@ GEMINI.md / .cursorrules — whichever your client uses).
 > connected and its base index is fresh (`reviewer status --json` -> `drift == 0`), prefer the
 > session-less reviewer tools over grep to ground cross-file facts during planning and review:
 > `search_codebase` (relevant code), `callers` (blast-radius of a signature you are about to
-> change), `related_symbols`, `definition`. Be targeted — skip small/familiar edits and files
+> change), `related_symbols`, `definition`, `implementations` (directed subclasses/overrides).
+> Be targeted — skip small/familiar edits and files
 > already in context (Voyage is rate-limited). The base index tracks the target branch, not
 > your working tree: grounding is reliable for existing code but blind to symbols you just
 > edited locally — verify those with Read. If reviewer is absent or the index is stale, fall

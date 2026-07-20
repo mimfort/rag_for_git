@@ -96,7 +96,7 @@ MCP-сессия (PreparedReview + ToolContext) живёт в процессе `
 | `reviewer/graph/` | `builder` (tree-sitter call-graph) · `scip` (парсер SCIP) · `backend` (оркестратор бэкенда: SCIP / tree-sitter) · `store` (Neo4j) |
 | `reviewer/retrieval/` | `Retriever`: гибрид (RRF) + graph-expansion + Voyage rerank → `ContextPack` |
 | `reviewer/llm/` | `_retry.py` (retry/backoff для Voyage) |
-| `reviewer/tools/` | инструменты MCP-агента PR-сессии (`search_code`, `get_related_symbols`, `read_file`, `get_definition`, `find_callers`, `get_changed_file_diff`); session-less варианты для Q&A — `search_codebase`/`related_symbols`/`callers`/`definition` в `mcp/service.py` |
+| `reviewer/tools/` | инструменты MCP-агента PR-сессии (`search_code`, `get_related_symbols`, `read_file`, `get_definition`, `find_callers`, `get_changed_file_diff`); session-less варианты для Q&A — `search_codebase`/`related_symbols`/`callers`/`definition`/`implementations` в `mcp/service.py` |
 | `reviewer/agent/` | `state` (ReviewUnit) · `assemble` · `dedup` |
 | `reviewer/mcp/` | `MCPReviewService` — сервисный слой MCP (prepare/tools/publish/history) |
 | `reviewer/services/` | `ReviewService.prepare` — подготовка PR (ingest + overlay + policy + units) |
