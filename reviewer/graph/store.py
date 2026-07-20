@@ -105,6 +105,20 @@ class GraphStore:
             ids=list(node_ids), repo=repo, branch=branch)
         return [{"id": r["id"], "rel": "CALLS"} for r in records]
 
+    def implementations_detailed(self, repo: str, node_ids: list[str], *,
+                                 branch: str = "") -> list[dict]:
+        """Реализации/наследники символов — направленные входящие IMPLEMENTS.
+        Класс → его подклассы; метод → его override-ы (SCIP эмитит и то, и то).
+        Элементы: {"id": <node_id>, "rel": "IMPLEMENTS"}, упорядочены по id.
+        Точны после полного `reviewer index` с SCIP (см. инвариант графа)."""
+        records, _, _ = self._driver.execute_query(
+            "UNWIND $ids AS sid "
+            "MATCH (c:Symbol {repo: $repo, branch: $branch})-[:IMPLEMENTS]->"
+            "(s:Symbol {repo: $repo, branch: $branch, id: sid}) "
+            "RETURN DISTINCT c.id AS id ORDER BY id",
+            ids=list(node_ids), repo=repo, branch=branch)
+        return [{"id": r["id"], "rel": "IMPLEMENTS"} for r in records]
+
     def expand_detailed(self, repo: str, node_ids: list[str], hops: int = 2, *,
                         branch: str = "") -> list[dict]:
         """Соседи символа с типами рёбер кратчайшего пути и дистанцией.
