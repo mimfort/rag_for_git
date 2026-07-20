@@ -676,7 +676,7 @@ RAG + граф кода и передаёт в **полный цикл superpowe
 
 - **Аргументы:** свободный вопрос (напр. «где аутентификация», «как работает свежесть индекса»,
   «объясни ретрив», «как устроено…»).
-- **MCP-тулы:** `search_codebase`, `related_symbols`, `callers`, `definition`; плюс harness
+- **MCP-тулы:** `search_codebase`, `related_symbols`, `callers`, `definition`, `implementations`; плюс harness
   `Read`/`Grep`/`Glob`.
 - **Поток:** при первом использовании за сессию — проверка свежести индекса `reviewer status` с
   предупреждением о дрейфе → резолв repo/branch → опционально: `get_subsystem_summaries` для
@@ -813,7 +813,7 @@ reviewer index /tmp/REPO --ref master --repo ORG/REPO # опц. вторая в�
 > его base-индекс свеж (`reviewer status --json` -> `drift == 0`), в фазах планирования и ревью
 > предпочитай session-less тулы reviewer голому grep для кросс-файловых фактов: `search_codebase`
 > (релевантный код), `callers` (blast-radius сигнатуры, которую собираешься менять),
-> `related_symbols`, `definition`. Точечно — пропускай мелкие/знакомые правки и файлы, уже в
+> `related_symbols`, `definition`, `implementations` (directed subclasses/overrides). Точечно — пропускай мелкие/знакомые правки и файлы, уже в
 > контексте (Voyage rate-limited). Base-индекс отслеживает целевую ветку, не твоё рабочее дерево:
 > грунтовка надёжна для существующего кода, но слепа к символам, которые ты только что правил
 > локально — их проверяй через Read. Если reviewer недоступен или индекс устарел — откат в grep/Read.

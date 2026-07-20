@@ -683,7 +683,7 @@ and enters brainstorming. It disciplines context-gathering — it does **not** w
 - **Arguments:** a task key (e.g. `PRI-4`, must match `key_pattern`) **or** a free-text description
   (e.g. "add a logout endpoint"). Board-less mode falls back to description + code search.
 - **MCP tools used:** `get_board_config`, `get_subsystem_summaries`, `get_task`, `index_task`, `get_task_context`, `search_tasks`,
-  `search_codebase`, `related_symbols`, `callers`, `definition`, `get_pr_diff`; plus the connected
+  `search_codebase`, `related_symbols`, `callers`, `definition`, `implementations`, `get_pr_diff`; plus the connected
   board MCP (`mcp__<board>__*`) to read the task. All task tools are scoped via `project=<task_board.project>`.
 - **Flow:** preflight (index freshness check → task corpus warmup via `sync_board`) → subsystem prior via `get_subsystem_summaries` → resolve board config → identify task (key vs free text) → store-first task read via `get_task(key, project=...)` (hit = use directly; miss = board MCP fallback) → best-effort, fail-open context
   gathering (task graph, similar tasks, relevant code, lazy PR diffs of similar tasks) → distill a
@@ -756,7 +756,7 @@ index.
 
 - **Arguments:** a free-text question (e.g. "where is authentication", "how does index freshness
   work", "explain the retrieval pipeline", "как устроено…").
-- **MCP tools used:** `search_codebase`, `related_symbols`, `callers`, `definition`; plus harness
+- **MCP tools used:** `search_codebase`, `related_symbols`, `callers`, `definition`, `implementations`; plus harness
   `Read`/`Grep`/`Glob`.
 - **Flow:** on first use per session — `reviewer status` freshness check with drift warning → resolve repo/branch → optional: `get_subsystem_summaries` for architectural prior → `search_codebase` → optionally expand via the graph → answer with
   an Evidence list of `path:line` citations.
