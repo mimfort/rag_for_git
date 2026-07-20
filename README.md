@@ -825,6 +825,7 @@ code_quote, message, suggestion, fix:{start_line,end_line,replacement}|null, con
 | `search_codebase` | `(repo, query, top_k=10, branch=None, include_tests=False)` | Hybrid search over a repo's base index; line-numbered, deduped, tests excluded by default. |
 | `related_symbols` | `(repo, node_id, branch=None)` | Graph neighbors (calls/implements/tests) of a symbol. |
 | `callers` | `(repo, node_id, branch=None)` | Incoming `CALLS` of `node_id` `path#fqn`. |
+| `implementations` | `(repo, node_id, branch=None)` | Incoming `IMPLEMENTS` of `node_id` `path#fqn` — subclasses/overrides. |
 | `definition` | `(repo, symbol, branch=None)` | Symbol definition (graph → index → semantic fallback). |
 | `get_pr_diff` | `(repo, number: int)` | Unified diff of any (historical) PR; capped, fail-soft. |
 | `get_task` | `(key: str, project: str \| None = None)` | Read one task's normalized `TaskBrief` from the store (`{key, aliases, title, description, status, url, criteria}`). Returns `null` if not found. |

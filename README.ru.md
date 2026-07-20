@@ -754,6 +754,7 @@ code_quote, message, suggestion, fix:{start_line,end_line,replacement}|null, con
 | `search_codebase` | `(repo, query, top_k=10, branch=None, include_tests=False)` | Гибрид-поиск по base-индексу репо; с номерами строк, дедуп, тесты исключены по умолчанию. |
 | `related_symbols` | `(repo, node_id, branch=None)` | Соседи графа (calls/implements/tests) символа. |
 | `callers` | `(repo, node_id, branch=None)` | Входящие `CALLS` узла `path#fqn`. |
+| `implementations` | `(repo, node_id, branch=None)` | Входящие `IMPLEMENTS` узла `path#fqn` — подклассы/override-ы. |
 | `definition` | `(repo, symbol, branch=None)` | Определение символа (граф → индекс → семантический фолбэк). |
 | `get_pr_diff` | `(repo, number: int)` | Unified diff любого (исторического) PR; кап, fail-soft. |
 | `get_task` | `(key: str, project: str \| None = None)` | Прочитать нормализованный `TaskBrief` из стора (`{key, aliases, title, description, status, url, criteria}`). Возвращает `null` если нет. |
