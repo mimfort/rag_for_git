@@ -120,3 +120,10 @@ def test_solve_task_records_brief_model_marker():
     assert "Собран на" in text, (
         "нет строки-маркера «Собран на: <tier/модель>» (наблюдаемость выбора)"
     )
+
+
+def test_solve_task_hints_implementations_for_oo():
+    """OO/registry-хинт: directed implementations для наследников/реализаций."""
+    text = SKILL_PATH.read_text(encoding="utf-8")
+    assert "implementations" in text          # тул назван в шаге graph-deepening
+    assert "IMPLEMENTS" in text or "наслед" in text  # смысл directed-обхода
