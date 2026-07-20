@@ -117,9 +117,10 @@ def test_graph_base_tools_registered():
     svc.related_symbols.return_value = "x"
     svc.callers.return_value = "x"
     svc.definition.return_value = "x"
+    svc.implementations.return_value = "x"
     server = create_server(svc)
     names = {t.name for t in asyncio.run(server.list_tools())}
-    assert {"related_symbols", "callers", "definition"} <= names
+    assert {"related_symbols", "callers", "definition", "implementations"} <= names
 
 
 def test_related_symbols_tool_forwards():
@@ -142,6 +143,17 @@ def test_callers_tool_forwards():
     asyncio.run(server.call_tool(
         "callers", {"repo": "owner/name", "node_id": "a.py#foo", "branch": "main"}))
     svc.callers.assert_called_once_with("owner/name", "a.py#foo", "main")
+
+
+def test_implementations_tool_forwards():
+    import asyncio
+
+    svc = _service()
+    svc.implementations.return_value = "impls"
+    server = create_server(svc)
+    asyncio.run(server.call_tool(
+        "implementations", {"repo": "owner/name", "node_id": "base.py#Base"}))
+    svc.implementations.assert_called_once_with("owner/name", "base.py#Base", None)
 
 
 def test_definition_tool_forwards():

@@ -61,6 +61,7 @@ def _components() -> MagicMock:
     c.graph.find_symbol.return_value = []
     c.graph.expand_detailed.return_value = []
     c.graph.callers_detailed.return_value = []
+    c.graph.implementations_detailed.return_value = []
     c.llm_provider = MagicMock()
     return c
 
@@ -649,6 +650,38 @@ def test_callers_delegates_to_graph() -> None:
         "a/b", ["a.py#foo"], branch=svc.settings.primary_branch())
     svc.components.graph.callers_detailed.return_value = []
     assert svc.callers("a/b", "a.py#foo") == "(вызовов не найдено)"
+
+
+def test_implementations_delegates_to_graph() -> None:
+    """implementations зовёт graph.implementations_detailed и форматирует компактно."""
+    svc = _make_mcp_service()
+    svc.components.graph.implementations_detailed.return_value = [
+        {"id": "impl.py#Sub", "rel": "IMPLEMENTS"}]
+    svc.components.store.fetch_nodes.return_value = [
+        SimpleNamespace(node_id="impl.py#Sub", path="impl.py", start_line=3,
+                        end_line=4, text="class Sub(Base): ...")]
+    out = svc.implementations("a/b", "base.py#Base")
+    assert "// impl.py#Sub (impl.py:3) [IMPLEMENTS]" in out
+    svc.components.graph.implementations_detailed.assert_called_once_with(
+        "a/b", ["base.py#Base"], branch=svc.settings.primary_branch())
+    svc.components.graph.implementations_detailed.return_value = []
+    assert svc.implementations("a/b", "base.py#Base") == "(implementations не найдены)"
+
+
+def test_implementations_empty_and_failsoft() -> None:
+    """Пусто → заглушка; исключение графа → тоже заглушка, не падаем."""
+    svc = _make_mcp_service()
+    svc.components.graph.implementations_detailed.return_value = []
+    assert svc.implementations("a/b", "base.py#Base") == "(implementations не найдены)"
+    svc.components.graph.implementations_detailed.side_effect = RuntimeError("neo4j down")
+    assert svc.implementations("a/b", "base.py#Base") == "(implementations не найдены)"
+
+
+def test_implementations_graph_none() -> None:
+    """graph=None (Neo4j выключен) → '(граф недоступен)'."""
+    svc = _make_mcp_service()
+    svc.components.graph = None
+    assert svc.implementations("a/b", "base.py#Base") == "(граф недоступен)"
 
 
 def test_definition_uses_graph_then_store() -> None:

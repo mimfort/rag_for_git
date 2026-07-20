@@ -213,6 +213,15 @@ def create_server(service: MCPReviewService) -> FastMCP:
         return service.callers(repo, node_id, branch)
 
     @mcp.tool()
+    def implementations(repo: str, node_id: str, branch: str | None = None) -> str:
+        """Implementers/subclasses of a symbol node_id 'path#fqn' over the base
+        index (incoming IMPLEMENTS, no PR session). A class node -> its subclasses;
+        a method node -> its overrides. Each item: node_id + (file:line) + one-line
+        definition snippet + [IMPLEMENTS]. Accurate after a full `reviewer index`
+        with SCIP. branch defaults to the primary tracked branch."""
+        return service.implementations(repo, node_id, branch)
+
+    @mcp.tool()
     def definition(repo: str, symbol: str, branch: str | None = None) -> str:
         """Find a symbol definition over the base index (graph -> index -> semantic
         fallback), no PR session. branch defaults to the primary tracked branch."""
