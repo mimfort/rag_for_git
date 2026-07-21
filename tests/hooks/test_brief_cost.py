@@ -23,9 +23,14 @@ def _load():
 bc = _load()
 
 
-def test_hook_import_does_not_create_bytecode_cache():
+def test_hook_import_does_not_create_new_bytecode_cache():
     cache = HOOK_PATH.parent / "__pycache__"
-    assert not list(cache.glob("brief_cost*.pyc"))
+    before = set(cache.glob("brief_cost*.pyc"))
+
+    _load()
+
+    after = set(cache.glob("brief_cost*.pyc"))
+    assert after == before
 
 
 def test_human_tokens_formats_k_and_m():
@@ -255,14 +260,18 @@ def test_run_replaces_on_rerun(tmp_path):
     assert out.count("## Токены (этап solve-task)") == 1
 
 
-def test_hooks_json_registers_posttooluse_write():
+def test_hooks_json_registers_single_posttooluse_write_wrapper():
     hooks = json.loads((ROOT / "plugin" / "hooks" / "hooks.json").read_text(encoding="utf-8"))
     entries = hooks["hooks"]["PostToolUse"]
     write_entries = [e for e in entries if e.get("matcher") == "Write"]
-    assert write_entries, "нужен PostToolUse-матчер на Write"
-    command = write_entries[0]["hooks"][0]["command"]
-    assert "brief_cost.py" in command
+    assert len(write_entries) == 1, "нужен ровно один PostToolUse-матчер на Write"
+    write_hooks = write_entries[0]["hooks"]
+    assert len(write_hooks) == 1
+    command = write_hooks[0]["command"]
+    assert "brief_post_write.py" in command
     assert "${CLAUDE_PLUGIN_ROOT}" in command
+    assert "brief_cost.py" not in command
+    assert "brief_guard.py" not in command
 
 
 def test_read_flag_fallback_block_style_true():
