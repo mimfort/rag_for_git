@@ -16,7 +16,7 @@ log = logging.getLogger(__name__)
 
 
 def create_server(service: MCPReviewService) -> FastMCP:
-    """Создать и вернуть сконфигурированный FastMCP-сервер с 34 тулами.
+    """Создать и вернуть сконфигурированный FastMCP-сервер с 36 тулами.
 
     Все тулы — обычные def (sync), а не async: сервис не потокобезопасен
     и рассчитан на последовательное исполнение sync-тулов FastMCP в event loop.
@@ -132,6 +132,23 @@ def create_server(service: MCPReviewService) -> FastMCP:
         env; fail-soft."""
         return service.finish_task(key, pr_url, note, mark_done, board_type,
                                    done_state, status_field, done_column)
+
+    @mcp.tool()
+    def create_task(title: str, problem: str = "", steps: list[str] | None = None,
+                    criteria: list[str] | None = None, context: str | None = None,
+                    board_type: str | None = None, project: str | None = None,
+                    target: str | None = None, status_field: str | None = None) -> dict:
+        """Create a task on the board (server-side write) from structured fields.
+
+        The canonical markdown body (Проблема / Что сделать / Критерии приёмки /
+        Контекст) is assembled by the server, so every client and model produces the
+        same structure; the board-specific markup conversion happens in the provider.
+        board_type, project, target and status_field come from the repo's .review.yml
+        (target = YouGile column title or YouTrack status value; discover valid values
+        with get_board_targets). Credentials come from env; fail-soft. Returns
+        {status, key, url, target_resolved, reindexed, warnings}."""
+        return service.create_task(title, problem, steps, criteria, context,
+                                   board_type, project, target, status_field)
 
     @mcp.tool()
     def search_tasks(query: str, top_k: int | None = None, project: str | None = None) -> str:

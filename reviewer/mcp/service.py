@@ -32,6 +32,7 @@ from reviewer.services.review_service import (
 )
 from reviewer.tasks.boards import make_board_provider
 from reviewer.tasks.graph import PRRef
+from reviewer.tasks.taskdoc import TaskDoc, render_markdown
 from reviewer.tools.code_tools import ToolContext, make_tools
 from reviewer.tools.graph_format import format_neighbors
 from reviewer.mcp.schemas import FindingIn, VerdictIn
@@ -468,6 +469,55 @@ class MCPReviewService:
                 pass
         return {"status": "ok", "board_type": board_type, "reindexed": reindexed,
                 **result}
+
+    def create_task(self, title: str, problem: str = "",
+                    steps: list[str] | None = None, criteria: list[str] | None = None,
+                    context: str | None = None, board_type: str | None = None,
+                    project: str | None = None, target: str | None = None,
+                    status_field: str | None = None) -> dict:
+        """Создать задачу на доске (server-side write) из структурированных полей.
+
+        Структура описания собирается сервером (reviewer/tasks/taskdoc.py), поэтому
+        одинакова во всех клиентах и моделях. target — колонка (YouGile) или
+        значение поля статуса (YouTrack). Креды из env; наружу не отдаются.
+        """
+        types = self.settings.configured_board_types()
+        if board_type is None:
+            if len(types) == 1:
+                board_type = types[0]
+            else:
+                return {"status": "error",
+                        "reason": f"board_type required (configured: {types or 'none'})"}
+        if board_type not in types:
+            return {"status": "error",
+                    "reason": f"board '{board_type}' not configured (have: {types or 'none'})"}
+        provider = make_board_provider(self.settings, board_type, status_field=status_field)
+        if provider is None:
+            return {"status": "error", "reason": f"board '{board_type}' not configured"}
+        doc_md = render_markdown(TaskDoc(title=title, problem=problem,
+                                         steps=list(steps or []),
+                                         criteria=list(criteria or []), context=context))
+        reindexed = False
+        try:
+            result = provider.create(doc_md, title=title, target=target, project=project)
+            # Write-through: созданная задача сразу видна в get_task/search_tasks,
+            # не дожидаясь ближайшего sync_board. Best-effort, fail-soft.
+            try:
+                raw = provider.fetch_one(result.get("key") or "")
+                if raw is not None:
+                    self.components.task_service.index_task(provider.normalize(raw))
+                    reindexed = True
+            except Exception:
+                log.warning("create_task: write-through реиндекс не удался", exc_info=True)
+        except Exception as e:
+            log.warning("create_task: сбой создания задачи", exc_info=True)
+            return {"status": "error", "reason": f"{type(e).__name__}: {e}"}
+        finally:
+            try:
+                provider.close()
+            except Exception:
+                pass
+        return {"status": "ok", "board_type": board_type, "reindexed": reindexed, **result}
 
     def get_board_targets(self, board_type: str | None = None,
                           project: str | None = None) -> dict:
