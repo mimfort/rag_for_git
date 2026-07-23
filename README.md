@@ -422,7 +422,7 @@ You get:
   `/rag-reviewer:reviewer_performance-review`, `/rag-reviewer:reviewer_maintainability-review`,
   `/rag-reviewer:reviewer_ask`, `/rag-reviewer:reviewer_pr-walkthrough`,
   `/rag-reviewer:reviewer_configure-review`, `/rag-reviewer:reviewer_summarize-subsystems`,
-  `/rag-reviewer:reviewer_finish-task`
+  `/rag-reviewer:reviewer_finish-task`, `/rag-reviewer:reviewer_create-task`
   (see [Skills reference](#skills-reference)).
 - **MCP server** `reviewer` exposing the 31 tools in [MCP tools reference](#mcp-tools-reference).
 

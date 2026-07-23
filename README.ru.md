@@ -368,6 +368,7 @@ claude plugin install rag-reviewer@rag-reviewer-marketplace --scope user
 - `/rag-reviewer:reviewer_configure-review` — настройка `.review.yml` и доски задач
 - `/rag-reviewer:reviewer_summarize-subsystems` — построение сводок подсистем (GraphRAG)
 - `/rag-reviewer:reviewer_finish-task` — закрытие задачи после PR
+- `/rag-reviewer:reviewer_create-task` — заведение задачи на доске
 - **MCP-сервер** `reviewer` с 31 тулом (см. [справочник MCP-тулов](#mcp-тулы-справочник)).
 
 > Команда `/plugin` покажет, что `rag-reviewer` установлен и включён.
