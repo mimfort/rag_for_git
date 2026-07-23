@@ -98,3 +98,26 @@ def test_create_raises_when_project_unknown():
     b = _board({"/admin/projects": _Resp(200, [])})
     with pytest.raises(ValueError):
         b.create(MD, title="t", target=None, project="NOPE")
+
+
+def test_create_warns_when_idreadable_missing_no_target():
+    # POST /issues вернул 200, но без idReadable — задача создана «вслепую»:
+    # это должно попасть в warnings, а не тихо проглатываться.
+    b = _board(_routes(), post_routes={"/issues": _Resp(200, {})})
+    res = b.create(MD, title="t", target=None, project="PRI")
+    assert res["key"] == ""
+    assert any("idReadable" in w for w in res["warnings"])
+
+
+def test_create_warns_target_not_applied_when_idreadable_missing():
+    # Тот же случай, но с запрошенным target: молчаливая деградация — target
+    # тихо не применяется (нет ключа, на котором его выставлять). Должен быть
+    # отдельный warning, явно называющий непринятый target.
+    b = _board(_routes(), post_routes={"/issues": _Resp(200, {})})
+    res = b.create(MD, title="t", target="In Progress", project="PRI")
+    assert res["key"] == ""
+    assert res["target_resolved"] is None
+    assert any("idReadable" in w for w in res["warnings"])
+    assert any("In Progress" in w and "target" in w.lower() for w in res["warnings"])
+    # без ключа выставлять поле не на чем — запроса на смену статуса быть не должно
+    assert not any(c[0] == "POST" and c[1].startswith("/issues/") for c in b._client.calls)

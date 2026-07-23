@@ -298,10 +298,7 @@ class YouTrackBoard:
         """
         if not project:
             raise ValueError("project обязателен для создания задачи в YouTrack")
-        pr = self._client.get("/admin/projects",
-                              params={"fields": "id,shortName", "query": project})
-        pr.raise_for_status()
-        pid = next((p["id"] for p in (pr.json() or []) if p.get("shortName") == project), None)
+        pid = self._resolve_project_id(project)
         if not pid:
             raise ValueError(f"проект {project!r} не найден в YouTrack")
 
@@ -312,7 +309,17 @@ class YouTrackBoard:
         key = (r.json() or {}).get("idReadable") or ""
         warnings: list[str] = []
         target_resolved = None
-        if target and key:
+        if not key:
+            # Ответ 200, но без idReadable — задача, вероятно, создана, но её ключ
+            # неизвестен: без него нельзя ни выставить target, ни вернуть рабочую
+            # ссылку. Тихо не проглатываем — это не полный успех.
+            warnings.append(
+                "ответ YouTrack не содержит idReadable — задача создана, "
+                "но её ключ не определён")
+            if target:
+                warnings.append(
+                    f"target={target!r} не применён: ключ задачи неизвестен")
+        elif target:
             safe_key = quote(key, safe="")
             try:
                 rr = self._client.get(
@@ -330,6 +337,18 @@ class YouTrackBoard:
         return {"key": key, "url": f"{web}/issue/{key}" if key else None,
                 "board_id": key, "target_resolved": target_resolved,
                 "warnings": warnings}
+
+    def _resolve_project_id(self, project: str) -> str | None:
+        """Внутренний id проекта YouTrack по shortName (query-фильтром на сервере).
+
+        Общий хелпер для `create` и `_admin_status_fields` — оба резолвят один
+        и тот же `GET /admin/projects`. None, если проект не найден. Бросает при
+        ошибке HTTP — вызывающий сам решает, fail-soft это или нет.
+        """
+        pr = self._client.get("/admin/projects",
+                              params={"fields": "id,shortName", "query": project})
+        pr.raise_for_status()
+        return next((p["id"] for p in (pr.json() or []) if p.get("shortName") == project), None)
 
     def fetch_one(self, key: str) -> RawTask | None:
         """Один RawTask по idReadable — write-through после finish.
@@ -374,11 +393,7 @@ class YouTrackBoard:
         или проект не найден. Бросает при ошибке HTTP — вызывающий ловит и фолбэкает."""
         if not project:
             return []
-        pr = self._client.get("/admin/projects",
-                              params={"fields": "id,shortName", "query": project})
-        pr.raise_for_status()
-        pid = next((p["id"] for p in (pr.json() or [])
-                    if p.get("shortName") == project), None)
+        pid = self._resolve_project_id(project)
         if not pid:
             return []
         r = self._client.get(
