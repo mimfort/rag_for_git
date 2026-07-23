@@ -54,7 +54,12 @@ class TaskBoardProvider(Protocol):
 
     def normalize(self, raw: RawTask) -> dict:
         """RawTask → TaskBrief dict {key, aliases, title, description,
-        criteria, status, url, links, attachments}."""
+        criteria, status, url, links, attachments}.
+
+        ИНВАРИАНТ: description возвращается в markdown. Если транспорт доски
+        хранит другой формат (YouGile — HTML), конвертация делается внутри
+        провайдера (reviewer/tasks/boards/markup.py).
+        """
         ...
 
     def normalize_meta(self, raw: RawTask) -> dict:
@@ -93,4 +98,16 @@ class TaskBoardProvider(Protocol):
                     "source": "admin"|"sample", "warnings": [...]}
 
         Ошибка/нет прав/сеть → пустой список + warnings (скилл откатывается на ручной ввод)."""
+        ...
+
+    def create(self, doc_md: str, *, title: str, target: str | None,
+               project: str | None) -> dict:
+        """Создать задачу из канонического markdown (см. reviewer/tasks/taskdoc.py).
+
+        target — доска-специфичная цель размещения (YouGile: title колонки;
+        YouTrack: значение поля статуса); не найдена → создать в дефолтном месте
+        и вернуть причину в warnings, не падать. Возвращает
+        {key, url, board_id, target_resolved, warnings}. Бросает только если
+        задачу не удалось создать вовсе.
+        """
         ...
