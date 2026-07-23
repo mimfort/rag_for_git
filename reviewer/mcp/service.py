@@ -502,13 +502,21 @@ class MCPReviewService:
             result = provider.create(doc_md, title=title, target=target, project=project)
             # Write-through: созданная задача сразу видна в get_task/search_tasks,
             # не дожидаясь ближайшего sync_board. Best-effort, fail-soft.
-            try:
-                raw = provider.fetch_one(result.get("key") or "")
-                if raw is not None:
-                    self.components.task_service.index_task(provider.normalize(raw))
-                    reindexed = True
-            except Exception:
-                log.warning("create_task: write-through реиндекс не удался", exc_info=True)
+            key = result.get("key")
+            if not key:
+                # Ключ деградирован (например, YouTrack без idReadable в ответе) —
+                # реиндексировать нечего; не дёргаем fetch_one сетевым запросом
+                # с пустой строкой, факт создания задачи это не откатывает.
+                log.warning("create_task: write-through пропущен — ключ задачи "
+                           "не определён, реиндекс не выполнен")
+            else:
+                try:
+                    raw = provider.fetch_one(key)
+                    if raw is not None:
+                        self.components.task_service.index_task(provider.normalize(raw))
+                        reindexed = True
+                except Exception:
+                    log.warning("create_task: write-through реиндекс не удался", exc_info=True)
         except Exception as e:
             log.warning("create_task: сбой создания задачи", exc_info=True)
             return {"status": "error", "reason": f"{type(e).__name__}: {e}"}

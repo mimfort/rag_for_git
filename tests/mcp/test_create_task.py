@@ -1,4 +1,6 @@
 """Сервисный слой create_task (PRI-213)."""
+import logging
+
 import pytest
 
 from reviewer.mcp.service import MCPReviewService
@@ -114,3 +116,52 @@ def test_create_task_returns_error_dict_on_provider_failure(service):
     assert res["status"] == "error"
     assert "проект не найден" in res["reason"]
     assert provider.closed is True
+
+
+def test_create_task_writethrough_skipped_when_key_missing(service, caplog):
+    # Деградированный ключ (пустая строка — типично для YouTrack без idReadable):
+    # write-through должен пропускаться без сетевого fetch_one, а не тихо съедаться
+    # общим except.
+    class _NoKeyProvider(_Provider):
+        def create(self, doc_md, *, title, target, project):
+            return {"key": "", "url": None, "board_id": "u1",
+                    "target_resolved": target,
+                    "warnings": ["ответ YouTrack не содержит idReadable — "
+                                 "задача создана, но её ключ не определён"]}
+
+        def fetch_one(self, key):
+            raise AssertionError("fetch_one не должен вызываться при пустом ключе")
+
+    svc, provider, tasks = service(provider=_NoKeyProvider())
+    with caplog.at_level(logging.WARNING):
+        res = svc.create_task(title="t", problem="p", project="PRI")
+
+    assert res["status"] == "ok"        # факт создания задачи не откатывается
+    assert res["reindexed"] is False
+    assert res["key"] == ""
+    assert tasks.indexed == []
+    assert any(
+        "write-through" in r.message and "пропущен" in r.message
+        for r in caplog.records
+    ), [r.message for r in caplog.records]
+
+
+def test_create_task_writethrough_failsoft_when_fetch_one_raises(service, caplog):
+    # fetch_one упал при нормальном ключе (сбой доски) — задача уже создана,
+    # это не должно откатывать успех create_task, только reindexed=False.
+    class _BoomFetch(_Provider):
+        def fetch_one(self, key):
+            raise RuntimeError("boom")
+
+    svc, provider, tasks = service(provider=_BoomFetch())
+    with caplog.at_level(logging.WARNING):
+        res = svc.create_task(title="t", problem="p", project="PRI")
+
+    assert res["status"] == "ok"
+    assert res["reindexed"] is False
+    assert res["key"] == "PRI-42"
+    assert tasks.indexed == []
+    assert any(
+        "write-through" in r.message and "не удался" in r.message
+        for r in caplog.records
+    ), [r.message for r in caplog.records]
