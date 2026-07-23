@@ -185,3 +185,8 @@ class BoardProviderRegistry:
                 raise TypeError(f"provider {board_type!r} is missing required method: {name}")
         if inspect.getattr_static(provider, "board_type", _MISSING) is _MISSING:
             raise TypeError(f"provider {board_type!r} is missing required attribute: board_type")
+        if provider.board_type != board_type:
+            raise TypeError(
+                f"provider board_type {provider.board_type!r} does not match registered board_type "
+                f"{board_type!r}"
+            )

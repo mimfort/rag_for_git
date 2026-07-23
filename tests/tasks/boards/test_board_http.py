@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
+from email.utils import format_datetime
+
 import httpx
 import pytest
 
@@ -38,6 +41,32 @@ def test_read_retries_rate_limit_using_bounded_retry_after():
     assert http.request_json("GET", "/issues?token=secret", operation="read") == {"id": 1}
     assert len(client.calls) == 2
     assert sleeps == [2.0]
+
+
+@pytest.mark.parametrize(
+    ("retry_after", "max_wait", "expected_wait"),
+    [
+        (datetime(2030, 1, 1, tzinfo=UTC) + timedelta(seconds=10), 2.0, 2.0),
+        (datetime(2030, 1, 1, tzinfo=UTC) - timedelta(seconds=10), 8.0, 0.0),
+    ],
+)
+def test_read_retries_using_http_date_retry_after(retry_after, max_wait, expected_wait):
+    now = datetime(2030, 1, 1, tzinfo=UTC)
+    client = _Client([
+        _Response(429, headers={"Retry-After": format_datetime(retry_after, usegmt=True)}),
+        _Response(200, {"id": 1}),
+    ])
+    sleeps = []
+    http = BoardHttpClient(
+        client,
+        attempts=2,
+        max_wait=max_wait,
+        sleeper=sleeps.append,
+        clock=lambda: now.timestamp(),
+    )
+
+    assert http.request_json("GET", "/issues", operation="read") == {"id": 1}
+    assert sleeps == [expected_wait]
 
 
 def test_read_retries_any_transient_server_error():

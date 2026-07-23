@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable, Collection
+from email.utils import parsedate_to_datetime
 from typing import Any, Literal
 
 import httpx
@@ -21,6 +22,7 @@ class BoardHttpClient:
         backoff_base: float = 1.0,
         max_wait: float = 8.0,
         sleeper: Callable[[float], None] = time.sleep,
+        clock: Callable[[], float] = time.time,
         secrets: Collection[str] = (),
     ) -> None:
         if attempts < 1:
@@ -30,6 +32,7 @@ class BoardHttpClient:
         self._backoff_base = backoff_base
         self._max_wait = max_wait
         self._sleep = sleeper
+        self._clock = clock
         self._secrets = frozenset(secrets)
 
     def request_json(
@@ -90,7 +93,10 @@ class BoardHttpClient:
         try:
             wait = float(retry_after) if retry_after is not None else self._backoff_base * 2**attempt
         except (TypeError, ValueError):
-            wait = self._backoff_base * 2**attempt
+            try:
+                wait = parsedate_to_datetime(retry_after).timestamp() - self._clock()
+            except (TypeError, ValueError, IndexError, OverflowError):
+                wait = self._backoff_base * 2**attempt
         return max(0.0, min(wait, self._max_wait))
 
     def _error_for_status(self, status: int, operation: str) -> BoardProviderError:

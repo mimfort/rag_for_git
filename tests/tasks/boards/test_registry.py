@@ -119,6 +119,20 @@ def test_registry_rejects_secret_option_and_incomplete_provider():
         )
 
 
+def test_registry_rejects_provider_with_a_different_runtime_board_type():
+    class _MismatchedProvider(_CompleteProvider):
+        board_type = "other"
+
+    registry = BoardProviderRegistry([
+        fake_spec(board_type="fake", factory=lambda _: _MismatchedProvider()),
+    ])
+
+    with pytest.raises(TypeError, match="does not match registered board_type"):
+        registry.create(
+            "fake", credentials={"FAKE_TOKEN": "secret"}, options={}, build_defaults=BUILD_DEFAULTS,
+        )
+
+
 def test_registry_creates_provider_with_validated_context():
     contexts: list[ProviderBuildContext] = []
 
