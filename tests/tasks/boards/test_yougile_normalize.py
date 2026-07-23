@@ -258,3 +258,21 @@ def test_normalize_meta_no_io_yougile():
     assert meta["url"] == "https://ru.yougile.com/team/T/#PRI-10"
     assert meta["project"] == "PRI"
     assert meta["criteria"] == [] and meta["attachments"] == []
+
+
+def test_normalize_converts_html_description_to_markdown():
+    # YouGile хранит описание в HTML; в стор reviewer оно обязано попадать markdown-ом
+    raw = RawTask(key="ID-1", project_code="PRI-1", title="t",
+                  description='тело<div>PR: <a href="https://g/p/1">https://g/p/1</a></div>',
+                  status="Бэклог", subtask_ids=[], timestamp=1)
+    out = normalize_yougile(raw, r"PRI-\d+", "https://b/#{code}")
+    assert "<div>" not in out["description"]
+    assert "PR: https://g/p/1" in out["description"]
+
+
+def test_normalize_keeps_plain_markdown_intact():
+    raw = RawTask(key="ID-2", project_code="PRI-2", title="t",
+                  description="## Проблема\n\nтекст", status=None,
+                  subtask_ids=[], timestamp=1)
+    out = normalize_yougile(raw, r"PRI-\d+", "https://b/#{code}")
+    assert out["description"] == "## Проблема\n\nтекст"

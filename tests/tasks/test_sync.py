@@ -234,3 +234,55 @@ def test_by_board_includes_meta_refreshed():
     result = SyncService([prov], ts, meta).run()
     assert result["meta_refreshed"] == 1
     assert result["by_board"][0]["meta_refreshed"] == 1
+
+
+def test_force_renormalize_reindexes_tasks_below_watermark():
+    """Разовая перенормализация: задачи ниже курсора идут через полный normalize,
+    а не через дешёвый meta-refresh (иначе смена нормализации не доедет до стора)."""
+    from reviewer.tasks.sync import SyncService
+
+    class _Provider:
+        board_type = "yougile"
+
+        def iter_raw(self, board, limit):
+            yield _raw("ID-1", 10)                    # ниже курсора
+
+        def normalize(self, raw):
+            return {"key": raw.key, "description": "## Проблема\n\nчисто"}
+
+        def normalize_meta(self, raw):
+            return {"key": raw.key}
+
+    class _Tasks:
+        def __init__(self):
+            self.indexed = []
+            self.meta = []
+
+        def index_batch(self, items):
+            self.indexed.extend(items)
+            return [{"key": i["key"], "embedded": True} for i in items]
+
+        def refresh_meta_batch(self, items):
+            self.meta.extend(items)
+            return {"meta_refreshed": len(items), "warnings": []}
+
+    class _Meta:
+        def get_index_meta(self, repo, ref):
+            return "100"                              # курсор выше timestamp задачи
+
+        def set_index_meta(self, repo, ref, value):
+            pass
+
+    tasks = _Tasks()
+    svc = SyncService([_Provider()], tasks, _Meta())
+
+    out = svc.run(force_renormalize=True)
+    assert out["changed"] == 1
+    assert tasks.indexed and "чисто" in tasks.indexed[0]["description"]
+    assert not tasks.meta                              # meta-refresh не вызывался
+
+    tasks2 = _Tasks()
+    svc2 = SyncService([_Provider()], tasks2, _Meta())
+    svc2.run()                                         # обычный прогон — как раньше
+    assert not tasks2.indexed
+    assert tasks2.meta

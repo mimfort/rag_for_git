@@ -272,6 +272,10 @@ Use the session-less tools above.
    `/reviewer_finish-task` skill — it appends the PR link to the task and marks it done (bumping
    last-modified so the sync re-indexes the closed task). Skip in board-less mode (no task key).
 
+   **Board-less mode:** when the user's formulation has no task key and a board IS configured,
+   you may offer `/reviewer_create-task` first — it files the task with the canonical structure,
+   so the work gets a key, a URL and a place in the task corpus before implementation starts.
+
 ## Failure handling (fail-open)
 
 - No `task_board` / board MCP not connected / task not found → board-less: build the brief from

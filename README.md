@@ -422,9 +422,9 @@ You get:
   `/rag-reviewer:reviewer_performance-review`, `/rag-reviewer:reviewer_maintainability-review`,
   `/rag-reviewer:reviewer_ask`, `/rag-reviewer:reviewer_pr-walkthrough`,
   `/rag-reviewer:reviewer_configure-review`, `/rag-reviewer:reviewer_summarize-subsystems`,
-  `/rag-reviewer:reviewer_finish-task`
+  `/rag-reviewer:reviewer_finish-task`, `/rag-reviewer:reviewer_create-task`
   (see [Skills reference](#skills-reference)).
-- **MCP server** `reviewer` exposing the 31 tools in [MCP tools reference](#mcp-tools-reference).
+- **MCP server** `reviewer` exposing the 36 tools in [MCP tools reference](#mcp-tools-reference).
 
 > Run `/plugin` to confirm `rag-reviewer` is installed and enabled.
 
@@ -785,11 +785,26 @@ Precompute concise per-subsystem summaries over the base code index for cheap hi
 - **MCP tools used:** `list_subsystem_clusters`, `index_subsystem_summary`, `prune_subsystem_summaries`, `backfill_summary_embeddings`.
 - **Flow:** list clusters → for each stale cluster, generate title+summary → index → after a full pass, prune orphaned summaries → embed any summaries with NULL embeddings.
 
+### `reviewer_create-task` — file a task on the board
+
+Creates a task on the connected board (YouGile / YouTrack) with a canonical body assembled
+server-side: Проблема / Что сделать / Критерии приёмки / Контекст. The description is stored as
+clean markdown in both directions — the board's own markup (YouGile keeps HTML) is converted by
+the provider, so `get_task` never returns `<br />` or `&gt;` to a model.
+
+- **Arguments:** free-text description of the task.
+- **MCP tools used:** `get_board_config`, `get_board_targets`, `search_codebase`, `create_task`,
+  `sync_board`.
+- **Flow:** read `.review.yml` task board → draft the four fields grounded in `path:line` →
+  discover the target column/status → confirm with the user → `create_task(...)` → `sync_board(...)`
+  → report key + URL.
+- **Requires:** reviewer MCP server + a board configured in its env.
+
 ---
 
 ## MCP tools reference
 
-The `reviewer-mcp` server exposes 31 tools. PR-session tools require an active `prepare_review` for
+The `reviewer-mcp` server exposes 36 tools. PR-session tools require an active `prepare_review` for
 that `(repo, pr)` in the same running server; the rest are session-less.
 
 ### Review lifecycle
@@ -926,6 +941,10 @@ board" rule **for bulk sync only** — single-task reads in `solve-task` / `revi
 the board-MCP on the LLM side. The task graph (`:Task`) is global, so one task can span PRs across
 several microservice repos.
 
+After a deploy that changes description normalization, run the sync once with
+`force_renormalize=true` — it ignores the watermark and re-normalizes the whole corpus (dedup by
+`content_hash` re-embeds only tasks whose description actually changed).
+
 ### Context layer (PRI-161)
 
 - `paths.ignore` — a list of fnmatch patterns; listed paths are **not indexed** (vectors and graph) and not commented on. A bare folder name (e.g. `eval`) catches the entire subtree; `eval/*` is the explicit form; globs like `*.gen.py` are supported. Saves Voyage quota and cuts noise.
@@ -1059,7 +1078,7 @@ reviewer/
   mcp/         MCPReviewService: prepare / tool calls / publish; session management
   services/    ReviewService.prepare: ingest PR, overlay, units
   policy/      ReviewPolicy: env defaults + .review.yml + gating
-  entrypoints/ cli.py (Click) · mcp_server.py (FastMCP, 31 tools)
+  entrypoints/ cli.py (Click) · mcp_server.py (FastMCP, 36 tools)
   install.py   reviewer init / install / install-skills (cross-platform client wiring)
   web/         FastAPI + React/Vite SPA — observability web admin
   app.py       dependency assembly from Settings

@@ -16,7 +16,7 @@ log = logging.getLogger(__name__)
 
 
 def create_server(service: MCPReviewService) -> FastMCP:
-    """Создать и вернуть сконфигурированный FastMCP-сервер с 34 тулами.
+    """Создать и вернуть сконфигурированный FastMCP-сервер с 36 тулами.
 
     Все тулы — обычные def (sync), а не async: сервис не потокобезопасен
     и рассчитан на последовательное исполнение sync-тулов FastMCP в event loop.
@@ -105,7 +105,8 @@ def create_server(service: MCPReviewService) -> FastMCP:
     def sync_board(board: str | None = None, limit: int | None = None,
                    purge_orphaned: bool = False, keep_with_prs: bool = True,
                    board_type: str | None = None,
-                   status_field: str | None = None) -> dict:
+                   status_field: str | None = None,
+                   force_renormalize: bool = False) -> dict:
         """Server-side ETL: enumerate the configured task board via REST, normalize,
         and index it (vector store + task graph). board_type limits sync to one board
         type (yougile|youtrack) — take it from task_board.type in the repo's .review.yml,
@@ -113,9 +114,13 @@ def create_server(service: MCPReviewService) -> FastMCP:
         status_field is the YouTrack status field name from the repo's .review.yml
         (so sync reads the right field; ignored by YouGile).
         Incremental via a per-(type,board) timestamp watermark; --limit disables purge
-        and cursor advance. Returns a compact counts summary with by_board breakdown."""
+        and cursor advance.
+        force_renormalize=True ignores the watermark and re-normalizes every task —
+        a one-off after normalization rules change (PRI-213); content_hash dedup keeps
+        the embedding cost to actually-changed descriptions.
+        Returns a compact counts summary with by_board breakdown."""
         return service.sync_board(board, limit, purge_orphaned, keep_with_prs,
-                                  board_type, status_field)
+                                  board_type, status_field, force_renormalize)
 
     @mcp.tool()
     def finish_task(key: str, pr_url: str, note: str | None = None,
@@ -132,6 +137,23 @@ def create_server(service: MCPReviewService) -> FastMCP:
         env; fail-soft."""
         return service.finish_task(key, pr_url, note, mark_done, board_type,
                                    done_state, status_field, done_column)
+
+    @mcp.tool()
+    def create_task(title: str, problem: str = "", steps: list[str] | None = None,
+                    criteria: list[str] | None = None, context: str | None = None,
+                    board_type: str | None = None, project: str | None = None,
+                    target: str | None = None, status_field: str | None = None) -> dict:
+        """Create a task on the board (server-side write) from structured fields.
+
+        The canonical markdown body (Проблема / Что сделать / Критерии приёмки /
+        Контекст) is assembled by the server, so every client and model produces the
+        same structure; the board-specific markup conversion happens in the provider.
+        board_type, project, target and status_field come from the repo's .review.yml
+        (target = YouGile column title or YouTrack status value; discover valid values
+        with get_board_targets). Credentials come from env; fail-soft. Returns
+        {status, key, url, target_resolved, reindexed, warnings}."""
+        return service.create_task(title, problem, steps, criteria, context,
+                                   board_type, project, target, status_field)
 
     @mcp.tool()
     def search_tasks(query: str, top_k: int | None = None, project: str | None = None) -> str:

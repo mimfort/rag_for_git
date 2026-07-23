@@ -19,6 +19,7 @@ import httpx
 
 from reviewer.tasks.boards.attachments import fetch_attachment, host_allowed, _registrable_domain
 from reviewer.tasks.boards.base import RawTask, project_prefix
+from reviewer.tasks.boards.markup import html_to_md, md_to_html
 
 log = logging.getLogger(__name__)
 
@@ -67,7 +68,11 @@ def normalize_yougile(
     subtask_titles: dict[str, str] | None = None,
     attachments: list[dict] | None = None,
 ) -> dict:
-    """RawTask → TaskBrief dict. Чистая: без I/O (titles подзадач инжектятся)."""
+    """RawTask → TaskBrief dict. Чистая: без I/O (titles подзадач инжектятся).
+
+    description конвертируется из HTML доски в markdown (PRI-213): стор и LLM
+    видят чистый текст, а не <br />, &gt; и <div> транспорта YouGile.
+    """
     subtask_titles = subtask_titles or {}
     key = raw.key
     aliases = [raw.project_code] if raw.project_code and raw.project_code != key else []
@@ -99,7 +104,7 @@ def normalize_yougile(
         "key": key,
         "aliases": aliases,
         "title": raw.title,
-        "description": raw.description,
+        "description": html_to_md(raw.description),
         "criteria": [],
         "status": "done" if raw.completed else raw.status,
         "url": url,
@@ -358,10 +363,13 @@ class YougileBoard:
                 "pr_link_added": pr_link_added, "column_moved": column_moved,
                 "already_closed": not payload, "warnings": warnings}
 
-    def list_done_targets(self, project: str | None) -> dict:
-        """Колонки досок проекта (read-only, fail-soft). project — код-префикс задач
-        (напр. PRI): доска включается, если на ней есть хоть одна задача проекта. Пустой
-        project → все доски всех проектов. НИКОГДА не бросает."""
+    def _columns_of_project(self, project: str | None) -> tuple[list[dict], list[str]]:
+        """Колонки досок проекта: ([{title, id, board_id, board_title}], warnings).
+
+        project — код-префикс задач (напр. PRI): доска включается, если на ней есть
+        хоть одна задача проекта. Пустой project → все доски. fail-soft: ошибка →
+        ([], warnings). Общая основа для discovery done-цели и для create.
+        """
         warnings: list[str] = []
         boards: list[dict] = []           # [{board_id, board_title, columns:[{id,title}]}]
         hosts: set[str] = set()           # board_id, где встречена задача проекта
@@ -392,7 +400,7 @@ class YougileBoard:
                             hosts.add(bid)
                             break
         except Exception:
-            log.warning("yougile: discovery колонок не удался", exc_info=True)
+            log.warning("yougile: обход колонок не удался", exc_info=True)
             warnings.append("не удалось перечислить колонки доски")
         kept = boards if not project else [b for b in boards if b["board_id"] in hosts]
         columns = [{"title": col["title"], "id": col["id"],
@@ -400,4 +408,50 @@ class YougileBoard:
                    for b in kept for col in b["columns"]]
         if project and not hosts and not warnings:
             warnings.append(f"колонки для проекта {project!r} не найдены")
+        return columns, warnings
+
+    def list_done_targets(self, project: str | None) -> dict:
+        """Колонки досок проекта (read-only, fail-soft). project — код-префикс задач
+        (напр. PRI): доска включается, если на ней есть хоть одна задача проекта. Пустой
+        project → все доски всех проектов. НИКОГДА не бросает."""
+        columns, warnings = self._columns_of_project(project)
         return {"columns": columns, "warnings": warnings}
+
+    def create(self, doc_md: str, *, title: str, target: str | None,
+               project: str | None) -> dict:
+        """Создать задачу YouGile: POST /tasks + резолв проектного кода вторым GET.
+
+        Описание конвертируется в HTML (транспорт YouGile). Колонка ищется по
+        точному title среди колонок досок проекта; не найдена → первая колонка
+        + warning. POST возвращает только внутренний uuid, поэтому ключ вида
+        PRI-N дочитывается GET /tasks/{uuid} (fail-soft: остаётся uuid).
+        """
+        columns, warnings = self._columns_of_project(project)
+        if not columns:
+            raise RuntimeError(f"колонки доски для проекта {project!r} не найдены")
+        col = next((c for c in columns if c["title"] == target), None) if target else None
+        if target and col is None:
+            warnings.append(
+                f"колонка '{target}' не найдена — задача создана в '{columns[0]['title']}'")
+        col = col or columns[0]
+
+        r = self._client.post("/tasks", json={"title": title, "columnId": col["id"],
+                                              "description": md_to_html(doc_md)})
+        r.raise_for_status()
+        uuid = str((r.json() or {}).get("id") or "")
+        key = uuid
+        try:
+            rr = self._client.get(f"/tasks/{quote(uuid, safe='')}")
+            rr.raise_for_status()
+            payload = rr.json() or {}
+            key = payload.get("idTaskProject") or uuid
+            if not payload.get("idTaskProject"):
+                warnings.append(
+                    "проектный код задачи не резолвится — ответ без idTaskProject, "
+                    "вернули внутренний id")
+        except Exception:
+            log.warning("yougile: проектный код задачи %s не резолвится", uuid, exc_info=True)
+            warnings.append("проектный код задачи не резолвится — вернули внутренний id")
+        url = self._url_template.replace("{code}", key) if self._url_template else None
+        return {"key": key, "url": url, "board_id": uuid,
+                "target_resolved": col["title"], "warnings": warnings}

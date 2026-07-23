@@ -32,6 +32,7 @@ from reviewer.services.review_service import (
 )
 from reviewer.tasks.boards import make_board_provider
 from reviewer.tasks.graph import PRRef
+from reviewer.tasks.taskdoc import TaskDoc, render_markdown
 from reviewer.tools.code_tools import ToolContext, make_tools
 from reviewer.tools.graph_format import format_neighbors
 from reviewer.mcp.schemas import FindingIn, VerdictIn
@@ -400,12 +401,15 @@ class MCPReviewService:
     def sync_board(self, board: str | None = None, limit: int | None = None,
                    purge_orphaned: bool = False, keep_with_prs: bool = True,
                    board_type: str | None = None,
-                   status_field: str | None = None) -> dict:
+                   status_field: str | None = None,
+                   force_renormalize: bool = False) -> dict:
         """Server-side ETL: перечислить доску по REST, нормализовать, проиндексировать.
 
         board_type ограничивает синк одним типом доски (yougile|youtrack); board —
         проектом (префикс кода). status_field — имя YouTrack-поля статуса из .review.yml
-        (чтобы синк читал верное поле). Доска/ключ не настроены → error-summary (fail-soft).
+        (чтобы синк читал верное поле). force_renormalize=True игнорирует watermark и
+        перенормализует ВСЕ задачи (разовая операция после смены правил нормализации).
+        Доска/ключ не настроены → error-summary (fail-soft).
         """
         sync = getattr(self.components, "sync_service", None)
         if sync is None:
@@ -417,7 +421,8 @@ class MCPReviewService:
         try:
             return sync.run(board=board, board_type=board_type, limit=limit,
                             purge_orphaned=purge_orphaned,
-                            keep_with_prs=keep_with_prs, status_field=status_field)
+                            keep_with_prs=keep_with_prs, status_field=status_field,
+                            force_renormalize=force_renormalize)
         except Exception as e:
             log.warning("sync_board: сбой синка", exc_info=True)
             return {"status": "error", "reason": f"{type(e).__name__}: {e}"}
@@ -468,6 +473,63 @@ class MCPReviewService:
                 pass
         return {"status": "ok", "board_type": board_type, "reindexed": reindexed,
                 **result}
+
+    def create_task(self, title: str, problem: str = "",
+                    steps: list[str] | None = None, criteria: list[str] | None = None,
+                    context: str | None = None, board_type: str | None = None,
+                    project: str | None = None, target: str | None = None,
+                    status_field: str | None = None) -> dict:
+        """Создать задачу на доске (server-side write) из структурированных полей.
+
+        Структура описания собирается сервером (reviewer/tasks/taskdoc.py), поэтому
+        одинакова во всех клиентах и моделях. target — колонка (YouGile) или
+        значение поля статуса (YouTrack). Креды из env; наружу не отдаются.
+        """
+        types = self.settings.configured_board_types()
+        if board_type is None:
+            if len(types) == 1:
+                board_type = types[0]
+            else:
+                return {"status": "error",
+                        "reason": f"board_type required (configured: {types or 'none'})"}
+        if board_type not in types:
+            return {"status": "error",
+                    "reason": f"board '{board_type}' not configured (have: {types or 'none'})"}
+        provider = make_board_provider(self.settings, board_type, status_field=status_field)
+        if provider is None:
+            return {"status": "error", "reason": f"board '{board_type}' not configured"}
+        doc_md = render_markdown(TaskDoc(title=title, problem=problem,
+                                         steps=list(steps or []),
+                                         criteria=list(criteria or []), context=context))
+        reindexed = False
+        try:
+            result = provider.create(doc_md, title=title, target=target, project=project)
+            # Write-through: созданная задача сразу видна в get_task/search_tasks,
+            # не дожидаясь ближайшего sync_board. Best-effort, fail-soft.
+            key = result.get("key")
+            if not key:
+                # Ключ деградирован (например, YouTrack без idReadable в ответе) —
+                # реиндексировать нечего; не дёргаем fetch_one сетевым запросом
+                # с пустой строкой, факт создания задачи это не откатывает.
+                log.warning("create_task: write-through пропущен — ключ задачи "
+                           "не определён, реиндекс не выполнен")
+            else:
+                try:
+                    raw = provider.fetch_one(key)
+                    if raw is not None:
+                        self.components.task_service.index_task(provider.normalize(raw))
+                        reindexed = True
+                except Exception:
+                    log.warning("create_task: write-through реиндекс не удался", exc_info=True)
+        except Exception as e:
+            log.warning("create_task: сбой создания задачи", exc_info=True)
+            return {"status": "error", "reason": f"{type(e).__name__}: {e}"}
+        finally:
+            try:
+                provider.close()
+            except Exception:
+                pass
+        return {"status": "ok", "board_type": board_type, "reindexed": reindexed, **result}
 
     def get_board_targets(self, board_type: str | None = None,
                           project: str | None = None) -> dict:

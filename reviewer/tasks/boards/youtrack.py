@@ -210,6 +210,33 @@ class YouTrackBoard:
         резолва вложений. Плоские поля (project/url/status) корректны."""
         return normalize_youtrack(raw, self._key_pattern, self._base)
 
+    def _set_status(self, safe_key: str, state: str,
+                    custom_fields: list[dict]) -> tuple[bool, list[str]]:
+        """Структурно выставить поле статуса задачи (без command-DSL).
+
+        custom_fields — уже прочитанные поля задачи (name/$type/value). Возвращает
+        (успех, warnings). Поле не найдено или REST отверг значение → (False, warning).
+        """
+        warnings: list[str] = []
+        field = next((cf for cf in custom_fields if cf.get("name") == self._status_field), None)
+        if field is None:
+            warnings.append(
+                f"поле статуса {self._status_field!r} не найдено на задаче — статус не изменён")
+            return False, warnings
+        cur = field.get("value")
+        value_type = (cur.get("$type") if isinstance(cur, dict) and cur.get("$type")
+                      else _FIELD_TO_ELEMENT.get(field.get("$type")))
+        value_obj: dict = {"name": state}
+        if value_type:
+            value_obj["$type"] = value_type
+        payload = {"name": self._status_field, "$type": field.get("$type"), "value": value_obj}
+        resp = self._client.post(f"/issues/{safe_key}", json={"customFields": [payload]})
+        if getattr(resp, "status_code", 200) >= 400:
+            warnings.append(
+                f"не удалось установить {self._status_field}={state}: HTTP {resp.status_code}")
+            return False, warnings
+        return True, warnings
+
     def finish(self, key: str, pr_url: str, *, note: str | None = None,
                mark_done: bool = True, done_state: str | None = None,
                done_column: str | None = None) -> dict:
@@ -253,36 +280,75 @@ class YouTrackBoard:
         warnings: list[str] = []
         done_set = False
         if mark_done:
-            field = next(
-                (cf for cf in custom_fields if cf.get("name") == self._status_field), None)
-            if field is None:
-                warnings.append(
-                    f"поле статуса {self._status_field!r} не найдено на задаче {key} — "
-                    "статус не изменён")
-            else:
-                state = done_state or "Fixed"
-                cur = field.get("value")
-                # тип элемента бандла: из текущего value, иначе из маппинга по типу поля
-                value_type = (cur.get("$type") if isinstance(cur, dict) and cur.get("$type")
-                              else _FIELD_TO_ELEMENT.get(field.get("$type")))
-                value_obj: dict = {"name": state}
-                if value_type:
-                    value_obj["$type"] = value_type
-                payload = {"name": self._status_field, "$type": field.get("$type"),
-                           "value": value_obj}
-                resp = self._client.post(
-                    f"/issues/{safe_key}", json={"customFields": [payload]})
-                if getattr(resp, "status_code", 200) >= 400:
-                    warnings.append(
-                        f"не удалось установить {self._status_field}={state} на {key}: "
-                        f"HTTP {resp.status_code}")
-                else:
-                    done_set = True
+            done_set, w = self._set_status(safe_key, done_state or "Fixed", custom_fields)
+            warnings.extend(w)
 
         return {"key": key, "board_id": key, "done_set": done_set,
                 "pr_link_added": pr_link_added,
                 "already_closed": not pr_link_added and not done_set,
                 "warnings": warnings}
+
+    def create(self, doc_md: str, *, title: str, target: str | None,
+               project: str | None) -> dict:
+        """Создать задачу YouTrack: POST /issues с markdown как есть.
+
+        project (shortName) обязателен — без него YouTrack не примет задачу; это
+        единственный не-fail-soft случай. target, если задан, выставляется как
+        значение self._status_field тем же структурным REST, что в finish.
+        """
+        if not project:
+            raise ValueError("project обязателен для создания задачи в YouTrack")
+        pid = self._resolve_project_id(project)
+        if not pid:
+            raise ValueError(f"проект {project!r} не найден в YouTrack")
+
+        r = self._client.post("/issues", params={"fields": "idReadable"},
+                              json={"project": {"id": pid}, "summary": title,
+                                    "description": doc_md})
+        r.raise_for_status()
+        key = (r.json() or {}).get("idReadable") or ""
+        warnings: list[str] = []
+        target_resolved = None
+        if not key:
+            # Ответ 200, но без idReadable — задача, вероятно, создана, но её ключ
+            # неизвестен: без него нельзя ни выставить target, ни вернуть рабочую
+            # ссылку. Тихо не проглатываем — это не полный успех.
+            warnings.append(
+                "ответ YouTrack не содержит idReadable — задача создана, "
+                "но её ключ не определён")
+            if target:
+                warnings.append(
+                    f"target={target!r} не применён: ключ задачи неизвестен")
+        elif target:
+            safe_key = quote(key, safe="")
+            try:
+                rr = self._client.get(
+                    f"/issues/{safe_key}",
+                    params={"fields": "customFields(name,$type,value($type,name))"})
+                rr.raise_for_status()
+                fields = (rr.json() or {}).get("customFields") or []
+            except Exception:
+                log.warning("youtrack: поля задачи %s недоступны", key, exc_info=True)
+                fields = []
+            ok, w = self._set_status(safe_key, target, fields)
+            warnings.extend(w)
+            target_resolved = target if ok else None
+        web = re.sub(r"/api/?$", "", self._base.rstrip("/"))
+        return {"key": key, "url": f"{web}/issue/{key}" if key else None,
+                "board_id": key, "target_resolved": target_resolved,
+                "warnings": warnings}
+
+    def _resolve_project_id(self, project: str) -> str | None:
+        """Внутренний id проекта YouTrack по shortName (query-фильтром на сервере).
+
+        Общий хелпер для `create` и `_admin_status_fields` — оба резолвят один
+        и тот же `GET /admin/projects`. None, если проект не найден. Бросает при
+        ошибке HTTP — вызывающий сам решает, fail-soft это или нет.
+        """
+        pr = self._client.get("/admin/projects",
+                              params={"fields": "id,shortName", "query": project})
+        pr.raise_for_status()
+        return next((p["id"] for p in (pr.json() or []) if p.get("shortName") == project), None)
 
     def fetch_one(self, key: str) -> RawTask | None:
         """Один RawTask по idReadable — write-through после finish.
@@ -327,11 +393,7 @@ class YouTrackBoard:
         или проект не найден. Бросает при ошибке HTTP — вызывающий ловит и фолбэкает."""
         if not project:
             return []
-        pr = self._client.get("/admin/projects",
-                              params={"fields": "id,shortName", "query": project})
-        pr.raise_for_status()
-        pid = next((p["id"] for p in (pr.json() or [])
-                    if p.get("shortName") == project), None)
+        pid = self._resolve_project_id(project)
         if not pid:
             return []
         r = self._client.get(
