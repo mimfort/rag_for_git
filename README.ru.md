@@ -369,7 +369,7 @@ claude plugin install rag-reviewer@rag-reviewer-marketplace --scope user
 - `/rag-reviewer:reviewer_summarize-subsystems` — построение сводок подсистем (GraphRAG)
 - `/rag-reviewer:reviewer_finish-task` — закрытие задачи после PR
 - `/rag-reviewer:reviewer_create-task` — заведение задачи на доске
-- **MCP-сервер** `reviewer` с 31 тулом (см. [справочник MCP-тулов](#mcp-тулы-справочник)).
+- **MCP-сервер** `reviewer` с 36 тулами (см. [справочник MCP-тулов](#mcp-тулы-справочник)).
 
 > Команда `/plugin` покажет, что `rag-reviewer` установлен и включён.
 
@@ -715,11 +715,26 @@ RAG + граф кода и передаёт в **полный цикл superpowe
 - **Поток:** list clusters → для каждого stale-кластера: title + summary → index →
   после полного прохода: удаление осиротевших сводок (prune) → доэмбеддинг сводок с NULL embeddings.
 
+### `reviewer_create-task` — завести задачу на доске
+
+Создаёт задачу на подключённой доске (YouGile / YouTrack). Тело описания собирает сервер по
+канонической структуре: Проблема / Что сделать / Критерии приёмки / Контекст. Описание хранится
+чистым markdown в обе стороны — разметку транспорта (YouGile хранит HTML) конвертирует провайдер,
+поэтому `get_task` больше не отдаёт модели `<br />` и `&gt;`.
+
+- **Аргументы:** свободное описание задачи.
+- **Используемые MCP-тулы:** `get_board_config`, `get_board_targets`, `search_codebase`,
+  `create_task`, `sync_board`.
+- **Поток:** прочитать `task_board` из `.review.yml` → собрать четыре поля с опорой на `path:line`
+  → discovery целевой колонки/статуса → подтверждение у пользователя → `create_task(...)` →
+  `sync_board(...)` → ключ и ссылка в ответе.
+- **Требует:** reviewer MCP-сервер + настроенную в его env доску.
+
 ---
 
 ## MCP-тулы (справочник)
 
-Сервер `reviewer-mcp` отдаёт 31 тул. Тулы PR-сессии требуют активного `prepare_review` для того же
+Сервер `reviewer-mcp` отдаёт 36 тулов. Тулы PR-сессии требуют активного `prepare_review` для того же
 `(repo, pr)` в том же запущенном сервере; остальные — session-less.
 
 ### Жизненный цикл ревью
@@ -873,6 +888,10 @@ watermark на доску в `index_meta` (`ref="tasks:<board>"`): повтор�
 по-прежнему идёт через board-MCP на стороне LLM. Граф задач (`:Task`) глобален — одна задача может
 охватывать PR из нескольких микросервисных репозиториев.
 
+После обновления, меняющего нормализацию описаний, один раз запусти синк с
+`force_renormalize=true` — он игнорирует watermark и пере-нормализует весь корпус (дедуп по
+`content_hash` оставит эмбеддинг только реально изменившимся задачам).
+
 **Граф и RAG по задачам.** Прочитанная задача индексируется в граф (Neo4j: узлы `:Task`/`:PR`, рёбра
 `TASK_LINK`/`IMPLEMENTED_BY`/`TOUCHES`) и в вектор (Postgres, таблица `tasks`) тулом `index_task`. При
 ревью агент видит связанные задачи и их PR/код через `get_task_context`, а похожие по смыслу — через
@@ -1001,7 +1020,7 @@ reviewer/
   mcp/         MCPReviewService: prepare/tool-вызовы/publish; управление сессиями
   services/    ReviewService.prepare: ingest PR, overlay, units
   policy/      ReviewPolicy: env-дефолты + .review.yml + гейтинг
-  entrypoints/ cli.py (Click) · mcp_server.py (FastMCP, 31 тул)
+  entrypoints/ cli.py (Click) · mcp_server.py (FastMCP, 36 тулов)
   install.py   reviewer init / install / install-skills (кроссплатформенная привязка клиентов)
   web/         FastAPI + React/Vite SPA — веб-админка наблюдаемости
   app.py       сборка зависимостей из Settings
