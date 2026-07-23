@@ -14,6 +14,7 @@ from __future__ import annotations
 import html
 import logging
 import re
+from html.parser import HTMLParser
 
 log = logging.getLogger(__name__)
 
@@ -127,3 +128,127 @@ def md_to_html(md: str) -> str:
     flush_para()
     flush_list()
     return "".join(out)
+
+
+_BLOCK_TAGS = {"p", "div", "section", "article", "blockquote", "tr"}
+_HEADINGS = {"h1": 2, "h2": 2, "h3": 3, "h4": 4, "h5": 5, "h6": 6}
+
+
+class _MarkdownWriter(HTMLParser):
+    """HTML → markdown: узкое подмножество; неизвестные теги прозрачны (текст цел).
+
+    Пробелы и переносы ВНУТРИ текста сохраняются как есть: почти все описания на
+    досках — markdown, лежащий в HTML-поле обычным текстом, и схлопывание пробелов
+    склеило бы его в один абзац.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self._parts: list[str] = []
+        self._lists: list[dict] = []
+        self._pre = False
+        self._href: str | None = None
+        self._link_at: int | None = None
+
+    def _newblock(self) -> None:
+        text = "".join(self._parts)
+        if not text:
+            return
+        if text.endswith("\n\n"):
+            return
+        self._parts.append("\n" if text.endswith("\n") else "\n\n")
+
+    def handle_starttag(self, tag: str, attrs: list) -> None:
+        if tag in _HEADINGS:
+            self._newblock()
+            self._parts.append("#" * _HEADINGS[tag] + " ")
+        elif tag == "br":
+            self._parts.append("\n")
+        elif tag in ("ul", "ol"):
+            self._newblock()
+            self._lists.append({"ordered": tag == "ol", "n": 0})
+        elif tag == "li":
+            lst = self._lists[-1] if self._lists else {"ordered": False, "n": 0}
+            lst["n"] += 1
+            text = "".join(self._parts)
+            if text and not text.endswith("\n"):
+                self._parts.append("\n")
+            self._parts.append(f"{lst['n']}. " if lst["ordered"] else "- ")
+        elif tag == "pre":
+            self._newblock()
+            self._parts.append("```\n")
+            self._pre = True
+        elif tag == "code" and not self._pre:
+            self._parts.append("`")
+        elif tag in ("strong", "b"):
+            self._parts.append("**")
+        elif tag in ("em", "i"):
+            self._parts.append("*")
+        elif tag == "a":
+            self._href = dict(attrs).get("href")
+            self._link_at = len(self._parts)
+        elif tag in _BLOCK_TAGS:
+            self._newblock()
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag in _HEADINGS or tag in _BLOCK_TAGS:
+            self._newblock()
+        elif tag in ("ul", "ol"):
+            if self._lists:
+                self._lists.pop()
+            self._newblock()
+        elif tag == "pre":
+            self._pre = False
+            if not "".join(self._parts).endswith("\n"):
+                self._parts.append("\n")
+            self._parts.append("```")
+            self._newblock()
+        elif tag == "code" and not self._pre:
+            self._parts.append("`")
+        elif tag in ("strong", "b"):
+            self._parts.append("**")
+        elif tag in ("em", "i"):
+            self._parts.append("*")
+        elif tag == "a":
+            at = self._link_at if self._link_at is not None else len(self._parts)
+            text = "".join(self._parts[at:]).strip()
+            del self._parts[at:]
+            href = self._href
+            if href and text and text != href:
+                self._parts.append(f"[{text}]({href})")
+            else:
+                self._parts.append(href or text)
+            self._href = None
+            self._link_at = None
+
+    def handle_data(self, data: str) -> None:
+        self._parts.append(data)
+
+    def result(self) -> str:
+        text = "".join(self._parts)
+        text = re.sub(r"[ \t]+\n", "\n", text)
+        text = re.sub(r"\n{3,}", "\n\n", text)
+        return text.strip()
+
+
+def html_to_md(html_text: str) -> str:
+    """HTML-описание доски → markdown. Терпима к чужому дереву; НИКОГДА не бросает.
+
+    Вход без тегов (markdown, лежащий в HTML-поле как текст) возвращается как есть,
+    только с разэкранированными сущностями. Ограничение: HTML-теги, написанные
+    человеком внутри инлайн-кода прямо в UI доски, неотличимы от настоящей разметки
+    и будут съедены. Для текста, записанного через create_task, этого не случается —
+    md_to_html экранирует содержимое кода.
+    """
+    if not html_text:
+        return ""
+    if "<" not in html_text:
+        return html.unescape(html_text)
+    writer = _MarkdownWriter()
+    try:
+        writer.feed(html_text)
+        writer.close()
+        return writer.result()
+    except Exception:
+        log.warning("markup: HTML не разобран — отдаём исходный текст", exc_info=True)
+        return html_text
