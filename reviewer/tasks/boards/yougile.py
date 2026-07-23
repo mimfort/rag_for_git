@@ -19,6 +19,7 @@ import httpx
 
 from reviewer.tasks.boards.attachments import fetch_attachment, host_allowed, _registrable_domain
 from reviewer.tasks.boards.base import RawTask, project_prefix
+from reviewer.tasks.boards.markup import html_to_md
 
 log = logging.getLogger(__name__)
 
@@ -67,7 +68,11 @@ def normalize_yougile(
     subtask_titles: dict[str, str] | None = None,
     attachments: list[dict] | None = None,
 ) -> dict:
-    """RawTask → TaskBrief dict. Чистая: без I/O (titles подзадач инжектятся)."""
+    """RawTask → TaskBrief dict. Чистая: без I/O (titles подзадач инжектятся).
+
+    description конвертируется из HTML доски в markdown (PRI-213): стор и LLM
+    видят чистый текст, а не <br />, &gt; и <div> транспорта YouGile.
+    """
     subtask_titles = subtask_titles or {}
     key = raw.key
     aliases = [raw.project_code] if raw.project_code and raw.project_code != key else []
@@ -99,7 +104,7 @@ def normalize_yougile(
         "key": key,
         "aliases": aliases,
         "title": raw.title,
-        "description": raw.description,
+        "description": html_to_md(raw.description),
         "criteria": [],
         "status": "done" if raw.completed else raw.status,
         "url": url,
