@@ -11,6 +11,8 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import Protocol
 
+JsonValue = None | bool | int | float | str | list["JsonValue"] | dict[str, "JsonValue"]
+
 _PREFIX_RE = re.compile(r"^([A-Za-z][A-Za-z0-9]*)-\d+$")
 
 
@@ -49,6 +51,9 @@ class TaskBoardProvider(Protocol):
 
     board_type: str  # ключ типа доски для курсора синка (напр. "yougile", "youtrack")
 
+    def validate_connection(self, project: str | None = None) -> dict:
+        ...
+
     def iter_raw(self, board: str | None, limit: int | None) -> Iterable[RawTask]:
         ...
 
@@ -69,14 +74,15 @@ class TaskBoardProvider(Protocol):
         meta-refresh задач ниже watermark — не дёргает сеть на задачу."""
         ...
 
+    def list_targets(self, project: str | None) -> dict:
+        ...
+
     def finish(self, key: str, pr_url: str, *, note: str | None = None,
-               mark_done: bool = True, done_state: str | None = None,
-               done_column: str | None = None) -> dict:
+               mark_done: bool = True, target: str | None = None) -> dict:
         """Закрыть задачу: пометить done + идемпотентно дописать PR-ссылку в описание.
         Любая правка двигает last-modified (timestamp/updated) → инкрементальный синк
-        переиндексирует обновлённую задачу. done_state — целевое состояние (YouTrack;
-        YouGile игнорирует, у него булев completed). done_column — целевая колонка
-        (YouGile: перенос задачи; YouTrack игнорирует). Возвращает
+        переиндексирует обновлённую задачу. target — board-специфичная done-цель
+        (например, id/label колонки или значение status). Возвращает
         {key, board_id, done_set, pr_link_added, already_closed, warnings};
         YouGile дополнительно кладёт `column_moved: bool` (доска-специфичное поле)."""
         ...
@@ -88,16 +94,6 @@ class TaskBoardProvider(Protocol):
         не дожидаясь инкрементального sync_board (тот отсекает задачи с
         timestamp <= watermark-курсор). fail-soft: сетевой сбой / 404 / нет задачи
         → None (write-through пропускается, стор догонит обычным синком)."""
-        ...
-
-    def list_done_targets(self, project: str | None) -> dict:
-        """Кандидаты done-цели доски (read-only, fail-soft, НИКОГДА не бросает).
-
-        YouGile → {"columns": [{"title", "id", "board_id", "board_title"}], "warnings": [...]}
-        YouTrack → {"status_fields": [{"field", "values": [...], "$type"?}],
-                    "source": "admin"|"sample", "warnings": [...]}
-
-        Ошибка/нет прав/сеть → пустой список + warnings (скилл откатывается на ручной ввод)."""
         ...
 
     def create(self, doc_md: str, *, title: str, target: str | None,
@@ -120,4 +116,7 @@ class TaskBoardProvider(Protocol):
         потребитель должен сравнивать `target_resolved` с запрошенным
         `target`, а не проверять его на truthiness.
         """
+        ...
+
+    def close(self) -> None:
         ...
