@@ -443,7 +443,12 @@ class YougileBoard:
         try:
             rr = self._client.get(f"/tasks/{quote(uuid, safe='')}")
             rr.raise_for_status()
-            key = (rr.json() or {}).get("idTaskProject") or uuid
+            payload = rr.json() or {}
+            key = payload.get("idTaskProject") or uuid
+            if not payload.get("idTaskProject"):
+                warnings.append(
+                    "проектный код задачи не резолвится — ответ без idTaskProject, "
+                    "вернули внутренний id")
         except Exception:
             log.warning("yougile: проектный код задачи %s не резолвится", uuid, exc_info=True)
             warnings.append("проектный код задачи не резолвится — вернули внутренний id")

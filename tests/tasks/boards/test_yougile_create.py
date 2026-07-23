@@ -103,6 +103,19 @@ def test_create_failsoft_when_key_lookup_fails():
     assert res["warnings"]
 
 
+def test_create_warns_when_second_get_lacks_project_key():
+    # второй GET отвечает 200, но БЕЗ idTaskProject (например, задача ещё не привязана
+    # к проекту на стороне YouGile) — деградация до uuid должна сопровождаться warning'ом
+    routes = _routes([{"id": "c1", "title": "Бэклог"}])
+    routes["/tasks/u-new"] = _Resp(200, {"id": "u-new"})  # нет idTaskProject
+    b = _board(routes)
+    res = b.create(MD, title="t", target=None, project="PRI")
+    assert res["key"] == "u-new"          # деградация до внутреннего id — данные не теряются
+    assert res["board_id"] == "u-new"
+    assert res["warnings"]
+    assert any("idTaskProject" in w for w in res["warnings"])
+
+
 def test_create_raises_when_no_columns():
     b = _board({"/projects": _Resp(200, {"content": []})})
     with pytest.raises(RuntimeError):
