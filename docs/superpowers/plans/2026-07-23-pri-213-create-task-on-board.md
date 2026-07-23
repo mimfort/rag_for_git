@@ -714,6 +714,8 @@ git commit -m "feat(tasks): YouGile отдаёт описание задачи �
 
 ```python
 """Создание задачи в YouGile (PRI-213)."""
+import pytest
+
 from reviewer.tasks.boards.yougile import YougileBoard
 
 MD = "## Проблема\n\nтекст"
@@ -818,11 +820,8 @@ def test_create_failsoft_when_key_lookup_fails():
 
 def test_create_raises_when_no_columns():
     b = _board({"/projects": _Resp(200, {"content": []})})
-    try:
+    with pytest.raises(RuntimeError):
         b.create(MD, title="t", target=None, project="PRI")
-    except RuntimeError:
-        return
-    raise AssertionError("ожидали RuntimeError при отсутствии колонок")
 ```
 
 - [ ] **Step 2: Прогнать тест — убедиться, что падает**
@@ -991,6 +990,8 @@ git commit -m "feat(tasks): создание задачи в YouGile через 
 
 ```python
 """Создание задачи в YouTrack (PRI-213)."""
+import pytest
+
 from reviewer.tasks.boards.youtrack import YouTrackBoard
 
 MD = "## Проблема\n\nтекст"
@@ -1080,20 +1081,14 @@ def test_create_failsoft_when_status_update_rejected():
 
 def test_create_requires_project():
     b = _board(_routes())
-    try:
+    with pytest.raises(ValueError):
         b.create(MD, title="t", target=None, project=None)
-    except ValueError:
-        return
-    raise AssertionError("ожидали ValueError без project")
 
 
 def test_create_raises_when_project_unknown():
     b = _board({"/admin/projects": _Resp(200, [])})
-    try:
+    with pytest.raises(ValueError):
         b.create(MD, title="t", target=None, project="NOPE")
-    except ValueError:
-        return
-    raise AssertionError("ожидали ValueError на неизвестный проект")
 ```
 
 Дописать в `tests/tasks/boards/test_base.py`:
