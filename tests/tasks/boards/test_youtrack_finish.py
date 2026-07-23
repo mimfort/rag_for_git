@@ -28,6 +28,24 @@ class _Client:
 
     def get(self, path, params=None):
         self.calls.append(("GET", path, None))
+        if path == "/admin/projects":
+            return _Resp(200, [{"id": "project-1", "shortName": "TES"}])
+        if path == "/admin/projects/project-1/customFields":
+            return _Resp(200, [{
+                "$type": "StateProjectCustomField",
+                "field": {"name": self.status_field},
+                "bundle": {"values": [
+                    {"name": value}
+                    for value in (
+                        "Fixed",
+                        "Fixed} tag urgent {",
+                        "NoSuchState",
+                        "Готово",
+                        "Done",
+                        "Готово к сдаче",
+                    )
+                ]},
+            }])
         return self._get[path]
 
     def post(self, path, json=None):
@@ -46,6 +64,7 @@ def _board(get_routes, post_status=None):
     b = YouTrackBoard.__new__(YouTrackBoard)  # обойти httpx.Client в __init__
     b._client = _Client(get_routes, post_status)
     b._status_field = "State"
+    b._client.status_field = "State"
     return b
 
 
@@ -67,7 +86,7 @@ def _has_field_post(calls):
 def test_youtrack_finish_edits_desc_and_sets_state_field():
     b = _board({"/issues/TES-1": _Resp(200, {
         "description": "тело", "customFields": [_state_field()]})})
-    res = b.finish("TES-1", PR, done_state="Fixed")
+    res = b.finish("TES-1", PR, target="Fixed")
     assert res["pr_link_added"] is True
     assert res["done_set"] is True
     posts = [c for c in b._client.calls if c[0] == "POST"]
@@ -85,7 +104,7 @@ def test_youtrack_finish_edits_desc_and_sets_state_field():
 def test_youtrack_finish_default_state_fixed():
     b = _board({"/issues/TES-1": _Resp(200, {
         "description": "", "customFields": [_state_field()]})})
-    b.finish("TES-1", PR)  # done_state не задан
+    b.finish("TES-1", PR)  # target не задан
     payload = _field_post(b._client.calls)[2]["customFields"][0]
     assert payload["value"]["name"] == "Fixed"
 
@@ -95,7 +114,7 @@ def test_youtrack_finish_malicious_value_is_verbatim_no_dsl():
     # command-DSL) — инъекция невозможна конструктивно; /commands не вызывается.
     b = _board({"/issues/TES-1": _Resp(200, {
         "description": "", "customFields": [_state_field()]})})
-    b.finish("TES-1", PR, done_state="Fixed} tag urgent {")
+    b.finish("TES-1", PR, target="Fixed} tag urgent {")
     payload = _field_post(b._client.calls)[2]["customFields"][0]
     assert payload["value"]["name"] == "Fixed} tag urgent {"
     assert not any(c[1] == "/commands" for c in b._client.calls)
@@ -114,7 +133,7 @@ def test_youtrack_finish_field_update_failsoft():
     b = _board({"/issues/TES-1": _Resp(200, {
         "description": "", "customFields": [_state_field()]})},
                post_status={"__fields__": 400})
-    res = b.finish("TES-1", PR, done_state="NoSuchState")
+    res = b.finish("TES-1", PR, target="NoSuchState")
     assert res["done_set"] is False
     assert res["warnings"]
     assert res["pr_link_added"] is True
@@ -138,8 +157,9 @@ def test_state_of_reads_custom_field():
 def test_youtrack_finish_uses_configured_status_field():
     b = _board({"/issues/TES-1": _Resp(200, {
         "description": "", "customFields": [_state_field(name="Stage")]})})
-    b._status_field = "Stage"  # как выставит make_board_provider/set_status_field
-    res = b.finish("TES-1", PR, done_state="Готово")
+    b._status_field = "Stage"
+    b._client.status_field = "Stage"
+    res = b.finish("TES-1", PR, target="Готово")
     payload = _field_post(b._client.calls)[2]["customFields"][0]
     assert payload["name"] == "Stage"
     assert payload["value"]["name"] == "Готово"
@@ -152,7 +172,8 @@ def test_youtrack_finish_field_not_found():
     b = _board({"/issues/TES-1": _Resp(200, {
         "description": "", "customFields": [_state_field(name="State")]})})
     b._status_field = "Stage"  # такого поля на задаче нет
-    res = b.finish("TES-1", PR, done_state="Готово")
+    b._client.status_field = "Stage"
+    res = b.finish("TES-1", PR, target="Готово")
     assert res["done_set"] is False
     assert res["warnings"]
     assert not _has_field_post(b._client.calls)
@@ -163,7 +184,8 @@ def test_youtrack_finish_multiword_field_name_works():
     b = _board({"/issues/TES-1": _Resp(200, {
         "description": "", "customFields": [_state_field(name="Kanban State")]})})
     b._status_field = "Kanban State"
-    res = b.finish("TES-1", PR, done_state="Done")
+    b._client.status_field = "Kanban State"
+    res = b.finish("TES-1", PR, target="Done")
     payload = _field_post(b._client.calls)[2]["customFields"][0]
     assert payload["name"] == "Kanban State"
     assert res["done_set"] is True
@@ -175,20 +197,19 @@ def test_youtrack_finish_cyrillic_field_and_multiword_value():
         "description": "",
         "customFields": [_state_field(name="Готовность", value_name="Открыто")]})})
     b._status_field = "Готовность"
-    res = b.finish("TES-1", PR, done_state="Готово к сдаче")
+    b._client.status_field = "Готовность"
+    res = b.finish("TES-1", PR, target="Готово к сдаче")
     payload = _field_post(b._client.calls)[2]["customFields"][0]
     assert payload["name"] == "Готовность"
     assert payload["value"]["name"] == "Готово к сдаче"
     assert res["done_set"] is True
 
 
-def test_youtrack_set_status_field_defaults_to_state():
+def test_youtrack_status_field_is_not_runtime_mutable():
     b = _board({"/issues/TES-1": _Resp(200, {
         "description": "", "customFields": [_state_field()]})})
-    b.set_status_field(None)
-    b.finish("TES-1", PR, done_state="Fixed")
-    payload = _field_post(b._client.calls)[2]["customFields"][0]
-    assert payload["name"] == "State"
+    assert not hasattr(b, "set_status_field")
+    assert b._status_field == "State"
 
 
 def test_youtrack_finish_null_value_type_from_mapping():
@@ -197,7 +218,7 @@ def test_youtrack_finish_null_value_type_from_mapping():
         "description": "",
         "customFields": [{"name": "State", "$type": "SingleEnumIssueCustomField",
                           "value": None}]})})
-    res = b.finish("TES-1", PR, done_state="Done")
+    res = b.finish("TES-1", PR, target="Done")
     payload = _field_post(b._client.calls)[2]["customFields"][0]
     assert payload["$type"] == "SingleEnumIssueCustomField"
     assert payload["value"]["$type"] == "EnumBundleElement"
@@ -211,7 +232,7 @@ def test_youtrack_finish_unknown_field_type_value_without_type():
         "description": "",
         "customFields": [{"name": "State", "$type": "SomeWeirdCustomField",
                           "value": None}]})})
-    res = b.finish("TES-1", PR, done_state="Done")
+    res = b.finish("TES-1", PR, target="Done")
     payload = _field_post(b._client.calls)[2]["customFields"][0]
     assert "$type" not in payload["value"]
     assert payload["value"]["name"] == "Done"

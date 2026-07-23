@@ -10,12 +10,15 @@ from __future__ import annotations
 import logging
 import re
 from collections.abc import Iterable
+from typing import Any
 from urllib.parse import quote, urljoin, urlsplit
 
 import httpx
 
 from reviewer.tasks.boards.attachments import fetch_attachment, host_allowed, _registrable_domain
 from reviewer.tasks.boards.base import RawTask, project_prefix
+from reviewer.tasks.boards.errors import BoardProviderError
+from reviewer.tasks.boards.http import BoardHttpClient
 
 log = logging.getLogger(__name__)
 
@@ -159,17 +162,59 @@ class YouTrackBoard:
             headers={"Authorization": f"Bearer {token}"},
             timeout=30.0,
         )
+        self._http = BoardHttpClient(self._client, secrets=(token,))
+        self._http_raw = self._client
 
     def close(self) -> None:
-        self._client.close()
+        self._board_http().close()
 
-    def set_status_field(self, field: str | None) -> None:
-        """Переустановить имя поля статуса (per-repo из .review.yml) для синка.
+    def _board_http(self) -> BoardHttpClient:
+        """Обёртка JSON-транспорта; lazy-ветка поддерживает тестовые fake clients."""
+        if getattr(self, "_http_raw", None) is not self._client:
+            self._http = BoardHttpClient(self._client, attempts=1)
+            self._http_raw = self._client
+        return self._http
 
-        Провайдер синка — долгоживущий singleton; SyncService выставляет поле
-        перед iter_raw и сбрасывает к «State» при отсутствии конфига.
-        """
-        self._status_field = field or "State"
+    def _read(self, path: str, **kwargs: Any) -> Any:
+        return self._board_http().request_json("GET", path, operation="read", **kwargs)
+
+    def _write(self, method: str, path: str, **kwargs: Any) -> Any:
+        return self._board_http().request_json(method, path, operation="write", **kwargs)
+
+    def validate_connection(self, project: str | None = None) -> dict:
+        """Проверить текущего пользователя и доступ к выбранному проекту."""
+        identity = self._read("/users/me", params={"fields": "id,login,name"}) or {}
+        project_info = None
+        if project:
+            projects = self._read(
+                "/admin/projects",
+                params={"fields": "id,shortName,name", "query": project},
+            ) or []
+            project_info = next(
+                (
+                    {"id": item.get("id"), "key": item.get("shortName"), "name": item.get("name")}
+                    for item in projects
+                    if item.get("shortName") == project
+                ),
+                None,
+            )
+            if project_info is None:
+                raise BoardProviderError(
+                    "not_found",
+                    "YouTrack project is not accessible.",
+                    hint="Check the project key and token permissions.",
+                )
+        return {
+            "status": "ok",
+            "identity": {
+                "id": identity.get("id"),
+                "login": identity.get("login"),
+                "name": identity.get("name"),
+            },
+            "project": project_info,
+            "capabilities": ["sync", "create", "finish", "attachments"],
+            "warnings": [],
+        }
 
     def iter_raw(self, board: str | None, limit: int | None) -> Iterable[RawTask]:
         count = 0
@@ -178,9 +223,7 @@ class YouTrackBoard:
             params: dict = {"fields": _FIELDS, "$top": _PAGE, "$skip": skip}
             if board:
                 params["query"] = f"project: {board}"
-            r = self._client.get("/issues", params=params)
-            r.raise_for_status()
-            page = r.json()
+            page = self._read("/issues", params=params) or []
             for issue in page:
                 yield _issue_to_raw(issue, self._status_field)
                 count += 1
@@ -230,16 +273,21 @@ class YouTrackBoard:
         if value_type:
             value_obj["$type"] = value_type
         payload = {"name": self._status_field, "$type": field.get("$type"), "value": value_obj}
-        resp = self._client.post(f"/issues/{safe_key}", json={"customFields": [payload]})
-        if getattr(resp, "status_code", 200) >= 400:
+        try:
+            self._write(
+                "POST",
+                f"/issues/{safe_key}",
+                json={"customFields": [payload]},
+            )
+        except BoardProviderError as exc:
             warnings.append(
-                f"не удалось установить {self._status_field}={state}: HTTP {resp.status_code}")
+                f"не удалось установить {self._status_field}={state}: {exc.category}"
+            )
             return False, warnings
         return True, warnings
 
     def finish(self, key: str, pr_url: str, *, note: str | None = None,
-               mark_done: bool = True, done_state: str | None = None,
-               done_column: str | None = None) -> dict:
+               mark_done: bool = True, target: str | None = None) -> dict:
         """Закрыть задачу YouTrack: правка описания (PR-ссылка) + структурная смена статуса.
 
         Первый GET тянет `description` и `customFields` (с типами). PR-ссылка дописывается
@@ -248,24 +296,22 @@ class YouTrackBoard:
 
         Смена статуса — **структурное REST-обновление кастом-поля**, а не command-DSL:
         `POST /issues/{key}` json={"customFields": [{"name": <status_field>, "$type": …,
-        "value": {"name": <done_state>, …}}]}. Имя поля берётся из `self._status_field`
-        (дефолт «State»), значение — из `done_state` (дефолт «Fixed»). YouTrack матчит
+        "value": {"name": <target>, …}}]}. Имя поля берётся из `self._status_field`
+        (дефолт «State»), значение — из `target` (дефолт «Fixed»). YouTrack матчит
         значение по имени против существующих элементов бандла. **DSL здесь нет вообще**,
-        поэтому инъекция через `done_state`/`status_field` структурно невозможна (значения
+        поэтому инъекция через `target`/`status_field` структурно невозможна (значения
         идут в JSON, не в командную строку), а многословные имена полей («Kanban State»)
         и статусов («Готово к сдаче») работают без экранирования.
 
-        Fail-soft: если поле `status_field` не найдено на задаче — warning, `done_set=False`,
-        поле не трогаем; если REST-обновление вернуло ошибку (невалидное значение) — warning,
-        `done_set=False`. PR-ссылка в любом случае уже записана. `done_column` принимается
-        ради совместимости с Protocol и игнорируется (у YouTrack нет колонок).
+        Fail-soft: если поле `status_field` или target не найден — warning,
+        `done_set=False`, поле не трогаем; если REST-обновление вернуло ошибку —
+        warning, `done_set=False`. PR-ссылка в любом случае уже записана.
         """
         safe_key = quote(key, safe="")
-        r = self._client.get(
+        body = self._read(
             f"/issues/{safe_key}",
-            params={"fields": "description,customFields(name,$type,value($type,name))"})
-        r.raise_for_status()
-        body = r.json()
+            params={"fields": "description,customFields(name,$type,value($type,name))"},
+        ) or {}
         desc = body.get("description", "") or ""
         custom_fields = body.get("customFields") or []
 
@@ -273,15 +319,25 @@ class YouTrackBoard:
         if pr_url and pr_url not in desc:
             block = f"\n\nPR: {pr_url}" + (f"\n\n{note}" if note else "")
             new_desc = desc + block if desc else block.lstrip("\n")
-            rr = self._client.post(f"/issues/{safe_key}", json={"description": new_desc})
-            rr.raise_for_status()
+            self._write("POST", f"/issues/{safe_key}", json={"description": new_desc})
             pr_link_added = True
 
         warnings: list[str] = []
         done_set = False
         if mark_done:
-            done_set, w = self._set_status(safe_key, done_state or "Fixed", custom_fields)
-            warnings.extend(w)
+            resolved, target_warnings = self._resolve_status_target(
+                target or "Fixed",
+                project_prefix(key),
+            )
+            warnings.extend(target_warnings)
+            current = _state_of({"customFields": custom_fields}, self._status_field)
+            if resolved is not None and current != resolved:
+                done_set, status_warnings = self._set_status(
+                    safe_key,
+                    resolved,
+                    custom_fields,
+                )
+                warnings.extend(status_warnings)
 
         return {"key": key, "board_id": key, "done_set": done_set,
                 "pr_link_added": pr_link_added,
@@ -302,11 +358,13 @@ class YouTrackBoard:
         if not pid:
             raise ValueError(f"проект {project!r} не найден в YouTrack")
 
-        r = self._client.post("/issues", params={"fields": "idReadable"},
-                              json={"project": {"id": pid}, "summary": title,
-                                    "description": doc_md})
-        r.raise_for_status()
-        key = (r.json() or {}).get("idReadable") or ""
+        created = self._write(
+            "POST",
+            "/issues",
+            params={"fields": "idReadable"},
+            json={"project": {"id": pid}, "summary": title, "description": doc_md},
+        )
+        key = (created or {}).get("idReadable") or ""
         warnings: list[str] = []
         target_resolved = None
         if not key:
@@ -321,18 +379,31 @@ class YouTrackBoard:
                     f"target={target!r} не применён: ключ задачи неизвестен")
         elif target:
             safe_key = quote(key, safe="")
+            resolved, target_warnings = self._resolve_status_target(target, project)
+            warnings.extend(target_warnings)
+            if resolved is None:
+                web = re.sub(r"/api/?$", "", self._base.rstrip("/"))
+                return {
+                    "key": key,
+                    "url": f"{web}/issue/{key}",
+                    "board_id": key,
+                    "target_resolved": None,
+                    "warnings": warnings,
+                }
             try:
-                rr = self._client.get(
-                    f"/issues/{safe_key}",
-                    params={"fields": "customFields(name,$type,value($type,name))"})
-                rr.raise_for_status()
-                fields = (rr.json() or {}).get("customFields") or []
+                fields = (
+                    self._read(
+                        f"/issues/{safe_key}",
+                        params={"fields": "customFields(name,$type,value($type,name))"},
+                    )
+                    or {}
+                ).get("customFields") or []
             except Exception:
                 log.warning("youtrack: поля задачи %s недоступны", key, exc_info=True)
                 fields = []
-            ok, w = self._set_status(safe_key, target, fields)
+            ok, w = self._set_status(safe_key, resolved, fields)
             warnings.extend(w)
-            target_resolved = target if ok else None
+            target_resolved = resolved if ok else None
         web = re.sub(r"/api/?$", "", self._base.rstrip("/"))
         return {"key": key, "url": f"{web}/issue/{key}" if key else None,
                 "board_id": key, "target_resolved": target_resolved,
@@ -345,10 +416,11 @@ class YouTrackBoard:
         и тот же `GET /admin/projects`. None, если проект не найден. Бросает при
         ошибке HTTP — вызывающий сам решает, fail-soft это или нет.
         """
-        pr = self._client.get("/admin/projects",
-                              params={"fields": "id,shortName", "query": project})
-        pr.raise_for_status()
-        return next((p["id"] for p in (pr.json() or []) if p.get("shortName") == project), None)
+        projects = self._read(
+            "/admin/projects",
+            params={"fields": "id,shortName", "query": project},
+        ) or []
+        return next((p["id"] for p in projects if p.get("shortName") == project), None)
 
     def fetch_one(self, key: str) -> RawTask | None:
         """Один RawTask по idReadable — write-through после finish.
@@ -356,10 +428,10 @@ class YouTrackBoard:
         GET /issues/{key} с богатым `fields` (_FIELDS) → _issue_to_raw. Имя поля
         статуса — self._status_field (per-repo). fail-soft: сбой/пусто → None."""
         try:
-            r = self._client.get(f"/issues/{quote(key, safe='')}",
-                                  params={"fields": _FIELDS})
-            r.raise_for_status()
-            issue = r.json()
+            issue = self._read(
+                f"/issues/{quote(key, safe='')}",
+                params={"fields": _FIELDS},
+            )
         except Exception:
             log.warning("youtrack: fetch_one(%s) не удался", key, exc_info=True)
             return None
@@ -367,15 +439,13 @@ class YouTrackBoard:
             return None
         return _issue_to_raw(issue, self._status_field)
 
-    def list_done_targets(self, project: str | None) -> dict:
-        """Поля статуса + значения (read-only, fail-soft). Try admin customFields;
-        при недоступности — агрегация distinct значений из выборки задач проекта.
-        НИКОГДА не бросает."""
+    def _discover_status_fields(self, project: str | None) -> tuple[list[dict], list[str]]:
+        """Старые status fields для преобразования в общую discovery-модель."""
         warnings: list[str] = []
         try:
             fields = self._admin_status_fields(project)
             if fields:
-                return {"status_fields": fields, "source": "admin", "warnings": warnings}
+                return fields, warnings
         except Exception:
             log.warning("youtrack: admin customFields недоступны — fallback", exc_info=True)
             warnings.append("admin customFields недоступны (нет прав?) — "
@@ -386,7 +456,54 @@ class YouTrackBoard:
             log.warning("youtrack: discovery полей из выборки не удался", exc_info=True)
             warnings.append("не удалось собрать поля статуса из задач")
             fields = []
-        return {"status_fields": fields, "source": "sample", "warnings": warnings}
+        return fields, warnings
+
+    def list_targets(self, project: str | None) -> dict:
+        """Статусы immutable status_field и доступные status-field options."""
+        fields, warnings = self._discover_status_fields(project)
+        selected = next((field for field in fields if field["field"] == self._status_field), None)
+        values = selected["values"] if selected is not None else []
+        if selected is None and fields:
+            warnings.append(
+                f"поле статуса {self._status_field!r} не найдено — targets недоступны"
+            )
+        return {
+            "targets": [
+                {"id": value, "label": value, "purposes": ["create", "done"]}
+                for value in values
+            ],
+            "options": [
+                {
+                    "key": "status_field",
+                    "label": "Status field",
+                    "required_for": ["sync", "create", "finish"],
+                    "choices": [
+                        {"id": field["field"], "label": field["field"]}
+                        for field in fields
+                    ],
+                }
+            ],
+            "warnings": warnings,
+        }
+
+    def _resolve_status_target(
+        self,
+        target: str,
+        project: str | None,
+    ) -> tuple[str | None, list[str]]:
+        discovery = self.list_targets(project)
+        exact_id = [item for item in discovery["targets"] if item["id"] == target]
+        if exact_id:
+            return exact_id[0]["id"], discovery["warnings"]
+        by_label = [item for item in discovery["targets"] if item["label"] == target]
+        if len(by_label) == 1:
+            return by_label[0]["id"], discovery["warnings"]
+        warnings = list(discovery["warnings"])
+        if len(by_label) > 1:
+            warnings.append(f"target {target!r} неоднозначен — статус не изменён")
+        else:
+            warnings.append(f"target {target!r} не найден — статус не изменён")
+        return None, warnings
 
     def _admin_status_fields(self, project: str | None) -> list[dict]:
         """Bundle-поля (state/enum) проекта из admin API + их значения. [] если project пуст
@@ -396,12 +513,12 @@ class YouTrackBoard:
         pid = self._resolve_project_id(project)
         if not pid:
             return []
-        r = self._client.get(
+        payload = self._read(
             f"/admin/projects/{quote(str(pid), safe='')}/customFields",
-            params={"fields": "field(name),$type,bundle(values(name,$type))"})
-        r.raise_for_status()
+            params={"fields": "field(name),$type,bundle(values(name,$type))"},
+        ) or []
         out: list[dict] = []
-        for pcf in (r.json() or []):
+        for pcf in payload:
             bundle = pcf.get("bundle") or {}
             values = [v.get("name") for v in (bundle.get("values") or []) if v.get("name")]
             if not values:
@@ -417,10 +534,9 @@ class YouTrackBoard:
         params: dict = {"fields": "customFields(name,value(name),$type)", "$top": _SAMPLE}
         if project:
             params["query"] = f"project: {project}"
-        r = self._client.get("/issues", params=params)
-        r.raise_for_status()
+        payload = self._read("/issues", params=params) or []
         agg: dict[str, dict] = {}  # field name -> {"values": [...], "$type": ...}
-        for issue in (r.json() or []):
+        for issue in payload:
             for cf in issue.get("customFields") or []:
                 name = cf.get("name")
                 val = cf.get("value")

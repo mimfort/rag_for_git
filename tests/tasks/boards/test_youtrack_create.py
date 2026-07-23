@@ -51,6 +51,11 @@ def _board(get_routes, post_routes=None, status_field="State"):
 def _routes():
     return {
         "/admin/projects": _Resp(200, [{"id": "0-1", "shortName": "PRI"}]),
+        "/admin/projects/0-1/customFields": _Resp(200, [{
+            "$type": "StateProjectCustomField",
+            "field": {"name": "State"},
+            "bundle": {"values": [{"name": "Open"}, {"name": "In Progress"}]},
+        }]),
         "/issues/PRI-42": _Resp(200, {"customFields": [
             {"name": "State", "$type": "StateIssueCustomField",
              "value": {"$type": "StateBundleElement", "name": "Open"}}]}),

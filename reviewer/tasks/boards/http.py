@@ -47,7 +47,11 @@ class BoardHttpClient:
             raise ValueError("operation must be 'read' or 'write'")
         for attempt in range(self._attempts):
             try:
-                response = self._client.request(method, path, **kwargs)
+                request = getattr(self._client, "request", None)
+                if callable(request):
+                    response = request(method, path, **kwargs)
+                else:
+                    response = getattr(self._client, method.lower())(path, **kwargs)
             except httpx.RequestError:
                 if operation == "read" and attempt < self._attempts - 1:
                     self._sleep(self._wait_for(attempt, None))

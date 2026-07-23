@@ -13,12 +13,14 @@ import html
 import logging
 import re
 from collections.abc import Iterable
+from typing import Any
 from urllib.parse import quote, unquote, urlsplit
 
 import httpx
 
 from reviewer.tasks.boards.attachments import fetch_attachment, host_allowed, _registrable_domain
 from reviewer.tasks.boards.base import RawTask, project_prefix
+from reviewer.tasks.boards.http import BoardHttpClient
 from reviewer.tasks.boards.markup import html_to_md, md_to_html
 
 log = logging.getLogger(__name__)
@@ -137,9 +139,47 @@ class YougileBoard:
             headers={"Authorization": f"Bearer {api_key}"},
             timeout=30.0,
         )
+        self._http = BoardHttpClient(self._client, secrets=(api_key,))
+        self._http_raw = self._client
 
     def close(self) -> None:
-        self._client.close()
+        self._board_http().close()
+
+    def _board_http(self) -> BoardHttpClient:
+        """Обёртка JSON-транспорта; lazy-ветка поддерживает тестовые fake clients."""
+        if getattr(self, "_http_raw", None) is not self._client:
+            self._http = BoardHttpClient(self._client, attempts=1)
+            self._http_raw = self._client
+        return self._http
+
+    def _read(self, path: str, **kwargs: Any) -> Any:
+        return self._board_http().request_json("GET", path, operation="read", **kwargs)
+
+    def _write(self, method: str, path: str, **kwargs: Any) -> Any:
+        return self._board_http().request_json(method, path, operation="write", **kwargs)
+
+    def validate_connection(self, project: str | None = None) -> dict:
+        """Проверить identity и минимальный read-доступ без возврата credentials."""
+        companies = (self._read("/companies", params={"limit": 1, "offset": 0}) or {}).get(
+            "content", []
+        )
+        projects = (self._read("/projects", params={"limit": 1, "offset": 0}) or {}).get(
+            "content", []
+        )
+        company = companies[0] if companies else {}
+        return {
+            "status": "ok",
+            "identity": {
+                "id": company.get("id"),
+                "name": company.get("name") or company.get("title"),
+            },
+            "project": {
+                "requested": project,
+                "accessible_projects": len(projects),
+            },
+            "capabilities": ["sync", "create", "finish", "attachments"],
+            "warnings": [],
+        }
 
     def _get_all(self, path: str, params: dict | None = None) -> list[dict]:
         """Пагинированный GET listing-эндпоинта (yougile: {content, paging})."""
@@ -148,9 +188,7 @@ class YougileBoard:
         while True:
             p = dict(params or {})
             p.update({"limit": _PAGE, "offset": offset})
-            r = self._client.get(path, params=p)
-            r.raise_for_status()
-            content = r.json().get("content", [])
+            content = (self._read(path, params=p) or {}).get("content", [])
             out.extend(content)
             if len(content) < _PAGE:
                 break
@@ -193,9 +231,7 @@ class YougileBoard:
         if not task_uuid:
             return []
         try:
-            r = self._client.get(f"/chats/{task_uuid}/messages")
-            r.raise_for_status()
-            msgs = r.json().get("content", []) or []
+            msgs = (self._read(f"/chats/{task_uuid}/messages") or {}).get("content", []) or []
         except Exception:
             log.warning("yougile: чат задачи %s недоступен", task_uuid, exc_info=True)
             return []
@@ -242,9 +278,7 @@ class YougileBoard:
         subtask_titles: dict[str, str] = {}
         for sid in raw.subtask_ids:
             try:
-                r = self._client.get(f"/tasks/{sid}")
-                r.raise_for_status()
-                st = r.json()
+                st = self._read(f"/tasks/{sid}") or {}
                 code = st.get("idTaskCommon") or sid
                 subtask_titles[sid] = f"{code}:{st.get('title', '')}"
             except Exception:
@@ -264,9 +298,7 @@ class YougileBoard:
         GET /tasks/{key} (тот же вызов, что и в finish); title колонки резолвится
         best-effort через GET /columns/{columnId}. fail-soft: сбой/404 → None."""
         try:
-            r = self._client.get(f"/tasks/{quote(key, safe='')}")
-            r.raise_for_status()
-            t = r.json()
+            t = self._read(f"/tasks/{quote(key, safe='')}") or {}
         except Exception:
             log.warning("yougile: fetch_one(%s) не удался", key, exc_info=True)
             return None
@@ -274,9 +306,9 @@ class YougileBoard:
         col_id = t.get("columnId")
         if col_id:
             try:
-                rc = self._client.get(f"/columns/{quote(str(col_id), safe='')}")
-                rc.raise_for_status()
-                status = rc.json().get("title")
+                status = (
+                    self._read(f"/columns/{quote(str(col_id), safe='')}") or {}
+                ).get("title")
             except Exception:
                 log.warning("yougile: колонка задачи %s недоступна — status=None",
                             key, exc_info=True)
@@ -292,37 +324,43 @@ class YougileBoard:
             completed=bool(t.get("completed", False)),
         )
 
-    def _resolve_column_id(self, current_col_id: str, title: str) -> str | None:
-        """id колонки с заданным title на той же доске, что и current_col_id.
+    def _resolve_column(
+        self,
+        current_col_id: str,
+        target: str,
+    ) -> tuple[dict | None, str | None]:
+        """Колонка по exact id или exact label на той же доске.
 
         GET /columns/{cur} → boardId; GET /columns?boardId=… → match по title.
-        fail-soft: сетевой сбой/не найдено → None (задачу не двигаем)."""
+        Неоднозначный label не выбирается."""
         try:
-            r = self._client.get(f"/columns/{quote(str(current_col_id), safe='')}")
-            r.raise_for_status()
-            board_id = r.json().get("boardId")
+            board_id = (
+                self._read(f"/columns/{quote(str(current_col_id), safe='')}") or {}
+            ).get("boardId")
             if not board_id:
-                log.warning("yougile: не определить доску колонки '%s' — задачу не двигаем", title)
-                return None
-            for col in self._get_all("/columns", {"boardId": board_id}):
-                if col.get("title") == title:
-                    return col.get("id")
+                return None, f"не удалось определить доску колонки {target!r}"
+            columns = self._get_all("/columns", {"boardId": board_id})
+            exact_id = next((col for col in columns if col.get("id") == target), None)
+            if exact_id is not None:
+                return exact_id, None
+            by_label = [col for col in columns if col.get("title") == target]
+            if len(by_label) == 1:
+                return by_label[0], None
+            if len(by_label) > 1:
+                return None, f"колонка {target!r} неоднозначна — задача не перенесена"
         except Exception:
-            log.warning("yougile: резолв колонки '%s' не удался", title, exc_info=True)
-        return None
+            log.warning("yougile: резолв колонки '%s' не удался", target, exc_info=True)
+            return None, f"не удалось разрешить колонку {target!r}"
+        return None, f"колонка {target!r} не найдена — задача не перенесена"
 
     def finish(self, key: str, pr_url: str, *, note: str | None = None,
-               mark_done: bool = True, done_state: str | None = None,
-               done_column: str | None = None) -> dict:
+               mark_done: bool = True, target: str | None = None) -> dict:
         """Закрыть задачу YouGile: completed:true + PR-ссылка в описание (идемпотентно)
-        + опциональный перенос в done-колонку (done_column).
+        + опциональный перенос в target-колонку.
 
         GET /tasks/{key} резолвит проектный/компанийный код в объект (+ uuid, columnId).
-        PUT обновляет задачу — двигает её timestamp (watermark синка). done_state не
-        применим (у YouGile булев completed)."""
-        r = self._client.get(f"/tasks/{quote(key, safe='')}")
-        r.raise_for_status()
-        task = r.json()
+        PUT обновляет задачу — двигает её timestamp (watermark синка)."""
+        task = self._read(f"/tasks/{quote(key, safe='')}") or {}
         uuid = task.get("id") or key
         desc = task.get("description", "") or ""
         completed = bool(task.get("completed", False))
@@ -343,12 +381,12 @@ class YougileBoard:
             pr_link_added = True
 
         column_moved = False
-        if done_column and cur_col:
-            target = self._resolve_column_id(cur_col, done_column)
-            if target is None:
-                warnings.append(f"колонка '{done_column}' не найдена — задача не перенесена")
-            elif target != cur_col:
-                payload["columnId"] = target
+        if target and cur_col:
+            target_column, warning = self._resolve_column(cur_col, target)
+            if warning:
+                warnings.append(warning)
+            elif target_column is not None and target_column.get("id") != cur_col:
+                payload["columnId"] = target_column["id"]
                 column_moved = True
 
         done_set = False
@@ -357,8 +395,7 @@ class YougileBoard:
             done_set = True
 
         if payload:
-            rr = self._client.put(f"/tasks/{quote(str(uuid), safe='')}", json=payload)
-            rr.raise_for_status()
+            self._write("PUT", f"/tasks/{quote(str(uuid), safe='')}", json=payload)
         return {"key": key, "board_id": uuid, "done_set": done_set,
                 "pr_link_added": pr_link_added, "column_moved": column_moved,
                 "already_closed": not payload, "warnings": warnings}
@@ -410,12 +447,21 @@ class YougileBoard:
             warnings.append(f"колонки для проекта {project!r} не найдены")
         return columns, warnings
 
-    def list_done_targets(self, project: str | None) -> dict:
-        """Колонки досок проекта (read-only, fail-soft). project — код-префикс задач
-        (напр. PRI): доска включается, если на ней есть хоть одна задача проекта. Пустой
-        project → все доски всех проектов. НИКОГДА не бросает."""
+    def list_targets(self, project: str | None) -> dict:
+        """Нормализованные create/done targets — колонки досок проекта."""
         columns, warnings = self._columns_of_project(project)
-        return {"columns": columns, "warnings": warnings}
+        return {
+            "targets": [
+                {
+                    "id": column["id"],
+                    "label": column["title"],
+                    "purposes": ["create", "done"],
+                }
+                for column in columns
+            ],
+            "options": [],
+            "warnings": warnings,
+        }
 
     def create(self, doc_md: str, *, title: str, target: str | None,
                project: str | None) -> dict:
@@ -429,21 +475,34 @@ class YougileBoard:
         columns, warnings = self._columns_of_project(project)
         if not columns:
             raise RuntimeError(f"колонки доски для проекта {project!r} не найдены")
-        col = next((c for c in columns if c["title"] == target), None) if target else None
-        if target and col is None:
-            warnings.append(
-                f"колонка '{target}' не найдена — задача создана в '{columns[0]['title']}'")
+        col = None
+        if target:
+            col = next((c for c in columns if c["id"] == target), None)
+            if col is None:
+                by_label = [c for c in columns if c["title"] == target]
+                if len(by_label) == 1:
+                    col = by_label[0]
+                elif len(by_label) > 1:
+                    warnings.append(
+                        f"колонка {target!r} неоднозначна — "
+                        f"задача создана в {columns[0]['title']!r}"
+                    )
+                else:
+                    warnings.append(
+                        f"колонка {target!r} не найдена — "
+                        f"задача создана в {columns[0]['title']!r}"
+                    )
         col = col or columns[0]
 
-        r = self._client.post("/tasks", json={"title": title, "columnId": col["id"],
-                                              "description": md_to_html(doc_md)})
-        r.raise_for_status()
-        uuid = str((r.json() or {}).get("id") or "")
+        created = self._write(
+            "POST",
+            "/tasks",
+            json={"title": title, "columnId": col["id"], "description": md_to_html(doc_md)},
+        )
+        uuid = str((created or {}).get("id") or "")
         key = uuid
         try:
-            rr = self._client.get(f"/tasks/{quote(uuid, safe='')}")
-            rr.raise_for_status()
-            payload = rr.json() or {}
+            payload = self._read(f"/tasks/{quote(uuid, safe='')}") or {}
             key = payload.get("idTaskProject") or uuid
             if not payload.get("idTaskProject"):
                 warnings.append(
