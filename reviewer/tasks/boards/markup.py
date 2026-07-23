@@ -24,7 +24,22 @@ _FENCE_RE = re.compile(r"^```")
 _INLINE_CODE_RE = re.compile(r"`([^`]+)`")
 _LINK_RE = re.compile(r"\[([^\]]+)\]\(([^)\s]+)\)")
 _BOLD_RE = re.compile(r"\*\*([^*]+)\*\*")
+_SAFE_URL_SCHEME_RE = re.compile(r"^(https?://|mailto:)", re.IGNORECASE)
 _STASH = "\x00%d\x00"
+
+
+def _link(m: re.Match) -> str:
+    """Собрать `<a href>` только для безопасной схемы URL.
+
+    `javascript:`/`data:`-схемы — известный XSS-вектор в href (браузер
+    доски может исполнить их по клику); текст, экранированный html.escape,
+    от этого не защищает, т.к. схема не содержит HTML-метасимволов. Ссылка
+    вне белого списка деградирует в исходный текст, а не ломает конвертацию.
+    """
+    text, url = m.group(1), m.group(2)
+    if _SAFE_URL_SCHEME_RE.match(url):
+        return f'<a href="{url}">{text}</a>'
+    return m.group(0)
 
 
 def _inline(text: str) -> str:
@@ -40,7 +55,7 @@ def _inline(text: str) -> str:
         return _STASH % (len(stash) - 1)
 
     out = html.escape(_INLINE_CODE_RE.sub(_keep, text))
-    out = _LINK_RE.sub(lambda m: f'<a href="{m.group(2)}">{m.group(1)}</a>', out)
+    out = _LINK_RE.sub(_link, out)
     out = _BOLD_RE.sub(r"<strong>\1</strong>", out)
     for i, chunk in enumerate(stash):
         out = out.replace(_STASH % i, chunk)

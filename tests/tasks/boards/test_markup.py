@@ -46,3 +46,13 @@ def test_raw_html_in_plain_text_is_escaped():
 
 def test_empty_input_returns_empty():
     assert md_to_html("") == ""
+
+
+def test_link_with_dangerous_scheme_is_not_rendered_as_link():
+    # javascript:/data: в href — XSS-вектор; такая ссылка должна деградировать
+    # в обычный текст, а не стать активным <a href="...">
+    for url in ("javascript:alert(1)", "data:text/html,<script>alert(1)</script>"):
+        html_out = md_to_html(f"[click]({url})")
+        assert "<a " not in html_out
+        assert "href=" not in html_out
+        assert "<script>" not in html_out
