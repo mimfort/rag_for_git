@@ -96,7 +96,7 @@ MCP-сессия (PreparedReview + ToolContext) живёт в процессе `
 | `reviewer/graph/` | `builder` (tree-sitter call-graph) · `scip` (парсер SCIP) · `backend` (оркестратор бэкенда: SCIP / tree-sitter) · `store` (Neo4j) |
 | `reviewer/retrieval/` | `Retriever`: гибрид (RRF) + graph-expansion + Voyage rerank → `ContextPack` |
 | `reviewer/llm/` | `_retry.py` (retry/backoff для Voyage) |
-| `reviewer/tools/` | инструменты MCP-агента PR-сессии (`search_code`, `get_related_symbols`, `read_file`, `get_definition`, `find_callers`, `get_changed_file_diff`); session-less варианты для Q&A — `search_codebase`/`related_symbols`/`callers`/`definition` в `mcp/service.py` |
+| `reviewer/tools/` | инструменты MCP-агента PR-сессии (`search_code`, `get_related_symbols`, `read_file`, `get_definition`, `find_callers`, `get_changed_file_diff`); session-less варианты для Q&A — `search_codebase`/`related_symbols`/`callers`/`definition`/`implementations` в `mcp/service.py` |
 | `reviewer/agent/` | `state` (ReviewUnit) · `assemble` · `dedup` |
 | `reviewer/mcp/` | `MCPReviewService` — сервисный слой MCP (prepare/tools/publish/history) |
 | `reviewer/services/` | `ReviewService.prepare` — подготовка PR (ingest + overlay + policy + units) |
@@ -131,8 +131,13 @@ MCP-сессия (PreparedReview + ToolContext) живёт в процессе `
   между `prepare_review` и `publish_review` (пользователь отменил, оркестрирующая LLM-сессия упала),
   публикация не вызывается вовсе — такой overlay собирает **GC** (`reviewer/services/gc.py`):
   оппортунистически при каждом `prepare_review` и по команде `reviewer gc`. Сирота = `pr:N` без
-  непросроченной строки в `review_sessions` (TTL `review_session_ttl_hours`) и вне активных сессий
-  процесса. GC никогда не трогает `base:<branch>`; при недоступной БД не удаляет ничего
+  живой строки в `review_sessions` и вне активных сессий процесса.
+  Живость — по последней активности (PRI-212, keepalive): обращения к сессии бампают
+  `last_seen_at` (in-memory всегда; в Postgres — `SessionStore.touch`, не чаще 60 с),
+  предикат везде `COALESCE(last_seen_at, created_at)` внутри TTL `review_session_ttl_hours`
+  (idle-таймаут, единый для GC, регидрации и `delete_expired`) — активное ревью дольше TTL
+  не теряет overlay, брошенное собирается как прежде.
+  GC никогда не трогает `base:<branch>`; при недоступной БД не удаляет ничего
   («не знаю живых» ≠ «живых нет»). Гарантию даёт только сервер: скилл `review-pr` — это промпт,
   а не `try/finally`.
 - **Наблюдаемость (`reviewer/web/`)**: каждый `publish_review` пишет в Postgres итоги прогона (`review_runs`/`review_findings`, гейт `REVIEW_HISTORY`) — fail-soft. Веб-админка (FastAPI `reviewer serve`) читает **ту же** БД.
@@ -166,8 +171,8 @@ MCP-сессия (PreparedReview + ToolContext) живёт в процессе `
 Догфуд PRI-203. В фазах планирования/ревью, если reviewer-MCP подключён и его base-индекс
 свеж (`reviewer status --json` -> `drift == 0`), предпочитай session-less тулы reviewer
 голому grep для кросс-файловых фактов: `search_codebase` (релевантный код), `callers`
-(blast-radius сигнатуры, которую собираешься менять), `related_symbols`, `definition`.
-Точечно — пропускай мелкие/знакомые правки и файлы, уже в контексте (Voyage 3 RPM / 10K TPM).
+(blast-radius сигнатуры, которую собираешься менять), `related_symbols`, `definition`,
+`implementations`. Точечно — пропускай мелкие/знакомые правки и файлы, уже в контексте (Voyage 3 RPM / 10K TPM).
 Base-индекс отслеживает целевую ветку, не рабочее дерево: грунтовка надёжна для существующего
 кода, но слепа к символам, только что правленным локально — их проверяй через Read. Если
 reviewer недоступен или индекс устарел — откат в grep/Read.

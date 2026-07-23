@@ -91,7 +91,7 @@ executing-plans → finishing). Единственный end-to-end пайпла
 | Индекс (RAG) | `reviewer/index/` | чанкинг (tree-sitter), эмбеддинги (Voyage), хранилище (pgvector+BM25), свежесть |
 | Граф кода | `reviewer/graph/` | построение рёбер `CALLS` + `IMPLEMENTS` (SCIP-бэкенд) или только `CALLS` (tree-sitter); оркестрация в `backend.py`; хранение и обход в Neo4j |
 | Ретрив | `reviewer/retrieval/` | гибрид (RRF) + graph-expansion + Voyage rerank → контекст |
-| Инструменты | `reviewer/tools/` | `search_code`, `get_related_symbols`, `read_file`, `get_definition`, `find_callers`, `get_changed_file_diff`; session-less `search_codebase`/`related_symbols`/`callers`/`definition` для Q&A |
+| Инструменты | `reviewer/tools/` | `search_code`, `get_related_symbols`, `read_file`, `get_definition`, `find_callers`, `get_changed_file_diff`; session-less `search_codebase`/`related_symbols`/`callers`/`definition`/`implementations` для Q&A |
 | Задачи/доски | `reviewer/tasks/` | нормализация в `TaskBrief`, REST-провайдеры досок (`TaskBoardProvider`, yougile — референс), `TaskService.index_batch` |
 | MCP-сервис | `reviewer/mcp/` | `MCPReviewService`: prepare/tool-вызовы/publish; управление сессиями PR |
 | Сервис | `reviewer/services/` | `ReviewService.prepare`: ingest PR, overlay, units |
@@ -368,7 +368,8 @@ claude plugin install rag-reviewer@rag-reviewer-marketplace --scope user
 - `/rag-reviewer:reviewer_configure-review` — настройка `.review.yml` и доски задач
 - `/rag-reviewer:reviewer_summarize-subsystems` — построение сводок подсистем (GraphRAG)
 - `/rag-reviewer:reviewer_finish-task` — закрытие задачи после PR
-- **MCP-сервер** `reviewer` с 31 тулом (см. [справочник MCP-тулов](#mcp-тулы-справочник)).
+- `/rag-reviewer:reviewer_create-task` — заведение задачи на доске
+- **MCP-сервер** `reviewer` с 36 тулами (см. [справочник MCP-тулов](#mcp-тулы-справочник)).
 
 > Команда `/plugin` покажет, что `rag-reviewer` установлен и включён.
 
@@ -601,7 +602,7 @@ RAG + граф кода и передаёт в **полный цикл superpowe
 - **Аргументы:** ключ задачи (напр. `PRI-4`, по `key_pattern`) **или** свободное описание (напр.
   «add a logout endpoint»). Board-less режим: описание + поиск по коду.
 - **MCP-тулы:** `get_board_config`, `get_subsystem_summaries`, `get_task`, `index_task`, `get_task_context`, `search_tasks`,
-  `search_codebase`, `related_symbols`, `callers`, `definition`, `get_pr_diff`; плюс подключённая
+  `search_codebase`, `related_symbols`, `callers`, `definition`, `implementations`, `get_pr_diff`; плюс подключённая
   доска (`mcp__<board>__*`) для чтения задачи.
 - **Поток:** preflight: проверка свежести индекса → прогрев корпуса задач через `sync_board` →
   резолв конфига доски → идентификация задачи (ключ vs текст) → subsystem prior через
@@ -676,7 +677,7 @@ RAG + граф кода и передаёт в **полный цикл superpowe
 
 - **Аргументы:** свободный вопрос (напр. «где аутентификация», «как работает свежесть индекса»,
   «объясни ретрив», «как устроено…»).
-- **MCP-тулы:** `search_codebase`, `related_symbols`, `callers`, `definition`; плюс harness
+- **MCP-тулы:** `search_codebase`, `related_symbols`, `callers`, `definition`, `implementations`; плюс harness
   `Read`/`Grep`/`Glob`.
 - **Поток:** при первом использовании за сессию — проверка свежести индекса `reviewer status` с
   предупреждением о дрейфе → резолв repo/branch → опционально: `get_subsystem_summaries` для
@@ -714,11 +715,26 @@ RAG + граф кода и передаёт в **полный цикл superpowe
 - **Поток:** list clusters → для каждого stale-кластера: title + summary → index →
   после полного прохода: удаление осиротевших сводок (prune) → доэмбеддинг сводок с NULL embeddings.
 
+### `reviewer_create-task` — завести задачу на доске
+
+Создаёт задачу на подключённой доске (YouGile / YouTrack). Тело описания собирает сервер по
+канонической структуре: Проблема / Что сделать / Критерии приёмки / Контекст. Описание хранится
+чистым markdown в обе стороны — разметку транспорта (YouGile хранит HTML) конвертирует провайдер,
+поэтому `get_task` больше не отдаёт модели `<br />` и `&gt;`.
+
+- **Аргументы:** свободное описание задачи.
+- **Используемые MCP-тулы:** `get_board_config`, `get_board_targets`, `search_codebase`,
+  `create_task`, `sync_board`.
+- **Поток:** прочитать `task_board` из `.review.yml` → собрать четыре поля с опорой на `path:line`
+  → discovery целевой колонки/статуса → подтверждение у пользователя → `create_task(...)` →
+  `sync_board(...)` → ключ и ссылка в ответе.
+- **Требует:** reviewer MCP-сервер + настроенную в его env доску.
+
 ---
 
 ## MCP-тулы (справочник)
 
-Сервер `reviewer-mcp` отдаёт 31 тул. Тулы PR-сессии требуют активного `prepare_review` для того же
+Сервер `reviewer-mcp` отдаёт 36 тулов. Тулы PR-сессии требуют активного `prepare_review` для того же
 `(repo, pr)` в том же запущенном сервере; остальные — session-less.
 
 ### Жизненный цикл ревью
@@ -754,6 +770,7 @@ code_quote, message, suggestion, fix:{start_line,end_line,replacement}|null, con
 | `search_codebase` | `(repo, query, top_k=10, branch=None, include_tests=False)` | Гибрид-поиск по base-индексу репо; с номерами строк, дедуп, тесты исключены по умолчанию. |
 | `related_symbols` | `(repo, node_id, branch=None)` | Соседи графа (calls/implements/tests) символа. |
 | `callers` | `(repo, node_id, branch=None)` | Входящие `CALLS` узла `path#fqn`. |
+| `implementations` | `(repo, node_id, branch=None)` | Входящие `IMPLEMENTS` узла `path#fqn` — подклассы/override-ы. |
 | `definition` | `(repo, symbol, branch=None)` | Определение символа (граф → индекс → семантический фолбэк). |
 | `get_pr_diff` | `(repo, number: int)` | Unified diff любого (исторического) PR; кап, fail-soft. |
 | `get_task` | `(key: str, project: str \| None = None)` | Прочитать нормализованный `TaskBrief` из стора (`{key, aliases, title, description, status, url, criteria}`). Возвращает `null` если нет. |
@@ -813,7 +830,7 @@ reviewer index /tmp/REPO --ref master --repo ORG/REPO # опц. вторая в�
 > его base-индекс свеж (`reviewer status --json` -> `drift == 0`), в фазах планирования и ревью
 > предпочитай session-less тулы reviewer голому grep для кросс-файловых фактов: `search_codebase`
 > (релевантный код), `callers` (blast-radius сигнатуры, которую собираешься менять),
-> `related_symbols`, `definition`. Точечно — пропускай мелкие/знакомые правки и файлы, уже в
+> `related_symbols`, `definition`, `implementations` (directed subclasses/overrides). Точечно — пропускай мелкие/знакомые правки и файлы, уже в
 > контексте (Voyage rate-limited). Base-индекс отслеживает целевую ветку, не твоё рабочее дерево:
 > грунтовка надёжна для существующего кода, но слепа к символам, которые ты только что правил
 > локально — их проверяй через Read. Если reviewer недоступен или индекс устарел — откат в grep/Read.
@@ -871,6 +888,10 @@ watermark на доску в `index_meta` (`ref="tasks:<board>"`): повтор�
 по-прежнему идёт через board-MCP на стороне LLM. Граф задач (`:Task`) глобален — одна задача может
 охватывать PR из нескольких микросервисных репозиториев.
 
+После обновления, меняющего нормализацию описаний, один раз запусти синк с
+`force_renormalize=true` — он игнорирует watermark и пере-нормализует весь корпус (дедуп по
+`content_hash` оставит эмбеддинг только реально изменившимся задачам).
+
 **Граф и RAG по задачам.** Прочитанная задача индексируется в граф (Neo4j: узлы `:Task`/`:PR`, рёбра
 `TASK_LINK`/`IMPLEMENTED_BY`/`TOUCHES`) и в вектор (Postgres, таблица `tasks`) тулом `index_task`. При
 ревью агент видит связанные задачи и их PR/код через `get_task_context`, а похожие по смыслу — через
@@ -901,6 +922,9 @@ reviewer check          # ✓/✗ по ключам, Postgres, Neo4j, GitHub; ex
 - Если ревью брошено между `prepare_review` и `publish_review` (пользователь отменил, оркестрирующая
   LLM-сессия упала), публикация не вызывается — такой overlay собирает GC: оппортунистически при
   следующем `prepare_review` и по команде `reviewer gc`.
+- Живость сессии продлевается активностью (keepalive): обращения к тулам ревью обновляют
+  `last_seen_at`, поэтому ревью, работающее дольше `review_session_ttl_hours`, не теряет свой
+  overlay; ревью без активности по-прежнему собирается GC по истечении TTL.
 
 ### Свежесть base-индекса
 
@@ -996,7 +1020,7 @@ reviewer/
   mcp/         MCPReviewService: prepare/tool-вызовы/publish; управление сессиями
   services/    ReviewService.prepare: ingest PR, overlay, units
   policy/      ReviewPolicy: env-дефолты + .review.yml + гейтинг
-  entrypoints/ cli.py (Click) · mcp_server.py (FastMCP, 31 тул)
+  entrypoints/ cli.py (Click) · mcp_server.py (FastMCP, 36 тулов)
   install.py   reviewer init / install / install-skills (кроссплатформенная привязка клиентов)
   web/         FastAPI + React/Vite SPA — веб-админка наблюдаемости
   app.py       сборка зависимостей из Settings

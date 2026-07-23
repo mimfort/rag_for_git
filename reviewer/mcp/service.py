@@ -32,6 +32,7 @@ from reviewer.services.review_service import (
 )
 from reviewer.tasks.boards import make_board_provider
 from reviewer.tasks.graph import PRRef
+from reviewer.tasks.taskdoc import TaskDoc, render_markdown
 from reviewer.tools.code_tools import ToolContext, make_tools
 from reviewer.tools.graph_format import format_neighbors
 from reviewer.mcp.schemas import FindingIn, VerdictIn
@@ -48,6 +49,11 @@ WALKTHROUGH_MARKER = "<!-- ai-walkthrough -->"
 # PRI-209: ограничиваем размер трейса сессии в памяти, чтобы избежать
 # неограниченного роста при длинных прогонах с большим числом tool calls.
 _MAX_SESSION_STEPS = 1000
+
+# PRI-212: DB-touch живости сессии (SessionStore.touch) — не чаще раза в
+# _TOUCH_INTERVAL_S. Тулы зовутся LLM-темпом; при TTL в часах минутная
+# гранулярность ничего не теряет и убирает бессмысленно частые UPDATE.
+_TOUCH_INTERVAL_S = 60
 
 
 @dataclass
@@ -71,6 +77,12 @@ class _Session:
     steps: list[dict] = field(default_factory=list)
     # PRI-209: момент начала сессии review (для duration_ms в истории).
     started_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    # PRI-212: последняя активность сессии (keepalive) — бампается на каждом
+    # обращении через _session(); по ней _gc_overlays фильтрует active_keys.
+    # started_at остаётся чистым «моментом создания» (duration_ms в истории).
+    last_seen_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    # PRI-212: момент последнего DB-touch (троттлинг _TOUCH_INTERVAL_S).
+    db_touched_at: datetime | None = None
     _seq: int = 0
 
 
@@ -250,17 +262,35 @@ class MCPReviewService:
         При промахе in-memory кэша пробуем поднять персистнутую сессию; успех
         прогревает кэш. Полный промах (нет строки / истёк TTL / БД недоступна) —
         ValueError с recovery hint.
+
+        PRI-212 (keepalive): каждое обращение продлевает живость сессии —
+        in-memory всегда (last_seen_at), в Postgres не чаще _TOUCH_INTERVAL_S
+        (SessionStore.touch fail-soft: сбой БД не роняет обращение).
         """
         s = self._sessions.get((repo, pr))
-        if s is not None:
-            return s
-        rehydrated = self._rehydrate_session(repo, pr)
-        if rehydrated is not None:
-            self._sessions[(repo, pr)] = rehydrated
-            return rehydrated
-        raise ValueError(
-            f"Сессия для {repo}#{pr} не найдена или истекла — вызови prepare_review заново"
-        )
+        if s is None:
+            s = self._rehydrate_session(repo, pr)
+            if s is None:
+                raise ValueError(
+                    f"Сессия для {repo}#{pr} не найдена или истекла — вызови prepare_review заново"
+                )
+            self._sessions[(repo, pr)] = s
+        self._touch_session(repo, pr, s)
+        return s
+
+    def _touch_session(self, repo: str, pr: int, s: _Session) -> None:
+        """Продлить живость сессии активностью (PRI-212)."""
+        now = datetime.now(timezone.utc)
+        s.last_seen_at = now
+        if (
+            s.db_touched_at is not None
+            and (now - s.db_touched_at).total_seconds() < _TOUCH_INTERVAL_S
+        ):
+            return
+        store = self._ensure_session_store()
+        if store is not None:
+            store.touch(repo, pr)  # fail-soft внутри SessionStore
+        s.db_touched_at = now
 
     def _invoke_tool(self, repo: str, pr: int, name: str, args: dict) -> str:
         """Вызов инструмента с per-вызов пересозданием make_tools.
@@ -371,12 +401,15 @@ class MCPReviewService:
     def sync_board(self, board: str | None = None, limit: int | None = None,
                    purge_orphaned: bool = False, keep_with_prs: bool = True,
                    board_type: str | None = None,
-                   status_field: str | None = None) -> dict:
+                   status_field: str | None = None,
+                   force_renormalize: bool = False) -> dict:
         """Server-side ETL: перечислить доску по REST, нормализовать, проиндексировать.
 
         board_type ограничивает синк одним типом доски (yougile|youtrack); board —
         проектом (префикс кода). status_field — имя YouTrack-поля статуса из .review.yml
-        (чтобы синк читал верное поле). Доска/ключ не настроены → error-summary (fail-soft).
+        (чтобы синк читал верное поле). force_renormalize=True игнорирует watermark и
+        перенормализует ВСЕ задачи (разовая операция после смены правил нормализации).
+        Доска/ключ не настроены → error-summary (fail-soft).
         """
         sync = getattr(self.components, "sync_service", None)
         if sync is None:
@@ -388,7 +421,8 @@ class MCPReviewService:
         try:
             return sync.run(board=board, board_type=board_type, limit=limit,
                             purge_orphaned=purge_orphaned,
-                            keep_with_prs=keep_with_prs, status_field=status_field)
+                            keep_with_prs=keep_with_prs, status_field=status_field,
+                            force_renormalize=force_renormalize)
         except Exception as e:
             log.warning("sync_board: сбой синка", exc_info=True)
             return {"status": "error", "reason": f"{type(e).__name__}: {e}"}
@@ -439,6 +473,63 @@ class MCPReviewService:
                 pass
         return {"status": "ok", "board_type": board_type, "reindexed": reindexed,
                 **result}
+
+    def create_task(self, title: str, problem: str = "",
+                    steps: list[str] | None = None, criteria: list[str] | None = None,
+                    context: str | None = None, board_type: str | None = None,
+                    project: str | None = None, target: str | None = None,
+                    status_field: str | None = None) -> dict:
+        """Создать задачу на доске (server-side write) из структурированных полей.
+
+        Структура описания собирается сервером (reviewer/tasks/taskdoc.py), поэтому
+        одинакова во всех клиентах и моделях. target — колонка (YouGile) или
+        значение поля статуса (YouTrack). Креды из env; наружу не отдаются.
+        """
+        types = self.settings.configured_board_types()
+        if board_type is None:
+            if len(types) == 1:
+                board_type = types[0]
+            else:
+                return {"status": "error",
+                        "reason": f"board_type required (configured: {types or 'none'})"}
+        if board_type not in types:
+            return {"status": "error",
+                    "reason": f"board '{board_type}' not configured (have: {types or 'none'})"}
+        provider = make_board_provider(self.settings, board_type, status_field=status_field)
+        if provider is None:
+            return {"status": "error", "reason": f"board '{board_type}' not configured"}
+        doc_md = render_markdown(TaskDoc(title=title, problem=problem,
+                                         steps=list(steps or []),
+                                         criteria=list(criteria or []), context=context))
+        reindexed = False
+        try:
+            result = provider.create(doc_md, title=title, target=target, project=project)
+            # Write-through: созданная задача сразу видна в get_task/search_tasks,
+            # не дожидаясь ближайшего sync_board. Best-effort, fail-soft.
+            key = result.get("key")
+            if not key:
+                # Ключ деградирован (например, YouTrack без idReadable в ответе) —
+                # реиндексировать нечего; не дёргаем fetch_one сетевым запросом
+                # с пустой строкой, факт создания задачи это не откатывает.
+                log.warning("create_task: write-through пропущен — ключ задачи "
+                           "не определён, реиндекс не выполнен")
+            else:
+                try:
+                    raw = provider.fetch_one(key)
+                    if raw is not None:
+                        self.components.task_service.index_task(provider.normalize(raw))
+                        reindexed = True
+                except Exception:
+                    log.warning("create_task: write-through реиндекс не удался", exc_info=True)
+        except Exception as e:
+            log.warning("create_task: сбой создания задачи", exc_info=True)
+            return {"status": "error", "reason": f"{type(e).__name__}: {e}"}
+        finally:
+            try:
+                provider.close()
+            except Exception:
+                pass
+        return {"status": "ok", "board_type": board_type, "reindexed": reindexed, **result}
 
     def get_board_targets(self, board_type: str | None = None,
                           project: str | None = None) -> dict:
@@ -649,6 +740,30 @@ class MCPReviewService:
         return format_neighbors(
             found, store=self.components.store, repo=repo, branch=resolved,
             overlay_ref=None, changed_paths=[], empty_msg="(вызовов не найдено)",
+            cap=cl.graph.callers_topk)
+
+    def implementations(self, repo: str, node_id: str,
+                        branch: str | None = None) -> str:
+        """Кто реализует/наследует символ node_id ('path#fqn') — входящие
+        IMPLEMENTS, без PR-сессии. Класс → подклассы; метод → override-ы.
+        На элемент: file:line + строка определения + [IMPLEMENTS].
+        Точны после полного `reviewer index` с SCIP."""
+        rb = self._resolve_repo_branch(repo, branch)
+        if isinstance(rb, str):
+            return rb
+        repo, resolved = rb
+        if self.components.graph is None:
+            return "(граф недоступен)"
+        cl = self._resolve_context_limits(repo, resolved)
+        try:
+            found = self.components.graph.implementations_detailed(
+                repo, [node_id], branch=resolved)
+        except Exception:
+            log.warning("implementations: сбой графа", exc_info=True)
+            return "(implementations не найдены)"
+        return format_neighbors(
+            found, store=self.components.store, repo=repo, branch=resolved,
+            overlay_ref=None, changed_paths=[], empty_msg="(implementations не найдены)",
             cap=cl.graph.callers_topk)
 
     def definition(self, repo: str, symbol: str,
@@ -1255,7 +1370,8 @@ class MCPReviewService:
         упал fail-soft.
 
         active_keys ограничены тем же TTL, что и персистнутые сессии (по
-        _Session.started_at), а не всем содержимым self._sessions. _sessions
+        _Session.last_seen_at — последней активности, PRI-212), а не всем
+        содержимым self._sessions. _sessions
         вычищается ТОЛЬКО в _cleanup (путь publish) — самый частый сценарий
         брошенного ревью (пользователь отменил скилл, а reviewer-mcp продолжает
         жить) никогда туда не попадает, и без TTL-отсечки ключ оставался бы
@@ -1267,7 +1383,7 @@ class MCPReviewService:
             cutoff = datetime.now(timezone.utc) - timedelta(
                 hours=self.settings.review_session_ttl_hours
             )
-            active = {k for k, s in self._sessions.items() if s.started_at > cutoff}
+            active = {k for k, s in self._sessions.items() if s.last_seen_at > cutoff}
             purge_orphaned_overlays(
                 self.components.store,
                 self._ensure_session_store(),

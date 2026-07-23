@@ -167,6 +167,11 @@ brief to `superpowers:brainstorming` (which leads to writing-plans → subagent-
      `include_tests=False`) returns deduplicated, line-numbered, test-free snippets — expand only the
      few symbols central to the task (feed graph tools the code node_ids, not test-exemplar ones), and cite
      `path:line` from the line-numbered snippets directly (no re-Read needed for grounding).
+     For OO/registry/dispatch tasks («add a new provider / handler»), prefer directed
+     `implementations(node_id)` (incoming IMPLEMENTS — who subclasses/overrides X) over the
+     undirected `related_symbols`, which mixes callers/tests/implements. A class node → its
+     subclasses; a method node → its overrides. Accurate after a full `reviewer index` with SCIP;
+     fail-soft `(implementations не найдены)` is non-fatal — continue.
      Pass the same `branch` you pass to `search_codebase`.
      Fail-open: a `(граф недоступен)` / `(нет связей)` / `(вызовов не найдено)` note is non-fatal — continue.
    - **Lazy PR diff (optional).** `get_task_context` surfaces a task and its PRs (id form
@@ -266,6 +271,10 @@ Use the session-less tools above.
    **After the PR is created (later in the dev cycle):** offer to close the task with the
    `/reviewer_finish-task` skill — it appends the PR link to the task and marks it done (bumping
    last-modified so the sync re-indexes the closed task). Skip in board-less mode (no task key).
+
+   **Board-less mode:** when the user's formulation has no task key and a board IS configured,
+   you may offer `/reviewer_create-task` first — it files the task with the canonical structure,
+   so the work gets a key, a URL and a place in the task corpus before implementation starts.
 
 ## Failure handling (fail-open)
 

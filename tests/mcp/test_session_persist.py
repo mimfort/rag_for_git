@@ -38,6 +38,9 @@ class _FakeSessionStore:
     def delete(self, repo, pr):
         self.rows.pop((repo, pr), None)
 
+    def touch(self, repo, pr):
+        """PRI-212: keepalive-заглушка — тест не проверяет продление живости."""
+
 
 class _FakeChangedFile:
     def __init__(self, path, status, patch):

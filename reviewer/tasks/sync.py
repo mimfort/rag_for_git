@@ -7,6 +7,10 @@ Board-агностичен (видит только TaskBoardProvider).
 active-keys и свежести статусов); normalize/index пропускаются для
 timestamp <= cursor. Purge выполняется по объединению active_keys всех провайдеров
 (задачи глобальны — иначе одна доска вычистит задачи другой).
+
+force_renormalize=True игнорирует watermark: каждая задача проходит полный
+normalize → index_batch. Разовая операция после смены правил нормализации
+(PRI-213); дедуп по content_hash сам отсечёт задачи с неизменившимся текстом.
 """
 from __future__ import annotations
 
@@ -26,7 +30,9 @@ class SyncService:
     def _cursor_ref(self, board_type: str, board: str | None) -> str:
         return f"tasks:{board_type}:{board or '*'}"
 
-    def _sync_provider(self, provider, board, limit) -> tuple[list[str], dict]:
+    def _sync_provider(
+        self, provider, board, limit, force_renormalize=False
+    ) -> tuple[list[str], dict]:
         """Синк одной доски: enumerate → watermark → normalize → index → курсор.
         purge НЕ делает (он общий по всем доскам — см. run)."""
         warnings: list[str] = []
@@ -46,7 +52,7 @@ class SyncService:
         for raw in provider.iter_raw(board, limit):
             active_keys.append(raw.key)
             max_ts = max(max_ts, raw.timestamp)
-            if raw.timestamp <= cursor:
+            if raw.timestamp <= cursor and not force_renormalize:
                 unchanged += 1
                 try:
                     meta_refresh.append(provider.normalize_meta(raw))
@@ -92,7 +98,8 @@ class SyncService:
         }
 
     def run(self, board=None, limit=None, purge_orphaned=False,
-            keep_with_prs=True, board_type=None, status_field=None) -> dict:
+            keep_with_prs=True, board_type=None, status_field=None,
+            force_renormalize=False) -> dict:
         agg = {"enumerated": 0, "changed": 0, "embedded": 0, "refreshed": 0,
                "unchanged": 0, "failed": 0, "meta_refreshed": 0,
                "warnings": [], "cursor_advanced": False}
@@ -111,7 +118,7 @@ class SyncService:
         all_active: list[str] = []
         by_board: list[dict] = []
         for provider in providers:
-            active, one = self._sync_provider(provider, board, limit)
+            active, one = self._sync_provider(provider, board, limit, force_renormalize)
             all_active.extend(active)
             for k in ("enumerated", "changed", "embedded", "refreshed",
                       "unchanged", "failed", "meta_refreshed"):
