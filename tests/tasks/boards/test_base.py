@@ -94,3 +94,15 @@ def test_make_board_provider_threads_status_field(monkeypatch):
     })()
     boards.make_board_provider(settings, "youtrack", status_field="Stage")
     assert captured["status_field"] == "Stage"
+
+
+def test_both_providers_implement_create():
+    # контракт Protocol: обе доски умеют создавать задачу с одной сигнатурой
+    import inspect
+
+    from reviewer.tasks.boards.yougile import YougileBoard
+    from reviewer.tasks.boards.youtrack import YouTrackBoard
+
+    for cls in (YougileBoard, YouTrackBoard):
+        sig = inspect.signature(cls.create)
+        assert list(sig.parameters) == ["self", "doc_md", "title", "target", "project"]
