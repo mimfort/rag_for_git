@@ -401,12 +401,15 @@ class MCPReviewService:
     def sync_board(self, board: str | None = None, limit: int | None = None,
                    purge_orphaned: bool = False, keep_with_prs: bool = True,
                    board_type: str | None = None,
-                   status_field: str | None = None) -> dict:
+                   status_field: str | None = None,
+                   force_renormalize: bool = False) -> dict:
         """Server-side ETL: перечислить доску по REST, нормализовать, проиндексировать.
 
         board_type ограничивает синк одним типом доски (yougile|youtrack); board —
         проектом (префикс кода). status_field — имя YouTrack-поля статуса из .review.yml
-        (чтобы синк читал верное поле). Доска/ключ не настроены → error-summary (fail-soft).
+        (чтобы синк читал верное поле). force_renormalize=True игнорирует watermark и
+        перенормализует ВСЕ задачи (разовая операция после смены правил нормализации).
+        Доска/ключ не настроены → error-summary (fail-soft).
         """
         sync = getattr(self.components, "sync_service", None)
         if sync is None:
@@ -418,7 +421,8 @@ class MCPReviewService:
         try:
             return sync.run(board=board, board_type=board_type, limit=limit,
                             purge_orphaned=purge_orphaned,
-                            keep_with_prs=keep_with_prs, status_field=status_field)
+                            keep_with_prs=keep_with_prs, status_field=status_field,
+                            force_renormalize=force_renormalize)
         except Exception as e:
             log.warning("sync_board: сбой синка", exc_info=True)
             return {"status": "error", "reason": f"{type(e).__name__}: {e}"}

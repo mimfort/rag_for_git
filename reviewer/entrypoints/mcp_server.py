@@ -105,7 +105,8 @@ def create_server(service: MCPReviewService) -> FastMCP:
     def sync_board(board: str | None = None, limit: int | None = None,
                    purge_orphaned: bool = False, keep_with_prs: bool = True,
                    board_type: str | None = None,
-                   status_field: str | None = None) -> dict:
+                   status_field: str | None = None,
+                   force_renormalize: bool = False) -> dict:
         """Server-side ETL: enumerate the configured task board via REST, normalize,
         and index it (vector store + task graph). board_type limits sync to one board
         type (yougile|youtrack) — take it from task_board.type in the repo's .review.yml,
@@ -113,9 +114,13 @@ def create_server(service: MCPReviewService) -> FastMCP:
         status_field is the YouTrack status field name from the repo's .review.yml
         (so sync reads the right field; ignored by YouGile).
         Incremental via a per-(type,board) timestamp watermark; --limit disables purge
-        and cursor advance. Returns a compact counts summary with by_board breakdown."""
+        and cursor advance.
+        force_renormalize=True ignores the watermark and re-normalizes every task —
+        a one-off after normalization rules change (PRI-213); content_hash dedup keeps
+        the embedding cost to actually-changed descriptions.
+        Returns a compact counts summary with by_board breakdown."""
         return service.sync_board(board, limit, purge_orphaned, keep_with_prs,
-                                  board_type, status_field)
+                                  board_type, status_field, force_renormalize)
 
     @mcp.tool()
     def finish_task(key: str, pr_url: str, note: str | None = None,
