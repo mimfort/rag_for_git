@@ -41,7 +41,7 @@ from reviewer.tasks.boards.errors import (
 from reviewer.tasks.boards.registry import BoardProviderRegistry, default_board_registry
 from reviewer.tasks.boards.runtime import resolved_provider
 from reviewer.tasks.graph import PRRef
-from reviewer.tasks.sync import SyncService
+from reviewer.tasks.sync import SyncProvider, SyncService
 from reviewer.tasks.taskdoc import TaskDoc, render_markdown
 from reviewer.tools.code_tools import ToolContext, make_tools
 from reviewer.tools.graph_format import format_neighbors
@@ -504,7 +504,7 @@ class MCPReviewService:
                 credential_source=credentials,
             ) as resolved:
                 scoped = SyncService(
-                    [resolved.provider],
+                    [SyncProvider(resolved.provider, resolved.secrets)],
                     self.components.task_service,
                     self.components.store,
                 )

@@ -65,10 +65,25 @@ def resolved_provider(
                 "attachment_store_chars": settings.task_attachment_store_chars,
             },
         )
+    except BoardProviderError as error:
+        raise BoardProviderError(
+            error.category,
+            error.message,
+            hint=error.hint,
+            retryable=error.retryable,
+            secrets=secrets,
+        ) from None
     except (TypeError, ValueError):
         raise BoardProviderError(
             "configuration",
             "Board provider configuration is invalid.",
+            secrets=secrets,
+        ) from None
+    except Exception:
+        raise BoardProviderError(
+            "configuration",
+            "Board provider initialization failed.",
+            secrets=secrets,
         ) from None
 
     try:

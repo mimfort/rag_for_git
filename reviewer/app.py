@@ -14,7 +14,7 @@ from reviewer.tasks.service import TaskService
 from reviewer.tasks.boards import make_board_providers
 from reviewer.config.provider_credentials import ProviderCredentialSource
 from reviewer.tasks.boards.registry import default_board_registry
-from reviewer.tasks.sync import SyncService
+from reviewer.tasks.sync import SyncProvider, SyncService
 
 @dataclass
 class Components:
@@ -70,7 +70,18 @@ def build_components(settings: Settings, connect: bool = True) -> Components:
         registry=board_registry,
         credential_source=board_credentials,
     )
-    sync_service = SyncService(providers, task_service, store) if providers else None
+    sync_providers = [
+        SyncProvider(
+            provider,
+            board_credentials.secret_values(board_registry.get(provider.board_type)),
+        )
+        for provider in providers
+    ]
+    sync_service = (
+        SyncService(sync_providers, task_service, store)
+        if sync_providers
+        else None
+    )
     summary_store = SummaryStore(
         settings.pg_dsn,
         min_size=settings.pg_pool_min_size,

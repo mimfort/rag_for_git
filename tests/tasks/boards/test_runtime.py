@@ -57,6 +57,63 @@ def test_resolved_provider_closes_and_sanitizes_provider_error():
     assert provider.closed is True
 
 
+def test_resolved_provider_sanitizes_runtime_error_from_factory():
+    secret = "factory-runtime-secret"
+
+    def factory(context):
+        raise RuntimeError(f"factory rejected {context.credentials['FAKE_TOKEN']}")
+
+    registry = BoardProviderRegistry([fake_provider_spec(factory=factory)])
+    credentials = ProviderCredentialSource(values={"FAKE_TOKEN": secret})
+
+    with pytest.raises(BoardProviderError) as exc_info:
+        with resolved_provider(
+            Settings(_env_file=None),
+            "fake",
+            {},
+            registry=registry,
+            credential_source=credentials,
+        ):
+            pass
+
+    assert secret not in str(exc_info.value)
+    assert secret not in repr(exc_info.value)
+
+
+def test_resolved_provider_resanitizes_board_error_from_factory():
+    secret = "factory-board-secret"
+
+    def factory(context):
+        value = context.credentials["FAKE_TOKEN"]
+        raise BoardProviderError(
+            "authentication",
+            f"token {value} was rejected",
+            hint=f"replace {value}",
+            retryable=True,
+        )
+
+    registry = BoardProviderRegistry([fake_provider_spec(factory=factory)])
+    credentials = ProviderCredentialSource(values={"FAKE_TOKEN": secret})
+
+    with pytest.raises(BoardProviderError) as exc_info:
+        with resolved_provider(
+            Settings(_env_file=None),
+            "fake",
+            {},
+            registry=registry,
+            credential_source=credentials,
+        ):
+            pass
+
+    error = exc_info.value
+    assert error.category == "authentication"
+    assert error.retryable is True
+    assert secret not in str(error)
+    assert secret not in repr(error)
+    assert "[REDACTED]" in error.message
+    assert "[REDACTED]" in error.hint
+
+
 def test_resolved_provider_rejects_ambiguous_or_unconfigured_type_safely():
     registry = BoardProviderRegistry([
         fake_provider_spec(board_type="first"),
