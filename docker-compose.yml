@@ -35,7 +35,7 @@ services:
     tmpfs: ["/var/lib/postgresql"]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U reviewer_test -d reviewer_test"]
-      start_period: 60s
+      start_period: 180s
       start_interval: 2s
       interval: 30s
       timeout: 2s
@@ -51,7 +51,7 @@ services:
     # частые пробы — только в фазе старта (start_period + start_interval).
     healthcheck:
       test: ["CMD-SHELL", "cypher-shell -u neo4j -p reviewer_test_pass 'RETURN 1'"]
-      start_period: 60s
+      start_period: 180s
       start_interval: 2s
       interval: 300s
       timeout: 3s

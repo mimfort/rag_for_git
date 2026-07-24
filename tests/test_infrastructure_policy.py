@@ -223,18 +223,27 @@ def _duration_seconds(value: str | int | float) -> float:
     return sum(float(number) * units[unit] for number, unit in parts)
 
 
-def _assert_cheap_idle_healthcheck(healthcheck: dict, *, probe: list[str]) -> None:
+def _assert_cheap_idle_healthcheck(
+    healthcheck: dict, *, probe: list[str], min_interval: int
+) -> None:
     """Проба и retries фиксированы точно, тайминги — инвариантами.
 
-    Инвариант: дорогая проба не крутится в установившемся режиме (interval >= 30s),
-    но старт остаётся быстрым — внутри start_period пробы идут часто (start_interval <= 5s).
-    Тюнинг конкретных чисел не должен ломать тест, поэтому равенства на них нет.
+    Инварианты: установившийся режим не дешевле порога, посчитанного под цену
+    конкретной пробы (interval >= min_interval — у neo4j-test порог выше, чем у
+    paradedb-test, потому что cypher-shell на порядки дороже pg_isready); старт не
+    слишком короткий, иначе сервис на загруженной машине не успевает подняться за
+    start_period и следующая проба откладывается до редкого interval
+    (start_period >= 30s); фаза старта остаётся частой (start_interval <= 5s); проба
+    не может зависать надолго и держать health-монитор (timeout <= 10s). Тюнинг
+    конкретных чисел внутри этих границ не должен ломать тест, поэтому равенства на
+    таймингах нет.
     """
     assert healthcheck["test"] == probe
     assert healthcheck["retries"] == 3
-    assert _duration_seconds(healthcheck["interval"]) >= 30
+    assert _duration_seconds(healthcheck["interval"]) >= min_interval
     assert _duration_seconds(healthcheck["start_interval"]) <= 5
-    assert _duration_seconds(healthcheck["start_period"]) > 0
+    assert _duration_seconds(healthcheck["start_period"]) >= 30
+    assert _duration_seconds(healthcheck["timeout"]) <= 10
 
 
 def test_compose_defines_isolated_test_profile_services() -> None:
@@ -252,6 +261,7 @@ def test_compose_defines_isolated_test_profile_services() -> None:
     _assert_cheap_idle_healthcheck(
         paradedb["healthcheck"],
         probe=["CMD-SHELL", "pg_isready -U reviewer_test -d reviewer_test"],
+        min_interval=30,
     )
 
     neo4j = compose["services"]["neo4j-test"]
@@ -264,6 +274,7 @@ def test_compose_defines_isolated_test_profile_services() -> None:
             "CMD-SHELL",
             "cypher-shell -u neo4j -p reviewer_test_pass 'RETURN 1'",
         ],
+        min_interval=300,
     )
 
 
