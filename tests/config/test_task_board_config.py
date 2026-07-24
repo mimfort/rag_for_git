@@ -93,3 +93,27 @@ def test_rejects_registry_declared_secret_names_without_echoing_values():
         })
 
     assert secret not in str(error.value)
+
+
+def test_rejects_secret_key_declared_by_another_registered_provider():
+    secret = "do-not-echo-cross-provider-secret"
+
+    with pytest.raises(ValueError) as error:
+        normalize_task_board_config({
+            "type": "yougile",
+            "options": {"YOUTRACK_TOKEN": secret},
+        })
+
+    assert secret not in str(error.value)
+
+
+def test_rejects_secret_key_nested_in_arbitrary_json_lists():
+    secret = "do-not-echo-nested-secret"
+
+    with pytest.raises(ValueError) as error:
+        normalize_task_board_config({
+            "type": "yougile",
+            "options": {"nested": [[{"YOUTRACK_TOKEN": secret}]]},
+        })
+
+    assert secret not in str(error.value)

@@ -1525,6 +1525,7 @@ class MCPReviewService:
             },
             "units": units,
             "task_board": p.task_board,
+            "task_board_warnings": list(p.policy.task_board_warnings),
             "task_keys": p.task_keys,
             "skipped_paths": p.skipped_paths,
             "skip_drafts": self.settings.review_skip_drafts,

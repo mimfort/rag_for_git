@@ -165,40 +165,29 @@ def _json_mapping(value: object, *, field: str) -> dict[str, JsonValue]:
     return {key: normalize(item) for key, item in value.items()}
 
 
-def _secret_env_names(board_type: str | tuple[str, ...] | None) -> frozenset[str]:
+def _secret_env_names() -> frozenset[str]:
     """Credential names come only from registry metadata, never from config values."""
     from reviewer.tasks.boards.registry import default_board_registry
 
     registry = default_board_registry()
-    requested = (board_type,) if isinstance(board_type, str) else board_type
-    specs = []
-    if requested:
-        for name in requested:
-            try:
-                specs.append(registry.get(name))
-            except KeyError:
-                continue
-    if not specs:
-        specs = [registry.get(name) for name in registry.registered_types()]
     return frozenset(
         env
-        for spec in specs
+        for board_name in registry.registered_types()
+        for spec in (registry.get(board_name),)
         for credential in spec.credential_fields
         if credential.secret
         for env in (credential.env, *credential.aliases)
     )
 
 
-def _contains_secret_key(value: Mapping[str, JsonValue], secret_names: frozenset[str]) -> bool:
-    for key, item in value.items():
-        if key in secret_names:
-            return True
-        if isinstance(item, dict) and _contains_secret_key(item, secret_names):
-            return True
-        if isinstance(item, list):
-            if any(isinstance(child, dict) and _contains_secret_key(child, secret_names)
-                   for child in item):
-                return True
+def _contains_secret_key(value: JsonValue, secret_names: frozenset[str]) -> bool:
+    if isinstance(value, dict):
+        return any(
+            key in secret_names or _contains_secret_key(item, secret_names)
+            for key, item in value.items()
+        )
+    if isinstance(value, list):
+        return any(_contains_secret_key(item, secret_names) for item in value)
     return False
 
 
@@ -218,8 +207,7 @@ def normalize_task_board_config(raw: Mapping[str, object] | None) -> TaskBoardCo
     board_type = _board_type(raw)
     raw_options = raw.get("options", {})
     options = _json_mapping(raw_options, field="task_board.options")
-    if _contains_secret_key(_json_mapping(raw, field="task_board"),
-                            _secret_env_names(board_type)):
+    if _contains_secret_key(_json_mapping(raw, field="task_board"), _secret_env_names()):
         raise ValueError("task_board must not contain credentials")
     done_target, options, warnings = _migrate_legacy_values(
         target=_optional_string(raw, "done_target"),
