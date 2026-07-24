@@ -12,6 +12,7 @@ import pytest
 
 from reviewer.tasks.boards.base import TaskBoardProvider
 from reviewer.tasks.boards.errors import BoardProviderError
+from reviewer.tasks.boards.jira import JiraCloudBoard
 from reviewer.tasks.boards.yougile import YougileBoard
 from reviewer.tasks.boards.youtrack import YouTrackBoard
 
@@ -57,11 +58,26 @@ class ProviderAdapter:
     ) -> tuple[TaskBoardProvider, _State]:
         state = state or _State()
         status = error_status or (403 if forbidden else None)
-        handler = (
-            _yougile_handler(state, error_status=status)
-            if self.board_type == "yougile"
-            else _youtrack_handler(state, error_status=status)
-        )
+        handler = {
+            "yougile": _yougile_handler,
+            "youtrack": _youtrack_handler,
+            "jira": _jira_handler,
+        }[self.board_type](state, error_status=status)
+        if self.board_type == "jira":
+            return (
+                JiraCloudBoard(
+                    base_url="https://jira.test",
+                    email="robot@example.test",
+                    api_token=self.secret,
+                    key_pattern=r"PRI-\d+",
+                    issue_type="10001",
+                    attachment_max_bytes=1000,
+                    attachment_timeout=1.0,
+                    attachment_store_chars=1000,
+                    transport=_RecordingTransport(handler, state),
+                ),
+                state,
+            )
         raw_client = httpx.Client(
             base_url=(
                 "https://yougile.test/api-v2"
@@ -105,6 +121,18 @@ ADAPTERS = (
         project="PRI",
         key="PRI-1",
         target_id="Done",
+        target_label="Done",
+        missing_target="Missing",
+    ),
+)
+
+JIRA_READ_ADAPTERS = (
+    ProviderAdapter(
+        board_type="jira",
+        secret="jira-contract-secret",
+        project="PRI",
+        key="PRI-1",
+        target_id="2",
         target_label="Done",
         missing_target="Missing",
     ),
@@ -334,6 +362,65 @@ def _youtrack_handler(
     return handle
 
 
+def _jira_issue(number: int) -> dict[str, Any]:
+    return {
+        "id": str(10000 + number),
+        "key": f"PRI-{number}",
+        "fields": {
+            "summary": f"Задача {number}",
+            "description": {
+                "type": "doc",
+                "version": 1,
+                "content": [
+                    {"type": "paragraph", "content": [{"type": "text", "text": f"Описание PRI-{number}"}]}
+                ],
+            },
+            "status": {"id": "1", "name": "Open"},
+            "updated": f"2026-07-23T09:{number % 60:02d}:00.000Z",
+            "subtasks": [{"key": "PRI-9", "fields": {"summary": "Подзадача"}}] if number == 1 else [],
+            "issuelinks": [],
+            "attachment": [
+                {
+                    "filename": "spec.txt",
+                    "mimeType": "text/plain",
+                    "size": 24,
+                    "content": "https://jira.test/files/spec.txt",
+                }
+            ] if number == 1 else [],
+            "issuetype": {"id": "10001", "name": "Task"},
+            "project": {"id": "10000", "key": "PRI", "name": "PRI"},
+        },
+    }
+
+
+def _jira_handler(
+    state: _State,
+    *,
+    error_status: int | None,
+) -> Callable[[httpx.Request], httpx.Response]:
+    def handle(request: httpx.Request) -> httpx.Response:
+        _record(state, request)
+        if error_status is not None:
+            return httpx.Response(error_status, json={"token": "must-not-leak"})
+        if request.method == "POST" and request.url.path == "/rest/api/3/search/jql":
+            payload = _json(request)
+            start = 200 if payload.get("nextPageToken") else 0
+            issues = [_jira_issue(number) for number in range(1, 202)]
+            page = {"issues": issues[start : start + 200]}
+            if start == 0:
+                page["nextPageToken"] = "next"
+            else:
+                page["isLast"] = True
+            return httpx.Response(200, json=page)
+        if request.method == "GET" and request.url.path == "/rest/api/3/issue/PRI-1":
+            return httpx.Response(200, json=_jira_issue(1))
+        if request.method == "GET" and request.url.path == "/files/spec.txt":
+            return httpx.Response(200, text="Критерий из вложения")
+        return httpx.Response(404, json={})
+
+    return handle
+
+
 class ProviderContract:
     """Общие поведенческие проверки полного provider contract."""
 
@@ -356,7 +443,11 @@ class ProviderContract:
         rows = list(provider.iter_raw(adapter.project, None))
         assert len(rows) > (1000 if adapter.board_type == "yougile" else 200)
         assert rows[0].timestamp > 0
-        page_calls = [call for call in state.calls if call[1].endswith("/tasks") or call[1].endswith("/issues")]
+        page_calls = [
+            call
+            for call in state.calls
+            if call[1].endswith(("/tasks", "/issues", "/search/jql"))
+        ]
         assert len(page_calls) >= 2
 
     def test_normalize_meta_has_zero_http_budget(self, adapter: ProviderAdapter) -> None:
@@ -467,3 +558,17 @@ class ProviderContract:
             provider.validate_connection(adapter.project)
         text = f"{exc_info.value!s}\n{exc_info.value!r}\n{caplog.text}"
         assert adapter.secret not in text
+
+
+class ProviderReadContract:
+    """Read/normalize subset для адаптера до включения production registration gate."""
+
+    adapter = ProviderContract.adapter
+    test_iter_raw_reads_all_pages_and_maps_stable_timestamp = (
+        ProviderContract.test_iter_raw_reads_all_pages_and_maps_stable_timestamp
+    )
+    test_normalize_meta_has_zero_http_budget = ProviderContract.test_normalize_meta_has_zero_http_budget
+    test_normalize_preserves_markdown_links_subtasks_and_attachments = (
+        ProviderContract.test_normalize_preserves_markdown_links_subtasks_and_attachments
+    )
+    test_fetch_one_matches_iter_mapper = ProviderContract.test_fetch_one_matches_iter_mapper

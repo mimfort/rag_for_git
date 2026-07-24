@@ -40,6 +40,7 @@ class RawTask:
     board_id: str = ""  # внутренний id задачи у провайдера (yougile UUID для чат-эндпоинта;
     # youtrack не использует — там везде idReadable)
     completed: bool = False  # YouGile: булев чекбокс «выполнено» (мапится в status="done")
+    provider_data: dict = field(default_factory=dict)  # нейтральные расширенные метаданные
 
 
 class TaskBoardProvider(Protocol):
