@@ -26,3 +26,10 @@ def test_readme_ru_has_grounding_section():
 def test_plugin_readme_points_to_grounding():
     text = _read("plugin/README.md")
     assert "грунтов" in text.lower()  # указатель на раздел грунтовки
+
+
+def test_readmes_point_to_authoritative_board_provider_reference():
+    for rel in ("README.md", "README.ru.md"):
+        text = _read(rel)
+        assert "docs/board-providers.md" in text
+        assert "provider_options" in text

@@ -3,12 +3,10 @@
 # Все ключи опциональны; заданные переопределяют env-дефолты (reviewer/config/settings.py).
 # Полный разбор политики — в README.md и reviewer/policy/policy.py.
 
-# Доска задач: включает обогащение ревью контекстом задачи и скилл /solve-task.
+# Доска задач: registered provider + generic targets/options; credentials живут только в env.
+# Полная matrix, setup, rotation и legacy migration: docs/board-providers.md.
 task_board:
   type: yougile
-  mcp: yougile
-  key_pattern: 'PRI-\d+'
-  url_template: 'https://ru.yougile.com/team/686c049c8af8/#{code}'
   project: PRI
   create_target: null
   done_target: Готово
@@ -32,7 +30,7 @@ paths:
   ignore:
     - eval                           # эвал-харнес агента: не продакшн-код, не нужен в ревью-индексе
     - reviewer/graph/scip_pb2.py     # сгенерированный protobuf-файл
-    - sync_chunk.py                  # ручная утилита синка задач YouGile; не продакшн-код, дублирует reviewer/tasks/sync.py
+    - sync_chunk.py                  # ручная утилита синка задач; не продакшн-код, дублирует reviewer/tasks/sync.py
 
 # Глубина кластеризации сводок подсистем (число сегментов пути). Дефолт из env (2).
 summary_cluster_depth: 2

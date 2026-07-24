@@ -92,7 +92,7 @@ executing-plans → finishing). Единственный end-to-end пайпла
 | Граф кода | `reviewer/graph/` | построение рёбер `CALLS` + `IMPLEMENTS` (SCIP-бэкенд) или только `CALLS` (tree-sitter); оркестрация в `backend.py`; хранение и обход в Neo4j |
 | Ретрив | `reviewer/retrieval/` | гибрид (RRF) + graph-expansion + Voyage rerank → контекст |
 | Инструменты | `reviewer/tools/` | `search_code`, `get_related_symbols`, `read_file`, `get_definition`, `find_callers`, `get_changed_file_diff`; session-less `search_codebase`/`related_symbols`/`callers`/`definition`/`implementations` для Q&A |
-| Задачи/доски | `reviewer/tasks/` | нормализация в `TaskBrief`, REST-провайдеры досок (`TaskBoardProvider`, yougile — референс), `TaskService.index_batch` |
+| Задачи/доски | `reviewer/tasks/` | нормализация в `TaskBrief`, REST-адаптеры зарегистрированных `TaskBoardProvider`, `TaskService.index_batch` |
 | MCP-сервис | `reviewer/mcp/` | `MCPReviewService`: prepare/tool-вызовы/publish; управление сессиями PR |
 | Сервис | `reviewer/services/` | `ReviewService.prepare`: ingest PR, overlay, units |
 | Агент | `reviewer/agent/` | state (ReviewUnit) · assemble · dedup |
@@ -499,25 +499,23 @@ rm /tmp/rag-reviewer.tgz
 
 Подключение к доске одинаково для всех репозиториев команды, поэтому задаётся **один раз** в env
 reviewer-mcp, а не дублируется в `.review.yml` каждого репо. См.
-[Политику per-repo и доску задач](#политика-per-repo-и-доска-задач).
+[Политику per-repo и доску задач](#политика-per-repo-и-доска-задач) и авторитетный
+[справочник провайдеров досок](docs/board-providers.md).
 
 | Переменная | Дефолт | Назначение |
 |---|---|---|
-| `YOUGILE_API_KEY` | `""` | **REST API-ключ** для YouGile server-side болк-синка. |
-| `YOUGILE_API_BASE` | `""` | YouGile REST API base URL; пусто → `https://yougile.com/api-v2`. |
-| `YOUTRACK_TOKEN` | `""` | **REST API-токен** для YouTrack server-side болк-синка. |
-| `YOUTRACK_BASE_URL` | `""` | YouTrack REST API base URL. |
+| `YOUGILE_API_KEY` / `YOUGILE_API_BASE` | `""` | Креды зарегистрированного провайдера; base имеет provider default. |
+| `YOUTRACK_TOKEN` / `YOUTRACK_BASE_URL` | `""` | Креды зарегистрированного провайдера. |
+| `JIRA_BASE_URL` / `JIRA_EMAIL` / `JIRA_API_TOKEN` | `""` | Jira Cloud direct-site креды; API-токен без scopes. |
 | `TASK_BOARD_MCP` | `""` | Имя подключённого MCP-сервера доски (тулы LLM-стороны `mcp__<mcp>__*`). |
 | `TASK_BOARD_KEY_PATTERN` | `""` | Регэксп ключа задачи, напр. `[A-Z]+-\d+`. |
-| `TASK_BOARD_URL_TEMPLATE` | `""` | Шаблон ссылки на задачу, напр. `https://ru.yougile.com/team/<id>/#{code}`. |
-| `TASK_BOARD_TYPE` | `""` | **Устарел** — тип теперь выводится из наличия кредов (`YOUGILE_API_KEY` / `YOUTRACK_TOKEN`). |
-| `TASK_BOARD_API_KEY` | `""` | **Legacy** — лучше `YOUGILE_API_KEY`. Работает как фолбэк. |
-| `TASK_BOARD_API_BASE` | `""` | **Legacy** — лучше `YOUGILE_API_BASE`. Работает как фолбэк. |
+| `TASK_BOARD_URL_TEMPLATE` | `""` | Опциональный шаблон ссылки на задачу. |
+| `TASK_BOARD_TYPE` | `""` | **Устарел** — выбрать зарегистрированный `task_board.type` в `.review.yml`. |
+| `TASK_BOARD_API_KEY` / `TASK_BOARD_API_BASE` | `""` | Read-only legacy aliases; новые конфиги их не генерируют. |
 
-> **Как получить `YOUGILE_API_KEY` (Yougile).** UI: `Ctrl + ~` (или ⚙ рядом с названием компании →
-> «Настроить») → **API** → создать/скопировать ключ. REST: узнать `companyId` (`Ctrl + Alt + Q`, либо
-> `POST /api-v2/auth/companies {login,password}`), затем `POST /api-v2/auth/keys {login,password,companyId}`.
-> Ключ кладётся **только** в env reviewer-mcp (`~/.config/rag-reviewer/.env`), не в чат и не в конфиг клиента.
+Креды хранятся только в env reviewer-mcp или secret manager, никогда в `.review.yml`, MCP-конфиге
+клиента, логах или коммитах. Справочник провайдеров описывает безопасное получение, validation через
+`reviewer check` и rotation для всех текущих провайдеров.
 
 ---
 
@@ -635,8 +633,8 @@ RAG + граф кода и передаёт в **полный цикл superpowe
 Тонкий триггер server-side ETL-тула `sync_board` — reviewer сам перечисляет доску по REST, LLM не
 передаёт текст задач (O(1) токенов независимо от размера доски).
 
-- **Аргументы (все опц.):** `--board <name>` (одна доска/проект), `--board-type <yougile|youtrack>`
-  (ограничить синк одним типом доски), `--limit <N>` (smoke-прогон;
+- **Аргументы (все опц.):** `--board <name>` (одна доска/проект), `--board-type <registered-provider>`
+  (ограничить синк одним зарегистрированным типом), `--limit <N>` (smoke-прогон;
   **отключает purge и продвижение курсора**), `--purge-orphaned` (удалить задачи, которых больше нет
   на доске; по умолчанию off), `--no-keep-with-prs` (с purge — удалять и задачи с PR-историей,
   по умолчанию защищены).
@@ -717,16 +715,15 @@ RAG + граф кода и передаёт в **полный цикл superpowe
 
 ### `reviewer_create-task` — завести задачу на доске
 
-Создаёт задачу на подключённой доске (YouGile / YouTrack). Тело описания собирает сервер по
-канонической структуре: Проблема / Что сделать / Критерии приёмки / Контекст. Описание хранится
-чистым markdown в обе стороны — разметку транспорта (YouGile хранит HTML) конвертирует провайдер,
-поэтому `get_task` больше не отдаёт модели `<br />` и `&gt;`.
+Создаёт задачу через выбранный зарегистрированный провайдер. Тело собирает сервер по канонической
+структуре: Проблема / Что сделать / Критерии приёмки / Контекст. Адаптер провайдера конвертирует
+транспортную разметку в чистый markdown, поэтому `get_task` не отдаёт модели board-specific HTML.
 
 - **Аргументы:** свободное описание задачи.
 - **Используемые MCP-тулы:** `get_board_config`, `get_board_targets`, `search_codebase`,
   `create_task`, `sync_board`.
 - **Поток:** прочитать `task_board` из `.review.yml` → собрать четыре поля с опорой на `path:line`
-  → discovery целевой колонки/статуса → подтверждение у пользователя → `create_task(...)` →
+  → discovery generic targets/options → подтверждение у пользователя → `create_task(...)` →
   `sync_board(...)` → ключ и ссылка в ответе.
 - **Требует:** reviewer MCP-сервер + настроенную в его env доску.
 
@@ -784,7 +781,10 @@ code_quote, message, suggestion, fix:{start_line,end_line,replacement}|null, con
 
 | Тул | Сигнатура | Что делает |
 |---|---|---|
-| `sync_board` | `(board=None, limit=None, purge_orphaned=False, keep_with_prs=True, board_type=None)` | Server-side ETL: перечислить доску по REST, нормализовать в `TaskBrief`, проиндексировать. Инкрементально по watermark; O(1) токенов. `board_type` ограничивает синк одним типом доски (`yougile`\|`youtrack`). |
+| `sync_board` | `(board=None, limit=None, purge_orphaned=False, keep_with_prs=True, board_type=None, provider_options=None, force_renormalize=False)` | Server-side ETL одного зарегистрированного провайдера: перечислить, нормализовать в `TaskBrief`, проиндексировать. Инкрементально по watermark `(type, board)`; O(1) токенов. |
+| `get_board_targets` | `(board_type=None, project=None, provider_options=None)` | Получить нормализованные targets и non-secret options зарегистрированного провайдера. |
+| `create_task` | `(title, problem="", steps=None, criteria=None, context=None, board_type=None, project=None, target=None, provider_options=None)` | Создать canonical task, разрешить generic target и сделать write-through в индекс. |
+| `finish_task` | `(key, pr_url, note=None, mark_done=True, board_type=None, target=None, provider_options=None)` | Идемпотентно дописать PR-link, опционально выставить generic done target и сделать write-through. |
 | `index_task` | `(task: dict)` | Индексировать один `TaskBrief` в граф + вектор (идемпотентно). |
 | `index_tasks_batch` | `(tasks: list[dict])` | То же для списка, одним вызовом Voyage. |
 | `search_tasks` | `(query, top_k=5, project=None)` | Семантически похожие задачи из индекса. `project` скоупит результаты одним проектом доски (префикс кода). |
@@ -850,13 +850,13 @@ paths: { ignore: ["**/migrations/**", "vendor/**"] }
 max_comments: 25
 
 # Контекст задачи (опц.): читать задачу с доски и проверять соответствие требованиям.
-# Доску (MCP) подключает пользователь на стороне сессии Claude Code; плагин её не бандлит.
 task_board:
-  type: yougile          # yougile | youtrack — выбирает плейбук скилла
-  mcp: yougile           # имя подключённого MCP-сервера доски (тулы зовутся mcp__<mcp>__*)
-  key_pattern: "[A-Z]+-\\d+"   # опц.; подходит Yougile PRI-34/ID-34 и Jira PROJ-123
-  project: PRI          # опц.; скоуп синка/выдачи задач этим проектом (префикс кода; пусто = всё)
-  url_template: 'https://ru.yougile.com/team/<teamId>/#{code}'  # опц.; кликабельные ссылки на задачи
+  type: <registered-provider>
+  project: PRI          # опц.; скоуп синка/выдачи задач этим проектом (пусто = всё)
+  create_target: Backlog
+  done_target: Done
+  options:
+    <provider-option>: <discovered-value>
 
 summary_cluster_depth: 2           # опц.; дефолт из env SUMMARY_CLUSTER_DEPTH
 summary_cluster_depth_overrides:   # опц.; per-prefix переопределения глубины
@@ -868,22 +868,18 @@ output_language: ru               # опц.; переопределяет REVIEW
 grounding_max_distance: 5          # опц.; переопределяет REVIEW_GROUNDING_MAX_DISTANCE
 ```
 
-**Блок `task_board` — глобальный дефолт деплоя, а не per-repo требование.** Подключение к доске
-одинаково для всех репозиториев команды, поэтому настраивается **один раз** в `.env` reviewer-mcp
-(`YOUGILE_API_KEY` / `YOUTRACK_TOKEN` / `TASK_BOARD_MCP` / `TASK_BOARD_KEY_PATTERN` / `TASK_BOARD_URL_TEMPLATE`), и
-каждый репо его наследует — `.review.yml` ради доски не нужен. Блок `task_board` в `.review.yml` репо
+**Блок `task_board` выбирает зарегистрированный провайдер и per-repo targets/options.** Креды
+настраиваются один раз в `.env` reviewer-mcp; в `.review.yml` секретов нет. Блок `task_board` в репо
 **переопределяет** дефолт для этого репо; пустой `task_board:` **выключает** доску для него.
-`review-pr` читает это через политику; `solve-task` — через тул `get_board_config` (и board-MCP на
-стороне LLM) как фолбэк, когда в локальном `.review.yml` блока нет.
+Перед setup, rotation и migration читайте [справочник провайдеров досок](docs/board-providers.md).
 
 **Болк-синк задач — server-side, не LLM (`sync_board`).** Скилл `sync-tasks` — тонкий триггер: один
-вызов `sync_board(board, limit, purge_orphaned, keep_with_prs)`, и сервер сам ходит на доску по
-**REST** (`reviewer/tasks/boards/`, за интерфейсом `TaskBoardProvider`; yougile — референс),
+вызов `sync_board(..., board_type, provider_options)`, и сервер сам ходит на доску по
+**REST** (`reviewer/tasks/boards/`, за интерфейсом `TaskBoardProvider` и explicit registry),
 нормализует каждую задачу в `TaskBrief` в Python и индексирует через батч-индексатор. LLM не передаёт
 текст задач → синк стоит O(1) токенов независимо от размера доски. Инкрементальность — timestamp-
 watermark на доску в `index_meta` (`ref="tasks:<board>"`): повторный синк трогает ~0 задач; `--limit`
-отключает purge и продвижение курсора. Креды REST-доски живут только в env reviewer-mcp
-(`YOUGILE_API_KEY` / `YOUGILE_API_BASE`). Это разворачивает инвариант «reviewer Python никогда
+отключает purge и продвижение курсора. Креды REST-доски живут только в env reviewer-mcp. Это разворачивает инвариант «reviewer Python никогда
 не трогает доску» **только для болк-синка** — одиночное чтение задачи в `solve-task` / `review-pr`
 по-прежнему идёт через board-MCP на стороне LLM. Граф задач (`:Task`) глобален — одна задача может
 охватывать PR из нескольких микросервисных репозиториев.
@@ -896,8 +892,8 @@ watermark на доску в `index_meta` (`ref="tasks:<board>"`): повтор�
 `TASK_LINK`/`IMPLEMENTED_BY`/`TOUCHES`) и в вектор (Postgres, таблица `tasks`) тулом `index_task`. При
 ревью агент видит связанные задачи и их PR/код через `get_task_context`, а похожие по смыслу — через
 `search_tasks`; при публикации PR автоматически линкуется к задаче (`task_key` в `publish_review`).
-Канонический ключ узла — сквозной код доски (Yougile `ID-N` / Jira key), прочие коды (Yougile `PRI-N`)
-хранятся как `aliases`, поэтому PR по любому коду резолвится в один узел.
+Канонический ключ узла — сквозной ключ задачи; дополнительные ключи хранятся как `aliases`, поэтому
+PR по любому известному ключу резолвится в один узел.
 
 #### Контекст-слой (PRI-161)
 
@@ -1015,7 +1011,7 @@ reviewer/
   retrieval/   Retriever: гибрид + graph-expansion + rerank → ContextPack
   llm/         _retry.py (retry/backoff для Voyage)
   tools/       инструменты агента (search_code, get_related_symbols, read_file, get_definition, …)
-  tasks/       нормализация TaskBrief · boards/ (TaskBoardProvider REST: yougile) · TaskService.index_batch
+  tasks/       нормализация TaskBrief · boards/ (зарегистрированные TaskBoardProvider REST-адаптеры) · TaskService.index_batch
   agent/       state (ReviewUnit) · assemble · dedup
   mcp/         MCPReviewService: prepare/tool-вызовы/publish; управление сессиями
   services/    ReviewService.prepare: ingest PR, overlay, units
