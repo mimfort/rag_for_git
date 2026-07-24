@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 import httpx
+import pytest
 
 from reviewer.tasks.boards.jira import JiraCloudBoard
 
@@ -100,3 +101,53 @@ def test_normalize_meta_does_not_download_attachments() -> None:
     assert calls == []
     assert brief["attachments"] == []
     assert brief["criteria"] == []
+
+
+@pytest.mark.parametrize(
+    "content_url",
+    [
+        "http://acme.atlassian.net/rest/api/3/attachment/content/20001",
+        "https://files.acme.atlassian.net/rest/api/3/attachment/content/20001",
+        "https://acme.atlassian.net:444/rest/api/3/attachment/content/20001",
+        "https://user@acme.atlassian.net/rest/api/3/attachment/content/20001",
+        "https://[broken/rest/api/3/attachment/content/20001",
+    ],
+    ids=["plaintext", "subdomain", "alternate-port", "userinfo", "malformed"],
+)
+def test_attachment_rejects_non_exact_origin_before_basic_auth_request(
+    content_url: str,
+) -> None:
+    issue = _issue()
+    issue["fields"]["attachment"][0]["content"] = content_url
+    requests: list[tuple[str, str | None]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append((str(request.url), request.headers.get("Authorization")))
+        return httpx.Response(200, content=b"must not be requested")
+
+    brief = _board(handler).normalize(JiraCloudBoard._raw_from_issue(issue))
+
+    assert requests == []
+    assert brief["attachments"] == []
+    assert any(
+        "spec.md" in warning and "origin" in warning
+        for warning in brief["warnings"]
+    )
+
+
+def test_attachment_allows_explicit_default_port_of_configured_https_origin() -> None:
+    issue = _issue()
+    issue["fields"]["attachment"][0]["content"] = (
+        "https://acme.atlassian.net:443/rest/api/3/attachment/content/20001"
+    )
+    authorization: list[str | None] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        authorization.append(request.headers.get("Authorization"))
+        return httpx.Response(200, content=b"hello world!")
+
+    brief = _board(handler).normalize(JiraCloudBoard._raw_from_issue(issue))
+
+    assert brief["attachments"][0]["content_text"] == "hello"
+    assert len(authorization) == 1
+    assert authorization[0] is not None and authorization[0].startswith("Basic ")

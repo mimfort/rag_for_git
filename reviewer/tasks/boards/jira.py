@@ -23,7 +23,6 @@ from reviewer.tasks.boards.adf import (
 from reviewer.tasks.boards.attachments import (
     attachment_supported,
     fetch_attachment,
-    host_allowed,
 )
 from reviewer.tasks.boards.base import RawTask, project_prefix
 from reviewer.tasks.boards.errors import BoardProviderError
@@ -105,6 +104,26 @@ def _timestamp(value: object) -> int:
         return 0
     normalized = value[:-1] + "+00:00" if value.endswith("Z") else value
     return int(datetime.fromisoformat(normalized).timestamp() * 1000)
+
+
+def _https_origin(value: object) -> tuple[str, int] | None:
+    """Нормализованный HTTPS origin без userinfo; malformed URL → None."""
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = urlsplit(value)
+        hostname = parsed.hostname
+        port = parsed.port
+    except (TypeError, ValueError):
+        return None
+    if (
+        parsed.scheme != "https"
+        or not hostname
+        or parsed.username is not None
+        or parsed.password is not None
+    ):
+        return None
+    return hostname.lower(), port or 443
 
 
 def _issue_links(issue: Mapping[str, Any]) -> list[dict]:
@@ -190,7 +209,7 @@ class JiraCloudBoard:
         self._base = _site_url(base_url, secrets=self._secrets)
         self._key_pattern = key_pattern
         self._issue_type = issue_type
-        self._att_domains = (urlsplit(self._base).hostname or "",)
+        self._att_origin = _https_origin(self._base)
         self._att_max_bytes = attachment_max_bytes
         self._att_timeout = attachment_timeout
         self._att_store_chars = attachment_store_chars
@@ -276,7 +295,7 @@ class JiraCloudBoard:
         seen_types: set[str] = set()
         for group in payload:
             type_id = str(group.get("id") or "")
-            if type_id and type_id not in seen_types:
+            if type_id and type_id not in seen_types and not group.get("subtask"):
                 issue_types.append({"id": type_id, "label": group.get("name") or type_id})
                 seen_types.add(type_id)
             for status in group.get("statuses") or []:
@@ -579,8 +598,8 @@ class JiraCloudBoard:
                 url = attachment["url"]
                 size = attachment.get("size")
                 mime = attachment.get("mime")
-                if not host_allowed(url, self._att_domains):
-                    warnings.append(f"вложение {name!r}: host не разрешён")
+                if _https_origin(url) != self._att_origin:
+                    warnings.append(f"вложение {name!r}: origin не разрешён")
                     continue
                 if isinstance(size, int) and size > self._att_max_bytes:
                     warnings.append(f"вложение {name!r}: размер превышает лимит")

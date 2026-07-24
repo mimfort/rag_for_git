@@ -15,6 +15,7 @@ def test_discovery_deduplicates_status_ids_and_lists_issue_type_choices() -> Non
         {"id": "1", "label": "Open", "purposes": ["create", "done"]},
         {"id": "2", "label": "Done", "purposes": ["create", "done"]},
         {"id": "3", "label": "Done", "purposes": ["create", "done"]},
+        {"id": "4", "label": "Subtask Done", "purposes": ["create", "done"]},
     ]
     assert result["options"] == [
         {

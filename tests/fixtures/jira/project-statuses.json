@@ -8,5 +8,11 @@
     "id": "10002",
     "name": "Bug",
     "statuses": [{"id": "1", "name": "Open"}, {"id": "3", "name": "Done"}]
+  },
+  {
+    "id": "10003",
+    "name": "Sub-task",
+    "subtask": true,
+    "statuses": [{"id": "1", "name": "Open"}, {"id": "4", "name": "Subtask Done"}]
   }
 ]
