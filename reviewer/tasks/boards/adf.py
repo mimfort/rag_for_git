@@ -90,7 +90,10 @@ class _AdfReader:
             attrs = node.get("attrs")
             language = attrs.get("language") if isinstance(attrs, Mapping) else ""
             suffix = language if isinstance(language, str) else ""
-            return f"```{suffix}\n{self.text_content(content)}\n```"
+            code = self.text_content(content)
+            longest_run = max((len(run) for run in re.findall(f"{chr(96)}+", code)), default=0)
+            fence = chr(96) * max(3, longest_run + 1)
+            return f"{fence}{suffix}\n{code}\n{fence}"
         if node_type in ("text", "hardBreak"):
             return self.inline(node)
 
@@ -326,6 +329,18 @@ def _code_block(lines: list[str], language: str) -> dict:
     }
 
 
+def _fence_parts(line: str) -> tuple[str, str] | None:
+    marker = chr(96)
+    if not line.startswith(marker):
+        return None
+    length = 0
+    while length < len(line) and line[length] == marker:
+        length += 1
+    if length < 3:
+        return None
+    return marker * length, line[length:].strip()
+
+
 def _list_match(line: str, *, ordered: bool) -> re.Match[str] | None:
     return (_ORDERED_RE if ordered else _BULLET_RE).match(line)
 
@@ -372,11 +387,12 @@ def _parse_markdown_blocks(markdown: str) -> list[dict]:
         if not line:
             index += 1
             continue
-        if line.startswith("```"):
-            language = line[3:].strip()
+        fence_parts = _fence_parts(line)
+        if fence_parts:
+            fence, language = fence_parts
             index += 1
             code: list[str] = []
-            while index < len(lines) and lines[index] != "```":
+            while index < len(lines) and lines[index] != fence:
                 code.append(lines[index])
                 index += 1
             if index < len(lines):

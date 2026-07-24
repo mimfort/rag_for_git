@@ -93,8 +93,10 @@ def test_canonical_task_document_round_trip_preserves_semantic_adf() -> None:
     )
 
     adf = markdown_to_adf(markdown)
-    restored = markdown_to_adf(adf_to_markdown(adf.value).value).value
+    rendered = adf_to_markdown(adf.value).value
+    restored = markdown_to_adf(rendered).value
 
+    assert rendered == markdown.rstrip("\n")
     assert restored == adf.value
     assert "heading" in str(restored)
     assert adf_contains_link(restored, "https://example.test/spec")
@@ -184,6 +186,29 @@ def test_round_trip_preserves_nested_lists_and_multiple_item_paragraphs() -> Non
     markdown = adf_to_markdown(document).value
 
     assert markdown == "- первый\n\n  второй абзац\n\n  1. вложенный"
+    assert markdown_to_adf(markdown).value == document
+
+
+@pytest.mark.parametrize(
+    ("code", "fence_length"),
+    [
+        ("до\n" + chr(96) * 3 + "\nпосле", 4),
+        (chr(96) * 5, 6),
+    ],
+)
+def test_code_block_round_trip_uses_fence_longer_than_content(code: str, fence_length: int) -> None:
+    document = _doc(
+        {
+            "type": "codeBlock",
+            "attrs": {"language": "python"},
+            "content": [{"type": "text", "text": code}],
+        }
+    )
+
+    markdown = adf_to_markdown(document).value
+    fence = chr(96) * fence_length
+
+    assert markdown == f"{fence}python\n{code}\n{fence}"
     assert markdown_to_adf(markdown).value == document
 
 
