@@ -356,7 +356,10 @@ def _youtrack_handler(
             if "description" in payload:
                 state.issue_description = payload["description"]
             for custom_field in payload.get("customFields", []):
-                state.issue_state = (custom_field.get("value") or {}).get("name", state.issue_state)
+                requested = (custom_field.get("value") or {}).get("name")
+                if requested == "Missing":
+                    return httpx.Response(400, json={})
+                state.issue_state = requested or state.issue_state
             return httpx.Response(200, json={})
         return httpx.Response(404, json={})
 

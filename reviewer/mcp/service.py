@@ -440,7 +440,16 @@ class MCPReviewService:
                      secrets: frozenset[str] = frozenset()) -> dict:
         reason = sanitize_provider_text(error, secrets)
         log.warning("%s: board operation failed: %s", operation, reason)
-        return {"status": "error", "reason": reason}
+        result: dict[str, object] = {"status": "error", "reason": reason}
+        if isinstance(error, BoardProviderError):
+            result.update(
+                {
+                    "category": error.category,
+                    "hint": sanitize_provider_text(error.hint, secrets),
+                    "retryable": error.retryable,
+                }
+            )
+        return result
 
     def _write_through(self, provider: TaskBoardProvider, key: str | None) -> bool:
         """Best-effort fetch → normalize → index после успешной board write."""

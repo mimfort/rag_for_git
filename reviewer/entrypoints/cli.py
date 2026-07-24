@@ -1,4 +1,6 @@
 from __future__ import annotations
+
+from collections.abc import Mapping
 from dataclasses import dataclass
 import logging
 import platform as _platform
@@ -304,6 +306,7 @@ def _check_board_providers(
     *,
     registry=None,
     credential_source=None,
+    board_projects: Mapping[str, str] | None = None,
 ) -> bool:
     """Проверить configured registry providers; ``True`` означает хотя бы одну ошибку."""
     import json
@@ -317,12 +320,16 @@ def _check_board_providers(
     registry = registry or default_board_registry()
     source = credential_source or ProviderCredentialSource.from_settings(settings)
     configured = registry.configured_types(source)
+    failed = False
+    for board_type in sorted(set(board_projects or {}) - set(configured)):
+        click.echo(f"✗ --board-project: provider {board_type!r} не настроен")
+        failed = True
     if not configured:
         click.echo("  Доски задач: configured providers не настроены, проверка пропущена")
-        return False
+        return failed
 
-    failed = False
     for board_type in configured:
+        project = (board_projects or {}).get(board_type)
         try:
             with resolved_provider(
                 settings,
@@ -331,7 +338,7 @@ def _check_board_providers(
                 registry=registry,
                 credential_source=source,
             ) as resolved:
-                report = resolved.provider.validate_connection()
+                report = resolved.provider.validate_connection(project)
                 safe = sanitize_validation_report(report, resolved.secrets)
             click.echo(f"✓ Доска задач [{board_type}]: подключение — OK")
             if isinstance(safe, dict):
@@ -349,10 +356,37 @@ def _check_board_providers(
     return failed
 
 
+def _parse_board_projects(values: tuple[str, ...]) -> dict[str, str]:
+    projects: dict[str, str] = {}
+    for value in values:
+        board_type, separator, project = value.partition("=")
+        if not separator or not board_type.strip() or not project.strip():
+            raise click.BadParameter(
+                "ожидается TYPE=PROJECT",
+                param_hint="--board-project",
+            )
+        board_type = board_type.strip()
+        if board_type in projects:
+            raise click.BadParameter(
+                f"тип {board_type!r} указан повторно",
+                param_hint="--board-project",
+            )
+        projects[board_type] = project.strip()
+    return projects
+
+
 @cli.command()
-def check() -> None:
+@click.option(
+    "--board-project",
+    "board_project_values",
+    multiple=True,
+    metavar="TYPE=PROJECT",
+    help="Проект для provider validation; опцию можно повторять.",
+)
+def check(board_project_values: tuple[str, ...]) -> None:
     """Проверить готовность окружения (ключи, Postgres, Neo4j, GitHub)."""
     s = Settings()
+    board_projects = _parse_board_projects(board_project_values)
     failed = False
 
     # 1. Ключи
@@ -429,7 +463,7 @@ def check() -> None:
         click.echo("  GitHub API: токен не задан, проверка пропущена")
 
     # 6. Настроенные board providers
-    failed = _check_board_providers(s) or failed
+    failed = _check_board_providers(s, board_projects=board_projects) or failed
 
     # 7. Свежесть установленных скилов (информационно, не влияет на exit-code)
     try:

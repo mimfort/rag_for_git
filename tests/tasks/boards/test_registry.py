@@ -139,6 +139,23 @@ def test_registry_rejects_nested_secret_values_without_echoing_them():
     assert secret not in str(exc_info.value)
 
 
+def test_registry_rejects_secret_embedded_in_nested_option_text():
+    registry = BoardProviderRegistry([
+        fake_spec(options=(ProviderOptionSpec("config", "Config"),)),
+    ])
+    secret = "long-server-secret"
+
+    with pytest.raises(ValueError, match="secret value") as exc_info:
+        registry.create(
+            "fake",
+            credentials={"FAKE_TOKEN": secret},
+            options={"config": {"authorization": f"Bearer {secret}"}},
+            build_defaults=BUILD_DEFAULTS,
+        )
+
+    assert secret not in str(exc_info.value)
+
+
 def test_registry_closes_incomplete_provider_rejected_at_runtime():
     class _IncompleteProvider:
         board_type = "broken"

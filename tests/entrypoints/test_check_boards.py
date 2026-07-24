@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+from click.testing import CliRunner
+
 from reviewer.config.provider_credentials import ProviderCredentialSource
-from reviewer.entrypoints.cli import _check_board_providers
+from reviewer.entrypoints.cli import _check_board_providers, check
 from reviewer.tasks.boards.errors import BoardProviderError
 from reviewer.tasks.boards.registry import (
     BoardProviderRegistry,
@@ -16,13 +18,19 @@ from reviewer.tasks.boards.registry import (
 class CheckProvider:
     board_type = "fake"
 
-    def __init__(self, result=None, error: Exception | None = None) -> None:
+    def __init__(
+        self,
+        result=None,
+        error: Exception | None = None,
+        expected_project: str | None = None,
+    ) -> None:
         self.result = result
         self.error = error
+        self.expected_project = expected_project
         self.closed = False
 
     def validate_connection(self, project=None):
-        assert project is None
+        assert project == self.expected_project
         if self.error:
             raise self.error
         return self.result
@@ -280,3 +288,46 @@ def test_check_skips_unconfigured_provider_without_constructing_it(capsys) -> No
     assert failed is False
     assert provider.closed is False
     assert "не настроены" in capsys.readouterr().out
+
+
+def test_check_passes_explicit_project_to_selected_provider(capsys) -> None:
+    provider = CheckProvider(
+        {
+            "status": "ok",
+            "project": {"key": "PRI"},
+            "capabilities": {"read": True, "create": True, "transition": True},
+            "warnings": [],
+        },
+        expected_project="PRI",
+    )
+
+    failed = _check_board_providers(
+        _settings(),
+        registry=_registry(provider),
+        credential_source=ProviderCredentialSource(values={"FAKE_TOKEN": "secret"}),
+        board_projects={"fake": "PRI"},
+    )
+
+    assert failed is False
+    assert '"key": "PRI"' in capsys.readouterr().out
+
+
+def test_check_rejects_project_for_unconfigured_provider(capsys) -> None:
+    provider = CheckProvider({"status": "ok", "warnings": []})
+
+    failed = _check_board_providers(
+        _settings(),
+        registry=_registry(provider),
+        credential_source=ProviderCredentialSource(values={"FAKE_TOKEN": "secret"}),
+        board_projects={"typo": "PRI"},
+    )
+
+    assert failed is True
+    assert "typo" in capsys.readouterr().out
+
+
+def test_check_help_documents_repeatable_board_project_option() -> None:
+    result = CliRunner().invoke(check, ["--help"])
+
+    assert result.exit_code == 0
+    assert "--board-project TYPE=PROJECT" in result.output

@@ -1,6 +1,7 @@
 from reviewer.config.provider_credentials import ProviderCredentialSource
 from reviewer.config.settings import Settings
 from reviewer.mcp.service import MCPReviewService
+from reviewer.tasks.boards.errors import BoardProviderError
 from reviewer.tasks.boards.registry import (
     BoardProviderRegistry,
     BoardProviderSpec,
@@ -127,3 +128,31 @@ def test_get_board_targets_failsoft():
     assert out["status"] == "error"
     assert "kaboom" in out["reason"]
     assert provider.closed is True
+
+
+def test_get_board_targets_preserves_safe_structured_provider_error():
+    secret = "upstream-secret"
+
+    class Boom(_Provider):
+        def __init__(self):
+            super().__init__({})
+
+        def list_targets(self, project):
+            raise BoardProviderError(
+                "rate_limit",
+                f"Jira throttled {secret}",
+                hint=f"retry after rotating {secret}",
+                retryable=True,
+                secrets=(secret,),
+            )
+
+    out = _Svc(["fake"], Boom()).get_board_targets()
+
+    assert out == {
+        "status": "error",
+        "reason": "Jira throttled [REDACTED]",
+        "category": "rate_limit",
+        "hint": "retry after rotating [REDACTED]",
+        "retryable": True,
+    }
+    assert secret not in repr(out)

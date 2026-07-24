@@ -109,6 +109,18 @@ def test_youtrack_finish_default_state_fixed():
     assert payload["value"]["name"] == "Fixed"
 
 
+def test_youtrack_finish_attempts_exact_target_when_discovery_is_incomplete():
+    b = _board({"/issues/TES-1": _Resp(200, {
+        "description": "", "customFields": [_state_field()]})})
+
+    res = b.finish("TES-1", PR, target="Ready for release")
+
+    payload = _field_post(b._client.calls)[2]["customFields"][0]
+    assert payload["value"]["name"] == "Ready for release"
+    assert res["done_set"] is True
+    assert not res["warnings"]
+
+
 def test_youtrack_finish_malicious_value_is_verbatim_no_dsl():
     # «Злое» значение с DSL-пунктуацией уходит в value.name ВЕРБАТИМ (структурно, без
     # command-DSL) — инъекция невозможна конструктивно; /commands не вызывается.

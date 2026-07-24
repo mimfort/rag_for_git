@@ -38,7 +38,7 @@ docker compose --profile test rm -sfv paradedb-test neo4j-test
 .venv/bin/ruff check .        # line-length 100, target py311
 
 # CLI (после pip install -e .)
-reviewer check                                    # проверить готовность окружения (ключи, Postgres, Neo4j, GitHub)
+reviewer check --board-project jira=PRI           # проверить окружение и project-scoped board permissions
 reviewer index /path/to/repo --ref main          # построить/обновить base-индекс (вектора + граф) из локального клона
 reviewer index /path/to/repo --ref master        # индекс второй ветки (изолированный, тот же деплой)
 reviewer search "token verification"              # диагностический гибрид-поиск по base-индексу (первичная ветка)

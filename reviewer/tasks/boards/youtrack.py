@@ -406,13 +406,9 @@ class YouTrackBoard:
         warnings: list[str] = []
         done_set = False
         if mark_done:
-            resolved, target_warnings = self._resolve_status_target(
-                target or "Fixed",
-                project_prefix(key),
-            )
-            warnings.extend(target_warnings)
+            resolved = target or "Fixed"
             current = _state_of({"customFields": custom_fields}, self._status_field)
-            if resolved is not None and current != resolved:
+            if current != resolved:
                 done_set, status_warnings = self._set_status(
                     safe_key,
                     resolved,
@@ -460,17 +456,6 @@ class YouTrackBoard:
                     f"target={target!r} не применён: ключ задачи неизвестен")
         elif target:
             safe_key = quote(key, safe="")
-            resolved, target_warnings = self._resolve_status_target(target, project)
-            warnings.extend(target_warnings)
-            if resolved is None:
-                web = re.sub(r"/api/?$", "", self._base.rstrip("/"))
-                return {
-                    "key": key,
-                    "url": f"{web}/issue/{key}",
-                    "board_id": key,
-                    "target_resolved": None,
-                    "warnings": warnings,
-                }
             try:
                 fields = (
                     self._read(
@@ -482,9 +467,9 @@ class YouTrackBoard:
             except Exception:
                 log.warning("youtrack: поля задачи %s недоступны", key, exc_info=True)
                 fields = []
-            ok, w = self._set_status(safe_key, resolved, fields)
+            ok, w = self._set_status(safe_key, target, fields)
             warnings.extend(w)
-            target_resolved = resolved if ok else None
+            target_resolved = target if ok else None
         web = re.sub(r"/api/?$", "", self._base.rstrip("/"))
         return {"key": key, "url": f"{web}/issue/{key}" if key else None,
                 "board_id": key, "target_resolved": target_resolved,
@@ -566,25 +551,6 @@ class YouTrackBoard:
             ],
             "warnings": warnings,
         }
-
-    def _resolve_status_target(
-        self,
-        target: str,
-        project: str | None,
-    ) -> tuple[str | None, list[str]]:
-        discovery = self.list_targets(project)
-        exact_id = [item for item in discovery["targets"] if item["id"] == target]
-        if exact_id:
-            return exact_id[0]["id"], discovery["warnings"]
-        by_label = [item for item in discovery["targets"] if item["label"] == target]
-        if len(by_label) == 1:
-            return by_label[0]["id"], discovery["warnings"]
-        warnings = list(discovery["warnings"])
-        if len(by_label) > 1:
-            warnings.append(f"target {target!r} неоднозначен — статус не изменён")
-        else:
-            warnings.append(f"target {target!r} не найден — статус не изменён")
-        return None, warnings
 
     def _admin_status_fields(self, project: str | None) -> list[dict]:
         """Bundle-поля (state/enum) проекта из admin API + их значения. [] если project пуст

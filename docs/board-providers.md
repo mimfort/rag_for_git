@@ -55,7 +55,10 @@ finish_task(key, pr_url, note=None, mark_done=True, board_type=None, target=None
 Credentials are server-side environment variables, never values in `.review.yml`,
 `provider_options`, a client MCP configuration, commits, previews, errors, or logs. Run
 `reviewer check` after setup or rotation; it validates each configured provider and reports only
-safe identity, project, permission, and configuration metadata.
+safe identity, project, permission, and configuration metadata. Pass a non-secret project for
+project-scoped validation, for example `reviewer check --board-project jira=PRI`; repeat
+`--board-project TYPE=PROJECT` for a multi-provider deployment. Without a Jira project, identity
+is still checked, but create/transition permissions are reported as unknown.
 
 ## YouGile
 
@@ -90,7 +93,8 @@ email and API token; it never accepts an Atlassian password.
 This first release deliberately does not support scoped tokens: they require the
 `api.atlassian.com/ex/jira/<cloudId>` gateway rather than the direct site URL used by
 `JIRA_BASE_URL`. Create a new unscoped token, keep it in a secret manager or hidden installer
-input, validate it with `reviewer check`, then revoke the old token after a successful rotation.
+input, validate it with `reviewer check --board-project jira=<PROJECT_KEY>`, then revoke the old
+token after a successful rotation.
 Validation checks `/rest/api/3/myself`, project visibility, and the permissions required by the
 enabled lifecycle operations. See the official
 [Jira Cloud REST API v3 introduction](https://developer.atlassian.com/cloud/jira/platform/rest/v3/intro/).

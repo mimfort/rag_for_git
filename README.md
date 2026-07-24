@@ -575,7 +575,8 @@ reviewer-mcp env rather than duplicated in each repo's `.review.yml`. See
 
 Keep credentials only in the reviewer-mcp environment or a secret manager — never in `.review.yml`,
 MCP client configuration, logs, or commits. The provider reference covers safe acquisition,
-validation with `reviewer check`, and rotation for every current provider.
+project-aware validation with `reviewer check --board-project TYPE=PROJECT`, and rotation for every
+current provider.
 
 ---
 

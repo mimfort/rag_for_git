@@ -251,6 +251,34 @@ class JiraCloudBoard:
     def _write(self, method: str, path: str, **kwargs: Any) -> Any:
         return self._http.request_json(method, path, operation="write", **kwargs)
 
+    def _project_permissions(self, project: str) -> tuple[dict[str, bool], list[str]]:
+        payload = self._read(
+            "GET",
+            "/rest/api/3/mypermissions",
+            params={
+                "projectKey": project,
+                "permissions": "BROWSE_PROJECTS,CREATE_ISSUES,TRANSITION_ISSUES",
+            },
+        ) or {}
+        permissions = payload.get("permissions") or {}
+        capabilities = {
+            "read": bool((permissions.get("BROWSE_PROJECTS") or {}).get("havePermission")),
+            "create": bool((permissions.get("CREATE_ISSUES") or {}).get("havePermission")),
+            "transition": bool(
+                (permissions.get("TRANSITION_ISSUES") or {}).get("havePermission")
+            ),
+        }
+        warnings = [
+            f"missing Jira permission: {permission}"
+            for permission, capability in (
+                ("BROWSE_PROJECTS", "read"),
+                ("CREATE_ISSUES", "create"),
+                ("TRANSITION_ISSUES", "transition"),
+            )
+            if not capabilities[capability]
+        ]
+        return capabilities, warnings
+
     def validate_connection(self, project: str | None = None) -> dict:
         """Проверить identity, видимость проекта и независимые lifecycle permissions."""
         try:
@@ -267,33 +295,15 @@ class JiraCloudBoard:
                     secrets=self._secrets,
                 ) from None
             raise
-        capabilities = {"read": True, "create": False, "transition": False}
+        capabilities = {"read": True}
         warnings: list[str] = []
         if project:
             self._read("GET", f"/rest/api/3/project/{quote(project, safe='')}")
-            payload = self._read(
-                "GET",
-                "/rest/api/3/mypermissions",
-                params={
-                    "projectKey": project,
-                    "permissions": "BROWSE_PROJECTS,CREATE_ISSUES,TRANSITION_ISSUES",
-                },
-            ) or {}
-            permissions = payload.get("permissions") or {}
-            capabilities = {
-                "read": bool((permissions.get("BROWSE_PROJECTS") or {}).get("havePermission")),
-                "create": bool((permissions.get("CREATE_ISSUES") or {}).get("havePermission")),
-                "transition": bool(
-                    (permissions.get("TRANSITION_ISSUES") or {}).get("havePermission")
-                ),
-            }
-            for permission, capability in (
-                ("BROWSE_PROJECTS", "read"),
-                ("CREATE_ISSUES", "create"),
-                ("TRANSITION_ISSUES", "transition"),
-            ):
-                if not capabilities[capability]:
-                    warnings.append(f"missing Jira permission: {permission}")
+            capabilities, warnings = self._project_permissions(project)
+        else:
+            warnings.append(
+                "Jira project was not checked; create and transition permissions are unknown."
+            )
         return {
             "status": "ok",
             "identity": {
@@ -308,14 +318,14 @@ class JiraCloudBoard:
     def list_targets(self, project: str | None) -> dict:
         """Статусы проекта и явные issue types в общей discovery-модели."""
         warnings: list[str] = []
-        payload = (
-            self._read(
-                "GET",
-                f"/rest/api/3/project/{quote(project, safe='')}/statuses",
-            )
-            if project
-            else []
-        ) or []
+        payload: list[dict] = []
+        if project:
+            capabilities, warnings = self._project_permissions(project)
+            if capabilities["read"]:
+                payload = self._read(
+                    "GET",
+                    f"/rest/api/3/project/{quote(project, safe='')}/statuses",
+                ) or []
         if not project:
             warnings.append("Jira project is required for target discovery.")
         statuses: list[dict] = []
@@ -357,6 +367,41 @@ class JiraCloudBoard:
             f"/rest/api/3/issue/{quote(key, safe='')}/transitions",
         ) or {}
         return list(payload.get("transitions") or [])
+
+    def _resolve_issue_type(self, project: str) -> str:
+        """Resolve configured Jira issue type to an exact project-scoped ID."""
+        assert self._issue_type is not None
+        if self._issue_type.isdigit():
+            return self._issue_type
+        payload = self._read(
+            "GET",
+            f"/rest/api/3/project/{quote(project, safe='')}/statuses",
+        ) or []
+        issue_types = [
+            {
+                "id": str(item.get("id") or ""),
+                "label": str(item.get("name") or ""),
+            }
+            for item in payload
+            if item.get("id") and not item.get("subtask")
+        ]
+        exact_id = [item for item in issue_types if item["id"] == self._issue_type]
+        if exact_id:
+            return exact_id[0]["id"]
+        by_label = [item for item in issue_types if item["label"] == self._issue_type]
+        if len(by_label) == 1:
+            return by_label[0]["id"]
+        if len(by_label) > 1:
+            raise BoardProviderError(
+                "configuration",
+                "Configured Jira issue_type label is ambiguous.",
+                hint="Select the exact issue type ID returned by target discovery.",
+            )
+        raise BoardProviderError(
+            "configuration",
+            "Configured Jira issue_type is unavailable for this project.",
+            hint="Select an issue type returned by target discovery.",
+        )
 
     @staticmethod
     def _resolve_transition(
@@ -425,6 +470,7 @@ class JiraCloudBoard:
                 "Jira issue_type is required to create an issue.",
                 hint="Select an issue type from Jira target discovery.",
             )
+        issue_type_id = self._resolve_issue_type(project)
         description = markdown_to_adf(doc_md)
         created = self._write(
             "POST",
@@ -434,7 +480,7 @@ class JiraCloudBoard:
                     "project": {"key": project},
                     "summary": title,
                     "description": description.value,
-                    "issuetype": {"id": self._issue_type},
+                    "issuetype": {"id": issue_type_id},
                 }
             },
         ) or {}

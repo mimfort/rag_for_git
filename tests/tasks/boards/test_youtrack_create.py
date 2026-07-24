@@ -85,6 +85,21 @@ def test_create_sets_status_field_when_target_given():
     assert not res["warnings"]
 
 
+def test_create_attempts_exact_target_when_discovery_is_incomplete():
+    b = _board(_routes())
+
+    res = b.create(MD, title="t", target="Ready for release", project="PRI")
+
+    upd = next(
+        call
+        for call in b._client.calls
+        if call[0] == "POST" and call[1] == "/issues/PRI-42"
+    )
+    assert upd[2]["customFields"][0]["value"]["name"] == "Ready for release"
+    assert res["target_resolved"] == "Ready for release"
+    assert not res["warnings"]
+
+
 def test_create_failsoft_when_status_update_rejected():
     b = _board(_routes(), post_routes={"/issues/PRI-42": _Resp(400, {})})
     res = b.create(MD, title="t", target="Нет такого", project="PRI")

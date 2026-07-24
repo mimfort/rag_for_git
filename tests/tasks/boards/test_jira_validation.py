@@ -46,7 +46,10 @@ def test_validation_without_project_only_checks_identity() -> None:
     result = board(handler).validate_connection()
 
     assert result["project"] is None
-    assert result["capabilities"] == {"read": True, "create": False, "transition": False}
+    assert result["capabilities"] == {"read": True}
+    assert result["warnings"] == [
+        "Jira project was not checked; create and transition permissions are unknown."
+    ]
     assert calls == ["/rest/api/3/myself"]
 
 

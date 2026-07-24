@@ -515,8 +515,9 @@ reviewer-mcp, а не дублируется в `.review.yml` каждого р�
 | `TASK_BOARD_API_BASE` | `""` | Read-only YouGile alias: `TASK_BOARD_API_BASE → YOUGILE_API_BASE`. |
 
 Креды хранятся только в env reviewer-mcp или secret manager, никогда в `.review.yml`, MCP-конфиге
-клиента, логах или коммитах. Справочник провайдеров описывает безопасное получение, validation через
-`reviewer check` и rotation для всех текущих провайдеров.
+клиента, логах или коммитах. Справочник провайдеров описывает безопасное получение, project-aware
+validation через `reviewer check --board-project TYPE=PROJECT` и rotation для всех текущих
+провайдеров.
 
 ---
 

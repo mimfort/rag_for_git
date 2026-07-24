@@ -81,11 +81,14 @@ _MISSING = object()
 
 def _contains_secret(value: JsonValue, secrets: frozenset[str]) -> bool:
     if isinstance(value, str):
-        return value in secrets
+        return value in secrets or any(
+            len(secret) >= 8 and secret in value
+            for secret in secrets
+        )
     if isinstance(value, list):
         return any(_contains_secret(item, secrets) for item in value)
     if isinstance(value, dict):
-        return any(key in secrets or _contains_secret(item, secrets)
+        return any(_contains_secret(key, secrets) or _contains_secret(item, secrets)
                    for key, item in value.items())
     return False
 

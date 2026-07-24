@@ -44,6 +44,49 @@ def test_create_sends_adf_and_resolves_exact_transition_id() -> None:
     assert result["warnings"] == []
 
 
+def test_create_resolves_discovered_issue_type_label_to_exact_id() -> None:
+    create_payload: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal create_payload
+        if request.method == "GET":
+            return httpx.Response(200, json=fixture("project-statuses.json"))
+        create_payload = json.loads(request.content)["fields"]
+        return httpx.Response(201, json={"id": "10077", "key": "PRI-77"})
+
+    result = board(handler, issue_type="Task").create(
+        "# Новая", title="Новая", target=None, project="PRI"
+    )
+
+    assert create_payload["issuetype"] == {"id": "10001"}
+    assert result["key"] == "PRI-77"
+
+
+def test_create_rejects_ambiguous_issue_type_label_before_write() -> None:
+    writes = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal writes
+        if request.method == "POST":
+            writes += 1
+            return httpx.Response(201, json={"id": "10077", "key": "PRI-77"})
+        return httpx.Response(
+            200,
+            json=[
+                {"id": "10001", "name": "Task", "statuses": []},
+                {"id": "10002", "name": "Task", "statuses": []},
+            ],
+        )
+
+    with pytest.raises(BoardProviderError, match="ambiguous") as exc_info:
+        board(handler, issue_type="Task").create(
+            "# Новая", title="Новая", target=None, project="PRI"
+        )
+
+    assert exc_info.value.category == "configuration"
+    assert writes == 0
+
+
 @pytest.mark.parametrize("target", ["Missing", "Done"])
 def test_create_keeps_issue_when_transition_is_unavailable_or_ambiguous(target: str) -> None:
     writes = 0
