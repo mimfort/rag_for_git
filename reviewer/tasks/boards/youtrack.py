@@ -19,6 +19,13 @@ from reviewer.tasks.boards.attachments import fetch_attachment, host_allowed, _r
 from reviewer.tasks.boards.base import RawTask, project_prefix
 from reviewer.tasks.boards.errors import BoardProviderError
 from reviewer.tasks.boards.http import BoardHttpClient
+from reviewer.tasks.boards.registry import (
+    BoardProviderSpec,
+    CredentialFieldSpec,
+    ProviderBuildContext,
+    ProviderOptionSpec,
+    ProviderSetupSpec,
+)
 
 log = logging.getLogger(__name__)
 
@@ -42,6 +49,52 @@ _FIELD_TO_ELEMENT = {
     "SingleBuildIssueCustomField": "BuildBundleElement",
     "SingleOwnedIssueCustomField": "OwnedBundleElement",
 }
+
+
+def _build_provider(context: ProviderBuildContext) -> YouTrackBoard:
+    status_field = context.options.get("status_field") or "State"
+    return YouTrackBoard(
+        token=context.credentials["YOUTRACK_TOKEN"],
+        base_url=context.credentials["YOUTRACK_BASE_URL"],
+        key_pattern=context.key_pattern,
+        status_field=str(status_field),
+        attachment_max_bytes=context.attachment_max_bytes,
+        attachment_timeout=context.attachment_timeout,
+        attachment_store_chars=context.attachment_store_chars,
+    )
+
+
+def provider_spec() -> BoardProviderSpec:
+    """Immutable registry spec YouTrack."""
+    return BoardProviderSpec(
+        board_type="youtrack",
+        factory=_build_provider,
+        credential_fields=(
+            CredentialFieldSpec(
+                env="YOUTRACK_TOKEN",
+                label="YouTrack permanent token",
+                secret=True,
+            ),
+            CredentialFieldSpec(
+                env="YOUTRACK_BASE_URL",
+                label="YouTrack API base URL",
+            ),
+        ),
+        option_fields=(
+            ProviderOptionSpec(
+                key="status_field",
+                label="Status field",
+                required_for=("sync", "create", "finish"),
+            ),
+        ),
+        setup=ProviderSetupSpec(
+            label="YouTrack",
+            help_url="https://www.jetbrains.com/help/youtrack/devportal/authentication-with-permanent-token.html",
+            help_text="Создайте permanent token с доступом к YouTrack project.",
+        ),
+        create_target_label="Статус создания",
+        done_target_label="Статус завершения",
+    )
 
 
 def _state_of(issue: dict, field: str = "State") -> str | None:

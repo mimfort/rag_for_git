@@ -22,6 +22,12 @@ from reviewer.tasks.boards.attachments import fetch_attachment, host_allowed, _r
 from reviewer.tasks.boards.base import RawTask, project_prefix
 from reviewer.tasks.boards.http import BoardHttpClient
 from reviewer.tasks.boards.markup import html_to_md, md_to_html
+from reviewer.tasks.boards.registry import (
+    BoardProviderSpec,
+    CredentialFieldSpec,
+    ProviderBuildContext,
+    ProviderSetupSpec,
+)
 
 log = logging.getLogger(__name__)
 
@@ -35,6 +41,49 @@ _PAGE = 1000
 _FILE_MARKER = re.compile(r"/root/#file:(\S+)")
 _HREF = re.compile(r"""href=["']([^"']+)["']""")
 _USER_DATA = "/user-data/"  # путь хранилища загруженных файлов YouGile
+
+
+def _build_provider(context: ProviderBuildContext) -> YougileBoard:
+    return YougileBoard(
+        api_key=context.credentials["YOUGILE_API_KEY"],
+        api_base=context.credentials["YOUGILE_API_BASE"],
+        key_pattern=context.key_pattern,
+        url_template=context.url_template,
+        attachment_max_bytes=context.attachment_max_bytes,
+        attachment_timeout=context.attachment_timeout,
+        attachment_store_chars=context.attachment_store_chars,
+    )
+
+
+def provider_spec() -> BoardProviderSpec:
+    """Immutable registry spec YouGile с legacy credential aliases."""
+    return BoardProviderSpec(
+        board_type="yougile",
+        factory=_build_provider,
+        credential_fields=(
+            CredentialFieldSpec(
+                env="YOUGILE_API_KEY",
+                label="YouGile API key",
+                secret=True,
+                aliases=("TASK_BOARD_API_KEY",),
+            ),
+            CredentialFieldSpec(
+                env="YOUGILE_API_BASE",
+                label="YouGile API base URL",
+                required=False,
+                default="https://yougile.com/api-v2",
+                aliases=("TASK_BOARD_API_BASE",),
+            ),
+        ),
+        setup=ProviderSetupSpec(
+            label="YouGile",
+            help_url="https://ru.yougile.com/api-v2",
+            help_text="Создайте API key YouGile с минимально необходимыми правами.",
+        ),
+        default_api_base="https://yougile.com/api-v2",
+        create_target_label="Колонка создания",
+        done_target_label="Колонка завершения",
+    )
 
 
 def _file_urls_from_text(text: str | None) -> list[str]:

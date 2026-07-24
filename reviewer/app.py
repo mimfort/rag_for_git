@@ -12,6 +12,8 @@ from reviewer.tasks.store import TaskStore
 from reviewer.tasks.graph import TaskGraph
 from reviewer.tasks.service import TaskService
 from reviewer.tasks.boards import make_board_providers
+from reviewer.config.provider_credentials import ProviderCredentialSource
+from reviewer.tasks.boards.registry import default_board_registry
 from reviewer.tasks.sync import SyncService
 
 @dataclass
@@ -61,7 +63,13 @@ def build_components(settings: Settings, connect: bool = True) -> Components:
     )
     # server-side синк досок: все настроенные провайдеры (связка ключей в env).
     # Пустой список → sync_service=None, sync_board вернёт понятный error-summary.
-    providers = make_board_providers(settings)
+    board_registry = default_board_registry()
+    board_credentials = ProviderCredentialSource.from_settings(settings)
+    providers = make_board_providers(
+        settings,
+        registry=board_registry,
+        credential_source=board_credentials,
+    )
     sync_service = SyncService(providers, task_service, store) if providers else None
     summary_store = SummaryStore(
         settings.pg_dsn,

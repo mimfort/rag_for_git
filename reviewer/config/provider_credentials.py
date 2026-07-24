@@ -33,20 +33,35 @@ class ProviderCredentialSource:
         env_file: str | Path | None = None,
         values: Mapping[str, str] | None = None,
     ) -> None:
+        # ``values`` — уже разрешённый snapshot (например, из Settings): повторно
+        # читать process-wide .env нельзя, иначе тестовый/внедрённый source загрязняется.
         path = Path(env_file) if env_file is not None else Path(_resolve_env_file())
-        # Явный env_file уже разрешён вызывающим: не ищем CWD повторно.
-        self._file_values = {
-            key: value for key, value in dotenv_values(path).items() if value is not None
-        }
+        self._file_values = (
+            {
+                key: value
+                for key, value in dotenv_values(path).items()
+                if value is not None
+            }
+            if values is None or env_file is not None
+            else {}
+        )
         self._process_values = dict(os.environ if values is None else values)
 
     @classmethod
     def from_settings(cls, settings: object) -> "ProviderCredentialSource":
-        """Совместимый конструктор для Settings без возврата секретов наружу."""
+        """Registry credentials из общего env/.env с приоритетом Settings."""
         dump = getattr(settings, "model_dump", None)
         if not callable(dump):
             return cls()
-        return cls(values={key.upper(): str(value) for key, value in dump().items() if value is not None})
+        env_file = getattr(settings, "_provider_env_file", _resolve_env_file())
+        source = cls(env_file=env_file) if env_file is not None else cls(values=os.environ)
+        source._process_values.update(
+            {
+                key.upper(): "" if value is None else str(value)
+                for key, value in dump().items()
+            }
+        )
+        return source
 
     def resolve(self, spec: BoardProviderSpec) -> ResolvedProviderCredentials:
         values: dict[str, str] = {}
@@ -86,11 +101,13 @@ class ProviderCredentialSource:
 
     def _lookup(self, env: str, aliases: tuple[str, ...]) -> str:
         for key in (env, *aliases):
-            if key in self._process_values:
-                return self._process_values[key]
+            value = self._process_values.get(key)
+            if value:
+                return value
         for key in (env, *aliases):
-            if key in self._file_values:
-                return self._file_values[key]
+            value = self._file_values.get(key)
+            if value:
+                return value
         return ""
 
     @staticmethod

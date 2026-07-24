@@ -4,6 +4,7 @@ from __future__ import annotations
 import inspect
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from functools import lru_cache
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Literal, Protocol
 
@@ -190,3 +191,18 @@ class BoardProviderRegistry:
                 f"provider board_type {provider.board_type!r} does not match registered board_type "
                 f"{board_type!r}"
             )
+
+
+@lru_cache(maxsize=1)
+def default_board_registry() -> BoardProviderRegistry:
+    """Production registry только полностью реализованных адаптеров.
+
+    Локальные явные импорты не создают цикл при инициализации modules.
+    """
+    from reviewer.tasks.boards.yougile import provider_spec as yougile_provider_spec
+    from reviewer.tasks.boards.youtrack import provider_spec as youtrack_provider_spec
+
+    return BoardProviderRegistry([
+        yougile_provider_spec(),
+        youtrack_provider_spec(),
+    ])
