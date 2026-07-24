@@ -67,6 +67,48 @@ def test_task_board_parsed_from_yaml():
     assert p.task_board == {"type": "yougile", "mcp": "yougile"}
 
 
+def test_task_board_is_normalized_for_generic_mcp_arguments_once():
+    p = ReviewPolicy.from_yaml("""
+task_board:
+  type: youtrack
+  create_target: Open
+  done_state: Fixed
+  status_field: Stage
+""")
+
+    assert p.task_board == {
+        "type": "youtrack",
+        "create_target": "Open",
+        "done_target": "Fixed",
+        "options": {"status_field": "Stage"},
+    }
+    assert p.task_board_warnings == [
+        "task_board.done_state migrated to done_target",
+        "task_board.status_field migrated to options.status_field",
+    ]
+
+
+def test_load_keeps_new_task_board_values_and_records_warnings_once():
+    p = ReviewPolicy.load(Settings(_env_file=None), """
+task_board:
+  type: youtrack
+  done_target: Done
+  done_state: Fixed
+  options: {status_field: Stage}
+  status_field: State
+""")
+
+    assert p.task_board == {
+        "type": "youtrack",
+        "done_target": "Done",
+        "options": {"status_field": "Stage"},
+    }
+    assert p.task_board_warnings == [
+        "task_board.done_state ignored because done_target is set",
+        "task_board.status_field ignored because options.status_field is set",
+    ]
+
+
 def test_task_board_none_when_absent():
     p = ReviewPolicy.from_yaml("severity_threshold: low")
     assert p.task_board is None

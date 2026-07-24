@@ -405,6 +405,41 @@ def test_prepare_review_payload_includes_task_context(
 
 @patch("reviewer.services.review_service.chunk_python", side_effect=_fake_chunk)
 @patch("reviewer.services.review_service.build_overlay")
+def test_prepare_review_hands_generic_task_board_values_to_mcp(
+    _mock_overlay: MagicMock,
+    _mock_chunk: MagicMock,
+) -> None:
+    """Конфиг политики передаётся клиенту MCP только как target/options."""
+    settings = _settings()
+    components = _components()
+    vcs = _fake_vcs(number=7)
+
+    def _read(path: str, ref: str) -> str:
+        if path == ".review.yml":
+            return """
+task_board:
+  type: youtrack
+  create_target: Open
+  done_target: Done
+  options: {status_field: Stage}
+"""
+        return "def foo(): pass"
+    vcs.get_file_at_ref.side_effect = _read
+
+    svc = MCPReviewService(settings, components, vcs_factory=lambda o, r: vcs)
+    out = svc.prepare_review("o/r", 7)
+
+    assert out["task_board"] == {
+        "type": "youtrack",
+        "create_target": "Open",
+        "done_target": "Done",
+        "options": {"status_field": "Stage"},
+    }
+    assert svc._sessions[("o/r", 7)].prepared.policy.task_board_warnings == []
+
+
+@patch("reviewer.services.review_service.chunk_python", side_effect=_fake_chunk)
+@patch("reviewer.services.review_service.build_overlay")
 def test_prepare_review_payload_task_keys_empty_when_no_key_in_pr(
     _mock_overlay: MagicMock,
     _mock_chunk: MagicMock,
