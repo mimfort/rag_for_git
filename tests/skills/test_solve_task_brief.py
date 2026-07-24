@@ -127,3 +127,11 @@ def test_solve_task_hints_implementations_for_oo():
     text = SKILL_PATH.read_text(encoding="utf-8")
     assert "implementations" in text          # тул назван в шаге graph-deepening
     assert "IMPLEMENTS" in text or "наслед" in text  # смысл directed-обхода
+
+
+def test_solve_task_uses_only_generic_board_metadata():
+    text = SKILL_PATH.read_text(encoding="utf-8").lower()
+    for token in ("create_target", "done_target", "options", "targets", "required_for", "choices"):
+        assert token in text
+    for forbidden in ("yougile", "youtrack", "done_column", "done_state", "status_field", "api_key"):
+        assert forbidden not in text

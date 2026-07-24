@@ -103,3 +103,17 @@ def test_solve_task_assembled_has_branch_and_tools():
     s = assemble("solve-task/SKILL.md")
     assert "REVIEW_BRANCHES" in s
     assert "search_codebase" in s
+
+
+def test_board_skills_assemble_to_generic_provider_contract_without_jira_branch():
+    for rel_path in (
+        "configure-review/SKILL.md",
+        "sync-tasks/SKILL.md",
+        "solve-task/SKILL.md",
+        "create-task/SKILL.md",
+        "finish-task/SKILL.md",
+    ):
+        text = assemble(rel_path).lower()
+        for token in ("create_target", "done_target", "options", "targets", "required_for", "choices"):
+            assert token in text, f"{rel_path}: missing {token}"
+        assert "jira" not in text, f"{rel_path}: provider-specific Jira branch leaked"

@@ -38,8 +38,8 @@ brief to `superpowers:brainstorming` (which leads to writing-plans → subagent-
       stale/unknown index.
    3. **Warm the task corpus.** Call
       `sync_board(board=<task_board.project or null>, board_type=<task_board.type or null>,
-      status_field=<task_board.status_field or null>, limit=null, purge_orphaned=false)` —
-      `task_board.type`, `task_board.project` и `task_board.status_field` берутся из
+      provider_options=<task_board.options or {}>, limit=null, purge_orphaned=false)` —
+      `task_board.type`, `task_board.project` и `task_board.options` берутся из
       `<root>/.review.yml` (прочитай здесь, до вызова `sync_board`; при отсутствии файла или
       блока `task_board` — используй `null`).
       Скоупированный прогрев корпуса своего проекта (PRI-170); пустой project → весь корпус.
@@ -66,12 +66,16 @@ brief to `superpowers:brainstorming` (which leads to writing-plans → subagent-
    reported like `sync-codebase`; `sync_board` runs incrementally at start; summaries missing →
    three-way choice (build now / build yourself / skip).
 
-1. **Config.** Resolve the `task_board` block (`type`, `mcp`, `key_pattern`, `project`): first from the repo's
+1. **Config.** Resolve the `task_board` block (`type`, `key_pattern`, `project`, `create_target`,
+   `done_target`, `options`): first from the repo's
    `.review.yml`, and if there is no block there, from the deploy-wide default via
    `get_board_config()` (reviewer MCP) — so a per-repo `.review.yml` is not required when the board
-   is configured once in the reviewer deploy (`TASK_BOARD_*` env). If a board is resolved, its tools
-   are `mcp__<task_board.mcp>__*`. No block anywhere (`get_board_config()` → `null`), or the board MCP
-   is not connected → board-less mode (continue without it).
+   is configured once in the reviewer deploy. If a board is resolved, retain only its non-secret
+   generic metadata. No block anywhere (`get_board_config()` → `null`) → board-less mode (continue
+   without it). For incomplete metadata call `get_board_targets(board_type=<task_board.type>,
+   project=<task_board.project>, provider_options=<task_board.options or {}>)`: select from
+   `targets` by `label`, and use option `required_for` / `choices` to ask for missing `options`.
+   Never guess a target or an option and never branch on a board type.
 
 1.5. **Choose the brief model (cross-CLI).** Building the brief (Steps 2–4: gather + distill) is a
    light reasoning task over session-less retrieval tools — a top-tier model is overkill and burns

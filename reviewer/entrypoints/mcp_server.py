@@ -106,8 +106,7 @@ def create_server(service: MCPReviewService) -> FastMCP:
                    purge_orphaned: bool = False, keep_with_prs: bool = True,
                    board_type: str | None = None,
                    provider_options: dict[str, object] | None = None,
-                   force_renormalize: bool = False, *,
-                   status_field: str | None = None) -> dict:
+                   force_renormalize: bool = False) -> dict:
         """Server-side ETL: enumerate the configured task board via REST, normalize,
         and index it (vector store + task graph). board_type is a registered provider
         type; provider_options is its non-secret JSON options object. board limits the
@@ -126,17 +125,13 @@ def create_server(service: MCPReviewService) -> FastMCP:
             board_type,
             provider_options,
             force_renormalize,
-            status_field=status_field,
         )
 
     @mcp.tool()
     def finish_task(key: str, pr_url: str, note: str | None = None,
                     mark_done: bool = True, board_type: str | None = None,
                     target: str | None = None,
-                    provider_options: dict[str, object] | None = None, *,
-                    done_state: str | None = None,
-                    status_field: str | None = None,
-                    done_column: str | None = None) -> dict:
+                    provider_options: dict[str, object] | None = None) -> dict:
         """Close a task on the board after its PR is created (server-side write):
         idempotently append the PR link to the description and mark it done, so the
         task's last-modified bumps and the next sync_board re-indexes the updated task.
@@ -151,9 +146,6 @@ def create_server(service: MCPReviewService) -> FastMCP:
             board_type,
             target,
             provider_options,
-            done_state=done_state,
-            status_field=status_field,
-            done_column=done_column,
         )
 
     @mcp.tool()
@@ -161,8 +153,7 @@ def create_server(service: MCPReviewService) -> FastMCP:
                     criteria: list[str] | None = None, context: str | None = None,
                     board_type: str | None = None, project: str | None = None,
                     target: str | None = None,
-                    provider_options: dict[str, object] | None = None, *,
-                    status_field: str | None = None) -> dict:
+                    provider_options: dict[str, object] | None = None) -> dict:
         """Create a task on the board (server-side write) from structured fields.
 
         The canonical markdown body (Проблема / Что сделать / Критерии приёмки /
@@ -182,7 +173,6 @@ def create_server(service: MCPReviewService) -> FastMCP:
             project,
             target,
             provider_options,
-            status_field=status_field,
         )
 
     @mcp.tool()
@@ -217,8 +207,9 @@ def create_server(service: MCPReviewService) -> FastMCP:
 
     @mcp.tool()
     def get_board_config() -> dict:
-        """Deploy-wide task board config (TASK_BOARD_* env), shared by all repos.
-        Returns {"task_board": {type, mcp, key_pattern?, url_template?} | null}.
+        """Deploy-wide non-secret task-board metadata, shared by all repos.
+        Returns {"task_board": {type, project?, key_pattern?, create_target?,
+        done_target?, options?} | null}; the type is a registered provider type.
         Use from /sync-tasks and /solve-task as the fallback when the repo has no
         .review.yml task_board block, so the board need not be duplicated per repo.
         null = no board configured in this deploy."""
@@ -228,9 +219,11 @@ def create_server(service: MCPReviewService) -> FastMCP:
     def get_board_targets(board_type: str | None = None,
                           project: str | None = None,
                           provider_options: dict[str, object] | None = None) -> dict:
-        """Discover normalized targets and provider option choices (read-only).
+        """Discover normalized board metadata (read-only).
         board_type is a registered provider type and provider_options is a non-secret
-        JSON object. Credentials are never returned; failures are safe for fallback."""
+        JSON object. Returns {board_type, project, targets, options, warnings}, where
+        targets are {id, label, purposes} and options are {key, label, required_for,
+        choices}. Credentials are never returned; failures are safe for fallback."""
         return service.get_board_targets(board_type, project, provider_options)
 
     @mcp.tool()

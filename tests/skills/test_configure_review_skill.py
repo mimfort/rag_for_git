@@ -57,17 +57,17 @@ def test_skill_preserves_foreign_keys():
 def test_skill_manages_task_board_block():
     text = SKILL.read_text(encoding="utf-8")
     assert "task_board" in text
-    assert "youtrack" in text                       # знает про новый тип доски
-    # креды НЕ пишутся скиллом — только напоминание про env
-    assert "YOUTRACK_TOKEN" in text or "env деплоя" in text
+    assert "create_target" in text
+    assert "done_target" in text
+    assert "options" in text
 
 
 def test_skill_manages_finish_task_done_target():
-    # done-цель finish-task настраивается скиллом: yougile-колонка + youtrack поле/значение.
     text = SKILL.read_text(encoding="utf-8")
-    assert "done_column" in text                    # yougile: колонка «выполнено»
-    assert "status_field" in text                   # youtrack: имя поля статуса
-    assert "done_state" in text                     # youtrack: целевое значение
+    assert "done_target" in text
+    assert "targets" in text
+    assert "required_for" in text
+    assert "choices" in text
 
 
 def test_skill_asks_before_writing_ignore():
@@ -121,3 +121,11 @@ def test_skill_done_target_discovery_falls_back_to_asking():
     text = SKILL.read_text(encoding="utf-8")
     # тул отсутствует/пусто/ошибка → спросить пользователя (fail-open)
     assert "fall back to asking" in text
+
+
+def test_skill_uses_only_generic_board_metadata():
+    text = SKILL.read_text(encoding="utf-8").lower()
+    for token in ("create_target", "done_target", "options", "targets", "required_for", "choices"):
+        assert token in text
+    for forbidden in ("yougile", "youtrack", "done_column", "done_state", "status_field", "api_key"):
+        assert forbidden not in text
