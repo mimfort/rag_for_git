@@ -31,9 +31,11 @@ services:
     tmpfs: ["/var/lib/postgresql"]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U reviewer_test -d reviewer_test"]
-      interval: 2s
+      start_period: 60s
+      start_interval: 2s
+      interval: 30s
       timeout: 2s
-      retries: 30
+      retries: 3
   neo4j-test:
     image: neo4j@sha256:0b5d3ab6ec1b866890dbfb53bf4fe1cf039f9e03c96165599a403005b7e7bcc3
     profiles: ["test"]
@@ -41,11 +43,15 @@ services:
       NEO4J_AUTH: neo4j/reviewer_test_pass
     ports: ["127.0.0.1:17474:7474", "127.0.0.1:17687:7687"]
     tmpfs: ["/data", "/logs"]
+    # cypher-shell поднимает JVM (~2.5 с CPU за вызов): в простое проба идёт раз в 5 минут,
+    # частые пробы — только в фазе старта (start_period + start_interval).
     healthcheck:
       test: ["CMD-SHELL", "cypher-shell -u neo4j -p reviewer_test_pass 'RETURN 1'"]
-      interval: 2s
+      start_period: 60s
+      start_interval: 2s
+      interval: 300s
       timeout: 3s
-      retries: 30
+      retries: 3
 volumes:
   paradedb_data:
   neo4j_data:

@@ -3,6 +3,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 import inspect
 from pathlib import Path
+import re
 import socket
 import subprocess
 import sys
@@ -211,6 +212,31 @@ def test_unit_stores_fail_fast_before_db_clients_start() -> None:
         GraphStore("neo4j://localhost:7687", "neo4j", "password")
 
 
+def _duration_seconds(value: str | int | float) -> float:
+    """Переводит длительность compose ('2s', '300s', '1m30s') в секунды."""
+    if isinstance(value, (int, float)):
+        return float(value)
+    units = {"us": 1e-6, "ms": 1e-3, "h": 3600.0, "m": 60.0, "s": 1.0}
+    parts = re.findall(r"(\d+(?:\.\d+)?)(us|ms|h|m|s)", value)
+    if not parts:
+        raise ValueError(f"не удалось разобрать длительность: {value!r}")
+    return sum(float(number) * units[unit] for number, unit in parts)
+
+
+def _assert_cheap_idle_healthcheck(healthcheck: dict, *, probe: list[str]) -> None:
+    """Проба и retries фиксированы точно, тайминги — инвариантами.
+
+    Инвариант: дорогая проба не крутится в установившемся режиме (interval >= 30s),
+    но старт остаётся быстрым — внутри start_period пробы идут часто (start_interval <= 5s).
+    Тюнинг конкретных чисел не должен ломать тест, поэтому равенства на них нет.
+    """
+    assert healthcheck["test"] == probe
+    assert healthcheck["retries"] == 3
+    assert _duration_seconds(healthcheck["interval"]) >= 30
+    assert _duration_seconds(healthcheck["start_interval"]) <= 5
+    assert _duration_seconds(healthcheck["start_period"]) > 0
+
+
 def test_compose_defines_isolated_test_profile_services() -> None:
     root = Path(__file__).parents[1]
     compose = yaml.safe_load((root / "docker-compose.yml").read_text(encoding="utf-8"))
@@ -223,26 +249,22 @@ def test_compose_defines_isolated_test_profile_services() -> None:
         "POSTGRES_DB": "reviewer_test",
     }
     assert paradedb["ports"] == ["127.0.0.1:55433:5432"]
-    assert paradedb["healthcheck"] == {
-        "test": ["CMD-SHELL", "pg_isready -U reviewer_test -d reviewer_test"],
-        "interval": "2s",
-        "timeout": "2s",
-        "retries": 30,
-    }
+    _assert_cheap_idle_healthcheck(
+        paradedb["healthcheck"],
+        probe=["CMD-SHELL", "pg_isready -U reviewer_test -d reviewer_test"],
+    )
 
     neo4j = compose["services"]["neo4j-test"]
     assert neo4j["profiles"] == ["test"]
     assert neo4j["environment"] == {"NEO4J_AUTH": "neo4j/reviewer_test_pass"}
     assert neo4j["ports"] == ["127.0.0.1:17474:7474", "127.0.0.1:17687:7687"]
-    assert neo4j["healthcheck"] == {
-        "test": [
+    _assert_cheap_idle_healthcheck(
+        neo4j["healthcheck"],
+        probe=[
             "CMD-SHELL",
             "cypher-shell -u neo4j -p reviewer_test_pass 'RETURN 1'",
         ],
-        "interval": "2s",
-        "timeout": "3s",
-        "retries": 30,
-    }
+    )
 
 
 def test_compose_pins_only_test_service_images_by_digest() -> None:
