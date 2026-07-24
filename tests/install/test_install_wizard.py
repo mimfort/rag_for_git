@@ -1,8 +1,14 @@
 from pathlib import Path
 
+import pytest
 from click.testing import CliRunner
 from reviewer import install as inst
 from reviewer.entrypoints.cli import cli
+from reviewer.tasks.boards.registry import (
+    BoardProviderRegistry,
+    BoardProviderSpec,
+    ProviderSetupSpec,
+)
 
 
 def _keys_from_text(text: str) -> set[str]:
@@ -171,7 +177,8 @@ def test_init_dry_run_redacts_legacy_and_unknown_extra_secrets(tmp_path, monkeyp
         "CUSTOM_TOKEN=custom-secret\n"
         "AWS_SECRET_ACCESS_KEY=aws-secret\n"
         "PG_DSN=postgresql://reviewer:pg-secret@db.example/reviewer\n"
-        "DATABASE_URL=postgresql://reviewer:db-secret@db.example/reviewer\n",
+        "DATABASE_URL=postgresql://reviewer:db-secret@db.example/reviewer\n"
+        "BROKEN_URL=https://user:ipv6-secret@[::1\n",
         encoding="utf-8",
     )
     monkeypatch.setattr("reviewer.install.default_env_path", lambda: dest)
@@ -186,19 +193,81 @@ def test_init_dry_run_redacts_legacy_and_unknown_extra_secrets(tmp_path, monkeyp
     assert "aws-secret" not in result.output
     assert "pg-secret" not in result.output
     assert "db-secret" not in result.output
+    assert "ipv6-secret" not in result.output
     assert "TASK_BOARD_API_KEY=legacy-secret" in dest.read_text(encoding="utf-8")
 
 
-def test_init_yes_never_calls_provider_setup(tmp_path, monkeypatch):
+@pytest.mark.parametrize("mode", ["--dry-run", "--yes"])
+def test_init_noninteractive_modes_never_touch_provider_setup_stages(
+    mode,
+    tmp_path,
+    monkeypatch,
+):
     dest = tmp_path / ".env"
     calls: list[str] = []
+
+    class SentinelClient:
+        def close(self) -> None:
+            calls.append("http-close")
+
+    class SentinelProvider:
+        def validate_connection(self, _project=None):
+            calls.append("validation")
+            return {"status": "ok"}
+
+        def close(self) -> None:
+            calls.append("provider-close")
+
+    def acquire(io):
+        calls.append("acquisition")
+        io.open_url("https://sentinel.example/acquire")
+        from reviewer.tasks.boards import setup
+
+        setup.httpx.Client().close()
+        return {}
+
+    def create_provider(_context):
+        calls.append("factory")
+        return SentinelProvider()
+
+    registry = BoardProviderRegistry(
+        [
+            BoardProviderSpec(
+                board_type="sentinel",
+                factory=create_provider,
+                credential_fields=(),
+                setup=ProviderSetupSpec(
+                    label="Sentinel",
+                    help_url="https://sentinel.example/setup",
+                    help_text="Sentinel setup.",
+                    acquisition=acquire,
+                ),
+            )
+        ]
+    )
     monkeypatch.setattr("reviewer.install.default_env_path", lambda: dest)
     monkeypatch.setattr(
-        "reviewer.tasks.boards.setup.configure_board_provider",
-        lambda *_args, **_kwargs: calls.append("setup") or {},
+        "reviewer.tasks.boards.registry.default_board_registry",
+        lambda: registry,
+    )
+    monkeypatch.setattr(
+        "click.confirm",
+        lambda *_args, **_kwargs: calls.append("confirm") or True,
+    )
+    monkeypatch.setattr(
+        "click.prompt",
+        lambda *_args, **_kwargs: calls.append("prompt") or "",
+    )
+    monkeypatch.setattr(
+        "click.launch",
+        lambda *_args, **_kwargs: calls.append("browser"),
+    )
+    monkeypatch.setattr(
+        "reviewer.tasks.boards.setup.httpx.Client",
+        lambda *_args, **_kwargs: calls.append("http-construction") or SentinelClient(),
     )
 
-    result = CliRunner().invoke(cli, ["init", "--yes"])
+    result = CliRunner().invoke(cli, ["init", mode])
 
     assert result.exit_code == 0, result.output
     assert calls == []

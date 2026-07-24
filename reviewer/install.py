@@ -26,6 +26,13 @@ from reviewer.tasks.boards.registry import default_board_registry as _default_bo
 
 PACKAGE = "rag-reviewer"
 SERVER_NAME = "reviewer"
+COMMON_BOARD_ENV_KEYS = frozenset(
+    {
+        "TASK_BOARD_MCP",
+        "TASK_BOARD_KEY_PATTERN",
+        "TASK_BOARD_URL_TEMPLATE",
+    }
+)
 
 # anchored-glob правило, разрешающее ВЕСЬ сервер reviewer в Claude Code
 # (permissions.allow). Wildcard покрывает новые тулы автоматически — список
@@ -157,12 +164,17 @@ def board_env_group(registry) -> EnvGroup:
     return EnvGroup(title="Доска задач", fields=fields, optional=True)
 
 
+def common_board_env_fields(group: EnvGroup) -> list[EnvField]:
+    """Только три non-secret поля общей связки; prefix matching запрещён."""
+    return [field for field in group.fields if field.key in COMMON_BOARD_ENV_KEYS]
+
+
 def _env_template_with_board_fields(template: str, group: EnvGroup) -> str:
     marker = "TASK_BOARD_URL_TEMPLATE=\n"
     provider_lines = "\n".join(
         f"{field.key}={field.default}"
         for field in group.fields
-        if not field.key.startswith("TASK_BOARD_")
+        if field.key not in COMMON_BOARD_ENV_KEYS
     )
     return template.replace(marker, f"{marker}{provider_lines}\n", 1)
 
@@ -358,7 +370,7 @@ def render_env_preview(values: dict[str, str], extra: dict[str, str]) -> str:
         try:
             parsed = urlsplit(value)
         except ValueError:
-            return value
+            return ""
         if parsed.scheme and (parsed.username is not None or parsed.password is not None):
             return ""
         return value

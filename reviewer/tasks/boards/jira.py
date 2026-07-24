@@ -36,6 +36,9 @@ from reviewer.tasks.boards.registry import (
 )
 
 _PAGE = 100
+_ATLASSIAN_TENANT_HOST = re.compile(
+    r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.atlassian\.net$"
+)
 
 
 def _build_provider(context: ProviderBuildContext) -> JiraCloudBoard:
@@ -83,11 +86,20 @@ def provider_spec() -> BoardProviderSpec:
     )
 
 
-def _site_url(value: str, *, secrets: tuple[str, ...]) -> str:
-    parsed = urlsplit((value or "").strip())
+def _normalize_site_url(value: str, *, secrets: tuple[str, ...]) -> str:
+    """Fail-closed Jira Cloud tenant origin до создания authenticated client."""
+    try:
+        parsed = urlsplit((value or "").strip())
+        hostname = (parsed.hostname or "").lower()
+        port = parsed.port
+    except (TypeError, ValueError):
+        parsed = urlsplit("")
+        hostname = ""
+        port = None
     if (
         parsed.scheme != "https"
-        or not parsed.hostname
+        or _ATLASSIAN_TENANT_HOST.fullmatch(hostname) is None
+        or port not in {None, 443}
         or parsed.username is not None
         or parsed.password is not None
         or parsed.query
@@ -96,11 +108,11 @@ def _site_url(value: str, *, secrets: tuple[str, ...]) -> str:
     ):
         raise BoardProviderError(
             "configuration",
-            "Jira base URL must be a direct HTTPS site URL.",
-            hint="Use https://<site> without /rest/api/3.",
+            "Jira base URL must be an exact Jira Cloud tenant origin.",
+            hint="Use https://<tenant>.atlassian.net without /rest/api/3.",
             secrets=secrets,
         )
-    return f"https://{parsed.netloc}"
+    return f"https://{hostname}"
 
 
 def _timestamp(value: object) -> int:
@@ -210,7 +222,7 @@ class JiraCloudBoard:
         sleeper: Callable[[float], None] = time.sleep,
     ) -> None:
         self._secrets = (api_token, email)
-        self._base = _site_url(base_url, secrets=self._secrets)
+        self._base = _normalize_site_url(base_url, secrets=self._secrets)
         self._key_pattern = key_pattern
         self._issue_type = issue_type
         self._att_origin = _https_origin(self._base)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import replace
 
 import httpx
@@ -35,6 +36,7 @@ class FakeIO:
         self.opened: list[str] = []
         self.messages: list[str] = []
         self.saved_values: dict[str, str] = {}
+        self.save_attempts: list[dict[str, str]] = []
         self.events: list[str] = []
 
     def confirm(self, text: str, default: bool = False) -> bool:
@@ -59,6 +61,11 @@ class FakeIO:
 
     def echo(self, text: str) -> None:
         self.messages.append(text)
+
+    def save(self, values: dict[str, str]) -> None:
+        attempted = dict(values)
+        self.save_attempts.append(attempted)
+        self.saved_values.update(attempted)
 
 
 class FakeProvider:
@@ -150,7 +157,7 @@ def test_jira_setup_rejects_rest_api_base_before_network() -> None:
         confirms=[False],
     )
 
-    with pytest.raises(BoardProviderError, match="direct HTTPS site URL"):
+    with pytest.raises(BoardProviderError, match="exact Jira Cloud tenant origin"):
         configure_board_provider(jira_provider_spec(), io)
 
     assert "jira-secret" not in "\n".join(io.messages)
@@ -217,6 +224,9 @@ def test_youtrack_setup_opens_instance_security_page_and_explains_full_token() -
     rendered = "\n".join(io.messages)
     assert "YouTrack service scope" in rendered
     assert "perm:" in rendered
+    assert "bundled Hub" in rendered
+    assert "external Hub" in rendered
+    assert "Profile" in rendered
     assert "reviewer" in rendered
     assert "PRI" in rendered
     assert "full-token" not in rendered
@@ -271,6 +281,8 @@ def test_yougile_acquires_api_key_from_company_without_saving_password() -> None
         "/api-v2/auth/keys",
     ]
     assert requests[1][1]["companyId"] == "company-1"
+    io.save(result)
+    assert io.save_attempts == [result]
     assert "YOUGILE_PASSWORD" not in io.saved_values
 
 
@@ -321,6 +333,8 @@ def test_yougile_client_initialization_failure_does_not_leak_password(
 
 
 def test_yougile_password_is_discarded_on_failure(caplog) -> None:
+    caplog.set_level(logging.DEBUG)
+
     def handler(_request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectError("transport failed")
 
@@ -333,12 +347,20 @@ def test_yougile_password_is_discarded_on_failure(caplog) -> None:
         confirms=[True, False],
     )
 
-    with pytest.raises(BoardProviderError):
+    with pytest.raises(BoardProviderError) as raised:
         acquire_yougile_key(io, client=_yougile_client(handler))
 
-    rendered = repr(io.saved_values) + caplog.text + "\n".join(io.messages)
+    rendered = (
+        repr(io.saved_values)
+        + repr(io.save_attempts)
+        + repr(raised.value)
+        + str(raised.value)
+        + caplog.text
+        + "\n".join(io.messages)
+    )
     assert "never-persist" not in rendered
     assert "YOUGILE_PASSWORD" not in io.saved_values
+    assert all("YOUGILE_PASSWORD" not in attempt for attempt in io.save_attempts)
 
 
 def test_yougile_manual_key_fallback_uses_hidden_prompt() -> None:

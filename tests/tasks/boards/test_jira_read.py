@@ -39,13 +39,56 @@ def _board(handler, *, base_url: str = "https://acme.atlassian.net") -> JiraClou
         "https://acme.atlassian.net/rest/api/3",
         "https://user@acme.atlassian.net",
         "https://acme.atlassian.net?token=secret",
+        "https://attacker.example",
+        "https://atlassian.net",
+        "https://acme.atlassian.net.attacker.example",
+        "https://nested.acme.atlassian.net",
+        "https://acme.atlassian.net:444",
+        "https://acme.atlassian.net:0",
+        "https://-acme.atlassian.net",
+        "https://acme-.atlassian.net",
     ],
 )
 def test_constructor_accepts_only_direct_https_site_url(base_url: str) -> None:
+    requests: list[httpx.Request] = []
+
     with pytest.raises(BoardProviderError) as exc_info:
-        _board(lambda _: httpx.Response(200, json={}), base_url=base_url)
+        _board(
+            lambda request: requests.append(request) or httpx.Response(200, json={}),
+            base_url=base_url,
+        )
     assert exc_info.value.category == "configuration"
     assert "jira-secret-token" not in repr(exc_info.value)
+    assert requests == []
+
+
+def test_hostile_jira_origin_is_rejected_before_authenticated_client_construction(
+    monkeypatch,
+) -> None:
+    constructions: list[dict] = []
+    monkeypatch.setattr(
+        "reviewer.tasks.boards.jira.httpx.Client",
+        lambda **kwargs: constructions.append(kwargs),
+    )
+
+    with pytest.raises(BoardProviderError):
+        _board(
+            lambda _request: httpx.Response(200, json={}),
+            base_url="https://acme.atlassian.net.attacker.example",
+        )
+
+    assert constructions == []
+
+
+@pytest.mark.parametrize(
+    "base_url",
+    ["https://acme.atlassian.net", "https://acme.atlassian.net:443"],
+)
+def test_constructor_accepts_exact_atlassian_tenant_on_effective_port_443(
+    base_url: str,
+) -> None:
+    provider = _board(lambda _request: httpx.Response(200, json={}), base_url=base_url)
+    provider.close()
 
 
 def test_basic_auth_and_enhanced_search_pagination() -> None:

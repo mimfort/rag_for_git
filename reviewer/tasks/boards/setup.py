@@ -278,7 +278,7 @@ def configure_board_provider(spec: BoardProviderSpec, io: SetupIO) -> dict[str, 
             io,
         )
         url = _setup_url(spec, acquired)
-        if io.confirm(f"Открыть страницу permanent token {url}?", default=False):
+        if io.confirm(f"Открыть предложенную страницу Account Security {url}?", default=False):
             io.open_url(url)
         acquired.update(
             _prompt_credentials(

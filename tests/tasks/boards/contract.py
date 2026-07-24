@@ -70,7 +70,7 @@ class ProviderAdapter:
         if self.board_type == "jira":
             return (
                 JiraCloudBoard(
-                    base_url="https://jira.test",
+                    base_url="https://jira-contract.atlassian.net",
                     email="robot@example.test",
                     api_token=self.secret,
                     key_pattern=r"PRI-\d+",
@@ -385,7 +385,7 @@ def _jira_issue(number: int) -> dict[str, Any]:
                     "filename": "spec.txt",
                     "mimeType": "text/plain",
                     "size": 24,
-                    "content": "https://jira.test/files/spec.txt",
+                    "content": "https://jira-contract.atlassian.net/files/spec.txt",
                 }
             ] if number == 1 else [],
             "issuetype": {"id": "10001", "name": "Task"},

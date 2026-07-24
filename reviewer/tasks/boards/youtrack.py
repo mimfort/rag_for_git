@@ -113,7 +113,10 @@ def provider_spec() -> BoardProviderSpec:
             help_url="https://www.jetbrains.com/help/youtrack/devportal/authentication-with-permanent-token.html",
             help_text=(
                 "Создайте permanent token, выберите YouTrack service scope и "
-                "сохраните полный token с префиксом perm:."
+                "сохраните полный token с префиксом perm:. Синтезированная instance "
+                "Account Security URL — только удобная ссылка для bundled Hub. "
+                "При external Hub откройте Profile в YouTrack и следуйте ссылке "
+                "Account Security в профиль Hub."
             ),
             help_url_builder=_permanent_token_url,
         ),

@@ -136,6 +136,59 @@ def test_check_sanitizes_provider_error_and_closes_provider(capsys) -> None:
     assert provider.closed is True
 
 
+def test_check_recursively_allowlists_validation_report_schema(capsys) -> None:
+    provider = CheckProvider(
+        {
+            "status": "ok",
+            "identity": {
+                "login": "reviewer",
+                "name": "https://user:identity-password@identity.example",
+                "details": {"refresh_token": "nested-identity-token"},
+            },
+            "project": {
+                "key": "PRI",
+                "metadata": {"refresh_token": "nested-project-token"},
+            },
+            "capabilities": {
+                "read": True,
+                "create": "yes",
+                "refresh_token": "nested-capability-token",
+                "details": {"token": "nested"},
+            },
+            "warnings": [
+                "read-only connection",
+                "see https://user:warning-password@warning.example/help",
+                {"refresh_token": "nested-warning-token"},
+            ],
+        }
+    )
+
+    failed = _check_board_providers(
+        _settings(),
+        registry=_registry(provider),
+        credential_source=ProviderCredentialSource(values={"FAKE_TOKEN": "configured-secret"}),
+    )
+
+    output = capsys.readouterr().out
+    assert failed is False
+    assert "reviewer" in output
+    assert "PRI" in output
+    assert '"read": true' in output
+    assert "read-only connection" in output
+    for forbidden in (
+        "refresh_token",
+        "nested-identity-token",
+        "nested-project-token",
+        "nested-capability-token",
+        "nested-warning-token",
+        "identity-password",
+        "warning-password",
+        '"create": "yes"',
+    ):
+        assert forbidden not in output
+    assert provider.closed is True
+
+
 def test_check_skips_unconfigured_provider_without_constructing_it(capsys) -> None:
     provider = CheckProvider({})
 
