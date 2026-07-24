@@ -55,12 +55,15 @@ class ProviderCredentialSource:
             return cls()
         env_file = getattr(settings, "_provider_env_file", _resolve_env_file())
         source = cls(env_file=env_file) if env_file is not None else cls(values=os.environ)
-        source._process_values.update(
-            {
-                key.upper(): "" if value is None else str(value)
-                for key, value in dump().items()
-            }
-        )
+        settings_values = {
+            key.upper(): "" if value is None else str(value)
+            for key, value in dump().items()
+        }
+        source._process_values.update(settings_values)
+        # Settings уже разрешил свои поля с учётом init/env/.env. Даже явное
+        # пустое значение — override; не даём нижнему file-layer вернуть его назад.
+        for key in settings_values:
+            source._file_values.pop(key, None)
         return source
 
     def resolve(self, spec: BoardProviderSpec) -> ResolvedProviderCredentials:

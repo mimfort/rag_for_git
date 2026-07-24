@@ -3,7 +3,16 @@ import logging
 
 import pytest
 
+from reviewer.config.provider_credentials import ProviderCredentialSource
+from reviewer.config.settings import Settings
 from reviewer.mcp.service import MCPReviewService
+from reviewer.tasks.boards.registry import (
+    BoardProviderRegistry,
+    BoardProviderSpec,
+    CredentialFieldSpec,
+    ProviderBuildContext,
+    ProviderSetupSpec,
+)
 
 
 class _Settings:
@@ -15,9 +24,17 @@ class _Settings:
 
 
 class _Provider:
+    board_type = "fake"
+
     def __init__(self):
         self.created = None
         self.closed = False
+
+    def validate_connection(self, project=None):
+        return {}
+
+    def iter_raw(self, board, limit):
+        return []
 
     def create(self, doc_md, *, title, target, project):
         self.created = {"doc_md": doc_md, "title": title, "target": target,
@@ -30,6 +47,15 @@ class _Provider:
 
     def normalize(self, raw):
         return {"key": "PRI-42", "description": "## Проблема\n\nтекст"}
+
+    def normalize_meta(self, raw):
+        return self.normalize(raw)
+
+    def list_targets(self, project):
+        return {"targets": [], "options": [], "warnings": []}
+
+    def finish(self, key, pr_url, *, note=None, mark_done=True, target=None):
+        return {}
 
     def close(self):
         self.closed = True
@@ -50,15 +76,30 @@ class _Components:
 
 
 @pytest.fixture
-def service(monkeypatch):
-    def _make(types=("yougile",), provider=None):
+def service():
+    def _make(types=("fake",), provider=None):
         provider = provider or _Provider()
         tasks = _TaskService()
         svc = MCPReviewService.__new__(MCPReviewService)
-        svc.settings = _Settings(types)
+        svc.settings = Settings(_env_file=None)
         svc.components = _Components(tasks)
-        monkeypatch.setattr("reviewer.mcp.service.make_board_provider",
-                            lambda *a, **kw: provider)
+        specs = []
+        values = {}
+        for board_type in types:
+            def factory(context: ProviderBuildContext, type_=board_type):
+                provider.board_type = type_
+                return provider
+
+            env = f"{board_type.upper()}_TOKEN"
+            specs.append(BoardProviderSpec(
+                board_type=board_type,
+                factory=factory,
+                credential_fields=(CredentialFieldSpec(env, "Token", secret=True),),
+                setup=ProviderSetupSpec(board_type, "https://fake/help", "Configure."),
+            ))
+            values[env] = "secret"
+        svc._board_registry = BoardProviderRegistry(specs)
+        svc._board_credentials = ProviderCredentialSource(values=values)
         return svc, provider, tasks
     return _make
 
@@ -93,16 +134,16 @@ def test_create_task_closes_provider(service):
 
 
 def test_create_task_requires_board_type_when_ambiguous(service):
-    svc, _, _ = service(types=("yougile", "youtrack"))
+    svc, _, _ = service(types=("first", "second"))
     res = svc.create_task(title="t", problem="p", project="PRI")
     assert res["status"] == "error"
     assert "board_type" in res["reason"]
 
 
 def test_create_task_rejects_unconfigured_board(service):
-    svc, _, _ = service(types=("yougile",))
+    svc, _, _ = service(types=("fake",))
     res = svc.create_task(title="t", problem="p", project="PRI",
-                          board_type="youtrack")
+                          board_type="other")
     assert res["status"] == "error"
 
 

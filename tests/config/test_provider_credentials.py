@@ -61,3 +61,19 @@ def test_configured_types_and_secret_values_are_stable(tmp_path):
     assert source.is_configured(YOUGILE_SPEC) is True
     assert source.configured_types(registry) == ("yougile",)
     assert source.secret_values(YOUGILE_SPEC) == frozenset({"legacy-secret"})
+
+
+def test_settings_empty_override_suppresses_declared_value_from_env_file(tmp_path):
+    env_file = tmp_path / ".env"
+    env_file.write_text("YOUGILE_API_KEY=file-secret\n", encoding="utf-8")
+
+    class _Settings:
+        _provider_env_file = env_file
+
+        @staticmethod
+        def model_dump():
+            return {"yougile_api_key": ""}
+
+    source = ProviderCredentialSource.from_settings(_Settings())
+
+    assert source.is_configured(YOUGILE_SPEC) is False
