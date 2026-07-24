@@ -600,7 +600,7 @@ RAG + граф кода и передаёт в **полный цикл superpowe
 
 - **Аргументы:** ключ задачи (напр. `PRI-4`, по `key_pattern`) **или** свободное описание (напр.
   «add a logout endpoint»). Board-less режим: описание + поиск по коду.
-- **MCP-тулы:** `get_subsystem_summaries`, `get_task`, `index_task`, `get_task_context`, `search_tasks`,
+- **MCP-тулы:** `get_subsystem_summaries`, `get_task`, `get_task_context`, `search_tasks`,
   `search_codebase`, `related_symbols`, `callers`, `definition`, `implementations`, `get_pr_diff` и
   server-side `sync_board`.
 - **Поток:** резолв generic board config → server-side incremental `sync_board` → идентификация
@@ -642,7 +642,9 @@ RAG + граф кода и передаёт в **полный цикл superpowe
 - **MCP-тулы:** `sync_board` (один вызов).
 - **Поток:** маппинг аргументов → один `sync_board(...)` → печать counts-сводки (перечислено/изменено/
   заэмбеждено/без изменений/ошибок, purge, warnings). При `{"status":"error",...}` доска не настроена
-  на сервере — задать `TASK_BOARD_*` в `~/.config/rag-reviewer/.env` и переподключить MCP.
+  на сервере — запустить `reviewer init`, настроить registry-declared credentials выбранного
+  registered provider по [docs/board-providers.md](docs/board-providers.md), запустить
+  `reviewer check` и переподключить MCP.
 
 ### `reviewer_performance-review` — ревью только производительности
 
@@ -791,7 +793,7 @@ code_quote, message, suggestion, fix:{start_line,end_line,replacement}|null, con
 | `search_tasks` | `(query, top_k=5, project=None)` | Семантически похожие задачи из индекса. `project` скоупит результаты одним проектом доски (префикс кода). |
 | `get_task_context` | `(key: str, project=None)` | Граф-контекст: задача, её PR, связанные задачи и их PR, затронутый код. `project` скоупит связанные задачи одним проектом. |
 | `purge_orphaned_tasks` | `(active_keys: list[str], keep_with_prs=True)` | Удалить задачи, которых больше нет на доске (с PR-историей защищены по умолчанию). |
-| `get_board_config` | `()` | Legacy deploy metadata (`TASK_BOARD_*`) для older clients; креды **не** отдаёт. Current generic skills резолвят repo-конфиг и используют server-side lifecycle-тулы. |
+| `get_board_config` | `()` | Current non-secret deploy-wide fallback: тип выводится из configured registry credentials плюс common non-secret metadata. Credentials are not returned. |
 
 ---
 

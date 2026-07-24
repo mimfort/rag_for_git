@@ -164,3 +164,27 @@ def test_root_review_yml_is_parseable_generic_config_with_key_pattern():
     assert config is not None
     assert config.key_pattern == r"PRI-\d+"
     assert config.url_template is None
+
+
+def test_readme_sync_error_hints_use_registry_setup_and_current_config_fallback():
+    for rel in ("README.md", "README.ru.md"):
+        text = _read(rel)
+        sync_section = text.split("### `reviewer_sync-tasks`", maxsplit=1)[1].split(
+            "### `reviewer_performance-review`", maxsplit=1
+        )[0]
+        assert "TASK_BOARD_*" not in sync_section
+        assert "reviewer init" in sync_section
+        assert "reviewer check" in sync_section
+        assert "docs/board-providers.md" in sync_section
+        assert "non-secret deploy-wide fallback" in text
+        assert "configured registry credentials" in text
+        assert "Credentials are not returned" in text
+
+
+def test_readme_solve_workflow_does_not_list_index_task():
+    for rel in ("README.md", "README.ru.md"):
+        text = _read(rel)
+        solve_section = text.split("### `reviewer_solve-task`", maxsplit=1)[1].split(
+            "### `reviewer_sync-tasks`", maxsplit=1
+        )[0]
+        assert "index_task" not in solve_section

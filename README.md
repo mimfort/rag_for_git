@@ -681,7 +681,7 @@ and enters brainstorming. It disciplines context-gathering — it does **not** w
 
 - **Arguments:** a task key (e.g. `PRI-4`, must match `key_pattern`) **or** a free-text description
   (e.g. "add a logout endpoint"). Board-less mode falls back to description + code search.
-- **MCP tools used:** `get_subsystem_summaries`, `get_task`, `index_task`, `get_task_context`, `search_tasks`,
+- **MCP tools used:** `get_subsystem_summaries`, `get_task`, `get_task_context`, `search_tasks`,
   `search_codebase`, `related_symbols`, `callers`, `definition`, `implementations`, `get_pr_diff`, and
   server-side `sync_board`. All task tools are scoped via `project=<task_board.project>`.
 - **Flow:** resolve generic board config → server-side incremental `sync_board` → identify task
@@ -722,7 +722,9 @@ REST itself, so the LLM passes no task text (O(1) tokens regardless of board siz
 - **MCP tools used:** `sync_board` (single call).
 - **Flow:** map args → one `sync_board(...)` call → print a counts summary (enumerated/changed/
   embedded/unchanged/failed, purge, warnings). On `{"status":"error",...}` the board is not
-  configured server-side — set `TASK_BOARD_*` in `~/.config/rag-reviewer/.env` and reconnect.
+  configured server-side — run `reviewer init`, configure the selected registered provider's
+  registry-declared credentials as documented in [docs/board-providers.md](docs/board-providers.md),
+  run `reviewer check`, then reconnect MCP.
 
 ### `reviewer_performance-review` — performance-only review
 
@@ -863,7 +865,7 @@ code_quote, message, suggestion, fix:{start_line,end_line,replacement}|null, con
 | `search_tasks` | `(query, top_k=5, project=None)` | Semantically similar tasks from the indexed corpus. |
 | `get_task_context` | `(key: str, project=None)` | Graph context: the task, its PRs, linked tasks and their PRs, and the touched code. |
 | `purge_orphaned_tasks` | `(active_keys: list[str], keep_with_prs=True)` | Remove tasks no longer on the board (PR-linked tasks protected by default). |
-| `get_board_config` | `()` | Legacy deploy metadata (`TASK_BOARD_*`) for older clients; credentials are **not** returned. Current generic skills resolve repository config and use server-side lifecycle tools. |
+| `get_board_config` | `()` | Current non-secret deploy-wide fallback: type is derived from configured registry credentials plus common non-secret metadata. Credentials are not returned. |
 
 ---
 

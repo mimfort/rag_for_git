@@ -40,3 +40,13 @@ def test_readmes_keep_generic_task_key_metadata_in_examples():
         text = _read(rel)
         assert "key_pattern:" in text
         assert "url_template:" in text
+
+
+def test_solve_task_skill_uses_generic_board_setup_hint():
+    text = _read("plugin/skills/solve-task/SKILL.md")
+
+    assert "TASK_BOARD_*" not in text
+    assert "reviewer init" in text
+    assert "reviewer check" in text
+    assert "docs/board-providers.md" in text
+    assert "continue board-less" in text

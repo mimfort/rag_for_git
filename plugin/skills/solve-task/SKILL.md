@@ -50,7 +50,9 @@ brief to `superpowers:brainstorming` (which leads to writing-plans → subagent-
       board-less.
       Скоупированный прогрев корпуса своего проекта (PRI-170); пустой project → весь корпус.
       Incremental (timestamp watermark), cheap when the corpus is warm. Board not configured or
-      `status=error` → print the `TASK_BOARD_*` hint and continue board-less.
+      `status=error` → tell the user to run `reviewer init`, configure the selected registered
+      provider's registry-declared credentials as documented in `docs/board-providers.md`, run
+      `reviewer check`, and reconnect MCP; continue board-less.
    4. **Summary warmth.** Call `get_subsystem_summaries(repo, branch)` (without `query`) and check
       the returned count. Skip this check if `drift == null` (no index at all — summaries can't
       exist). If count == 0 (summaries not built yet):

@@ -401,9 +401,11 @@ class MCPReviewService:
         """Глобальный (env) конфиг доски задач деплоя — для клиентских скилов.
 
         Скилы sync-tasks/solve-task сначала читают per-repo .review.yml; если
-        там нет блока task_board, берут этот глобальный дефолт, чтобы не плодить
-        .review.yml в каждом репозитории. ``{"task_board": None}`` = доска в
-        деплое не настроена (задайте TASK_BOARD_* в .env reviewer-mcp).
+        там нет блока task_board, берут этот current non-secret deploy-wide fallback.
+        Его тип выводится из configured registry credentials, а common non-secret metadata
+        дополняет конфиг. ``{"task_board": None}`` = доска в деплое не настроена:
+        выполните ``reviewer init``, задайте registry-declared provider credentials и
+        проверьте подключение через ``reviewer check``.
         """
         return {"task_board": self.settings.task_board_default()}
 
