@@ -59,7 +59,7 @@ def provider_spec() -> BoardProviderSpec:
         factory=_build_provider,
         credential_fields=(
             CredentialFieldSpec("JIRA_BASE_URL", "Jira Cloud site URL"),
-            CredentialFieldSpec("JIRA_EMAIL", "Atlassian account email"),
+            CredentialFieldSpec("JIRA_EMAIL", "Atlassian account email", secret=True),
             CredentialFieldSpec("JIRA_API_TOKEN", "Atlassian API token", secret=True),
         ),
         option_fields=(
@@ -72,7 +72,11 @@ def provider_spec() -> BoardProviderSpec:
         setup=ProviderSetupSpec(
             "Jira Cloud",
             "https://id.atlassian.com/manage-profile/security/api-tokens",
-            "Создайте API token без scopes для прямого Jira Cloud site URL.",
+            (
+                "Создайте API token без scopes для прямого Jira Cloud site URL, "
+                "задайте понятные name/expiration и сразу сохраните token: повторно "
+                "его посмотреть нельзя. Пароль Atlassian не подходит."
+            ),
         ),
         create_target_label="Статус создания",
         done_target_label="Статус завершения",
@@ -237,7 +241,20 @@ class JiraCloudBoard:
 
     def validate_connection(self, project: str | None = None) -> dict:
         """Проверить identity, видимость проекта и независимые lifecycle permissions."""
-        identity = self._read("GET", "/rest/api/3/myself") or {}
+        try:
+            identity = self._read("GET", "/rest/api/3/myself") or {}
+        except BoardProviderError as error:
+            if error.category == "authentication":
+                raise BoardProviderError(
+                    "authentication",
+                    error.message,
+                    hint=(
+                        "Для direct Jira Cloud site URL создайте API token без scopes "
+                        "и используйте email Atlassian account."
+                    ),
+                    secrets=self._secrets,
+                ) from None
+            raise
         capabilities = {"read": True, "create": False, "transition": False}
         warnings: list[str] = []
         if project:

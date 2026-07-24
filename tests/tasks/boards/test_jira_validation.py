@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import httpx
+import pytest
 
+from reviewer.tasks.boards.errors import BoardProviderError
 from tests.tasks.boards.jira_helpers import board
 
 
@@ -46,3 +48,21 @@ def test_validation_without_project_only_checks_identity() -> None:
     assert result["project"] is None
     assert result["capabilities"] == {"read": True, "create": False, "transition": False}
     assert calls == ["/rest/api/3/myself"]
+
+
+def test_direct_site_auth_401_suggests_unscoped_token_without_leaking_response() -> None:
+    raw_body = "scoped token rejected: jira-secret-token"
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(401, text=raw_body)
+
+    with pytest.raises(BoardProviderError) as raised:
+        board(handler).validate_connection("PRI")
+
+    error = raised.value
+    rendered = f"{error!r} {error}"
+    assert error.category == "authentication"
+    assert "token без scopes" in error.hint
+    assert "direct Jira Cloud site URL" in error.hint
+    assert "jira-secret-token" not in rendered
+    assert raw_body not in rendered

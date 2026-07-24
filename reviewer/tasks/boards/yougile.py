@@ -29,6 +29,7 @@ from reviewer.tasks.boards.registry import (
     ProviderBuildContext,
     ProviderSetupSpec,
 )
+from reviewer.tasks.boards.setup import acquire_yougile_key
 
 log = logging.getLogger(__name__)
 
@@ -79,7 +80,11 @@ def provider_spec() -> BoardProviderSpec:
         setup=ProviderSetupSpec(
             label="YouGile",
             help_url="https://ru.yougile.com/api-v2",
-            help_text="Создайте API key YouGile с минимально необходимыми правами.",
+            help_text=(
+                "Получите API key автоматически или используйте официальный ручной flow. "
+                "При allowOnlyOpenId нужен готовый key от API-capable аккаунта."
+            ),
+            acquisition=acquire_yougile_key,
         ),
         default_api_base="https://yougile.com/api-v2",
         create_target_label="Колонка создания",

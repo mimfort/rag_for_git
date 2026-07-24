@@ -299,6 +299,58 @@ def _apply_claude_allowlist(inst, *, dry_run: bool) -> None:
         click.echo(f"  бэкап: {backup}")
 
 
+def _check_board_providers(
+    settings,
+    *,
+    registry=None,
+    credential_source=None,
+) -> bool:
+    """Проверить configured registry providers; ``True`` означает хотя бы одну ошибку."""
+    import json
+
+    from reviewer.config.provider_credentials import ProviderCredentialSource
+    from reviewer.tasks.boards.errors import (
+        BoardProviderError,
+        sanitize_provider_payload,
+    )
+    from reviewer.tasks.boards.registry import default_board_registry
+    from reviewer.tasks.boards.runtime import resolved_provider
+
+    registry = registry or default_board_registry()
+    source = credential_source or ProviderCredentialSource.from_settings(settings)
+    configured = registry.configured_types(source)
+    if not configured:
+        click.echo("  Доски задач: configured providers не настроены, проверка пропущена")
+        return False
+
+    failed = False
+    for board_type in configured:
+        try:
+            with resolved_provider(
+                settings,
+                board_type,
+                {},
+                registry=registry,
+                credential_source=source,
+            ) as resolved:
+                report = resolved.provider.validate_connection()
+                safe = sanitize_provider_payload(report, resolved.secrets)
+            click.echo(f"✓ Доска задач [{board_type}]: подключение — OK")
+            if isinstance(safe, dict):
+                for key in ("identity", "project", "capabilities"):
+                    if key in safe:
+                        rendered = json.dumps(safe[key], ensure_ascii=False, sort_keys=True)
+                        click.echo(f"  {key}: {rendered}")
+                for warning in safe.get("warnings") or []:
+                    click.echo(f"  warning: {warning}")
+        except BoardProviderError as error:
+            click.echo(f"✗ Доска задач [{board_type}] ({error.category}): {error.message}")
+            if error.hint:
+                click.echo(f"  {error.hint}")
+            failed = True
+    return failed
+
+
 @cli.command()
 def check() -> None:
     """Проверить готовность окружения (ключи, Postgres, Neo4j, GitHub)."""
@@ -378,7 +430,10 @@ def check() -> None:
     else:
         click.echo("  GitHub API: токен не задан, проверка пропущена")
 
-    # 6. Свежесть установленных скилов (информационно, не влияет на exit-code)
+    # 6. Настроенные board providers
+    failed = _check_board_providers(s) or failed
+
+    # 7. Свежесть установленных скилов (информационно, не влияет на exit-code)
     try:
         from reviewer import install as _inst
         warns = _inst.staleness_warnings()
@@ -743,24 +798,95 @@ def install(client: str | None, all_clients: bool, list_clients: bool,
               help="куда писать .env (по умолчанию ~/.config/rag-reviewer/.env)")
 @click.option("--yes", "yes", is_flag=True,
               help="принять все дефолты без интерактива (CI-режим)")
-def init(path_opt: str | None, yes: bool) -> None:
+@click.option("--dry-run", "dry_run", is_flag=True,
+              help="показать безопасный preview без prompt, сети и записи файла")
+def init(path_opt: str | None, yes: bool, dry_run: bool) -> None:
     """Интерактивный мастер настройки .env для rag-reviewer."""
     import subprocess
     from pathlib import Path
     from reviewer import install as inst
+    from reviewer.tasks.boards import setup as board_setup
+    from reviewer.tasks.boards.errors import BoardProviderError
+    from reviewer.tasks.boards.registry import default_board_registry
 
     dest = Path(path_opt).expanduser() if path_opt else inst.default_env_path()
-    dest.parent.mkdir(parents=True, exist_ok=True)
-
     current = inst.read_env(dest)
     wizard_keys = {f.key for g in inst.WIZARD_GROUPS for f in g.fields}
+
+    if dry_run:
+        values = inst.prompt_groups(inst.WIZARD_GROUPS, current=current, yes=True)
+        extra = {k: v for k, v in current.items() if k not in wizard_keys}
+        click.echo(f"# reviewer init preview: {dest}")
+        click.echo(inst.render_env_preview(values, extra))
+        return
+
+    dest.parent.mkdir(parents=True, exist_ok=True)
 
     if not yes:
         click.echo(f"Настройка rag-reviewer: {dest}")
         click.echo("─" * 52)
 
     try:
-        values = inst.prompt_groups(inst.WIZARD_GROUPS, current=current, yes=yes)
+        groups = inst.WIZARD_GROUPS
+        if yes:
+            values = inst.prompt_groups(groups, current=current, yes=True)
+        else:
+            board_group = next(group for group in groups if group.title == "Доска задач")
+            common_fields = [
+                field for field in board_group.fields if field.key.startswith("TASK_BOARD_")
+            ]
+            values = inst.prompt_groups(
+                [
+                    (
+                        inst.EnvGroup(
+                            title=board_group.title,
+                            fields=common_fields,
+                            optional=True,
+                        )
+                        if group is board_group
+                        else group
+                    )
+                    for group in groups
+                ],
+                current=current,
+                yes=False,
+            )
+            for field in board_group.fields:
+                if field in common_fields:
+                    continue
+                values[field.key] = current.get(field.key, "") or field.default
+
+            if click.confirm("\nПодключить provider доски задач?", default=False):
+                registry = default_board_registry()
+                io = board_setup.ClickSetupIO()
+                board_type = io.choose(
+                    "Выберите provider доски",
+                    [
+                        board_setup.SetupChoice(
+                            value=registered_type,
+                            label=registry.get(registered_type).setup.label,
+                        )
+                        for registered_type in registry.registered_types()
+                    ],
+                )
+                while True:
+                    try:
+                        values.update(
+                            board_setup.configure_board_provider(registry.get(board_type), io)
+                        )
+                        break
+                    except BoardProviderError as error:
+                        click.echo(f"✗ {board_type}: {error.message}")
+                        if error.hint:
+                            click.echo(f"  {error.hint}")
+                        if not click.confirm(
+                            "Исправить credentials и повторить?",
+                            default=True,
+                        ):
+                            click.echo(
+                                "Provider пропущен; непроверенные credentials не сохранены."
+                            )
+                            break
     except click.Abort:
         click.echo("\nОтменено — файл не изменён.")
         return

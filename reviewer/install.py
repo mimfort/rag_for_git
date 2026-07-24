@@ -20,6 +20,9 @@ import tomllib
 from dataclasses import dataclass, field as _field
 from pathlib import Path, PureWindowsPath
 from typing import Callable
+from urllib.parse import urlsplit
+
+from reviewer.tasks.boards.registry import default_board_registry as _default_board_registry
 
 PACKAGE = "rag-reviewer"
 SERVER_NAME = "reviewer"
@@ -35,7 +38,7 @@ SKILLS_TARBALL = "https://github.com/mimfort/rag_for_git/archive/refs/heads/main
 
 # Шаблон .env (встроен, чтобы `reviewer init` работал из published-wheel без
 # упаковки файла). Все остальные переменные имеют дефолты в settings.py.
-ENV_TEMPLATE = """\
+_ENV_TEMPLATE_BASE = """\
 # rag_for_git — конфигурация. Обязателен только VOYAGE_API_KEY; GITHUB_TOKEN
 # нужен для ревью PR. Остальное имеет дефолты в reviewer/config/settings.py.
 # Полный справочник полей — зеркало .env.example.
@@ -85,16 +88,17 @@ REVIEW_SKIP_DRAFTS=true
 REVIEW_HISTORY=true
 MAX_TOOL_RESULT_CHARS=8000
 
-# --- Доска задач (опционально; per-type креды, legacy-алиас TASK_BOARD_API_KEY/BASE) ---
-# Тип доски (yougile|youtrack) задаётся в .review.yml каждого репо (task_board.type),
+# --- Доска задач (опционально; canonical per-provider credentials) ---
+# Тип доски (yougile|youtrack|jira) задаётся в .review.yml каждого репо (task_board.type),
 # а не в env; TASK_BOARD_TYPE устарел и игнорируется.
+# Legacy TASK_BOARD_API_KEY/BASE только читаются как YouGile compatibility aliases:
+# новые конфиги и preview их не генерируют.
+# Jira: https://id.atlassian.com/manage-profile/security/api-tokens
+# YouTrack: Profile → Account Security → permanent token (YouTrack scope, полный perm:).
+# YouGile: https://ru.yougile.com/api-v2; reviewer init умеет получить key автоматически.
 TASK_BOARD_MCP=
 TASK_BOARD_KEY_PATTERN=
 TASK_BOARD_URL_TEMPLATE=
-YOUGILE_API_KEY=
-YOUGILE_API_BASE=
-YOUTRACK_TOKEN=
-YOUTRACK_BASE_URL=
 
 # --- Веб-админка наблюдаемости (опционально; пусто = без аутентификации) ---
 WEB_ADMIN_USER=
@@ -116,6 +120,51 @@ class EnvGroup:
     title: str
     fields: list[EnvField] = _field(default_factory=list)
     optional: bool = False
+
+
+def board_env_group(registry) -> EnvGroup:
+    """Построить canonical env-поля досок из registry metadata.
+
+    Compatibility aliases читаются credential source, но новый конфиг их не
+    генерирует.
+    """
+    fields = [
+        EnvField(
+            key="TASK_BOARD_MCP",
+            prompt_text="TASK_BOARD_MCP (имя MCP-сервера доски)",
+        ),
+        EnvField(
+            key="TASK_BOARD_KEY_PATTERN",
+            prompt_text=r"TASK_BOARD_KEY_PATTERN (напр. [A-Z]+-\d+)",
+        ),
+        EnvField(
+            key="TASK_BOARD_URL_TEMPLATE",
+            prompt_text="TASK_BOARD_URL_TEMPLATE (напр. https://.../{code})",
+        ),
+    ]
+    for board_type in registry.registered_types():
+        spec = registry.get(board_type)
+        fields.extend(
+            EnvField(
+                key=credential.env,
+                prompt_text=credential.label,
+                default=credential.default,
+                secret=credential.secret,
+                required=credential.required,
+            )
+            for credential in spec.credential_fields
+        )
+    return EnvGroup(title="Доска задач", fields=fields, optional=True)
+
+
+def _env_template_with_board_fields(template: str, group: EnvGroup) -> str:
+    marker = "TASK_BOARD_URL_TEMPLATE=\n"
+    provider_lines = "\n".join(
+        f"{field.key}={field.default}"
+        for field in group.fields
+        if not field.key.startswith("TASK_BOARD_")
+    )
+    return template.replace(marker, f"{marker}{provider_lines}\n", 1)
 
 
 WIZARD_GROUPS: list[EnvGroup] = [
@@ -193,50 +242,7 @@ WIZARD_GROUPS: list[EnvGroup] = [
             ),
         ],
     ),
-    EnvGroup(
-        title="Доска задач",
-        optional=True,
-        fields=[
-            EnvField(
-                key="TASK_BOARD_MCP",
-                prompt_text="TASK_BOARD_MCP (имя MCP-сервера доски)",
-                default="",
-            ),
-            EnvField(
-                key="TASK_BOARD_KEY_PATTERN",
-                prompt_text=r"TASK_BOARD_KEY_PATTERN (напр. [A-Z]+-\d+)",
-                default="",
-            ),
-            EnvField(
-                key="TASK_BOARD_URL_TEMPLATE",
-                prompt_text="TASK_BOARD_URL_TEMPLATE (напр. https://.../{code})",
-                default="",
-            ),
-            EnvField(
-                key="YOUGILE_API_KEY",
-                prompt_text="YOUGILE_API_KEY (REST-ключ yougile; Ctrl+~ → API)",
-                default="",
-                secret=True,
-            ),
-            EnvField(
-                key="YOUGILE_API_BASE",
-                prompt_text="YOUGILE_API_BASE (base URL, пусто=дефолт)",
-                default="",
-            ),
-            EnvField(
-                key="YOUTRACK_TOKEN",
-                prompt_text="YOUTRACK_TOKEN (permanent token: Profile → Account "
-                            "Security → New permanent token)",
-                default="",
-                secret=True,
-            ),
-            EnvField(
-                key="YOUTRACK_BASE_URL",
-                prompt_text="YOUTRACK_BASE_URL (напр. https://company.youtrack.cloud/api)",
-                default="",
-            ),
-        ],
-    ),
+    board_env_group(_default_board_registry()),
     EnvGroup(
         title="Веб-админка",
         optional=True,
@@ -255,6 +261,11 @@ WIZARD_GROUPS: list[EnvGroup] = [
         ],
     ),
 ]
+
+ENV_TEMPLATE = _env_template_with_board_fields(
+    _ENV_TEMPLATE_BASE,
+    next(group for group in WIZARD_GROUPS if group.title == "Доска задач"),
+)
 
 
 def read_env(path: Path) -> dict[str, str]:
@@ -284,9 +295,10 @@ _GROUP_HEADERS: dict[str, str] = {
     "Доска задач": (
         "# --- Доска задач (опционально; server-side sync_board, связка ключей) ---\n"
         "# Тип доски репо выбирается в его .review.yml (task_board.type); ключи —\n"
-        "# здесь, под каждую доску свой. YOUGILE_API_KEY: конфигуратор yougile (Ctrl+~)\n"
-        "# → API. YOUTRACK_TOKEN: permanent token, YOUTRACK_BASE_URL инстанс-специфичен.\n"
-        "# TASK_BOARD_API_KEY/BASE — legacy-алиас для yougile (обратная совместимость)."
+        "# здесь, под каждую доску свой. Jira требует direct Cloud site URL и API token\n"
+        "# без scopes. YouTrack permanent token хранится целиком с perm: и service scope.\n"
+        "# YouGile key можно получить автоматически через reviewer init; password не пишется.\n"
+        "# TASK_BOARD_API_KEY/BASE — только read-only compatibility aliases для YouGile."
     ),
     "Веб-админка": "# --- Веб-админка наблюдаемости (опционально; пусто = без аутентификации) ---",
 }
@@ -314,6 +326,52 @@ def render_env(values: dict[str, str], extra: dict[str, str]) -> str:
         lines.append("")
 
     return "\n".join(lines)
+
+
+def render_env_preview(values: dict[str, str], extra: dict[str, str]) -> str:
+    """Безопасный preview: показывает secret keys, но скрывает их значения."""
+    secret_keys = {
+        field.key
+        for group in WIZARD_GROUPS
+        for field in group.fields
+        if field.secret
+    }
+    registry = _default_board_registry()
+    secret_keys.update(
+        alias
+        for board_type in registry.registered_types()
+        for field in registry.get(board_type).credential_fields
+        if field.secret
+        for alias in field.aliases
+    )
+
+    def is_secret_key(key: str) -> bool:
+        upper = key.upper()
+        return key in secret_keys or any(
+            marker in upper
+            for marker in ("TOKEN", "PASSWORD", "API_KEY", "SECRET", "PRIVATE_KEY")
+        )
+
+    def safe_value(key: str, value: str) -> str:
+        if is_secret_key(key):
+            return ""
+        try:
+            parsed = urlsplit(value)
+        except ValueError:
+            return value
+        if parsed.scheme and (parsed.username is not None or parsed.password is not None):
+            return ""
+        return value
+
+    safe_values = {
+        key: safe_value(key, value)
+        for key, value in values.items()
+    }
+    safe_extra = {
+        key: safe_value(key, value)
+        for key, value in extra.items()
+    }
+    return render_env(safe_values, safe_extra)
 
 
 def prompt_groups(

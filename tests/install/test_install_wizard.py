@@ -120,6 +120,11 @@ def test_render_env_includes_board_api_key_and_hint():
     assert "YOUGILE_API_KEY=" in result
     assert "YOUTRACK_TOKEN=" in result
     assert "YOUTRACK_BASE_URL=" in result
+    assert "JIRA_BASE_URL=" in result
+    assert "JIRA_EMAIL=" in result
+    assert "JIRA_API_TOKEN=" in result
+    assert "TASK_BOARD_API_KEY=" not in result
+    assert "TASK_BOARD_API_BASE=" not in result
     assert "permanent token" in result      # подсказка YouTrack в prompt_text поля
 
 
@@ -135,6 +140,144 @@ def test_init_yes_creates_env_file(tmp_path, monkeypatch):
     assert "PG_DSN=" in content
     assert "YOUGILE_API_KEY=" in content
     assert "YOUTRACK_TOKEN=" in content
+    assert "JIRA_API_TOKEN=" in content
+
+
+def test_init_dry_run_is_safe_preview_only(tmp_path, monkeypatch):
+    dest = tmp_path / "missing" / ".env"
+    secret = "must-not-appear"
+    monkeypatch.setattr("reviewer.install.default_env_path", lambda: dest)
+    monkeypatch.setattr(
+        "reviewer.install.read_env",
+        lambda _path: {"JIRA_API_TOKEN": secret},
+    )
+    monkeypatch.setattr(
+        "click.prompt",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("prompt called")),
+    )
+    result = CliRunner().invoke(cli, ["init", "--dry-run"])
+
+    assert result.exit_code == 0, result.output
+    assert "JIRA_API_TOKEN=" in result.output
+    assert secret not in result.output
+    assert not dest.exists()
+    assert not dest.parent.exists()
+
+
+def test_init_dry_run_redacts_legacy_and_unknown_extra_secrets(tmp_path, monkeypatch):
+    dest = tmp_path / ".env"
+    dest.write_text(
+        "TASK_BOARD_API_KEY=legacy-secret\n"
+        "CUSTOM_TOKEN=custom-secret\n"
+        "AWS_SECRET_ACCESS_KEY=aws-secret\n"
+        "PG_DSN=postgresql://reviewer:pg-secret@db.example/reviewer\n"
+        "DATABASE_URL=postgresql://reviewer:db-secret@db.example/reviewer\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("reviewer.install.default_env_path", lambda: dest)
+
+    result = CliRunner().invoke(cli, ["init", "--dry-run"])
+
+    assert result.exit_code == 0, result.output
+    assert "TASK_BOARD_API_KEY=" in result.output
+    assert "CUSTOM_TOKEN=" in result.output
+    assert "legacy-secret" not in result.output
+    assert "custom-secret" not in result.output
+    assert "aws-secret" not in result.output
+    assert "pg-secret" not in result.output
+    assert "db-secret" not in result.output
+    assert "TASK_BOARD_API_KEY=legacy-secret" in dest.read_text(encoding="utf-8")
+
+
+def test_init_yes_never_calls_provider_setup(tmp_path, monkeypatch):
+    dest = tmp_path / ".env"
+    calls: list[str] = []
+    monkeypatch.setattr("reviewer.install.default_env_path", lambda: dest)
+    monkeypatch.setattr(
+        "reviewer.tasks.boards.setup.configure_board_provider",
+        lambda *_args, **_kwargs: calls.append("setup") or {},
+    )
+
+    result = CliRunner().invoke(cli, ["init", "--yes"])
+
+    assert result.exit_code == 0, result.output
+    assert calls == []
+
+
+def test_init_interactive_configures_selected_registry_provider(tmp_path, monkeypatch):
+    dest = tmp_path / ".env"
+    configured: list[str] = []
+    monkeypatch.setattr("reviewer.install.default_env_path", lambda: dest)
+    monkeypatch.setattr(
+        "reviewer.install.prompt_groups",
+        lambda groups, current, yes: {
+            field.key: current.get(field.key, "") or field.default
+            for group in groups
+            for field in group.fields
+        },
+    )
+    monkeypatch.setattr(
+        "reviewer.tasks.boards.setup.ClickSetupIO.choose",
+        lambda _io, _text, choices: next(
+            choice.value for choice in choices if choice.value == "jira"
+        ),
+    )
+    monkeypatch.setattr(
+        "reviewer.tasks.boards.setup.configure_board_provider",
+        lambda spec, _io: configured.append(spec.board_type)
+        or {
+            "JIRA_BASE_URL": "https://acme.atlassian.net",
+            "JIRA_EMAIL": "bot@example.test",
+            "JIRA_API_TOKEN": "jira-secret",
+        },
+    )
+    answers = iter([True, False])
+    monkeypatch.setattr("click.confirm", lambda *_args, **_kwargs: next(answers))
+    monkeypatch.setattr("reviewer.entrypoints.cli._shutil.which", lambda _name: None)
+
+    result = CliRunner().invoke(cli, ["init"])
+
+    assert result.exit_code == 0, result.output
+    assert configured == ["jira"]
+    content = dest.read_text(encoding="utf-8")
+    assert "JIRA_BASE_URL=https://acme.atlassian.net" in content
+    assert "JIRA_EMAIL=bot@example.test" in content
+    assert "JIRA_API_TOKEN=jira-secret" in content
+
+
+def test_init_interactive_common_board_fields_do_not_require_rest_provider(
+    tmp_path,
+    monkeypatch,
+):
+    dest = tmp_path / ".env"
+    seen_board_group = []
+    monkeypatch.setattr("reviewer.install.default_env_path", lambda: dest)
+
+    def prompt_groups(groups, current, yes):
+        values = {}
+        for group in groups:
+            if group.title == "Доска задач":
+                seen_board_group.extend(field.key for field in group.fields)
+            for field in group.fields:
+                values[field.key] = (
+                    "board-mcp" if field.key == "TASK_BOARD_MCP" else field.default
+                )
+        return values
+
+    monkeypatch.setattr("reviewer.install.prompt_groups", prompt_groups)
+    answers = iter([False, False])
+    monkeypatch.setattr("click.confirm", lambda *_args, **_kwargs: next(answers))
+    monkeypatch.setattr("reviewer.entrypoints.cli._shutil.which", lambda _name: None)
+
+    result = CliRunner().invoke(cli, ["init"])
+
+    assert result.exit_code == 0, result.output
+    assert seen_board_group == [
+        "TASK_BOARD_MCP",
+        "TASK_BOARD_KEY_PATTERN",
+        "TASK_BOARD_URL_TEMPLATE",
+    ]
+    assert "TASK_BOARD_MCP=board-mcp" in dest.read_text(encoding="utf-8")
 
 
 def test_init_yes_preserves_existing_secret(tmp_path, monkeypatch):

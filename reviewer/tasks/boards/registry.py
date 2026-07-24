@@ -6,19 +6,13 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from functools import lru_cache
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Literal, Protocol
+from typing import TYPE_CHECKING, Literal
 
 from reviewer.tasks.boards.base import JsonValue, TaskBoardProvider
 
 if TYPE_CHECKING:
     from reviewer.config.provider_credentials import ProviderCredentialSource
-
-
-class SetupIO(Protocol):
-    """Минимальный I/O-контракт интерактивного setup провайдера."""
-
-    def prompt(self, label: str, *, secret: bool = False) -> str:
-        ...
+    from reviewer.tasks.boards.setup import SetupIO
 
 
 @dataclass(frozen=True)
@@ -44,6 +38,7 @@ class ProviderSetupSpec:
     help_url: str
     help_text: str
     acquisition: Callable[[SetupIO], dict[str, str]] | None = None
+    help_url_builder: Callable[[Mapping[str, str]], str] | None = None
 
 
 @dataclass(frozen=True)

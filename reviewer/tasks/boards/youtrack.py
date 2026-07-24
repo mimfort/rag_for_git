@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 import re
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from typing import Any
 from urllib.parse import quote, urljoin, urlsplit
 
@@ -64,6 +64,27 @@ def _build_provider(context: ProviderBuildContext) -> YouTrackBoard:
     )
 
 
+def _permanent_token_url(credentials: Mapping[str, str]) -> str:
+    base_url = credentials.get("YOUTRACK_BASE_URL", "").rstrip("/")
+    parsed = urlsplit(base_url)
+    if (
+        parsed.scheme != "https"
+        or not parsed.netloc
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.query
+        or parsed.fragment
+        or not parsed.path.endswith("/api")
+    ):
+        raise BoardProviderError(
+            "configuration",
+            "YouTrack base URL must be an HTTPS API URL ending in /api.",
+            hint="Use https://<instance>/api.",
+        )
+    instance_path = parsed.path.removesuffix("/api")
+    return f"https://{parsed.netloc}{instance_path}/users/me?tab=accountSecurity"
+
+
 def provider_spec() -> BoardProviderSpec:
     """Immutable registry spec YouTrack."""
     return BoardProviderSpec(
@@ -71,13 +92,13 @@ def provider_spec() -> BoardProviderSpec:
         factory=_build_provider,
         credential_fields=(
             CredentialFieldSpec(
+                env="YOUTRACK_BASE_URL",
+                label="YouTrack API base URL",
+            ),
+            CredentialFieldSpec(
                 env="YOUTRACK_TOKEN",
                 label="YouTrack permanent token",
                 secret=True,
-            ),
-            CredentialFieldSpec(
-                env="YOUTRACK_BASE_URL",
-                label="YouTrack API base URL",
             ),
         ),
         option_fields=(
@@ -90,7 +111,11 @@ def provider_spec() -> BoardProviderSpec:
         setup=ProviderSetupSpec(
             label="YouTrack",
             help_url="https://www.jetbrains.com/help/youtrack/devportal/authentication-with-permanent-token.html",
-            help_text="Создайте permanent token с доступом к YouTrack project.",
+            help_text=(
+                "Создайте permanent token, выберите YouTrack service scope и "
+                "сохраните полный token с префиксом perm:."
+            ),
+            help_url_builder=_permanent_token_url,
         ),
         create_target_label="Статус создания",
         done_target_label="Статус завершения",
