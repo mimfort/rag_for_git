@@ -2,6 +2,7 @@
 .review.yml (PRI-168). Скилл автономен (только git + правка файла), редактирует
 ровно контекст-слой и не клоберит чужие ключи, пересбор не запускает.
 """
+import re
 from pathlib import Path
 
 SKILL = (Path(__file__).resolve().parents[2]
@@ -94,6 +95,32 @@ def test_skill_context_limits_needs_no_rebuild():
     assert "no rebuild needed" in text
 
 
+def test_skill_maps_rebuilds_to_the_changed_setting_only():
+    text = SKILL.read_text(encoding="utf-8")
+    rules = re.search(r"## Rebuild guidance.*?(?=\n## )", text, re.DOTALL)
+    assert rules
+    assert re.search(r"paths\.ignore.*reviewer_sync-codebase", rules.group())
+    assert re.search(r"summary_cluster_depth.*reviewer_summarize-subsystems", rules.group())
+    assert re.search(r"summary_cluster_depth_overrides.*reviewer_summarize-subsystems", rules.group())
+    assert re.search(r"summary_topk_threshold.*no rebuild", rules.group())
+    assert re.search(r"context_limits.*no rebuild", rules.group())
+
+
+def test_skill_has_complete_deterministic_context_limit_presets():
+    text = SKILL.read_text(encoding="utf-8")
+    presets = re.search(r"## Retrieval profile.*?(?=\n## )", text, re.DOTALL)
+    assert presets
+    for field in (
+        "floor", "ceiling", "ratio", "abs_floor", "candidate_pool", "ann_distance_max",
+        "search_tasks", "hops", "callers_topk",
+    ):
+        assert field in presets.group()
+    for expected in ("tiny-util", "3 / 8", "standard", "4 / 15", "large / monorepo", "4 / 25"):
+        assert expected in presets.group()
+    for expected in ("< 150", "150–800", "800+", "3 / 10", "4 / 14"):
+        assert expected in presets.group()
+
+
 def test_skill_suggests_rebuilds_without_running():
     text = SKILL.read_text(encoding="utf-8")
     assert "do NOT run" in text                     # не запускает пересбор сам
@@ -115,6 +142,16 @@ def test_skill_uses_server_side_done_target_discovery():
     assert "pick-list" in text                    # предъявляет список кандидатов
     # больше не зависит от клиентского yougile-MCP
     assert "get_columns" not in text
+
+
+def test_skill_maps_discovery_choices_by_operation():
+    text = SKILL.read_text(encoding="utf-8")
+    discovery = re.search(r"get_board_targets\(.*?(?=\n## )", text, re.DOTALL)
+    assert discovery
+    for operation in ("sync", "create", "finish"):
+        assert re.search(rf"required_for.*{operation}", discovery.group())
+    assert "choices" in discovery.group()
+    assert "selected `id`" in discovery.group()
 
 
 def test_skill_done_target_discovery_falls_back_to_asking():

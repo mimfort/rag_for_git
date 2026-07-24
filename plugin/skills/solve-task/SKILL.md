@@ -22,6 +22,12 @@ brief to `superpowers:brainstorming` (which leads to writing-plans → subagent-
    (`git branch --show-current`; if it is in `REVIEW_BRANCHES` use it, else the primary branch) —
    step 3 reuses the same branch for `search_codebase`.
 
+   **Resolve `task_board` exactly once before any board call.** Read the repo `.review.yml` block:
+   its `task_board` mapping has priority; an absent block falls back to `get_board_config()`;
+   an explicit empty `task_board:` disables board work for this run. Keep the resolved
+   `{type, project, key_pattern, create_target, done_target, options}` value and **reuse this resolved value** in Step 1 and every board operation. Never call the deploy fallback when the
+   repo explicitly disables the board.
+
    1. **Base-index freshness.** Run
       `uvx --from rag-reviewer reviewer status <path> --branch <branch> --json` and read `drift`
       for that branch:
@@ -39,9 +45,9 @@ brief to `superpowers:brainstorming` (which leads to writing-plans → subagent-
    3. **Warm the task corpus.** Call
       `sync_board(board=<task_board.project or null>, board_type=<task_board.type or null>,
       provider_options=<task_board.options or {}>, limit=null, purge_orphaned=false)` —
-      `task_board.type`, `task_board.project` и `task_board.options` берутся из
-      `<root>/.review.yml` (прочитай здесь, до вызова `sync_board`; при отсутствии файла или
-      блока `task_board` — используй `null`).
+      the resolved `task_board.type`, `task_board.project`, and `task_board.options` from this
+      preflight. If board work is disabled or no board resolves, skip this call and continue
+      board-less.
       Скоупированный прогрев корпуса своего проекта (PRI-170); пустой project → весь корпус.
       Incremental (timestamp watermark), cheap when the corpus is warm. Board not configured or
       `status=error` → print the `TASK_BOARD_*` hint and continue board-less.
@@ -66,13 +72,9 @@ brief to `superpowers:brainstorming` (which leads to writing-plans → subagent-
    reported like `sync-codebase`; `sync_board` runs incrementally at start; summaries missing →
    three-way choice (build now / build yourself / skip).
 
-1. **Config.** Resolve the `task_board` block (`type`, `key_pattern`, `project`, `create_target`,
-   `done_target`, `options`): first from the repo's
-   `.review.yml`, and if there is no block there, from the deploy-wide default via
-   `get_board_config()` (reviewer MCP) — so a per-repo `.review.yml` is not required when the board
-   is configured once in the reviewer deploy. If a board is resolved, retain only its non-secret
-   generic metadata. No block anywhere (`get_board_config()` → `null`) → board-less mode (continue
-   without it). For incomplete metadata call `get_board_targets(board_type=<task_board.type>,
+1. **Config.** Reuse the resolved value from preflight; do not read `.review.yml` or call
+   `get_board_config()` again. If no board resolved, continue board-less. For incomplete metadata
+   call `get_board_targets(board_type=<task_board.type>,
    project=<task_board.project>, provider_options=<task_board.options or {}>)`: select from
    `targets` by `label`, and use option `required_for` / `choices` to ask for missing `options`.
    Never guess a target or an option and never branch on a board type.
@@ -112,27 +114,21 @@ brief to `superpowers:brainstorming` (which leads to writing-plans → subagent-
         - **Hit** (a task object with a `key`): use it directly as the `TaskBrief`. The task is
           already indexed (the preflight sync persisted it) — do NOT call `index_task`. Note in the
           brief that the task data came from the reviewer store (after sync).
-          - **Thin-criteria enrichment (optional, fail-open).** The store returns `criteria=[]` —
-            requirements normally live in `description`. If `description` has NO acceptance-criteria
-            heading (no section matching `(?i)(критери|приёмк|acceptance)`) AND a board is connected,
-            resolve the task's subtasks into `criteria[]` via the board-MCP playbook
-            `../review-pr/references/task-context-<task_board.type>.md` (its «Criteria note»):
-            one board `get_task(key)` → for each `subtasks[]` id resolve its title. Fold the resolved
-            criteria into the brief's `## Task` section only — do NOT call `index_task`. When the
-            heading IS present, criteria are inline in `description` → skip (leave `[]`). No board /
-            no subtasks / any error → leave `criteria` empty.
-        - **Miss** (`null` / no `key`) AND a board is configured/connected: read the task via the
-          playbook `../review-pr/references/task-context-<task_board.type>.md`, build a `TaskBrief`
-          `{key, aliases[], title, description, criteria[], status, url, links[]}`, then call
-          `index_task(TaskBrief)` to persist it (idempotent — safe to repeat).
-        - **Miss** AND no board (or board MCP not connected): board-less — treat `$ARGUMENTS` as the
-          task description.
+          - **Thin criteria (optional, fail-open).** The store can return `criteria=[]`; requirements
+            normally live in `description`. If it has NO heading matching
+            `(?i)(критери|приёмк|acceptance)`, leave `criteria` empty and record the gap rather than
+            querying a provider directly. Do NOT call `index_task`.
+        - **Miss** (`null` / no `key`) AND a board is resolved: call generic incremental
+          `sync_board(board=<task_board.project or null>, board_type=<task_board.type>,
+          provider_options=<task_board.options or {}>, limit=null, purge_orphaned=false)`, then
+          retry `get_task(key, project=<task_board.project>)` once. Error or second miss →
+          board-less: treat `$ARGUMENTS` as the task description and record the gap.
+        - **Miss** AND no board: board-less — treat `$ARGUMENTS` as the task description.
    - Otherwise: treat `$ARGUMENTS` as the task description; do not read the board.
 
    Store-first cuts the double-fetch: the preflight `sync_board` already pulled the whole board into
-   the reviewer store, so a single read of our own store avoids re-enumerating the board via board-MCP
-   (fewer LLM tokens, fewer external deps). The board-MCP fallback stays for misses and for boards
-   without a REST provider.
+   the reviewer store, and a miss gets one generic incremental sync/retry (fewer LLM tokens and no
+   provider-specific client dependency).
 
 3. **Gather context (best-effort, fail-open).** Any tool returning a "(… unavailable)" / "(ничего не
    найдено)" note or an error is non-fatal — continue.

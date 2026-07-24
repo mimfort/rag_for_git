@@ -30,9 +30,16 @@ enter the index. Do not use a filesystem walk to find them.
 3. Measure churn with `git log --since="6 months ago" --name-only --pretty=format: -- '*.py'`.
    If history is too short or unavailable, say so and recommend from structure alone.
 4. Propose depth and ignore changes. Ask the user about every candidate for `paths.ignore` and
-   **never write it silently**. Changing depth/threshold/limits needs no rebuild needed; changing
-   ignore can require `/reviewer_sync-codebase`. Suggest that command or
-   `/reviewer_summarize-subsystems` when relevant, but **do NOT run** either command.
+   **never write it silently**. Follow the exact rebuild map below; suggest but **do NOT run** a
+   follow-up skill.
+
+## Rebuild guidance
+
+- Changed `paths.ignore` → suggest `/reviewer_sync-codebase`.
+- Changed `summary_cluster_depth` → suggest `/reviewer_summarize-subsystems`.
+- Changed `summary_cluster_depth_overrides` → suggest `/reviewer_summarize-subsystems`.
+- Changed `summary_topk_threshold` → no rebuild needed.
+- Changed `context_limits` → no rebuild needed.
 
 ## Generic board metadata
 
@@ -69,16 +76,37 @@ request, display, or write credentials.
 
 ## Retrieval profile
 
-Choose one profile from tracked-file structure and show the full `context_limits` draft:
+Choose one profile from tracked-file structure and write all real `context_limits` fields:
 
-| Profile | Condition |
-|---|---|
-| tiny-util | fewer than 80 tracked Python files and one package |
-| standard | 80–800 files |
-| large / monorepo | over 800 files or at least three large packages |
+| Profile | Condition | search_codebase: floor / ceiling / ratio / abs_floor / candidate_pool / ann_distance_max | graph: hops / callers_topk |
+|---|---|---|---|
+| tiny-util | fewer than 80 tracked Python files and one package | 3 / 8 / 0.60 / 0.35 / 20 / 0.65 | 1 / 20 |
+| standard | 80–800 files | 4 / 15 / 0.50 / 0.30 / 30 / 0.65 | 1 / 25 |
+| large / monorepo | over 800 files or at least three large packages | 4 / 25 / 0.45 / 0.30 / 40 / 0.60 | 1 / 30 |
 
-Use `count_tasks(project)` only when reviewer MCP is available to size task retrieval. A missing
-tool, zero count, or unavailable corpus **falls back to asking** the user for small/medium/large.
+Write the selected profile as:
+
+```yaml
+context_limits:
+  search_codebase:
+    floor: <profile value>
+    ceiling: <profile value>
+    ratio: <profile value>
+    abs_floor: <profile value>
+    candidate_pool: <profile value>
+    ann_distance_max: <profile value>
+  search_tasks:
+    floor: <board-size value>
+    ceiling: <board-size value>
+  graph:
+    hops: <profile value>
+    callers_topk: <profile value>
+```
+
+Map `count_tasks(project)` to `search_tasks` deterministically: `< 150` → `3 / 8`;
+`150–800` → `3 / 10`; `800+` → `4 / 14`. A missing tool, zero count, or unavailable corpus
+**falls back to asking** the user for small/medium/large, then uses the same mapping.
+
 Preserve every other configuration key and ask for confirmation before writing the assembled draft.
 
 ## Completion

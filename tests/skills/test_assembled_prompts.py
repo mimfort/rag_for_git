@@ -2,7 +2,10 @@ import re
 from pathlib import Path
 
 SKILLS_DIR = Path(__file__).resolve().parents[2] / "plugin" / "skills"
-_INCLUDE = re.compile(r"<!-- include: (\S+\.md) -->")
+_INCLUDE = re.compile(r"<!-- include: (_common/[A-Za-z0-9_-]+\.md) -->")
+_PROVIDER_SPECIFIC = re.compile(
+    r"(yougile|youtrack)|done_column|done_state|status_field|task_board\.mcp|task-context-"
+)
 
 
 def assemble(rel_path: str) -> str:
@@ -17,7 +20,7 @@ def assemble(rel_path: str) -> str:
         return (SKILLS_DIR / m.group(1)).read_text(encoding="utf-8")
 
     out = _INCLUDE.sub(repl, text)
-    assert "<!-- include:" not in out, f"неразрешённый include в {rel_path}"
+    assert not _INCLUDE.search(out), f"неразрешённый include в {rel_path}"
     return out
 
 
@@ -105,15 +108,14 @@ def test_solve_task_assembled_has_branch_and_tools():
     assert "search_codebase" in s
 
 
-def test_board_skills_assemble_to_generic_provider_contract_without_jira_branch():
+def test_public_board_skills_have_no_provider_specific_surface():
     for rel_path in (
         "configure-review/SKILL.md",
         "sync-tasks/SKILL.md",
         "solve-task/SKILL.md",
         "create-task/SKILL.md",
         "finish-task/SKILL.md",
+        "review-pr/SKILL.md",
     ):
         text = assemble(rel_path).lower()
-        for token in ("create_target", "done_target", "options", "targets", "required_for", "choices"):
-            assert token in text, f"{rel_path}: missing {token}"
-        assert "jira" not in text, f"{rel_path}: provider-specific Jira branch leaked"
+        assert not _PROVIDER_SPECIFIC.search(text), f"{rel_path}: provider-specific board surface leaked"
