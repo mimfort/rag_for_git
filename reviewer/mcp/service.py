@@ -4,7 +4,7 @@
 между вызовами prepare_review и publish_review одного PR.
 """
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING
@@ -19,7 +19,9 @@ from reviewer.agent.centrality import annotate_centrality
 from reviewer.agent.dedup import dedup_findings
 from reviewer.agent.outcomes import account_outcomes
 from reviewer.app import Components
+from reviewer.config.provider_credentials import ProviderCredentialSource
 from reviewer.config.settings import Settings
+from reviewer.config.task_board import migrate_legacy_board_args
 from reviewer.index.refs import base_ref
 from reviewer.mcp.session_serde import from_payload, to_payload
 from reviewer.mcp.session_store import SessionStore
@@ -30,8 +32,16 @@ from reviewer.services.review_service import (
     PreparedReview,
     ReviewService,
 )
-from reviewer.tasks.boards import make_board_provider
+from reviewer.tasks.boards.base import JsonValue, TaskBoardProvider
+from reviewer.tasks.boards.errors import (
+    BoardProviderError,
+    sanitize_provider_payload,
+    sanitize_provider_text,
+)
+from reviewer.tasks.boards.registry import BoardProviderRegistry, default_board_registry
+from reviewer.tasks.boards.runtime import resolved_provider
 from reviewer.tasks.graph import PRRef
+from reviewer.tasks.sync import SyncProvider, SyncService
 from reviewer.tasks.taskdoc import TaskDoc, render_markdown
 from reviewer.tools.code_tools import ToolContext, make_tools
 from reviewer.tools.graph_format import format_neighbors
@@ -114,11 +124,18 @@ class MCPReviewService:
         settings: Settings,
         components: Components,
         vcs_factory: Callable[[str, str], VCSProvider] | None = None,
+        *,
+        board_registry: BoardProviderRegistry | None = None,
+        board_credentials: ProviderCredentialSource | None = None,
     ) -> None:
         self.settings = settings
         self.components = components
         self._review_service = ReviewService(settings, components)
         self._vcs_factory = vcs_factory  # для тестов; None = GitHubProvider
+        self._board_registry = board_registry or default_board_registry()
+        self._board_credentials = (
+            board_credentials or ProviderCredentialSource.from_settings(settings)
+        )
         self._sessions: dict[tuple[str, int], _Session] = {}
         self._session_store: SessionStore | None = None
 
@@ -384,9 +401,11 @@ class MCPReviewService:
         """Глобальный (env) конфиг доски задач деплоя — для клиентских скилов.
 
         Скилы sync-tasks/solve-task сначала читают per-repo .review.yml; если
-        там нет блока task_board, берут этот глобальный дефолт, чтобы не плодить
-        .review.yml в каждом репозитории. ``{"task_board": None}`` = доска в
-        деплое не настроена (задайте TASK_BOARD_* в .env reviewer-mcp).
+        там нет блока task_board, берут этот current non-secret deploy-wide fallback.
+        Его тип выводится из configured registry credentials, а common non-secret metadata
+        дополняет конфиг. ``{"task_board": None}`` = доска в деплое не настроена:
+        выполните ``reviewer init``, задайте registry-declared provider credentials и
+        проверьте подключение через ``reviewer check``.
         """
         return {"task_board": self.settings.task_board_default()}
 
@@ -398,170 +417,258 @@ class MCPReviewService:
             active_keys, keep_with_prs=keep_with_prs
         )
 
-    def sync_board(self, board: str | None = None, limit: int | None = None,
-                   purge_orphaned: bool = False, keep_with_prs: bool = True,
-                   board_type: str | None = None,
-                   status_field: str | None = None,
-                   force_renormalize: bool = False) -> dict:
-        """Server-side ETL: перечислить доску по REST, нормализовать, проиндексировать.
+    def _board_runtime(self) -> tuple[BoardProviderRegistry, ProviderCredentialSource]:
+        registry = getattr(self, "_board_registry", None) or default_board_registry()
+        credentials = getattr(self, "_board_credentials", None)
+        if credentials is None:
+            credentials = ProviderCredentialSource.from_settings(self.settings)
+        return registry, credentials
 
-        board_type ограничивает синк одним типом доски (yougile|youtrack); board —
-        проектом (префикс кода). status_field — имя YouTrack-поля статуса из .review.yml
-        (чтобы синк читал верное поле). force_renormalize=True игнорирует watermark и
-        перенормализует ВСЕ задачи (разовая операция после смены правил нормализации).
-        Доска/ключ не настроены → error-summary (fail-soft).
-        """
+    def _board_secrets(self) -> frozenset[str]:
+        registry, credentials = self._board_runtime()
+        return credentials.secret_values(
+            tuple(registry.get(type_) for type_ in registry.registered_types())
+        )
+
+    @staticmethod
+    def _safe_board_payload(payload: dict, secrets: frozenset[str]) -> dict:
+        sanitized = sanitize_provider_payload(payload, secrets)
+        return sanitized if isinstance(sanitized, dict) else {}
+
+    @staticmethod
+    def _board_error(operation: str, error: Exception,
+                     secrets: frozenset[str] = frozenset()) -> dict:
+        reason = sanitize_provider_text(error, secrets)
+        log.warning("%s: board operation failed: %s", operation, reason)
+        result: dict[str, object] = {"status": "error", "reason": reason}
+        if isinstance(error, BoardProviderError):
+            result.update(
+                {
+                    "category": error.category,
+                    "hint": sanitize_provider_text(error.hint, secrets),
+                    "retryable": error.retryable,
+                }
+            )
+        return result
+
+    def _write_through(self, provider: TaskBoardProvider, key: str | None) -> bool:
+        """Best-effort fetch → normalize → index после успешной board write."""
+        if not key:
+            log.warning("board write-through пропущен: ключ задачи не определён")
+            return False
+        try:
+            raw = provider.fetch_one(key)
+            if raw is None:
+                return False
+            self.components.task_service.index_task(provider.normalize(raw))
+            return True
+        except Exception:
+            log.warning("board write-through реиндекс не удался")
+            return False
+
+    def sync_board(
+        self,
+        board: str | None = None,
+        limit: int | None = None,
+        purge_orphaned: bool = False,
+        keep_with_prs: bool = True,
+        board_type: str | None = None,
+        provider_options: Mapping[str, JsonValue] | None = None,
+        force_renormalize: bool = False,
+        *,
+        status_field: str | None = None,
+    ) -> dict:
+        """Server-side ETL зарегистрированной доски через generic provider options."""
+        _, options, migration_warnings = migrate_legacy_board_args(
+            target=None,
+            provider_options=provider_options,
+            status_field=status_field,
+        )
         sync = getattr(self.components, "sync_service", None)
-        if sync is None:
-            return {"status": "error",
-                    "reason": "task board REST not configured — set YOUGILE_API_KEY or "
-                              "YOUTRACK_TOKEN + YOUTRACK_BASE_URL in the reviewer-mcp env "
-                              "(~/.config/rag-reviewer/.env), then reconnect. Yougile key: "
-                              "configurator (Ctrl+~ → API) or POST /api-v2/auth/keys"}
-        try:
-            return sync.run(board=board, board_type=board_type, limit=limit,
-                            purge_orphaned=purge_orphaned,
-                            keep_with_prs=keep_with_prs, status_field=status_field,
-                            force_renormalize=force_renormalize)
-        except Exception as e:
-            log.warning("sync_board: сбой синка", exc_info=True)
-            return {"status": "error", "reason": f"{type(e).__name__}: {e}"}
-
-    def finish_task(self, key: str, pr_url: str, note: str | None = None,
-                    mark_done: bool = True, board_type: str | None = None,
-                    done_state: str | None = None, status_field: str | None = None,
-                    done_column: str | None = None) -> dict:
-        """Закрыть задачу на доске (server-side write): пометить done + дописать
-        PR-ссылку в описание. Резолвит провайдера по board_type (или единственному
-        настроенному), fail-soft. status_field/done_state — YouTrack (поле+значение);
-        done_column — YouGile (колонка). Креды из env; наружу не отдаются."""
-        types = self.settings.configured_board_types()
-        if board_type is None:
-            if len(types) == 1:
-                board_type = types[0]
-            else:
-                return {"status": "error",
-                        "reason": f"board_type required (configured: {types or 'none'})"}
-        if board_type not in types:
-            return {"status": "error",
-                    "reason": f"board '{board_type}' not configured (have: {types or 'none'})"}
-        provider = make_board_provider(self.settings, board_type, status_field=status_field)
-        if provider is None:
-            return {"status": "error", "reason": f"board '{board_type}' not configured"}
-        reindexed = False
-        try:
-            result = provider.finish(key, pr_url, note=note, mark_done=mark_done,
-                                     done_state=done_state, done_column=done_column)
-            # Write-through: сразу переиндексировать закрытую задачу в стор reviewer
-            # (fetch_one → normalize → index_task), чтобы get_task/search_tasks/граф
-            # отразили done+PR без гонки с watermark инкрементального sync_board
-            # (тот пропускает задачи с timestamp <= курсор). Best-effort, fail-soft.
+        if board_type is None and not options:
+            if sync is None:
+                return {
+                    "status": "error",
+                    "reason": "task board REST is not configured",
+                }
+            secrets = self._board_secrets()
             try:
-                raw = provider.fetch_one(key)
-                if raw is not None:
-                    self.components.task_service.index_task(provider.normalize(raw))
-                    reindexed = True
-            except Exception:
-                log.warning("finish_task: write-through реиндекс не удался", exc_info=True)
-        except Exception as e:  # fail-soft: PR уже создан, доска — вторичный эффект
-            log.warning("finish_task: сбой записи в доску", exc_info=True)
-            return {"status": "error", "reason": f"{type(e).__name__}: {e}"}
-        finally:
-            try:
-                provider.close()
-            except Exception:
-                pass
-        return {"status": "ok", "board_type": board_type, "reindexed": reindexed,
-                **result}
+                result = sync.run(
+                    board=board,
+                    limit=limit,
+                    purge_orphaned=purge_orphaned,
+                    keep_with_prs=keep_with_prs,
+                    force_renormalize=force_renormalize,
+                )
+            except Exception as error:
+                return self._board_error("sync_board", error, secrets)
+            result.setdefault("warnings", []).extend(migration_warnings)
+            return self._safe_board_payload(result, secrets)
 
-    def create_task(self, title: str, problem: str = "",
-                    steps: list[str] | None = None, criteria: list[str] | None = None,
-                    context: str | None = None, board_type: str | None = None,
-                    project: str | None = None, target: str | None = None,
-                    status_field: str | None = None) -> dict:
-        """Создать задачу на доске (server-side write) из структурированных полей.
-
-        Структура описания собирается сервером (reviewer/tasks/taskdoc.py), поэтому
-        одинакова во всех клиентах и моделях. target — колонка (YouGile) или
-        значение поля статуса (YouTrack). Креды из env; наружу не отдаются.
-        """
-        types = self.settings.configured_board_types()
-        if board_type is None:
-            if len(types) == 1:
-                board_type = types[0]
-            else:
-                return {"status": "error",
-                        "reason": f"board_type required (configured: {types or 'none'})"}
-        if board_type not in types:
-            return {"status": "error",
-                    "reason": f"board '{board_type}' not configured (have: {types or 'none'})"}
-        provider = make_board_provider(self.settings, board_type, status_field=status_field)
-        if provider is None:
-            return {"status": "error", "reason": f"board '{board_type}' not configured"}
-        doc_md = render_markdown(TaskDoc(title=title, problem=problem,
-                                         steps=list(steps or []),
-                                         criteria=list(criteria or []), context=context))
-        reindexed = False
+        registry, credentials = self._board_runtime()
         try:
-            result = provider.create(doc_md, title=title, target=target, project=project)
-            # Write-through: созданная задача сразу видна в get_task/search_tasks,
-            # не дожидаясь ближайшего sync_board. Best-effort, fail-soft.
-            key = result.get("key")
-            if not key:
-                # Ключ деградирован (например, YouTrack без idReadable в ответе) —
-                # реиндексировать нечего; не дёргаем fetch_one сетевым запросом
-                # с пустой строкой, факт создания задачи это не откатывает.
-                log.warning("create_task: write-through пропущен — ключ задачи "
-                           "не определён, реиндекс не выполнен")
-            else:
-                try:
-                    raw = provider.fetch_one(key)
-                    if raw is not None:
-                        self.components.task_service.index_task(provider.normalize(raw))
-                        reindexed = True
-                except Exception:
-                    log.warning("create_task: write-through реиндекс не удался", exc_info=True)
-        except Exception as e:
-            log.warning("create_task: сбой создания задачи", exc_info=True)
-            return {"status": "error", "reason": f"{type(e).__name__}: {e}"}
-        finally:
-            try:
-                provider.close()
-            except Exception:
-                pass
-        return {"status": "ok", "board_type": board_type, "reindexed": reindexed, **result}
+            with resolved_provider(
+                self.settings,
+                board_type,
+                options,
+                registry=registry,
+                credential_source=credentials,
+            ) as resolved:
+                scoped = SyncService(
+                    [SyncProvider(resolved.provider, resolved.secrets)],
+                    self.components.task_service,
+                    self.components.store,
+                )
+                result = scoped.run(
+                    board=board,
+                    limit=limit,
+                    purge_orphaned=purge_orphaned,
+                    keep_with_prs=keep_with_prs,
+                    board_type=resolved.board_type,
+                    force_renormalize=force_renormalize,
+                )
+                result.setdefault("warnings", []).extend(migration_warnings)
+                return self._safe_board_payload(result, resolved.secrets)
+        except BoardProviderError as error:
+            return self._board_error("sync_board", error)
 
-    def get_board_targets(self, board_type: str | None = None,
-                          project: str | None = None) -> dict:
-        """Кандидаты done-цели доски для configure-review (read-only, server-side).
-
-        Резолвит провайдера по board_type (или единственному настроенному), зовёт
-        list_done_targets(project) fail-soft. YouGile → columns; YouTrack → status_fields
-        (+source). Креды из env; наружу НЕ отдаются."""
-        types = self.settings.configured_board_types()
-        if board_type is None:
-            if len(types) == 1:
-                board_type = types[0]
-            else:
-                return {"status": "error",
-                        "reason": f"board_type required (configured: {types or 'none'})"}
-        if board_type not in types:
-            return {"status": "error",
-                    "reason": f"board '{board_type}' not configured (have: {types or 'none'})"}
-        provider = make_board_provider(self.settings, board_type)
-        if provider is None:
-            return {"status": "error", "reason": f"board '{board_type}' not configured"}
+    def finish_task(
+        self,
+        key: str,
+        pr_url: str,
+        note: str | None = None,
+        mark_done: bool = True,
+        board_type: str | None = None,
+        target: str | None = None,
+        provider_options: Mapping[str, JsonValue] | None = None,
+        *,
+        done_state: str | None = None,
+        status_field: str | None = None,
+        done_column: str | None = None,
+    ) -> dict:
+        """Закрыть задачу через generic target/options и выполнить write-through."""
+        target, options, migration_warnings = migrate_legacy_board_args(
+            target=target,
+            provider_options=provider_options,
+            done_state=done_state,
+            status_field=status_field,
+            done_column=done_column,
+        )
+        registry, credentials = self._board_runtime()
         try:
-            targets = provider.list_done_targets(project)
-        except Exception as e:  # fail-soft: discovery — вторичная функция
-            log.warning("get_board_targets: сбой discovery", exc_info=True)
-            return {"status": "error", "reason": f"{type(e).__name__}: {e}"}
-        finally:
-            try:
-                provider.close()
-            except Exception:
-                pass
-        return {"board_type": board_type, "project": project, **targets}
+            with resolved_provider(
+                self.settings,
+                board_type,
+                options,
+                registry=registry,
+                credential_source=credentials,
+            ) as resolved:
+                result = resolved.provider.finish(
+                    key,
+                    pr_url,
+                    note=note,
+                    mark_done=mark_done,
+                    target=target,
+                )
+                reindexed = self._write_through(resolved.provider, key)
+                result.setdefault("warnings", []).extend(migration_warnings)
+                return self._safe_board_payload(
+                    {
+                        "status": "ok",
+                        "board_type": resolved.board_type,
+                        "reindexed": reindexed,
+                        **result,
+                    },
+                    resolved.secrets,
+                )
+        except BoardProviderError as error:
+            return self._board_error("finish_task", error)
+
+    def create_task(
+        self,
+        title: str,
+        problem: str = "",
+        steps: list[str] | None = None,
+        criteria: list[str] | None = None,
+        context: str | None = None,
+        board_type: str | None = None,
+        project: str | None = None,
+        target: str | None = None,
+        provider_options: Mapping[str, JsonValue] | None = None,
+        *,
+        status_field: str | None = None,
+    ) -> dict:
+        """Создать задачу через generic target/options и выполнить write-through."""
+        target, options, migration_warnings = migrate_legacy_board_args(
+            target=target,
+            provider_options=provider_options,
+            status_field=status_field,
+        )
+        doc_md = render_markdown(
+            TaskDoc(
+                title=title,
+                problem=problem,
+                steps=list(steps or []),
+                criteria=list(criteria or []),
+                context=context,
+            )
+        )
+        registry, credentials = self._board_runtime()
+        try:
+            with resolved_provider(
+                self.settings,
+                board_type,
+                options,
+                registry=registry,
+                credential_source=credentials,
+            ) as resolved:
+                result = resolved.provider.create(
+                    doc_md,
+                    title=title,
+                    target=target,
+                    project=project,
+                )
+                reindexed = self._write_through(resolved.provider, result.get("key"))
+                result.setdefault("warnings", []).extend(migration_warnings)
+                return self._safe_board_payload(
+                    {
+                        "status": "ok",
+                        "board_type": resolved.board_type,
+                        "reindexed": reindexed,
+                        **result,
+                    },
+                    resolved.secrets,
+                )
+        except BoardProviderError as error:
+            return self._board_error("create_task", error)
+
+    def get_board_targets(
+        self,
+        board_type: str | None = None,
+        project: str | None = None,
+        provider_options: Mapping[str, JsonValue] | None = None,
+    ) -> dict:
+        """Нормализованные targets/options зарегистрированной доски."""
+        registry, credentials = self._board_runtime()
+        try:
+            with resolved_provider(
+                self.settings,
+                board_type,
+                provider_options,
+                registry=registry,
+                credential_source=credentials,
+            ) as resolved:
+                result = resolved.provider.list_targets(project)
+                return self._safe_board_payload(
+                    {
+                        "board_type": resolved.board_type,
+                        "project": project,
+                        **result,
+                    },
+                    resolved.secrets,
+                )
+        except BoardProviderError as error:
+            return self._board_error("get_board_targets", error)
 
     def _resolve_repo_branch(self, repo: str, branch: str | None) -> tuple[str, str] | str:
         """Резолв (repo, ветка) для session-less тулов.
@@ -1429,6 +1536,7 @@ class MCPReviewService:
             },
             "units": units,
             "task_board": p.task_board,
+            "task_board_warnings": list(p.policy.task_board_warnings),
             "task_keys": p.task_keys,
             "skipped_paths": p.skipped_paths,
             "skip_drafts": self.settings.review_skip_drafts,

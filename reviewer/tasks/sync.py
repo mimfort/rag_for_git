@@ -15,15 +15,30 @@ normalize → index_batch. Разовая операция после смены
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
+
+from reviewer.tasks.boards.base import TaskBoardProvider
+from reviewer.tasks.boards.errors import sanitize_provider_text
 
 log = logging.getLogger(__name__)
 
 _CURSOR_REPO = ""  # задачи глобальны (таблица tasks без repo-скоупа)
 
 
+@dataclass(frozen=True)
+class SyncProvider:
+    """Provider и его immutable secret set для безопасного sync boundary."""
+
+    provider: TaskBoardProvider
+    secrets: frozenset[str] = frozenset()
+
+
 class SyncService:
     def __init__(self, providers, task_service, meta_store) -> None:
-        self._providers = list(providers)
+        self._providers = [
+            item if isinstance(item, SyncProvider) else SyncProvider(item)
+            for item in providers
+        ]
         self._tasks = task_service
         self._meta = meta_store
 
@@ -31,10 +46,12 @@ class SyncService:
         return f"tasks:{board_type}:{board or '*'}"
 
     def _sync_provider(
-        self, provider, board, limit, force_renormalize=False
+        self, sync_provider, board, limit, force_renormalize=False
     ) -> tuple[list[str], dict]:
         """Синк одной доски: enumerate → watermark → normalize → index → курсор.
         purge НЕ делает (он общий по всем доскам — см. run)."""
+        provider = sync_provider.provider
+        secrets = sync_provider.secrets
         warnings: list[str] = []
         ref = self._cursor_ref(provider.board_type, board)
         try:
@@ -57,14 +74,22 @@ class SyncService:
                 try:
                     meta_refresh.append(provider.normalize_meta(raw))
                 except Exception as e:
-                    log.warning("sync: сбой normalize_meta %s", raw.key, exc_info=True)
-                    warnings.append(f"normalize_meta {raw.key}: {type(e).__name__}: {e}")
+                    safe_key = sanitize_provider_text(raw.key, secrets)
+                    safe_error = sanitize_provider_text(
+                        f"{type(e).__name__}: {e}", secrets
+                    )
+                    log.warning("sync: сбой normalize_meta %s: %s", safe_key, safe_error)
+                    warnings.append(f"normalize_meta {safe_key}: {safe_error}")
                 continue
             try:
                 changed.append(provider.normalize(raw))
             except Exception as e:
-                log.warning("sync: сбой нормализации %s", raw.key, exc_info=True)
-                warnings.append(f"normalize {raw.key}: {type(e).__name__}: {e}")
+                safe_key = sanitize_provider_text(raw.key, secrets)
+                safe_error = sanitize_provider_text(
+                    f"{type(e).__name__}: {e}", secrets
+                )
+                log.warning("sync: сбой нормализации %s: %s", safe_key, safe_error)
+                warnings.append(f"normalize {safe_key}: {safe_error}")
 
         results = self._tasks.index_batch(changed) if changed else []
         embedded = sum(1 for r in results if r.get("embedded"))
@@ -72,13 +97,19 @@ class SyncService:
                         if not r.get("embedded") and not r.get("warnings"))
         failed = sum(1 for r in results if r.get("warnings"))
         for r in results:
-            warnings.extend(r.get("warnings") or [])
+            warnings.extend(
+                sanitize_provider_text(warning, secrets)
+                for warning in (r.get("warnings") or [])
+            )
 
         meta_refreshed = 0
         if meta_refresh:
             mr = self._tasks.refresh_meta_batch(meta_refresh)
             meta_refreshed = mr.get("meta_refreshed", 0)
-            warnings.extend(mr.get("warnings") or [])
+            warnings.extend(
+                sanitize_provider_text(warning, secrets)
+                for warning in (mr.get("warnings") or [])
+            )
 
         cursor_advanced = False
         if limit:
@@ -98,27 +129,28 @@ class SyncService:
         }
 
     def run(self, board=None, limit=None, purge_orphaned=False,
-            keep_with_prs=True, board_type=None, status_field=None,
-            force_renormalize=False) -> dict:
+            keep_with_prs=True, board_type=None, force_renormalize=False) -> dict:
         agg = {"enumerated": 0, "changed": 0, "embedded": 0, "refreshed": 0,
                "unchanged": 0, "failed": 0, "meta_refreshed": 0,
                "warnings": [], "cursor_advanced": False}
         # PRI-170: scoped-синк из репо — только один тип доски (board_type), а не все.
         providers = self._providers
         if board_type is not None:
-            providers = [p for p in self._providers if p.board_type == board_type]
+            providers = [
+                item
+                for item in self._providers
+                if item.provider.board_type == board_type
+            ]
             if not providers:
                 agg["warnings"].append(
                     f"тип доски '{board_type}' не настроен на сервере")
-        # per-repo имя поля статуса YouTrack (из .review.yml). Провайдер синка —
-        # singleton; выставляем детерминированно каждый run (None → сброс к «State»).
-        for p in providers:
-            if getattr(p, "board_type", None) == "youtrack" and hasattr(p, "set_status_field"):
-                p.set_status_field(status_field)
         all_active: list[str] = []
         by_board: list[dict] = []
-        for provider in providers:
-            active, one = self._sync_provider(provider, board, limit, force_renormalize)
+        for sync_provider in providers:
+            provider = sync_provider.provider
+            active, one = self._sync_provider(
+                sync_provider, board, limit, force_renormalize
+            )
             all_active.extend(active)
             for k in ("enumerated", "changed", "embedded", "refreshed",
                       "unchanged", "failed", "meta_refreshed"):

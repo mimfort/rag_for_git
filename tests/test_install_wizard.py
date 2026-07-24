@@ -1,5 +1,11 @@
-"""Тесты wizard-групп installer — проверяют набор ключей в WIZARD_GROUPS."""
-from reviewer.install import WIZARD_GROUPS
+"""Тесты registry-driven wizard-групп installer."""
+from reviewer.install import WIZARD_GROUPS, board_env_group, common_board_env_fields
+from reviewer.tasks.boards.registry import (
+    BoardProviderRegistry,
+    BoardProviderSpec,
+    CredentialFieldSpec,
+    ProviderSetupSpec,
+)
 
 
 def _keys():
@@ -11,6 +17,9 @@ def test_wizard_has_per_type_board_creds():
     assert "YOUGILE_API_KEY" in keys
     assert "YOUTRACK_TOKEN" in keys
     assert "YOUTRACK_BASE_URL" in keys
+    assert "JIRA_BASE_URL" in keys
+    assert "JIRA_EMAIL" in keys
+    assert "JIRA_API_TOKEN" in keys
 
 
 def test_wizard_keeps_board_selectors():
@@ -37,6 +46,66 @@ def test_wizard_has_yougile_api_base():
     assert "YOUGILE_API_BASE" in _keys()
 
 
-def test_wizard_total_field_count():
-    total = sum(len(g.fields) for g in WIZARD_GROUPS)
-    assert total == 20, f"Expected 20 fields, got {total}"
+def test_board_group_uses_registry_metadata_without_legacy_aliases():
+    registry = BoardProviderRegistry(
+        [
+            BoardProviderSpec(
+                board_type="future",
+                factory=lambda _context: object(),
+                credential_fields=(
+                    CredentialFieldSpec(
+                        "FUTURE_TOKEN",
+                        "Future token",
+                        secret=True,
+                        aliases=("OLD_FUTURE_TOKEN",),
+                    ),
+                    CredentialFieldSpec(
+                        "FUTURE_URL",
+                        "Future URL",
+                        required=False,
+                        default="https://future.example",
+                    ),
+                    CredentialFieldSpec(
+                        "TASK_BOARD_SERVICE_TOKEN",
+                        "Future service token",
+                        secret=True,
+                    ),
+                ),
+                setup=ProviderSetupSpec(
+                    "Future",
+                    "https://future.example/setup",
+                    "Create a token.",
+                ),
+            )
+        ]
+    )
+
+    group = board_env_group(registry)
+    fields = {field.key: field for field in group.fields}
+
+    assert {"TASK_BOARD_MCP", "TASK_BOARD_KEY_PATTERN", "TASK_BOARD_URL_TEMPLATE"} <= fields.keys()
+    assert fields["FUTURE_TOKEN"].secret is True
+    assert fields["FUTURE_URL"].default == "https://future.example"
+    assert fields["TASK_BOARD_SERVICE_TOKEN"].secret is True
+    assert "OLD_FUTURE_TOKEN" not in fields
+    assert {field.key for field in common_board_env_fields(group)} == {
+        "TASK_BOARD_MCP",
+        "TASK_BOARD_KEY_PATTERN",
+        "TASK_BOARD_URL_TEMPLATE",
+    }
+
+
+def test_wizard_field_count_tracks_registry_credentials():
+    from reviewer.tasks.boards.registry import default_board_registry
+
+    registry_fields = sum(
+        len(default_board_registry().get(board_type).credential_fields)
+        for board_type in default_board_registry().registered_types()
+    )
+    non_board_fields = sum(
+        len(group.fields) for group in WIZARD_GROUPS if group.title != "Доска задач"
+    )
+
+    assert sum(len(group.fields) for group in WIZARD_GROUPS) == (
+        non_board_fields + 3 + registry_fields
+    )

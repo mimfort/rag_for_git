@@ -26,3 +26,27 @@ def test_readme_ru_has_grounding_section():
 def test_plugin_readme_points_to_grounding():
     text = _read("plugin/README.md")
     assert "грунтов" in text.lower()  # указатель на раздел грунтовки
+
+
+def test_readmes_point_to_authoritative_board_provider_reference():
+    for rel in ("README.md", "README.ru.md"):
+        text = _read(rel)
+        assert "docs/board-providers.md" in text
+        assert "provider_options" in text
+
+
+def test_readmes_keep_generic_task_key_metadata_in_examples():
+    for rel in ("README.md", "README.ru.md"):
+        text = _read(rel)
+        assert "key_pattern:" in text
+        assert "url_template:" in text
+
+
+def test_solve_task_skill_uses_generic_board_setup_hint():
+    text = _read("plugin/skills/solve-task/SKILL.md")
+
+    assert "TASK_BOARD_*" not in text
+    assert "reviewer init" in text
+    assert "reviewer check" in text
+    assert "docs/board-providers.md" in text
+    assert "continue board-less" in text

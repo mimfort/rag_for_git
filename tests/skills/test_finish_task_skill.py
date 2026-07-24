@@ -34,10 +34,11 @@ def test_solve_task_points_to_finish_task():
     assert "finish-task" in SOLVE.read_text(encoding="utf-8")
 
 
-def test_finish_task_reads_status_field_and_done_column():
+def test_finish_task_reads_generic_done_target_and_options():
     t = SKILL.read_text(encoding="utf-8")
-    assert "status_field" in t     # читает имя поля YouTrack из .review.yml
-    assert "done_column" in t       # читает done-колонку YouGile из .review.yml
+    assert "done_target" in t
+    assert "provider_options" in t
+    assert "targets" in t
 
 
 def test_finish_task_names_resolved_done_target():
@@ -45,3 +46,11 @@ def test_finish_task_names_resolved_done_target():
     assert "resolved done target" in t   # шаг 4 явно называет цель, не обобщённое mark done
     # гейт подтверждения не регрессирует
     assert "only after explicit confirmation" in t
+
+
+def test_finish_task_uses_only_generic_board_metadata():
+    text = SKILL.read_text(encoding="utf-8").lower()
+    for token in ("create_target", "done_target", "options", "targets", "required_for", "choices"):
+        assert token in text
+    for forbidden in ("yougile", "youtrack", "done_column", "done_state", "status_field", "api_key"):
+        assert forbidden not in text

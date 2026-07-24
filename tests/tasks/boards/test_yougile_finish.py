@@ -103,7 +103,7 @@ def test_yougile_finish_moves_to_done_column():
             {"id": "col-done", "title": "Готово"}]}),
     }
     b = _board(routes)
-    res = b.finish("PRI-10", PR, done_column="Готово")
+    res = b.finish("PRI-10", PR, target="Готово")
     assert res["column_moved"] is True
     put = next(c for c in b._client.calls if c[0] == "PUT")
     assert put[2]["columnId"] == "col-done"
@@ -118,7 +118,7 @@ def test_yougile_finish_column_not_found_failsoft():
         "/columns": _Resp(200, {"content": [{"id": "col-cur", "title": "В работе"}]}),
     }
     b = _board(routes)
-    res = b.finish("PRI-10", PR, done_column="Нет такой")
+    res = b.finish("PRI-10", PR, target="Нет такой")
     assert res["column_moved"] is False
     assert res["warnings"]                 # предупреждение о ненайденной колонке
     assert res["done_set"] is True         # completed всё равно выставлен
@@ -126,10 +126,10 @@ def test_yougile_finish_column_not_found_failsoft():
     assert "columnId" not in put[2]
 
 
-def test_yougile_finish_no_done_column_unchanged():
+def test_yougile_finish_without_target_keeps_column():
     routes = {"/tasks/PRI-10": _Resp(200, {"id": "u1", "description": "",
                                            "completed": False, "columnId": "col-cur"})}
     b = _board(routes)
-    res = b.finish("PRI-10", PR)  # done_column не задан
+    res = b.finish("PRI-10", PR)  # target не задан
     assert res["column_moved"] is False
     assert not any(c[1] == "/columns/col-cur" for c in b._client.calls)  # резолва нет

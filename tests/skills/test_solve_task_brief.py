@@ -6,6 +6,7 @@
 бинарное правило релевантности. Тест не пинит точные формулировки — только
 стабильные маркеры спеки, чтобы правка не удалила её молча.
 """
+import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -44,13 +45,15 @@ def test_solve_task_dedupes_related_sources():
     assert "canonical task key" in text             # дедуп по каноническому ключу
 
 
-def test_solve_task_resolves_subtask_criteria_when_thin():
-    """PRI-164(a): при тонком description критерии дорезолвятся из подзадач (fail-open, без index_task)."""
+def test_solve_task_handles_thin_criteria_without_provider_playbook():
+    """Тонкие критерии fail-open остаются пустыми, не включая provider-specific чтение."""
     text = SKILL_PATH.read_text(encoding="utf-8")
-    assert "Thin-criteria enrichment" in text                 # шаг присутствует
-    assert "(?i)(критери|приёмк|acceptance)" in text          # детектор «тонкого» description
-    assert "subtasks" in text                                  # источник критериев — подзадачи
-    assert "do NOT call `index_task`" in text                  # обогащение только в бриф
+    section = re.search(r"\*\*Thin criteria.*?(?=\n\s*- \*\*Miss\*\*)", text, re.DOTALL)
+    assert section
+    assert "(?i)(критери|приёмк|acceptance)" in section.group()
+    assert "leave `criteria` empty" in section.group()
+    assert "Do NOT call `index_task`" in section.group()
+    assert "task-context-" not in section.group()
 
 
 def test_solve_task_includes_test_exemplars():
@@ -127,3 +130,11 @@ def test_solve_task_hints_implementations_for_oo():
     text = SKILL_PATH.read_text(encoding="utf-8")
     assert "implementations" in text          # тул назван в шаге graph-deepening
     assert "IMPLEMENTS" in text or "наслед" in text  # смысл directed-обхода
+
+
+def test_solve_task_uses_only_generic_board_metadata():
+    text = SKILL_PATH.read_text(encoding="utf-8").lower()
+    for token in ("create_target", "done_target", "options", "targets", "required_for", "choices"):
+        assert token in text
+    for forbidden in ("yougile", "youtrack", "done_column", "done_state", "status_field", "api_key"):
+        assert forbidden not in text

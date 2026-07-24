@@ -49,10 +49,14 @@ def test_youtrack_targets_admin_success():
              "bundle": None},  # не bundle-поле → пропуск
         ]),
     }
-    res = _board(routes).list_done_targets("TES")
-    assert res["source"] == "admin"
-    assert res["status_fields"] == [
-        {"field": "Stage", "values": ["Open", "Готово"], "$type": "StateProjectCustomField"}]
+    board = _board(routes)
+    board._status_field = "Stage"
+    res = board.list_targets("TES")
+    assert res["targets"] == [
+        {"id": "Open", "label": "Open", "purposes": ["create", "done"]},
+        {"id": "Готово", "label": "Готово", "purposes": ["create", "done"]},
+    ]
+    assert res["options"][0]["choices"] == [{"id": "Stage", "label": "Stage"}]
     assert res["warnings"] == []
 
 
@@ -66,10 +70,10 @@ def test_youtrack_targets_fallback_to_sample_on_admin_403():
                                "$type": "StateIssueCustomField"}]},
         ]),
     }
-    res = _board(routes).list_done_targets("TES")
-    assert res["source"] == "sample"
-    assert res["status_fields"] == [
-        {"field": "Stage", "values": ["Open", "Готово"], "$type": "StateIssueCustomField"}]
+    board = _board(routes)
+    board._status_field = "Stage"
+    res = board.list_targets("TES")
+    assert [target["id"] for target in res["targets"]] == ["Open", "Готово"]
     assert res["warnings"]  # предупреждение про недоступный admin
 
 
@@ -82,15 +86,16 @@ def test_youtrack_targets_sample_ignores_non_dict_values():
                               {"name": "Sprints", "value": [{"name": "S1"}]}]},  # list → пропуск
         ]),
     }
-    res = _board(routes).list_done_targets("TES")
-    assert [f["field"] for f in res["status_fields"]] == ["Stage"]
+    board = _board(routes)
+    board._status_field = "Stage"
+    res = board.list_targets("TES")
+    assert [choice["id"] for choice in res["options"][0]["choices"]] == ["Stage"]
 
 
 def test_youtrack_targets_total_failure_empty_failsoft():
     routes = {"/admin/projects": _Resp(403, None), "/issues": _Resp(500, None)}
-    res = _board(routes).list_done_targets("TES")
-    assert res["status_fields"] == []
-    assert res["source"] == "sample"
+    res = _board(routes).list_targets("TES")
+    assert res["targets"] == []
     assert len(res["warnings"]) >= 1
 
 
@@ -99,7 +104,6 @@ def test_youtrack_targets_empty_project_uses_sample_no_admin_call():
         {"customFields": [{"name": "State", "value": {"name": "Open"},
                            "$type": "StateIssueCustomField"}]}])}
     b = _board(routes)
-    res = b.list_done_targets(None)
-    assert res["source"] == "sample"
-    assert [f["field"] for f in res["status_fields"]] == ["State"]
+    res = b.list_targets(None)
+    assert [target["id"] for target in res["targets"]] == ["Open"]
     assert not any(path.startswith("/admin") for path, _ in b._client.calls)

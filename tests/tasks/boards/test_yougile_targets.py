@@ -1,3 +1,6 @@
+import pytest
+
+from reviewer.tasks.boards.errors import BoardProviderError
 from reviewer.tasks.boards.yougile import YougileBoard
 
 
@@ -57,30 +60,69 @@ _TWO_BOARDS = {
 
 
 def test_yougile_targets_scopes_to_project_boards():
-    res = _board(_TWO_BOARDS).list_done_targets("PRI")
-    titles = {(c["title"], c["board_title"]) for c in res["columns"]}
-    assert titles == {("В работе", "Board One"), ("Готово", "Board One")}
+    res = _board(_TWO_BOARDS).list_targets("PRI")
+    assert {(target["id"], target["label"]) for target in res["targets"]} == {
+        ("c1", "В работе"),
+        ("c2", "Готово"),
+    }
     assert res["warnings"] == []
-    assert all(c["board_id"] == "b1" for c in res["columns"])
+    assert res["options"] == []
+    assert all(target["purposes"] == ["create", "done"] for target in res["targets"])
 
 
 def test_yougile_targets_empty_project_returns_all_boards():
     b = _board(_TWO_BOARDS)
-    res = b.list_done_targets(None)
-    assert {c["title"] for c in res["columns"]} == {"В работе", "Готово", "Todo", "Done"}
+    res = b.list_targets(None)
+    assert {target["label"] for target in res["targets"]} == {
+        "В работе",
+        "Готово",
+        "Todo",
+        "Done",
+    }
     # без project задачи не сканируются вовсе
     assert not any(path == "/tasks" for path, _ in b._client.calls)
 
 
 def test_yougile_targets_no_project_boards_warns():
-    res = _board(_TWO_BOARDS).list_done_targets("ZZZ")
-    assert res["columns"] == []
+    res = _board(_TWO_BOARDS).list_targets("ZZZ")
+    assert res["targets"] == []
     assert res["warnings"]  # «колонки для проекта 'ZZZ' не найдены»
 
 
 def test_yougile_targets_failsoft_on_error():
     # отсутствует роут /boards?projectId=p1 → 500 внутри обхода → warning, без падения
     routes = {"/projects": [{"id": "p1", "title": "Proj"}]}
-    res = _board(routes).list_done_targets("PRI")
-    assert res["columns"] == []
+    res = _board(routes).list_targets("PRI")
+    assert res["targets"] == []
     assert res["warnings"]
+
+
+def test_yougile_validate_connection_resolves_exact_requested_project():
+    board = _board({
+        "/companies": [{"id": "company-1", "name": "Acme"}],
+        "/projects": [
+            {"id": "project-other", "title": "OTHER"},
+            {"id": "project-pri", "title": "PRI"},
+        ],
+    })
+
+    result = board.validate_connection("PRI")
+
+    assert result["project"] == {
+        "id": "project-pri",
+        "key": "PRI",
+        "name": "PRI",
+    }
+
+
+def test_yougile_validate_connection_rejects_inaccessible_requested_project():
+    board = _board({
+        "/companies": [{"id": "company-1", "name": "Acme"}],
+        "/projects": [{"id": "project-other", "title": "OTHER"}],
+    })
+
+    with pytest.raises(BoardProviderError) as exc_info:
+        board.validate_connection("PRI")
+
+    assert exc_info.value.category == "not_found"
+    assert "PRI" not in str(exc_info.value)

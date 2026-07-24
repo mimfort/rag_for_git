@@ -73,6 +73,11 @@ def _kind(ext: str, mime: str | None) -> str | None:
     return None
 
 
+def attachment_supported(name: str, mime: str | None) -> bool:
+    """Поддерживается ли извлечение текста из вложения без чтения его содержимого."""
+    return _kind(_ext(name), mime) is not None
+
+
 def _docx_text(data: bytes) -> str | None:
     from docx import Document
     doc = Document(BytesIO(data))
@@ -113,15 +118,15 @@ def download(client, url: str, *, timeout: float, max_bytes: int) -> bytes | Non
         resp.raise_for_status()
         cl = resp.headers.get("Content-Length")
         if cl and cl.isdigit() and int(cl) > max_bytes:
-            log.warning("attachments: %s > max_bytes (%s) — skip", url, cl)
+            log.warning("attachments: Content-Length > max_bytes (%s) — skip", cl)
             return None
         data = resp.content
         if len(data) > max_bytes:
-            log.warning("attachments: %s превысил max_bytes при чтении — skip", url)
+            log.warning("attachments: файл превысил max_bytes при чтении — skip")
             return None
         return data
     except Exception:
-        log.warning("attachments: скачивание %s упало (fail-soft)", url, exc_info=True)
+        log.warning("attachments: скачивание упало (fail-soft)")
         return None
 
 

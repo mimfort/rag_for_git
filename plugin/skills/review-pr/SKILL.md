@@ -30,7 +30,8 @@ blocks.
    - `pr`: `{number, title, body, base_sha, head_sha, base_ref, draft}`
    - `policy`: `{severity_threshold, min_confidence, max_comments, categories, ignore, output_language}`
    - `units`: list of `{path, patch, commentable_right, commentable_left}`
-   - `task_board`: `{type, mcp, key_pattern}` or null — task board config from `.review.yml`
+   - `task_board`: `{type, project, key_pattern, create_target, done_target, options}` or null —
+     non-secret generic board metadata from `.review.yml`
    - `task_keys`: `{primary, others}` or null — task keys extracted from the PR by the server
    - `skipped_paths`, `skip_drafts`, `suggestions_mode`
 
@@ -50,23 +51,19 @@ blocks.
    branch `.review.yml`, see step with `task_board`) to `get_task`/`get_task_context`/`search_tasks`
    (PRI-170; empty `project` = unscoped).
 
-   Read the task **store-first** (unifies with solve-task; required for boards synced server-side
-   without a board MCP, e.g. youtrack):
+   Read the task **store-first** (unifies with solve-task):
    - Call reviewer `get_task(key, project=<task_board.project>)` first. **Hit** (object with a `key`) → use it as the `TaskBrief`
      directly; it is already indexed by the server-side sync, so do NOT call `index_task`.
-   - **Miss** (`null`) AND `task_board.mcp` is set → fall back to the board-MCP playbook for
-     `task_board.type` (`references/task-context-yougile.md` or `references/task-context-jira.md`):
-     call the board MCP server named by `task_board.mcp`, build a `TaskBrief`, then `index_task(TaskBrief)`.
-   - **Miss** AND `task_board.mcp` is empty (e.g. youtrack — no board MCP) → treat the task as not
-     found: skip the requirements dimension and note the reason in the summary.
-   In all cases, if the board MCP is not connected, a tool errors, or the task is not found: skip the
-   requirements dimension and note the reason — NEVER abort the review.
+   - **Miss** (`null`) → call generic incremental
+     `sync_board(board=<task_board.project or null>, board_type=<task_board.type>,
+     provider_options=<task_board.options or {}>, limit=null, purge_orphaned=false)`, then call
+     `get_task(key, project=<task_board.project>)` once more. A sync error or second miss is
+     fail-open: skip the requirements dimension and note the reason in the summary — NEVER abort
+     the review.
 
    The `TaskBrief` schema is `{key, aliases[], title, description, criteria[], status, url, links[]}`
-   (phase 3 adds `aliases[]` and uses `links[]`; see the board playbook for how to fill them).
-   On a store **hit** the brief is already indexed — do NOT re-index. Only when the brief was freshly
-   built from the board MCP (the **Miss** branch) call `index_task(TaskBrief)` to persist it
-   (idempotent — safe to repeat). Then gather task context to sharpen the requirements check:
+   (phase 3 adds `aliases[]` and uses `links[]`). On either store **hit** the brief is already
+   indexed — do NOT re-index. Then gather task context to sharpen the requirements check:
    - `get_task_context(TaskBrief.key, project=<task_board.project>)` → linked tasks, their PRs, and the code those PRs touched;
    - `search_tasks("<TaskBrief.title>. <first lines of description>", project=<task_board.project>)` → semantically similar tasks.
    Keep ONLY the related/similar items that look relevant; you will pass them to the requirements
@@ -115,7 +112,7 @@ blocks.
 6. **Publish.** Compose a short review summary (2-5 sentences, in
    `policy.output_language`): what the PR does, overall assessment, key risks.
    If a task was read, state whether the PR meets the task's requirements; if the task context was
-   requested but unavailable (no key, board MCP not connected, task not found), say so briefly.
+   requested but unavailable (no key, sync error, task not found), say so briefly.
    Mention files that were not analyzed: failed subagents and `skipped_paths`
    from the prepare payload. Call `publish_review(repo, pr, summary, dry_run, task_key)`
    where `task_key` is the canonical `TaskBrief.key` if a task was read (else omit / null). If the

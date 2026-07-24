@@ -34,5 +34,15 @@ def test_skill_shows_by_board_breakdown():
     assert "by_board" in text          # обрабатывает per-board breakdown
 
 
-def test_sync_tasks_reads_status_field():
-    assert "status_field" in SKILL.read_text(encoding="utf-8")
+def test_sync_tasks_passes_generic_provider_options():
+    text = SKILL.read_text(encoding="utf-8")
+    assert "provider_options=<task_board.options" in text
+    assert "options" in text
+
+
+def test_sync_tasks_uses_only_generic_board_metadata():
+    text = SKILL.read_text(encoding="utf-8").lower()
+    for token in ("create_target", "done_target", "options", "targets", "required_for", "choices"):
+        assert token in text
+    for forbidden in ("yougile", "youtrack", "done_column", "done_state", "status_field", "api_key"):
+        assert forbidden not in text

@@ -1635,7 +1635,7 @@ wheels = [
 
 [[package]]
 name = "rag-reviewer"
-version = "0.3.2"
+version = "0.3.6"
 source = { editable = "." }
 dependencies = [
     { name = "click" },
@@ -1650,6 +1650,7 @@ dependencies = [
     { name = "pydantic-settings" },
     { name = "pypdf" },
     { name = "python-docx" },
+    { name = "python-dotenv" },
     { name = "pyyaml" },
     { name = "tree-sitter" },
     { name = "tree-sitter-python" },
@@ -1688,6 +1689,7 @@ requires-dist = [
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.23" },
     { name = "pytest-socket", marker = "extra == 'dev'", specifier = ">=0.8,<0.9" },
     { name = "python-docx", specifier = ">=1.1" },
+    { name = "python-dotenv", specifier = ">=1.0" },
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.5" },
     { name = "tree-sitter", specifier = ">=0.25,<0.26" },
