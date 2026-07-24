@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import inspect
 from collections.abc import Callable, Mapping
+from contextlib import suppress
 from dataclasses import dataclass
 from functools import lru_cache
 from types import MappingProxyType
@@ -168,10 +169,8 @@ class BoardProviderRegistry:
         except Exception:
             close = getattr(provider, "close", None)
             if callable(close):
-                try:
+                with suppress(Exception):
                     close()
-                except Exception:
-                    pass
             raise
         return provider
 

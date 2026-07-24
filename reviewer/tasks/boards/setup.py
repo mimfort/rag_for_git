@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping, Sequence
+from contextlib import suppress
 from dataclasses import dataclass
 from typing import Protocol
 from urllib.parse import urlsplit
@@ -358,8 +359,6 @@ def configure_board_provider(spec: BoardProviderSpec, io: SetupIO) -> dict[str, 
             secrets=secrets,
         ) from None
     finally:
-        try:
+        with suppress(Exception):
             provider.close()
-        except Exception:
-            pass
     return values

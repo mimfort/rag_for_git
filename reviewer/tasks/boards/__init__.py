@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from contextlib import suppress
 
 from reviewer.config.provider_credentials import ProviderCredentialSource
 from reviewer.tasks.boards.base import RawTask, TaskBoardProvider, project_prefix
@@ -66,9 +67,7 @@ def make_board_providers(
                 out.append(provider)
     except Exception:
         for provider in out:
-            try:
+            with suppress(Exception):
                 provider.close()
-            except Exception:
-                pass
         raise
     return out

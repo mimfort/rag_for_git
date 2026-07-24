@@ -905,13 +905,14 @@ rg -n 'board_type.*yougile\\|youtrack|type: yougile.*youtrack' \
 - [ ] Проверить отсутствие незавершённых маркеров в изменённых production/test/docs файлах:
 
 ```bash
-git diff --name-only -z aec8136..HEAD |
-  xargs -0 rg -n \
-    -e 'TO''DO' -e 'FIX''ME' -e 'pa''ss$' \
-    -e 'NotImplemented''Error' -e 'place''holder' -e 'similar'' to'
+git diff --unified=0 --diff-filter=ACMRT aec8136..HEAD -- \
+  '*.py' '*.md' '*.yml' '*.yaml' '*.toml' '.env.example' \
+  ':!docs/superpowers/plans/*' |
+  rg -n '^\+[^+].*(TO''DO|FIX''ME|[[:space:]]pa''ss$|NotImplemented''Error|place''holder|similar'' to)'
 ```
 
-Ожидание: exit 1. Допустимые исторические совпадения вне diff не учитывать.
+Ожидание: exit 1. Проверяются только добавленные строки; исторические совпадения
+в изменённых файлах и сами implementation plans не учитывать.
 
 - [ ] Проверить generic boundaries:
 

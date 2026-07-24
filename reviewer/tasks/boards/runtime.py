@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator, Mapping
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 
 from reviewer.config.provider_credentials import ProviderCredentialSource
@@ -104,7 +104,5 @@ def resolved_provider(
             secrets=secrets,
         ) from None
     finally:
-        try:
+        with suppress(Exception):
             provider.close()
-        except Exception:
-            pass

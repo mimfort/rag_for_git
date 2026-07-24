@@ -52,7 +52,7 @@ class _CompleteProvider:
         return {}
 
     def close(self):
-        pass
+        return None
 
 
 def fake_spec(*, board_type="fake", secret_env="FAKE_TOKEN", factory=None, options=()):

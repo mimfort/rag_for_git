@@ -74,7 +74,7 @@ def test_resolved_provider_sanitizes_runtime_error_from_factory():
             registry=registry,
             credential_source=credentials,
         ):
-            pass
+            pytest.fail("factory error must be raised before entering the context")
 
     assert secret not in str(exc_info.value)
     assert secret not in repr(exc_info.value)
@@ -103,7 +103,7 @@ def test_resolved_provider_resanitizes_board_error_from_factory():
             registry=registry,
             credential_source=credentials,
         ):
-            pass
+            pytest.fail("factory error must be raised before entering the context")
 
     error = exc_info.value
     assert error.category == "authentication"
@@ -129,7 +129,7 @@ def test_resolved_provider_rejects_ambiguous_or_unconfigured_type_safely():
             registry=registry,
             credential_source=credentials,
         ):
-            pass
+            pytest.fail("ambiguous configuration must fail before entering the context")
 
     with pytest.raises(BoardProviderError, match="not configured"):
         with resolved_provider(
@@ -139,4 +139,4 @@ def test_resolved_provider_rejects_ambiguous_or_unconfigured_type_safely():
             registry=registry,
             credential_source=ProviderCredentialSource(values={}),
         ):
-            pass
+            pytest.fail("missing credentials must fail before entering the context")
