@@ -23,6 +23,21 @@ class AdfConversion:
 _HEADING_RE = re.compile(r"^(#{1,6}) (.*)$")
 _BULLET_RE = re.compile(r"^- (.*)$")
 _ORDERED_RE = re.compile(r"^(\d+)\. (.*)$")
+_MARK_ORDER = {"strong": 0, "em": 1, "code": 2, "link": 3}
+_MARKDOWN_ESCAPES = "\\*" + chr(96) + "[]()"
+
+
+def _escape_markdown_text(text: str) -> str:
+    return "".join(f"\\{char}" if char in _MARKDOWN_ESCAPES else char for char in text)
+
+
+def _escape_block_starts(text: str) -> str:
+    """Не дать обычному тексту стать блоком при обратном разборе."""
+    return re.sub(r"(?m)^(?=(?:#{1,6} |- |>|\d+\. ))", r"\\", text)
+
+
+def _escape_link_target(href: str) -> str:
+    return _escape_markdown_text(href)
 
 
 class _AdfReader:
@@ -98,17 +113,27 @@ class _AdfReader:
         for index, item in enumerate(items):
             if item.get("type") != "listItem":
                 self._warn_unknown(item.get("type"))
-            text = self.block(item)
-            if not text:
+            item_lines = self.list_item_lines(item)
+            if not item_lines:
                 continue
             prefix = f"{start + index}. " if ordered else "- "
-            first, *rest = text.splitlines()
-            lines.append(prefix + first)
-            lines.extend(f"  {line}" if line else "" for line in rest)
+            lines.append(prefix + item_lines[0])
+            lines.extend(f"  {line}" if line else "" for line in item_lines[1:])
         return "\n".join(lines)
 
+    def list_item_lines(self, item: Mapping[str, object]) -> list[str]:
+        lines: list[str] = []
+        for child in self._content(item):
+            text = self.block(child)
+            if not text:
+                continue
+            if lines:
+                lines.append("")
+            lines.extend(text.splitlines())
+        return lines
+
     def inline_children(self, content: list[Mapping[str, object]]) -> str:
-        return "".join(self.inline(child) for child in content)
+        return _escape_block_starts("".join(self.inline(child) for child in content))
 
     def inline(self, node: Mapping[str, object]) -> str:
         node_type = node.get("type")
@@ -119,7 +144,7 @@ class _AdfReader:
             return self.inline_children(self._content(node))
 
         text = node.get("text")
-        result = text if isinstance(text, str) else ""
+        result = _escape_markdown_text(text) if isinstance(text, str) else ""
         marks = node.get("marks")
         if not isinstance(marks, list):
             return result
@@ -140,7 +165,7 @@ class _AdfReader:
         attrs = link.get("attrs") if link else None
         href = attrs.get("href") if isinstance(attrs, Mapping) else None
         if isinstance(href, str) and href:
-            result = f"[{result}]({href})"
+            result = f"[{result}]({_escape_link_target(href)})"
         return result
 
     def text_content(self, content: list[Mapping[str, object]]) -> str:
@@ -173,9 +198,19 @@ def _mark(mark_type: str, *, href: str | None = None) -> dict:
     return mark
 
 
+def _normalise_marks(marks: list[dict]) -> list[dict]:
+    unique = {str(mark.get("type")): mark for mark in marks if mark.get("type") in _MARK_ORDER}
+    return [unique[mark_type] for mark_type in _MARK_ORDER if mark_type in unique]
+
+
+def _with_mark(marks: list[dict], mark: dict) -> list[dict]:
+    return _normalise_marks([*marks, mark])
+
+
 def _append_text(out: list[dict], text: str, marks: list[dict]) -> None:
     if not text:
         return
+    marks = _normalise_marks(marks)
     if out and out[-1].get("type") == "text" and out[-1].get("marks", []) == marks:
         out[-1]["text"] += text
         return
@@ -185,50 +220,92 @@ def _append_text(out: list[dict], text: str, marks: list[dict]) -> None:
     out.append(node)
 
 
+def _find_unescaped(text: str, token: str, start: int) -> int:
+    position = start
+    while position <= len(text) - len(token):
+        if text[position] == "\\":
+            position += 2
+        elif text.startswith(token, position):
+            return position
+        else:
+            position += 1
+    return -1
+
+
+def _unescape_text(text: str) -> str:
+    out: list[str] = []
+    position = 0
+    while position < len(text):
+        if text[position] == "\\" and position + 1 < len(text):
+            out.append(text[position + 1])
+            position += 2
+        else:
+            out.append(text[position])
+            position += 1
+    return "".join(out)
+
+
 def _parse_inline(text: str, marks: list[dict] | None = None) -> list[dict]:
     """Разобрать только инлайн-формы, которые сам ADF-конвертер выдаёт."""
-    inherited = list(marks or [])
+    inherited = _normalise_marks(list(marks or []))
     out: list[dict] = []
     position = 0
-    plain_start = 0
+    plain: list[str] = []
+
+    def flush_plain() -> None:
+        _append_text(out, "".join(plain), inherited)
+        plain.clear()
+
     while position < len(text):
-        if text.startswith("**", position):
-            close = text.find("**", position + 2)
+        if text[position] == "\\":
+            if position + 1 < len(text):
+                plain.append(text[position + 1])
+                position += 2
+            else:
+                plain.append("\\")
+                position += 1
+            continue
+        if text[position] == "[":
+            close_label = _find_unescaped(text, "](", position + 1)
+            close_href = _find_unescaped(text, ")", close_label + 2) if close_label != -1 else -1
+            if close_href != -1:
+                flush_plain()
+                href = _unescape_text(text[close_label + 2:close_href])
+                out.extend(_parse_inline(text[position + 1:close_label], _with_mark(inherited, _mark("link", href=href))))
+                position = close_href + 1
+                continue
+        if text.startswith("***", position):
+            close = _find_unescaped(text, "***", position + 3)
             if close != -1:
-                _append_text(out, text[plain_start:position], inherited)
-                out.extend(_parse_inline(text[position + 2:close], inherited + [_mark("strong")]))
+                flush_plain()
+                combined = _with_mark(_with_mark(inherited, _mark("strong")), _mark("em"))
+                out.extend(_parse_inline(text[position + 3:close], combined))
+                position = close + 3
+                continue
+        if text.startswith("**", position):
+            close = _find_unescaped(text, "**", position + 2)
+            if close != -1:
+                flush_plain()
+                out.extend(_parse_inline(text[position + 2:close], _with_mark(inherited, _mark("strong"))))
                 position = close + 2
-                plain_start = position
                 continue
         if text[position] == "*" and not text.startswith("**", position):
-            close = text.find("*", position + 1)
+            close = _find_unescaped(text, "*", position + 1)
             if close != -1:
-                _append_text(out, text[plain_start:position], inherited)
-                out.extend(_parse_inline(text[position + 1:close], inherited + [_mark("em")]))
+                flush_plain()
+                out.extend(_parse_inline(text[position + 1:close], _with_mark(inherited, _mark("em"))))
                 position = close + 1
-                plain_start = position
                 continue
-        if text[position] == "`":
-            close = text.find("`", position + 1)
+        if text[position] == chr(96):
+            close = _find_unescaped(text, chr(96), position + 1)
             if close != -1:
-                _append_text(out, text[plain_start:position], inherited)
-                _append_text(out, text[position + 1:close], inherited + [_mark("code")])
+                flush_plain()
+                out.extend(_parse_inline(text[position + 1:close], _with_mark(inherited, _mark("code"))))
                 position = close + 1
-                plain_start = position
                 continue
-        if text[position] == "[":
-            close_label = text.find("](", position + 1)
-            close_href = text.find(")", close_label + 2) if close_label != -1 else -1
-            if close_href != -1:
-                _append_text(out, text[plain_start:position], inherited)
-                label = text[position + 1:close_label]
-                href = text[close_label + 2:close_href]
-                out.extend(_parse_inline(label, inherited + [_mark("link", href=href)]))
-                position = close_href + 1
-                plain_start = position
-                continue
+        plain.append(text[position])
         position += 1
-    _append_text(out, text[plain_start:], inherited)
+    flush_plain()
     return out
 
 
@@ -247,6 +324,43 @@ def _code_block(lines: list[str], language: str) -> dict:
         "attrs": {"language": language} if language else {},
         "content": [{"type": "text", "text": "\n".join(lines)}] if lines else [],
     }
+
+
+def _list_match(line: str, *, ordered: bool) -> re.Match[str] | None:
+    return (_ORDERED_RE if ordered else _BULLET_RE).match(line)
+
+
+def _parse_list(lines: list[str], index: int, *, ordered: bool) -> tuple[dict, int]:
+    first = _list_match(lines[index], ordered=ordered)
+    assert first is not None
+    start = int(first.group(1)) if ordered else 1
+    items: list[dict] = []
+
+    while index < len(lines):
+        match = _list_match(lines[index], ordered=ordered)
+        if match is None:
+            break
+        item_lines = [match.group(2) if ordered else match.group(1)]
+        index += 1
+        while index < len(lines):
+            line = lines[index]
+            if _list_match(line, ordered=ordered):
+                break
+            if line.startswith("  "):
+                item_lines.append(line[2:])
+                index += 1
+                continue
+            if not line and index + 1 < len(lines) and lines[index + 1].startswith("  "):
+                item_lines.append("")
+                index += 1
+                continue
+            break
+        items.append({"type": "listItem", "content": _parse_markdown_blocks("\n".join(item_lines))})
+
+    node: dict = {"type": "orderedList" if ordered else "bulletList", "content": items}
+    if ordered and start != 1:
+        node["attrs"] = {"order": start}
+    return node, index
 
 
 def _parse_markdown_blocks(markdown: str) -> list[dict]:
@@ -276,27 +390,13 @@ def _parse_markdown_blocks(markdown: str) -> list[dict]:
             continue
         bullet = _BULLET_RE.match(line)
         if bullet:
-            items: list[dict] = []
-            while index < len(lines):
-                match = _BULLET_RE.match(lines[index])
-                if not match:
-                    break
-                items.append({"type": "listItem", "content": [_paragraph(match.group(1))]})
-                index += 1
-            blocks.append({"type": "bulletList", "content": items})
+            block, index = _parse_list(lines, index, ordered=False)
+            blocks.append(block)
             continue
         ordered = _ORDERED_RE.match(line)
         if ordered:
-            start = int(ordered.group(1))
-            items: list[dict] = []
-            while index < len(lines):
-                match = _ORDERED_RE.match(lines[index])
-                if not match:
-                    break
-                items.append({"type": "listItem", "content": [_paragraph(match.group(2))]})
-                index += 1
-            attrs = {"order": start} if start != 1 else {}
-            blocks.append({"type": "orderedList", "attrs": attrs, "content": items})
+            block, index = _parse_list(lines, index, ordered=True)
+            blocks.append(block)
             continue
         if line.startswith(">"):
             quote_lines: list[str] = []

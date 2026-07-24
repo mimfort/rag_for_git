@@ -82,7 +82,7 @@ def test_adf_to_markdown_canonical_nodes(node: dict, expected: str) -> None:
     assert adf_to_markdown(_doc(node)).value == expected
 
 
-def test_canonical_task_document_round_trip_preserves_markdown_except_terminal_newline() -> None:
+def test_canonical_task_document_round_trip_preserves_semantic_adf() -> None:
     markdown = (
         "## Проблема\n\n"
         "Нужна [спецификация](https://example.test/spec).\n\n"
@@ -93,11 +93,98 @@ def test_canonical_task_document_round_trip_preserves_markdown_except_terminal_n
     )
 
     adf = markdown_to_adf(markdown)
-    restored = adf_to_markdown(adf.value).value
+    restored = markdown_to_adf(adf_to_markdown(adf.value).value).value
 
-    assert restored == markdown.rstrip("\n")
-    assert "heading" in str(adf.value)
-    assert adf_contains_link(adf.value, "https://example.test/spec")
+    assert restored == adf.value
+    assert "heading" in str(restored)
+    assert adf_contains_link(restored, "https://example.test/spec")
+
+
+def test_round_trip_escapes_literal_markdown_delimiters_and_backslashes() -> None:
+    document = _doc(
+        {
+            "type": "paragraph",
+            "content": [{"type": "text", "text": r"literal \\ * ** \` [x] (y) # заголовок"}],
+        }
+    )
+
+    markdown = adf_to_markdown(document).value
+
+    assert r"\*" in markdown and r"\[x\]" in markdown and r"\(y\)" in markdown
+    assert markdown != document["content"][0]["content"][0]["text"]
+    assert markdown_to_adf(markdown).value == document
+
+
+def test_round_trip_preserves_overlapping_marks_in_deterministic_order() -> None:
+    document = _doc(
+        {
+            "type": "paragraph",
+            "content": [
+                {"type": "text", "text": "оба", "marks": [{"type": "em"}, {"type": "strong"}]},
+                {"type": "text", "text": "код", "marks": [{"type": "link", "attrs": {"href": "https://e/x"}}, {"type": "code"}]},
+            ],
+        }
+    )
+
+    markdown = adf_to_markdown(document).value
+    restored = markdown_to_adf(markdown).value
+
+    assert markdown == "***оба***[`код`](https://e/x)"
+    assert restored == _doc(
+        {
+            "type": "paragraph",
+            "content": [
+                {"type": "text", "text": "оба", "marks": [{"type": "strong"}, {"type": "em"}]},
+                {"type": "text", "text": "код", "marks": [{"type": "code"}, {"type": "link", "attrs": {"href": "https://e/x"}}]},
+            ],
+        }
+    )
+
+
+def test_round_trip_preserves_escaped_link_label_and_href_identity() -> None:
+    href = r"https://example.test/a)\\b"
+    document = _doc(
+        {
+            "type": "paragraph",
+            "content": [{"type": "text", "text": r"ссылка [x)\\", "marks": [{"type": "link", "attrs": {"href": href}}]}],
+        }
+    )
+
+    restored = markdown_to_adf(adf_to_markdown(document).value).value
+
+    assert restored == document
+    assert adf_contains_link(restored, href)
+
+
+def test_round_trip_preserves_nested_lists_and_multiple_item_paragraphs() -> None:
+    document = _doc(
+        {
+            "type": "bulletList",
+            "content": [
+                {
+                    "type": "listItem",
+                    "content": [
+                        {"type": "paragraph", "content": [{"type": "text", "text": "первый"}]},
+                        {"type": "paragraph", "content": [{"type": "text", "text": "второй абзац"}]},
+                        {
+                            "type": "orderedList",
+                            "content": [
+                                {
+                                    "type": "listItem",
+                                    "content": [{"type": "paragraph", "content": [{"type": "text", "text": "вложенный"}]}],
+                                }
+                            ],
+                        },
+                    ],
+                }
+            ],
+        }
+    )
+
+    markdown = adf_to_markdown(document).value
+
+    assert markdown == "- первый\n\n  второй абзац\n\n  1. вложенный"
+    assert markdown_to_adf(markdown).value == document
 
 
 def test_unknown_node_preserves_recursive_text_and_reports_type() -> None:
