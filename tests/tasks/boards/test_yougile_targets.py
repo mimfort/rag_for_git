@@ -1,3 +1,6 @@
+import pytest
+
+from reviewer.tasks.boards.errors import BoardProviderError
 from reviewer.tasks.boards.yougile import YougileBoard
 
 
@@ -92,3 +95,34 @@ def test_yougile_targets_failsoft_on_error():
     res = _board(routes).list_targets("PRI")
     assert res["targets"] == []
     assert res["warnings"]
+
+
+def test_yougile_validate_connection_resolves_exact_requested_project():
+    board = _board({
+        "/companies": [{"id": "company-1", "name": "Acme"}],
+        "/projects": [
+            {"id": "project-other", "title": "OTHER"},
+            {"id": "project-pri", "title": "PRI"},
+        ],
+    })
+
+    result = board.validate_connection("PRI")
+
+    assert result["project"] == {
+        "id": "project-pri",
+        "key": "PRI",
+        "name": "PRI",
+    }
+
+
+def test_yougile_validate_connection_rejects_inaccessible_requested_project():
+    board = _board({
+        "/companies": [{"id": "company-1", "name": "Acme"}],
+        "/projects": [{"id": "project-other", "title": "OTHER"}],
+    })
+
+    with pytest.raises(BoardProviderError) as exc_info:
+        board.validate_connection("PRI")
+
+    assert exc_info.value.category == "not_found"
+    assert "PRI" not in str(exc_info.value)

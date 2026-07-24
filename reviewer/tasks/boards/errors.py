@@ -28,6 +28,22 @@ def sanitize_provider_text(value: object, secrets: Collection[str] = ()) -> str:
     return rendered
 
 
+def sanitize_provider_payload(value: object, secrets: Collection[str] = ()) -> object:
+    """Рекурсивно скрыть секреты в provider result до внешней границы."""
+    if isinstance(value, str):
+        return sanitize_provider_text(value, secrets)
+    if isinstance(value, list):
+        return [sanitize_provider_payload(item, secrets) for item in value]
+    if isinstance(value, tuple):
+        return tuple(sanitize_provider_payload(item, secrets) for item in value)
+    if isinstance(value, dict):
+        return {
+            sanitize_provider_text(key, secrets): sanitize_provider_payload(item, secrets)
+            for key, item in value.items()
+        }
+    return value
+
+
 class BoardProviderError(RuntimeError):
     """Ошибка провайдера, пригодная для безопасного показа пользователю."""
 

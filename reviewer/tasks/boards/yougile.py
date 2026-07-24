@@ -20,6 +20,7 @@ import httpx
 
 from reviewer.tasks.boards.attachments import fetch_attachment, host_allowed, _registrable_domain
 from reviewer.tasks.boards.base import RawTask, project_prefix
+from reviewer.tasks.boards.errors import BoardProviderError
 from reviewer.tasks.boards.http import BoardHttpClient
 from reviewer.tasks.boards.markup import html_to_md, md_to_html
 from reviewer.tasks.boards.registry import (
@@ -209,23 +210,50 @@ class YougileBoard:
 
     def validate_connection(self, project: str | None = None) -> dict:
         """Проверить identity и минимальный read-доступ без возврата credentials."""
-        companies = (self._read("/companies", params={"limit": 1, "offset": 0}) or {}).get(
-            "content", []
-        )
-        projects = (self._read("/projects", params={"limit": 1, "offset": 0}) or {}).get(
-            "content", []
-        )
+        companies = self._get_all("/companies")
+        projects = self._get_all("/projects")
         company = companies[0] if companies else {}
+        project_info = None
+        if project:
+            selected = next(
+                (
+                    item
+                    for item in projects
+                    if project
+                    in {
+                        item.get("id"),
+                        item.get("key"),
+                        item.get("code"),
+                        item.get("title"),
+                        item.get("name"),
+                    }
+                ),
+                None,
+            )
+            if selected is None:
+                raise BoardProviderError(
+                    "not_found",
+                    "YouGile project is not accessible.",
+                    hint="Check the project identifier and API key permissions.",
+                )
+            label = (
+                selected.get("key")
+                or selected.get("code")
+                or selected.get("title")
+                or selected.get("name")
+            )
+            project_info = {
+                "id": selected.get("id"),
+                "key": label,
+                "name": selected.get("name") or selected.get("title") or label,
+            }
         return {
             "status": "ok",
             "identity": {
                 "id": company.get("id"),
                 "name": company.get("name") or company.get("title"),
             },
-            "project": {
-                "requested": project,
-                "accessible_projects": len(projects),
-            },
+            "project": project_info,
             "capabilities": ["sync", "create", "finish", "attachments"],
             "warnings": [],
         }

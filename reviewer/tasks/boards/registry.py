@@ -83,6 +83,17 @@ _REQUIRED_PROVIDER_MEMBERS = (
 _MISSING = object()
 
 
+def _contains_secret(value: JsonValue, secrets: frozenset[str]) -> bool:
+    if isinstance(value, str):
+        return value in secrets
+    if isinstance(value, list):
+        return any(_contains_secret(item, secrets) for item in value)
+    if isinstance(value, dict):
+        return any(key in secrets or _contains_secret(item, secrets)
+                   for key, item in value.items())
+    return False
+
+
 class BoardProviderRegistry:
     """Хранит allowlist типов досок и создаёт только полные провайдеры."""
 
@@ -135,11 +146,18 @@ class BoardProviderRegistry:
         }
         prohibited = sorted(set(options) & credential_envs)
         if prohibited:
-            raise ValueError("credentials must not be provider options: " + ", ".join(prohibited))
+            raise ValueError("credentials must not be provider options")
+        secret_values = frozenset(
+            credentials[field.env]
+            for field in spec.credential_fields
+            if field.secret and credentials.get(field.env)
+        )
+        if _contains_secret(dict(options), secret_values):
+            raise ValueError("provider options must not contain a secret value")
         known_options = {field.key for field in spec.option_fields}
         unknown = sorted(set(options) - known_options)
         if unknown:
-            raise ValueError(f"unknown provider option: {unknown[0]}")
+            raise ValueError("unknown provider option")
         context = ProviderBuildContext(
             credentials=MappingProxyType(dict(credentials)),
             options=MappingProxyType(dict(options)),
@@ -150,7 +168,16 @@ class BoardProviderRegistry:
             attachment_store_chars=int(build_defaults["attachment_store_chars"]),
         )
         provider = spec.factory(context)
-        self._validate_runtime_provider(provider, board_type)
+        try:
+            self._validate_runtime_provider(provider, board_type)
+        except Exception:
+            close = getattr(provider, "close", None)
+            if callable(close):
+                try:
+                    close()
+                except Exception:
+                    pass
+            raise
         return provider
 
     def _validate_spec(self, spec: BoardProviderSpec) -> None:

@@ -92,23 +92,25 @@ def test_registry_rejects_incompatible_repeated_credential_declarations():
 def test_registry_rejects_unknown_provider_option():
     registry = BoardProviderRegistry([fake_spec(options=(ProviderOptionSpec("project", "Project"),))])
 
-    with pytest.raises(ValueError, match="unknown provider option: other"):
+    with pytest.raises(ValueError, match="unknown provider option") as exc_info:
         registry.create(
-            "fake", credentials={"FAKE_TOKEN": "secret"}, options={"other": "x"},
+            "fake", credentials={"FAKE_TOKEN": "secret"}, options={"private-option": "x"},
             build_defaults=BUILD_DEFAULTS,
         )
+    assert "private-option" not in str(exc_info.value)
 
 
 def test_registry_rejects_secret_option_and_incomplete_provider():
     registry = BoardProviderRegistry()
     registry.register(fake_spec(secret_env="FAKE_TOKEN"))
-    with pytest.raises(ValueError, match="credentials must not be provider options"):
+    with pytest.raises(ValueError, match="credentials must not be provider options") as exc_info:
         registry.create(
             "fake",
             credentials={"FAKE_TOKEN": "secret"},
             options={"FAKE_TOKEN": "secret"},
             build_defaults=BUILD_DEFAULTS,
         )
+    assert "FAKE_TOKEN" not in str(exc_info.value)
     registry.register(fake_spec(factory=lambda _: object(), board_type="broken"))
     with pytest.raises(TypeError, match="validate_connection"):
         registry.create(
@@ -119,18 +121,70 @@ def test_registry_rejects_secret_option_and_incomplete_provider():
         )
 
 
+def test_registry_rejects_nested_secret_values_without_echoing_them():
+    registry = BoardProviderRegistry([
+        fake_spec(options=(ProviderOptionSpec("config", "Config"),)),
+    ])
+    secret = "nested-secret-value"
+
+    with pytest.raises(ValueError, match="secret value") as exc_info:
+        registry.create(
+            "fake",
+            credentials={"FAKE_TOKEN": secret},
+            options={"config": {"nested": ["safe", {"token": secret}]}},
+            build_defaults=BUILD_DEFAULTS,
+        )
+
+    assert secret not in str(exc_info.value)
+
+
+def test_registry_closes_incomplete_provider_rejected_at_runtime():
+    class _IncompleteProvider:
+        board_type = "broken"
+
+        def __init__(self):
+            self.closed = False
+
+        def close(self):
+            self.closed = True
+
+    provider = _IncompleteProvider()
+    registry = BoardProviderRegistry([
+        fake_spec(board_type="broken", factory=lambda _: provider),
+    ])
+
+    with pytest.raises(TypeError, match="validate_connection"):
+        registry.create(
+            "broken",
+            credentials={"FAKE_TOKEN": "secret"},
+            options={},
+            build_defaults=BUILD_DEFAULTS,
+        )
+
+    assert provider.closed is True
+
+
 def test_registry_rejects_provider_with_a_different_runtime_board_type():
     class _MismatchedProvider(_CompleteProvider):
         board_type = "other"
 
+        def __init__(self):
+            self.closed = False
+
+        def close(self):
+            self.closed = True
+
+    provider = _MismatchedProvider()
+
     registry = BoardProviderRegistry([
-        fake_spec(board_type="fake", factory=lambda _: _MismatchedProvider()),
+        fake_spec(board_type="fake", factory=lambda _: provider),
     ])
 
     with pytest.raises(TypeError, match="does not match registered board_type"):
         registry.create(
             "fake", credentials={"FAKE_TOKEN": "secret"}, options={}, build_defaults=BUILD_DEFAULTS,
         )
+    assert provider.closed is True
 
 
 def test_registry_creates_provider_with_validated_context():
