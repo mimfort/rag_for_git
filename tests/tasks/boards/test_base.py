@@ -123,7 +123,7 @@ def test_default_registry_contains_exactly_current_complete_providers():
     from reviewer.tasks.boards import registry as registry_module
 
     registry = registry_module.default_board_registry()
-    assert registry.registered_types() == ("yougile", "youtrack")
+    assert registry.registered_types() == ("yougile", "youtrack", "jira")
     assert registry_module.default_board_registry() is registry
 
 

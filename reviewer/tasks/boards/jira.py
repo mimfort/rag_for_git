@@ -6,14 +6,20 @@ Jira Server/Data Center, OAuth и scoped-token gateway намеренно не �
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable, Mapping
+import time
+from collections.abc import Callable, Iterable, Mapping
 from datetime import datetime
 from typing import Any
 from urllib.parse import quote, urlsplit
 
 import httpx
 
-from reviewer.tasks.boards.adf import adf_to_markdown
+from reviewer.tasks.boards.adf import (
+    adf_contains_link,
+    adf_to_markdown,
+    append_link_paragraph,
+    markdown_to_adf,
+)
 from reviewer.tasks.boards.attachments import (
     attachment_supported,
     fetch_attachment,
@@ -178,6 +184,7 @@ class JiraCloudBoard:
         attachment_timeout: float,
         attachment_store_chars: int,
         transport: httpx.BaseTransport | None = None,
+        sleeper: Callable[[float], None] = time.sleep,
     ) -> None:
         self._secrets = (api_token, email)
         self._base = _site_url(base_url, secrets=self._secrets)
@@ -194,13 +201,285 @@ class JiraCloudBoard:
             timeout=30.0,
             transport=transport,
         )
-        self._http = BoardHttpClient(self._client, secrets=self._secrets)
+        self._http = BoardHttpClient(
+            self._client,
+            sleeper=sleeper,
+            secrets=self._secrets,
+        )
 
     def close(self) -> None:
         self._http.close()
 
     def _read(self, method: str, path: str, **kwargs: Any) -> Any:
         return self._http.request_json(method, path, operation="read", **kwargs)
+
+    def _write(self, method: str, path: str, **kwargs: Any) -> Any:
+        return self._http.request_json(method, path, operation="write", **kwargs)
+
+    def validate_connection(self, project: str | None = None) -> dict:
+        """Проверить identity, видимость проекта и независимые lifecycle permissions."""
+        identity = self._read("GET", "/rest/api/3/myself") or {}
+        capabilities = {"read": True, "create": False, "transition": False}
+        warnings: list[str] = []
+        if project:
+            self._read("GET", f"/rest/api/3/project/{quote(project, safe='')}")
+            payload = self._read(
+                "GET",
+                "/rest/api/3/mypermissions",
+                params={
+                    "projectKey": project,
+                    "permissions": "BROWSE_PROJECTS,CREATE_ISSUES,TRANSITION_ISSUES",
+                },
+            ) or {}
+            permissions = payload.get("permissions") or {}
+            capabilities = {
+                "read": bool((permissions.get("BROWSE_PROJECTS") or {}).get("havePermission")),
+                "create": bool((permissions.get("CREATE_ISSUES") or {}).get("havePermission")),
+                "transition": bool(
+                    (permissions.get("TRANSITION_ISSUES") or {}).get("havePermission")
+                ),
+            }
+            for permission, capability in (
+                ("BROWSE_PROJECTS", "read"),
+                ("CREATE_ISSUES", "create"),
+                ("TRANSITION_ISSUES", "transition"),
+            ):
+                if not capabilities[capability]:
+                    warnings.append(f"missing Jira permission: {permission}")
+        return {
+            "status": "ok",
+            "identity": {
+                "account_id": identity.get("accountId"),
+                "display_name": identity.get("displayName"),
+            },
+            "project": project,
+            "capabilities": capabilities,
+            "warnings": warnings,
+        }
+
+    def list_targets(self, project: str | None) -> dict:
+        """Статусы проекта и явные issue types в общей discovery-модели."""
+        warnings: list[str] = []
+        payload = (
+            self._read(
+                "GET",
+                f"/rest/api/3/project/{quote(project, safe='')}/statuses",
+            )
+            if project
+            else []
+        ) or []
+        if not project:
+            warnings.append("Jira project is required for target discovery.")
+        statuses: list[dict] = []
+        seen_statuses: set[str] = set()
+        issue_types: list[dict] = []
+        seen_types: set[str] = set()
+        for group in payload:
+            type_id = str(group.get("id") or "")
+            if type_id and type_id not in seen_types:
+                issue_types.append({"id": type_id, "label": group.get("name") or type_id})
+                seen_types.add(type_id)
+            for status in group.get("statuses") or []:
+                status_id = str(status.get("id") or "")
+                if status_id and status_id not in seen_statuses:
+                    statuses.append(
+                        {
+                            "id": status_id,
+                            "label": status.get("name") or status_id,
+                            "purposes": ["create", "done"],
+                        }
+                    )
+                    seen_statuses.add(status_id)
+        return {
+            "targets": statuses,
+            "options": [
+                {
+                    "key": "issue_type",
+                    "label": "Issue type",
+                    "required_for": ["create"],
+                    "choices": issue_types,
+                }
+            ],
+            "warnings": warnings,
+        }
+
+    def _transitions(self, key: str) -> list[dict]:
+        payload = self._read(
+            "GET",
+            f"/rest/api/3/issue/{quote(key, safe='')}/transitions",
+        ) or {}
+        return list(payload.get("transitions") or [])
+
+    @staticmethod
+    def _resolve_transition(
+        transitions: list[dict],
+        target: str,
+    ) -> tuple[dict | None, list[str]]:
+        by_id = [
+            item
+            for item in transitions
+            if str((item.get("to") or {}).get("id") or "") == target
+        ]
+        if by_id:
+            return by_id[0], []
+        by_label = [
+            item
+            for item in transitions
+            if str((item.get("to") or {}).get("name") or "") == target
+        ]
+        if len(by_label) == 1:
+            return by_label[0], []
+        if len(by_label) > 1:
+            return None, [f"Jira target {target!r} is ambiguous; transition was not applied."]
+        return None, [f"Jira target {target!r} is unavailable; transition was not applied."]
+
+    def _apply_transition(
+        self,
+        key: str,
+        target: str,
+    ) -> tuple[str | None, list[str]]:
+        try:
+            transitions = self._transitions(key)
+        except BoardProviderError as error:
+            return None, [f"Jira transitions are unavailable: {error.category}."]
+        transition, warnings = self._resolve_transition(transitions, target)
+        if transition is None:
+            return None, warnings
+        status = transition.get("to") or {}
+        try:
+            self._write(
+                "POST",
+                f"/rest/api/3/issue/{quote(key, safe='')}/transitions",
+                json={"transition": {"id": str(transition.get("id") or "")}},
+            )
+        except BoardProviderError as error:
+            warnings.append(f"Jira transition failed: {error.category}.")
+            return None, warnings
+        return str(status.get("id") or status.get("name") or target), warnings
+
+    def create(
+        self,
+        doc_md: str,
+        *,
+        title: str,
+        target: str | None,
+        project: str | None,
+    ) -> dict:
+        """Создать issue ровно один раз и отдельно, fail-soft, применить transition."""
+        if not project:
+            raise BoardProviderError(
+                "configuration",
+                "Jira project is required to create an issue.",
+            )
+        if not self._issue_type:
+            raise BoardProviderError(
+                "configuration",
+                "Jira issue_type is required to create an issue.",
+                hint="Select an issue type from Jira target discovery.",
+            )
+        description = markdown_to_adf(doc_md)
+        created = self._write(
+            "POST",
+            "/rest/api/3/issue",
+            json={
+                "fields": {
+                    "project": {"key": project},
+                    "summary": title,
+                    "description": description.value,
+                    "issuetype": {"id": self._issue_type},
+                }
+            },
+        ) or {}
+        key = str(created.get("key") or "")
+        if not key:
+            raise BoardProviderError(
+                "unsupported",
+                "Jira create response did not include an issue key.",
+            )
+        warnings = list(description.warnings)
+        target_resolved = None
+        if target:
+            target_resolved, transition_warnings = self._apply_transition(key, target)
+            warnings.extend(transition_warnings)
+        return {
+            "key": key,
+            "url": f"{self._base}/browse/{key}",
+            "board_id": str(created.get("id") or key),
+            "target_resolved": target_resolved,
+            "warnings": warnings,
+        }
+
+    def finish(
+        self,
+        key: str,
+        pr_url: str,
+        *,
+        note: str | None = None,
+        mark_done: bool = True,
+        target: str | None = None,
+    ) -> dict:
+        """Независимо обновить ADF description и применить доступный transition."""
+        safe_key = quote(key, safe="")
+        issue = self._read(
+            "GET",
+            f"/rest/api/3/issue/{safe_key}",
+            params={"fields": "description,status"},
+        ) or {}
+        fields = issue.get("fields") or {}
+        description = fields.get("description")
+        document = description if isinstance(description, Mapping) else None
+        link_present = bool(pr_url and adf_contains_link(document, pr_url))
+        pr_link_added = False
+        warnings: list[str] = []
+        if pr_url and not link_present:
+            updated = append_link_paragraph(
+                document,
+                pr_url,
+                label=f"PR: {pr_url}",
+                note=note,
+            )
+            try:
+                self._write(
+                    "PUT",
+                    f"/rest/api/3/issue/{safe_key}",
+                    json={"fields": {"description": updated}},
+                )
+                pr_link_added = True
+            except BoardProviderError as error:
+                warnings.append(f"Jira description update failed: {error.category}.")
+
+        status = fields.get("status") or {}
+        current_id = str(status.get("id") or "")
+        current_name = str(status.get("name") or "")
+        already_at_target = bool(
+            target and (current_id == target or current_name == target)
+        )
+        done_set = False
+        if mark_done and not already_at_target:
+            if not target:
+                warnings.append(
+                    "Jira done target is required; localized status was not guessed."
+                )
+            else:
+                resolved, transition_warnings = self._apply_transition(key, target)
+                done_set = resolved is not None
+                warnings.extend(transition_warnings)
+
+        link_satisfied = not pr_url or link_present or pr_link_added
+        done_satisfied = not mark_done or already_at_target or done_set
+        return {
+            "key": key,
+            "board_id": str(issue.get("id") or key),
+            "done_set": done_set,
+            "pr_link_added": pr_link_added,
+            "already_closed": (
+                not pr_link_added
+                and not done_set
+                and link_satisfied
+                and done_satisfied
+            ),
+            "warnings": warnings,
+        }
 
     @staticmethod
     def _raw_from_issue(issue: Mapping[str, Any]) -> RawTask:

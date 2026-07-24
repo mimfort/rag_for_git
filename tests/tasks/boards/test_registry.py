@@ -11,6 +11,7 @@ from reviewer.tasks.boards.registry import (
     ProviderBuildContext,
     ProviderOptionSpec,
     ProviderSetupSpec,
+    default_board_registry,
 )
 
 
@@ -207,3 +208,26 @@ def test_registry_creates_provider_with_validated_context():
     assert contexts[0].credentials == {"FAKE_TOKEN": "secret"}
     assert contexts[0].options == {"project": "A"}
     assert contexts[0].key_pattern == BUILD_DEFAULTS["key_pattern"]
+
+
+def test_default_registry_registers_jira_only_as_complete_provider():
+    registry = default_board_registry()
+
+    assert registry.registered_types() == ("yougile", "youtrack", "jira")
+    spec = registry.get("jira")
+    assert [field.env for field in spec.credential_fields] == [
+        "JIRA_BASE_URL",
+        "JIRA_EMAIL",
+        "JIRA_API_TOKEN",
+    ]
+    provider = registry.create(
+        "jira",
+        credentials={
+            "JIRA_BASE_URL": "https://acme.atlassian.net",
+            "JIRA_EMAIL": "bot@example.test",
+            "JIRA_API_TOKEN": "secret",
+        },
+        options={"issue_type": "10001"},
+        build_defaults=BUILD_DEFAULTS,
+    )
+    provider.close()

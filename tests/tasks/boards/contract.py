@@ -26,6 +26,10 @@ class _State:
     task_column: str = "open-id"
     issue_description: str = "Описание PRI-2"
     issue_state: str = "Open"
+    jira_description: dict = field(
+        default_factory=lambda: {"type": "doc", "version": 1, "content": []}
+    )
+    jira_state_id: str = "1"
     created: int = 0
 
 
@@ -124,9 +128,6 @@ ADAPTERS = (
         target_label="Done",
         missing_target="Missing",
     ),
-)
-
-JIRA_READ_ADAPTERS = (
     ProviderAdapter(
         board_type="jira",
         secret="jira-contract-secret",
@@ -393,6 +394,16 @@ def _jira_issue(number: int) -> dict[str, Any]:
     }
 
 
+def _jira_state_issue(state: _State, number: int) -> dict[str, Any]:
+    result = _jira_issue(number)
+    result["fields"]["description"] = state.jira_description
+    result["fields"]["status"] = {
+        "id": state.jira_state_id,
+        "name": state.issue_state,
+    }
+    return result
+
+
 def _jira_handler(
     state: _State,
     *,
@@ -402,6 +413,42 @@ def _jira_handler(
         _record(state, request)
         if error_status is not None:
             return httpx.Response(error_status, json={"token": "must-not-leak"})
+        path = request.url.path
+        if request.method == "GET" and path == "/rest/api/3/myself":
+            return httpx.Response(
+                200,
+                json={"accountId": "user-1", "displayName": "Robot"},
+            )
+        if request.method == "GET" and path == "/rest/api/3/project/PRI/statuses":
+            return httpx.Response(
+                200,
+                json=[
+                    {
+                        "id": "10001",
+                        "name": "Task",
+                        "statuses": [
+                            {"id": "1", "name": "Open"},
+                            {"id": "2", "name": "Done"},
+                        ],
+                    }
+                ],
+            )
+        if request.method == "GET" and path == "/rest/api/3/project/PRI":
+            return httpx.Response(200, json={"id": "10000", "key": "PRI"})
+        if request.method == "GET" and path == "/rest/api/3/mypermissions":
+            return httpx.Response(
+                200,
+                json={
+                    "permissions": {
+                        name: {"havePermission": True}
+                        for name in (
+                            "BROWSE_PROJECTS",
+                            "CREATE_ISSUES",
+                            "TRANSITION_ISSUES",
+                        )
+                    }
+                },
+            )
         if request.method == "POST" and request.url.path == "/rest/api/3/search/jql":
             payload = _json(request)
             start = 200 if payload.get("nextPageToken") else 0
@@ -412,10 +459,43 @@ def _jira_handler(
             else:
                 page["isLast"] = True
             return httpx.Response(200, json=page)
-        if request.method == "GET" and request.url.path == "/rest/api/3/issue/PRI-1":
+        if request.method == "GET" and path == "/rest/api/3/issue/PRI-1":
             return httpx.Response(200, json=_jira_issue(1))
-        if request.method == "GET" and request.url.path == "/files/spec.txt":
+        if request.method == "GET" and path in {
+            "/rest/api/3/issue/PRI-2",
+            "/rest/api/3/issue/PRI-77",
+        }:
+            number = 2 if path.endswith("PRI-2") else 77
+            return httpx.Response(200, json=_jira_state_issue(state, number))
+        if request.method == "GET" and path.endswith("/transitions"):
+            return httpx.Response(
+                200,
+                json={
+                    "transitions": [
+                        {"id": "21", "name": "Complete", "to": {"id": "2", "name": "Done"}}
+                    ]
+                },
+            )
+        if request.method == "GET" and path == "/files/spec.txt":
             return httpx.Response(200, text="Критерий из вложения")
+        if request.method == "POST" and path == "/rest/api/3/issue":
+            state.created += 1
+            state.jira_description = (_json(request).get("fields") or {}).get(
+                "description", state.jira_description
+            )
+            return httpx.Response(201, json={"id": "10077", "key": "PRI-77"})
+        if request.method == "PUT" and path in {
+            "/rest/api/3/issue/PRI-2",
+            "/rest/api/3/issue/PRI-77",
+        }:
+            state.jira_description = (_json(request).get("fields") or {}).get(
+                "description", state.jira_description
+            )
+            return httpx.Response(204)
+        if request.method == "POST" and path.endswith("/transitions"):
+            state.jira_state_id = "2"
+            state.issue_state = "Done"
+            return httpx.Response(204)
         return httpx.Response(404, json={})
 
     return handle
@@ -558,17 +638,3 @@ class ProviderContract:
             provider.validate_connection(adapter.project)
         text = f"{exc_info.value!s}\n{exc_info.value!r}\n{caplog.text}"
         assert adapter.secret not in text
-
-
-class ProviderReadContract:
-    """Read/normalize subset для адаптера до включения production registration gate."""
-
-    adapter = ProviderContract.adapter
-    test_iter_raw_reads_all_pages_and_maps_stable_timestamp = (
-        ProviderContract.test_iter_raw_reads_all_pages_and_maps_stable_timestamp
-    )
-    test_normalize_meta_has_zero_http_budget = ProviderContract.test_normalize_meta_has_zero_http_budget
-    test_normalize_preserves_markdown_links_subtasks_and_attachments = (
-        ProviderContract.test_normalize_preserves_markdown_links_subtasks_and_attachments
-    )
-    test_fetch_one_matches_iter_mapper = ProviderContract.test_fetch_one_matches_iter_mapper

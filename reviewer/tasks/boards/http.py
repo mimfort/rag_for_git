@@ -66,6 +66,8 @@ class BoardHttpClient:
 
             status = response.status_code
             if 200 <= status < 300:
+                if status == 204:
+                    return {}
                 try:
                     return response.json()
                 except (TypeError, ValueError):

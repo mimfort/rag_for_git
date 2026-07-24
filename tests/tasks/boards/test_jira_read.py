@@ -104,4 +104,3 @@ def test_fetch_one_and_search_share_mapper_and_404_is_none() -> None:
     assert one is not None
     assert dataclasses.asdict(raw) == dataclasses.asdict(one)
     assert board.fetch_one("PRI-404") is None
-

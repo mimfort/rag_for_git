@@ -1,0 +1,12 @@
+[
+  {
+    "id": "10001",
+    "name": "Task",
+    "statuses": [{"id": "1", "name": "Open"}, {"id": "2", "name": "Done"}]
+  },
+  {
+    "id": "10002",
+    "name": "Bug",
+    "statuses": [{"id": "1", "name": "Open"}, {"id": "3", "name": "Done"}]
+  }
+]
