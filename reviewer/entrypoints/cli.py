@@ -299,97 +299,6 @@ def _apply_claude_allowlist(inst, *, dry_run: bool) -> None:
         click.echo(f"  бэкап: {backup}")
 
 
-_BOARD_IDENTITY_FIELDS = frozenset({"id", "account_id", "login", "name", "display_name"})
-_BOARD_PROJECT_FIELDS = frozenset({"id", "key", "code", "name", "title"})
-_BOARD_CAPABILITY_FIELDS = frozenset(
-    {"read", "sync", "create", "finish", "transition", "attachments"}
-)
-_CREDENTIAL_URL = re.compile(r"[a-zA-Z][a-zA-Z0-9+.-]*://[^\s]+")
-_CREDENTIAL_ASSIGNMENT = re.compile(
-    r"(?i)\b(token|password|secret|api[_-]?key)=([^\s&]+)"
-)
-
-
-def _safe_board_text(value: str, secrets) -> str:
-    from urllib.parse import urlsplit
-
-    from reviewer.tasks.boards.errors import sanitize_provider_text
-
-    rendered = sanitize_provider_text(value, secrets)
-    for match in reversed(list(_CREDENTIAL_URL.finditer(rendered))):
-        url = match.group(0)
-        try:
-            parsed = urlsplit(url)
-            unsafe = parsed.username is not None or parsed.password is not None
-        except ValueError:
-            unsafe = True
-        if unsafe:
-            rendered = rendered[:match.start()] + "[REDACTED]" + rendered[match.end():]
-    return _CREDENTIAL_ASSIGNMENT.sub(r"\1=[REDACTED]", rendered)
-
-
-def _safe_board_fields(value, allowed_fields: frozenset[str], secrets) -> dict:
-    if not isinstance(value, dict):
-        return {}
-    safe: dict[str, object] = {}
-    for key in allowed_fields:
-        if key not in value:
-            continue
-        item = value.get(key)
-        if item is None:
-            safe[key] = None
-        elif isinstance(item, str):
-            safe[key] = _safe_board_text(item, secrets)
-        elif isinstance(item, int) and not isinstance(item, bool):
-            safe[key] = item
-    return safe
-
-
-def _safe_board_validation_report(report, secrets) -> dict:
-    """Рекурсивный schema allowlist для внешнего validation-report boundary."""
-    if not isinstance(report, dict):
-        return {}
-    safe: dict[str, object] = {}
-    identity = _safe_board_fields(report.get("identity"), _BOARD_IDENTITY_FIELDS, secrets)
-    if identity:
-        safe["identity"] = identity
-    project = report.get("project")
-    if isinstance(project, str):
-        safe["project"] = _safe_board_text(project, secrets)
-    elif isinstance(project, dict):
-        safe_project = _safe_board_fields(project, _BOARD_PROJECT_FIELDS, secrets)
-        if safe_project:
-            safe["project"] = safe_project
-    elif project is None and "project" in report:
-        safe["project"] = None
-
-    capabilities = report.get("capabilities")
-    safe_capabilities: dict[str, bool] = {}
-    if isinstance(capabilities, dict):
-        safe_capabilities = {
-            key: value
-            for key, value in capabilities.items()
-            if key in _BOARD_CAPABILITY_FIELDS and isinstance(value, bool)
-        }
-    elif isinstance(capabilities, list):
-        safe_capabilities = {
-            item: True
-            for item in capabilities
-            if isinstance(item, str) and item in _BOARD_CAPABILITY_FIELDS
-        }
-    if safe_capabilities:
-        safe["capabilities"] = safe_capabilities
-
-    warnings = report.get("warnings")
-    if isinstance(warnings, list):
-        safe["warnings"] = [
-            _safe_board_text(warning, secrets)
-            for warning in warnings
-            if isinstance(warning, str)
-        ]
-    return safe
-
-
 def _check_board_providers(
     settings,
     *,
@@ -401,6 +310,7 @@ def _check_board_providers(
 
     from reviewer.config.provider_credentials import ProviderCredentialSource
     from reviewer.tasks.boards.errors import BoardProviderError
+    from reviewer.tasks.boards.reporting import sanitize_validation_report
     from reviewer.tasks.boards.registry import default_board_registry
     from reviewer.tasks.boards.runtime import resolved_provider
 
@@ -422,7 +332,7 @@ def _check_board_providers(
                 credential_source=source,
             ) as resolved:
                 report = resolved.provider.validate_connection()
-                safe = _safe_board_validation_report(report, resolved.secrets)
+                safe = sanitize_validation_report(report, resolved.secrets)
             click.echo(f"✓ Доска задач [{board_type}]: подключение — OK")
             if isinstance(safe, dict):
                 for key in ("identity", "project", "capabilities"):

@@ -11,9 +11,9 @@ import httpx
 
 from reviewer.tasks.boards.errors import (
     BoardProviderError,
-    sanitize_provider_payload,
     sanitize_provider_text,
 )
+from reviewer.tasks.boards.reporting import sanitize_validation_report
 from reviewer.tasks.boards.registry import BoardProviderSpec, ProviderBuildContext
 
 _YOUGILE_API_BASE = "https://yougile.com/api-v2"
@@ -340,13 +340,7 @@ def configure_board_provider(spec: BoardProviderSpec, io: SetupIO) -> dict[str, 
         ) from None
     try:
         validation = provider.validate_connection(project)
-        safe_validation = sanitize_provider_payload(validation, secrets)
-        if isinstance(safe_validation, dict):
-            safe_validation = {
-                key: safe_validation[key]
-                for key in ("status", "identity", "project", "capabilities", "warnings")
-                if key in safe_validation
-            }
+        safe_validation = sanitize_validation_report(validation, secrets)
         _echo(io, json.dumps(safe_validation, ensure_ascii=False, sort_keys=True))
     except BoardProviderError as error:
         raise BoardProviderError(

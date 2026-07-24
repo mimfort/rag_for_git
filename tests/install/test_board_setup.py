@@ -84,6 +84,90 @@ class FakeProvider:
         self.closed = True
 
 
+def _hostile_validation_report(secret: str) -> dict:
+    return {
+        "status": "ok",
+        "identity": {
+            "id": "user-1",
+            "display_name": "Reviewer Bot",
+            "name": "Safe identity; Authorization=Basic warning-basic-secret",
+            "refresh_token": "nested-refresh-secret",
+            "profile": {"api-key": "nested-api-key-secret"},
+        },
+        "project": {
+            "id": "project-1",
+            "key": "PRI",
+            "name": "Reviewer",
+            "authorization": "nested-authorization-secret",
+            "nested": {"password": "nested-password-secret"},
+        },
+        "capabilities": {
+            "read": True,
+            "create": False,
+            "credential": True,
+            "token": "nested-capability-secret",
+        },
+        "warnings": [
+            "connection is read-only",
+            "refresh_token=warning-refresh-secret",
+            "api_token=warning-api-secret",
+            "Authorization: Bearer warning-bearer-secret",
+            "password: warning-password-secret",
+            "visit https://user:url-password-secret@warning.example/help",
+            f"known literal {secret}",
+            {"cookie": "nested-cookie-secret"},
+        ],
+        "debug": {"secret": "top-level-secret"},
+    }
+
+
+def test_setup_uses_fail_closed_validation_report_sanitizer() -> None:
+    provider = FakeProvider(_hostile_validation_report("jira-secret"))
+    spec = replace(jira_provider_spec(), factory=lambda _context: provider)
+    io = FakeIO(
+        answers={
+            "Jira Cloud site URL": "https://acme.atlassian.net",
+            "Atlassian account email": "bot@example.test",
+            "Atlassian API token": "jira-secret",
+        },
+        confirms=[False],
+    )
+
+    configure_board_provider(spec, io)
+
+    rendered = "\n".join(io.messages)
+    for safe in (
+        "ok",
+        "user-1",
+        "Reviewer Bot",
+        "Safe identity",
+        "project-1",
+        "PRI",
+        "connection is read-only",
+        '"read": true',
+        '"create": false',
+    ):
+        assert safe in rendered
+    for forbidden in (
+        "nested-refresh-secret",
+        "nested-api-key-secret",
+        "nested-authorization-secret",
+        "nested-password-secret",
+        "nested-capability-secret",
+        "warning-refresh-secret",
+        "warning-api-secret",
+        "warning-bearer-secret",
+        "warning-basic-secret",
+        "warning-password-secret",
+        "url-password-secret",
+        "jira-secret",
+        "nested-cookie-secret",
+        "top-level-secret",
+    ):
+        assert forbidden not in rendered
+    assert provider.closed is True
+
+
 def test_jira_setup_opens_official_page_only_after_confirmation_and_validates() -> None:
     provider = FakeProvider(
         {

@@ -189,6 +189,85 @@ def test_check_recursively_allowlists_validation_report_schema(capsys) -> None:
     assert provider.closed is True
 
 
+def test_check_uses_fail_closed_validation_report_sanitizer(capsys) -> None:
+    provider = CheckProvider(
+        {
+            "status": "ok",
+            "identity": {
+                "id": "user-1",
+                "display_name": "Reviewer Bot",
+                "name": "Safe identity; Authorization=Basic warning-basic-secret",
+                "refresh_token": "nested-refresh-secret",
+                "profile": {"api-key": "nested-api-key-secret"},
+            },
+            "project": {
+                "id": "project-1",
+                "key": "PRI",
+                "name": "Reviewer",
+                "authorization": "nested-authorization-secret",
+                "nested": {"password": "nested-password-secret"},
+            },
+            "capabilities": {
+                "read": True,
+                "create": False,
+                "credential": True,
+                "token": "nested-capability-secret",
+            },
+            "warnings": [
+                "connection is read-only",
+                "refresh_token=warning-refresh-secret",
+                "api_token=warning-api-secret",
+                "Authorization: Bearer warning-bearer-secret",
+                "password: warning-password-secret",
+                "visit https://user:url-password-secret@warning.example/help",
+                "known literal configured-secret",
+                {"cookie": "nested-cookie-secret"},
+            ],
+            "debug": {"secret": "top-level-secret"},
+        }
+    )
+
+    failed = _check_board_providers(
+        _settings(),
+        registry=_registry(provider),
+        credential_source=ProviderCredentialSource(
+            values={"FAKE_TOKEN": "configured-secret"}
+        ),
+    )
+
+    output = capsys.readouterr().out
+    assert failed is False
+    for safe in (
+        "user-1",
+        "Reviewer Bot",
+        "Safe identity",
+        "project-1",
+        "PRI",
+        "connection is read-only",
+        '"read": true',
+        '"create": false',
+    ):
+        assert safe in output
+    for forbidden in (
+        "nested-refresh-secret",
+        "nested-api-key-secret",
+        "nested-authorization-secret",
+        "nested-password-secret",
+        "nested-capability-secret",
+        "warning-refresh-secret",
+        "warning-api-secret",
+        "warning-bearer-secret",
+        "warning-basic-secret",
+        "warning-password-secret",
+        "url-password-secret",
+        "configured-secret",
+        "nested-cookie-secret",
+        "top-level-secret",
+    ):
+        assert forbidden not in output
+    assert provider.closed is True
+
+
 def test_check_skips_unconfigured_provider_without_constructing_it(capsys) -> None:
     provider = CheckProvider({})
 
