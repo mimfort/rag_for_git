@@ -609,7 +609,7 @@ All commands run via `uvx --from rag-reviewer <command>`, or after `uv tool inst
 
 | Command | Arguments | Options | What it does |
 |---|---|---|---|
-| `check` | — | — | Verify environment readiness (keys, Postgres, Neo4j, GitHub). Prints ✓/✗ per item; exits 1 on any problem. Spends no Voyage quota. |
+| `check` | — | repeatable `--board-project TYPE=PROJECT` for project-scoped provider validation | Verify environment readiness (keys, Postgres, Neo4j, GitHub, configured boards). Prints ✓/✗ per item; exits 1 on any problem. Spends no Voyage quota. |
 | `init` | — | `--path FILE` (default `~/.config/rag-reviewer/.env`), `--yes` (accept defaults, CI mode) | Interactive wizard that writes the `.env` (Voyage/GitHub + optional groups). |
 | `install` | `[client]` | `--all`, `--list`, `--path FILE`, `--pin VERSION`, `--no-latest`, `--no-skills`, `--dry-run` | Register the MCP server (and skills) in AI clients (cross-platform). |
 | `install-skills` | `[client]` | `--all`, `--list`, `--path FILE` | Install only the skills into a client's global skills directory. |

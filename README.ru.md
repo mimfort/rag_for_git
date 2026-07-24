@@ -529,7 +529,7 @@ validation через `reviewer check --board-project TYPE=PROJECT` и rotation 
 
 | Команда | Аргументы | Опции | Что делает |
 |---|---|---|---|
-| `check` | — | — | Проверка готовности окружения (ключи, Postgres, Neo4j, GitHub). ✓/✗ по пунктам; exit 1 при проблеме. Квоту Voyage не тратит. |
+| `check` | — | повторяемый `--board-project TYPE=PROJECT` для project-scoped validation | Проверка готовности окружения (ключи, Postgres, Neo4j, GitHub, настроенные доски). ✓/✗ по пунктам; exit 1 при проблеме. Квоту Voyage не тратит. |
 | `init` | — | `--path FILE` (по умолчанию `~/.config/rag-reviewer/.env`), `--yes` (принять дефолты, CI-режим) | Интерактивный wizard записи `.env` (Voyage/GitHub + опциональные группы). |
 | `install` | `[client]` | `--all`, `--list`, `--path FILE`, `--pin VERSION`, `--no-latest`, `--no-skills`, `--dry-run` | Прописать MCP-сервер (и скиллы) в AI-клиенты (кроссплатформенно). |
 | `install-skills` | `[client]` | `--all`, `--list`, `--path FILE` | Установить только скиллы в глобальную папку клиента. |
