@@ -306,6 +306,18 @@ def test_compose_documents_only_safe_test_profile_teardown() -> None:
     ) in normalized
 
 
+def test_compose_documents_start_interval_docker_requirement() -> None:
+    root = Path(__file__).parents[1]
+    compose_text = (root / "docker-compose.yml").read_text(encoding="utf-8")
+    normalized = "\n".join(line.lstrip() for line in compose_text.splitlines())
+
+    assert (
+        "# start_interval требует Docker Engine >= 25.0 / API >= 1.44: на старых движках\n"
+        "# ключ игнорируется, стартовые пробы идут с редким interval и `up -d --wait`\n"
+        "# ждёт минутами вместо секунд."
+    ) in normalized
+
+
 def test_env_example_documents_exact_test_endpoint_defaults() -> None:
     root = Path(__file__).parents[1]
     values = {

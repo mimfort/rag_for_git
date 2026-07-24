@@ -19,6 +19,10 @@ services:
   # Безопасное удаление: docker compose --profile test rm -sfv paradedb-test neo4j-test
   # НИКОГДА не используйте `docker compose --profile test down -v`: это остановит
   # dev-сервисы и удалит production named volumes.
+  #
+  # start_interval требует Docker Engine >= 25.0 / API >= 1.44: на старых движках
+  # ключ игнорируется, стартовые пробы идут с редким interval и `up -d --wait`
+  # ждёт минутами вместо секунд.
   # ============================================================================
   paradedb-test:
     image: paradedb/paradedb@sha256:dbd64f0eb2716b8466afe54b91fec782f4107a8d0e6bd3660b89c88a1ded2ead
