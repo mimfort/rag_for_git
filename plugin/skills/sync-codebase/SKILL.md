@@ -70,4 +70,4 @@ Parse from $ARGUMENTS (all optional):
 - After `reviewer index`, individual PR reviews (`reviewer_review-pr`) trigger **incremental**
   re-sync of changed files automatically via `prepare_review`. Full re-index is only needed when
   the base branch diverges significantly or after a fresh deploy.
-- For task graph sync (Yougile/Jira board), use `reviewer_sync-tasks` instead.
+- To sync tasks from the configured registered task board, use `reviewer_sync-tasks` instead.

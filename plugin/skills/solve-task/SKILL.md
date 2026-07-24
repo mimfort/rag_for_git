@@ -1,6 +1,6 @@
 ---
 name: reviewer_solve-task
-description: Gather disciplined context for solving a task, then hand off to development. Use when the user asks to solve/implement a task ("solve PRI-4", "/reviewer_solve-task <key or description>", "реши задачу X"). Reads the task from a connected board (if a key + board), pulls related/similar tasks and relevant code, distills a brief, and enters brainstorming. Requires the reviewer MCP server (and optionally a board MCP).
+description: Gather disciplined context for solving a task, then hand off to development. Use when the user asks to solve/implement a task ("solve PRI-4", "/reviewer_solve-task <key or description>", "реши задачу X"). Reads a keyed task from the reviewer store, pulls related/similar tasks and relevant code, distills a brief, and enters brainstorming. Requires the reviewer MCP server.
 ---
 
 # Solve Task
@@ -116,15 +116,14 @@ brief to `superpowers:brainstorming` (which leads to writing-plans → subagent-
           brief that the task data came from the reviewer store (after sync).
           - **Thin criteria (optional, fail-open).** The store can return `criteria=[]`; requirements
             normally live in `description`. If it has NO heading matching
-            `(?i)(критери|приёмк|acceptance)`, leave `criteria` empty and record the gap rather than
-            querying a provider directly. Do NOT call `index_task`.
+            `(?i)(критери|приёмк|acceptance)`, leave `criteria` empty and record the gap. Do NOT call `index_task`.
         - **Miss** (`null` / no `key`) AND a board is resolved: call generic incremental
           `sync_board(board=<task_board.project or null>, board_type=<task_board.type>,
           provider_options=<task_board.options or {}>, limit=null, purge_orphaned=false)`, then
           retry `get_task(key, project=<task_board.project>)` once. Error or second miss →
           board-less: treat `$ARGUMENTS` as the task description and record the gap.
         - **Miss** AND no board: board-less — treat `$ARGUMENTS` as the task description.
-   - Otherwise: treat `$ARGUMENTS` as the task description; do not read the board.
+   - Otherwise: treat `$ARGUMENTS` as the task description; do not perform external task reads.
 
    Store-first cuts the double-fetch: the preflight `sync_board` already pulled the whole board into
    the reviewer store, and a miss gets one generic incremental sync/retry (fewer LLM tokens and no
@@ -143,8 +142,8 @@ brief to `superpowers:brainstorming` (which leads to writing-plans → subagent-
      `get_task`, `get_task_context`, and `search_tasks` so only this repo's project surfaces (PRI-170).
    - If you have a task key: `get_task_context(key, project=<task_board.project>)` → linked tasks, their PRs, and the code those PRs
      touched.
-   - `search_tasks("<title>. <first lines of description>", project=<task_board.project>)` → semantically similar tasks. If a board
-     is connected, you may read the most relevant similar tasks from the board for fuller detail.
+   - `search_tasks("<title>. <first lines of description>", project=<task_board.project>)` → semantically similar tasks from the
+     reviewer store. Use their indexed fields only; if detail is missing, record that task-context gap.
    - **Related work = linked ∪ similar.** The «Related work» brief section draws from two sources —
      `get_task_context` (linked) and `search_tasks` (similar). They overlap; the Step 4 filter
      deduplicates them by key before the cap.
@@ -278,15 +277,16 @@ Use the session-less tools above.
 
 ## Failure handling (fail-open)
 
-- No `task_board` / board MCP not connected / task not found → board-less: build the brief from
-  `search_tasks` (if the corpus is warm) + `search_codebase` + the user's formulation; note the gap.
+- No configured `task_board` / failed generic sync / task not found → board-less: build the brief
+  from `search_tasks` (if the corpus is warm) + `search_codebase` + the user's formulation; note
+  the missing task context.
 - Neo4j down → `get_task_context` / `index_task` graph parts degrade (empty + warning); build the
   brief from `search_tasks` + `search_codebase`.
-- Empty task corpus (no prior `/reviewer_sync-tasks` or reviews) → `search_tasks` is empty; rely on the board
-  (if a key) + `search_codebase`.
-- Postgres down → `search_codebase` / `search_tasks` return empty; build the brief from the board (if
-  a key) or the user's formulation alone; still hand off to brainstorming.
+- Empty task corpus (no prior `/reviewer_sync-tasks` or reviews) → `search_tasks` is empty; use
+  `search_codebase` + the user's formulation and note the missing task context.
+- Postgres down → `search_codebase` / `search_tasks` return empty; build the brief from the user's
+  formulation alone and note the missing task context; still hand off to brainstorming.
 - Never abort: with any gap, distill what you have, note the deficit in the brief, and still hand off
   to brainstorming.
-- Read-only on the board; this skill never writes to it. The brief file under
-  `docs/superpowers/briefs/` is the only write this skill makes — to the repo, not the board.
+- This skill reads task data only through the reviewer store and generic `sync_board`/retry. The
+  brief file under `docs/superpowers/briefs/` is its only repository write.

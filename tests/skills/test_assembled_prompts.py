@@ -4,7 +4,8 @@ from pathlib import Path
 SKILLS_DIR = Path(__file__).resolve().parents[2] / "plugin" / "skills"
 _INCLUDE = re.compile(r"<!-- include: (_common/[A-Za-z0-9_-]+\.md) -->")
 _PROVIDER_SPECIFIC = re.compile(
-    r"(yougile|youtrack)|done_column|done_state|status_field|task_board\.mcp|task-context-"
+    r"(yougile|youtrack|jira)|done_column|done_state|status_field|task_board\.mcp|task-context-",
+    re.IGNORECASE,
 )
 
 
@@ -108,14 +109,15 @@ def test_solve_task_assembled_has_branch_and_tools():
     assert "search_codebase" in s
 
 
-def test_public_board_skills_have_no_provider_specific_surface():
-    for rel_path in (
-        "configure-review/SKILL.md",
-        "sync-tasks/SKILL.md",
-        "solve-task/SKILL.md",
-        "create-task/SKILL.md",
-        "finish-task/SKILL.md",
-        "review-pr/SKILL.md",
-    ):
-        text = assemble(rel_path).lower()
-        assert not _PROVIDER_SPECIFIC.search(text), f"{rel_path}: provider-specific board surface leaked"
+def test_public_skill_markdown_has_no_provider_specific_board_surface():
+    offenders = []
+    for path in SKILLS_DIR.rglob("*.md"):
+        match = _PROVIDER_SPECIFIC.search(path.read_text(encoding="utf-8"))
+        if match:
+            offenders.append(f"{path.relative_to(SKILLS_DIR)}: {match.group()}")
+
+    assert not offenders, "provider-specific board surface leaked:\n" + "\n".join(offenders)
+
+
+def test_no_public_task_context_playbooks_remain():
+    assert not list(SKILLS_DIR.rglob("task-context-*.md"))
