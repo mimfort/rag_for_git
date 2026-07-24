@@ -566,11 +566,12 @@ reviewer-mcp env rather than duplicated in each repo's `.review.yml`. See
 | `YOUGILE_API_KEY` / `YOUGILE_API_BASE` | `""` | Registered-provider credentials; the base has a provider default. |
 | `YOUTRACK_TOKEN` / `YOUTRACK_BASE_URL` | `""` | Registered-provider credentials. |
 | `JIRA_BASE_URL` / `JIRA_EMAIL` / `JIRA_API_TOKEN` | `""` | Jira Cloud direct-site credentials; API token is unscoped. |
-| `TASK_BOARD_MCP` | `""` | Name of the connected board MCP server (LLM-side tools `mcp__<mcp>__*`). |
+| `TASK_BOARD_MCP` | `""` | Legacy metadata for older clients; current generic skills do not use it. |
 | `TASK_BOARD_KEY_PATTERN` | `""` | Task-key regex, e.g. `[A-Z]+-\d+`. |
 | `TASK_BOARD_URL_TEMPLATE` | `""` | Optional task-link template. |
 | `TASK_BOARD_TYPE` | `""` | **Deprecated** — choose a registered `task_board.type` in `.review.yml`. |
-| `TASK_BOARD_API_KEY` / `TASK_BOARD_API_BASE` | `""` | Read-only legacy aliases; new configurations never generate them. |
+| `TASK_BOARD_API_KEY` | `""` | Read-only YouGile alias: `TASK_BOARD_API_KEY → YOUGILE_API_KEY`. |
+| `TASK_BOARD_API_BASE` | `""` | Read-only YouGile alias: `TASK_BOARD_API_BASE → YOUGILE_API_BASE`. |
 
 Keep credentials only in the reviewer-mcp environment or a secret manager — never in `.review.yml`,
 MCP client configuration, logs, or commits. The provider reference covers safe acquisition,
@@ -680,10 +681,12 @@ and enters brainstorming. It disciplines context-gathering — it does **not** w
 
 - **Arguments:** a task key (e.g. `PRI-4`, must match `key_pattern`) **or** a free-text description
   (e.g. "add a logout endpoint"). Board-less mode falls back to description + code search.
-- **MCP tools used:** `get_board_config`, `get_subsystem_summaries`, `get_task`, `index_task`, `get_task_context`, `search_tasks`,
-  `search_codebase`, `related_symbols`, `callers`, `definition`, `implementations`, `get_pr_diff`; plus the connected
-  board MCP (`mcp__<board>__*`) to read the task. All task tools are scoped via `project=<task_board.project>`.
-- **Flow:** preflight (index freshness check → task corpus warmup via `sync_board`) → subsystem prior via `get_subsystem_summaries` → resolve board config → identify task (key vs free text) → store-first task read via `get_task(key, project=...)` (hit = use directly; miss = board MCP fallback) → best-effort, fail-open context
+- **MCP tools used:** `get_subsystem_summaries`, `get_task`, `index_task`, `get_task_context`, `search_tasks`,
+  `search_codebase`, `related_symbols`, `callers`, `definition`, `implementations`, `get_pr_diff`, and
+  server-side `sync_board`. All task tools are scoped via `project=<task_board.project>`.
+- **Flow:** resolve generic board config → server-side incremental `sync_board` → identify task
+  (key vs free text) → store-first `get_task(key, project=...)`; on a miss, retry after sync and
+  continue fail-open with code context if it is still unavailable → subsystem prior and best-effort context
   gathering (task graph, similar tasks, relevant code, lazy PR diffs of similar tasks) → distill a
   structured brief (Task / Related work / Relevant code / Constraints) → persist it to
   `docs/superpowers/briefs/` (`ГГГГ-ММ-ДД-<KEY>-<slug>.md`, survives context compaction) → hand off to
@@ -860,7 +863,7 @@ code_quote, message, suggestion, fix:{start_line,end_line,replacement}|null, con
 | `search_tasks` | `(query, top_k=5, project=None)` | Semantically similar tasks from the indexed corpus. |
 | `get_task_context` | `(key: str, project=None)` | Graph context: the task, its PRs, linked tasks and their PRs, and the touched code. |
 | `purge_orphaned_tasks` | `(active_keys: list[str], keep_with_prs=True)` | Remove tasks no longer on the board (PR-linked tasks protected by default). |
-| `get_board_config` | `()` | Deploy-wide board config (`TASK_BOARD_*`); fallback for `sync-tasks`/`solve-task`. Credentials are **not** returned. |
+| `get_board_config` | `()` | Legacy deploy metadata (`TASK_BOARD_*`) for older clients; credentials are **not** returned. Current generic skills resolve repository config and use server-side lifecycle tools. |
 
 ---
 
@@ -904,6 +907,8 @@ max_comments: 25
 task_board:
   type: <registered-provider>
   project: PRI          # optional; scopes task sync/queries to this project (empty = all)
+  key_pattern: "[A-Z]+-\\d+"  # optional non-secret task-key metadata
+  url_template: "https://tasks.example/{code}"  # optional non-secret link metadata
   create_target: Backlog
   done_target: Done
   options:
@@ -930,12 +935,13 @@ it calls one MCP tool, `sync_board(..., board_type, provider_options)`, and the 
 server enumerates the board over **REST** itself (`reviewer/tasks/boards/`, behind a
 `TaskBoardProvider` interface and explicit registry), normalizes each task into a `TaskBrief`
 in Python, and indexes it via the existing batch indexer. The LLM passes no task text, so a sync
-costs O(1) tokens regardless of board size. It is incremental via a per-board timestamp watermark in
-`index_meta` (`ref="tasks:<board>"`): a repeat sync touches ~0 tasks; `--limit` disables purge and
-the watermark advance. Board REST credentials live only in the reviewer-mcp environment. This inverts the "reviewer Python never touches the
-board" rule **for bulk sync only** — single-task reads in `solve-task` / `review-pr` still go through
-the board-MCP on the LLM side. The task graph (`:Task`) is global, so one task can span PRs across
-several microservice repos.
+costs O(1) tokens regardless of board size. It is incremental via a per-(type, board) timestamp
+watermark in `index_meta` (`ref="tasks:<type>:<board>"`): a repeat sync touches ~0 tasks; `--limit`
+disables purge and the watermark advance. Board REST credentials live only in the reviewer-mcp
+environment. Python performs server-side sync, create, and finish operations; successful create and
+finish use write-through reindexing. Reads use the indexed store first and remain fail-open when a
+task is unavailable. The task graph (`:Task`) is global, so one task can span PRs across several
+microservice repos.
 
 After a deploy that changes description normalization, run the sync once with
 `force_renormalize=true` — it ignores the watermark and re-normalizes the whole corpus (dedup by

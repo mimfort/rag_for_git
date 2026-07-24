@@ -1,7 +1,14 @@
 """Контракт пользовательской документации расширяемых провайдеров досок."""
 
-from pathlib import Path
 import re
+from pathlib import Path
+
+from dotenv import dotenv_values
+
+from reviewer.config.provider_credentials import ProviderCredentialSource
+from reviewer.config.settings import Settings
+from reviewer.config.task_board import normalize_task_board_config
+from reviewer.tasks.boards.registry import default_board_registry
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -94,3 +101,66 @@ def test_public_docs_use_registered_provider_terminology_not_a_closed_choice():
     )
     for rel in ("README.md", "README.ru.md", "CLAUDE.md", ".env.example", ".review.yml"):
         assert not closed_choice.search(_read(rel)), rel
+
+
+def test_env_template_leaves_all_registry_credentials_unconfigured(monkeypatch):
+    registry = default_board_registry()
+    credential_envs = {
+        env
+        for board_type in registry.registered_types()
+        for field in registry.get(board_type).credential_fields
+        for env in (field.env, *field.aliases)
+    }
+    for env in credential_envs:
+        monkeypatch.delenv(env, raising=False)
+
+    template = ROOT / ".env.example"
+    values = dotenv_values(template)
+    assert all(values.get(env, "") == "" for env in credential_envs)
+    assert not re.search(r"^[A-Z][A-Z0-9_]*=[ \t]+#", _read(".env.example"), re.MULTILINE)
+
+    settings = Settings(_env_file=template)
+    source = ProviderCredentialSource.from_settings(settings)
+    assert registry.configured_types(source) == ()
+
+
+def test_readmes_document_store_first_server_side_board_workflow_symmetrically():
+    required = (
+        "sync_board",
+        "get_task(key, project=...)",
+        "store-first",
+        "tasks:<type>:<board>",
+        "TASK_BOARD_API_KEY → YOUGILE_API_KEY",
+        "TASK_BOARD_API_BASE → YOUGILE_API_BASE",
+        "legacy metadata for older clients",
+    )
+    forbidden = ("board-mcp", "board mcp", "mcp__<board>", "tasks:<board>")
+
+    for rel in ("README.md", "README.ru.md"):
+        text = _read(rel)
+        lowered = text.lower()
+        for marker in required:
+            assert marker.lower() in lowered, (rel, marker)
+        for stale in forbidden:
+            assert stale not in lowered, (rel, stale)
+
+
+def test_provider_reference_scopes_legacy_aliases_to_yougile():
+    text = _read("docs/board-providers.md")
+
+    assert "TASK_BOARD_API_KEY → YOUGILE_API_KEY" in text
+    assert "TASK_BOARD_API_BASE → YOUGILE_API_BASE" in text
+    assert "only for YouGile" in text
+    assert "new generic fields win" in text.lower()
+    assert "warning" in text.lower()
+
+
+def test_root_review_yml_is_parseable_generic_config_with_key_pattern():
+    import yaml
+
+    data = yaml.safe_load(_read(".review.yml"))
+    config = normalize_task_board_config(data["task_board"])
+
+    assert config is not None
+    assert config.key_pattern == r"PRI-\d+"
+    assert config.url_template is None

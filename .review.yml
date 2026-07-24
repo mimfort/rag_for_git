@@ -8,6 +8,7 @@
 task_board:
   type: yougile
   project: PRI
+  key_pattern: 'PRI-\d+'
   create_target: null
   done_target: Готово
   options: {}

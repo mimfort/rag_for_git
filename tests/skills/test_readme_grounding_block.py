@@ -33,3 +33,10 @@ def test_readmes_point_to_authoritative_board_provider_reference():
         text = _read(rel)
         assert "docs/board-providers.md" in text
         assert "provider_options" in text
+
+
+def test_readmes_keep_generic_task_key_metadata_in_examples():
+    for rel in ("README.md", "README.ru.md"):
+        text = _read(rel)
+        assert "key_pattern:" in text
+        assert "url_template:" in text

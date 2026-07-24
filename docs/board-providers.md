@@ -32,6 +32,8 @@ provider-specific playbook.
 task_board:
   type: <registered-provider>
   project: PRI
+  key_pattern: "[A-Z]+-\\d+"      # optional non-secret task-key metadata
+  url_template: "https://tasks.example/{code}"  # optional non-secret link metadata
   create_target: Backlog
   done_target: Done
   options:
@@ -97,8 +99,10 @@ enabled lifecycle operations. See the official
 
 Legacy configuration is read but never generated. For **one compatibility release** the resolver
 maps `done_column` and `done_state` to `done_target`, and `status_field` to
-`options.status_field`. If both forms are present, the new generic field wins and the validator
-returns a warning identifying the ignored legacy field.
+`options.status_field`. It also reads `TASK_BOARD_API_KEY → YOUGILE_API_KEY` and
+`TASK_BOARD_API_BASE → YOUGILE_API_BASE` only for YouGile; those aliases never configure another
+provider. New generic fields win over a legacy value and the validator returns a warning identifying
+the ignored legacy field.
 
 The legacy fields will be removed **no earlier than the next breaking release**. Track the removal
 in the documented [future breaking-cleanup task](#future-breaking-cleanup-task); do not delete the

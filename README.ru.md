@@ -507,11 +507,12 @@ reviewer-mcp, а не дублируется в `.review.yml` каждого р�
 | `YOUGILE_API_KEY` / `YOUGILE_API_BASE` | `""` | Креды зарегистрированного провайдера; base имеет provider default. |
 | `YOUTRACK_TOKEN` / `YOUTRACK_BASE_URL` | `""` | Креды зарегистрированного провайдера. |
 | `JIRA_BASE_URL` / `JIRA_EMAIL` / `JIRA_API_TOKEN` | `""` | Jira Cloud direct-site креды; API-токен без scopes. |
-| `TASK_BOARD_MCP` | `""` | Имя подключённого MCP-сервера доски (тулы LLM-стороны `mcp__<mcp>__*`). |
+| `TASK_BOARD_MCP` | `""` | Legacy metadata for older clients; current generic skills его не используют. |
 | `TASK_BOARD_KEY_PATTERN` | `""` | Регэксп ключа задачи, напр. `[A-Z]+-\d+`. |
 | `TASK_BOARD_URL_TEMPLATE` | `""` | Опциональный шаблон ссылки на задачу. |
 | `TASK_BOARD_TYPE` | `""` | **Устарел** — выбрать зарегистрированный `task_board.type` в `.review.yml`. |
-| `TASK_BOARD_API_KEY` / `TASK_BOARD_API_BASE` | `""` | Read-only legacy aliases; новые конфиги их не генерируют. |
+| `TASK_BOARD_API_KEY` | `""` | Read-only YouGile alias: `TASK_BOARD_API_KEY → YOUGILE_API_KEY`. |
+| `TASK_BOARD_API_BASE` | `""` | Read-only YouGile alias: `TASK_BOARD_API_BASE → YOUGILE_API_BASE`. |
 
 Креды хранятся только в env reviewer-mcp или secret manager, никогда в `.review.yml`, MCP-конфиге
 клиента, логах или коммитах. Справочник провайдеров описывает безопасное получение, validation через
@@ -599,13 +600,13 @@ RAG + граф кода и передаёт в **полный цикл superpowe
 
 - **Аргументы:** ключ задачи (напр. `PRI-4`, по `key_pattern`) **или** свободное описание (напр.
   «add a logout endpoint»). Board-less режим: описание + поиск по коду.
-- **MCP-тулы:** `get_board_config`, `get_subsystem_summaries`, `get_task`, `index_task`, `get_task_context`, `search_tasks`,
-  `search_codebase`, `related_symbols`, `callers`, `definition`, `implementations`, `get_pr_diff`; плюс подключённая
-  доска (`mcp__<board>__*`) для чтения задачи.
-- **Поток:** preflight: проверка свежести индекса → прогрев корпуса задач через `sync_board` →
-  резолв конфига доски → идентификация задачи (ключ vs текст) → subsystem prior через
-  `get_subsystem_summaries` → store-first чтение задачи через `get_task(key, project=...)`
-  (hit = напрямую; miss = board-MCP фолбэк) → best-effort fail-open сбор контекста (граф задач,
+- **MCP-тулы:** `get_subsystem_summaries`, `get_task`, `index_task`, `get_task_context`, `search_tasks`,
+  `search_codebase`, `related_symbols`, `callers`, `definition`, `implementations`, `get_pr_diff` и
+  server-side `sync_board`.
+- **Поток:** резолв generic board config → server-side incremental `sync_board` → идентификация
+  задачи (ключ vs текст) → store-first `get_task(key, project=...)`; при промахе повторить после
+  синка и продолжить fail-open с кодовым контекстом, если задача всё ещё недоступна → subsystem prior
+  и best-effort сбор контекста (граф задач,
   похожие задачи, релевантный код, ленивые диффы PR похожих задач) → бриф
   (Task / Related work / Relevant code / Constraints) → передача в `superpowers:brainstorming`
   → **полный superpowers-цикл**: brainstorming → writing-plans → subagent-driven-development →
@@ -790,7 +791,7 @@ code_quote, message, suggestion, fix:{start_line,end_line,replacement}|null, con
 | `search_tasks` | `(query, top_k=5, project=None)` | Семантически похожие задачи из индекса. `project` скоупит результаты одним проектом доски (префикс кода). |
 | `get_task_context` | `(key: str, project=None)` | Граф-контекст: задача, её PR, связанные задачи и их PR, затронутый код. `project` скоупит связанные задачи одним проектом. |
 | `purge_orphaned_tasks` | `(active_keys: list[str], keep_with_prs=True)` | Удалить задачи, которых больше нет на доске (с PR-историей защищены по умолчанию). |
-| `get_board_config` | `()` | Deploy-wide конфиг доски (`TASK_BOARD_*`); фолбэк для `sync-tasks`/`solve-task`. Креды **не** отдаёт. |
+| `get_board_config` | `()` | Legacy deploy metadata (`TASK_BOARD_*`) для older clients; креды **не** отдаёт. Current generic skills резолвят repo-конфиг и используют server-side lifecycle-тулы. |
 
 ---
 
@@ -853,6 +854,8 @@ max_comments: 25
 task_board:
   type: <registered-provider>
   project: PRI          # опц.; скоуп синка/выдачи задач этим проектом (пусто = всё)
+  key_pattern: "[A-Z]+-\\d+"  # опциональные non-secret метаданные ключа задачи
+  url_template: "https://tasks.example/{code}"  # опциональные non-secret метаданные ссылки
   create_target: Backlog
   done_target: Done
   options:
@@ -878,11 +881,12 @@ grounding_max_distance: 5          # опц.; переопределяет REVIE
 **REST** (`reviewer/tasks/boards/`, за интерфейсом `TaskBoardProvider` и explicit registry),
 нормализует каждую задачу в `TaskBrief` в Python и индексирует через батч-индексатор. LLM не передаёт
 текст задач → синк стоит O(1) токенов независимо от размера доски. Инкрементальность — timestamp-
-watermark на доску в `index_meta` (`ref="tasks:<board>"`): повторный синк трогает ~0 задач; `--limit`
-отключает purge и продвижение курсора. Креды REST-доски живут только в env reviewer-mcp. Это разворачивает инвариант «reviewer Python никогда
-не трогает доску» **только для болк-синка** — одиночное чтение задачи в `solve-task` / `review-pr`
-по-прежнему идёт через board-MCP на стороне LLM. Граф задач (`:Task`) глобален — одна задача может
-охватывать PR из нескольких микросервисных репозиториев.
+watermark по `(type, board)` в `index_meta` (`ref="tasks:<type>:<board>"`): повторный синк трогает
+~0 задач; `--limit` отключает purge и продвижение курсора. Креды REST-доски живут только в env
+reviewer-mcp. Python выполняет server-side sync, create и finish; успешные create/finish делают
+write-through reindex. Чтение идёт из индексированного store-first и остаётся fail-open, если задача
+недоступна. Граф задач (`:Task`) глобален — одна задача может охватывать PR из нескольких
+микросервисных репозиториев.
 
 После обновления, меняющего нормализацию описаний, один раз запусти синк с
 `force_renormalize=true` — он игнорирует watermark и пере-нормализует весь корпус (дедуп по
