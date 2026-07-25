@@ -16,6 +16,9 @@ from reviewer.entrypoints.cli import cli
 
 pytest_plugins = ("tests.services.test_status",)
 
+_NON_TTY_COLUMNS = 40
+_NON_TTY_WIDTH = 50
+
 
 def test_installed_reviewer_entry_point_loads_launcher():
     """Публичная команда reviewer загружает безопасный launcher."""
@@ -66,9 +69,15 @@ def _invoke_launcher(argv: tuple[str, ...], capsys) -> tuple[int, str, str]:
 
 
 @pytest.mark.parametrize("argv", [("--help",), ("does-not-exist",)])
-def test_launcher_output_matches_direct_click(argv, capsys):
+def test_launcher_output_matches_direct_click(monkeypatch, argv, capsys):
     """Прямой маршрут сохраняет код и байты вывода Click."""
-    direct = CliRunner().invoke(cli, list(argv), prog_name="reviewer", terminal_width=78)
+    monkeypatch.setenv("COLUMNS", str(_NON_TTY_COLUMNS))
+    direct = CliRunner().invoke(
+        cli,
+        list(argv),
+        prog_name="reviewer",
+        terminal_width=_NON_TTY_WIDTH,
+    )
     actual = _invoke_launcher(argv, capsys)
 
     assert actual == (direct.exit_code, direct.stdout, direct.stderr)
