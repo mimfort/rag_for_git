@@ -260,3 +260,24 @@ def test_get_pull_request_head_ref_none_when_absent():
     p = make_provider(handler)
     pr = p.get_pull_request(10)
     assert pr.head_ref is None
+
+
+def test_update_pull_request_body_patches_body():
+    seen = {}
+
+    def handler(req):
+        seen["method"] = req.method
+        seen["path"] = req.url.path
+        seen["json"] = json.loads(req.content)
+        return httpx.Response(200, json={})
+
+    make_provider(handler).update_pull_request_body(7, "новое тело")
+    assert seen["method"] == "PATCH"
+    assert seen["path"] == "/repos/o/r/pulls/7"
+    assert seen["json"] == {"body": "новое тело"}
+
+
+def test_update_pull_request_body_raises_on_forbidden():
+    p = make_provider(lambda req: httpx.Response(403, json={"message": "no"}))
+    with pytest.raises(httpx.HTTPStatusError):
+        p.update_pull_request_body(7, "тело")
