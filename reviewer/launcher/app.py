@@ -55,11 +55,14 @@ class _LauncherUI:
         )
         self.query_field.buffer.on_text_changed += self._query_changed
         self.form_widgets: list[AnyContainer] = []
+        self.parameter_widgets: dict[str, AnyContainer] = {}
         self.flag_controls: dict[FormattedTextControl, str] = {}
         self.flag_buttons: dict[str, Button] = {}
         self.checking_update = False
         self.version_check: VersionCheck | None = None
         self.update_error: str | None = None
+        self._active_update_token: object | None = None
+        self._visible_update_token: object | None = None
 
     def container(self) -> AnyContainer:
         """Вернуть контейнер текущего экрана."""
@@ -87,6 +90,11 @@ class _LauncherUI:
             self._start_update_check(event)
             return
         self.controller.open_preview()
+        if self.controller.errors:
+            first_error = next(iter(self.controller.errors))
+            widget = self.parameter_widgets.get(first_error)
+            if widget is not None:
+                event.app.layout.focus(widget)
         event.app.invalidate()
 
     def confirm(self, event: KeyPressEvent) -> None:
@@ -105,6 +113,7 @@ class _LauncherUI:
             event.app.exit(result=self.controller.result)
             return
         if self.controller.screen is Screen.UPDATE_RESULT:
+            self._visible_update_token = None
             self.controller.screen = Screen.DETAILS
         else:
             self.controller.back()
@@ -252,6 +261,7 @@ class _LauncherUI:
 
     def _build_form(self) -> None:
         self.form_widgets = []
+        self.parameter_widgets = {}
         self.flag_controls = {}
         self.flag_buttons = {}
         for parameter in self.controller.visible_parameters:
@@ -263,21 +273,24 @@ class _LauncherUI:
                 )
                 self.flag_controls[button.control] = parameter.name
                 self.flag_buttons[parameter.name] = button
+                self.parameter_widgets[parameter.name] = button
                 self.form_widgets.append(button)
-                continue
-            field = TextArea(
-                text=self._display_value(self.controller.values.get(parameter.name)),
-                prompt=f"{parameter.name}: ",
-                password=parameter.sensitive,
-                multiline=False,
-                wrap_lines=False,
-            )
-            field.buffer.on_text_changed += partial(self._field_changed, parameter, field)
-            self.form_widgets.append(field)
-            if parameter.name in self.controller.errors:
-                self.form_widgets.append(
-                    Label(f"Ошибка {parameter.name}: {self.controller.errors[parameter.name]}")
+            else:
+                field = TextArea(
+                    text=self._display_value(self.controller.values.get(parameter.name)),
+                    prompt=f"{parameter.name}: ",
+                    password=parameter.sensitive,
+                    multiline=False,
+                    wrap_lines=False,
                 )
+                field.buffer.on_text_changed += partial(self._field_changed, parameter, field)
+                self.parameter_widgets[parameter.name] = field
+                self.form_widgets.append(field)
+            self.form_widgets.append(Label(partial(self._error_text, parameter.name)))
+
+    def _error_text(self, name: str) -> str:
+        error = self.controller.errors.get(name)
+        return f"Ошибка {name}: {error}" if error else ""
 
     def _field_changed(self, parameter: ParameterSpec, field: TextArea, _) -> None:
         self.controller.set_value(parameter.name, self._field_value(parameter, field.text))
@@ -315,9 +328,19 @@ class _LauncherUI:
         return f"[{marker}] {name}"
 
     def _start_update_check(self, event: KeyPressEvent) -> None:
-        if self.checking_update or self.version_check is not None:
+        if self.version_check is not None or self.update_error is not None:
+            self.controller.screen = Screen.UPDATE_RESULT
+            event.app.invalidate()
             return
+        if self.checking_update:
+            self._visible_update_token = self._active_update_token
+            self.controller.screen = Screen.UPDATE_RESULT
+            event.app.invalidate()
+            return
+        token = object()
         self.checking_update = True
+        self._active_update_token = token
+        self._visible_update_token = token
         self.controller.screen = Screen.UPDATE_RESULT
         event.app.invalidate()
 
@@ -326,12 +349,18 @@ class _LauncherUI:
                 loop = asyncio.get_running_loop()
                 result = await loop.run_in_executor(None, self._check_update)
             except Exception as error:
-                self.update_error = str(error)
+                result = None
+                update_error = str(error)
             else:
+                update_error = None
+            if self._active_update_token is token:
                 self.version_check = result
-            finally:
+                self.update_error = update_error
                 self.checking_update = False
-                if self.controller.result is None:
+                self._active_update_token = None
+                owns_view = self._visible_update_token is token
+                self._visible_update_token = None
+                if owns_view and self.controller.result is None:
                     self.controller.screen = Screen.UPDATE_RESULT
                     event.app.invalidate()
 
