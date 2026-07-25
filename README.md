@@ -558,25 +558,25 @@ always win).
 
 A board connection is the same for every repo of one team, so it is configured **once** in the
 reviewer-mcp env rather than duplicated in each repo's `.review.yml`. See
-[Per-repo policy & task board](#per-repo-policy--task-board).
+[Per-repo policy & task board](#per-repo-policy--task-board) and the authoritative
+[board provider reference](docs/board-providers.md).
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `YOUGILE_API_KEY` | `""` | **REST API key** for YouGile server-side bulk sync. |
-| `YOUGILE_API_BASE` | `""` | YouGile REST API base URL; empty → `https://yougile.com/api-v2`. |
-| `YOUTRACK_TOKEN` | `""` | **REST API token** for YouTrack server-side bulk sync. |
-| `YOUTRACK_BASE_URL` | `""` | YouTrack REST API base URL. |
-| `TASK_BOARD_MCP` | `""` | Name of the connected board MCP server (LLM-side tools `mcp__<mcp>__*`). |
+| `YOUGILE_API_KEY` / `YOUGILE_API_BASE` | `""` | Registered-provider credentials; the base has a provider default. |
+| `YOUTRACK_TOKEN` / `YOUTRACK_BASE_URL` | `""` | Registered-provider credentials. |
+| `JIRA_BASE_URL` / `JIRA_EMAIL` / `JIRA_API_TOKEN` | `""` | Jira Cloud direct-site credentials; API token is unscoped. |
+| `TASK_BOARD_MCP` | `""` | Legacy metadata for older clients; current generic skills do not use it. |
 | `TASK_BOARD_KEY_PATTERN` | `""` | Task-key regex, e.g. `[A-Z]+-\d+`. |
-| `TASK_BOARD_URL_TEMPLATE` | `""` | Task-link template, e.g. `https://ru.yougile.com/team/<id>/#{code}`. |
-| `TASK_BOARD_TYPE` | `""` | **Deprecated** — type is now auto-derived from which credentials are set (`YOUGILE_API_KEY` / `YOUTRACK_TOKEN`). |
-| `TASK_BOARD_API_KEY` | `""` | **Legacy** — prefer `YOUGILE_API_KEY`. Still works as fallback. |
-| `TASK_BOARD_API_BASE` | `""` | **Legacy** — prefer `YOUGILE_API_BASE`. Still works as fallback. |
+| `TASK_BOARD_URL_TEMPLATE` | `""` | Optional task-link template. |
+| `TASK_BOARD_TYPE` | `""` | **Deprecated** — choose a registered `task_board.type` in `.review.yml`. |
+| `TASK_BOARD_API_KEY` | `""` | Read-only YouGile alias: `TASK_BOARD_API_KEY → YOUGILE_API_KEY`. |
+| `TASK_BOARD_API_BASE` | `""` | Read-only YouGile alias: `TASK_BOARD_API_BASE → YOUGILE_API_BASE`. |
 
-> **Getting `YOUGILE_API_KEY` (Yougile).** UI: press `Ctrl + ~` (or ⚙ next to the company name →
-> "Настроить") → **API** → create/copy the key. REST: get `companyId` (`Ctrl + Alt + Q`, or
-> `POST /api-v2/auth/companies {login,password}`), then `POST /api-v2/auth/keys {login,password,companyId}`.
-> The key belongs **only** in the reviewer-mcp env (`~/.config/rag-reviewer/.env`), not in a chat or a client config.
+Keep credentials only in the reviewer-mcp environment or a secret manager — never in `.review.yml`,
+MCP client configuration, logs, or commits. The provider reference covers safe acquisition,
+project-aware validation with `reviewer check --board-project TYPE=PROJECT`, and rotation for every
+current provider.
 
 ---
 
@@ -609,7 +609,7 @@ All commands run via `uvx --from rag-reviewer <command>`, or after `uv tool inst
 
 | Command | Arguments | Options | What it does |
 |---|---|---|---|
-| `check` | — | — | Verify environment readiness (keys, Postgres, Neo4j, GitHub). Prints ✓/✗ per item; exits 1 on any problem. Spends no Voyage quota. |
+| `check` | — | repeatable `--board-project TYPE=PROJECT` for project-scoped provider validation | Verify environment readiness (keys, Postgres, Neo4j, GitHub, configured boards). Prints ✓/✗ per item; exits 1 on any problem. Spends no Voyage quota. |
 | `init` | — | `--path FILE` (default `~/.config/rag-reviewer/.env`), `--yes` (accept defaults, CI mode) | Interactive wizard that writes the `.env` (Voyage/GitHub + optional groups). |
 | `install` | `[client]` | `--all`, `--list`, `--path FILE`, `--pin VERSION`, `--no-latest`, `--no-skills`, `--dry-run` | Register the MCP server (and skills) in AI clients (cross-platform). |
 | `install-skills` | `[client]` | `--all`, `--list`, `--path FILE` | Install only the skills into a client's global skills directory. |
@@ -682,10 +682,12 @@ and enters brainstorming. It disciplines context-gathering — it does **not** w
 
 - **Arguments:** a task key (e.g. `PRI-4`, must match `key_pattern`) **or** a free-text description
   (e.g. "add a logout endpoint"). Board-less mode falls back to description + code search.
-- **MCP tools used:** `get_board_config`, `get_subsystem_summaries`, `get_task`, `index_task`, `get_task_context`, `search_tasks`,
-  `search_codebase`, `related_symbols`, `callers`, `definition`, `implementations`, `get_pr_diff`; plus the connected
-  board MCP (`mcp__<board>__*`) to read the task. All task tools are scoped via `project=<task_board.project>`.
-- **Flow:** preflight (index freshness check → task corpus warmup via `sync_board`) → subsystem prior via `get_subsystem_summaries` → resolve board config → identify task (key vs free text) → store-first task read via `get_task(key, project=...)` (hit = use directly; miss = board MCP fallback) → best-effort, fail-open context
+- **MCP tools used:** `get_subsystem_summaries`, `get_task`, `get_task_context`, `search_tasks`,
+  `search_codebase`, `related_symbols`, `callers`, `definition`, `implementations`, `get_pr_diff`, and
+  server-side `sync_board`. All task tools are scoped via `project=<task_board.project>`.
+- **Flow:** resolve generic board config → server-side incremental `sync_board` → identify task
+  (key vs free text) → store-first `get_task(key, project=...)`; on a miss, retry after sync and
+  continue fail-open with code context if it is still unavailable → subsystem prior and best-effort context
   gathering (task graph, similar tasks, relevant code, lazy PR diffs of similar tasks) → distill a
   structured brief (Task / Related work / Relevant code / Constraints) → persist it to
   `docs/superpowers/briefs/` (`ГГГГ-ММ-ДД-<KEY>-<slug>.md`, survives context compaction) → hand off to
@@ -714,14 +716,16 @@ Thin wrapper over `reviewer index` (vector store + code graph) from a local clon
 A thin trigger over the server-side ETL tool `sync_board` — the reviewer enumerates the board over
 REST itself, so the LLM passes no task text (O(1) tokens regardless of board size).
 
-- **Arguments (all optional):** `--board <name>` (limit to one board/project), `--board-type <yougile|youtrack>` (limit the sync to one board type), `--limit <N>` (smoke
+- **Arguments (all optional):** `--board <name>` (limit to one board/project), `--board-type <registered-provider>` (limit the sync to one registered type), `--limit <N>` (smoke
   run; **disables purge and watermark advance**), `--purge-orphaned` (remove tasks no longer on the
   board; off by default), `--no-keep-with-prs` (with purge, also remove tasks that have PR history —
   protected by default).
 - **MCP tools used:** `sync_board` (single call).
 - **Flow:** map args → one `sync_board(...)` call → print a counts summary (enumerated/changed/
   embedded/unchanged/failed, purge, warnings). On `{"status":"error",...}` the board is not
-  configured server-side — set `TASK_BOARD_*` in `~/.config/rag-reviewer/.env` and reconnect.
+  configured server-side — run `reviewer init`, configure the selected registered provider's
+  registry-declared credentials as documented in [docs/board-providers.md](docs/board-providers.md),
+  run `reviewer check`, then reconnect MCP.
 
 ### `reviewer_performance-review` — performance-only review
 
@@ -787,16 +791,15 @@ Precompute concise per-subsystem summaries over the base code index for cheap hi
 
 ### `reviewer_create-task` — file a task on the board
 
-Creates a task on the connected board (YouGile / YouTrack) with a canonical body assembled
-server-side: Проблема / Что сделать / Критерии приёмки / Контекст. The description is stored as
-clean markdown in both directions — the board's own markup (YouGile keeps HTML) is converted by
-the provider, so `get_task` never returns `<br />` or `&gt;` to a model.
+Creates a task through the selected registered provider with a canonical body assembled server-side:
+Проблема / Что сделать / Критерии приёмки / Контекст. Provider adapters convert transport markup to
+clean markdown, so `get_task` never returns board-specific HTML to a model.
 
 - **Arguments:** free-text description of the task.
 - **MCP tools used:** `get_board_config`, `get_board_targets`, `search_codebase`, `create_task`,
   `sync_board`.
 - **Flow:** read `.review.yml` task board → draft the four fields grounded in `path:line` →
-  discover the target column/status → confirm with the user → `create_task(...)` → `sync_board(...)`
+  discover generic targets and options → confirm with the user → `create_task(...)` → `sync_board(...)`
   → report key + URL.
 - **Requires:** reviewer MCP server + a board configured in its env.
 
@@ -854,13 +857,16 @@ code_quote, message, suggestion, fix:{start_line,end_line,replacement}|null, con
 
 | Tool | Signature | Returns / does |
 |---|---|---|
-| `sync_board` | `(board=None, limit=None, purge_orphaned=False, keep_with_prs=True, board_type=None)` | Server-side ETL: enumerate the board over REST, normalize to `TaskBrief`, index. Incremental via a per-board watermark; O(1) tokens. |
+| `sync_board` | `(board=None, limit=None, purge_orphaned=False, keep_with_prs=True, board_type=None, provider_options=None, force_renormalize=False)` | Server-side ETL for one registered provider; enumerate, normalize to `TaskBrief`, and index. Incremental via a per-(type, board) watermark; O(1) tokens. |
+| `get_board_targets` | `(board_type=None, project=None, provider_options=None)` | Discover normalized targets and non-secret options for a registered provider. |
+| `create_task` | `(title, problem="", steps=None, criteria=None, context=None, board_type=None, project=None, target=None, provider_options=None)` | Create a canonical task, resolve a generic target, and write through to the index. |
+| `finish_task` | `(key, pr_url, note=None, mark_done=True, board_type=None, target=None, provider_options=None)` | Idempotently link a PR, optionally set a generic done target, prepend a clickable task link to the PR body, and write through. |
 | `index_task` | `(task: dict)` | Index one normalized `TaskBrief` into the task graph + vector store (idempotent). |
 | `index_tasks_batch` | `(tasks: list[dict])` | Same for a list, in one Voyage call. |
 | `search_tasks` | `(query, top_k=5, project=None)` | Semantically similar tasks from the indexed corpus. |
 | `get_task_context` | `(key: str, project=None)` | Graph context: the task, its PRs, linked tasks and their PRs, and the touched code. |
 | `purge_orphaned_tasks` | `(active_keys: list[str], keep_with_prs=True)` | Remove tasks no longer on the board (PR-linked tasks protected by default). |
-| `get_board_config` | `()` | Deploy-wide board config (`TASK_BOARD_*`); fallback for `sync-tasks`/`solve-task`. Credentials are **not** returned. |
+| `get_board_config` | `()` | Current non-secret deploy-wide fallback: type is derived from configured registry credentials plus common non-secret metadata. Credentials are not returned. |
 
 ---
 
@@ -901,13 +907,15 @@ paths: { ignore: ["**/migrations/**", "vendor/**"] }
 max_comments: 25
 
 # Optional task context: read the task from a board and check requirement compliance.
-# The board (MCP) is connected by the user on the Claude Code side; the plugin does not bundle it.
 task_board:
-  type: yougile          # yougile | youtrack — selects the skill playbook
-  mcp: yougile           # name of the connected board MCP server (tools are mcp__<mcp>__*)
-  key_pattern: "[A-Z]+-\\d+"   # optional; matches Yougile PRI-34/ID-34 and YouTrack PROJ-123
-  project: PRI          # optional; scopes task sync/queries to this project (code prefix; empty = all)
-  url_template: 'https://ru.yougile.com/team/<teamId>/#{code}'  # optional; clickable task links
+  type: <registered-provider>
+  project: PRI          # optional; scopes task sync/queries to this project (empty = all)
+  key_pattern: "[A-Z]+-\\d+"  # optional non-secret task-key metadata
+  url_template: "https://tasks.example/{code}"  # optional non-secret link metadata
+  create_target: Backlog
+  done_target: Done
+  options:
+    <provider-option>: <discovered-value>
 
 summary_cluster_depth: 2           # optional; default from env SUMMARY_CLUSTER_DEPTH
 summary_cluster_depth_overrides:   # optional; per-prefix depth overrides
@@ -919,27 +927,24 @@ output_language: ru               # optional; overrides REVIEW_OUTPUT_LANGUAGE
 grounding_max_distance: 5          # optional; overrides REVIEW_GROUNDING_MAX_DISTANCE
 ```
 
-**The `task_board` block is a deploy-wide default, not a per-repo requirement.** A board connection
-is the same for every repo of one team, so configure it **once** in the reviewer `.env`
-(`YOUGILE_API_KEY` / `YOUTRACK_TOKEN` / `TASK_BOARD_MCP` / `TASK_BOARD_KEY_PATTERN` / `TASK_BOARD_URL_TEMPLATE`) and
-every repo inherits it — no `.review.yml` needed just for the board. A `task_board` block in a repo's
+**The `task_board` block selects a registered provider and per-repo targets/options.** Credentials
+are configured once in the reviewer `.env`; no secret belongs in `.review.yml`. A `task_board` block in a repo's
 `.review.yml` **overrides** that default for that repo; an explicit empty `task_board:` **disables**
-the board for it. `review-pr` reads this through the policy; `solve-task` reads it via the
-`get_board_config` MCP tool (and the board-MCP, LLM-side) as a fallback when the local `.review.yml`
-has no block.
+the board for it. Read the [board provider reference](docs/board-providers.md) before setup,
+rotation, or migration.
 
 **Bulk task sync is server-side, not LLM (`sync_board`).** The `sync-tasks` skill is a thin trigger:
-it calls one MCP tool, `sync_board(board, limit, purge_orphaned, keep_with_prs)`, and the reviewer
+it calls one MCP tool, `sync_board(..., board_type, provider_options)`, and the reviewer
 server enumerates the board over **REST** itself (`reviewer/tasks/boards/`, behind a
-`TaskBoardProvider` interface — Yougile is the reference), normalizes each task into a `TaskBrief`
+`TaskBoardProvider` interface and explicit registry), normalizes each task into a `TaskBrief`
 in Python, and indexes it via the existing batch indexer. The LLM passes no task text, so a sync
-costs O(1) tokens regardless of board size. It is incremental via a per-board timestamp watermark in
-`index_meta` (`ref="tasks:<board>"`): a repeat sync touches ~0 tasks; `--limit` disables purge and
-the watermark advance. The board REST credentials live only in the reviewer-mcp environment
-(now `YOUGILE_API_KEY` / `YOUTRACK_TOKEN`; legacy `TASK_BOARD_API_KEY` / `TASK_BOARD_API_BASE` still work as fallback). This inverts the "reviewer Python never touches the
-board" rule **for bulk sync only** — single-task reads in `solve-task` / `review-pr` still go through
-the board-MCP on the LLM side. The task graph (`:Task`) is global, so one task can span PRs across
-several microservice repos.
+costs O(1) tokens regardless of board size. It is incremental via a per-(type, board) timestamp
+watermark in `index_meta` (`ref="tasks:<type>:<board>"`): a repeat sync touches ~0 tasks; `--limit`
+disables purge and the watermark advance. Board REST credentials live only in the reviewer-mcp
+environment. Python performs server-side sync, create, and finish operations; successful create and
+finish use write-through reindexing. Reads use the indexed store first and remain fail-open when a
+task is unavailable. The task graph (`:Task`) is global, so one task can span PRs across several
+microservice repos.
 
 After a deploy that changes description normalization, run the sync once with
 `force_renormalize=true` — it ignores the watermark and re-normalizes the whole corpus (dedup by
@@ -1073,7 +1078,7 @@ reviewer/
   retrieval/   Retriever: hybrid + graph expansion + rerank → ContextPack
   llm/         _retry.py (retry/backoff for Voyage)
   tools/       agent tools (search_code, get_related_symbols, read_file, get_definition, …)
-  tasks/       TaskBrief normalization · boards/ (TaskBoardProvider REST: yougile) · TaskService.index_batch
+  tasks/       TaskBrief normalization · boards/ (registered TaskBoardProvider REST adapters) · TaskService.index_batch
   agent/       state (ReviewUnit) · assemble · dedup
   mcp/         MCPReviewService: prepare / tool calls / publish; session management
   services/    ReviewService.prepare: ingest PR, overlay, units

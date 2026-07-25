@@ -1,0 +1,20 @@
+{
+  "issues": [
+    {
+      "id": "10001",
+      "key": "PRI-1",
+      "fields": {
+        "summary": "Первая",
+        "description": {"type": "doc", "version": 1, "content": []},
+        "status": {"id": "1", "name": "Open"},
+        "updated": "2026-07-23T09:00:00.000Z",
+        "subtasks": [],
+        "issuelinks": [],
+        "attachment": [],
+        "issuetype": {"id": "10001", "name": "Task"},
+        "project": {"id": "10000", "key": "PRI", "name": "Reviewer"}
+      }
+    }
+  ],
+  "nextPageToken": "page-2"
+}

@@ -282,3 +282,19 @@ def test_new_line_map_multi_hunk():
     assert result[2] is None
     # Удалённая строка — не попадает в карту по new_line.
     assert 4 not in result         # такого new_line нет
+
+
+def test_update_pull_request_body_puts_description():
+    seen = {}
+
+    def handler(req):
+        seen["method"] = req.method
+        seen["path"] = req.url.raw_path.decode()
+        seen["json"] = json.loads(req.content)
+        return httpx.Response(200, json={})
+
+    make_provider(handler).update_pull_request_body(7, "новое тело")
+    assert seen["method"] == "PUT"
+    # путь проекта URL-энкодится в :id (raw_path — до декодирования)
+    assert seen["path"] == "/api/v4/projects/o%2Fr/merge_requests/7"
+    assert seen["json"] == {"description": "новое тело"}

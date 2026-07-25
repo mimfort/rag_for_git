@@ -3,20 +3,15 @@
 # Все ключи опциональны; заданные переопределяют env-дефолты (reviewer/config/settings.py).
 # Полный разбор политики — в README.md и reviewer/policy/policy.py.
 
-# Доска задач: включает обогащение ревью контекстом задачи (фаза 2/3)
-# и скилл /solve-task (фаза 4). Без этого блока система работает в board-less режиме.
+# Доска задач: registered provider + generic targets/options; credentials живут только в env.
+# Полная matrix, setup, rotation и legacy migration: docs/board-providers.md.
 task_board:
-  type: yougile                       # тип доски → плейбук plugin/skills/review-pr/references/task-context-yougile.md
-  mcp: yougile                        # имя MCP-сервера доски → инструменты mcp__yougile__*
-  key_pattern: 'PRI-\d+'              # коды задач проекта PRI (напр. PRI-4, PRI-170)
-  url_template: 'https://ru.yougile.com/team/686c049c8af8/#{code}'  # {code} = проектный код PRI-N
-  project: PRI                        # PRI-170: скоуп синка/выдачи задач этим проектом (префикс кода)
-  # --- done-цель для finish-task (закрытие задачи после PR) ---
-  done_column: Готово                 # YouGile: колонка, куда finish-task переносит выполненную задачу (+ completed:true)
-  # Ключи ниже — только для YouTrack-досок; наша доска YouGile их игнорирует:
-  # status_field: State               # YouTrack: имя кастом-поля статуса, на котором построена доска (дефолт State;
-  #                                   #   действует И на чтение статуса при синке, И на команду finish — чинит доски на кастом-поле типа Stage)
-  # done_state: Fixed                 # YouTrack: целевое значение status_field для «выполнено» (дефолт Fixed)
+  type: yougile
+  project: PRI
+  key_pattern: 'PRI-\d+'
+  create_target: null
+  done_target: Готово
+  options: {}
 
 # --- Скилл solve-task ---
 
@@ -36,7 +31,7 @@ paths:
   ignore:
     - eval                           # эвал-харнес агента: не продакшн-код, не нужен в ревью-индексе
     - reviewer/graph/scip_pb2.py     # сгенерированный protobuf-файл
-    - sync_chunk.py                  # ручная утилита синка задач YouGile; не продакшн-код, дублирует reviewer/tasks/sync.py
+    - sync_chunk.py                  # ручная утилита синка задач; не продакшн-код, дублирует reviewer/tasks/sync.py
 
 # Глубина кластеризации сводок подсистем (число сегментов пути). Дефолт из env (2).
 summary_cluster_depth: 2

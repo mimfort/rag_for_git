@@ -56,6 +56,12 @@ class GitHubProvider:
             head_ref=d.get("head", {}).get("ref"),
         )
 
+    def update_pull_request_body(self, number: int, body: str) -> None:
+        """Заменить тело PR (обратный линк задачи из finish_task)."""
+        self._c.patch(
+            f"{self._base()}/pulls/{number}", json={"body": body}
+        ).raise_for_status()
+
     def get_changed_files(self, number: int) -> list[ChangedFile]:
         files, page = [], 1
         while True:

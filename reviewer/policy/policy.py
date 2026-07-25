@@ -3,6 +3,7 @@ from dataclasses import dataclass, field
 import yaml
 
 from reviewer.config.settings import SeverityLevel
+from reviewer.config.task_board import normalize_task_board_config
 from reviewer.index.pathfilter import is_ignored
 from reviewer.policy.context_limits import ContextLimits
 
@@ -19,12 +20,20 @@ class ReviewPolicy:
     min_confidence: float = 0.5
     output_language: str = "ru"                                  # язык текста находок в публикуемом ревью
     task_board: dict | None = None                               # конфиг доски задач из .review.yml (None = выкл.)
+    task_board_warnings: list[str] = field(default_factory=list)  # migration metadata, не provider options
     grounding_max_distance: int = 5                              # макс. дистанция снапа строки к commentable при grounding
     summary_cluster_depth: int = 2                               # глубина пути кластера подсистемы; per-repo override .review.yml (PRI-166)
     summary_topk_threshold: int = 20                            # порог масштаба приора сводок; per-repo override .review.yml (PRI-167)
     summary_cluster_depth_overrides: dict[str, int] = field(
         default_factory=dict)             # per-prefix depth из .review.yml (PRI-161)
     context_limits: ContextLimits = field(default_factory=ContextLimits)  # PRI-202, только из .review.yml
+
+    @staticmethod
+    def _normalized_task_board(raw) -> tuple[dict | None, list[str]]:
+        config = normalize_task_board_config(raw)
+        if config is None:
+            return None, []
+        return config.as_dict(), list(config.warnings)
 
     @classmethod
     def from_yaml(cls, text: str | None) -> "ReviewPolicy":
@@ -34,6 +43,8 @@ class ReviewPolicy:
         sev = data.get("severity_threshold", "low")
         if sev not in _SEV:
             sev = "low"
+        task_board, task_board_warnings = cls._normalized_task_board(
+            data.get("task_board"))
         return cls(
             categories=data.get("categories", {}),
             severity_threshold=sev,
@@ -41,7 +52,8 @@ class ReviewPolicy:
             max_comments=data.get("max_comments", 25),
             min_confidence=data.get("min_confidence", 0.5),
             output_language=str(data.get("output_language", "ru")),
-            task_board=data.get("task_board") or None,
+            task_board=task_board,
+            task_board_warnings=task_board_warnings,
             grounding_max_distance=data.get("grounding_max_distance", 5),
             summary_cluster_depth=int(data.get("summary_cluster_depth", 2)),
             summary_topk_threshold=int(data.get("summary_topk_threshold", 20)),
@@ -53,13 +65,16 @@ class ReviewPolicy:
     @classmethod
     def from_settings(cls, settings) -> "ReviewPolicy":
         """Дефолтная политика из env."""
+        task_board, task_board_warnings = cls._normalized_task_board(
+            settings.task_board_default())
         return cls(
             enabled_only=settings.review_categories_list(),
             severity_threshold=settings.review_severity_threshold,
             max_comments=settings.review_max_comments,
             min_confidence=settings.review_min_confidence,
             output_language=settings.review_output_language,
-            task_board=settings.task_board_default(),   # глобальный env-дефолт доски
+            task_board=task_board,   # глобальный env-дефолт доски
+            task_board_warnings=task_board_warnings,
             grounding_max_distance=settings.review_grounding_max_distance,
             summary_cluster_depth=settings.summary_cluster_depth,
             summary_topk_threshold=settings.summary_topk_threshold,
@@ -89,7 +104,8 @@ class ReviewPolicy:
         if "output_language" in data:
             policy.output_language = str(data["output_language"])
         if "task_board" in data:
-            policy.task_board = data["task_board"] or None
+            policy.task_board, policy.task_board_warnings = cls._normalized_task_board(
+                data["task_board"])
         if "grounding_max_distance" in data:
             policy.grounding_max_distance = data["grounding_max_distance"]
         if "summary_cluster_depth" in data:

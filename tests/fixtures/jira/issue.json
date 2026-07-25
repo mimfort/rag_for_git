@@ -1,0 +1,50 @@
+{
+  "id": "10001",
+  "key": "PRI-1",
+  "self": "https://acme.atlassian.net/rest/api/3/issue/10001",
+  "fields": {
+    "summary": "Поддержать Jira Cloud",
+    "description": {
+      "type": "doc",
+      "version": 1,
+      "content": [
+        {
+          "type": "heading",
+          "attrs": {"level": 2},
+          "content": [{"type": "text", "text": "Требования"}]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {"type": "text", "text": "Сохранить "},
+            {"type": "text", "text": "ADF", "marks": [{"type": "strong"}]}
+          ]
+        }
+      ]
+    },
+    "status": {"id": "1", "name": "В работе"},
+    "updated": "2026-07-23T12:34:56.789+0300",
+    "subtasks": [{"key": "PRI-2", "fields": {"summary": "Подзадача"}}],
+    "issuelinks": [
+      {
+        "type": {"id": "10000", "name": "Blocks", "inward": "is blocked by", "outward": "blocks"},
+        "outwardIssue": {"key": "PRI-3", "fields": {"summary": "Зависимая задача"}}
+      },
+      {
+        "type": {"id": "10001", "name": "Duplicate", "inward": "is duplicated by", "outward": "duplicates"},
+        "inwardIssue": {"key": "PRI-4", "fields": {"summary": "Оригинал"}}
+      }
+    ],
+    "attachment": [
+      {
+        "id": "20001",
+        "filename": "spec.md",
+        "mimeType": "text/markdown",
+        "size": 12,
+        "content": "https://acme.atlassian.net/rest/api/3/attachment/content/20001"
+      }
+    ],
+    "issuetype": {"id": "10001", "name": "Задача"},
+    "project": {"id": "10000", "key": "PRI", "name": "Reviewer"}
+  }
+}

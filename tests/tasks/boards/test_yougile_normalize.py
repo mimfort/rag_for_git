@@ -73,6 +73,7 @@ UUID = "09e30301-4d72-46c8-9161-87cb1ab32487"
 
 class _FakeYResp:
     def __init__(self, json_data=None, content=b"", headers=None):
+        self.status_code = 200
         self._json = json_data or {}
         self.content = content
         self.headers = headers or {"Content-Length": str(len(content))}

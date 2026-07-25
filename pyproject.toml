@@ -1,6 +1,6 @@
 [project]
 name = "rag-reviewer"
-version = "0.3.6"
+version = "0.3.7"
 description = "AI pull-request reviewer: hybrid RAG + a code graph + Claude Code. Whole-repo context, inline GitHub comments grounded on exact code."
 readme = "README.md"
 license = { text = "MIT" }
@@ -34,6 +34,7 @@ classifiers = [
 requires-python = ">=3.11,<3.14"
 dependencies = [
     "pydantic-settings>=2.3",
+    "python-dotenv>=1.0",
     "tree-sitter>=0.25,<0.26",
     "tree-sitter-python>=0.25,<0.26",
     "voyageai>=0.4,<0.5",

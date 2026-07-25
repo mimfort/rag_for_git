@@ -113,22 +113,33 @@ class ReviewService:
         self._history = history
         self._history_owned = history is None
 
-    def _create_vcs_provider(self, owner: str, repo: str) -> VCSProvider:
+    def _create_vcs_provider(
+        self,
+        owner: str,
+        repo: str,
+        platform: str | None = None,
+        base_url: str | None = None,
+    ) -> VCSProvider:
         """Создать VCS-провайдер по платформе репо (repo_vcs → ENV-фолбэк).
 
         Тип резолвится ДО любого API-вызова: дешёвое чтение repo_vcs из стора.
-        Токен берётся из ENV по платформе (секретов в .review.yml нет)."""
+        Токен берётся из ENV по платформе (секретов в .review.yml нет).
+        Явные platform/base_url побеждают repo_vcs: ссылка на PR — более прямое
+        свидетельство платформы, чем таблица, где репо может отсутствовать
+        (иначе GitLab-MR в непроиндексированном репо ушёл бы в GitHub-фолбэк)."""
         from reviewer.services.repo_id import normalize_repo
         from reviewer.vcs.gitlab import GitLabProvider
         full = normalize_repo(f"{owner}/{repo}")
         row = self.components.store.get_repo_vcs(full)
-        provider, base_url = row if row else (self.settings.vcs_provider, "")
+        stored, stored_url = row if row else (self.settings.vcs_provider, "")
+        provider = platform or stored
+        resolved_url = base_url or stored_url
         if provider == "gitlab":
             return GitLabProvider(
                 owner,
                 repo,
                 token=self.settings.gitlab_token,
-                base_url=base_url or self.settings.gitlab_url,
+                base_url=resolved_url or self.settings.gitlab_url,
                 retry_attempts=self.settings.github_retry_attempts,
                 retry_backoff_base=self.settings.github_retry_backoff_base,
             )

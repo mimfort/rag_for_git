@@ -1,5 +1,8 @@
+import inspect
+import logging
+
 from reviewer.tasks.boards.base import RawTask
-from reviewer.tasks.sync import SyncService
+from reviewer.tasks.sync import SyncProvider, SyncService
 
 
 class FakeProvider:
@@ -203,28 +206,64 @@ def test_unknown_board_type_warns_and_indexes_nothing():
     assert any("jira" in w for w in summary["warnings"])
 
 
-def test_sync_run_resets_youtrack_status_field():
-    class _YT:
-        board_type = "youtrack"
+def test_sync_run_has_no_provider_specific_mutation_option():
+    assert "status_field" not in inspect.signature(SyncService.run).parameters
 
-        def __init__(self):
-            self._status_field = "State"
 
-        def set_status_field(self, f):
-            self._status_field = f or "State"
+def test_scoped_sync_redacts_normalize_exception_from_warning_and_log(caplog):
+    secret = "scoped-sync-secret"
 
-        def iter_raw(self, board, limit):
-            return iter([])
+    class _FailingProvider(FakeProvider):
+        def normalize(self, raw):
+            raise RuntimeError(f"normalize rejected credential {secret}")
 
-    yt = _YT()
-    meta = type("M", (), {"get_index_meta": lambda *a: None,
-                          "set_index_meta": lambda *a: None})()
-    tasks = type("T", (), {"index_batch": staticmethod(lambda x: [])})()
-    svc = SyncService([yt], tasks, meta)
-    svc.run(board_type="youtrack", status_field="Stage")
-    assert yt._status_field == "Stage"
-    svc.run(board_type="youtrack")           # без status_field → сброс к State
-    assert yt._status_field == "State"
+    provider = _FailingProvider([_raw("ID-1", 100)])
+    service = SyncService(
+        [SyncProvider(provider, frozenset({secret}))],
+        FakeTaskService(),
+        FakeMeta(),
+    )
+
+    with caplog.at_level(logging.WARNING):
+        result = service.run(board_type="fake")
+
+    assert result["changed"] == 0
+    assert "[REDACTED]" in repr(result["warnings"])
+    assert secret not in repr(result)
+    assert secret not in caplog.text
+    assert "[REDACTED]" in caplog.text
+
+
+def test_deploy_wide_sync_redacts_normalize_meta_exception_from_warning_and_log(caplog):
+    secret = "deploy-sync-secret"
+
+    class _FailingProvider(FakeProvider):
+        def normalize_meta(self, raw):
+            raise RuntimeError(f"normalize_meta rejected credential {secret}")
+
+    failing = _FailingProvider([_raw("ID-1", 100)], board_type="first")
+    healthy = FakeProvider([_raw("ID-2", 200)], board_type="second")
+    meta = FakeMeta({("", "tasks:first:*"): "999"})
+    service = SyncService(
+        [
+            SyncProvider(failing, frozenset({secret})),
+            SyncProvider(healthy, frozenset({"other-secret"})),
+        ],
+        FakeTaskService(),
+        meta,
+    )
+
+    with caplog.at_level(logging.WARNING):
+        result = service.run()
+
+    assert {entry["board_type"] for entry in result["by_board"]} == {
+        "first",
+        "second",
+    }
+    assert "[REDACTED]" in repr(result["warnings"])
+    assert secret not in repr(result)
+    assert secret not in caplog.text
+    assert "[REDACTED]" in caplog.text
 
 
 def test_by_board_includes_meta_refreshed():

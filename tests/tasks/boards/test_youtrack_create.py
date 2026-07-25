@@ -51,6 +51,11 @@ def _board(get_routes, post_routes=None, status_field="State"):
 def _routes():
     return {
         "/admin/projects": _Resp(200, [{"id": "0-1", "shortName": "PRI"}]),
+        "/admin/projects/0-1/customFields": _Resp(200, [{
+            "$type": "StateProjectCustomField",
+            "field": {"name": "State"},
+            "bundle": {"values": [{"name": "Open"}, {"name": "In Progress"}]},
+        }]),
         "/issues/PRI-42": _Resp(200, {"customFields": [
             {"name": "State", "$type": "StateIssueCustomField",
              "value": {"$type": "StateBundleElement", "name": "Open"}}]}),
@@ -77,6 +82,21 @@ def test_create_sets_status_field_when_target_given():
     assert field["name"] == "State"
     assert field["value"]["name"] == "In Progress"
     assert res["target_resolved"] == "In Progress"
+    assert not res["warnings"]
+
+
+def test_create_attempts_exact_target_when_discovery_is_incomplete():
+    b = _board(_routes())
+
+    res = b.create(MD, title="t", target="Ready for release", project="PRI")
+
+    upd = next(
+        call
+        for call in b._client.calls
+        if call[0] == "POST" and call[1] == "/issues/PRI-42"
+    )
+    assert upd[2]["customFields"][0]["value"]["name"] == "Ready for release"
+    assert res["target_resolved"] == "Ready for release"
     assert not res["warnings"]
 
 

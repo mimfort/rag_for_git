@@ -1,6 +1,6 @@
 ---
 name: reviewer_solve-task
-description: Gather disciplined context for solving a task, then hand off to development. Use when the user asks to solve/implement a task ("solve PRI-4", "/reviewer_solve-task <key or description>", "реши задачу X"). Reads the task from a connected board (if a key + board), pulls related/similar tasks and relevant code, distills a brief, and enters brainstorming. Requires the reviewer MCP server (and optionally a board MCP).
+description: Gather disciplined context for solving a task, then hand off to development. Use when the user asks to solve/implement a task ("solve PRI-4", "/reviewer_solve-task <key or description>", "реши задачу X"). Reads a keyed task from the reviewer store, pulls related/similar tasks and relevant code, distills a brief, and enters brainstorming. Requires the reviewer MCP server.
 ---
 
 # Solve Task
@@ -22,6 +22,12 @@ brief to `superpowers:brainstorming` (which leads to writing-plans → subagent-
    (`git branch --show-current`; if it is in `REVIEW_BRANCHES` use it, else the primary branch) —
    step 3 reuses the same branch for `search_codebase`.
 
+   **Resolve `task_board` exactly once before any board call.** Read the repo `.review.yml` block:
+   its `task_board` mapping has priority; an absent block falls back to `get_board_config()`;
+   an explicit empty `task_board:` disables board work for this run. Keep the resolved
+   `{type, project, key_pattern, create_target, done_target, options}` value and **reuse this resolved value** in Step 1 and every board operation. Never call the deploy fallback when the
+   repo explicitly disables the board.
+
    1. **Base-index freshness.** Run
       `uvx --from rag-reviewer reviewer status <path> --branch <branch> --json` and read `drift`
       for that branch:
@@ -38,13 +44,15 @@ brief to `superpowers:brainstorming` (which leads to writing-plans → subagent-
       stale/unknown index.
    3. **Warm the task corpus.** Call
       `sync_board(board=<task_board.project or null>, board_type=<task_board.type or null>,
-      status_field=<task_board.status_field or null>, limit=null, purge_orphaned=false)` —
-      `task_board.type`, `task_board.project` и `task_board.status_field` берутся из
-      `<root>/.review.yml` (прочитай здесь, до вызова `sync_board`; при отсутствии файла или
-      блока `task_board` — используй `null`).
+      provider_options=<task_board.options or {}>, limit=null, purge_orphaned=false)` —
+      the resolved `task_board.type`, `task_board.project`, and `task_board.options` from this
+      preflight. If board work is disabled or no board resolves, skip this call and continue
+      board-less.
       Скоупированный прогрев корпуса своего проекта (PRI-170); пустой project → весь корпус.
       Incremental (timestamp watermark), cheap when the corpus is warm. Board not configured or
-      `status=error` → print the `TASK_BOARD_*` hint and continue board-less.
+      `status=error` → tell the user to run `reviewer init`, configure the selected registered
+      provider's registry-declared credentials as documented in `docs/board-providers.md`, run
+      `reviewer check`, and reconnect MCP; continue board-less.
    4. **Summary warmth.** Call `get_subsystem_summaries(repo, branch)` (without `query`) and check
       the returned count. Skip this check if `drift == null` (no index at all — summaries can't
       exist). If count == 0 (summaries not built yet):
@@ -66,12 +74,12 @@ brief to `superpowers:brainstorming` (which leads to writing-plans → subagent-
    reported like `sync-codebase`; `sync_board` runs incrementally at start; summaries missing →
    three-way choice (build now / build yourself / skip).
 
-1. **Config.** Resolve the `task_board` block (`type`, `mcp`, `key_pattern`, `project`): first from the repo's
-   `.review.yml`, and if there is no block there, from the deploy-wide default via
-   `get_board_config()` (reviewer MCP) — so a per-repo `.review.yml` is not required when the board
-   is configured once in the reviewer deploy (`TASK_BOARD_*` env). If a board is resolved, its tools
-   are `mcp__<task_board.mcp>__*`. No block anywhere (`get_board_config()` → `null`), or the board MCP
-   is not connected → board-less mode (continue without it).
+1. **Config.** Reuse the resolved value from preflight; do not read `.review.yml` or call
+   `get_board_config()` again. If no board resolved, continue board-less. For incomplete metadata
+   call `get_board_targets(board_type=<task_board.type>,
+   project=<task_board.project>, provider_options=<task_board.options or {}>)`: select from
+   `targets` by `label`, and use option `required_for` / `choices` to ask for missing `options`.
+   Never guess a target or an option and never branch on a board type.
 
 1.5. **Choose the brief model (cross-CLI).** Building the brief (Steps 2–4: gather + distill) is a
    light reasoning task over session-less retrieval tools — a top-tier model is overkill and burns
@@ -108,27 +116,20 @@ brief to `superpowers:brainstorming` (which leads to writing-plans → subagent-
         - **Hit** (a task object with a `key`): use it directly as the `TaskBrief`. The task is
           already indexed (the preflight sync persisted it) — do NOT call `index_task`. Note in the
           brief that the task data came from the reviewer store (after sync).
-          - **Thin-criteria enrichment (optional, fail-open).** The store returns `criteria=[]` —
-            requirements normally live in `description`. If `description` has NO acceptance-criteria
-            heading (no section matching `(?i)(критери|приёмк|acceptance)`) AND a board is connected,
-            resolve the task's subtasks into `criteria[]` via the board-MCP playbook
-            `../review-pr/references/task-context-<task_board.type>.md` (its «Criteria note»):
-            one board `get_task(key)` → for each `subtasks[]` id resolve its title. Fold the resolved
-            criteria into the brief's `## Task` section only — do NOT call `index_task`. When the
-            heading IS present, criteria are inline in `description` → skip (leave `[]`). No board /
-            no subtasks / any error → leave `criteria` empty.
-        - **Miss** (`null` / no `key`) AND a board is configured/connected: read the task via the
-          playbook `../review-pr/references/task-context-<task_board.type>.md`, build a `TaskBrief`
-          `{key, aliases[], title, description, criteria[], status, url, links[]}`, then call
-          `index_task(TaskBrief)` to persist it (idempotent — safe to repeat).
-        - **Miss** AND no board (or board MCP not connected): board-less — treat `$ARGUMENTS` as the
-          task description.
-   - Otherwise: treat `$ARGUMENTS` as the task description; do not read the board.
+          - **Thin criteria (optional, fail-open).** The store can return `criteria=[]`; requirements
+            normally live in `description`. If it has NO heading matching
+            `(?i)(критери|приёмк|acceptance)`, leave `criteria` empty and record the gap. Do NOT call `index_task`.
+        - **Miss** (`null` / no `key`) AND a board is resolved: call generic incremental
+          `sync_board(board=<task_board.project or null>, board_type=<task_board.type>,
+          provider_options=<task_board.options or {}>, limit=null, purge_orphaned=false)`, then
+          retry `get_task(key, project=<task_board.project>)` once. Error or second miss →
+          board-less: treat `$ARGUMENTS` as the task description and record the gap.
+        - **Miss** AND no board: board-less — treat `$ARGUMENTS` as the task description.
+   - Otherwise: treat `$ARGUMENTS` as the task description; do not perform external task reads.
 
    Store-first cuts the double-fetch: the preflight `sync_board` already pulled the whole board into
-   the reviewer store, so a single read of our own store avoids re-enumerating the board via board-MCP
-   (fewer LLM tokens, fewer external deps). The board-MCP fallback stays for misses and for boards
-   without a REST provider.
+   the reviewer store, and a miss gets one generic incremental sync/retry (fewer LLM tokens and no
+   provider-specific client dependency).
 
 3. **Gather context (best-effort, fail-open).** Any tool returning a "(… unavailable)" / "(ничего не
    найдено)" note or an error is non-fatal — continue.
@@ -143,8 +144,8 @@ brief to `superpowers:brainstorming` (which leads to writing-plans → subagent-
      `get_task`, `get_task_context`, and `search_tasks` so only this repo's project surfaces (PRI-170).
    - If you have a task key: `get_task_context(key, project=<task_board.project>)` → linked tasks, their PRs, and the code those PRs
      touched.
-   - `search_tasks("<title>. <first lines of description>", project=<task_board.project>)` → semantically similar tasks. If a board
-     is connected, you may read the most relevant similar tasks from the board for fuller detail.
+   - `search_tasks("<title>. <first lines of description>", project=<task_board.project>)` → semantically similar tasks from the
+     reviewer store. Use their indexed fields only; if detail is missing, record that task-context gap.
    - **Related work = linked ∪ similar.** The «Related work» brief section draws from two sources —
      `get_task_context` (linked) and `search_tasks` (similar). They overlap; the Step 4 filter
      deduplicates them by key before the cap.
@@ -278,15 +279,16 @@ Use the session-less tools above.
 
 ## Failure handling (fail-open)
 
-- No `task_board` / board MCP not connected / task not found → board-less: build the brief from
-  `search_tasks` (if the corpus is warm) + `search_codebase` + the user's formulation; note the gap.
+- No configured `task_board` / failed generic sync / task not found → board-less: build the brief
+  from `search_tasks` (if the corpus is warm) + `search_codebase` + the user's formulation; note
+  the missing task context.
 - Neo4j down → `get_task_context` / `index_task` graph parts degrade (empty + warning); build the
   brief from `search_tasks` + `search_codebase`.
-- Empty task corpus (no prior `/reviewer_sync-tasks` or reviews) → `search_tasks` is empty; rely on the board
-  (if a key) + `search_codebase`.
-- Postgres down → `search_codebase` / `search_tasks` return empty; build the brief from the board (if
-  a key) or the user's formulation alone; still hand off to brainstorming.
+- Empty task corpus (no prior `/reviewer_sync-tasks` or reviews) → `search_tasks` is empty; use
+  `search_codebase` + the user's formulation and note the missing task context.
+- Postgres down → `search_codebase` / `search_tasks` return empty; build the brief from the user's
+  formulation alone and note the missing task context; still hand off to brainstorming.
 - Never abort: with any gap, distill what you have, note the deficit in the brief, and still hand off
   to brainstorming.
-- Read-only on the board; this skill never writes to it. The brief file under
-  `docs/superpowers/briefs/` is the only write this skill makes — to the repo, not the board.
+- This skill reads task data only through the reviewer store and generic `sync_board`/retry. The
+  brief file under `docs/superpowers/briefs/` is its only repository write.

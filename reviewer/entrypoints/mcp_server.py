@@ -105,55 +105,76 @@ def create_server(service: MCPReviewService) -> FastMCP:
     def sync_board(board: str | None = None, limit: int | None = None,
                    purge_orphaned: bool = False, keep_with_prs: bool = True,
                    board_type: str | None = None,
-                   status_field: str | None = None,
+                   provider_options: dict[str, object] | None = None,
                    force_renormalize: bool = False) -> dict:
         """Server-side ETL: enumerate the configured task board via REST, normalize,
-        and index it (vector store + task graph). board_type limits sync to one board
-        type (yougile|youtrack) — take it from task_board.type in the repo's .review.yml,
-        not from the deploy env. board limits to one project/board by name (e.g. PRI).
-        status_field is the YouTrack status field name from the repo's .review.yml
-        (so sync reads the right field; ignored by YouGile).
+        and index it (vector store + task graph). board_type is a registered provider
+        type; provider_options is its non-secret JSON options object. board limits the
+        operation to one project/board.
         Incremental via a per-(type,board) timestamp watermark; --limit disables purge
         and cursor advance.
         force_renormalize=True ignores the watermark and re-normalizes every task —
         a one-off after normalization rules change (PRI-213); content_hash dedup keeps
         the embedding cost to actually-changed descriptions.
         Returns a compact counts summary with by_board breakdown."""
-        return service.sync_board(board, limit, purge_orphaned, keep_with_prs,
-                                  board_type, status_field, force_renormalize)
+        return service.sync_board(
+            board,
+            limit,
+            purge_orphaned,
+            keep_with_prs,
+            board_type,
+            provider_options,
+            force_renormalize,
+        )
 
     @mcp.tool()
     def finish_task(key: str, pr_url: str, note: str | None = None,
                     mark_done: bool = True, board_type: str | None = None,
-                    done_state: str | None = None, status_field: str | None = None,
-                    done_column: str | None = None) -> dict:
+                    target: str | None = None,
+                    provider_options: dict[str, object] | None = None) -> dict:
         """Close a task on the board after its PR is created (server-side write):
         idempotently append the PR link to the description and mark it done, so the
         task's last-modified bumps and the next sync_board re-indexes the updated task.
-        board_type and done_state come from the repo's .review.yml (YouGile ignores
-        done_state — it has a boolean completed; YouTrack sets State via command,
-        default 'Fixed'). status_field/done_column also come from .review.yml —
-        YouTrack status field name / YouGile done column name. Credentials come from
-        env; fail-soft."""
-        return service.finish_task(key, pr_url, note, mark_done, board_type,
-                                   done_state, status_field, done_column)
+        board_type is a registered provider type, target is the selected generic done
+        target, and provider_options is a non-secret JSON object. It also appends a
+        clickable task link to the PR body (task_link_added; fail-soft, reasons land in
+        warnings). Credentials remain server-side; failures are returned safely."""
+        return service.finish_task(
+            key,
+            pr_url,
+            note,
+            mark_done,
+            board_type,
+            target,
+            provider_options,
+        )
 
     @mcp.tool()
     def create_task(title: str, problem: str = "", steps: list[str] | None = None,
                     criteria: list[str] | None = None, context: str | None = None,
                     board_type: str | None = None, project: str | None = None,
-                    target: str | None = None, status_field: str | None = None) -> dict:
+                    target: str | None = None,
+                    provider_options: dict[str, object] | None = None) -> dict:
         """Create a task on the board (server-side write) from structured fields.
 
         The canonical markdown body (Проблема / Что сделать / Критерии приёмки /
         Контекст) is assembled by the server, so every client and model produces the
         same structure; the board-specific markup conversion happens in the provider.
-        board_type, project, target and status_field come from the repo's .review.yml
-        (target = YouGile column title or YouTrack status value; discover valid values
-        with get_board_targets). Credentials come from env; fail-soft. Returns
+        board_type is a registered provider type, target is a value returned by
+        get_board_targets, and provider_options is its non-secret JSON options object.
+        Credentials come from env; fail-soft. Returns
         {status, key, url, target_resolved, reindexed, warnings}."""
-        return service.create_task(title, problem, steps, criteria, context,
-                                   board_type, project, target, status_field)
+        return service.create_task(
+            title,
+            problem,
+            steps,
+            criteria,
+            context,
+            board_type,
+            project,
+            target,
+            provider_options,
+        )
 
     @mcp.tool()
     def search_tasks(query: str, top_k: int | None = None, project: str | None = None) -> str:
@@ -187,8 +208,9 @@ def create_server(service: MCPReviewService) -> FastMCP:
 
     @mcp.tool()
     def get_board_config() -> dict:
-        """Deploy-wide task board config (TASK_BOARD_* env), shared by all repos.
-        Returns {"task_board": {type, mcp, key_pattern?, url_template?} | null}.
+        """Deploy-wide non-secret task-board metadata, shared by all repos.
+        Returns {"task_board": {type, project?, key_pattern?, create_target?,
+        done_target?, options?} | null}; the type is a registered provider type.
         Use from /sync-tasks and /solve-task as the fallback when the repo has no
         .review.yml task_board block, so the board need not be duplicated per repo.
         null = no board configured in this deploy."""
@@ -196,14 +218,14 @@ def create_server(service: MCPReviewService) -> FastMCP:
 
     @mcp.tool()
     def get_board_targets(board_type: str | None = None,
-                          project: str | None = None) -> dict:
-        """Discover done-target candidates for a repo's board, server-side (read-only).
-        YouGile → board columns; YouTrack → status fields + their values (bundle via the
-        admin API, else aggregated from a sample of project issues). board_type and
-        project come from the repo's .review.yml task_board block. Credentials are NEVER
-        returned; fail-soft — empty list + warnings when the board/creds/permissions are
-        unavailable, so configure-review can fall back to asking."""
-        return service.get_board_targets(board_type, project)
+                          project: str | None = None,
+                          provider_options: dict[str, object] | None = None) -> dict:
+        """Discover normalized board metadata (read-only).
+        board_type is a registered provider type and provider_options is a non-secret
+        JSON object. Returns {board_type, project, targets, options, warnings}, where
+        targets are {id, label, purposes} and options are {key, label, required_for,
+        choices}. Credentials are never returned; failures are safe for fallback."""
+        return service.get_board_targets(board_type, project, provider_options)
 
     @mcp.tool()
     def search_codebase(repo: str, query: str, top_k: int | None = None,

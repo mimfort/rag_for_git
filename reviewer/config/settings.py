@@ -2,14 +2,12 @@ import os
 from pathlib import Path
 from typing import Literal
 
+from pydantic import PrivateAttr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 SeverityLevel = Literal["low", "medium", "high", "critical"]
 SuggestionsMode = Literal["apply", "text"]
 GraphBackend = Literal["auto", "scip", "treesitter"]
-
-# Дефолтный base URL REST API доски по её типу (когда task_board_api_base пуст).
-_BOARD_API_BASE_DEFAULTS = {"yougile": "https://yougile.com/api-v2"}
 
 
 def _resolve_env_file() -> str:
@@ -39,6 +37,12 @@ def _resolve_env_file() -> str:
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=_resolve_env_file(), extra="ignore")
+    _provider_env_file: str | Path | None = PrivateAttr(default=None)
+
+    def __init__(self, **values) -> None:
+        provider_env_file = values.get("_env_file", self.model_config.get("env_file"))
+        super().__init__(**values)
+        self._provider_env_file = provider_env_file
 
     # review tuning (дефолты; per-repo .review.yml может переопределить)
     review_severity_threshold: SeverityLevel = "medium"     # low|medium|high|critical — ниже отбрасываем
@@ -155,21 +159,61 @@ class Settings(BaseSettings):
             cfg["url_template"] = self.task_board_url_template
         return cfg or None
 
-    def task_board_api_base_for(self, type_: str) -> str:
-        """Base URL REST API доски: явный task_board_api_base или дефолт по типу."""
-        return self.task_board_api_base or _BOARD_API_BASE_DEFAULTS.get(type_, "")
+    def task_board_api_base_for(self, type_: str, *, registry=None,
+                                credential_source=None) -> str:
+        """Совместимый доступ к base URL через provider spec."""
+        from reviewer.config.provider_credentials import ProviderCredentialSource
+        from reviewer.tasks.boards.registry import default_board_registry
 
-    def board_creds(self, type_: str) -> tuple[str, str]:
-        """REST-креды доски по типу: (api_key, api_base). Пустой api_key = доска
-        этого типа не настроена. yougile фолбэчит на legacy TASK_BOARD_API_KEY/BASE."""
-        if type_ == "yougile":
-            api_key = self.yougile_api_key or self.task_board_api_key
-            api_base = self.yougile_api_base or self.task_board_api_base_for("yougile")
-            return api_key, api_base
-        if type_ == "youtrack":
-            return self.youtrack_token, self.youtrack_base_url
-        return "", ""
+        registry = registry or default_board_registry()
+        source = credential_source or ProviderCredentialSource.from_settings(self)
+        try:
+            spec = registry.get(type_)
+        except KeyError:
+            return ""
+        resolved = source.resolve(spec)
+        return next(
+            (
+                resolved.values[field.env]
+                for field in spec.credential_fields
+                if not field.secret and resolved.values[field.env]
+            ),
+            spec.default_api_base,
+        )
 
-    def configured_board_types(self) -> list[str]:
-        """Типы досок с заданным REST-ключом — для перебора в make_board_providers."""
-        return [t for t in ("yougile", "youtrack") if self.board_creds(t)[0]]
+    def board_creds(self, type_: str, *, registry=None,
+                    credential_source=None) -> tuple[str, str]:
+        """Совместимый tuple основных credential/base значений из provider spec."""
+        from reviewer.config.provider_credentials import ProviderCredentialSource
+        from reviewer.tasks.boards.registry import default_board_registry
+
+        registry = registry or default_board_registry()
+        source = credential_source or ProviderCredentialSource.from_settings(self)
+        try:
+            spec = registry.get(type_)
+        except KeyError:
+            return "", ""
+        resolved = source.resolve(spec)
+        api_key = next(
+            (
+                resolved.values[field.env]
+                for field in spec.credential_fields
+                if field.secret
+            ),
+            "",
+        )
+        return api_key, self.task_board_api_base_for(
+            type_,
+            registry=registry,
+            credential_source=source,
+        )
+
+    def configured_board_types(self, *, registry=None,
+                               credential_source=None) -> list[str]:
+        """Типы досок с полным набором обязательных credentials из registry."""
+        from reviewer.config.provider_credentials import ProviderCredentialSource
+        from reviewer.tasks.boards.registry import default_board_registry
+
+        registry = registry or default_board_registry()
+        source = credential_source or ProviderCredentialSource.from_settings(self)
+        return list(registry.configured_types(source))

@@ -1,4 +1,7 @@
 from reviewer.config.settings import Settings
+from reviewer.config.provider_credentials import ProviderCredentialSource
+from reviewer.tasks.boards.registry import BoardProviderRegistry
+from tests.tasks.boards.provider_fakes import fake_provider_spec
 
 def test_review_categories_list_parsed_from_csv(monkeypatch):
     monkeypatch.setenv("REVIEW_CATEGORIES", "security, correctness")
@@ -78,6 +81,16 @@ def test_configured_board_types_empty_when_nothing(monkeypatch):
     for k in ("TASK_BOARD_API_KEY", "YOUGILE_API_KEY", "YOUTRACK_TOKEN"):
         monkeypatch.delenv(k, raising=False)
     assert Settings(_env_file=None).configured_board_types() == []
+
+
+def test_configured_types_are_derived_from_injected_registry_spec():
+    settings = Settings(_env_file=None)
+    registry = BoardProviderRegistry([fake_provider_spec()])
+    source = ProviderCredentialSource(values={"FAKE_TOKEN": "x"})
+    assert settings.configured_board_types(
+        registry=registry,
+        credential_source=source,
+    ) == ["fake"]
 
 
 def test_task_board_default_type_single_from_creds(monkeypatch):
