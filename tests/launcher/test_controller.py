@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import click
+import pytest
 
 from reviewer.entrypoints.cli import cli
 from reviewer.launcher.catalog import build_catalog
@@ -16,6 +17,19 @@ from reviewer.launcher.models import (
 
 def _spec(name: str) -> CommandSpec:
     return next(item for item in build_catalog(cli) if item.path == (name,))
+
+
+def _search_spec(name: str) -> CommandSpec:
+    return CommandSpec(
+        path=(name,),
+        command=click.Command(name),
+        summary="",
+        details="",
+        effects=(),
+        scenarios=(),
+        keywords=(),
+        params=(),
+    )
 
 
 def _secret_spec() -> CommandSpec:
@@ -44,6 +58,36 @@ def _secret_spec() -> CommandSpec:
         effects=(Effect.WRITE,),
         scenarios=(),
         keywords=("release",),
+        params=(parameter,),
+    )
+
+
+def _sensitive_validation_spec(parameter_type: click.ParamType) -> CommandSpec:
+    source = click.Option(["--token"], type=parameter_type)
+    parameter = ParameterSpec(
+        source=source,
+        name="token",
+        kind="option",
+        option_strings=("--token",),
+        secondary_strings=(),
+        required=False,
+        nargs=1,
+        multiple=False,
+        count=False,
+        is_flag=False,
+        default=None,
+        choices=(),
+        section=ParamSection.BASIC,
+        sensitive=True,
+    )
+    return CommandSpec(
+        path=("validate",),
+        command=click.Command("validate", params=[source]),
+        summary="Проверить секрет",
+        details="Тестовая команда с чувствительным параметром.",
+        effects=(),
+        scenarios=(),
+        keywords=(),
         params=(parameter,),
     )
 
@@ -77,6 +121,36 @@ def test_search_filters_metadata_and_prioritizes_command_name():
     assert controller.selected.path == ("status",)
 
 
+def test_search_matches_subsequences_in_command_names_and_keywords():
+    controller = LauncherController((_spec("status"), _spec("index"), _spec("serve")))
+
+    controller.set_query("idx")
+    assert [command.path for command in controller.filtered_commands] == [("index",)]
+
+    controller.set_query("dbrd")
+    assert [command.path for command in controller.filtered_commands] == [("serve",)]
+
+
+def test_search_orders_exact_prefix_substring_then_subsequence():
+    controller = LauncherController(
+        (
+            _search_spec("in-d-ex"),
+            _search_spec("reindex"),
+            _search_spec("indexing"),
+            _search_spec("index"),
+        )
+    )
+
+    controller.set_query("index")
+
+    assert [command.path for command in controller.filtered_commands] == [
+        ("index",),
+        ("indexing",),
+        ("reindex",),
+        ("in-d-ex",),
+    ]
+
+
 def test_move_wraps_inside_filtered_commands():
     controller = LauncherController((_spec("status"), _spec("check")))
 
@@ -107,6 +181,26 @@ def test_builtin_click_type_is_validated_without_final_click_parse():
 
     assert controller.screen is Screen.DETAILS
     assert "port" in controller.errors
+
+
+@pytest.mark.parametrize(
+    ("parameter_type", "secret"),
+    [
+        (click.Choice(("alpha", "beta")), "secret-choice"),
+        (click.INT, "secret-integer"),
+    ],
+)
+def test_sensitive_builtin_validation_error_never_contains_raw_value(parameter_type, secret):
+    """Ошибка чувствительного встроенного типа хранится только в безопасном виде."""
+    controller = LauncherController((_sensitive_validation_spec(parameter_type),))
+    controller.open_selected()
+    controller.set_value("token", secret)
+
+    controller.open_preview()
+
+    assert controller.errors == {"token": "Некорректное значение"}
+    assert secret not in repr(controller.errors)
+    assert secret not in repr(controller)
 
 
 def test_custom_click_type_is_deferred_to_final_click_parse():

@@ -1,4 +1,5 @@
 """Модели результата интерактивного launcher."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -60,6 +61,8 @@ class ParameterSpec:
     choices: tuple[str, ...]
     section: ParamSection
     sensitive: bool
+    label: str = ""
+    description: str | None = None
 
 
 @dataclass(frozen=True)

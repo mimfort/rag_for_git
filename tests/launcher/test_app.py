@@ -53,6 +53,54 @@ def _integer_spec() -> CommandSpec:
     )
 
 
+def _sensitive_integer_spec() -> CommandSpec:
+    source = click.Option(["--token"], type=int)
+    parameter = ParameterSpec(
+        source=source,
+        name="token",
+        kind="option",
+        option_strings=("--token",),
+        secondary_strings=(),
+        required=False,
+        nargs=1,
+        multiple=False,
+        count=False,
+        is_flag=False,
+        default=None,
+        choices=(),
+        section=ParamSection.BASIC,
+        sensitive=True,
+    )
+    return CommandSpec(
+        path=("sensitive",),
+        command=click.Command("sensitive", params=[source]),
+        summary="Проверить секрет",
+        details="Тестовая команда с чувствительным целочисленным параметром.",
+        effects=(),
+        scenarios=(),
+        keywords=(),
+        params=(parameter,),
+    )
+
+
+def _choice_spec() -> CommandSpec:
+    @click.group()
+    def root() -> None:
+        pass
+
+    @root.command()
+    @click.option(
+        "--mode",
+        "internal_mode",
+        type=click.Choice(("fast", "safe")),
+        help="Режим выполнения из Click.",
+    )
+    def choose(internal_mode: str | None) -> None:
+        pass
+
+    return build_catalog(root)[0]
+
+
 def _send_after(
     pipe,
     event: threading.Event,
@@ -79,6 +127,9 @@ class _TrackingOutput(PlainTextOutput):
         self.required_error_rendered = threading.Event()
         self.required_error_removed = threading.Event()
         self.type_error_rendered = threading.Event()
+        self.sensitive_error_rendered = threading.Event()
+        self.public_fields_rendered = threading.Event()
+        self.choice_help_rendered = threading.Event()
         self.update_result_rendered = threading.Event()
         self._frame = ""
         super().__init__(self.stream)
@@ -90,19 +141,25 @@ class _TrackingOutput(PlainTextOutput):
         if "Проверяем способ установки" in rendered:
             self.progress_rendered.set()
         if (
-            "Ошибка repo: Обязательное поле" in rendered
+            "Ошибка REPO: Обязательное поле" in rendered
             and not self.required_error_rendered.is_set()
         ):
             self.required_error_rendered.set()
-        if "Ошибка port:" in rendered:
+        if "Ошибка --port:" in rendered:
             self.type_error_rendered.set()
+        if "Ошибка --token:" in rendered:
+            self.sensitive_error_rendered.set()
+        if "--repo:" in rendered and "--branch:" in rendered:
+            self.public_fields_rendered.set()
+        if "Режим выполнения из Click." in rendered and "Варианты: fast, safe" in rendered:
+            self.choice_help_rendered.set()
         if "Доступна новая версия: 0.4.0 → 0.5.0" in rendered:
             self.update_result_rendered.set()
         if (
             self.required_error_rendered.is_set()
             and "owner/repo" in self._frame
             and "Расширенные параметры:" in self._frame
-            and "Ошибка repo:" not in self._frame
+            and "Ошибка REPO:" not in self._frame
         ):
             self.required_error_removed.set()
 
@@ -151,6 +208,7 @@ def test_required_error_is_rendered_and_removed_after_field_edit():
     output = _TrackingOutput()
 
     with create_pipe_input() as pipe:
+
         def stop_launcher() -> None:
             output.required_error_removed.wait(2)
             pipe.send_bytes(b"\x03")
@@ -198,6 +256,83 @@ def test_builtin_type_error_is_rendered_in_details():
 
     assert result == LauncherResult(None, 130)
     assert output.type_error_rendered.is_set(), output.stream.getvalue()
+
+
+def test_sensitive_type_error_is_rendered_without_raw_value():
+    output = _TrackingOutput()
+    secret = "secret-integer"
+
+    def sender(pipe) -> None:
+        output.sensitive_error_rendered.wait(2)
+        pipe.send_bytes(b"\x03")
+
+    with create_pipe_input() as pipe:
+        thread = threading.Thread(target=sender, args=(pipe,))
+        thread.start()
+        pipe.send_bytes(b"\r")
+        pipe.send_text(secret)
+        pipe.send_bytes(b"\r")
+        result = run_launcher(
+            commands=(_sensitive_integer_spec(),),
+            input=pipe,
+            output=output,
+        )
+        thread.join()
+
+    rendered = output.stream.getvalue()
+    assert result == LauncherResult(None, 130)
+    assert output.sensitive_error_rendered.is_set(), rendered
+    assert "Ошибка --token: Некорректное значение" in rendered
+    assert secret not in rendered
+
+
+def test_details_render_public_option_labels_including_advanced_fields():
+    output = _TrackingOutput()
+
+    def sender(pipe) -> None:
+        output.public_fields_rendered.wait(2)
+        pipe.send_bytes(b"\x03")
+
+    with create_pipe_input() as pipe:
+        thread = threading.Thread(target=sender, args=(pipe,))
+        thread.start()
+        pipe.send_bytes(b"\r\x1bOQ")
+        result = run_launcher(
+            commands=(_spec("status"),),
+            input=pipe,
+            output=output,
+        )
+        thread.join()
+
+    rendered = output.stream.getvalue()
+    assert result == LauncherResult(None, 130)
+    assert output.public_fields_rendered.is_set(), rendered
+    assert "repo_tag" not in rendered
+    assert "branch_opt" not in rendered
+
+
+def test_details_render_click_help_and_choices():
+    output = _TrackingOutput()
+
+    def sender(pipe) -> None:
+        output.choice_help_rendered.wait(2)
+        pipe.send_bytes(b"\x03")
+
+    with create_pipe_input() as pipe:
+        thread = threading.Thread(target=sender, args=(pipe,))
+        thread.start()
+        pipe.send_bytes(b"\r")
+        result = run_launcher(
+            commands=(_choice_spec(),),
+            input=pipe,
+            output=output,
+        )
+        thread.join()
+
+    rendered = output.stream.getvalue()
+    assert result == LauncherResult(None, 130)
+    assert output.choice_help_rendered.is_set(), rendered
+    assert "internal_mode" not in rendered
 
 
 def test_prompt_toolkit_is_not_imported_by_models_or_catalog():

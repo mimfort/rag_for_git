@@ -1,4 +1,5 @@
 """Terminal UI интерактивного launcher на prompt_toolkit."""
+
 from __future__ import annotations
 
 import asyncio
@@ -278,7 +279,7 @@ class _LauncherUI:
             else:
                 field = TextArea(
                     text=self._display_value(self.controller.values.get(parameter.name)),
-                    prompt=f"{parameter.name}: ",
+                    prompt=f"{self._parameter_label(parameter)}: ",
                     password=parameter.sensitive,
                     multiline=False,
                     wrap_lines=False,
@@ -286,11 +287,15 @@ class _LauncherUI:
                 field.buffer.on_text_changed += partial(self._field_changed, parameter, field)
                 self.parameter_widgets[parameter.name] = field
                 self.form_widgets.append(field)
-            self.form_widgets.append(Label(partial(self._error_text, parameter.name)))
+            hint = self._parameter_hint(parameter)
+            if hint:
+                self.form_widgets.append(Label(hint))
+            self.form_widgets.append(Label(partial(self._error_text, parameter)))
 
-    def _error_text(self, name: str) -> str:
-        error = self.controller.errors.get(name)
-        return f"Ошибка {name}: {error}" if error else ""
+    def _error_text(self, parameter: ParameterSpec) -> str:
+        error = self.controller.errors.get(parameter.name)
+        label = self._parameter_label(parameter)
+        return f"Ошибка {label}: {error}" if error else ""
 
     def _field_changed(self, parameter: ParameterSpec, field: TextArea, _) -> None:
         self.controller.set_value(parameter.name, self._field_value(parameter, field.text))
@@ -325,7 +330,25 @@ class _LauncherUI:
 
     def _flag_text(self, name: str) -> str:
         marker = "✓" if self.controller.values.get(name) else " "
-        return f"[{marker}] {name}"
+        parameter = next(
+            parameter for parameter in self.controller.selected.params if parameter.name == name
+        )
+        return f"[{marker}] {self._parameter_label(parameter)}"
+
+    @staticmethod
+    def _parameter_label(parameter: ParameterSpec) -> str:
+        if parameter.label:
+            return parameter.label
+        if parameter.option_strings or parameter.secondary_strings:
+            return " / ".join((*parameter.option_strings, *parameter.secondary_strings))
+        return parameter.name
+
+    @staticmethod
+    def _parameter_hint(parameter: ParameterSpec) -> str:
+        parts = [parameter.description] if parameter.description else []
+        if parameter.choices:
+            parts.append(f"Варианты: {', '.join(parameter.choices)}")
+        return " ".join(parts)
 
     def _start_update_check(self, event: KeyPressEvent) -> None:
         if self.version_check is not None or self.update_error is not None:

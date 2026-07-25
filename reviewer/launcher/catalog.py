@@ -1,4 +1,5 @@
 """Построение каталога команд из деклараций Click."""
+
 from __future__ import annotations
 
 import click
@@ -71,4 +72,16 @@ def _parameter_spec(
         choices=tuple(str(choice) for choice in choices),
         section=presentation.section,
         sensitive=presentation.sensitive,
+        label=_public_label(parameter),
+        description=(
+            presentation.description
+            if presentation.description is not None
+            else getattr(parameter, "help", None)
+        ),
     )
+
+
+def _public_label(parameter: click.Parameter) -> str:
+    if isinstance(parameter, click.Option):
+        return " / ".join((*parameter.opts, *parameter.secondary_opts))
+    return parameter.human_readable_name

@@ -4,7 +4,8 @@ import click
 
 from reviewer.entrypoints.cli import cli
 from reviewer.launcher.catalog import build_catalog
-from reviewer.launcher.metadata import COMMAND_PRESENTATION
+from reviewer.launcher.metadata import COMMAND_PRESENTATION, PARAMETER_PRESENTATION
+from reviewer.launcher.models import ParameterPresentation
 
 
 VISIBLE_COMMANDS = {
@@ -37,6 +38,49 @@ def test_status_schema_comes_from_click():
     assert by_name["path"].default == "."
     assert by_name["repo_tag"].option_strings == ("--repo",)
     assert by_name["as_json"].is_flag is True
+
+
+def test_catalog_uses_public_click_labels_and_help_for_options():
+    """Форма получает публичные имена и справку, а не Python destination."""
+    status = next(item for item in build_catalog(cli) if item.path == ("status",))
+    by_name = {param.name: param for param in status.params}
+
+    assert by_name["repo_tag"].label == "--repo"
+    assert by_name["repo_tag"].description == (
+        "owner/name тег индекса; по умолчанию из git remote origin"
+    )
+    assert by_name["branch_opt"].label == "--branch"
+    assert by_name["branch_opt"].description == ("одна ветка; по умолчанию все из REVIEW_BRANCHES")
+
+
+def test_catalog_preserves_click_choices_and_presentation_description(monkeypatch):
+    """Choices остаются Click-authority, а presentation может уточнить подпись."""
+
+    @click.group()
+    def root() -> None:
+        pass
+
+    @root.command()
+    @click.option(
+        "--mode",
+        "internal_mode",
+        type=click.Choice(("fast", "safe")),
+        help="Режим из Click.",
+    )
+    def choose(internal_mode: str | None) -> None:
+        pass
+
+    monkeypatch.setitem(
+        PARAMETER_PRESENTATION,
+        ("choose", "internal_mode"),
+        ParameterPresentation(description="Публичное описание режима."),
+    )
+
+    parameter = build_catalog(root)[0].params[0]
+
+    assert parameter.label == "--mode"
+    assert parameter.description == "Публичное описание режима."
+    assert parameter.choices == ("fast", "safe")
 
 
 def test_catalog_skips_hidden_commands_and_does_not_call_default():

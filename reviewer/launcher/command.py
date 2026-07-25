@@ -1,4 +1,5 @@
 """Безопасное построение argv и его отображаемого preview."""
+
 from __future__ import annotations
 
 from collections.abc import Mapping
@@ -30,8 +31,24 @@ def prepare_command(
     """Собрать аргументы процесса и безопасный preview без shell-интерпретации."""
     argv = list(spec.path)
     masked = list(spec.path)
+    option_argv: list[str] = []
+    masked_options: list[str] = []
+    positional_argv: list[str] = []
+    masked_positionals: list[str] = []
     for parameter in spec.params:
-        _append_parameter(argv, masked, parameter, values, changed)
+        target_argv, target_masked = (
+            (positional_argv, masked_positionals)
+            if parameter.kind == "argument"
+            else (option_argv, masked_options)
+        )
+        _append_parameter(target_argv, target_masked, parameter, values, changed)
+    argv.extend(option_argv)
+    masked.extend(masked_options)
+    if any(token.startswith("-") for token in positional_argv):
+        argv.append("--")
+        masked.append("--")
+    argv.extend(positional_argv)
+    masked.extend(masked_positionals)
     return PreparedCommand(
         argv=tuple(argv),
         preview=_format_preview(("reviewer", *masked), platform_name),

@@ -1,4 +1,5 @@
 """Чистое состояние интерактивного launcher без зависимости от terminal UI."""
+
 from __future__ import annotations
 
 from enum import StrEnum
@@ -94,8 +95,7 @@ class LauncherController:
             return
         self.screen = next_screen
         self.values = {
-            parameter.name: self._initial_value(parameter)
-            for parameter in self.selected.params
+            parameter.name: self._initial_value(parameter) for parameter in self.selected.params
         }
         self.changed.clear()
         self.errors.clear()
@@ -156,25 +156,22 @@ class LauncherController:
         return default
 
     @staticmethod
-    def _match_rank(command: CommandSpec, query: str) -> int | None:
+    def _match_rank(command: CommandSpec, query: str) -> tuple[int, ...] | None:
         if not query:
-            return 0
-        path = " ".join(command.path).casefold()
-        if path == query:
-            return 0
-        if path.startswith(query):
-            return 1
-        if query in path:
-            return 2
-        if query in command.summary.casefold():
-            return 3
-        if any(query in keyword.casefold() for keyword in command.keywords):
-            return 4
-        if query in command.details.casefold():
-            return 5
-        if any(query in scenario.casefold() for scenario in command.scenarios):
-            return 6
-        return None
+            return (0,)
+        fields = (
+            " ".join(command.path),
+            command.summary,
+            *command.keywords,
+            command.details,
+            *command.scenarios,
+        )
+        matches = [
+            (*score, position)
+            for position, text in enumerate(fields)
+            if (score := _fuzzy_score(text.casefold(), query)) is not None
+        ]
+        return min(matches) if matches else None
 
     def _validate(self) -> dict[str, str]:
         errors: dict[str, str] = {}
@@ -188,7 +185,9 @@ class LauncherController:
             try:
                 self._convert(parameter, value)
             except click.BadParameter as error:
-                errors[parameter.name] = error.format_message()
+                errors[parameter.name] = (
+                    "Некорректное значение" if parameter.sensitive else error.format_message()
+                )
         return errors
 
     @staticmethod
@@ -200,3 +199,24 @@ class LauncherController:
         values = value if parameter.multiple and isinstance(value, (tuple, list)) else (value,)
         for item in values:
             parameter.source.type.convert(item, parameter.source, None)
+
+
+def _fuzzy_score(text: str, query: str) -> tuple[int, int, int, int] | None:
+    if text == query:
+        return (0, 0, 0, len(text))
+    if text.startswith(query):
+        return (1, len(text) - len(query), 0, len(text))
+    substring_start = text.find(query)
+    if substring_start >= 0:
+        return (2, substring_start, len(text) - len(query), len(text))
+
+    positions: list[int] = []
+    search_from = 0
+    for character in query:
+        position = text.find(character, search_from)
+        if position < 0:
+            return None
+        positions.append(position)
+        search_from = position + 1
+    span = positions[-1] - positions[0] + 1
+    return (3, span - len(query), positions[0], len(text))
