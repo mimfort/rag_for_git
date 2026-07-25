@@ -1009,15 +1009,18 @@ git commit -m "feat(cli): добавить интерактивную command pa
 - Consumes: `reviewer.entrypoints.launcher:main`, существующие Click tests/fakes.
 - Produces: публичный console script `reviewer = "reviewer.entrypoints.launcher:main"`.
 
-- [ ] **Step 1: Написать failing entry-point metadata test**
+- [ ] **Step 1: Написать failing installed entry-point test**
 
 ```python
-def test_reviewer_script_points_to_launcher():
-    data = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
-    assert data["project"]["scripts"] == {
-        "reviewer": "reviewer.entrypoints.launcher:main",
-        "reviewer-mcp": "reviewer.entrypoints.mcp_server:main",
+def test_installed_reviewer_entry_point_loads_launcher():
+    scripts = {
+        item.name: item
+        for item in importlib.metadata.entry_points(group="console_scripts")
+        if item.name in {"reviewer", "reviewer-mcp"}
     }
+    assert scripts["reviewer"].value == "reviewer.entrypoints.launcher:main"
+    assert scripts["reviewer"].load() is launcher.main
+    assert scripts["reviewer-mcp"].value == "reviewer.entrypoints.mcp_server:main"
 ```
 
 - [ ] **Step 2: Запустить RED metadata**
@@ -1025,10 +1028,10 @@ def test_reviewer_script_points_to_launcher():
 Run:
 
 ```bash
-.venv/bin/pytest tests/entrypoints/test_launcher_contract.py::test_reviewer_script_points_to_launcher -q
+.venv/bin/pytest tests/entrypoints/test_launcher_contract.py::test_installed_reviewer_entry_point_loads_launcher -q
 ```
 
-Expected: FAIL: текущее значение `reviewer.entrypoints.cli:cli`.
+Expected: FAIL: installed editable metadata ещё указывает на `reviewer.entrypoints.cli:cli`.
 
 - [ ] **Step 3: Переключить только reviewer entry point**
 
@@ -1036,6 +1039,13 @@ Expected: FAIL: текущее значение `reviewer.entrypoints.cli:cli`.
 [project.scripts]
 reviewer = "reviewer.entrypoints.launcher:main"
 reviewer-mcp = "reviewer.entrypoints.mcp_server:main"
+```
+
+Обновить editable metadata и повторить focused test:
+
+```bash
+uv sync --extra dev --extra web
+.venv/bin/pytest tests/entrypoints/test_launcher_contract.py::test_installed_reviewer_entry_point_loads_launcher -q
 ```
 
 - [ ] **Step 4: Написать failing exact delegation tests**
