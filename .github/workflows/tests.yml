@@ -1,0 +1,29 @@
+name: Tests
+
+# Гейт на пути feature → dev → main. Релизные workflow (publish, codex-plugin)
+# висят только на main, поэтому без этого прогона поломка, попавшая в dev,
+# всплывает лишь после мержа в main и блокирует публикацию.
+on:
+  pull_request:
+    branches: [dev, main]
+  push:
+    branches: [dev]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6.3.0
+        with:
+          python-version: "3.11"
+      - run: pip install -e ".[dev,web]"
+      # Раньше полного прогона: рассинхрон сгенерированных манифестов плагина
+      # с версией pyproject даёт здесь одну внятную строку вместо десятка
+      # падений в тестах install.
+      - run: python scripts/update_codex_plugin_manifest.py --check
+      - run: pytest -q
