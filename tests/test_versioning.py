@@ -114,6 +114,35 @@ def test_falls_back_to_uvx_when_uv_tool_list_fails():
     assert info == InstallationInfo(InstallMode.UVX, "0.4.0", "/usr/bin/uv")
 
 
+def test_falls_back_to_uvx_when_uv_tool_list_returns_error():
+    run = Mock(
+        return_value=SimpleNamespace(
+            returncode=1,
+            stdout="rag-reviewer v0.4.0\nошибка: список инструментов недоступен\n",
+        )
+    )
+
+    info = detect_installation(
+        distribution=_Distribution(editable=False),
+        which=lambda name: "/usr/bin/uv",
+        run=run,
+    )
+
+    assert info == InstallationInfo(InstallMode.UVX, "0.4.0", "/usr/bin/uv")
+
+
+def test_ignores_whitespace_only_lines_in_uv_tool_list():
+    run = Mock(return_value=SimpleNamespace(returncode=0, stdout="  \n\trag-reviewer v0.4.0\n"))
+
+    info = detect_installation(
+        distribution=_Distribution(editable=False),
+        which=lambda name: "/usr/bin/uv",
+        run=run,
+    )
+
+    assert info == InstallationInfo(InstallMode.UV_TOOL, "0.4.0", "/usr/bin/uv")
+
+
 @pytest.mark.parametrize(
     ("latest", "update_available"),
     [("0.4.0", False), ("0.4.1", True), ("0.5.0", True)],

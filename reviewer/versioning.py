@@ -76,11 +76,11 @@ def detect_installation(
     if uv:
         try:
             tool_list = run([uv, "tool", "list"], capture_output=True, text=True)
-            is_tool = any(
-                line.split(maxsplit=1)[0] == "rag-reviewer"
-                for line in tool_list.stdout.splitlines()
-                if line
-            )
+            if getattr(tool_list, "returncode", 0) == 0:
+                is_tool = any(
+                    line.split(maxsplit=1)[:1] == ["rag-reviewer"]
+                    for line in tool_list.stdout.splitlines()
+                )
         except OSError:
             pass
 
