@@ -15,6 +15,19 @@ from reviewer.tasks.boards.registry import (
 )
 
 
+EXPECTED_BOARD_TYPES = (
+    "yougile",
+    "youtrack",
+    "jira",
+    "github",
+    "trello",
+    "linear",
+    "clickup",
+    "asana",
+    "yandex_tracker",
+    "kaiten",
+)
+
 BUILD_DEFAULTS = {
     "key_pattern": r"[A-Z]+-\\d+",
     "url_template": "https://board.example/{key}",
@@ -227,10 +240,64 @@ def test_registry_creates_provider_with_validated_context():
     assert contexts[0].key_pattern == BUILD_DEFAULTS["key_pattern"]
 
 
-def test_default_registry_registers_jira_only_as_complete_provider():
+# Поля, форма которых строже «просто https-URL»: tenant-origin Jira и ровно один
+# из двух взаимоисключающих org-заголовков Yandex Tracker.
+CREDENTIAL_OVERRIDES = {
+    "JIRA_BASE_URL": "https://acme.atlassian.net",
+    "YANDEX_TRACKER_ORG_ID": "org-42",
+}
+
+
+def _dummy_credential(env: str) -> str:
+    """Синтетическое значение credential нужной формы: URL, email или произвольный секрет."""
+    if env in CREDENTIAL_OVERRIDES:
+        return CREDENTIAL_OVERRIDES[env]
+    if env.endswith(("_BASE", "_URL")) or "BASE_URL" in env:
+        return "https://board.example.test"
+    if "EMAIL" in env:
+        return "bot@example.test"
+    return "dummy-credential-value"
+
+
+def test_default_registry_registers_every_complete_provider_in_order():
     registry = default_board_registry()
 
-    assert registry.registered_types() == ("yougile", "youtrack", "jira")
+    assert registry.registered_types() == EXPECTED_BOARD_TYPES
+
+
+def test_default_registry_builds_and_validates_every_registered_provider():
+    """Каждый зарегистрированный тип проходит `_validate_runtime_provider` при создании."""
+    registry = default_board_registry()
+
+    for board_type in registry.registered_types():
+        spec = registry.get(board_type)
+        # Как и `ProviderCredentialSource`, реестру передаются все объявленные поля:
+        # обязательные — синтетическим значением, необязательные — своим дефолтом.
+        credentials = {
+            field.env: (
+                CREDENTIAL_OVERRIDES[field.env]
+                if field.env in CREDENTIAL_OVERRIDES
+                else (_dummy_credential(field.env) if field.required else field.default)
+            )
+            for field in spec.credential_fields
+        }
+        provider = registry.create(
+            board_type,
+            credentials=credentials,
+            options={},
+            build_defaults=BUILD_DEFAULTS,
+        )
+        try:
+            assert provider.board_type == board_type
+            assert spec.setup.label
+            assert spec.create_target_label and spec.done_target_label
+        finally:
+            provider.close()
+
+
+def test_default_registry_exposes_jira_credential_schema_and_builds_provider():
+    registry = default_board_registry()
+
     spec = registry.get("jira")
     assert [field.env for field in spec.credential_fields] == [
         "JIRA_BASE_URL",

@@ -6,21 +6,42 @@ the current matrix, not a closed list of future choices.
 
 ## Capability matrix
 
-| Capability | YouGile | YouTrack | Jira Cloud |
-|---|---:|---:|---:|
-| Sync/pagination | ✓ | ✓ | ✓ |
-| Markdown normalization | HTML↔MD | Native MD | ADF↔MD |
-| Links/subtasks | ✓ | ✓ | ✓ |
-| Attachments | ✓ | ✓ | ✓ |
-| Single read | ✓ | ✓ | ✓ |
-| Discovery | ✓ | ✓ | ✓ |
-| Create/target | ✓ | ✓ | ✓ |
-| Finish/PR link | ✓ | ✓ | ✓ |
-| Write-through | ✓ | ✓ | ✓ |
+One row per registered provider; every row must fill all nine capability columns.
+
+| Provider | Sync/pagination | Markdown normalization | Links/subtasks | Attachments | Single read | Discovery | Create/target | Finish/PR link | Write-through |
+|---|:-:|---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
+| YouGile | ✓ | HTML↔MD | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| YouTrack | ✓ | Native MD | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Jira Cloud | ✓ | ADF↔MD | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| GitHub Issues | ✓ | Native MD | ✓ | metadata only | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Trello | ✓ | Native MD | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Linear | ✓ | Native MD | ✓ | metadata only | ✓ | ✓ | ✓ | ✓ | ✓ |
+| ClickUp | ✓ | Native MD (query flag) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Asana | ✓ | HTML↔MD | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Yandex Tracker | ✓ | YFM→MD | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Kaiten | ✓ | Native MD | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 
 All adapters implement validation, full pagination, normalized reads, target discovery, create,
 idempotent finish, and write-through reindexing. The registry exposes only configured types whose
 credential schema is complete; secrets never leave the reviewer-mcp process.
+
+Attachment indexing is fail-soft everywhere: when a file cannot be fetched with the board
+credential — an off-host or short-lived signed URL, a size or format limit — the adapter reports
+the attachment's metadata plus a warning instead of failing the task. `metadata only` marks a
+board whose API never exposes attachment bytes at all.
+
+## Shared transport
+
+New adapters build on the shared transport layer instead of re-implementing HTTP behaviour:
+`restbase.py` (`RestBoardBase` — client lifecycle, secret redaction, read/write split),
+`pagination.py` (offset, page, cursor and `Link`-header generators), `graphql.py`
+(`GraphQLClient` with cursor pagination and error categorisation), and `yfm.py`. Retries,
+`Retry-After` handling and status categorisation live in `BoardHttpClient`; a provider only
+supplies an optional `rate_limit_hint` for board-specific limit headers.
+
+**Known debt:** the three original adapters (YouGile, YouTrack, Jira Cloud) predate this layer and
+still own their httpx wiring. Retrofitting them is deliberately out of scope of the provider
+expansion — it would rewrite three green adapters and their tests — and is tracked as follow-up.
 
 ## Configuration
 
@@ -98,6 +119,109 @@ token after a successful rotation.
 Validation checks `/rest/api/3/myself`, project visibility, and the permissions required by the
 enabled lifecycle operations. See the official
 [Jira Cloud REST API v3 introduction](https://developer.atlassian.com/cloud/jira/platform/rest/v3/intro/).
+
+## GitHub Issues
+
+Set `GITHUB_ISSUES_TOKEN`; for GitHub Enterprise Server also set `GITHUB_ISSUES_API_BASE`
+(`https://<host>/api/v3`). Create a fine-grained personal access token with `Issues: Read and
+write` on the target repository — a classic token needs the `repo` scope — following
+[GitHub's personal-access-token documentation](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens).
+The board is deliberately opt-in on its own variable: the review pipeline's `GITHUB_TOKEN` is
+**not** an alias, so an existing deployment never silently gains an unconfigured issues board.
+Required option `repo` (`owner/name`); `key_prefix` sets the synthetic task key (`WIDGETS-7`) since
+GitHub has no human-readable issue key. Pull requests are filtered out of the issues listing.
+Issue attachments cannot be downloaded through the API and live on third-party hosts, so they are
+reported as metadata with a warning rather than indexed text. Rotate by issuing a replacement
+token, updating the protected reviewer-mcp environment, running `reviewer check`, then revoking the
+old token.
+
+## Trello
+
+Set `TRELLO_API_KEY` and `TRELLO_API_TOKEN`, optionally `TRELLO_API_BASE`. Both credentials are
+treated as secrets: they travel in the query string of every request and together grant full
+account access. Generate them from a Power-Up in the
+[Trello developer admin](https://trello.com/apps/admin) — the API Key tab, then the adjacent Token
+link — as described in the
+[REST API introduction](https://developer.atlassian.com/cloud/trello/guides/rest-api/api-introduction/).
+Required option `board_id`; `key_prefix` builds the task key from the card's short id. Trello has
+no reliable server-side "modified since" filter, so the adapter paginates the board by creation
+date, orders by `dateLastActivity`, and relies on the sync watermark for incrementality. Attachment
+download needs an `Authorization: OAuth` header, and off-host link attachments are never fetched
+(metadata plus warning) so credentials cannot leak to a third party. Rotate by generating a new
+token, validating with `reviewer check`, then revoking the old one.
+
+## Linear
+
+Set `LINEAR_API_KEY`, optionally `LINEAR_API_BASE`. Create a personal API key with read and write
+access (plus create-issue permission) in Linear's
+[account security settings](https://linear.app/settings/account/security); see the
+[API documentation](https://linear.app/developers/graphql). The key is sent as a bare
+`Authorization` header **without** the `Bearer` prefix, and OAuth is not supported. Required option
+`team_key` — the human-readable team key that also prefixes every issue `identifier`, resolved to a
+team id through one filtered query. Keys are native (`ENG-123`), so no `key_prefix` is needed.
+Done targets are the team's workflow states; a state of type `completed` or `canceled` is offered
+as a done target, which keeps target selection independent of workspace language. Attachments are
+private and require separate authorization, so they are reported as metadata with a warning.
+Linear signals rate limiting as HTTP 400 with `RATELIMITED`, which the adapter maps to a retryable
+category through the shared transport's `rate_limit_hint`.
+
+## ClickUp
+
+Set `CLICKUP_API_TOKEN`, optionally `CLICKUP_API_BASE`. Create a personal token (`pk_…`, no
+expiry) under avatar → Settings → Apps as documented in
+[ClickUp authentication](https://developer.clickup.com/docs/authentication); it is sent in
+`Authorization` without a `Bearer` prefix. Required option `list_id`; `key_prefix` builds the task
+key, and `team_id` is needed only when the workspace uses custom task ids. ClickUp stores
+descriptions as plain text and returns markdown only when the request asks for it, so every read
+sets `include_markdown_description=true` and every write uses `markdown_content`; a response
+without `markdown_description` falls back to the plain field with a warning. Done targets are list
+status names, which are also exactly what the write API accepts. Rotate by generating a new token,
+validating with `reviewer check`, then deleting the old one.
+
+## Asana
+
+Set `ASANA_ACCESS_TOKEN`, optionally `ASANA_API_BASE`. Create a personal access token in the
+[Asana developer console](https://app.asana.com/0/my-apps); see the
+[personal-access-token documentation](https://developers.asana.com/docs/personal-access-token).
+Required option `project_gid`; `key_prefix` builds the task key from the task `gid`. Descriptions
+round-trip through `html_notes`: Asana's
+[rich-text subset](https://developers.asana.com/docs/rich-text) has no `<p>` and no longer supports
+`<br/>`, so the adapter maps markdown into the supported tag set and reads it back into markdown.
+Closing a task sets the boolean `completed`; a `done_target` section is an additional board
+placement reported separately. Attachment `download_url` values are short-lived signed URLs on
+third-party storage and are fetched without the Asana credential. Rotate by creating a replacement
+token, validating with `reviewer check`, then revoking the old one.
+
+## Yandex Tracker
+
+Set `YANDEX_TRACKER_TOKEN` plus exactly one organization header — `YANDEX_TRACKER_ORG_ID` for a
+Yandex 360 organization or `YANDEX_TRACKER_CLOUD_ORG_ID` for a Yandex Cloud organization; the
+adapter refuses to start with both or neither. `YANDEX_TRACKER_AUTH_SCHEME` selects `OAuth`
+(default) or `Bearer` for a Yandex Cloud IAM token, and `YANDEX_TRACKER_API_BASE` overrides the
+default `https://api.tracker.yandex.net/v3`. Follow the official
+[API access guide](https://yandex.ru/support/tracker/ru/api-ref/access); a long-lived deployment
+should prefer an OAuth token because an IAM token expires within 12 hours. Required option `queue`.
+Keys are native (`TREK-123`), so no `key_prefix` is needed. Descriptions are Yandex Flavored
+Markdown and are converted to markdown on read, while writes are sent with `markupType: md`.
+Closing a task executes a workflow **transition** — the adapter never sets a status directly and
+never uses the command DSL — so a missing transition yields a warning instead of bypassing the
+workflow. Page-based enumeration is documented up to 10 000 issues per queue; larger queues would
+need scroll-cursor support, which is not implemented.
+
+## Kaiten
+
+Set `KAITEN_BASE_URL` to the company address (`https://<company>.kaiten.ru`) and
+`KAITEN_API_TOKEN`. The adapter appends the API suffix itself and accepts a self-hosted subpath.
+Create a permanent API key in the user profile's API-key section; the developer reference is
+[developers.kaiten.ru](https://developers.kaiten.ru/). There is no single cloud base URL, so the
+base URL is a required non-secret credential rather than an option — the same shape as YouTrack.
+Required option `board_id` (numeric); `key_prefix` builds the task key from the card id, and
+`space_id` optionally narrows the listing. Done targets are board columns: a column of `type` 3 is
+offered as done, so a localized column name never has to be guessed. Card descriptions are markdown
+natively. Checklists become acceptance criteria while child cards become subtask links, because
+checklist items are not tasks and would otherwise create dangling task stubs in the graph.
+Attachments hosted on external storage are reported as metadata with a warning instead of being
+fetched with the board credential.
 
 ## Legacy migration
 

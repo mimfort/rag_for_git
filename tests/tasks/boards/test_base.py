@@ -121,9 +121,10 @@ def test_make_board_provider_threads_immutable_options():
 
 def test_default_registry_contains_exactly_current_complete_providers():
     from reviewer.tasks.boards import registry as registry_module
+    from tests.tasks.boards.test_registry import EXPECTED_BOARD_TYPES
 
     registry = registry_module.default_board_registry()
-    assert registry.registered_types() == ("yougile", "youtrack", "jira")
+    assert registry.registered_types() == EXPECTED_BOARD_TYPES
     assert registry_module.default_board_registry() is registry
 
 

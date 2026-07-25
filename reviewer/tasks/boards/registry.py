@@ -223,7 +223,16 @@ def default_board_registry() -> BoardProviderRegistry:
 
     Локальные явные импорты не создают цикл при инициализации modules.
     """
+    from reviewer.tasks.boards.asana import provider_spec as asana_provider_spec
+    from reviewer.tasks.boards.clickup import provider_spec as clickup_provider_spec
+    from reviewer.tasks.boards.github import provider_spec as github_provider_spec
     from reviewer.tasks.boards.jira import provider_spec as jira_provider_spec
+    from reviewer.tasks.boards.kaiten import provider_spec as kaiten_provider_spec
+    from reviewer.tasks.boards.linear import provider_spec as linear_provider_spec
+    from reviewer.tasks.boards.trello import provider_spec as trello_provider_spec
+    from reviewer.tasks.boards.yandex_tracker import (
+        provider_spec as yandex_tracker_provider_spec,
+    )
     from reviewer.tasks.boards.yougile import provider_spec as yougile_provider_spec
     from reviewer.tasks.boards.youtrack import provider_spec as youtrack_provider_spec
 
@@ -231,4 +240,11 @@ def default_board_registry() -> BoardProviderRegistry:
         yougile_provider_spec(),
         youtrack_provider_spec(),
         jira_provider_spec(),
+        github_provider_spec(),
+        trello_provider_spec(),
+        linear_provider_spec(),
+        clickup_provider_spec(),
+        asana_provider_spec(),
+        yandex_tracker_provider_spec(),
+        kaiten_provider_spec(),
     ])

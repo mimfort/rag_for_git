@@ -23,9 +23,31 @@ __all__ = ["ADAPTERS", "FakeState", "ProviderAdapter", "ProviderContract"]
 
 def _adapters() -> tuple[ProviderAdapter, ...]:
     """Явный список зарегистрированных фейков: одна строка на провайдера."""
-    from tests.tasks.boards.fakes import jira, yougile, youtrack
+    from tests.tasks.boards.fakes import (
+        asana,
+        clickup,
+        github,
+        jira,
+        kaiten,
+        linear,
+        trello,
+        yandex_tracker,
+        yougile,
+        youtrack,
+    )
 
-    return (yougile.ADAPTER, youtrack.ADAPTER, jira.ADAPTER)
+    return (
+        yougile.ADAPTER,
+        youtrack.ADAPTER,
+        jira.ADAPTER,
+        github.ADAPTER,
+        trello.ADAPTER,
+        linear.ADAPTER,
+        clickup.ADAPTER,
+        asana.ADAPTER,
+        yandex_tracker.ADAPTER,
+        kaiten.ADAPTER,
+    )
 
 
 ADAPTERS = _adapters()
