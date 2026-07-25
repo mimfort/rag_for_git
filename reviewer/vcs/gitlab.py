@@ -123,6 +123,10 @@ class GitLabProvider:
             head_ref=d.get("source_branch"),
         )
 
+    def update_pull_request_body(self, number: int, body: str) -> None:
+        """Заменить описание MR (обратный линк задачи из finish_task)."""
+        self._c.put(self._mr(number), json={"description": body}).raise_for_status()
+
     def get_changed_files(self, number: int) -> list[ChangedFile]:
         d = self._c.get(f"{self._mr(number)}/changes").raise_for_status().json()
         return [_to_changed_file(ch) for ch in d.get("changes", [])]

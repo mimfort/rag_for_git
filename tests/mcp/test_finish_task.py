@@ -58,19 +58,42 @@ class _Provider:
 
     def normalize(self, raw):
         return {"key": raw.key, "title": raw.title, "status": "done",
-                "project": "PRI", "description": raw.description}
+                "project": "PRI", "description": raw.description,
+                "url": "https://board.example/#PRI-10"}
+
+    def close(self):
+        self.closed = True
+
+
+class _FakeVCS:
+    def __init__(self, body="## Что сделано\n\nтекст", fail=False):
+        self.body = body
+        self.fail = fail
+        self.updated = []
+        self.closed = False
+
+    def get_pull_request(self, number):
+        if self.fail:
+            raise RuntimeError("403 нет прав")
+        return type("PR", (), {"number": number, "body": self.body})()
+
+    def update_pull_request_body(self, number, body):
+        self.updated.append((number, body))
 
     def close(self):
         self.closed = True
 
 
 class _Svc(MCPReviewService):
-    def __init__(self, configured, provider=None, task_service=None, contexts=None):
+    def __init__(self, configured, provider=None, task_service=None, contexts=None,
+                 vcs=None):
         provider = provider or _Provider()
         contexts = contexts if contexts is not None else []
         self.settings = Settings(_env_file=None)
         self.components = type("C", (), {
             "task_service": task_service or _FakeTaskService()})()
+        self._vcs_factory = (lambda owner, name: vcs) if vcs is not None else None
+        self._review_service = None   # реальный ReviewService не нужен: VCS даёт фабрика
         specs = []
         values = {}
         for board_type in configured:
@@ -135,7 +158,7 @@ def test_finish_task_migrates_legacy_status_field_and_done_column():
     )
     assert contexts[0].options == {"status_field": "Stage"}
     assert prov.finished[4] == "Готово"
-    assert len(out["warnings"]) == 2
+    assert len(out["warnings"]) == 3   # 2 migration + пропуск бэклинка (pr_url не распознан)
 
 
 def test_finish_task_failsoft():
@@ -179,3 +202,76 @@ def test_finish_task_writethrough_failsoft_when_fetch_none():
     assert out["status"] == "ok"
     assert out["reindexed"] is False
     assert ts.indexed == []
+
+
+PR_URL = "https://github.com/o/r/pull/7"
+
+
+def test_finish_task_backlinks_task_into_pr_body():
+    # Связь двусторонняя: PR-ссылка ушла в задачу, ссылка на задачу — в тело PR.
+    vcs = _FakeVCS()
+    out = _Svc(["fake"], vcs=vcs).finish_task("PRI-10", PR_URL)
+    assert out["status"] == "ok"
+    assert out["task_link_added"] is True
+    assert len(vcs.updated) == 1
+    number, body = vcs.updated[0]
+    assert number == 7
+    assert body.startswith("Задача: [PRI-10](https://board.example/#PRI-10)")
+    assert "<!-- reviewer:task-link -->" in body
+    assert body.endswith("## Что сделано\n\nтекст")
+
+
+def test_finish_task_backlink_idempotent_on_second_run():
+    vcs = _FakeVCS(body="Задача: [PRI-10](https://board.example/#PRI-10)\n"
+                        "<!-- reviewer:task-link -->\n\nтекст")
+    out = _Svc(["fake"], vcs=vcs).finish_task("PRI-10", PR_URL)
+    assert out["status"] == "ok"
+    assert out["task_link_added"] is False
+    assert vcs.updated == []
+    assert out["warnings"] == []
+
+
+def test_finish_task_backlink_failsoft_on_vcs_error():
+    # Доска уже закрыта — сбой правки PR не откатывает успех finish_task.
+    vcs = _FakeVCS(fail=True)
+    out = _Svc(["fake"], vcs=vcs).finish_task("PRI-10", PR_URL)
+    assert out["status"] == "ok"
+    assert out["done_set"] is True
+    assert out["task_link_added"] is False
+    assert any("403" in w for w in out["warnings"])
+
+
+def test_finish_task_backlink_skipped_without_task_url():
+    class _NoUrl(_Provider):
+        def normalize(self, raw):
+            return {"key": raw.key, "title": raw.title, "status": "done",
+                    "project": "PRI", "description": raw.description, "url": None}
+
+    vcs = _FakeVCS()
+    out = _Svc(["fake"], _NoUrl(), vcs=vcs).finish_task("PRI-10", PR_URL)
+    assert out["status"] == "ok"
+    assert out["task_link_added"] is False
+    assert vcs.updated == []
+    assert any("url_template" in w for w in out["warnings"])
+
+
+def test_finish_task_backlink_skipped_on_unparsable_pr_url():
+    vcs = _FakeVCS()
+    out = _Svc(["fake"], vcs=vcs).finish_task("PRI-10", "не ссылка")
+    assert out["status"] == "ok"
+    assert out["task_link_added"] is False
+    assert vcs.updated == []
+
+
+def test_finish_task_backlink_skipped_when_writethrough_failed():
+    # Без брифа неоткуда взять url задачи — но finish всё равно ok.
+    class _NoRaw(_Provider):
+        def fetch_one(self, key):
+            return None
+
+    vcs = _FakeVCS()
+    out = _Svc(["fake"], _NoRaw(), vcs=vcs).finish_task("PRI-10", PR_URL)
+    assert out["status"] == "ok"
+    assert out["reindexed"] is False
+    assert out["task_link_added"] is False
+    assert vcs.updated == []

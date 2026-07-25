@@ -150,7 +150,11 @@ MCP-сессия (PreparedReview + ToolContext) живёт в процессе `
   идемпотентно дописывает PR-ссылку и запрашивает generic done target через server-side MCP-тул
   `finish_task(..., board_type, target, provider_options)`. Провайдер возвращает отдельные
   `pr_link_added`, `done_set`, `already_closed` и warnings; общий слой затем делает write-through
-  `fetch_one → normalize → index_task`. Любая правка двигает last-modified, поэтому следующий
+  `fetch_one → normalize → index_task`.
+  Связь двусторонняя: тот же слой fail-soft дописывает кликабельную ссылку на задачу
+  (markdown, из `url_template`) в начало тела PR — маркер `<!-- reviewer:task-link -->`
+  даёт идемпотентность, платформа резолвится по форме ссылки (`/pull/N` → GitHub,
+  `/-/merge_requests/N` → GitLab), результат — в поле `task_link_added`. Любая правка двигает last-modified, поэтому следующий
   `sync_board` сохраняет обновлённую задачу. Python пишет в доску и при болк-синке, и при
   `finish_task`; креды остаются в env. Добавлять type разрешено только полным путём: adapter →
   immutable spec → explicit registry line → full contract fixture → provider-specific tests →

@@ -788,7 +788,7 @@ code_quote, message, suggestion, fix:{start_line,end_line,replacement}|null, con
 | `sync_board` | `(board=None, limit=None, purge_orphaned=False, keep_with_prs=True, board_type=None, provider_options=None, force_renormalize=False)` | Server-side ETL одного зарегистрированного провайдера: перечислить, нормализовать в `TaskBrief`, проиндексировать. Инкрементально по watermark `(type, board)`; O(1) токенов. |
 | `get_board_targets` | `(board_type=None, project=None, provider_options=None)` | Получить нормализованные targets и non-secret options зарегистрированного провайдера. |
 | `create_task` | `(title, problem="", steps=None, criteria=None, context=None, board_type=None, project=None, target=None, provider_options=None)` | Создать canonical task, разрешить generic target и сделать write-through в индекс. |
-| `finish_task` | `(key, pr_url, note=None, mark_done=True, board_type=None, target=None, provider_options=None)` | Идемпотентно дописать PR-link, опционально выставить generic done target и сделать write-through. |
+| `finish_task` | `(key, pr_url, note=None, mark_done=True, board_type=None, target=None, provider_options=None)` | Идемпотентно дописать PR-link, опционально выставить generic done target, добавить кликабельную ссылку на задачу в тело PR и сделать write-through. |
 | `index_task` | `(task: dict)` | Индексировать один `TaskBrief` в граф + вектор (идемпотентно). |
 | `index_tasks_batch` | `(tasks: list[dict])` | То же для списка, одним вызовом Voyage. |
 | `search_tasks` | `(query, top_k=5, project=None)` | Семантически похожие задачи из индекса. `project` скоупит результаты одним проектом доски (префикс кода). |
