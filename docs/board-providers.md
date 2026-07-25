@@ -33,7 +33,7 @@ task_board:
   type: <registered-provider>
   project: PRI
   key_pattern: "[A-Z]+-\\d+"      # optional non-secret task-key metadata
-  url_template: "https://tasks.example/{code}"  # optional non-secret link metadata
+  url_template: "https://tasks.example/{code}"  # optional non-secret link metadata; also feeds the PR backlink
   create_target: Backlog
   done_target: Done
   options:

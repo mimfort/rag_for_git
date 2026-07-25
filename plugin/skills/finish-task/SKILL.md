@@ -5,8 +5,8 @@ description: After a task's PR is created, offer to close the task on the config
 
 # Finish Task
 
-Reply in Russian. The server appends the PR link idempotently and completes the selected generic
-target; clients never send credentials.
+Reply in Russian. The server appends the PR link idempotently, completes the selected generic
+target, and adds a clickable task link to the PR body; clients never send credentials.
 
 1. **Config.** Read `task_board` from `.review.yml`, otherwise `get_board_config()`. Use only
    `type`, `project`, `create_target`, `done_target`, and `options`. If no board is resolved,
@@ -19,7 +19,7 @@ target; clients never send credentials.
    purpose. For each option with `required_for` containing `finish`, resolve its value from
    `choices`; if required metadata is missing, ask instead of guessing.
 4. **Offer + confirm.** Show the PR link and the **resolved done target** by its label plus every
-   selected option. Ask whether to add an optional note. Write **only after explicit confirmation**;
+   selected option, and state that a task link will be prepended to the PR body. Ask whether to add an optional note. Write **only after explicit confirmation**;
    never write to the board silently.
 5. **Write.** Call
    ```
@@ -29,6 +29,7 @@ target; clients never send credentials.
    On `status == "error"`, report the reason in Russian and stop.
 6. **Re-index.** Call `sync_board(board=<project or null>, board_type=<type>,
    provider_options=<task_board.options or {}>)`, then report the write and sync result. When
-   `already_closed` is true, state that no duplicate PR link was added.
+   `already_closed` is true, state that no duplicate PR link was added. Report `task_link_added`:
+   when false, relay the warning verbatim — the board write still succeeded.
 
 All reads are fail-open; the explicitly confirmed `finish_task` call is the only write.

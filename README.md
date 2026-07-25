@@ -860,7 +860,7 @@ code_quote, message, suggestion, fix:{start_line,end_line,replacement}|null, con
 | `sync_board` | `(board=None, limit=None, purge_orphaned=False, keep_with_prs=True, board_type=None, provider_options=None, force_renormalize=False)` | Server-side ETL for one registered provider; enumerate, normalize to `TaskBrief`, and index. Incremental via a per-(type, board) watermark; O(1) tokens. |
 | `get_board_targets` | `(board_type=None, project=None, provider_options=None)` | Discover normalized targets and non-secret options for a registered provider. |
 | `create_task` | `(title, problem="", steps=None, criteria=None, context=None, board_type=None, project=None, target=None, provider_options=None)` | Create a canonical task, resolve a generic target, and write through to the index. |
-| `finish_task` | `(key, pr_url, note=None, mark_done=True, board_type=None, target=None, provider_options=None)` | Idempotently link a PR, optionally set a generic done target, and write through. |
+| `finish_task` | `(key, pr_url, note=None, mark_done=True, board_type=None, target=None, provider_options=None)` | Idempotently link a PR, optionally set a generic done target, prepend a clickable task link to the PR body, and write through. |
 | `index_task` | `(task: dict)` | Index one normalized `TaskBrief` into the task graph + vector store (idempotent). |
 | `index_tasks_batch` | `(tasks: list[dict])` | Same for a list, in one Voyage call. |
 | `search_tasks` | `(query, top_k=5, project=None)` | Semantically similar tasks from the indexed corpus. |

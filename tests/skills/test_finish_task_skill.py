@@ -54,3 +54,9 @@ def test_finish_task_uses_only_generic_board_metadata():
         assert token in text
     for forbidden in ("yougile", "youtrack", "done_column", "done_state", "status_field", "api_key"):
         assert forbidden not in text
+
+
+def test_finish_task_mentions_pr_backlink():
+    t = SKILL.read_text(encoding="utf-8")
+    assert "task_link_added" in t     # отчёт озвучивает результат обратного линка
+    assert "PR body" in t             # offer предупреждает о правке тела PR
