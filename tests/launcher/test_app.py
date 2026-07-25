@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import subprocess
 import sys
 import threading
@@ -8,13 +9,18 @@ from io import StringIO
 
 import click
 
+import reviewer.launcher.app as launcher_app
 from reviewer.entrypoints.cli import cli
-from reviewer.launcher.app import run_launcher
+from reviewer.launcher.app import _LauncherUI, _bindings, run_launcher
 from reviewer.launcher.catalog import build_catalog
+from reviewer.launcher.controller import LauncherController, Screen
 from reviewer.launcher.models import CommandSpec, LauncherResult, ParameterSpec, ParamSection
 from reviewer.versioning import InstallMode, InstallationInfo, VersionCheck
 
-from prompt_toolkit.input import create_pipe_input
+from prompt_toolkit.application import Application, get_app
+from prompt_toolkit.data_structures import Size
+from prompt_toolkit.input import DummyInput, create_pipe_input
+from prompt_toolkit.layout import Layout
 from prompt_toolkit.output import DummyOutput
 from prompt_toolkit.output.plain_text import PlainTextOutput
 
@@ -166,6 +172,56 @@ class _TrackingOutput(PlainTextOutput):
     def erase_down(self) -> None:
         self._frame = ""
         super().erase_down()
+
+
+class _SmallTerminalOutput(_TrackingOutput):
+    def __init__(self) -> None:
+        super().__init__()
+        self.frames: list[str] = []
+        self.focused_frames: dict[str, str] = {}
+        self.client_focused = threading.Event()
+        self.path_focused = threading.Event()
+        self.pin_focused = threading.Event()
+        self.dry_run_focused = threading.Event()
+        self.dry_run_toggled = threading.Event()
+
+    def get_size(self) -> Size:
+        return Size(rows=24, columns=80)
+
+    def flush(self) -> None:
+        super().flush()
+        screen = get_app().renderer.last_rendered_screen
+        if screen is None:
+            return
+        size = self.get_size()
+        frame = "\n".join(
+            "".join(screen.data_buffer[row][column].char for column in range(size.columns))
+            for row in range(size.rows)
+        )
+        self.frames.append(frame)
+        write_position = screen.visible_windows_to_write_positions.get(
+            get_app().layout.current_window
+        )
+        if write_position is None:
+            return
+        focused_text = "\n".join(
+            frame.splitlines()[
+                max(0, write_position.ypos) : max(0, write_position.ypos + write_position.height)
+            ]
+        )
+        focused = (
+            ("client", "CLIENT:", self.client_focused),
+            ("path", "--path:", self.path_focused),
+            ("pin", "--pin:", self.pin_focused),
+            ("dry_run", "--dry-run", self.dry_run_focused),
+        )
+        for name, marker, event in focused:
+            if marker in focused_text:
+                self.focused_frames[name] = frame
+                event.set()
+        if "[✓] --dry-run" in focused_text:
+            self.focused_frames["dry_run_toggled"] = frame
+            self.dry_run_toggled.set()
 
 
 def test_escape_from_palette_returns_clean_cancel():
@@ -335,11 +391,98 @@ def test_details_render_click_help_and_choices():
     assert "internal_mode" not in rendered
 
 
+def test_advanced_install_fields_scroll_in_24_by_80_terminal():
+    output = _SmallTerminalOutput()
+
+    def sender(pipe) -> None:
+        try:
+            if not output.client_focused.wait(2):
+                return
+            pipe.send_bytes(b"\t\t\t")
+            if not output.path_focused.wait(2):
+                return
+            pipe.send_bytes(b"\t")
+            if not output.pin_focused.wait(2):
+                return
+            pipe.send_bytes(b"\t\t\t")
+            if not output.dry_run_focused.wait(2):
+                return
+            pipe.send_bytes(b"\r")
+            output.dry_run_toggled.wait(2)
+        finally:
+            pipe.send_bytes(b"\x03")
+
+    with create_pipe_input() as pipe:
+        thread = threading.Thread(target=sender, args=(pipe,))
+        thread.start()
+        pipe.send_bytes(b"\r\x1bOQ")
+        result = run_launcher(
+            commands=(_spec("install"),),
+            input=pipe,
+            output=output,
+        )
+        thread.join()
+
+    rendered = "\n".join(output.frames)
+    assert result == LauncherResult(None, 130)
+    assert "Window too small" not in rendered
+    assert output.path_focused.is_set(), rendered
+    assert output.pin_focused.is_set(), rendered
+    assert output.dry_run_focused.is_set(), rendered
+    assert output.dry_run_toggled.is_set(), rendered
+    for name in ("path", "pin", "dry_run", "dry_run_toggled"):
+        assert "Расширенные параметры: показаны" in output.focused_frames[name]
+
+
+def test_advanced_install_has_compact_fallback_without_scrollable_pane(monkeypatch):
+    monkeypatch.setattr(launcher_app, "_ScrollablePane", None)
+    controller = LauncherController((_spec("install"),))
+    controller.open_selected()
+    controller.toggle_advanced()
+    ui = _LauncherUI(
+        controller,
+        installation_detector=lambda: None,
+        version_checker=lambda installation, timeout: None,
+    )
+    ui._build_form()
+    output = _SmallTerminalOutput()
+
+    with create_pipe_input() as pipe:
+        pipe.send_bytes(b"\t\t\t\t\t\t\t\x03")
+        application: Application[LauncherResult] = Application(
+            layout=Layout(ui._details(), focused_element=ui.form_widgets[0]),
+            key_bindings=_bindings(ui),
+            full_screen=True,
+            input=pipe,
+            output=output,
+        )
+        result = application.run()
+
+    rendered = "\n".join(output.frames)
+    assert result == LauncherResult(None, 130)
+    assert "Window too small" not in rendered
+    assert "--path:" in rendered
+    assert "--pin:" in rendered
+    assert "--dry-run" in rendered
+    assert "Расширенные параметры: показаны" in rendered
+
+
 def test_prompt_toolkit_is_not_imported_by_models_or_catalog():
     code = (
         "import sys; "
         "import reviewer.launcher.models, reviewer.launcher.catalog; "
         "assert 'prompt_toolkit' not in sys.modules"
+    )
+
+    subprocess.run([sys.executable, "-c", code], check=True)
+
+
+def test_app_imports_with_early_prompt_toolkit_exports():
+    code = (
+        "import prompt_toolkit.key_binding, prompt_toolkit.layout; "
+        "del prompt_toolkit.key_binding.KeyPressEvent; "
+        "del prompt_toolkit.layout.ScrollablePane; "
+        "import reviewer.launcher.app"
     )
 
     subprocess.run([sys.executable, "-c", code], check=True)
@@ -428,6 +571,106 @@ def test_update_check_renders_progress_while_executor_is_running():
 
     assert result == LauncherResult(None, 130)
     assert output.progress_rendered.is_set(), output.stream.getvalue()
+
+
+def test_ctrl_c_returns_while_update_checker_is_still_blocked():
+    checker_started = threading.Event()
+    checker_completed = threading.Event()
+    release_checker = threading.Event()
+    launcher_finished = threading.Event()
+    info = InstallationInfo(InstallMode.UV_TOOL, "0.4.0", "/usr/bin/uv")
+    output = _TrackingOutput()
+    results: list[LauncherResult] = []
+    failures: list[BaseException] = []
+    workers: list[threading.Thread] = []
+
+    def checker(installation: InstallationInfo, *, timeout: int) -> VersionCheck:
+        workers.append(threading.current_thread())
+        checker_started.set()
+        release_checker.wait()
+        checker_completed.set()
+        return VersionCheck(installation, "0.5.0", True)
+
+    with create_pipe_input() as pipe:
+
+        def launch() -> None:
+            try:
+                results.append(
+                    run_launcher(
+                        commands=(_spec("update"),),
+                        input=pipe,
+                        output=output,
+                        installation_detector=lambda: info,
+                        version_checker=checker,
+                    )
+                )
+            except BaseException as error:
+                failures.append(error)
+            finally:
+                launcher_finished.set()
+
+        thread = threading.Thread(target=launch)
+        thread.start()
+        returned_before_release = False
+        checker_did_complete = False
+        rendered_after_close = ""
+        try:
+            pipe.send_bytes(b"\r\r")
+            assert checker_started.wait(2)
+            pipe.send_bytes(b"\x03")
+            returned_before_release = launcher_finished.wait(2)
+            rendered_after_close = output.stream.getvalue()
+            assert not release_checker.is_set()
+        finally:
+            release_checker.set()
+            checker_did_complete = checker_completed.wait(2)
+            for worker in workers:
+                worker.join(2)
+            thread.join(2)
+
+    assert returned_before_release
+    assert checker_did_complete
+    assert not thread.is_alive()
+    assert len(workers) == 1
+    assert workers[0].daemon
+    assert not workers[0].is_alive()
+    assert failures == []
+    assert results == [LauncherResult(None, 130)]
+    assert output.stream.getvalue() == rendered_after_close
+
+
+def test_done_application_rejects_late_update_result():
+    info = InstallationInfo(InstallMode.UV_TOOL, "0.4.0", "/usr/bin/uv")
+    result = VersionCheck(info, "0.5.0", True)
+    controller = LauncherController((_spec("update"),))
+    controller.screen = Screen.UPDATE_RESULT
+    ui = _LauncherUI(
+        controller,
+        installation_detector=lambda: info,
+        version_checker=lambda installation, timeout: result,
+    )
+    token = object()
+    ui.checking_update = True
+    ui._active_update_token = token
+    ui._visible_update_token = token
+    application: Application[LauncherResult] = Application(
+        input=DummyInput(),
+        output=DummyOutput(),
+    )
+    loop = asyncio.new_event_loop()
+    application.future = loop.create_future()
+    application.future.set_result(LauncherResult(None, 130))
+    try:
+        ui._finish_update_check(token, application, result, None)
+    finally:
+        application.future = None
+        loop.close()
+
+    assert ui.version_check is None
+    assert ui.update_error is None
+    assert ui.checking_update is True
+    assert ui._active_update_token is token
+    assert ui._visible_update_token is token
 
 
 def test_late_update_completion_does_not_take_over_another_command():

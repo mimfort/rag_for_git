@@ -4,18 +4,29 @@ from __future__ import annotations
 
 import asyncio
 import shlex
+import threading
 from collections.abc import Callable
 from functools import partial
 
 from prompt_toolkit.application import Application
 from prompt_toolkit.formatted_text import StyleAndTextTuples
 from prompt_toolkit.input import Input
-from prompt_toolkit.key_binding import KeyBindings, KeyPressEvent
+from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.layout import Dimension, Layout
 from prompt_toolkit.layout.containers import AnyContainer, DynamicContainer, HSplit, Window
 from prompt_toolkit.layout.controls import FormattedTextControl
 from prompt_toolkit.output import Output
 from prompt_toolkit.widgets import Button, Label, TextArea
+
+try:
+    from prompt_toolkit.layout import ScrollablePane as _ScrollablePane
+except ImportError:  # pragma: no cover - совместимость с ранними prompt_toolkit 3.0
+    _ScrollablePane = None  # type: ignore[assignment,misc]
+
+try:
+    from prompt_toolkit.key_binding import KeyPressEvent
+except ImportError:  # pragma: no cover - совместимость с prompt_toolkit 3.0.0
+    from prompt_toolkit.key_binding.key_processor import KeyPressEvent
 
 from reviewer.entrypoints.cli import cli
 from reviewer.launcher.catalog import build_catalog
@@ -105,12 +116,14 @@ class _LauncherUI:
         elif self.controller.screen is Screen.UPDATE_RESULT and self._can_update_uv_tool():
             self.controller.result = LauncherResult(("update",), 0)
         if self.controller.result is not None:
+            self.close()
             event.app.exit(result=self.controller.result)
 
     def back(self, event: KeyPressEvent) -> None:
         """Вернуться назад, не выполняя выбранную команду."""
         if self.controller.screen is Screen.PALETTE:
             self.controller.cancel()
+            self.close()
             event.app.exit(result=self.controller.result)
             return
         if self.controller.screen is Screen.UPDATE_RESULT:
@@ -125,7 +138,13 @@ class _LauncherUI:
     def cancel(self, event: KeyPressEvent, exit_code: int) -> None:
         """Завершить приложение без argv."""
         self.controller.cancel(exit_code)
+        self.close()
         event.app.exit(result=self.controller.result)
+
+    def close(self) -> None:
+        """Отозвать право фоновой проверки изменять закрывающийся launcher."""
+        self._active_update_token = None
+        self._visible_update_token = None
 
     def toggle_advanced(self, event: KeyPressEvent) -> None:
         """Переключить расширенные поля и перестроить форму."""
@@ -185,26 +204,57 @@ class _LauncherUI:
     def _details(self) -> AnyContainer:
         selected = self.controller.selected
         effects = ", ".join(_EFFECT_LABELS[effect.value] for effect in selected.effects)
-        header = [
-            Label(f"Команда: {' '.join(selected.path)} — {selected.summary}"),
-            Label(selected.details),
-            Label(f"Эффекты: {effects or 'нет'}"),
-        ]
+        header = HSplit(
+            [
+                Label(f"Команда: {' '.join(selected.path)} — {selected.summary}"),
+                Label(selected.details),
+                Label(f"Эффекты: {effects or 'нет'}"),
+            ]
+        )
         if selected.special_action == "check_update":
-            body: list[AnyContainer] = [
-                Label("Enter — явно проверить PyPI · Esc — назад"),
-            ]
+            return HSplit(
+                [
+                    header,
+                    Label("Enter — явно проверить PyPI · Esc — назад"),
+                ],
+                padding=1,
+            )
+        if _ScrollablePane is None:
+            form = self._compact_form()
         else:
-            body = self.form_widgets or [Label("У команды нет параметров.")]
-            advanced = "скрыты" if not self.controller.show_advanced else "показаны"
-            body = [
-                *body,
-                Label(
-                    f"Расширенные параметры: {advanced} (F2) · "
-                    "Tab — следующее поле · Enter — preview"
-                ),
-            ]
-        return HSplit([*header, *body], padding=1)
+            body = HSplit(
+                self.form_widgets or [Label("У команды нет параметров.")],
+                padding=1,
+            )
+            form = _ScrollablePane(body)
+        advanced = "скрыты" if not self.controller.show_advanced else "показаны"
+        footer = Label(
+            f"Расширенные параметры: {advanced} (F2) · Tab — следующее поле · Enter — preview"
+        )
+        return HSplit(
+            [
+                header,
+                form,
+                footer,
+            ],
+            padding=1,
+        )
+
+    def _compact_form(self) -> AnyContainer:
+        """Собрать компактную форму для ранних версий prompt_toolkit."""
+        if not self.form_widgets:
+            return Label("У команды нет параметров.")
+        rows: list[AnyContainer] = []
+        for parameter in self.controller.visible_parameters:
+            rows.append(self.parameter_widgets[parameter.name])
+            rows.append(Label(partial(self._compact_parameter_text, parameter)))
+        return HSplit(rows)
+
+    def _compact_parameter_text(self, parameter: ParameterSpec) -> str:
+        """Объединить подсказку и ошибку в одну строку компактной формы."""
+        return " · ".join(
+            text for text in (self._parameter_hint(parameter), self._error_text(parameter)) if text
+        )
 
     def _preview(self) -> AnyContainer:
         preview = self.controller.prepared.preview if self.controller.prepared else ""
@@ -367,27 +417,53 @@ class _LauncherUI:
         self.controller.screen = Screen.UPDATE_RESULT
         event.app.invalidate()
 
-        async def check_in_executor() -> None:
+        loop = asyncio.get_running_loop()
+        application = event.app
+
+        def check_in_worker() -> None:
             try:
-                loop = asyncio.get_running_loop()
-                result = await loop.run_in_executor(None, self._check_update)
+                result = self._check_update()
             except Exception as error:
                 result = None
                 update_error = str(error)
             else:
                 update_error = None
-            if self._active_update_token is token:
-                self.version_check = result
-                self.update_error = update_error
-                self.checking_update = False
-                self._active_update_token = None
-                owns_view = self._visible_update_token is token
-                self._visible_update_token = None
-                if owns_view and self.controller.result is None:
-                    self.controller.screen = Screen.UPDATE_RESULT
-                    event.app.invalidate()
+            try:
+                loop.call_soon_threadsafe(
+                    self._finish_update_check,
+                    token,
+                    application,
+                    result,
+                    update_error,
+                )
+            except RuntimeError:
+                return
 
-        event.app.create_background_task(check_in_executor())
+        threading.Thread(
+            target=check_in_worker,
+            name="reviewer-update-check",
+            daemon=True,
+        ).start()
+
+    def _finish_update_check(
+        self,
+        token: object,
+        application: Application[LauncherResult],
+        result: VersionCheck | None,
+        update_error: str | None,
+    ) -> None:
+        """Принять результат проверки, пока launcher всё ещё владеет запросом."""
+        if self._active_update_token is not token or application.is_done:
+            return
+        self.version_check = result
+        self.update_error = update_error
+        self.checking_update = False
+        self._active_update_token = None
+        owns_view = self._visible_update_token is token
+        self._visible_update_token = None
+        if owns_view and self.controller.result is None:
+            self.controller.screen = Screen.UPDATE_RESULT
+            application.invalidate()
 
     def _check_update(self) -> VersionCheck:
         installation = self.installation_detector()
@@ -469,5 +545,8 @@ def run_launcher(
         input=input,
         output=output,
     )
-    result = application.run()
+    try:
+        result = application.run()
+    finally:
+        ui.close()
     return result or LauncherResult(None, 0)
