@@ -451,20 +451,59 @@ class MCPReviewService:
             )
         return result
 
-    def _write_through(self, provider: TaskBoardProvider, key: str | None) -> bool:
-        """Best-effort fetch → normalize → index после успешной board write."""
+    def _write_through(self, provider: TaskBoardProvider, key: str | None) -> dict | None:
+        """Best-effort fetch → normalize → index после успешной board write.
+
+        Возвращает нормализованный бриф (нужен вызывающему как источник url
+        задачи для обратного линка в PR) или None, если реиндекс не удался."""
         if not key:
             log.warning("board write-through пропущен: ключ задачи не определён")
-            return False
+            return None
         try:
             raw = provider.fetch_one(key)
             if raw is None:
-                return False
-            self.components.task_service.index_task(provider.normalize(raw))
-            return True
+                return None
+            brief = provider.normalize(raw)
+            self.components.task_service.index_task(brief)
+            return brief
         except Exception:
             log.warning("board write-through реиндекс не удался")
-            return False
+            return None
+
+    def _backlink_pr(self, pr_url: str, key: str, task_url: str) -> tuple[bool, list[str]]:
+        """Дописать ссылку на задачу в начало тела PR. Возвращает (added, warnings).
+
+        Обратная сторона связи: finish пишет PR-ссылку в задачу, здесь — ссылку
+        на задачу в PR. Полностью fail-soft: доска к этому моменту уже записана,
+        поэтому ни одна ошибка правки PR не отменяет успех finish_task."""
+        from reviewer.tasks.pr_backlink import apply_backlink, parse_pr_url
+        if not task_url:
+            return False, ["ссылка на задачу не добавлена в PR: url задачи не резолвится "
+                           "(task_board.url_template не задан)"]
+        target = parse_pr_url(pr_url)
+        if target is None:
+            return False, ["ссылка на задачу не добавлена в PR: "
+                           f"{pr_url!r} не распознан как ссылка на PR/MR"]
+        vcs = None
+        try:
+            vcs = (self._vcs_factory(target.owner, target.repo) if self._vcs_factory
+                   else self._review_service._create_vcs_provider(
+                       target.owner, target.repo,
+                       platform=target.platform, base_url=target.base_url))
+            body = apply_backlink(vcs.get_pull_request(target.number).body, key, task_url)
+            if body is None:
+                return False, []       # ссылка уже на месте — идемпотентный no-op
+            vcs.update_pull_request_body(target.number, body)
+            return True, []
+        except Exception as exc:
+            log.warning("бэклинк задачи в PR не удался", exc_info=True)
+            return False, [f"ссылка на задачу не добавлена в PR: {exc}"]
+        finally:
+            if vcs is not None and self._vcs_factory is None:
+                try:
+                    vcs.close()
+                except Exception:
+                    log.warning("не удалось закрыть VCS после бэклинка", exc_info=True)
 
     def sync_board(
         self,
@@ -570,13 +609,17 @@ class MCPReviewService:
                     mark_done=mark_done,
                     target=target,
                 )
-                reindexed = self._write_through(resolved.provider, key)
+                brief = self._write_through(resolved.provider, key)
+                link_added, link_warnings = self._backlink_pr(
+                    pr_url, key, (brief or {}).get("url") or "")
                 result.setdefault("warnings", []).extend(migration_warnings)
+                result["warnings"].extend(link_warnings)
                 return self._safe_board_payload(
                     {
                         "status": "ok",
                         "board_type": resolved.board_type,
-                        "reindexed": reindexed,
+                        "reindexed": brief is not None,
+                        "task_link_added": link_added,
                         **result,
                     },
                     resolved.secrets,
@@ -628,7 +671,7 @@ class MCPReviewService:
                     target=target,
                     project=project,
                 )
-                reindexed = self._write_through(resolved.provider, result.get("key"))
+                reindexed = self._write_through(resolved.provider, result.get("key")) is not None
                 result.setdefault("warnings", []).extend(migration_warnings)
                 return self._safe_board_payload(
                     {
