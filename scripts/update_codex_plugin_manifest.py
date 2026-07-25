@@ -15,6 +15,17 @@ def main() -> int:
     if errors:
         for error in errors:
             print(error)
+        if args.check:
+            # Манифесты плагина — сгенерированный артефакт, но лежат в git: их
+            # читает marketplace прямо из репозитория. Значит версию pyproject
+            # они не наследуют автоматически, и после бампа их надо пересобрать.
+            print(
+                "\nМанифесты плагина рассинхронизированы с pyproject. Почини так:\n"
+                "  python scripts/update_codex_plugin_manifest.py\n"
+                "  git add .codex-plugin plugin/.codex-plugin plugin/.claude-plugin "
+                "plugin/assets\n"
+                "и закоммить результат."
+            )
         return 1
     if not args.check:
         print("Codex plugin manifests synchronized")
