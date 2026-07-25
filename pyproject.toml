@@ -73,7 +73,7 @@ Issues = "https://github.com/mimfort/rag_for_git/issues"
 PyPI = "https://pypi.org/project/rag-reviewer/"
 
 [project.scripts]
-reviewer = "reviewer.entrypoints.cli:cli"
+reviewer = "reviewer.entrypoints.launcher:main"
 reviewer-mcp = "reviewer.entrypoints.mcp_server:main"
 
 [tool.pytest.ini_options]
