@@ -52,7 +52,7 @@ def _resolved_path(value: str | Path | None) -> Path | None:
         return None
     try:
         return Path(value).expanduser().resolve(strict=False)
-    except (OSError, RuntimeError):
+    except (OSError, RuntimeError, TypeError, ValueError):
         return None
 
 
@@ -125,7 +125,13 @@ def detect_installation(
 
     if getattr(tool_dir_result, "returncode", 1) != 0:
         return InstallationInfo(InstallMode.UVX, current, uv)
-    tool_dir = _resolved_path(getattr(tool_dir_result, "stdout", "").strip())
+    tool_dir_text = getattr(tool_dir_result, "stdout", "")
+    if not isinstance(tool_dir_text, str):
+        return InstallationInfo(InstallMode.UVX, current, uv)
+    tool_dir_text = tool_dir_text.strip()
+    if not tool_dir_text:
+        return InstallationInfo(InstallMode.UVX, current, uv)
+    tool_dir = _resolved_path(tool_dir_text)
     if tool_dir is None:
         return InstallationInfo(InstallMode.UVX, current, uv)
     tool_environment = _resolved_path(tool_dir / "rag-reviewer")

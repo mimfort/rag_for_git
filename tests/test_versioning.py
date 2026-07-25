@@ -181,6 +181,37 @@ def test_falls_back_to_uvx_when_uv_tool_dir_returns_error(tmp_path):
     assert run.call_args.kwargs["timeout"] == 5
 
 
+def test_falls_back_to_uvx_when_uv_tool_dir_returns_blank_path(monkeypatch, tmp_path):
+    tool_environment = tmp_path / "rag-reviewer"
+    tool_environment.mkdir()
+    monkeypatch.chdir(tmp_path)
+    run = Mock(return_value=SimpleNamespace(returncode=0, stdout=" \n"))
+
+    info = detect_installation(
+        distribution=_Distribution(editable=False),
+        which=lambda name: str(tmp_path / "bin" / "uv"),
+        run=run,
+        current_prefix=tool_environment,
+        distribution_location=tool_environment / "site-packages",
+    )
+
+    assert info.mode is InstallMode.UVX
+
+
+def test_falls_back_to_uvx_when_uv_tool_dir_returns_path_with_nul(tmp_path):
+    run = Mock(return_value=SimpleNamespace(returncode=0, stdout="\0\n"))
+
+    info = detect_installation(
+        distribution=_Distribution(editable=False),
+        which=lambda name: str(tmp_path / "bin" / "uv"),
+        run=run,
+        current_prefix=tmp_path / "uvx",
+        distribution_location=tmp_path / "uvx" / "site-packages",
+    )
+
+    assert info.mode is InstallMode.UVX
+
+
 @pytest.mark.parametrize(
     ("latest", "update_available"),
     [("0.4.0", False), ("0.4.1", True), ("0.5.0", True)],
