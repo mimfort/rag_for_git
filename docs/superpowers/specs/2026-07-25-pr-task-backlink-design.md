@@ -55,8 +55,17 @@ finish_task(key, pr_url, …)
 `reviewer/tasks/pr_links.py`.
 
 ```python
-def parse_pr_url(url: str) -> tuple[str, str, str, int] | None:
-    """(platform, owner, repo, number) или None, если ссылка не распознана."""
+@dataclass(frozen=True)
+class PRTarget:
+    platform: str    # "github" | "gitlab"
+    owner: str       # для GitLab — путь группы любой глубины
+    repo: str
+    number: int
+    base_url: str    # схема+хост из ссылки; "" для github (API захардкожен)
+
+
+def parse_pr_url(url: str) -> PRTarget | None:
+    """PRTarget или None, если ссылка не распознана."""
 
 def apply_backlink(body: str, key: str, task_url: str) -> str | None:
     """Новое тело PR или None, если писать не надо (ссылка уже есть)."""
