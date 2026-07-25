@@ -507,6 +507,13 @@ reviewer-mcp, а не дублируется в `.review.yml` каждого р�
 | `YOUGILE_API_KEY` / `YOUGILE_API_BASE` | `""` | Креды зарегистрированного провайдера; base имеет provider default. |
 | `YOUTRACK_TOKEN` / `YOUTRACK_BASE_URL` | `""` | Креды зарегистрированного провайдера. |
 | `JIRA_BASE_URL` / `JIRA_EMAIL` / `JIRA_API_TOKEN` | `""` | Jira Cloud direct-site креды; API-токен без scopes. |
+| `GITHUB_ISSUES_TOKEN` / `GITHUB_ISSUES_API_BASE` | `""` | Креды GitHub Issues; `GITHUB_TOKEN` ревью PR намеренно не алиас — доска включается явно. |
+| `TRELLO_API_KEY` / `TRELLO_API_TOKEN` / `TRELLO_API_BASE` | `""` | Креды Trello; key и token оба секретны — они уходят в query-строке. |
+| `LINEAR_API_KEY` / `LINEAR_API_BASE` | `""` | Personal API key Linear; уходит без префикса `Bearer`. |
+| `CLICKUP_API_TOKEN` / `CLICKUP_API_BASE` | `""` | Personal token ClickUp (`pk_…`); уходит без префикса `Bearer`. |
+| `ASANA_ACCESS_TOKEN` / `ASANA_API_BASE` | `""` | Personal access token Asana. |
+| `YANDEX_TRACKER_TOKEN` / `YANDEX_TRACKER_API_BASE` / `YANDEX_TRACKER_ORG_ID` / `YANDEX_TRACKER_CLOUD_ORG_ID` / `YANDEX_TRACKER_AUTH_SCHEME` | `""` | Креды Yandex Tracker; ровно один ID организации, схема `OAuth` (дефолт) или `Bearer` для IAM-токена Cloud. |
+| `KAITEN_BASE_URL` / `KAITEN_API_TOKEN` | `""` | Адрес компании Kaiten (`https://<company>.kaiten.ru`) и постоянный API-ключ. |
 | `TASK_BOARD_MCP` | `""` | Legacy metadata for older clients; current generic skills его не используют. |
 | `TASK_BOARD_KEY_PATTERN` | `""` | Регэксп ключа задачи, напр. `[A-Z]+-\d+`. |
 | `TASK_BOARD_URL_TEMPLATE` | `""` | Опциональный шаблон ссылки на задачу. |
@@ -518,6 +525,12 @@ reviewer-mcp, а не дублируется в `.review.yml` каждого р�
 клиента, логах или коммитах. Справочник провайдеров описывает безопасное получение, project-aware
 validation через `reviewer check --board-project TYPE=PROJECT` и rotation для всех текущих
 провайдеров.
+
+В реестре одиннадцать типов провайдеров. Новые адаптеры используют общий транспортный слой —
+`RestBoardBase`, генераторы пагинации, GraphQL-клиент и конвертер YFM — вместо собственных retry и
+категоризации ошибок, и ни один из них не использует OAuth loopback, поэтому настройка работает в
+headless-CLI и по SSH. Что поддерживает каждая доска — в
+[матрице возможностей](docs/board-providers.md#capability-matrix).
 
 ---
 

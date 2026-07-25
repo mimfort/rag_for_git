@@ -295,6 +295,50 @@ def test_default_registry_builds_and_validates_every_registered_provider():
             provider.close()
 
 
+def test_every_registered_spec_rejects_a_secret_smuggled_through_options():
+    """`_contains_secret` проверяется на каждой зарегистрированной spec, не только на фейковой."""
+    registry = default_board_registry()
+    checked = []
+
+    for board_type in registry.registered_types():
+        spec = registry.get(board_type)
+        secret_fields = [field for field in spec.credential_fields if field.secret]
+        if not spec.option_fields or not secret_fields:
+            continue
+        secret = f"server-secret-for-{board_type}"
+        credentials = {
+            field.env: (
+                secret
+                if field.secret
+                else (
+                    CREDENTIAL_OVERRIDES.get(field.env)
+                    or (_dummy_credential(field.env) if field.required else field.default)
+                )
+            )
+            for field in spec.credential_fields
+        }
+        option_key = spec.option_fields[0].key
+
+        with pytest.raises(ValueError, match="secret value") as exc_info:
+            registry.create(
+                board_type,
+                credentials=credentials,
+                options={option_key: secret},
+                build_defaults=BUILD_DEFAULTS,
+            )
+        assert secret not in str(exc_info.value), board_type
+        checked.append(board_type)
+
+    # Типы без опций или без секретных полей проверять нечем; остальные обязаны быть покрыты.
+    expected = [
+        board_type
+        for board_type in registry.registered_types()
+        if registry.get(board_type).option_fields
+        and any(field.secret for field in registry.get(board_type).credential_fields)
+    ]
+    assert checked == expected
+
+
 def test_default_registry_exposes_jira_credential_schema_and_builds_provider():
     registry = default_board_registry()
 
