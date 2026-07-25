@@ -573,6 +573,7 @@ reviewer-mcp env rather than duplicated in each repo's `.review.yml`. See
 | `ASANA_ACCESS_TOKEN` / `ASANA_API_BASE` | `""` | Asana personal access token. |
 | `YANDEX_TRACKER_TOKEN` / `YANDEX_TRACKER_API_BASE` / `YANDEX_TRACKER_ORG_ID` / `YANDEX_TRACKER_CLOUD_ORG_ID` / `YANDEX_TRACKER_AUTH_SCHEME` | `""` | Yandex Tracker credentials; exactly one organization id, `OAuth` (default) or `Bearer` for a Cloud IAM token. |
 | `KAITEN_BASE_URL` / `KAITEN_API_TOKEN` | `""` | Kaiten company address (`https://<company>.kaiten.ru`) and permanent API key. |
+| `WEEEK_API_TOKEN` / `WEEEK_API_BASE` | `""` | Weeek workspace access token; requests act as the token's creator. |
 | `TASK_BOARD_MCP` | `""` | Legacy metadata for older clients; current generic skills do not use it. |
 | `TASK_BOARD_KEY_PATTERN` | `""` | Task-key regex, e.g. `[A-Z]+-\d+`. |
 | `TASK_BOARD_URL_TEMPLATE` | `""` | Optional task-link template. |

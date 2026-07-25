@@ -20,6 +20,7 @@ One row per registered provider; every row must fill all nine capability columns
 | Asana | ✓ | HTML↔MD | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Yandex Tracker | ✓ | YFM→MD | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Kaiten | ✓ | Native MD | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Weeek | ✓ | HTML↔MD | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 
 All adapters implement validation, full pagination, normalized reads, target discovery, create,
 idempotent finish, and write-through reindexing. The registry exposes only configured types whose
@@ -222,6 +223,25 @@ natively. Checklists become acceptance criteria while child cards become subtask
 checklist items are not tasks and would otherwise create dangling task stubs in the graph.
 Attachments hosted on external storage are reported as metadata with a warning instead of being
 fetched with the board credential.
+
+## Weeek
+
+Set `WEEEK_API_TOKEN`, optionally `WEEEK_API_BASE`. Create an access token in the workspace API
+settings as described in the
+[Weeek developer reference](https://developers.weeek.net/#generating-access-token); every request
+acts as the token's creator, so use an account with access to the task project. Required options
+`project_id` and `board_id`; `key_prefix` builds the task key from the numeric id. Descriptions are
+HTML and are converted to markdown on read and back on write. Columns have no "done" type, so
+completion is the task's `isCompleted` flag; moving the task to a done column is an additional
+cosmetic step reported separately. Weeek's public API exposes no "modified since" filter, so a sync
+walks every page and the watermark only saves indexing work. Attachment URLs for files stored in
+Weeek expire after an hour, so the text is extracted during normalization rather than later.
+
+Two behaviours are implemented against unconfirmed documentation and marked `TODO(weeek)` in the
+adapter: the maximum `perPage` value, and whether `PUT /tm/tasks/{id}` accepts `description` — the
+official request body omits it, third-party clients rely on it, and there is no comment endpoint to
+use instead. The PR-link write is fail-soft: a rejection is reported as a warning and the task is
+still closed.
 
 ## Legacy migration
 

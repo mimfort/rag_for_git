@@ -26,6 +26,7 @@ EXPECTED_BOARD_TYPES = (
     "asana",
     "yandex_tracker",
     "kaiten",
+    "weeek",
 )
 
 BUILD_DEFAULTS = {

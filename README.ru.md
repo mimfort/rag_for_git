@@ -514,6 +514,7 @@ reviewer-mcp, а не дублируется в `.review.yml` каждого р�
 | `ASANA_ACCESS_TOKEN` / `ASANA_API_BASE` | `""` | Personal access token Asana. |
 | `YANDEX_TRACKER_TOKEN` / `YANDEX_TRACKER_API_BASE` / `YANDEX_TRACKER_ORG_ID` / `YANDEX_TRACKER_CLOUD_ORG_ID` / `YANDEX_TRACKER_AUTH_SCHEME` | `""` | Креды Yandex Tracker; ровно один ID организации, схема `OAuth` (дефолт) или `Bearer` для IAM-токена Cloud. |
 | `KAITEN_BASE_URL` / `KAITEN_API_TOKEN` | `""` | Адрес компании Kaiten (`https://<company>.kaiten.ru`) и постоянный API-ключ. |
+| `WEEEK_API_TOKEN` / `WEEEK_API_BASE` | `""` | Access token воркспейса Weeek; запросы идут от имени создателя токена. |
 | `TASK_BOARD_MCP` | `""` | Legacy metadata for older clients; current generic skills его не используют. |
 | `TASK_BOARD_KEY_PATTERN` | `""` | Регэксп ключа задачи, напр. `[A-Z]+-\d+`. |
 | `TASK_BOARD_URL_TEMPLATE` | `""` | Опциональный шаблон ссылки на задачу. |

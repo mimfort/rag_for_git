@@ -233,6 +233,7 @@ def default_board_registry() -> BoardProviderRegistry:
     from reviewer.tasks.boards.yandex_tracker import (
         provider_spec as yandex_tracker_provider_spec,
     )
+    from reviewer.tasks.boards.weeek import provider_spec as weeek_provider_spec
     from reviewer.tasks.boards.yougile import provider_spec as yougile_provider_spec
     from reviewer.tasks.boards.youtrack import provider_spec as youtrack_provider_spec
 
@@ -247,4 +248,5 @@ def default_board_registry() -> BoardProviderRegistry:
         asana_provider_spec(),
         yandex_tracker_provider_spec(),
         kaiten_provider_spec(),
+        weeek_provider_spec(),
     ])

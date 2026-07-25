@@ -31,6 +31,7 @@ def _adapters() -> tuple[ProviderAdapter, ...]:
         kaiten,
         linear,
         trello,
+        weeek,
         yandex_tracker,
         yougile,
         youtrack,
@@ -47,6 +48,7 @@ def _adapters() -> tuple[ProviderAdapter, ...]:
         asana.ADAPTER,
         yandex_tracker.ADAPTER,
         kaiten.ADAPTER,
+        weeek.ADAPTER,
     )
 
 
