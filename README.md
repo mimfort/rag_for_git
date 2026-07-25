@@ -566,6 +566,14 @@ reviewer-mcp env rather than duplicated in each repo's `.review.yml`. See
 | `YOUGILE_API_KEY` / `YOUGILE_API_BASE` | `""` | Registered-provider credentials; the base has a provider default. |
 | `YOUTRACK_TOKEN` / `YOUTRACK_BASE_URL` | `""` | Registered-provider credentials. |
 | `JIRA_BASE_URL` / `JIRA_EMAIL` / `JIRA_API_TOKEN` | `""` | Jira Cloud direct-site credentials; API token is unscoped. |
+| `GITHUB_ISSUES_TOKEN` / `GITHUB_ISSUES_API_BASE` | `""` | GitHub Issues credentials; the review pipeline's `GITHUB_TOKEN` is deliberately not an alias, so the board stays opt-in. |
+| `TRELLO_API_KEY` / `TRELLO_API_TOKEN` / `TRELLO_API_BASE` | `""` | Trello credentials; key and token are both secret because they travel in the query string. |
+| `LINEAR_API_KEY` / `LINEAR_API_BASE` | `""` | Linear personal API key, sent without a `Bearer` prefix. |
+| `CLICKUP_API_TOKEN` / `CLICKUP_API_BASE` | `""` | ClickUp personal token (`pk_…`), sent without a `Bearer` prefix. |
+| `ASANA_ACCESS_TOKEN` / `ASANA_API_BASE` | `""` | Asana personal access token. |
+| `YANDEX_TRACKER_TOKEN` / `YANDEX_TRACKER_API_BASE` / `YANDEX_TRACKER_ORG_ID` / `YANDEX_TRACKER_CLOUD_ORG_ID` / `YANDEX_TRACKER_AUTH_SCHEME` | `""` | Yandex Tracker credentials; exactly one organization id, `OAuth` (default) or `Bearer` for a Cloud IAM token. |
+| `KAITEN_BASE_URL` / `KAITEN_API_TOKEN` | `""` | Kaiten company address (`https://<company>.kaiten.ru`) and permanent API key. |
+| `WEEEK_API_TOKEN` / `WEEEK_API_BASE` | `""` | Weeek workspace access token; requests act as the token's creator. |
 | `TASK_BOARD_MCP` | `""` | Legacy metadata for older clients; current generic skills do not use it. |
 | `TASK_BOARD_KEY_PATTERN` | `""` | Task-key regex, e.g. `[A-Z]+-\d+`. |
 | `TASK_BOARD_URL_TEMPLATE` | `""` | Optional task-link template. |
@@ -577,6 +585,12 @@ Keep credentials only in the reviewer-mcp environment or a secret manager — ne
 MCP client configuration, logs, or commits. The provider reference covers safe acquisition,
 project-aware validation with `reviewer check --board-project TYPE=PROJECT`, and rotation for every
 current provider.
+
+The registry ships eleven provider types. New adapters share one transport layer — `RestBoardBase`,
+the pagination generators, a GraphQL client and the YFM converter — instead of re-implementing HTTP
+retries and error categorisation, and none of them uses an OAuth loopback flow, so setup works in a
+headless CLI or over SSH. See the
+[capability matrix](docs/board-providers.md#capability-matrix) for what each board supports.
 
 ---
 

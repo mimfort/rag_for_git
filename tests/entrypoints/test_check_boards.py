@@ -326,6 +326,27 @@ def test_check_rejects_project_for_unconfigured_provider(capsys) -> None:
     assert "typo" in capsys.readouterr().out
 
 
+def test_check_accepts_board_project_for_every_registered_type(capsys) -> None:
+    """`--board-project TYPE=PROJECT` работает для каждого зарегистрированного типа."""
+    from reviewer.tasks.boards.registry import default_board_registry
+
+    registry = default_board_registry()
+
+    for board_type in registry.registered_types():
+        failed = _check_board_providers(
+            _settings(),
+            registry=registry,
+            credential_source=ProviderCredentialSource(values={}),
+            board_projects={board_type: "PRI"},
+        )
+
+        # Провайдер без кредов не собирается вовсе, но тип распознан и назван в отчёте.
+        assert failed is True, board_type
+        out = capsys.readouterr().out
+        assert board_type in out, board_type
+        assert "не настроен" in out, board_type
+
+
 def test_check_help_documents_repeatable_board_project_option() -> None:
     result = CliRunner().invoke(check, ["--help"])
 

@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import time
-from collections.abc import Callable, Collection
+from collections.abc import Callable, Collection, Mapping
 from email.utils import parsedate_to_datetime
 from typing import Any, Literal
 
@@ -24,6 +24,7 @@ class BoardHttpClient:
         sleeper: Callable[[float], None] = time.sleep,
         clock: Callable[[], float] = time.time,
         secrets: Collection[str] = (),
+        rate_limit_hint: Callable[[int, Mapping[str, str]], float | None] | None = None,
     ) -> None:
         if attempts < 1:
             raise ValueError("attempts must be at least one")
@@ -34,6 +35,7 @@ class BoardHttpClient:
         self._sleep = sleeper
         self._clock = clock
         self._secrets = frozenset(secrets)
+        self._rate_limit_hint = rate_limit_hint
 
     def request_json(
         self,
@@ -77,14 +79,14 @@ class BoardHttpClient:
                         hint="Check the board API endpoint.",
                         secrets=self._secrets,
                     ) from None
-            if (
-                (status == 429 or 500 <= status < 600)
-                and operation == "read"
-                and attempt < self._attempts - 1
-            ):
-                self._sleep(self._wait_for(attempt, response.headers))
+            headers = getattr(response, "headers", None)
+            hinted = self._hinted_wait(status, headers)
+            retryable_status = status == 429 or 500 <= status < 600 or hinted is not None
+            if retryable_status and operation == "read" and attempt < self._attempts - 1:
+                wait = hinted if hinted is not None else self._wait_for(attempt, headers)
+                self._sleep(min(wait, self._max_wait))
                 continue
-            raise self._error_for_status(status, operation)
+            raise self._error_for_status(status, operation, rate_limited=hinted is not None)
         raise AssertionError("unreachable")
 
     def close(self) -> None:
@@ -105,8 +107,28 @@ class BoardHttpClient:
                 wait = self._backoff_base * 2**attempt
         return max(0.0, min(wait, self._max_wait))
 
-    def _error_for_status(self, status: int, operation: str) -> BoardProviderError:
-        if status == 401:
+    def _hinted_wait(self, status: int, headers: Any) -> float | None:
+        """Секунды ожидания из provider-специфичного хука; None — хука нет либо это не rate-limit."""
+        if self._rate_limit_hint is None:
+            return None
+        try:
+            wait = self._rate_limit_hint(status, headers or {})
+        except Exception:
+            return None
+        if wait is None:
+            return None
+        return max(0.0, min(float(wait), self._max_wait))
+
+    def _error_for_status(
+        self,
+        status: int,
+        operation: str,
+        *,
+        rate_limited: bool = False,
+    ) -> BoardProviderError:
+        if rate_limited:
+            category, hint = "rate_limit", "Wait before trying the board again."
+        elif status == 401:
             category, hint = "authentication", "Check the board credentials."
         elif status == 403:
             category, hint = "permission", "Check the board permissions."

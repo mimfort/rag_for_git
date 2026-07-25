@@ -15,6 +15,20 @@ from reviewer.tasks.boards.registry import (
 )
 
 
+EXPECTED_BOARD_TYPES = (
+    "yougile",
+    "youtrack",
+    "jira",
+    "github",
+    "trello",
+    "linear",
+    "clickup",
+    "asana",
+    "yandex_tracker",
+    "kaiten",
+    "weeek",
+)
+
 BUILD_DEFAULTS = {
     "key_pattern": r"[A-Z]+-\\d+",
     "url_template": "https://board.example/{key}",
@@ -227,10 +241,108 @@ def test_registry_creates_provider_with_validated_context():
     assert contexts[0].key_pattern == BUILD_DEFAULTS["key_pattern"]
 
 
-def test_default_registry_registers_jira_only_as_complete_provider():
+# Поля, форма которых строже «просто https-URL»: tenant-origin Jira и ровно один
+# из двух взаимоисключающих org-заголовков Yandex Tracker.
+CREDENTIAL_OVERRIDES = {
+    "JIRA_BASE_URL": "https://acme.atlassian.net",
+    "YANDEX_TRACKER_ORG_ID": "org-42",
+}
+
+
+def _dummy_credential(env: str) -> str:
+    """Синтетическое значение credential нужной формы: URL, email или произвольный секрет."""
+    if env in CREDENTIAL_OVERRIDES:
+        return CREDENTIAL_OVERRIDES[env]
+    if env.endswith(("_BASE", "_URL")) or "BASE_URL" in env:
+        return "https://board.example.test"
+    if "EMAIL" in env:
+        return "bot@example.test"
+    return "dummy-credential-value"
+
+
+def test_default_registry_registers_every_complete_provider_in_order():
     registry = default_board_registry()
 
-    assert registry.registered_types() == ("yougile", "youtrack", "jira")
+    assert registry.registered_types() == EXPECTED_BOARD_TYPES
+
+
+def test_default_registry_builds_and_validates_every_registered_provider():
+    """Каждый зарегистрированный тип проходит `_validate_runtime_provider` при создании."""
+    registry = default_board_registry()
+
+    for board_type in registry.registered_types():
+        spec = registry.get(board_type)
+        # Как и `ProviderCredentialSource`, реестру передаются все объявленные поля:
+        # обязательные — синтетическим значением, необязательные — своим дефолтом.
+        credentials = {
+            field.env: (
+                CREDENTIAL_OVERRIDES[field.env]
+                if field.env in CREDENTIAL_OVERRIDES
+                else (_dummy_credential(field.env) if field.required else field.default)
+            )
+            for field in spec.credential_fields
+        }
+        provider = registry.create(
+            board_type,
+            credentials=credentials,
+            options={},
+            build_defaults=BUILD_DEFAULTS,
+        )
+        try:
+            assert provider.board_type == board_type
+            assert spec.setup.label
+            assert spec.create_target_label and spec.done_target_label
+        finally:
+            provider.close()
+
+
+def test_every_registered_spec_rejects_a_secret_smuggled_through_options():
+    """`_contains_secret` проверяется на каждой зарегистрированной spec, не только на фейковой."""
+    registry = default_board_registry()
+    checked = []
+
+    for board_type in registry.registered_types():
+        spec = registry.get(board_type)
+        secret_fields = [field for field in spec.credential_fields if field.secret]
+        if not spec.option_fields or not secret_fields:
+            continue
+        secret = f"server-secret-for-{board_type}"
+        credentials = {
+            field.env: (
+                secret
+                if field.secret
+                else (
+                    CREDENTIAL_OVERRIDES.get(field.env)
+                    or (_dummy_credential(field.env) if field.required else field.default)
+                )
+            )
+            for field in spec.credential_fields
+        }
+        option_key = spec.option_fields[0].key
+
+        with pytest.raises(ValueError, match="secret value") as exc_info:
+            registry.create(
+                board_type,
+                credentials=credentials,
+                options={option_key: secret},
+                build_defaults=BUILD_DEFAULTS,
+            )
+        assert secret not in str(exc_info.value), board_type
+        checked.append(board_type)
+
+    # Типы без опций или без секретных полей проверять нечем; остальные обязаны быть покрыты.
+    expected = [
+        board_type
+        for board_type in registry.registered_types()
+        if registry.get(board_type).option_fields
+        and any(field.secret for field in registry.get(board_type).credential_fields)
+    ]
+    assert checked == expected
+
+
+def test_default_registry_exposes_jira_credential_schema_and_builds_provider():
+    registry = default_board_registry()
+
     spec = registry.get("jira")
     assert [field.env for field in spec.credential_fields] == [
         "JIRA_BASE_URL",
