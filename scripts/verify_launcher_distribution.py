@@ -4,7 +4,7 @@ import argparse
 import os
 import subprocess
 from collections.abc import Callable, Iterator, Mapping, Sequence
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -28,16 +28,39 @@ def run_command(command: Command) -> None:
     )
 
 
+def _temporary_parent_candidates() -> tuple[Path | None, ...]:
+    candidates: list[Path | None] = [None, _CHECKOUT_ROOT.parent]
+    for variable in ("XDG_RUNTIME_DIR", "LOCALAPPDATA", "APPDATA"):
+        if value := os.environ.get(variable):
+            candidates.append(Path(value))
+    try:
+        candidates.append(Path.home())
+    except RuntimeError:
+        pass
+    return tuple(dict.fromkeys(candidates))
+
+
 @contextmanager
 def _temporary_root() -> Iterator[Path]:
-    for parent in (None, _CHECKOUT_ROOT.parent):
-        with TemporaryDirectory(prefix="reviewer-launcher-", dir=parent) as raw:
+    last_error: OSError | None = None
+    for parent in _temporary_parent_candidates():
+        candidate = ExitStack()
+        try:
+            raw = candidate.enter_context(
+                TemporaryDirectory(prefix="reviewer-launcher-", dir=parent)
+            )
             root = Path(raw).resolve()
-            if root.is_relative_to(_CHECKOUT_ROOT):
-                continue
+        except OSError as error:
+            last_error = error
+            candidate.close()
+            continue
+        if root.is_relative_to(_CHECKOUT_ROOT):
+            candidate.close()
+            continue
+        with candidate:
             yield root
-            return
-    raise RuntimeError("не удалось создать временный каталог вне checkout")
+        return
+    raise RuntimeError("не удалось создать временный каталог вне checkout") from last_error
 
 
 def verify_distribution(

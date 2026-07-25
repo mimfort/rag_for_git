@@ -58,9 +58,16 @@ def test_distribution_check_uses_isolated_uv_dirs_and_outside_checkout(tmp_path)
     assert all(not root.exists() for root in roots)
 
 
-def test_distribution_check_rejects_temp_candidate_inside_checkout(monkeypatch):
+def test_distribution_check_skips_inside_and_unwritable_temp_candidates(
+    tmp_path,
+    monkeypatch,
+):
     created_roots: list[Path] = []
     parent_arguments: list[Path | None] = []
+    unwritable_parent = distribution._CHECKOUT_ROOT.parent
+    safe_parent = tmp_path / "безопасный-temp"
+    safe_parent.mkdir()
+    candidates = (None, unwritable_parent, safe_parent)
 
     with TemporaryDirectory(
         prefix="reviewer-temp-candidate-",
@@ -72,6 +79,8 @@ def test_distribution_check_rejects_temp_candidate_inside_checkout(monkeypatch):
 
         def temporary_directory(*, prefix, dir=None):
             parent_arguments.append(dir)
+            if dir == unwritable_parent:
+                raise PermissionError("первый fallback недоступен")
             parent = Path(raw_inside) if dir is None else Path(dir)
 
             @contextmanager
@@ -82,15 +91,69 @@ def test_distribution_check_rejects_temp_candidate_inside_checkout(monkeypatch):
 
             return managed()
 
+        monkeypatch.setattr(
+            distribution,
+            "_temporary_parent_candidates",
+            lambda: candidates,
+            raising=False,
+        )
         monkeypatch.setattr(distribution, "TemporaryDirectory", temporary_directory)
 
         verify_distribution(wheel_dir, runner=_recording_runner(calls))
 
-        assert parent_arguments == [None, distribution._CHECKOUT_ROOT.parent]
+        assert parent_arguments == list(candidates)
         assert all(
             not call.cwd.resolve().is_relative_to(distribution._CHECKOUT_ROOT)
             for call in calls
         )
+        assert all(not root.exists() for root in created_roots)
+
+
+def test_distribution_check_reports_exhausted_temp_candidates(tmp_path, monkeypatch):
+    created_roots: list[Path] = []
+    parent_arguments: list[Path | None] = []
+    candidates = (
+        None,
+        distribution._CHECKOUT_ROOT.parent,
+        tmp_path / "ещё-один-fallback",
+    )
+
+    with TemporaryDirectory(
+        prefix="reviewer-exhaustion-candidate-",
+        dir=distribution._CHECKOUT_ROOT,
+    ) as raw_inside:
+        wheel_dir = Path(raw_inside) / "dist"
+        _wheel(wheel_dir)
+
+        def temporary_directory(*, prefix, dir=None):
+            parent_arguments.append(dir)
+            if dir is not None:
+                raise PermissionError(f"недоступен parent: {dir}")
+
+            @contextmanager
+            def managed():
+                with TemporaryDirectory(prefix=prefix, dir=raw_inside) as raw:
+                    created_roots.append(Path(raw))
+                    yield raw
+
+            return managed()
+
+        monkeypatch.setattr(
+            distribution,
+            "_temporary_parent_candidates",
+            lambda: candidates,
+            raising=False,
+        )
+        monkeypatch.setattr(distribution, "TemporaryDirectory", temporary_directory)
+
+        with pytest.raises(
+            RuntimeError,
+            match="не удалось создать временный каталог вне checkout",
+        ) as error:
+            verify_distribution(wheel_dir, runner=lambda command: None)
+
+        assert isinstance(error.value.__cause__, PermissionError)
+        assert parent_arguments == list(candidates)
         assert all(not root.exists() for root in created_roots)
 
 
