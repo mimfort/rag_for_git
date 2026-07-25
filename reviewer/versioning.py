@@ -74,8 +74,15 @@ def detect_installation(
 
     is_tool = False
     if uv:
-        tool_list = run([uv, "tool", "list"], capture_output=True, text=True)
-        is_tool = "rag-reviewer" in tool_list.stdout
+        try:
+            tool_list = run([uv, "tool", "list"], capture_output=True, text=True)
+            is_tool = any(
+                line.split(maxsplit=1)[0] == "rag-reviewer"
+                for line in tool_list.stdout.splitlines()
+                if line
+            )
+        except OSError:
+            pass
 
     mode = InstallMode.UV_TOOL if is_tool else InstallMode.UVX
     return InstallationInfo(mode, current, uv)

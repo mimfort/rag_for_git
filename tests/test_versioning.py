@@ -78,12 +78,40 @@ def test_detects_uv_tool_from_read_only_tool_list():
 
 
 def test_detects_uvx_when_tool_is_not_installed():
+    run = Mock(return_value=SimpleNamespace(stdout="another-tool v1.0.0\n- another\n"))
+
     info = detect_installation(
         distribution=_Distribution(editable=False),
-        which=lambda name: None,
+        which=lambda name: "/usr/bin/uv",
+        run=run,
     )
 
-    assert info == InstallationInfo(InstallMode.UVX, "0.4.0", None)
+    assert info == InstallationInfo(InstallMode.UVX, "0.4.0", "/usr/bin/uv")
+
+
+def test_does_not_detect_similarly_named_uv_tool():
+    run = Mock(return_value=SimpleNamespace(stdout="rag-reviewer-extra v1.0.0\n"))
+
+    info = detect_installation(
+        distribution=_Distribution(editable=False),
+        which=lambda name: "/usr/bin/uv",
+        run=run,
+    )
+
+    assert info == InstallationInfo(InstallMode.UVX, "0.4.0", "/usr/bin/uv")
+
+
+def test_falls_back_to_uvx_when_uv_tool_list_fails():
+    def failing_run(*args, **kwargs):
+        raise OSError("uv исчез")
+
+    info = detect_installation(
+        distribution=_Distribution(editable=False),
+        which=lambda name: "/usr/bin/uv",
+        run=failing_run,
+    )
+
+    assert info == InstallationInfo(InstallMode.UVX, "0.4.0", "/usr/bin/uv")
 
 
 @pytest.mark.parametrize(
