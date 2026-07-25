@@ -1,11 +1,13 @@
 import json
 import shutil
 import subprocess
+import sys
 import urllib.request
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import StrEnum
 from importlib import metadata
+from pathlib import Path
 
 
 class InstallMode(StrEnum):
@@ -34,6 +36,9 @@ class UpgradeResult:
     stderr: str
 
 
+_UV_DISCOVERY_TIMEOUT = 5
+
+
 def _version_tuple(version: str) -> tuple[int, ...]:
     try:
         return tuple(int(part) for part in version.split("."))
@@ -41,11 +46,36 @@ def _version_tuple(version: str) -> tuple[int, ...]:
         return (0,)
 
 
+def _resolved_path(value: str | Path | None) -> Path | None:
+    """Нормализовать путь с учётом символических ссылок без требования существования."""
+    if value is None:
+        return None
+    try:
+        return Path(value).expanduser().resolve(strict=False)
+    except (OSError, RuntimeError):
+        return None
+
+
+def _belongs_to_environment(value: str | Path | None, environment: Path) -> bool:
+    """Проверить принадлежность пути окружению по границам компонентов."""
+    path = _resolved_path(value)
+    if path is None:
+        return False
+    try:
+        path.relative_to(environment)
+    except ValueError:
+        return False
+    return True
+
+
 def detect_installation(
     *,
     distribution: object | None = None,
     which: Callable[[str], str | None] = shutil.which,
     run: Callable = subprocess.run,
+    current_prefix: str | Path | None = None,
+    distribution_location: str | Path | None = None,
+    timeout: int = _UV_DISCOVERY_TIMEOUT,
 ) -> InstallationInfo:
     """Определить способ установки без изменения окружения."""
     if distribution is None:
@@ -72,18 +102,40 @@ def detect_installation(
     if editable:
         return InstallationInfo(InstallMode.EDITABLE, current, uv)
 
-    is_tool = False
-    if uv:
-        try:
-            tool_list = run([uv, "tool", "list"], capture_output=True, text=True)
-            if getattr(tool_list, "returncode", 0) == 0:
-                is_tool = any(
-                    line.split(maxsplit=1)[:1] == ["rag-reviewer"]
-                    for line in tool_list.stdout.splitlines()
-                )
-        except OSError:
-            pass
+    if not uv:
+        return InstallationInfo(InstallMode.UVX, current, None)
 
+    if current_prefix is None:
+        current_prefix = sys.prefix
+    if distribution_location is None and dist is not None:
+        try:
+            distribution_location = dist.locate_file("")
+        except Exception:
+            distribution_location = None
+
+    try:
+        tool_dir_result = run(
+            [uv, "tool", "dir"],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return InstallationInfo(InstallMode.UVX, current, uv)
+
+    if getattr(tool_dir_result, "returncode", 1) != 0:
+        return InstallationInfo(InstallMode.UVX, current, uv)
+    tool_dir = _resolved_path(getattr(tool_dir_result, "stdout", "").strip())
+    if tool_dir is None:
+        return InstallationInfo(InstallMode.UVX, current, uv)
+    tool_environment = _resolved_path(tool_dir / "rag-reviewer")
+    if tool_environment is None or not tool_environment.is_dir():
+        return InstallationInfo(InstallMode.UVX, current, uv)
+
+    is_tool = any(
+        _belongs_to_environment(candidate, tool_environment)
+        for candidate in (current_prefix, distribution_location)
+    )
     mode = InstallMode.UV_TOOL if is_tool else InstallMode.UVX
     return InstallationInfo(mode, current, uv)
 
@@ -121,7 +173,5 @@ def upgrade_uv_tool(
     """Обновить установленный через uv tool пакет."""
     if info.uv_executable is None:
         raise RuntimeError("uv не найден в PATH")
-    result = run(
-        [info.uv_executable, "tool", "upgrade", "rag-reviewer"], capture_output=True
-    )
+    result = run([info.uv_executable, "tool", "upgrade", "rag-reviewer"], capture_output=True)
     return UpgradeResult(result.returncode, result.stderr.decode().strip())
