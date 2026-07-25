@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import os
+from contextlib import contextmanager
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 
 import pytest
@@ -28,16 +30,103 @@ def test_distribution_check_uses_isolated_uv_dirs_and_outside_checkout(tmp_path)
     wheel_dir = tmp_path / "dist"
     wheel = _wheel(wheel_dir)
     calls: list[Command] = []
+    roots: list[Path] = []
 
-    verify_distribution(wheel_dir, runner=_recording_runner(calls))
+    def observe(command: Command) -> None:
+        assert command.cwd.exists()
+        roots.append(command.cwd.parent)
+        calls.append(command)
+
+    verify_distribution(wheel_dir, runner=observe)
 
     install = calls[0]
     assert install.argv[:4] == ("uv", "tool", "install", "--force")
     assert install.argv[-1] == str(wheel.resolve())
-    assert install.env["UV_TOOL_DIR"].startswith(str(tmp_path))
-    assert install.env["UV_TOOL_BIN_DIR"].startswith(str(tmp_path))
-    assert all(call.cwd != Path.cwd() for call in calls)
+    assert len(set(roots)) == 1
+    assert all(not call.cwd.resolve().is_relative_to(distribution._CHECKOUT_ROOT) for call in calls)
+    assert {
+        Path(install.env[name]).parent
+        for name in ("UV_TOOL_DIR", "UV_TOOL_BIN_DIR", "UV_CACHE_DIR")
+    } == {roots[0]}
+    assert len(
+        {
+            install.env[name]
+            for name in ("UV_TOOL_DIR", "UV_TOOL_BIN_DIR", "UV_CACHE_DIR")
+        }
+    ) == 3
     assert any(call.argv[:2] == ("uvx", "--from") for call in calls)
+    assert all(not root.exists() for root in roots)
+
+
+def test_distribution_check_rejects_temp_candidate_inside_checkout(monkeypatch):
+    created_roots: list[Path] = []
+    parent_arguments: list[Path | None] = []
+
+    with TemporaryDirectory(
+        prefix="reviewer-temp-candidate-",
+        dir=distribution._CHECKOUT_ROOT,
+    ) as raw_inside:
+        wheel_dir = Path(raw_inside) / "dist"
+        _wheel(wheel_dir)
+        calls: list[Command] = []
+
+        def temporary_directory(*, prefix, dir=None):
+            parent_arguments.append(dir)
+            parent = Path(raw_inside) if dir is None else Path(dir)
+
+            @contextmanager
+            def managed():
+                with TemporaryDirectory(prefix=prefix, dir=parent) as raw:
+                    created_roots.append(Path(raw))
+                    yield raw
+
+            return managed()
+
+        monkeypatch.setattr(distribution, "TemporaryDirectory", temporary_directory)
+
+        verify_distribution(wheel_dir, runner=_recording_runner(calls))
+
+        assert parent_arguments == [None, distribution._CHECKOUT_ROOT.parent]
+        assert all(
+            not call.cwd.resolve().is_relative_to(distribution._CHECKOUT_ROOT)
+            for call in calls
+        )
+        assert all(not root.exists() for root in created_roots)
+
+
+def test_distribution_check_does_not_use_external_wheel_parent_for_temp(
+    tmp_path,
+    monkeypatch,
+):
+    wheel_dir = tmp_path / "недоступный-источник" / "dist"
+    wheel_dir.parent.mkdir()
+    wheel = _wheel(wheel_dir)
+    system_temp = tmp_path / "системный-temp"
+    system_temp.mkdir()
+    created_roots: list[Path] = []
+    parent_arguments: list[Path | None] = []
+    calls: list[Command] = []
+
+    def temporary_directory(*, prefix, dir=None):
+        parent_arguments.append(dir)
+        if dir is not None:
+            raise AssertionError("temp нельзя создавать рядом с external wheel")
+
+        @contextmanager
+        def managed():
+            with TemporaryDirectory(prefix=prefix, dir=system_temp) as raw:
+                created_roots.append(Path(raw))
+                yield raw
+
+        return managed()
+
+    monkeypatch.setattr(distribution, "TemporaryDirectory", temporary_directory)
+
+    verify_distribution(wheel_dir, runner=_recording_runner(calls))
+
+    assert parent_arguments == [None]
+    assert calls[0].argv[-1] == str(wheel.resolve())
+    assert all(not root.exists() for root in created_roots)
 
 
 def test_distribution_check_uses_windows_executable_suffix(tmp_path, monkeypatch):

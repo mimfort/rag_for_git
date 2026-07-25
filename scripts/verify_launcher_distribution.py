@@ -3,7 +3,8 @@ from __future__ import annotations
 import argparse
 import os
 import subprocess
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -27,6 +28,18 @@ def run_command(command: Command) -> None:
     )
 
 
+@contextmanager
+def _temporary_root() -> Iterator[Path]:
+    for parent in (None, _CHECKOUT_ROOT.parent):
+        with TemporaryDirectory(prefix="reviewer-launcher-", dir=parent) as raw:
+            root = Path(raw).resolve()
+            if root.is_relative_to(_CHECKOUT_ROOT):
+                continue
+            yield root
+            return
+    raise RuntimeError("не удалось создать временный каталог вне checkout")
+
+
 def verify_distribution(
     wheel_dir: Path,
     *,
@@ -36,12 +49,8 @@ def verify_distribution(
     if len(wheels) != 1:
         raise RuntimeError(f"ожидался один wheel, найдено: {len(wheels)}")
     wheel = wheels[0]
-    temporary_parent = None
-    if not wheel_dir.resolve().is_relative_to(_CHECKOUT_ROOT):
-        temporary_parent = wheel_dir.resolve().parent
 
-    with TemporaryDirectory(prefix="reviewer-launcher-", dir=temporary_parent) as raw:
-        root = Path(raw)
+    with _temporary_root() as root:
         tool_dir = root / "tools"
         bin_dir = root / "bin"
         outside = root / "outside-checkout"
