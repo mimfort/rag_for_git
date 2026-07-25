@@ -230,10 +230,12 @@ manages its own).
 ### Quick setup (recommended, all platforms)
 
 ```bash
-# 0) Install the reviewer CLI — once, globally
+# 0) Установить reviewer один раз глобально и запустить launcher
 uv tool install rag-reviewer
-# uv and uvx are the same binary; installing uv gives you both.
-# The MCP server launched by your editor uses uvx @latest and self-updates automatically.
+reviewer
+
+# Временный запуск без постоянной установки
+uvx --from rag-reviewer@latest reviewer
 
 # 1) Infrastructure
 curl -O https://raw.githubusercontent.com/mimfort/rag_for_git/main/docker-compose.yml
@@ -256,6 +258,12 @@ reviewer check
 # Update CLI later:
 uv tool upgrade rag-reviewer
 ```
+
+Установка и запуск launcher работают из любого каталога: clone репозитория и переход в checkout
+не нужны. Пустая команда `reviewer` в интерактивном терминале открывает палитру. Команды с
+аргументами (`reviewer check`, `reviewer status --json`), pipe/CI и `reviewer-mcp` сохраняют прямой
+неинтерактивный путь. Launcher обращается к сети для проверки версии только после явного выбора
+действия «Проверить обновление»; прямой эквивалент — `reviewer update`.
 
 > **`reviewer install` is cross-platform** (Windows / macOS / Linux). It injects the
 > absolute path to `uvx` automatically — no `bash -lc` wrapper needed. The manual
@@ -617,9 +625,15 @@ GEMINI.md / .cursorrules — whichever your client uses).
 
 ## CLI reference
 
-All commands run via `uvx --from rag-reviewer <command>`, or after `uv tool install rag-reviewer` /
-`pip install -e ".[dev]"` simply as `reviewer`. Two entry points are installed:
-`reviewer` (the CLI below) and `reviewer-mcp` (the MCP server, started by your editor/plugin).
+После `uv tool install rag-reviewer` все команды запускаются через глобальный `reviewer`.
+Для одноразового запуска используйте `uvx --from rag-reviewer@latest reviewer <command>`.
+Оба варианта работают из любого каталога без clone/cd в checkout. Устанавливаются две точки входа:
+`reviewer` (CLI и интерактивный launcher) и `reviewer-mcp` (MCP-сервер для редактора/плагина).
+
+Без аргументов `reviewer` открывает палитру только в TTY. Начните печатать для поиска, используйте
+`↑/↓` для выбора и `Enter` для перехода к параметрам и preview. `Esc` возвращает назад или
+закрывает launcher без запуска, `Ctrl+C` отменяет его с кодом 130. Перед выполнением показывается
+готовая команда; чувствительные значения в preview заменяются маской `••••••`.
 
 | Command | Arguments | Options | What it does |
 |---|---|---|---|
@@ -640,20 +654,21 @@ Examples:
 
 ```bash
 # First-time setup
-uvx --from rag-reviewer reviewer init
-uvx --from rag-reviewer reviewer install --all
-uvx --from rag-reviewer reviewer check
+reviewer init
+reviewer install --all
+reviewer check
 
 # Build the base index (whole-repo context for RAG + graph)
-uvx --from rag-reviewer reviewer index /path/to/repo --ref main --repo owner/name
-uvx --from rag-reviewer reviewer index /path/to/repo --ref master --repo owner/name   # second tracked branch
+reviewer index /path/to/repo --ref main --repo owner/name
+reviewer index /path/to/repo --ref master --repo owner/name   # second tracked branch
 
 # Diagnostics (no Voyage spend except `search`)
-uvx --from rag-reviewer reviewer search "token verification" --branch master
-uvx --from rag-reviewer reviewer status /path/to/repo --branch dev
+reviewer search "token verification" --branch master
+reviewer status /path/to/repo --branch dev
+reviewer status --repo owner/name --json
 
 # Web admin
-uvx --from rag-reviewer reviewer serve --host 127.0.0.1 --port 8000
+reviewer serve --host 127.0.0.1 --port 8000
 ```
 
 Reviewing works even without a prior `index` — context is then limited to the diff and the overlay
