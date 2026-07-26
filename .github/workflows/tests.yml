@@ -42,6 +42,14 @@ jobs:
         with:
           python-version: "3.11"
       - run: pip install -e ".[dev]" uv
-      - run: pytest tests/entrypoints/test_launcher.py tests/entrypoints/test_launcher_contract.py tests/launcher -q
+      - run: >-
+          pytest
+          tests/entrypoints/test_launcher.py
+          tests/entrypoints/test_launcher_contract.py
+          tests/launcher
+          tests/test_infrastructure_policy.py::test_unit_test_cannot_create_python_socket
+          tests/test_infrastructure_policy.py::test_unit_test_allows_in_process_socketpair
+          tests/test_infrastructure_policy.py::test_unit_test_allows_asyncio_internal_wakeup_socketpair
+          -q
       - run: uv build
       - run: python scripts/verify_launcher_distribution.py dist

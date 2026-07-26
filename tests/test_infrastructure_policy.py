@@ -113,6 +113,7 @@ from pytest_socket import SocketBlockedError
 def state():
     return (
         socket.socket,
+        socket.socketpair,
         "connect" in socket.socket.__dict__,
         socket.socket.__dict__.get("connect"),
         psycopg.connect,
@@ -153,6 +154,7 @@ from psycopg_pool import ConnectionPool
 def state():
     return (
         socket.socket,
+        socket.socketpair,
         "connect" in socket.socket.__dict__,
         socket.socket.__dict__.get("connect"),
         psycopg.connect,
