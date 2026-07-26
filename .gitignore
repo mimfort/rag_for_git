@@ -11,8 +11,7 @@ venv/
 env/
 .python-version
 
-# Tooling
-uv.lock
+# Tooling (uv.lock отслеживается и проверяется CI)
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/

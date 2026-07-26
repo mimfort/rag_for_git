@@ -2,6 +2,7 @@ import json
 from datetime import datetime
 from unittest.mock import MagicMock
 
+import pytest
 import reviewer.services.status as status_mod
 from reviewer.services.status import build_status_report, OverlayStatus, render_status, render_status_json, RepoStatus, BranchStatus
 from click.testing import CliRunner
@@ -30,6 +31,20 @@ class FakeGraph:
         if self._fail:
             raise RuntimeError("neo4j down")
         return self._nodes.get(branch, 0)
+
+
+@pytest.fixture
+def status_report() -> RepoStatus:
+    """Возвращает отчёт с одной свежей основной веткой."""
+    return RepoStatus(
+        repo="a/x",
+        branches=[
+            BranchStatus(
+                "main", "base:main", "abc1234567def", datetime(2026, 6, 18, 14, 2), 5, 3, 0
+            )
+        ],
+        overlays=[],
+    )
 
 
 def test_build_status_report_fresh_and_behind(monkeypatch):

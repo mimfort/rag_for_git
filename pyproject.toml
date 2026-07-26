@@ -1,6 +1,6 @@
 [project]
 name = "rag-reviewer"
-version = "0.4.0"
+version = "0.4.1"
 description = "AI pull-request reviewer: hybrid RAG + a code graph + Claude Code. Whole-repo context, inline GitHub comments grounded on exact code."
 readme = "README.md"
 license = { text = "MIT" }
@@ -46,8 +46,10 @@ dependencies = [
     "python-docx>=1.1",
     "pypdf>=4.0",
     "langchain-core>=1.4,<2",
+    "packaging>=24,<27",
     "pyyaml>=6.0",
     "click>=8.1",
+    "prompt_toolkit>=3.0,<4",
     "protobuf>=5.27",
     "mcp>=1.9,<2",
 ]
@@ -72,7 +74,7 @@ Issues = "https://github.com/mimfort/rag_for_git/issues"
 PyPI = "https://pypi.org/project/rag-reviewer/"
 
 [project.scripts]
-reviewer = "reviewer.entrypoints.cli:cli"
+reviewer = "reviewer.entrypoints.launcher:main"
 reviewer-mcp = "reviewer.entrypoints.mcp_server:main"
 
 [tool.pytest.ini_options]
