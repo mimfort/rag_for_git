@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import socket
+import sys
 from typing import Any
 
 import pytest
@@ -33,6 +34,38 @@ class _SessionPolicyState:
 
 
 _SESSION_POLICIES: list[_SessionPolicyState] = []
+_TRUE_SOCKET_TYPE = socket.socket
+
+
+def _disable_unit_sockets() -> None:
+    """Запретить сеть, оставив Windows asyncio внутреннюю wake-up socketpair."""
+    disable_socket(allow_unix_socket=True)
+    if sys.platform != "win32":
+        return
+
+    guarded_socket_type = socket.socket
+
+    class _WindowsUnitSocket(guarded_socket_type):
+        def __new__(
+            cls,
+            family: socket.AddressFamily | int = -1,
+            type: socket.SocketKind | int = -1,
+            proto: int = -1,
+            fileno: int | None = None,
+        ) -> _WindowsUnitSocket:
+            # CPython уже создал оба соединённых конца socketpair на низком
+            # уровне и здесь только оборачивает их в Python-объекты. Новые
+            # AF_INET-сокеты (fileno=None) по-прежнему блокирует pytest-socket.
+            if (
+                fileno is not None
+                and family == socket.AF_INET
+                and type == socket.SOCK_STREAM
+                and proto == 0
+            ):
+                return _TRUE_SOCKET_TYPE.__new__(cls, family, type, proto, fileno)
+            return super().__new__(cls, family, type, proto, fileno)
+
+    socket.socket = _WindowsUnitSocket
 
 
 def _capture_socket_policy() -> _SocketPolicyState:
@@ -64,7 +97,7 @@ def pytest_sessionstart(session: pytest.Session) -> None:
             sockets=_capture_socket_policy(),
         )
     )
-    disable_socket(allow_unix_socket=True)
+    _disable_unit_sockets()
     install_unit_db_guards(monkeypatch)
 
 
@@ -80,7 +113,7 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
 def pytest_runtest_teardown(item: pytest.Item, nextitem: pytest.Item | None):
     yield
     enable_socket()
-    disable_socket(allow_unix_socket=True)
+    _disable_unit_sockets()
 
 
 @pytest.hookimpl(tryfirst=True)
@@ -105,7 +138,7 @@ def infrastructure_test_settings(
 ) -> InfrastructureTestSettings | None:
     if request.node.get_closest_marker("integration") is None:
         enable_socket()
-        disable_socket(allow_unix_socket=True)
+        _disable_unit_sockets()
         return None
 
     production = Settings()
