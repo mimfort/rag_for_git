@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import os
+import subprocess
+import sys
 from contextlib import contextmanager
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -47,7 +49,7 @@ def test_distribution_check_runs_standalone_uvx_before_persistent_install(tmp_pa
 
     verify_distribution(wheel_dir, runner=observe)
 
-    uvx, install, installed = calls
+    uvx, install, installed, tui_smoke, mcp_smoke = calls
     assert uvx.argv == (
         "uvx",
         "--isolated",
@@ -63,6 +65,23 @@ def test_distribution_check_runs_standalone_uvx_before_persistent_install(tmp_pa
     )
     assert uvx.argv[0] != installed.argv[0]
     assert Path(installed.argv[0]).parent == Path(install.env["UV_TOOL_BIN_DIR"])
+    tool_python = (
+        Path(install.env["UV_TOOL_DIR"])
+        / "rag-reviewer"
+        / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+    )
+    assert tui_smoke.argv == (
+        str(tool_python),
+        "-I",
+        "-c",
+        distribution.TUI_SMOKE_SCRIPT,
+    )
+    assert mcp_smoke.argv == (
+        str(tool_python),
+        "-I",
+        "-c",
+        distribution.MCP_IMPORT_SMOKE_SCRIPT,
+    )
 
 
 def test_distribution_check_uses_isolated_uv_dirs_and_outside_checkout(tmp_path):
@@ -78,7 +97,7 @@ def test_distribution_check_uses_isolated_uv_dirs_and_outside_checkout(tmp_path)
 
     verify_distribution(wheel_dir, runner=observe)
 
-    uvx, install, _installed = calls
+    uvx, install, _installed, tui_smoke, mcp_smoke = calls
     assert install.argv[:4] == ("uv", "tool", "install", "--force")
     assert install.argv[-1] == str(wheel.resolve())
     assert len(set(roots)) == 1
@@ -92,6 +111,12 @@ def test_distribution_check_uses_isolated_uv_dirs_and_outside_checkout(tmp_path)
             len({command.env[name] for name in ("UV_TOOL_DIR", "UV_TOOL_BIN_DIR", "UV_CACHE_DIR")})
             == 3
         )
+    for command in calls:
+        assert "PYTHONPATH" not in command.env
+        assert "PYTHONHOME" not in command.env
+    outside = calls[0].cwd
+    assert tui_smoke.cwd == outside
+    assert mcp_smoke.cwd == outside
     assert all(not root.exists() for root in roots)
 
 
@@ -241,6 +266,44 @@ def test_distribution_check_uses_windows_executable_suffix(tmp_path, monkeypatch
     verify_distribution(wheel_dir, runner=_recording_runner(calls))
 
     assert calls[2].argv[0].endswith("reviewer.exe")
+    assert calls[3].argv[0].endswith("rag-reviewer/Scripts/python.exe")
+    assert calls[4].argv[0].endswith("rag-reviewer/Scripts/python.exe")
+
+
+def test_distribution_check_uses_posix_tool_python(tmp_path):
+    wheel_dir = tmp_path / "dist"
+    _wheel(wheel_dir)
+    calls: list[Command] = []
+
+    verify_distribution(wheel_dir, runner=_recording_runner(calls))
+
+    assert calls[3].argv[0].endswith("rag-reviewer/bin/python")
+    assert calls[4].argv[0].endswith("rag-reviewer/bin/python")
+
+
+@pytest.mark.parametrize(
+    "payload_name",
+    [
+        pytest.param("TUI_SMOKE_SCRIPT", id="tui"),
+        pytest.param("MCP_IMPORT_SMOKE_SCRIPT", id="mcp-import"),
+    ],
+)
+def test_distribution_smoke_payloads_pass_in_fresh_process_outside_checkout(
+    tmp_path,
+    payload_name,
+):
+    env = {
+        name: value
+        for name, value in os.environ.items()
+        if name not in {"PYTHONHOME", "PYTHONPATH"}
+    }
+
+    subprocess.run(
+        [sys.executable, "-I", "-c", getattr(distribution, payload_name)],
+        cwd=tmp_path,
+        env=env,
+        check=True,
+    )
 
 
 @pytest.mark.parametrize("wheel_count", [0, 2])

@@ -21,7 +21,9 @@ jobs:
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6.3.0
         with:
           python-version: "3.11"
-      - run: pip install -e ".[dev,web]"
+      - run: pip install -e ".[dev,web]" uv
+      # uv.lock — отслеживаемый источник воспроизводимого разрешения зависимостей.
+      - run: uv lock --check
       # Раньше полного прогона: рассинхрон сгенерированных манифестов плагина
       # с версией pyproject даёт здесь одну внятную строку вместо десятка
       # падений в тестах install.

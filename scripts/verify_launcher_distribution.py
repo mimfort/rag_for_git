@@ -11,6 +11,28 @@ from tempfile import TemporaryDirectory
 
 _CHECKOUT_ROOT = Path(__file__).resolve().parents[1]
 
+TUI_SMOKE_SCRIPT = """\
+from prompt_toolkit.input import create_pipe_input
+from prompt_toolkit.output import DummyOutput
+from reviewer.launcher.app import run_launcher
+from reviewer.launcher.models import LauncherResult
+
+with create_pipe_input() as pipe:
+    pipe.send_bytes(b"\\x1b")
+    result = run_launcher(input=pipe, output=DummyOutput())
+
+assert result == LauncherResult(None, 0), result
+"""
+
+MCP_IMPORT_SMOKE_SCRIPT = """\
+import sys
+
+import reviewer.entrypoints.mcp_server
+
+assert "reviewer.entrypoints.launcher" not in sys.modules
+assert "prompt_toolkit" not in sys.modules
+"""
+
 
 @dataclass(frozen=True)
 class Command:
@@ -74,8 +96,13 @@ def verify_distribution(
     wheel = wheels[0]
 
     with _temporary_root() as root:
+        clean_env = {
+            name: value
+            for name, value in os.environ.items()
+            if name not in {"PYTHONHOME", "PYTHONPATH"}
+        }
         uvx_env = {
-            **os.environ,
+            **clean_env,
             "UV_TOOL_DIR": str(root / "uvx-tools"),
             "UV_TOOL_BIN_DIR": str(root / "uvx-bin"),
             "UV_CACHE_DIR": str(root / "uvx-cache"),
@@ -85,7 +112,7 @@ def verify_distribution(
         outside = root / "outside-checkout"
         outside.mkdir()
         install_env = {
-            **os.environ,
+            **clean_env,
             "UV_TOOL_DIR": str(tool_dir),
             "UV_TOOL_BIN_DIR": str(bin_dir),
             "UV_CACHE_DIR": str(root / "cache"),
@@ -106,6 +133,23 @@ def verify_distribution(
         )
         executable = bin_dir / ("reviewer.exe" if os.name == "nt" else "reviewer")
         runner(Command((str(executable), "--help"), outside, install_env))
+        tool_python = (
+            tool_dir / "rag-reviewer" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+        )
+        runner(
+            Command(
+                (str(tool_python), "-I", "-c", TUI_SMOKE_SCRIPT),
+                outside,
+                install_env,
+            )
+        )
+        runner(
+            Command(
+                (str(tool_python), "-I", "-c", MCP_IMPORT_SMOKE_SCRIPT),
+                outside,
+                install_env,
+            )
+        )
 
 
 def main(argv: Sequence[str] | None = None) -> None:
