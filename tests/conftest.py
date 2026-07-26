@@ -67,6 +67,30 @@ def _disable_unit_sockets() -> None:
     """Запретить сеть, оставив Windows asyncio внутреннюю wake-up socketpair."""
     disable_socket(allow_unix_socket=True)
     if sys.platform == "win32":
+        guarded_socket_type = socket.socket
+
+        class _WindowsUnitSocket(guarded_socket_type):
+            def __new__(
+                cls,
+                family: socket.AddressFamily | int = -1,
+                type: socket.SocketKind | int = -1,
+                proto: int = -1,
+                fileno: int | None = None,
+            ) -> _WindowsUnitSocket:
+                # Windows socketpair создаёт listener/client через изолированную
+                # штатную функцию, а socket.accept() затем оборачивает уже
+                # принятый handle через глобальный socket.socket. Только эта
+                # вторая стадия имеет fileno; создание новых сокетов блокируется.
+                if (
+                    fileno is not None
+                    and family == socket.AF_INET
+                    and type == socket.SOCK_STREAM
+                    and proto == 0
+                ):
+                    return _TRUE_SOCKET_TYPE.__new__(cls, family, type, proto, fileno)
+                return super().__new__(cls, family, type, proto, fileno)
+
+        socket.socket = _WindowsUnitSocket
         socket.socketpair = _WINDOWS_UNIT_SOCKETPAIR
 
 
