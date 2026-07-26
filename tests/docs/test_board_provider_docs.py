@@ -18,25 +18,70 @@ def _read(rel: str) -> str:
     return (ROOT / rel).read_text(encoding="utf-8")
 
 
-def test_authoritative_provider_reference_has_full_capability_matrix():
+MATRIX_CAPABILITIES = (
+    "Sync/pagination",
+    "Markdown normalization",
+    "Links/subtasks",
+    "Attachments",
+    "Single read",
+    "Discovery",
+    "Create/target",
+    "Finish/PR link",
+    "Write-through",
+)
+
+
+def _matrix_rows(text: str) -> dict[str, list[str]]:
+    """Строки таблицы «Capability matrix»: имя провайдера → значения девяти колонок."""
+    section = text.split("## Capability matrix", maxsplit=1)[1].split("\n## ", maxsplit=1)[0]
+    rows: dict[str, list[str]] = {}
+    for line in section.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("|") or set(stripped) <= set("|-: "):
+            continue
+        cells = [cell.strip() for cell in stripped.strip("|").split("|")]
+        rows[cells[0]] = cells[1:]
+    return rows
+
+
+def test_capability_matrix_has_one_complete_row_per_registered_provider():
+    """Матрица — строка на провайдера; каждая из девяти колонок заполнена."""
+    rows = _matrix_rows(_read("docs/board-providers.md"))
+
+    assert rows.pop("Provider", None) == list(MATRIX_CAPABILITIES)
+    registry = default_board_registry()
+    documented = {
+        registry.get(board_type).setup.label for board_type in registry.registered_types()
+    }
+    assert set(rows) == documented
+
+    normalization = MATRIX_CAPABILITIES.index("Markdown normalization")
+    for label, cells in rows.items():
+        assert len(cells) == len(MATRIX_CAPABILITIES), label
+        assert all(cells), label
+        # Нормализация описания обязана быть названа явно, а не отмечена галочкой.
+        assert cells[normalization] != "✓", label
+
+
+def test_provider_reference_documents_every_registered_credential_env():
+    text = _read("docs/board-providers.md")
+    registry = default_board_registry()
+
+    for board_type in registry.registered_types():
+        spec = registry.get(board_type)
+        assert f"## {spec.setup.label}" in text, board_type
+        for field in spec.credential_fields:
+            assert field.env in text, (board_type, field.env)
+
+
+def test_provider_reference_records_shared_transport_and_its_known_debt():
     text = _read("docs/board-providers.md")
 
-    assert "| Capability | YouGile | YouTrack | Jira Cloud |" in text
-    expected_rows = {
-        "Markdown normalization": "| Markdown normalization | HTML↔MD | Native MD | ADF↔MD |",
-    }
-    for capability in (
-        "Sync/pagination",
-        "Markdown normalization",
-        "Links/subtasks",
-        "Attachments",
-        "Single read",
-        "Discovery",
-        "Create/target",
-        "Finish/PR link",
-        "Write-through",
-    ):
-        assert expected_rows.get(capability, f"| {capability} | ✓ | ✓ | ✓ |") in text
+    section = text.split("## Shared transport", maxsplit=1)[1].split("\n## ", maxsplit=1)[0]
+    for module in ("restbase.py", "pagination.py", "graphql.py", "yfm.py"):
+        assert module in section
+    assert "Known debt" in section
+    assert "out of scope" in section
 
 
 def test_provider_reference_documents_safe_credentials_and_jira_cloud_boundary():

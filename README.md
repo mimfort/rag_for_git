@@ -230,10 +230,12 @@ manages its own).
 ### Quick setup (recommended, all platforms)
 
 ```bash
-# 0) Install the reviewer CLI — once, globally
+# 0) Установить reviewer один раз глобально и запустить launcher
 uv tool install rag-reviewer
-# uv and uvx are the same binary; installing uv gives you both.
-# The MCP server launched by your editor uses uvx @latest and self-updates automatically.
+reviewer
+
+# Временный запуск без постоянной установки
+uvx --from rag-reviewer@latest reviewer
 
 # 1) Infrastructure
 curl -O https://raw.githubusercontent.com/mimfort/rag_for_git/main/docker-compose.yml
@@ -256,6 +258,17 @@ reviewer check
 # Update CLI later:
 uv tool upgrade rag-reviewer
 ```
+
+Установка и запуск launcher работают из любого каталога: clone репозитория и переход в checkout
+не нужны. Пустая команда `reviewer` в интерактивном терминале открывает палитру. Команды с
+аргументами (`reviewer check`, `reviewer status --json`), pipe/CI и `reviewer-mcp` сохраняют прямой
+неинтерактивный путь. В TUI действие «Проверить обновление» только после явного выбора выполняет
+read-only проверку способа установки и версии на PyPI. Если для постоянной `uv tool`-установки
+найдена новая версия, отдельное подтверждение `Enter` возвращает существующий путь
+`reviewer update`. Прямой `reviewer update` ведёт себя иначе: для постоянной `uv tool`-установки
+он проверяет версию и при доступном обновлении сразу запускает `uv tool upgrade rag-reviewer`;
+в режиме `uvx` проверяет и только печатает инструкции, а в editable-режиме только сообщает
+команды `git pull`/`pip install -e .`. Эти режимы не изменяют посторонние постоянные установки.
 
 > **`reviewer install` is cross-platform** (Windows / macOS / Linux). It injects the
 > absolute path to `uvx` automatically — no `bash -lc` wrapper needed. The manual
@@ -566,6 +579,14 @@ reviewer-mcp env rather than duplicated in each repo's `.review.yml`. See
 | `YOUGILE_API_KEY` / `YOUGILE_API_BASE` | `""` | Registered-provider credentials; the base has a provider default. |
 | `YOUTRACK_TOKEN` / `YOUTRACK_BASE_URL` | `""` | Registered-provider credentials. |
 | `JIRA_BASE_URL` / `JIRA_EMAIL` / `JIRA_API_TOKEN` | `""` | Jira Cloud direct-site credentials; API token is unscoped. |
+| `GITHUB_ISSUES_TOKEN` / `GITHUB_ISSUES_API_BASE` | `""` | GitHub Issues credentials; the review pipeline's `GITHUB_TOKEN` is deliberately not an alias, so the board stays opt-in. |
+| `TRELLO_API_KEY` / `TRELLO_API_TOKEN` / `TRELLO_API_BASE` | `""` | Trello credentials; key and token are both secret because they travel in the query string. |
+| `LINEAR_API_KEY` / `LINEAR_API_BASE` | `""` | Linear personal API key, sent without a `Bearer` prefix. |
+| `CLICKUP_API_TOKEN` / `CLICKUP_API_BASE` | `""` | ClickUp personal token (`pk_…`), sent without a `Bearer` prefix. |
+| `ASANA_ACCESS_TOKEN` / `ASANA_API_BASE` | `""` | Asana personal access token. |
+| `YANDEX_TRACKER_TOKEN` / `YANDEX_TRACKER_API_BASE` / `YANDEX_TRACKER_ORG_ID` / `YANDEX_TRACKER_CLOUD_ORG_ID` / `YANDEX_TRACKER_AUTH_SCHEME` | `""` | Yandex Tracker credentials; exactly one organization id, `OAuth` (default) or `Bearer` for a Cloud IAM token. |
+| `KAITEN_BASE_URL` / `KAITEN_API_TOKEN` | `""` | Kaiten company address (`https://<company>.kaiten.ru`) and permanent API key. |
+| `WEEEK_API_TOKEN` / `WEEEK_API_BASE` | `""` | Weeek workspace access token; requests act as the token's creator. |
 | `TASK_BOARD_MCP` | `""` | Legacy metadata for older clients; current generic skills do not use it. |
 | `TASK_BOARD_KEY_PATTERN` | `""` | Task-key regex, e.g. `[A-Z]+-\d+`. |
 | `TASK_BOARD_URL_TEMPLATE` | `""` | Optional task-link template. |
@@ -577,6 +598,12 @@ Keep credentials only in the reviewer-mcp environment or a secret manager — ne
 MCP client configuration, logs, or commits. The provider reference covers safe acquisition,
 project-aware validation with `reviewer check --board-project TYPE=PROJECT`, and rotation for every
 current provider.
+
+The registry ships eleven provider types. New adapters share one transport layer — `RestBoardBase`,
+the pagination generators, a GraphQL client and the YFM converter — instead of re-implementing HTTP
+retries and error categorisation, and none of them uses an OAuth loopback flow, so setup works in a
+headless CLI or over SSH. See the
+[capability matrix](docs/board-providers.md#capability-matrix) for what each board supports.
 
 ---
 
@@ -603,9 +630,15 @@ GEMINI.md / .cursorrules — whichever your client uses).
 
 ## CLI reference
 
-All commands run via `uvx --from rag-reviewer <command>`, or after `uv tool install rag-reviewer` /
-`pip install -e ".[dev]"` simply as `reviewer`. Two entry points are installed:
-`reviewer` (the CLI below) and `reviewer-mcp` (the MCP server, started by your editor/plugin).
+После `uv tool install rag-reviewer` все команды запускаются через глобальный `reviewer`.
+Для одноразового запуска используйте `uvx --from rag-reviewer@latest reviewer <command>`.
+Оба варианта работают из любого каталога без clone/cd в checkout. Устанавливаются две точки входа:
+`reviewer` (CLI и интерактивный launcher) и `reviewer-mcp` (MCP-сервер для редактора/плагина).
+
+Без аргументов `reviewer` открывает палитру только в TTY. Начните печатать для поиска, используйте
+`↑/↓` для выбора и `Enter` для перехода к параметрам и preview. `Esc` возвращает назад или
+закрывает launcher без запуска, `Ctrl+C` отменяет его с кодом 130. Перед выполнением показывается
+готовая команда; чувствительные значения в preview заменяются маской `••••••`.
 
 | Command | Arguments | Options | What it does |
 |---|---|---|---|
@@ -613,7 +646,7 @@ All commands run via `uvx --from rag-reviewer <command>`, or after `uv tool inst
 | `init` | — | `--path FILE` (default `~/.config/rag-reviewer/.env`), `--yes` (accept defaults, CI mode) | Interactive wizard that writes the `.env` (Voyage/GitHub + optional groups). |
 | `install` | `[client]` | `--all`, `--list`, `--path FILE`, `--pin VERSION`, `--no-latest`, `--no-skills`, `--dry-run` | Register the MCP server (and skills) in AI clients (cross-platform). |
 | `install-skills` | `[client]` | `--all`, `--list`, `--path FILE` | Install only the skills into a client's global skills directory. |
-| `update` | — | — | Check PyPI for a newer `rag-reviewer` and report how to upgrade. |
+| `update` | — | — | Check PyPI for a newer `rag-reviewer`; immediately upgrade the current persistent `uv tool` install when needed. In `uvx`/editable mode, only report instructions without mutating unrelated installs. |
 | `index` | `<repo>` (path to local clone) | `--ref BRANCH` (git ref to read; default = primary branch), `--branch NAME` (storage key; default = `--ref`), `--repo OWNER/NAME` (default from git `origin`) | Build/update the base index of a branch (vectors + graph). Done once, then incremental. |
 | `search` | `<query>` | `--repo OWNER/NAME` (default `DEFAULT_REPO`), `--branch NAME` (default primary) | Diagnostic hybrid search over a branch's base index. |
 | `status` | `[path]` (default `.`) | `--repo OWNER/NAME` (default from git `origin`), `--branch NAME` (default: all `REVIEW_BRANCHES`), `--json` (machine-readable output) | Index health / freshness vs the clone's HEAD. Spends no Voyage quota. |
@@ -626,20 +659,21 @@ Examples:
 
 ```bash
 # First-time setup
-uvx --from rag-reviewer reviewer init
-uvx --from rag-reviewer reviewer install --all
-uvx --from rag-reviewer reviewer check
+reviewer init
+reviewer install --all
+reviewer check
 
 # Build the base index (whole-repo context for RAG + graph)
-uvx --from rag-reviewer reviewer index /path/to/repo --ref main --repo owner/name
-uvx --from rag-reviewer reviewer index /path/to/repo --ref master --repo owner/name   # second tracked branch
+reviewer index /path/to/repo --ref main --repo owner/name
+reviewer index /path/to/repo --ref master --repo owner/name   # second tracked branch
 
 # Diagnostics (no Voyage spend except `search`)
-uvx --from rag-reviewer reviewer search "token verification" --branch master
-uvx --from rag-reviewer reviewer status /path/to/repo --branch dev
+reviewer search "token verification" --branch master
+reviewer status /path/to/repo --branch dev
+reviewer status --repo owner/name --json
 
 # Web admin
-uvx --from rag-reviewer reviewer serve --host 127.0.0.1 --port 8000
+reviewer serve --host 127.0.0.1 --port 8000
 ```
 
 Reviewing works even without a prior `index` — context is then limited to the diff and the overlay

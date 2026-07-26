@@ -25,6 +25,7 @@ from reviewer.index.store import ChunkStore
 from reviewer.mcp.session_store import SessionStore
 from reviewer.services.gc import purge_orphaned_overlays
 from reviewer.services.status import build_status_report, render_status, render_status_json
+from reviewer.versioning import InstallMode, check_latest, detect_installation, upgrade_uv_tool
 
 if TYPE_CHECKING:
     from reviewer.install_claude import ClaudeInstallResult
@@ -943,78 +944,41 @@ def init(path_opt: str | None, yes: bool, dry_run: bool) -> None:
 @cli.command()
 def update() -> None:
     """Проверить наличие новой версии rag-reviewer на PyPI."""
-    import json
-    import subprocess
-    import urllib.request
-    from importlib import metadata
-
-    def _ver_tuple(v: str) -> tuple[int, ...]:
-        try:
-            return tuple(int(x) for x in v.split("."))
-        except ValueError:
-            return (0,)
-
-    try:
-        cur = metadata.version("rag-reviewer")
-    except Exception:
-        cur = "?"
-
-    # Определяем режим установки
-    try:
-        dist = metadata.Distribution.from_name("rag-reviewer")
-        direct_url_text = dist.read_text("direct_url.json")
-        direct_url = json.loads(direct_url_text) if direct_url_text else {}
-        is_editable = direct_url.get("dir_info", {}).get("editable", False)
-    except Exception:
-        is_editable = False
-
-    uv = _shutil.which("uv")
-    is_tool = False
-    if uv and not is_editable:
-        tool_list = subprocess.run([uv, "tool", "list"], capture_output=True, text=True)
-        is_tool = "rag-reviewer" in tool_list.stdout
-
-    if is_editable:
-        click.echo(f"Режим: dev (editable) | Версия: {cur}")
+    installation = detect_installation()
+    if installation.mode is InstallMode.EDITABLE:
+        click.echo(f"Режим: dev (editable) | Версия: {installation.current}")
         click.echo("Для обновления: git pull && pip install -e .")
         return
 
-    mode = "uv tool (постоянная)" if is_tool else "uvx (временная)"
-    click.echo(f"Режим: {mode} | Версия: {cur}")
+    mode = "uv tool (постоянная)" if installation.mode is InstallMode.UV_TOOL else "uvx (временная)"
+    click.echo(f"Режим: {mode} | Версия: {installation.current}")
 
-    # Получаем latest с PyPI
-    latest_ver: str | None = None
-    try:
-        req = urllib.request.Request(
-            "https://pypi.org/pypi/rag-reviewer/json",
-            headers={"Cache-Control": "no-cache, no-store", "Pragma": "no-cache"},
-        )
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            latest_ver = json.loads(resp.read())["info"]["version"]
-    except Exception:
-        pass
-
-    if latest_ver is None:
+    version_check = check_latest(installation)
+    if version_check.latest is None:
         click.echo("Не удалось получить информацию с PyPI. Проверьте сеть.")
         return
 
-    if cur != "?" and _ver_tuple(latest_ver) <= _ver_tuple(cur):
-        click.echo(f"Версия актуальна: {cur}.")
-        if not is_tool:
+    if not version_check.current_valid:
+        click.echo("Не удалось определить корректную текущую версию. Обновление не запущено.")
+        return
+
+    if not version_check.update_available and installation.current != "?":
+        click.echo(f"Версия актуальна: {installation.current}.")
+        if installation.mode is not InstallMode.UV_TOOL:
             click.echo("MCP-сервер обновляется автоматически — в конфиге клиента прописан @latest.")
         return
 
-    click.echo(f"Доступна новая версия: {cur} → {latest_ver}")
+    click.echo(f"Доступна новая версия: {installation.current} → {version_check.latest}")
 
-    if is_tool:
-        if not uv:
+    if installation.mode is InstallMode.UV_TOOL:
+        if installation.uv_executable is None:
             click.echo("uv не найден в PATH. Запустите: uv tool upgrade rag-reviewer")
             return
-        result = subprocess.run([uv, "tool", "upgrade", "rag-reviewer"], capture_output=True)
+        result = upgrade_uv_tool(installation)
         if result.returncode == 0:
             click.echo("Обновлено. Перезапустите MCP-сервер.")
         else:
-            click.echo(f"Ошибка uv tool upgrade: {result.stderr.decode().strip()}")
+            click.echo(f"Ошибка uv tool upgrade: {result.stderr}")
     else:
         # uvx: MCP-сервер обновится сам при следующем запуске (конфиг содержит @latest).
         # Для CLI-команд достаточно использовать @latest явно.
