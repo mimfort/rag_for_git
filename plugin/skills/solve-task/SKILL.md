@@ -145,7 +145,8 @@ brief to `superpowers:brainstorming` (which leads to writing-plans → subagent-
      gets no marker. For `stale: true`, either omit the item or use exactly this line shape:
      `- [stale] <cluster_key> — summary content omitted; verify against code.` Do not interpolate its
      title or summary claims. Omitting a stale summary does not change the directly-informing
-     `search_codebase` entries selected for `## Relevant code`.
+     `search_codebase` entries selected for `## Relevant code`: evaluate every code item solely against
+     the task, independently of whether it corroborates or refutes any stale-summary claim.
    - **Project scope.** Pass `project=<task_board.project>` (from Step 1; empty = unscoped) to
      `get_task`, `get_task_context`, and `search_tasks` so only this repo's project surfaces (PRI-170).
    - If you have a task key: `get_task_context(key, project=<task_board.project>)` → linked tasks, their PRs, and the code those PRs
