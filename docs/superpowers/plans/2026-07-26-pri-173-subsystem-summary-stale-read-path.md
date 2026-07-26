@@ -49,7 +49,7 @@ Run:
 ```bash
 docker compose --profile test up -d --wait paradedb-test
 TEST_PG_DSN=postgresql://reviewer_test:reviewer_test@localhost:55433/reviewer_test \
-  .venv/bin/pytest -q -m integration \
+  /Users/aleksejzadoroznyj/PycharmProjects/rag_for_git/.venv/bin/pytest -q -m integration \
   tests/index/test_summary_store.py::test_upsert_then_get_roundtrip \
   tests/index/test_summary_store.py::test_upsert_writes_embedding_and_search_returns_nearest_first
 ```
@@ -209,7 +209,8 @@ Extend the existing below-threshold query test with a matching current member an
 Run:
 
 ```bash
-.venv/bin/pytest -q tests/mcp/test_subsystem_summaries.py
+/Users/aleksejzadoroznyj/PycharmProjects/rag_for_git/.venv/bin/pytest -q \
+  tests/mcp/test_subsystem_summaries.py
 ```
 
 Expected: the new assertions fail because `get_subsystem_summaries` does not emit `stale`.
@@ -316,8 +317,10 @@ is not computed (including the scaled ANN path) or unavailable.
 Run:
 
 ```bash
-.venv/bin/pytest -q tests/mcp/test_subsystem_summaries.py
-.venv/bin/ruff check reviewer/mcp/service.py reviewer/entrypoints/mcp_server.py \
+/Users/aleksejzadoroznyj/PycharmProjects/rag_for_git/.venv/bin/pytest -q \
+  tests/mcp/test_subsystem_summaries.py
+/Users/aleksejzadoroznyj/PycharmProjects/rag_for_git/.venv/bin/ruff check \
+  reviewer/mcp/service.py reviewer/entrypoints/mcp_server.py \
   tests/mcp/test_subsystem_summaries.py
 ```
 
@@ -333,71 +336,37 @@ git commit -m "feat(mcp): отмечать устаревшие сводки PRI
 
 ---
 
-### Task 3: Make all global-plugin consumers respect stale summaries
+### Task 3: Keep stale subsystem structure out of solve-task briefs
 
 **Files:**
-- Modify: `plugin/skills/ask/SKILL.md:46-54`
 - Modify: `plugin/skills/solve-task/SKILL.md:136-142`
-- Modify: `plugin/skills/pr-walkthrough/SKILL.md:38-46`
-- Modify: `tests/skills/test_ask_uses_summaries.py`
-- Modify: `tests/skills/test_solve_task_brief.py`
-- Modify: `tests/skills/test_pr_walkthrough_skill.py`
+- Verify: `tests/skills`
+- Report: plan-owned SDD workspace pressure-scenario artifacts
 
 **Interfaces:**
-- Consumes: summary dictionaries with `stale: true | false | null`.
-- Produces: prompt rules that treat `stale: true` as a weak prior, require code grounding for structural claims, and render `[stale]` where the skill exposes subsystem summaries.
+- Consumes: subsystem summary dictionaries with `stale: true | false | null`.
+- Produces: solve-task briefs where `stale: true` is a weak prior, never an unqualified structural claim, and any retained subsystem line starts with `[stale]`.
 
-- [ ] **Step 1: Add failing prompt guard tests**
+- [ ] **Step 1: Record the no-guidance RED evidence**
 
-Add exact consumer-specific guards:
+Use the five fresh-context controls already run against the unchanged skill. Their fixed inputs were:
 
-```python
-def test_ask_downweights_stale_summary_prior():
-    text = ASK.read_text(encoding="utf-8")
-    assert "`stale: true`" in text
-    assert "structural claims" in text
-
-
-def test_solve_task_marks_stale_subsystems():
-    text = SOLVE.read_text(encoding="utf-8")
-    assert "`stale: true`" in text
-    assert "[stale]" in text
-    assert "structural claims" in text
-
-
-def test_pr_walkthrough_marks_stale_subsystems():
-    text = SKILL.read_text(encoding="utf-8")
-    assert "`stale: true`" in text
-    assert "[stale]" in text
-    assert "diff" in text.lower() or "graph" in text.lower()
+```text
+Task: change auth token verification.
+Summary: reviewer/auth uses JWT access tokens, Redis sessions, and reviewer/auth/session.py;
+         source_hash=old, stale=true.
+Code: reviewer/auth/oauth.py:10-30 contains verify_oauth_token using OAuth2;
+      no Redis or session.py evidence.
+Output: only ## Subsystems and ## Relevant code under pressure to stay compact.
 ```
 
-- [ ] **Step 2: Run prompt tests and verify RED**
+Expected RED: at least one control carries JWT/Redis/session.py into `## Subsystems` as if it
+described the implementation. Observed before the edit: 4/5 controls did so; one dropped the stale
+summary. Preserve the five raw outputs in the task report.
 
-Run:
+- [ ] **Step 2: Add the minimal conditional guidance**
 
-```bash
-.venv/bin/pytest -q \
-  tests/skills/test_ask_uses_summaries.py \
-  tests/skills/test_solve_task_brief.py \
-  tests/skills/test_pr_walkthrough_skill.py
-```
-
-Expected: the new stale-consumer tests fail.
-
-- [ ] **Step 3: Update the ask prior contract**
-
-After the existing prior-only rule, add:
-
-```markdown
-If a returned summary has `stale: true`, downweight it to a weak orientation hint and do not use
-it for structural claims unless `search_codebase`, `Read`, or graph tools confirm them.
-`stale: null` is unknown freshness, not evidence that the summary is current.
-```
-
-- [ ] **Step 4: Update solve-task gathering and rendering**
-
-Add:
+Immediately after the existing subsystem-prior grounding sentence, add:
 
 ```markdown
 If a returned summary has `stale: true`, keep it only as a weak prior, do not use it for structural
@@ -405,34 +374,37 @@ claims, and prefix its `## Subsystems` line with `[stale]`. `stale: null` is unk
 gets no marker.
 ```
 
-- [ ] **Step 5: Update PR walkthrough gathering and rendering**
+- [ ] **Step 3: Run five fresh-context GREEN pressure scenarios**
 
-Add:
+Repeat the exact Step 1 scenario with five fresh agents that read the edited solve-task skill.
 
-```markdown
-If a summary has `stale: true`, it cannot independently identify a touched subsystem: require
-confirmation from the diff or graph and prefix the rendered subsystem line with `[stale]`.
-`stale: null` gets no marker.
-```
+Expected GREEN for every output:
 
-- [ ] **Step 6: Run skill and assembled-prompt guards**
+- it may omit the stale subsystem entirely; or
+- it may retain a line beginning with `[stale]`, but must not present JWT, Redis, or
+  `reviewer/auth/session.py` as current structure;
+- `## Relevant code` remains grounded at `reviewer/auth/oauth.py:10-30`.
+
+Record all five outputs and a manual pass/fail judgment in the task report. A single failure means
+tighten only the conditional guidance and repeat five fresh samples.
+
+- [ ] **Step 4: Run existing skill regression guards**
 
 Run:
 
 ```bash
-.venv/bin/pytest -q tests/skills
-.venv/bin/ruff check tests/skills
+/Users/aleksejzadoroznyj/PycharmProjects/rag_for_git/.venv/bin/pytest -q tests/skills
+/Users/aleksejzadoroznyj/PycharmProjects/rag_for_git/.venv/bin/ruff check tests/skills
 ```
 
-Expected: all skill tests pass and Ruff reports no errors.
+Expected: all existing skill tests pass and Ruff reports no errors. Do not add text-grep tests for
+the new prose; the pressure scenarios are the behavioral test.
 
-- [ ] **Step 7: Commit the global-plugin behavior**
+- [ ] **Step 5: Commit the validated solve-task behavior**
 
 ```bash
-git add plugin/skills/ask/SKILL.md plugin/skills/solve-task/SKILL.md \
-  plugin/skills/pr-walkthrough/SKILL.md tests/skills/test_ask_uses_summaries.py \
-  tests/skills/test_solve_task_brief.py tests/skills/test_pr_walkthrough_skill.py
-git commit -m "feat(skills): учитывать stale-сводки PRI-173"
+git add plugin/skills/solve-task/SKILL.md
+git commit -m "feat(skills): ослабить stale-приор solve-task PRI-173"
 ```
 
 ---
@@ -443,29 +415,31 @@ git commit -m "feat(skills): учитывать stale-сводки PRI-173"
 - Verify only; no planned source changes.
 
 **Interfaces:**
-- Consumes: Tasks 1–3.
+- Consumes: Tasks 1–3; ask/pr-walkthrough no-guidance controls (5/5 safe each).
 - Produces: evidence that store, MCP, skills, unit suite, and formatting agree.
 
 - [ ] **Step 1: Run the focused integration and unit suites**
 
 ```bash
 TEST_PG_DSN=postgresql://reviewer_test:reviewer_test@localhost:55433/reviewer_test \
-  .venv/bin/pytest -q -m integration tests/index/test_summary_store.py
-.venv/bin/pytest -q tests/mcp/test_subsystem_summaries.py tests/skills
+  /Users/aleksejzadoroznyj/PycharmProjects/rag_for_git/.venv/bin/pytest -q \
+  -m integration tests/index/test_summary_store.py
+/Users/aleksejzadoroznyj/PycharmProjects/rag_for_git/.venv/bin/pytest -q \
+  tests/mcp/test_subsystem_summaries.py tests/skills
 ```
 
 - [ ] **Step 2: Run the repository unit suite and lint**
 
 ```bash
-.venv/bin/pytest -q
-.venv/bin/ruff check .
+/Users/aleksejzadoroznyj/PycharmProjects/rag_for_git/.venv/bin/pytest -q
+/Users/aleksejzadoroznyj/PycharmProjects/rag_for_git/.venv/bin/ruff check .
 ```
 
 - [ ] **Step 3: Inspect the final diff and worktree boundaries**
 
 ```bash
-git diff HEAD~3 --check
-git diff HEAD~3 --stat
+git diff b9e1c8e..HEAD --check
+git diff b9e1c8e..HEAD --stat
 git status --short
 ```
 
