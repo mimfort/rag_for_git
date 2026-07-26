@@ -63,6 +63,7 @@ class ParameterSpec:
     sensitive: bool
     label: str = ""
     description: str | None = None
+    metavar: str | None = None
 
 
 @dataclass(frozen=True)

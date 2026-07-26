@@ -81,8 +81,8 @@ def _append_parameter(
     if value is None:
         return
     if parameter.multiple:
-        for item in _values(value, parameter, split_multiple=True):
-            _append_option(argv, masked, parameter, (item,))
+        for occurrence in parameter_occurrences(value, parameter):
+            _append_option(argv, masked, parameter, occurrence)
         return
     _append_option(argv, masked, parameter, _values(value, parameter))
 
@@ -128,11 +128,17 @@ def _append_values(
         masked.append(_MASK if sensitive else str(value))
 
 
-def _values(
-    value: object, parameter: ParameterSpec, *, split_multiple: bool = False
-) -> tuple[object, ...]:
-    if split_multiple:
-        return tuple(value) if isinstance(value, (tuple, list)) else (value,)
+def parameter_occurrences(
+    value: object, parameter: ParameterSpec
+) -> tuple[tuple[object, ...], ...]:
+    """Нормализовать каждое повторение Click-параметра отдельно."""
+    if not parameter.multiple:
+        return (_values(value, parameter),)
+    raw = tuple(value) if isinstance(value, (tuple, list)) else (value,)
+    return tuple(tuple(item) if isinstance(item, (tuple, list)) else (item,) for item in raw)
+
+
+def _values(value: object, parameter: ParameterSpec) -> tuple[object, ...]:
     if parameter.nargs != 1:
         return tuple(value) if isinstance(value, (tuple, list)) else (value,)
     return (value,)

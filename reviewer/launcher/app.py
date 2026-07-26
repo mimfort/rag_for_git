@@ -30,7 +30,7 @@ except ImportError:  # pragma: no cover - совместимость с prompt_t
 
 from reviewer.entrypoints.cli import cli
 from reviewer.launcher.catalog import build_catalog
-from reviewer.launcher.command import prepare_command
+from reviewer.launcher.command import parameter_occurrences, prepare_command
 from reviewer.launcher.controller import LauncherController, Screen
 from reviewer.launcher.models import CommandSpec, LauncherResult, ParameterSpec
 from reviewer.versioning import (
@@ -66,16 +66,19 @@ class _LauncherUI:
             multiline=False,
             wrap_lines=False,
         )
-        self.query_field.buffer.on_text_changed += self._query_changed
+        self._query_handler = self._query_changed
+        self.query_field.buffer.on_text_changed += self._query_handler
         self.form_widgets: list[AnyContainer] = []
         self.parameter_widgets: dict[str, AnyContainer] = {}
         self.flag_controls: dict[FormattedTextControl, str] = {}
         self.flag_buttons: dict[str, Button] = {}
+        self._field_handlers: dict[TextArea, Callable[..., None]] = {}
         self.checking_update = False
         self.version_check: VersionCheck | None = None
         self.update_error: str | None = None
         self._active_update_token: object | None = None
         self._visible_update_token: object | None = None
+        self._closed = False
 
     def container(self) -> AnyContainer:
         """Вернуть контейнер текущего экрана."""
@@ -117,14 +120,14 @@ class _LauncherUI:
         elif self.controller.screen is Screen.UPDATE_RESULT and self._can_update_uv_tool():
             self.controller.result = LauncherResult(("update",), 0)
         if self.controller.result is not None:
-            self.close()
+            self._revoke_updates()
             event.app.exit(result=self.controller.result)
 
     def back(self, event: KeyPressEvent) -> None:
         """Вернуться назад, не выполняя выбранную команду."""
         if self.controller.screen is Screen.PALETTE:
             self.controller.cancel()
-            self.close()
+            self._revoke_updates()
             event.app.exit(result=self.controller.result)
             return
         if self.controller.screen is Screen.UPDATE_RESULT:
@@ -144,11 +147,26 @@ class _LauncherUI:
     def cancel(self, event: KeyPressEvent, exit_code: int) -> None:
         """Завершить приложение без argv."""
         self.controller.cancel(exit_code)
-        self.close()
+        self._revoke_updates()
         event.app.exit(result=self.controller.result)
 
     def close(self) -> None:
-        """Отозвать право фоновой проверки изменять закрывающийся launcher."""
+        """Отозвать фоновые результаты и удалить transient UI-данные."""
+        if self._closed:
+            return
+        self._closed = True
+        self._revoke_updates()
+        self.checking_update = False
+        self.version_check = None
+        self.update_error = None
+
+        self.query_field.buffer.on_text_changed -= self._query_handler
+        self.query_field.text = ""
+        self._drop_form()
+        self.controller.scrub_transient_state()
+
+    def _revoke_updates(self) -> None:
+        """Не позволить daemon-worker изменить закрывающееся приложение."""
         self._active_update_token = None
         self._visible_update_token = None
 
@@ -336,10 +354,7 @@ class _LauncherUI:
         return "Обновление не требуется · Esc — назад"
 
     def _build_form(self) -> None:
-        self.form_widgets = []
-        self.parameter_widgets = {}
-        self.flag_controls = {}
-        self.flag_buttons = {}
+        self._drop_form()
         for parameter in self.controller.visible_parameters:
             if parameter.is_flag:
                 button = Button(
@@ -353,19 +368,32 @@ class _LauncherUI:
                 self.form_widgets.append(button)
             else:
                 field = TextArea(
-                    text=self._display_value(self.controller.values.get(parameter.name)),
+                    text=self._display_value(parameter, self.controller.values.get(parameter.name)),
                     prompt=f"{self._parameter_label(parameter)}: ",
                     password=parameter.sensitive,
                     multiline=False,
                     wrap_lines=False,
                 )
-                field.buffer.on_text_changed += partial(self._field_changed, parameter, field)
+                handler = partial(self._field_changed, parameter, field)
+                field.buffer.on_text_changed += handler
+                self._field_handlers[field] = handler
                 self.parameter_widgets[parameter.name] = field
                 self.form_widgets.append(field)
             hint = self._parameter_hint(parameter)
             if hint:
                 self.form_widgets.append(Label(hint))
             self.form_widgets.append(Label(partial(self._error_text, parameter)))
+
+    def _drop_form(self) -> None:
+        """Отцепить callbacks, очистить TextArea и удалить ссылки на форму."""
+        for field, handler in self._field_handlers.items():
+            field.buffer.on_text_changed -= handler
+            field.text = ""
+        self.form_widgets.clear()
+        self.parameter_widgets.clear()
+        self.flag_controls.clear()
+        self.flag_buttons.clear()
+        self._field_handlers.clear()
 
     def _error_text(self, parameter: ParameterSpec) -> str:
         error = self.controller.errors.get(parameter.name)
@@ -378,7 +406,7 @@ class _LauncherUI:
     @staticmethod
     def _field_value(parameter: ParameterSpec, text: str) -> object:
         if parameter.multiple:
-            return tuple(item.strip() for item in text.split(",") if item.strip())
+            return _parse_occurrences(text)
         if parameter.nargs != 1:
             try:
                 return tuple(shlex.split(text))
@@ -392,11 +420,16 @@ class _LauncherUI:
         return text or None
 
     @staticmethod
-    def _display_value(value: object) -> str:
+    def _display_value(parameter: ParameterSpec, value: object) -> str:
         if value is None:
             return ""
+        if parameter.multiple:
+            return " ; ".join(
+                shlex.join(tuple(str(item) for item in occurrence))
+                for occurrence in parameter_occurrences(value, parameter)
+            )
         if isinstance(value, (tuple, list)):
-            return ", ".join(str(item) for item in value)
+            return shlex.join(tuple(str(item) for item in value))
         return str(value)
 
     def _toggle_flag(self, name: str) -> None:
@@ -413,16 +446,31 @@ class _LauncherUI:
     @staticmethod
     def _parameter_label(parameter: ParameterSpec) -> str:
         if parameter.label:
-            return parameter.label
-        if parameter.option_strings or parameter.secondary_strings:
-            return " / ".join((*parameter.option_strings, *parameter.secondary_strings))
-        return parameter.name
+            label = parameter.label
+        elif parameter.option_strings or parameter.secondary_strings:
+            label = " / ".join((*parameter.option_strings, *parameter.secondary_strings))
+        else:
+            label = parameter.name
+        if parameter.metavar and not parameter.is_flag:
+            return f"{label} {parameter.metavar}"
+        return label
 
     @staticmethod
     def _parameter_hint(parameter: ParameterSpec) -> str:
         parts = [parameter.description] if parameter.description else []
         if parameter.choices:
             parts.append(f"Варианты: {', '.join(parameter.choices)}")
+        if parameter.nargs > 1:
+            subject = (
+                "Количество значений в каждом повторении"
+                if parameter.multiple
+                else "Количество значений"
+            )
+            parts.append(f"{subject}: {parameter.nargs}; разделяйте их пробелами.")
+        if parameter.multiple:
+            parts.append("Повторения разделяйте «;»; для пробелов используйте кавычки.")
+        elif parameter.nargs > 1:
+            parts.append("Для пробелов внутри значения используйте кавычки.")
         return " ".join(parts)
 
     def _start_update_check(self, event: KeyPressEvent) -> None:
@@ -501,6 +549,23 @@ class _LauncherUI:
             and self.version_check.update_available
             and self.version_check.installation.mode is InstallMode.UV_TOOL
         )
+
+
+def _parse_occurrences(text: str) -> tuple[tuple[str, ...], ...]:
+    """Разобрать repeatable input: `;` между occurrences, shlex внутри."""
+    try:
+        lexer = shlex.shlex(text, posix=True, punctuation_chars=";")
+        lexer.whitespace_split = True
+        lexer.commenters = ""
+        occurrences: list[list[str]] = [[]]
+        for token in lexer:
+            if token and set(token) == {";"}:
+                occurrences.extend([] for _ in token)
+            else:
+                occurrences[-1].append(token)
+    except ValueError:
+        return ((text,),)
+    return tuple(tuple(occurrence) for occurrence in occurrences if occurrence)
 
 
 def _bindings(ui: _LauncherUI) -> KeyBindings:

@@ -78,6 +78,7 @@ def _parameter_spec(
             if presentation.description is not None
             else getattr(parameter, "help", None)
         ),
+        metavar=getattr(parameter, "metavar", None),
     )
 
 

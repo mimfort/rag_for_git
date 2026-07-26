@@ -231,6 +231,34 @@ def test_prepare_command_serializes_click_parameter_shapes(parameter, value, cha
     assert prepared.argv == expected
 
 
+def test_prepare_command_flattens_each_multiple_fixed_nargs_occurrence_for_click():
+    """Каждое повторение compound option становится отдельной группой argv-токенов."""
+    option = click.Option(["--pair"], nargs=2, multiple=True)
+    received: list[tuple[tuple[str, str], ...]] = []
+    spec = _test_command(option)
+    spec.command.callback = lambda pair: received.append(pair)
+
+    prepared = prepare_command(
+        spec,
+        {"pair": (("left", "right"), ("third value", "fourth"))},
+        {"pair"},
+        platform_name="Linux",
+    )
+    result = CliRunner().invoke(spec.command, list(prepared.argv[1:]))
+
+    assert prepared.argv == (
+        "run",
+        "--pair",
+        "left",
+        "right",
+        "--pair",
+        "third value",
+        "fourth",
+    )
+    assert result.exit_code == 0, result.output
+    assert received == [(("left", "right"), ("third value", "fourth"))]
+
+
 def test_windows_preview_uses_windows_quoting_after_masking_secret():
     """Windows preview экранируется list2cmdline и маскирует секрет до форматирования."""
     prepared = prepare_command(

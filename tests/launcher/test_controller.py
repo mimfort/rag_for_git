@@ -184,6 +184,58 @@ def test_builtin_click_type_is_validated_without_final_click_parse():
 
 
 @pytest.mark.parametrize(
+    ("option", "value"),
+    [
+        (click.Option(["--pair"], nargs=2), ("only-one",)),
+        (
+            click.Option(["--pair"], nargs=2, multiple=True),
+            (("left", "right"), ("only-one",)),
+        ),
+    ],
+)
+def test_fixed_nargs_requires_exact_arity_before_preview(option, value):
+    """Malformed fixed arity остаётся на форме и не достигает preview."""
+    spec = CommandSpec(
+        path=("compound",),
+        command=click.Command("compound", params=[option]),
+        summary="Compound",
+        details="Тест fixed nargs.",
+        effects=(),
+        scenarios=(),
+        keywords=(),
+        params=(
+            ParameterSpec(
+                source=option,
+                name=option.name,
+                kind="option",
+                option_strings=tuple(option.opts),
+                secondary_strings=tuple(option.secondary_opts),
+                required=False,
+                nargs=option.nargs,
+                multiple=option.multiple,
+                count=False,
+                is_flag=False,
+                default=None,
+                choices=(),
+                section=ParamSection.BASIC,
+                sensitive=False,
+            ),
+        ),
+    )
+    controller = LauncherController((spec,))
+    controller.open_selected()
+    controller.set_value("pair", value)
+
+    controller.open_preview()
+
+    assert controller.screen is Screen.DETAILS
+    assert controller.prepared is None
+    assert controller.errors == {
+        "pair": "Количество значений в каждом повторении должно быть равно 2"
+    }
+
+
+@pytest.mark.parametrize(
     ("parameter_type", "secret"),
     [
         (click.Choice(("alpha", "beta")), "secret-choice"),

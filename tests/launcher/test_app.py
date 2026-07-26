@@ -24,6 +24,7 @@ from prompt_toolkit.input import DummyInput, create_pipe_input
 from prompt_toolkit.layout import Layout
 from prompt_toolkit.output import DummyOutput
 from prompt_toolkit.output.plain_text import PlainTextOutput
+from prompt_toolkit.widgets import TextArea
 
 
 def _spec(name: str) -> CommandSpec:
@@ -83,6 +84,36 @@ def _sensitive_integer_spec() -> CommandSpec:
         command=click.Command("sensitive", params=[source]),
         summary="Проверить секрет",
         details="Тестовая команда с чувствительным целочисленным параметром.",
+        effects=(),
+        scenarios=(),
+        keywords=(),
+        params=(parameter,),
+    )
+
+
+def _sensitive_spec() -> CommandSpec:
+    source = click.Option(["--token"], required=True)
+    parameter = ParameterSpec(
+        source=source,
+        name="token",
+        kind="option",
+        option_strings=("--token",),
+        secondary_strings=(),
+        required=True,
+        nargs=1,
+        multiple=False,
+        count=False,
+        is_flag=False,
+        default=None,
+        choices=(),
+        section=ParamSection.BASIC,
+        sensitive=True,
+    )
+    return CommandSpec(
+        path=("sensitive",),
+        command=click.Command("sensitive", params=[source]),
+        summary="Проверить секрет",
+        details="Тестовая команда с чувствительным параметром.",
         effects=(),
         scenarios=(),
         keywords=(),
@@ -373,6 +404,123 @@ def test_sensitive_type_error_is_rendered_without_raw_value():
     assert secret not in rendered
 
 
+def test_confirm_scrubs_sensitive_ui_state_after_real_application_returns(monkeypatch):
+    """Подтверждение сохраняет секрет только в immutable argv результата."""
+    retained_uis: list[_LauncherUI] = []
+    retained_fields: list[TextArea] = []
+
+    class _RetainedUI(_LauncherUI):
+        def __init__(self, *args, **kwargs) -> None:
+            super().__init__(*args, **kwargs)
+            retained_uis.append(self)
+
+        def _build_form(self) -> None:
+            super()._build_form()
+            retained_fields.extend(
+                widget for widget in self.parameter_widgets.values() if isinstance(widget, TextArea)
+            )
+
+    monkeypatch.setattr(launcher_app, "_LauncherUI", _RetainedUI)
+    output = _TrackingOutput()
+    secret = "confirm-secret-value"
+
+    with create_pipe_input() as pipe:
+        sender = threading.Timer(0.5, lambda: pipe.send_bytes(b"\r"))
+        sender.start()
+        pipe.send_bytes(b"\r")
+        pipe.send_text(secret)
+        pipe.send_bytes(b"\r")
+        result = run_launcher(
+            commands=(_sensitive_spec(),),
+            input=pipe,
+            output=output,
+        )
+        sender.join()
+
+    ui = retained_uis[0]
+    assert result.argv == ("sensitive", "--token", secret)
+    assert "••••••" in output.stream.getvalue()
+    assert ui.controller.values == {}
+    assert ui.controller.changed == set()
+    assert ui.controller.errors == {}
+    assert ui.controller.prepared is None
+    assert all(field.text == "" for field in retained_fields)
+    assert ui.form_widgets == []
+    assert ui.parameter_widgets == {}
+    assert ui.flag_controls == {}
+    assert ui.flag_buttons == {}
+    assert secret not in output.stream.getvalue()
+    assert secret not in repr(ui.__dict__)
+
+
+def test_cancel_scrubs_sensitive_error_and_ui_state_after_real_application_returns(monkeypatch):
+    """Отмена после ошибки типа не оставляет секрет в controller или TextArea."""
+    retained_uis: list[_LauncherUI] = []
+    retained_fields: list[TextArea] = []
+
+    class _RetainedUI(_LauncherUI):
+        def __init__(self, *args, **kwargs) -> None:
+            super().__init__(*args, **kwargs)
+            retained_uis.append(self)
+
+        def _build_form(self) -> None:
+            super()._build_form()
+            retained_fields.extend(
+                widget for widget in self.parameter_widgets.values() if isinstance(widget, TextArea)
+            )
+
+    monkeypatch.setattr(launcher_app, "_LauncherUI", _RetainedUI)
+    output = _TrackingOutput()
+    secret = "cancel-secret-value"
+
+    with create_pipe_input() as pipe:
+        pipe.send_bytes(b"\r")
+        pipe.send_text(secret)
+        pipe.send_bytes(b"\r\x03")
+        result = run_launcher(
+            commands=(_sensitive_integer_spec(),),
+            input=pipe,
+            output=output,
+        )
+
+    ui = retained_uis[0]
+    assert result == LauncherResult(None, 130)
+    assert ui.controller.values == {}
+    assert ui.controller.changed == set()
+    assert ui.controller.errors == {}
+    assert ui.controller.prepared is None
+    assert all(field.text == "" for field in retained_fields)
+    assert ui.form_widgets == []
+    assert ui.parameter_widgets == {}
+    assert ui.flag_controls == {}
+    assert ui.flag_buttons == {}
+    assert secret not in output.stream.getvalue()
+    assert secret not in repr(ui.__dict__)
+
+
+def test_rebuilding_form_clears_every_superseded_sensitive_text_buffer():
+    controller = LauncherController((_sensitive_spec(),))
+    controller.open_selected()
+    ui = _LauncherUI(
+        controller,
+        installation_detector=lambda: None,
+        version_checker=lambda installation, timeout: None,
+    )
+    ui._build_form()
+    first_field = ui.parameter_widgets["token"]
+    assert isinstance(first_field, TextArea)
+    first_field.text = "superseded-secret"
+
+    ui._build_form()
+    second_field = ui.parameter_widgets["token"]
+    assert isinstance(second_field, TextArea)
+    ui.close()
+
+    assert first_field.text == ""
+    assert second_field.text == ""
+    assert controller.values == {}
+
+
 def test_details_render_public_option_labels_including_advanced_fields():
     output = _TrackingOutput()
 
@@ -420,6 +568,47 @@ def test_details_render_click_help_and_choices():
     assert result == LauncherResult(None, 130)
     assert output.choice_help_rendered.is_set(), rendered
     assert "internal_mode" not in rendered
+
+
+def test_repeatable_metavar_and_encoding_are_explained_by_app():
+    check = _spec("check")
+    parameter = next(item for item in check.params if item.name == "board_project_values")
+
+    assert _LauncherUI._parameter_label(parameter) == "--board-project TYPE=PROJECT"
+    assert "Повторения разделяйте «;»" in _LauncherUI._parameter_hint(parameter)
+    assert "для пробелов используйте кавычки" in _LauncherUI._parameter_hint(parameter)
+
+
+def test_compound_widget_parser_preserves_occurrences_and_quoted_members():
+    source = click.Option(["--pair"], nargs=2, multiple=True, metavar="LEFT RIGHT")
+    parameter = ParameterSpec(
+        source=source,
+        name="pair",
+        kind="option",
+        option_strings=("--pair",),
+        secondary_strings=(),
+        required=False,
+        nargs=2,
+        multiple=True,
+        count=False,
+        is_flag=False,
+        default=None,
+        choices=(),
+        section=ParamSection.BASIC,
+        sensitive=False,
+    )
+
+    value = _LauncherUI._field_value(
+        parameter,
+        'left "right with spaces"; "third value" fourth',
+    )
+
+    assert value == (
+        ("left", "right with spaces"),
+        ("third value", "fourth"),
+    )
+    assert "Количество значений в каждом повторении: 2" in _LauncherUI._parameter_hint(parameter)
+    assert "Повторения разделяйте «;»" in _LauncherUI._parameter_hint(parameter)
 
 
 def test_advanced_install_fields_scroll_in_24_by_80_terminal():
@@ -766,6 +955,40 @@ def test_done_application_rejects_late_update_result():
     assert ui.checking_update is True
     assert ui._active_update_token is token
     assert ui._visible_update_token is token
+
+
+def test_closed_ui_rejects_late_update_result_without_repopulating_state():
+    info = InstallationInfo(InstallMode.UV_TOOL, "0.4.0", "/usr/bin/uv")
+    result = VersionCheck(info, "0.5.0", True)
+    controller = LauncherController((_spec("update"),))
+    controller.screen = Screen.UPDATE_RESULT
+    controller.values["token"] = "transient-value"
+    controller.errors["token"] = "transient-error"
+    ui = _LauncherUI(
+        controller,
+        installation_detector=lambda: info,
+        version_checker=lambda installation, timeout: result,
+    )
+    token = object()
+    ui.checking_update = True
+    ui._active_update_token = token
+    ui._visible_update_token = token
+    application: Application[LauncherResult] = Application(
+        input=DummyInput(),
+        output=DummyOutput(),
+    )
+
+    ui.close()
+    ui._finish_update_check(token, application, result, "late-error")
+
+    assert controller.values == {}
+    assert controller.errors == {}
+    assert controller.prepared is None
+    assert ui.version_check is None
+    assert ui.update_error is None
+    assert ui.checking_update is False
+    assert ui._active_update_token is None
+    assert ui._visible_update_token is None
 
 
 def test_late_update_completion_does_not_take_over_another_command():

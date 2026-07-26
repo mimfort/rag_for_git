@@ -53,6 +53,14 @@ def test_catalog_uses_public_click_labels_and_help_for_options():
     assert by_name["branch_opt"].description == ("одна ветка; по умолчанию все из REVIEW_BRANCHES")
 
 
+def test_catalog_preserves_explicit_click_metavar_for_repeatable_option():
+    check = next(item for item in build_catalog(cli) if item.path == ("check",))
+    board_project = next(param for param in check.params if param.name == "board_project_values")
+
+    assert board_project.metavar == "TYPE=PROJECT"
+    assert board_project.multiple is True
+
+
 def test_catalog_preserves_click_choices_and_presentation_description(monkeypatch):
     """Choices остаются Click-authority, а presentation может уточнить подпись."""
 

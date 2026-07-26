@@ -6,7 +6,11 @@ from enum import StrEnum
 
 import click
 
-from reviewer.launcher.command import PreparedCommand, prepare_command
+from reviewer.launcher.command import (
+    PreparedCommand,
+    parameter_occurrences,
+    prepare_command,
+)
 from reviewer.launcher.models import CommandSpec, LauncherResult, ParameterSpec, ParamSection
 
 
@@ -148,6 +152,15 @@ class LauncherController:
         """Завершить launcher без выбранной команды."""
         self.result = LauncherResult(None, exit_code)
 
+    def scrub_transient_state(self) -> None:
+        """Удалить введённые значения, оставив только immutable результат запуска."""
+        self.query = ""
+        self.values.clear()
+        self.changed.clear()
+        self.errors.clear()
+        self.prepared = None
+        self.show_advanced = False
+
     @staticmethod
     def _initial_value(parameter: ParameterSpec) -> object:
         default = parameter.default
@@ -180,10 +193,20 @@ class LauncherController:
             if parameter.required and self._is_empty(value):
                 errors[parameter.name] = "Обязательное поле"
                 continue
-            if self._is_empty(value) or type(parameter.source.type) not in _SAFE_CLICK_TYPES:
+            if self._is_empty(value):
+                continue
+            occurrences = parameter_occurrences(value, parameter)
+            if parameter.nargs > 0 and any(
+                len(occurrence) != parameter.nargs for occurrence in occurrences
+            ):
+                errors[parameter.name] = (
+                    f"Количество значений в каждом повторении должно быть равно {parameter.nargs}"
+                )
+                continue
+            if type(parameter.source.type) not in _SAFE_CLICK_TYPES:
                 continue
             try:
-                self._convert(parameter, value)
+                self._convert(parameter, occurrences)
             except click.BadParameter as error:
                 errors[parameter.name] = (
                     "Некорректное значение" if parameter.sensitive else error.format_message()
@@ -195,10 +218,10 @@ class LauncherController:
         return value is None or value == "" or value == () or value == []
 
     @staticmethod
-    def _convert(parameter: ParameterSpec, value: object) -> None:
-        values = value if parameter.multiple and isinstance(value, (tuple, list)) else (value,)
-        for item in values:
-            parameter.source.type.convert(item, parameter.source, None)
+    def _convert(parameter: ParameterSpec, occurrences: tuple[tuple[object, ...], ...]) -> None:
+        for occurrence in occurrences:
+            for item in occurrence:
+                parameter.source.type.convert(item, parameter.source, None)
 
 
 def _fuzzy_score(text: str, query: str) -> tuple[int, int, int, int] | None:
