@@ -48,7 +48,7 @@ Run:
 
 ```bash
 docker compose --profile test up -d --wait paradedb-test
-TEST_PG_DSN=postgresql://reviewer_test:reviewer_test@localhost:55433/reviewer_test \
+TEST_PG_DSN='postgresql://reviewer_test:reviewer_test@localhost:55433/reviewer_test?connect_timeout=5' \
   /Users/aleksejzadoroznyj/PycharmProjects/rag_for_git/.venv/bin/pytest -q -m integration \
   tests/index/test_summary_store.py::test_upsert_then_get_roundtrip \
   tests/index/test_summary_store.py::test_upsert_writes_embedding_and_search_returns_nearest_first
@@ -421,7 +421,7 @@ git commit -m "feat(skills): ослабить stale-приор solve-task PRI-17
 - [ ] **Step 1: Run the focused integration and unit suites**
 
 ```bash
-TEST_PG_DSN=postgresql://reviewer_test:reviewer_test@localhost:55433/reviewer_test \
+TEST_PG_DSN='postgresql://reviewer_test:reviewer_test@localhost:55433/reviewer_test?connect_timeout=5' \
   /Users/aleksejzadoroznyj/PycharmProjects/rag_for_git/.venv/bin/pytest -q \
   -m integration tests/index/test_summary_store.py
 /Users/aleksejzadoroznyj/PycharmProjects/rag_for_git/.venv/bin/pytest -q \
@@ -445,10 +445,8 @@ git status --short
 
 Confirm only PRI-173 files were committed and pre-existing untracked files remain untouched.
 
-- [ ] **Step 4: Remove only the isolated test service**
+- [ ] **Step 4: Preserve the pre-existing isolated test service**
 
-```bash
-docker compose --profile test rm -sfv paradedb-test
-```
-
-Do not run `docker compose down -v`.
+Task 1 found that port 55433 is owned by the healthy
+`rag_for_git-paradedb-test-1` service started outside this worktree. Do not stop or remove it.
+This plan created no container of its own. Never run `docker compose down -v`.
