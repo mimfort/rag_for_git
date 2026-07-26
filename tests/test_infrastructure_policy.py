@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from contextlib import contextmanager
 import inspect
 from pathlib import Path
@@ -112,6 +113,7 @@ from pytest_socket import SocketBlockedError
 def state():
     return (
         socket.socket,
+        socket.socketpair,
         "connect" in socket.socket.__dict__,
         socket.socket.__dict__.get("connect"),
         psycopg.connect,
@@ -152,6 +154,7 @@ from psycopg_pool import ConnectionPool
 def state():
     return (
         socket.socket,
+        socket.socketpair,
         "connect" in socket.socket.__dict__,
         socket.socket.__dict__.get("connect"),
         psycopg.connect,
@@ -187,10 +190,15 @@ def test_unit_test_cannot_create_python_socket() -> None:
             socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
 
-def test_unit_test_allows_unix_socketpair_for_in_process_event_loops() -> None:
+def test_unit_test_allows_in_process_socketpair() -> None:
     left, right = socket.socketpair()
     left.close()
     right.close()
+
+
+def test_unit_test_allows_asyncio_internal_wakeup_socketpair() -> None:
+    loop = asyncio.new_event_loop()
+    loop.close()
 
 
 @pytest.mark.parametrize("connect", [lambda: psycopg.connect(""), lambda: psycopg.Connection.connect("")])

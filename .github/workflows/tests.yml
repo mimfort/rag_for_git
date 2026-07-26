@@ -21,9 +21,35 @@ jobs:
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6.3.0
         with:
           python-version: "3.11"
-      - run: pip install -e ".[dev,web]"
+      - run: pip install -e ".[dev,web]" uv
+      # uv.lock — отслеживаемый источник воспроизводимого разрешения зависимостей.
+      - run: uv lock --check
       # Раньше полного прогона: рассинхрон сгенерированных манифестов плагина
       # с версией pyproject даёт здесь одну внятную строку вместо десятка
       # падений в тестах install.
       - run: python scripts/update_codex_plugin_manifest.py --check
       - run: pytest -q
+
+  launcher-platform:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.11"
+      - run: pip install -e ".[dev]" uv
+      - run: >-
+          pytest
+          tests/entrypoints/test_launcher.py
+          tests/entrypoints/test_launcher_contract.py
+          tests/launcher
+          tests/test_infrastructure_policy.py::test_unit_test_cannot_create_python_socket
+          tests/test_infrastructure_policy.py::test_unit_test_allows_in_process_socketpair
+          tests/test_infrastructure_policy.py::test_unit_test_allows_asyncio_internal_wakeup_socketpair
+          -q
+      - run: uv build
+      - run: python scripts/verify_launcher_distribution.py dist

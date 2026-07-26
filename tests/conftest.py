@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import socket
+import sys
+from types import FunctionType
 from typing import Any
 
 import pytest
@@ -19,6 +21,7 @@ from tests.infrastructure_policy import (
 @dataclass(frozen=True)
 class _SocketPolicyState:
     socket_type: Any
+    socketpair: Any
     socket_connect_defined: bool
     socket_connect: Any
     getaddrinfo: Any
@@ -33,11 +36,68 @@ class _SessionPolicyState:
 
 
 _SESSION_POLICIES: list[_SessionPolicyState] = []
+_TRUE_SOCKET_TYPE = socket.socket
+_TRUE_SOCKETPAIR = socket.socketpair
+
+
+def _build_windows_unit_socketpair() -> Any:
+    """Изолировать штатную Windows socketpair от подмены socket.socket."""
+    if not isinstance(_TRUE_SOCKETPAIR, FunctionType):
+        return _TRUE_SOCKETPAIR
+
+    isolated_globals = dict(_TRUE_SOCKETPAIR.__globals__)
+    isolated_globals["socket"] = _TRUE_SOCKET_TYPE
+    isolated = FunctionType(
+        _TRUE_SOCKETPAIR.__code__,
+        isolated_globals,
+        _TRUE_SOCKETPAIR.__name__,
+        _TRUE_SOCKETPAIR.__defaults__,
+        _TRUE_SOCKETPAIR.__closure__,
+    )
+    isolated.__kwdefaults__ = _TRUE_SOCKETPAIR.__kwdefaults__
+    return isolated
+
+
+_WINDOWS_UNIT_SOCKETPAIR = (
+    _build_windows_unit_socketpair() if sys.platform == "win32" else _TRUE_SOCKETPAIR
+)
+
+
+def _disable_unit_sockets() -> None:
+    """Запретить сеть, оставив Windows asyncio внутреннюю wake-up socketpair."""
+    disable_socket(allow_unix_socket=True)
+    if sys.platform == "win32":
+        guarded_socket_type = socket.socket
+
+        class _WindowsUnitSocket(guarded_socket_type):
+            def __new__(
+                cls,
+                family: socket.AddressFamily | int = -1,
+                type: socket.SocketKind | int = -1,
+                proto: int = -1,
+                fileno: int | None = None,
+            ) -> _WindowsUnitSocket:
+                # Windows socketpair создаёт listener/client через изолированную
+                # штатную функцию, а socket.accept() затем оборачивает уже
+                # принятый handle через глобальный socket.socket. Только эта
+                # вторая стадия имеет fileno; создание новых сокетов блокируется.
+                if (
+                    fileno is not None
+                    and family == socket.AF_INET
+                    and type == socket.SOCK_STREAM
+                    and proto == 0
+                ):
+                    return _TRUE_SOCKET_TYPE.__new__(cls, family, type, proto, fileno)
+                return super().__new__(cls, family, type, proto, fileno)
+
+        socket.socket = _WindowsUnitSocket
+        socket.socketpair = _WINDOWS_UNIT_SOCKETPAIR
 
 
 def _capture_socket_policy() -> _SocketPolicyState:
     return _SocketPolicyState(
         socket_type=socket.socket,
+        socketpair=socket.socketpair,
         socket_connect_defined="connect" in socket.socket.__dict__,
         socket_connect=socket.socket.__dict__.get("connect"),
         getaddrinfo=socket.getaddrinfo,
@@ -47,6 +107,7 @@ def _capture_socket_policy() -> _SocketPolicyState:
 
 def _restore_socket_policy(state: _SocketPolicyState) -> None:
     socket.socket = state.socket_type
+    socket.socketpair = state.socketpair
     if state.socket_connect_defined:
         socket.socket.connect = state.socket_connect
     elif "connect" in socket.socket.__dict__:
@@ -64,7 +125,7 @@ def pytest_sessionstart(session: pytest.Session) -> None:
             sockets=_capture_socket_policy(),
         )
     )
-    disable_socket(allow_unix_socket=True)
+    _disable_unit_sockets()
     install_unit_db_guards(monkeypatch)
 
 
@@ -80,7 +141,7 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
 def pytest_runtest_teardown(item: pytest.Item, nextitem: pytest.Item | None):
     yield
     enable_socket()
-    disable_socket(allow_unix_socket=True)
+    _disable_unit_sockets()
 
 
 @pytest.hookimpl(tryfirst=True)
@@ -105,7 +166,7 @@ def infrastructure_test_settings(
 ) -> InfrastructureTestSettings | None:
     if request.node.get_closest_marker("integration") is None:
         enable_socket()
-        disable_socket(allow_unix_socket=True)
+        _disable_unit_sockets()
         return None
 
     production = Settings()
