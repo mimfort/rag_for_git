@@ -9,6 +9,7 @@ import time
 from io import StringIO
 
 import click
+import pytest
 
 import reviewer.launcher.app as launcher_app
 from reviewer.entrypoints.cli import cli
@@ -539,6 +540,36 @@ def test_rebuilding_form_clears_every_superseded_sensitive_text_buffer():
     _assert_buffer_scrubbed(first_field.buffer, "superseded-secret")
     _assert_buffer_scrubbed(second_field.buffer, "superseded-secret")
     assert controller.values == {}
+
+
+@pytest.mark.parametrize("cache_state", ["missing", "without_clear"])
+def test_close_preserves_result_when_document_cache_cleanup_is_unavailable(cache_state):
+    """Изменение private cache prompt_toolkit не должно ломать result delivery."""
+    controller = LauncherController((_sensitive_spec(),))
+    controller.open_selected()
+    ui = _LauncherUI(
+        controller,
+        installation_detector=lambda: None,
+        version_checker=lambda installation, timeout: None,
+    )
+    ui._build_form()
+    field = ui.parameter_widgets["token"]
+    assert isinstance(field, TextArea)
+    secret = "cache-compat-secret"
+    field.text = secret
+    result = LauncherResult(("sensitive", "--token", secret), 0)
+    controller.result = result
+    if cache_state == "missing":
+        del field.buffer._document_cache
+    else:
+        field.buffer._document_cache = object()
+
+    ui.close()
+
+    assert controller.result is result
+    assert controller.values == {}
+    assert ui.form_widgets == []
+    assert ui.parameter_widgets == {}
 
 
 def test_details_render_public_option_labels_including_advanced_fields():

@@ -387,10 +387,17 @@ class _LauncherUI:
     def _drop_form(self) -> None:
         """Отцепить callbacks, очистить TextArea и удалить ссылки на форму."""
         for field, handler in self._field_handlers.items():
-            field.buffer.on_text_changed -= handler
-            field.buffer.reset()
+            buffer = field.buffer
+            buffer.on_text_changed -= handler
+            buffer.reset()
             # prompt_toolkit 3.x оставляет старые Document в cache после reset().
-            field.buffer._document_cache.clear()
+            clear_document_cache = getattr(
+                getattr(buffer, "_document_cache", None),
+                "clear",
+                None,
+            )
+            if callable(clear_document_cache):
+                clear_document_cache()
         self.form_widgets.clear()
         self.parameter_widgets.clear()
         self.flag_controls.clear()

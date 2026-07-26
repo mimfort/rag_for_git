@@ -64,8 +64,9 @@ def test_should_use_tui_matrix(argv, stdin_tty, stdout_tty, env, expected):
         "TEAMCITY_VERSION",
     ],
 )
-def test_empty_ci_marker_routes_direct_without_loading_prompt_toolkit(marker):
-    """Даже пустой CI-маркер не должен загружать или запускать TUI."""
+@pytest.mark.parametrize("value", ["", "false", "1"])
+def test_ci_marker_routes_direct_without_loading_prompt_toolkit(marker, value):
+    """Любое значение CI-маркера запрещает импорт и запуск TUI."""
     code = """
 import sys
 from reviewer.entrypoints import launcher
@@ -78,7 +79,7 @@ class TTY:
 
 launcher.sys.stdin = TTY()
 launcher.sys.stdout = TTY()
-launcher.os.environ = {"TERM": "xterm-256color", sys.argv[1]: ""}
+launcher.os.environ = {"TERM": "xterm-256color", sys.argv[1]: sys.argv[2]}
 calls = []
 launcher._run_cli = lambda argv: calls.append(tuple(argv))
 launcher._run_tui = lambda: (_ for _ in ()).throw(AssertionError("TUI вызван в CI"))
@@ -87,7 +88,7 @@ assert calls == [()]
 assert "prompt_toolkit" not in sys.modules
 """
 
-    subprocess.run([sys.executable, "-c", code, marker], check=True)
+    subprocess.run([sys.executable, "-c", code, marker, value], check=True)
 
 
 @pytest.mark.parametrize(
