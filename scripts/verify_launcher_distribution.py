@@ -162,7 +162,7 @@ def main(argv: Sequence[str] | None = None) -> None:
 
     def run_and_report(command: Command) -> None:
         run_command(command)
-        print(f"Подтверждено: {' '.join(command.argv)}")
+        print(f"Verified: {ascii(' '.join(command.argv))}")
 
     verify_distribution(args.wheel_dir, runner=run_and_report)
 

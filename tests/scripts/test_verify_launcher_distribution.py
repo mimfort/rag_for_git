@@ -4,6 +4,7 @@ import os
 import subprocess
 import sys
 from contextlib import contextmanager
+from io import BytesIO, TextIOWrapper
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
@@ -357,3 +358,22 @@ def test_run_command_passes_tokenized_argv_without_shell(tmp_path, monkeypatch):
             },
         )
     ]
+
+
+def test_main_reports_non_ascii_command_to_legacy_windows_stdout(tmp_path, monkeypatch):
+    raw_stdout = BytesIO()
+    legacy_stdout = TextIOWrapper(raw_stdout, encoding="cp1252", errors="strict")
+
+    def fake_verify_distribution(wheel_dir, *, runner):
+        runner(Command(("reviewer", "помощь"), tmp_path, {}))
+
+    monkeypatch.setattr(distribution, "verify_distribution", fake_verify_distribution)
+    monkeypatch.setattr(distribution, "run_command", lambda command: None)
+    monkeypatch.setattr(sys, "stdout", legacy_stdout)
+
+    distribution.main([str(tmp_path)])
+    legacy_stdout.flush()
+
+    rendered = raw_stdout.getvalue().decode("cp1252")
+    assert rendered.startswith("Verified: ")
+    assert "\\u043f" in rendered
