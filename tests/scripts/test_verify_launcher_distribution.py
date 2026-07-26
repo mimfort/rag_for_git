@@ -26,6 +26,45 @@ def _wheel(wheel_dir: Path, name: str = "rag_reviewer-0.4.0-py3-none-any.whl") -
     return wheel
 
 
+def test_distribution_check_runs_standalone_uvx_before_persistent_install(tmp_path):
+    wheel_dir = tmp_path / "dist"
+    wheel = _wheel(wheel_dir)
+    calls: list[Command] = []
+    persistent_install_seen = False
+    uvx_saw_persistent_install = False
+
+    def observe(command: Command) -> None:
+        nonlocal persistent_install_seen, uvx_saw_persistent_install
+        calls.append(command)
+        if command.argv[:3] == ("uv", "tool", "install"):
+            persistent_install_seen = True
+        if command.argv[0] == "uvx":
+            uvx_saw_persistent_install = persistent_install_seen
+            assert all(
+                not Path(command.env[name]).exists()
+                for name in ("UV_TOOL_DIR", "UV_TOOL_BIN_DIR", "UV_CACHE_DIR")
+            )
+
+    verify_distribution(wheel_dir, runner=observe)
+
+    uvx, install, installed = calls
+    assert uvx.argv == (
+        "uvx",
+        "--isolated",
+        "--from",
+        str(wheel.resolve()),
+        "reviewer",
+        "--help",
+    )
+    assert not uvx_saw_persistent_install
+    assert all(
+        uvx.env[name] != install.env[name]
+        for name in ("UV_TOOL_DIR", "UV_TOOL_BIN_DIR", "UV_CACHE_DIR")
+    )
+    assert uvx.argv[0] != installed.argv[0]
+    assert Path(installed.argv[0]).parent == Path(install.env["UV_TOOL_BIN_DIR"])
+
+
 def test_distribution_check_uses_isolated_uv_dirs_and_outside_checkout(tmp_path):
     wheel_dir = tmp_path / "dist"
     wheel = _wheel(wheel_dir)
@@ -39,22 +78,20 @@ def test_distribution_check_uses_isolated_uv_dirs_and_outside_checkout(tmp_path)
 
     verify_distribution(wheel_dir, runner=observe)
 
-    install = calls[0]
+    uvx, install, _installed = calls
     assert install.argv[:4] == ("uv", "tool", "install", "--force")
     assert install.argv[-1] == str(wheel.resolve())
     assert len(set(roots)) == 1
     assert all(not call.cwd.resolve().is_relative_to(distribution._CHECKOUT_ROOT) for call in calls)
-    assert {
-        Path(install.env[name]).parent
-        for name in ("UV_TOOL_DIR", "UV_TOOL_BIN_DIR", "UV_CACHE_DIR")
-    } == {roots[0]}
-    assert len(
-        {
-            install.env[name]
+    for command in (uvx, install):
+        assert {
+            Path(command.env[name]).parent
             for name in ("UV_TOOL_DIR", "UV_TOOL_BIN_DIR", "UV_CACHE_DIR")
-        }
-    ) == 3
-    assert any(call.argv[:2] == ("uvx", "--from") for call in calls)
+        } == {roots[0]}
+        assert (
+            len({command.env[name] for name in ("UV_TOOL_DIR", "UV_TOOL_BIN_DIR", "UV_CACHE_DIR")})
+            == 3
+        )
     assert all(not root.exists() for root in roots)
 
 
@@ -103,8 +140,7 @@ def test_distribution_check_skips_inside_and_unwritable_temp_candidates(
 
         assert parent_arguments == list(candidates)
         assert all(
-            not call.cwd.resolve().is_relative_to(distribution._CHECKOUT_ROOT)
-            for call in calls
+            not call.cwd.resolve().is_relative_to(distribution._CHECKOUT_ROOT) for call in calls
         )
         assert all(not root.exists() for root in created_roots)
 
@@ -188,7 +224,7 @@ def test_distribution_check_does_not_use_external_wheel_parent_for_temp(
     verify_distribution(wheel_dir, runner=_recording_runner(calls))
 
     assert parent_arguments == [None]
-    assert calls[0].argv[-1] == str(wheel.resolve())
+    assert calls[0].argv[3] == str(wheel.resolve())
     assert all(not root.exists() for root in created_roots)
 
 
@@ -204,7 +240,7 @@ def test_distribution_check_uses_windows_executable_suffix(tmp_path, monkeypatch
 
     verify_distribution(wheel_dir, runner=_recording_runner(calls))
 
-    assert calls[1].argv[0].endswith("reviewer.exe")
+    assert calls[2].argv[0].endswith("reviewer.exe")
 
 
 @pytest.mark.parametrize("wheel_count", [0, 2])

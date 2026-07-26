@@ -74,20 +74,38 @@ def verify_distribution(
     wheel = wheels[0]
 
     with _temporary_root() as root:
+        uvx_env = {
+            **os.environ,
+            "UV_TOOL_DIR": str(root / "uvx-tools"),
+            "UV_TOOL_BIN_DIR": str(root / "uvx-bin"),
+            "UV_CACHE_DIR": str(root / "uvx-cache"),
+        }
         tool_dir = root / "tools"
         bin_dir = root / "bin"
         outside = root / "outside-checkout"
         outside.mkdir()
-        env = {
+        install_env = {
             **os.environ,
             "UV_TOOL_DIR": str(tool_dir),
             "UV_TOOL_BIN_DIR": str(bin_dir),
             "UV_CACHE_DIR": str(root / "cache"),
         }
-        runner(Command(("uv", "tool", "install", "--force", str(wheel)), outside, env))
+        runner(
+            Command(
+                ("uvx", "--isolated", "--from", str(wheel), "reviewer", "--help"),
+                outside,
+                uvx_env,
+            )
+        )
+        runner(
+            Command(
+                ("uv", "tool", "install", "--force", str(wheel)),
+                outside,
+                install_env,
+            )
+        )
         executable = bin_dir / ("reviewer.exe" if os.name == "nt" else "reviewer")
-        runner(Command((str(executable), "--help"), outside, env))
-        runner(Command(("uvx", "--from", str(wheel), "reviewer", "--help"), outside, env))
+        runner(Command((str(executable), "--help"), outside, install_env))
 
 
 def main(argv: Sequence[str] | None = None) -> None:

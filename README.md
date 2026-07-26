@@ -262,8 +262,13 @@ uv tool upgrade rag-reviewer
 Установка и запуск launcher работают из любого каталога: clone репозитория и переход в checkout
 не нужны. Пустая команда `reviewer` в интерактивном терминале открывает палитру. Команды с
 аргументами (`reviewer check`, `reviewer status --json`), pipe/CI и `reviewer-mcp` сохраняют прямой
-неинтерактивный путь. Launcher обращается к сети для проверки версии только после явного выбора
-действия «Проверить обновление»; прямой эквивалент — `reviewer update`.
+неинтерактивный путь. В TUI действие «Проверить обновление» только после явного выбора выполняет
+read-only проверку способа установки и версии на PyPI. Если для постоянной `uv tool`-установки
+найдена новая версия, отдельное подтверждение `Enter` возвращает существующий путь
+`reviewer update`. Прямой `reviewer update` ведёт себя иначе: для постоянной `uv tool`-установки
+он проверяет версию и при доступном обновлении сразу запускает `uv tool upgrade rag-reviewer`;
+в режиме `uvx` проверяет и только печатает инструкции, а в editable-режиме только сообщает
+команды `git pull`/`pip install -e .`. Эти режимы не изменяют посторонние постоянные установки.
 
 > **`reviewer install` is cross-platform** (Windows / macOS / Linux). It injects the
 > absolute path to `uvx` automatically — no `bash -lc` wrapper needed. The manual
@@ -641,7 +646,7 @@ GEMINI.md / .cursorrules — whichever your client uses).
 | `init` | — | `--path FILE` (default `~/.config/rag-reviewer/.env`), `--yes` (accept defaults, CI mode) | Interactive wizard that writes the `.env` (Voyage/GitHub + optional groups). |
 | `install` | `[client]` | `--all`, `--list`, `--path FILE`, `--pin VERSION`, `--no-latest`, `--no-skills`, `--dry-run` | Register the MCP server (and skills) in AI clients (cross-platform). |
 | `install-skills` | `[client]` | `--all`, `--list`, `--path FILE` | Install only the skills into a client's global skills directory. |
-| `update` | — | — | Check PyPI for a newer `rag-reviewer` and report how to upgrade. |
+| `update` | — | — | Check PyPI for a newer `rag-reviewer`; immediately upgrade the current persistent `uv tool` install when needed. In `uvx`/editable mode, only report instructions without mutating unrelated installs. |
 | `index` | `<repo>` (path to local clone) | `--ref BRANCH` (git ref to read; default = primary branch), `--branch NAME` (storage key; default = `--ref`), `--repo OWNER/NAME` (default from git `origin`) | Build/update the base index of a branch (vectors + graph). Done once, then incremental. |
 | `search` | `<query>` | `--repo OWNER/NAME` (default `DEFAULT_REPO`), `--branch NAME` (default primary) | Diagnostic hybrid search over a branch's base index. |
 | `status` | `[path]` (default `.`) | `--repo OWNER/NAME` (default from git `origin`), `--branch NAME` (default: all `REVIEW_BRANCHES`), `--json` (machine-readable output) | Index health / freshness vs the clone's HEAD. Spends no Voyage quota. |
