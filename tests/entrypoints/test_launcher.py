@@ -1,5 +1,9 @@
 """Проверки маршрутизации глобального launcher."""
+
 from __future__ import annotations
+
+import subprocess
+import sys
 
 import pytest
 
@@ -30,18 +34,60 @@ class _BrokenStream:
         ([], True, True, {"TERM": "dumb"}, False),
         ([], True, True, {"CI": "true"}, False),
         ([], True, True, {"GITHUB_ACTIONS": "true"}, False),
-        ([], True, True, {"CI": "false"}, True),
+        ([], True, True, {"CI": "false"}, False),
         ([], True, True, {}, True),
     ],
 )
 def test_should_use_tui_matrix(argv, stdin_tty, stdout_tty, env, expected):
     """Интерактивный режим включается только в подходящем терминале."""
-    assert should_use_tui(
-        argv,
-        stdin=_Stream(stdin_tty),
-        stdout=_Stream(stdout_tty),
-        environ=env,
-    ) is expected
+    assert (
+        should_use_tui(
+            argv,
+            stdin=_Stream(stdin_tty),
+            stdout=_Stream(stdout_tty),
+            environ=env,
+        )
+        is expected
+    )
+
+
+@pytest.mark.parametrize(
+    "marker",
+    [
+        "CI",
+        "GITHUB_ACTIONS",
+        "GITLAB_CI",
+        "TF_BUILD",
+        "BUILDKITE",
+        "CIRCLECI",
+        "JENKINS_URL",
+        "TEAMCITY_VERSION",
+    ],
+)
+def test_empty_ci_marker_routes_direct_without_loading_prompt_toolkit(marker):
+    """Даже пустой CI-маркер не должен загружать или запускать TUI."""
+    code = """
+import sys
+from reviewer.entrypoints import launcher
+
+class TTY:
+    def isatty(self):
+        return True
+    def flush(self):
+        pass
+
+launcher.sys.stdin = TTY()
+launcher.sys.stdout = TTY()
+launcher.os.environ = {"TERM": "xterm-256color", sys.argv[1]: ""}
+calls = []
+launcher._run_cli = lambda argv: calls.append(tuple(argv))
+launcher._run_tui = lambda: (_ for _ in ()).throw(AssertionError("TUI вызван в CI"))
+launcher.main([])
+assert calls == [()]
+assert "prompt_toolkit" not in sys.modules
+"""
+
+    subprocess.run([sys.executable, "-c", code, marker], check=True)
 
 
 @pytest.mark.parametrize(

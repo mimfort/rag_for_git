@@ -388,7 +388,9 @@ class _LauncherUI:
         """Отцепить callbacks, очистить TextArea и удалить ссылки на форму."""
         for field, handler in self._field_handlers.items():
             field.buffer.on_text_changed -= handler
-            field.text = ""
+            field.buffer.reset()
+            # prompt_toolkit 3.x оставляет старые Document в cache после reset().
+            field.buffer._document_cache.clear()
         self.form_widgets.clear()
         self.parameter_widgets.clear()
         self.flag_controls.clear()

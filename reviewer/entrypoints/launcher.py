@@ -1,4 +1,5 @@
 """Безопасный выбор между CLI и интерактивным launcher."""
+
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
@@ -7,8 +8,8 @@ import sys
 
 from reviewer.launcher.models import LauncherResult
 
-_FALSEY_ENV = {"", "0", "false", "no", "off"}
 _CI_MARKERS = (
+    "CI",
     "GITHUB_ACTIONS",
     "GITLAB_CI",
     "TF_BUILD",
@@ -27,10 +28,7 @@ def _safe_isatty(stream: object) -> bool:
 
 
 def _in_ci(environ: Mapping[str, str]) -> bool:
-    ci = environ.get("CI")
-    if ci is not None and ci.strip().casefold() not in _FALSEY_ENV:
-        return True
-    return any(environ.get(name) for name in _CI_MARKERS)
+    return any(name in environ for name in _CI_MARKERS)
 
 
 def should_use_tui(

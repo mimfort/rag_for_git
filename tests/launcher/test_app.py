@@ -19,12 +19,23 @@ from reviewer.launcher.models import CommandSpec, LauncherResult, ParameterSpec,
 from reviewer.versioning import InstallMode, InstallationInfo, VersionCheck
 
 from prompt_toolkit.application import Application, get_app
+from prompt_toolkit.buffer import Buffer
 from prompt_toolkit.data_structures import Size
 from prompt_toolkit.input import DummyInput, create_pipe_input
 from prompt_toolkit.layout import Layout
 from prompt_toolkit.output import DummyOutput
 from prompt_toolkit.output.plain_text import PlainTextOutput
 from prompt_toolkit.widgets import TextArea
+
+
+def _assert_buffer_scrubbed(buffer: Buffer, secret: str) -> None:
+    """Проверить, что секрет удалён из всего transient-состояния Buffer."""
+    assert buffer.text == ""
+    assert buffer.document.text == ""
+    assert buffer.document.current_line == ""
+    assert buffer.selection_state is None
+    assert secret not in repr(buffer.history.get_strings())
+    assert secret not in repr(buffer.__dict__)
 
 
 def _spec(name: str) -> CommandSpec:
@@ -407,7 +418,7 @@ def test_sensitive_type_error_is_rendered_without_raw_value():
 def test_confirm_scrubs_sensitive_ui_state_after_real_application_returns(monkeypatch):
     """Подтверждение сохраняет секрет только в immutable argv результата."""
     retained_uis: list[_LauncherUI] = []
-    retained_fields: list[TextArea] = []
+    retained_buffers: list[Buffer] = []
 
     class _RetainedUI(_LauncherUI):
         def __init__(self, *args, **kwargs) -> None:
@@ -416,8 +427,10 @@ def test_confirm_scrubs_sensitive_ui_state_after_real_application_returns(monkey
 
         def _build_form(self) -> None:
             super()._build_form()
-            retained_fields.extend(
-                widget for widget in self.parameter_widgets.values() if isinstance(widget, TextArea)
+            retained_buffers.extend(
+                widget.buffer
+                for widget in self.parameter_widgets.values()
+                if isinstance(widget, TextArea)
             )
 
     monkeypatch.setattr(launcher_app, "_LauncherUI", _RetainedUI)
@@ -444,7 +457,9 @@ def test_confirm_scrubs_sensitive_ui_state_after_real_application_returns(monkey
     assert ui.controller.changed == set()
     assert ui.controller.errors == {}
     assert ui.controller.prepared is None
-    assert all(field.text == "" for field in retained_fields)
+    assert retained_buffers
+    for buffer in retained_buffers:
+        _assert_buffer_scrubbed(buffer, secret)
     assert ui.form_widgets == []
     assert ui.parameter_widgets == {}
     assert ui.flag_controls == {}
@@ -456,7 +471,7 @@ def test_confirm_scrubs_sensitive_ui_state_after_real_application_returns(monkey
 def test_cancel_scrubs_sensitive_error_and_ui_state_after_real_application_returns(monkeypatch):
     """Отмена после ошибки типа не оставляет секрет в controller или TextArea."""
     retained_uis: list[_LauncherUI] = []
-    retained_fields: list[TextArea] = []
+    retained_buffers: list[Buffer] = []
 
     class _RetainedUI(_LauncherUI):
         def __init__(self, *args, **kwargs) -> None:
@@ -465,8 +480,10 @@ def test_cancel_scrubs_sensitive_error_and_ui_state_after_real_application_retur
 
         def _build_form(self) -> None:
             super()._build_form()
-            retained_fields.extend(
-                widget for widget in self.parameter_widgets.values() if isinstance(widget, TextArea)
+            retained_buffers.extend(
+                widget.buffer
+                for widget in self.parameter_widgets.values()
+                if isinstance(widget, TextArea)
             )
 
     monkeypatch.setattr(launcher_app, "_LauncherUI", _RetainedUI)
@@ -489,7 +506,9 @@ def test_cancel_scrubs_sensitive_error_and_ui_state_after_real_application_retur
     assert ui.controller.changed == set()
     assert ui.controller.errors == {}
     assert ui.controller.prepared is None
-    assert all(field.text == "" for field in retained_fields)
+    assert retained_buffers
+    for buffer in retained_buffers:
+        _assert_buffer_scrubbed(buffer, secret)
     assert ui.form_widgets == []
     assert ui.parameter_widgets == {}
     assert ui.flag_controls == {}
@@ -510,14 +529,15 @@ def test_rebuilding_form_clears_every_superseded_sensitive_text_buffer():
     first_field = ui.parameter_widgets["token"]
     assert isinstance(first_field, TextArea)
     first_field.text = "superseded-secret"
+    first_field.buffer.save_to_undo_stack()
 
     ui._build_form()
     second_field = ui.parameter_widgets["token"]
     assert isinstance(second_field, TextArea)
     ui.close()
 
-    assert first_field.text == ""
-    assert second_field.text == ""
+    _assert_buffer_scrubbed(first_field.buffer, "superseded-secret")
+    _assert_buffer_scrubbed(second_field.buffer, "superseded-secret")
     assert controller.values == {}
 
 
