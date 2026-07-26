@@ -101,6 +101,7 @@ def verify_distribution(
             for name, value in os.environ.items()
             if name not in {"PYTHONHOME", "PYTHONPATH"}
         }
+        clean_env["PYTHONUTF8"] = "1"
         uvx_env = {
             **clean_env,
             "UV_TOOL_DIR": str(root / "uvx-tools"),

@@ -120,6 +120,18 @@ def test_distribution_check_uses_isolated_uv_dirs_and_outside_checkout(tmp_path)
     assert all(not root.exists() for root in roots)
 
 
+def test_distribution_check_forces_utf8_for_child_python(tmp_path, monkeypatch):
+    wheel_dir = tmp_path / "dist"
+    _wheel(wheel_dir)
+    calls: list[Command] = []
+    monkeypatch.setenv("PYTHONUTF8", "0")
+
+    verify_distribution(wheel_dir, runner=_recording_runner(calls))
+
+    assert calls
+    assert {command.env["PYTHONUTF8"] for command in calls} == {"1"}
+
+
 def test_distribution_check_skips_inside_and_unwritable_temp_candidates(
     tmp_path,
     monkeypatch,
