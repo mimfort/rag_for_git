@@ -189,7 +189,10 @@ class _AttachmentDownloader:
 
     def __init__(self, client: httpx.Client, api_key: str, api_token: str) -> None:
         self._client = client
-        self._header = f'OAuth oauth_consumer_key="{api_key}", oauth_token="{api_token}"'
+        self._header = 'OAuth oauth_consumer_key="{}", oauth_token="{}"'.format(
+            api_key,
+            api_token,
+        )
 
     def get(self, url: str, timeout: float) -> httpx.Response:
         return self._client.get(url, timeout=timeout, headers={"Authorization": self._header})
