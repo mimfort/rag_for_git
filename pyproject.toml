@@ -46,6 +46,7 @@ dependencies = [
     "python-docx>=1.1",
     "pypdf>=4.0",
     "langchain-core>=1.4,<2",
+    "packaging>=24,<27",
     "pyyaml>=6.0",
     "click>=8.1",
     "prompt_toolkit>=3.0,<4",

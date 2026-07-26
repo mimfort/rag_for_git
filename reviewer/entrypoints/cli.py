@@ -958,6 +958,10 @@ def update() -> None:
         click.echo("Не удалось получить информацию с PyPI. Проверьте сеть.")
         return
 
+    if not version_check.current_valid:
+        click.echo("Не удалось определить корректную текущую версию. Обновление не запущено.")
+        return
+
     if not version_check.update_available and installation.current != "?":
         click.echo(f"Версия актуальна: {installation.current}.")
         if installation.mode is not InstallMode.UV_TOOL:

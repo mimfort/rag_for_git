@@ -1,3 +1,4 @@
+from contextlib import nullcontext
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -9,6 +10,7 @@ from reviewer.versioning import (
     InstallationInfo,
     UpgradeResult,
     VersionCheck,
+    check_latest,
     detect_installation,
 )
 
@@ -96,6 +98,44 @@ def test_update_uv_tool_upgrade_failure_preserves_output(monkeypatch):
         "Доступна новая версия: 0.4.0 → 0.5.0\n"
         "Ошибка uv tool upgrade: не удалось обновить\n"
     )
+
+
+def test_update_uv_tool_does_not_upgrade_when_latest_version_is_unknown(monkeypatch):
+    info = InstallationInfo(InstallMode.UV_TOOL, "0.4.0", "/usr/bin/uv")
+    upgrade = Mock()
+    monkeypatch.setattr(cli_mod, "detect_installation", lambda: info)
+    monkeypatch.setattr(cli_mod, "check_latest", lambda info: VersionCheck(info, None, False))
+    monkeypatch.setattr(cli_mod, "upgrade_uv_tool", upgrade)
+
+    result = CliRunner().invoke(cli_mod.cli, ["update"])
+
+    assert result.exit_code == 0
+    assert "Не удалось получить информацию с PyPI. Проверьте сеть." in result.output
+    upgrade.assert_not_called()
+
+
+def test_update_does_not_claim_invalid_current_version_is_current_or_upgrade(monkeypatch):
+    info = InstallationInfo(InstallMode.UV_TOOL, "не-версия", "/usr/bin/uv")
+    upgrade = Mock()
+    response = SimpleNamespace(read=lambda: b'{"info": {"version": "1.0"}}')
+    monkeypatch.setattr(cli_mod, "detect_installation", lambda: info)
+    monkeypatch.setattr(
+        cli_mod,
+        "check_latest",
+        lambda installation: check_latest(
+            installation,
+            opener=lambda request, timeout: nullcontext(response),
+        ),
+    )
+    monkeypatch.setattr(cli_mod, "upgrade_uv_tool", upgrade)
+
+    result = CliRunner().invoke(cli_mod.cli, ["update"])
+
+    assert result.exit_code == 0
+    assert "Не удалось определить корректную текущую версию." in result.output
+    assert "Версия актуальна" not in result.output
+    assert "Доступна новая версия" not in result.output
+    upgrade.assert_not_called()
 
 
 def test_update_uvx_new_version_preserves_output(monkeypatch):

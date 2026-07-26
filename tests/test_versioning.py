@@ -213,17 +213,44 @@ def test_falls_back_to_uvx_when_uv_tool_dir_returns_path_with_nul(tmp_path):
 
 
 @pytest.mark.parametrize(
-    ("latest", "update_available"),
-    [("0.4.0", False), ("0.4.1", True), ("0.5.0", True)],
+    ("current", "latest", "update_available"),
+    [
+        ("0.4.0", "0.4.0", False),
+        ("0.4.0", "0.4.1", True),
+        ("0.4.0", "0.5.0", True),
+        ("1.0", "1.0.post1", True),
+        ("1.0.post1", "1.0", False),
+        ("1.0.dev1", "1.0a1", True),
+        ("1.0a1", "1.0b1", True),
+        ("1.0rc1", "1.0", True),
+        ("1.0+local.1", "1.0+local.2", True),
+        ("2.0", "1!0.1", True),
+        ("не-версия", "1.0", False),
+    ],
 )
-def test_check_latest_compares_versions(latest: str, update_available: bool):
+def test_check_latest_compares_pep_440_versions(
+    current: str,
+    latest: str,
+    update_available: bool,
+):
     result = check_latest(
-        InstallationInfo(InstallMode.UV_TOOL, "0.4.0", "/usr/bin/uv"),
+        InstallationInfo(InstallMode.UV_TOOL, current, "/usr/bin/uv"),
         opener=_Opener({"info": {"version": latest}}),
     )
 
     assert result.latest == latest
     assert result.update_available is update_available
+
+
+@pytest.mark.parametrize("latest", ["не-версия", "", None, 42])
+def test_check_latest_treats_invalid_pypi_version_as_unknown(latest):
+    result = check_latest(
+        InstallationInfo(InstallMode.UV_TOOL, "0.4.0", "/usr/bin/uv"),
+        opener=_Opener({"info": {"version": latest}}),
+    )
+
+    assert result.latest is None
+    assert result.update_available is False
 
 
 def test_check_latest_is_read_only_and_uses_timeout():

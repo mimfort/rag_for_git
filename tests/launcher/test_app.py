@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import subprocess
 import sys
 import threading
@@ -126,6 +127,20 @@ def _send_after(
     return thread
 
 
+class _VersionResponse:
+    def __init__(self, latest: str) -> None:
+        self.latest = latest
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return False
+
+    def read(self) -> bytes:
+        return json.dumps({"info": {"version": self.latest}}).encode()
+
+
 class _TrackingOutput(PlainTextOutput):
     def __init__(self) -> None:
         self.stream = StringIO()
@@ -137,6 +152,9 @@ class _TrackingOutput(PlainTextOutput):
         self.public_fields_rendered = threading.Event()
         self.choice_help_rendered = threading.Event()
         self.update_result_rendered = threading.Event()
+        self.update_read_only_rendered = threading.Event()
+        self.update_confirmation_rendered = threading.Event()
+        self.update_failure_rendered = threading.Event()
         self._frame = ""
         super().__init__(self.stream)
 
@@ -161,6 +179,19 @@ class _TrackingOutput(PlainTextOutput):
             self.choice_help_rendered.set()
         if "Доступна новая версия: 0.4.0 → 0.5.0" in rendered:
             self.update_result_rendered.set()
+        if "До подтверждения проверка только читает данные и обращается к PyPI." in rendered:
+            self.update_read_only_rendered.set()
+        if (
+            "reviewer update" in rendered
+            and "Эффект после подтверждения: запись" in rendered
+            and "будет изменена постоянная uv tool-установка rag-reviewer" in rendered
+        ):
+            self.update_confirmation_rendered.set()
+        if (
+            "Не удалось получить информацию с PyPI. Проверьте сеть." in rendered
+            and "Повторить проверку: Esc — назад, затем Enter" in rendered
+        ):
+            self.update_failure_rendered.set()
         if (
             self.required_error_rendered.is_set()
             and "owner/repo" in self._frame
@@ -513,6 +544,35 @@ def test_update_cancel_does_not_detect_installation_or_check_network():
     assert calls == []
 
 
+def test_update_details_explicitly_keep_startup_and_check_read_only():
+    output = _TrackingOutput()
+    calls: list[str] = []
+
+    def detector() -> InstallationInfo:
+        calls.append("detect")
+        raise AssertionError("экран проверки не должен определять установку")
+
+    def sender(pipe) -> None:
+        output.update_read_only_rendered.wait(2)
+        pipe.send_bytes(b"\x03")
+
+    with create_pipe_input() as pipe:
+        thread = threading.Thread(target=sender, args=(pipe,))
+        thread.start()
+        pipe.send_bytes(b"\r")
+        result = run_launcher(
+            commands=(_spec("update"),),
+            input=pipe,
+            output=output,
+            installation_detector=detector,
+        )
+        thread.join()
+
+    assert result == LauncherResult(None, 130)
+    assert output.update_read_only_rendered.is_set(), output.stream.getvalue()
+    assert calls == []
+
+
 def test_update_check_runs_once_and_does_not_return_upgrade_without_confirm():
     checked = threading.Event()
     info = InstallationInfo(InstallMode.UV_TOOL, "0.4.0", "/usr/bin/uv")
@@ -537,6 +597,41 @@ def test_update_check_runs_once_and_does_not_return_upgrade_without_confirm():
 
     assert result == LauncherResult(None, 130)
     assert calls == [(info, 5)]
+
+
+def test_uv_tool_update_result_renders_command_write_effect_and_persistent_warning():
+    checked = threading.Event()
+    info = InstallationInfo(InstallMode.UV_TOOL, "0.4.0", "/usr/bin/uv")
+    output = _TrackingOutput()
+
+    def checker(installation: InstallationInfo, *, timeout: int) -> VersionCheck:
+        checked.set()
+        return VersionCheck(installation, "0.5.0", True)
+
+    def sender(pipe) -> None:
+        if not output.update_confirmation_rendered.wait(2):
+            pipe.send_bytes(b"\x03")
+            return
+        pipe.send_bytes(b"\x03")
+
+    with create_pipe_input() as pipe:
+        thread = threading.Thread(target=sender, args=(pipe,))
+        thread.start()
+        pipe.send_bytes(b"\r\r")
+        result = run_launcher(
+            commands=(_spec("update"),),
+            input=pipe,
+            output=output,
+            installation_detector=lambda: info,
+            version_checker=checker,
+        )
+        thread.join()
+
+    rendered = output.stream.getvalue()
+    assert checked.is_set()
+    assert output.update_confirmation_rendered.is_set(), rendered
+    assert "Команда после подтверждения: reviewer update" in rendered
+    assert result == LauncherResult(None, 130)
 
 
 def test_update_check_renders_progress_while_executor_is_running():
@@ -758,18 +853,21 @@ def test_update_confirm_returns_existing_click_argv_for_uv_tool():
         checked.set()
         return VersionCheck(installation, "0.5.0", True)
 
+    output = _TrackingOutput()
+
     with create_pipe_input() as pipe:
         sender = _send_after(pipe, checked, b"\r")
         pipe.send_bytes(b"\r\r")
         result = run_launcher(
             commands=(_spec("update"),),
             input=pipe,
-            output=DummyOutput(),
+            output=output,
             installation_detector=lambda: info,
             version_checker=checker,
         )
         sender.join()
 
+    assert checked.is_set()
     assert result == LauncherResult(("update",), 0)
 
 
@@ -781,16 +879,159 @@ def test_uvx_update_result_only_shows_instructions_without_upgrade_argv():
         checked.set()
         return VersionCheck(installation, "0.5.0", True)
 
+    output = _TrackingOutput()
+
     with create_pipe_input() as pipe:
-        sender = _send_after(pipe, checked, b"\r\x03")
+        sender = _send_after(pipe, output.update_result_rendered, b"\r\x03")
         pipe.send_bytes(b"\r\r")
         result = run_launcher(
             commands=(_spec("update"),),
             input=pipe,
-            output=DummyOutput(),
+            output=output,
             installation_detector=lambda: info,
             version_checker=checker,
         )
         sender.join()
 
+    rendered = output.stream.getvalue()
+    assert checked.is_set()
+    assert "Команда после подтверждения: reviewer update" not in rendered
+    assert "Эффект после подтверждения: запись" not in rendered
+    assert "будет изменена постоянная uv tool-установка" not in rendered
+    assert result == LauncherResult(None, 130)
+
+
+def test_editable_update_result_has_no_mutation_preview_or_button():
+    info = InstallationInfo(InstallMode.EDITABLE, "0.4.0", "/usr/bin/uv")
+    output = _TrackingOutput()
+
+    def checker(installation: InstallationInfo, *, timeout: int) -> VersionCheck:
+        return VersionCheck(installation, "0.5.0", True)
+
+    with create_pipe_input() as pipe:
+        stop = threading.Timer(0.5, lambda: pipe.send_bytes(b"\x03"))
+        stop.start()
+        pipe.send_bytes(b"\r\r")
+        result = run_launcher(
+            commands=(_spec("update"),),
+            input=pipe,
+            output=output,
+            installation_detector=lambda: info,
+            version_checker=checker,
+        )
+        stop.join()
+
+    rendered = output.stream.getvalue()
+    assert "Для обновления: git pull && pip install -e ." in rendered
+    assert "Команда после подтверждения: reviewer update" not in rendered
+    assert "Эффект после подтверждения: запись" not in rendered
+    assert "будет изменена постоянная uv tool-установка" not in rendered
+    assert result == LauncherResult(None, 130)
+
+
+def test_invalid_current_version_disables_tui_update_confirmation():
+    info = InstallationInfo(InstallMode.UV_TOOL, "не-версия", "/usr/bin/uv")
+    output = _TrackingOutput()
+
+    def checker(installation: InstallationInfo, *, timeout: int) -> VersionCheck:
+        return launcher_app.check_latest(
+            installation,
+            opener=lambda request, timeout: _VersionResponse("1.0"),
+        )
+
+    with create_pipe_input() as pipe:
+        stop = threading.Timer(0.5, lambda: pipe.send_bytes(b"\x03"))
+        stop.start()
+        pipe.send_bytes(b"\r\r")
+        result = run_launcher(
+            commands=(_spec("update"),),
+            input=pipe,
+            output=output,
+            installation_detector=lambda: info,
+            version_checker=checker,
+        )
+        stop.join()
+
+    rendered = output.stream.getvalue()
+    assert "Не удалось определить корректную текущую версию." in rendered
+    assert "Версия актуальна" not in rendered
+    assert "Команда после подтверждения: reviewer update" not in rendered
+    assert "Enter — подтвердить" not in rendered
+    assert result == LauncherResult(None, 130)
+
+
+def test_offline_update_result_shows_failure_retry_and_no_currency_or_confirmation():
+    info = InstallationInfo(InstallMode.UV_TOOL, "0.4.0", "/usr/bin/uv")
+    output = _TrackingOutput()
+
+    def checker(installation: InstallationInfo, *, timeout: int) -> VersionCheck:
+        return VersionCheck(installation, None, False)
+
+    def sender(pipe) -> None:
+        output.update_failure_rendered.wait(2)
+        pipe.send_bytes(b"\x03")
+
+    with create_pipe_input() as pipe:
+        thread = threading.Thread(target=sender, args=(pipe,))
+        thread.start()
+        pipe.send_bytes(b"\r\r")
+        result = run_launcher(
+            commands=(_spec("update"),),
+            input=pipe,
+            output=output,
+            installation_detector=lambda: info,
+            version_checker=checker,
+        )
+        thread.join()
+
+    rendered = output.stream.getvalue()
+    assert output.update_failure_rendered.is_set(), rendered
+    assert "Обновление не требуется" not in rendered
+    assert "Версия актуальна" not in rendered
+    assert "Команда после подтверждения: reviewer update" not in rendered
+    assert "Enter — подтвердить" not in rendered
+    assert result == LauncherResult(None, 130)
+
+
+def test_back_from_offline_result_allows_a_fresh_retry():
+    info = InstallationInfo(InstallMode.UV_TOOL, "0.4.0", "/usr/bin/uv")
+    output = _TrackingOutput()
+    retried = threading.Event()
+    checked = threading.Event()
+    calls = 0
+
+    def checker(installation: InstallationInfo, *, timeout: int) -> VersionCheck:
+        nonlocal calls
+        calls += 1
+        checked.set()
+        if calls == 2:
+            retried.set()
+        return VersionCheck(installation, None, False)
+
+    def sender(pipe) -> None:
+        if not checked.wait(2):
+            pipe.send_bytes(b"\x03")
+            return
+        time.sleep(0.2)
+        pipe.send_bytes(b"\x1b")
+        time.sleep(0.7)
+        pipe.send_bytes(b"\r")
+        retried.wait(2)
+        pipe.send_bytes(b"\x03")
+
+    with create_pipe_input() as pipe:
+        thread = threading.Thread(target=sender, args=(pipe,))
+        thread.start()
+        pipe.send_bytes(b"\r\r")
+        result = run_launcher(
+            commands=(_spec("update"),),
+            input=pipe,
+            output=output,
+            installation_detector=lambda: info,
+            version_checker=checker,
+        )
+        thread.join()
+
+    assert retried.is_set(), output.stream.getvalue()
+    assert calls == 2
     assert result == LauncherResult(None, 130)

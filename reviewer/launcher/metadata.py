@@ -1,4 +1,5 @@
 """Метаданные представления команд интерактивного launcher."""
+
 from __future__ import annotations
 
 from reviewer.launcher.models import (
@@ -82,8 +83,11 @@ COMMAND_PRESENTATION = {
     ),
     ("update",): CommandPresentation(
         summary="Проверить обновления",
-        details="По явному действию сравнивает установленную и последнюю PyPI-версию.",
-        effects=(Effect.READ, Effect.NETWORK),
+        details=(
+            "Сначала только проверяет PyPI; постоянную uv tool-установку изменяет "
+            "только после отдельного подтверждения."
+        ),
+        effects=(Effect.READ, Effect.NETWORK, Effect.WRITE),
         scenarios=("Обновление глобальной uv tool-установки",),
         keywords=("pypi", "version", "upgrade"),
         special_action="check_update",

@@ -5,7 +5,7 @@ import click
 from reviewer.entrypoints.cli import cli
 from reviewer.launcher.catalog import build_catalog
 from reviewer.launcher.metadata import COMMAND_PRESENTATION, PARAMETER_PRESENTATION
-from reviewer.launcher.models import ParameterPresentation
+from reviewer.launcher.models import Effect, ParameterPresentation
 
 
 VISIBLE_COMMANDS = {
@@ -117,3 +117,11 @@ def test_current_commands_have_rich_metadata_without_orphans():
     paths = {item.path for item in build_catalog(cli)}
 
     assert set(COMMAND_PRESENTATION) == paths
+
+
+def test_update_metadata_discloses_conditional_persistent_write():
+    update = next(item for item in build_catalog(cli) if item.path == ("update",))
+
+    assert update.effects == (Effect.READ, Effect.NETWORK, Effect.WRITE)
+    assert "постоянную uv tool-установку" in update.details
+    assert "только после отдельного подтверждения" in update.details

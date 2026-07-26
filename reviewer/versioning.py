@@ -9,6 +9,8 @@ from enum import StrEnum
 from importlib import metadata
 from pathlib import Path
 
+from packaging.version import InvalidVersion, Version
+
 
 class InstallMode(StrEnum):
     EDITABLE = "editable"
@@ -28,6 +30,7 @@ class VersionCheck:
     installation: InstallationInfo
     latest: str | None
     update_available: bool
+    current_valid: bool = True
 
 
 @dataclass(frozen=True)
@@ -37,13 +40,6 @@ class UpgradeResult:
 
 
 _UV_DISCOVERY_TIMEOUT = 5
-
-
-def _version_tuple(version: str) -> tuple[int, ...]:
-    try:
-        return tuple(int(part) for part in version.split("."))
-    except ValueError:
-        return (0,)
 
 
 def _resolved_path(value: str | Path | None) -> Path | None:
@@ -153,6 +149,7 @@ def check_latest(
     timeout: int = 10,
 ) -> VersionCheck:
     """Получить версию PyPI только HTTP-запросом."""
+    latest_version: Version | None = None
     try:
         request = urllib.request.Request(
             "https://pypi.org/pypi/rag-reviewer/json",
@@ -160,15 +157,20 @@ def check_latest(
         )
         with opener(request, timeout=timeout) as response:
             latest = json.loads(response.read())["info"]["version"]
+        latest_version = Version(latest)
     except Exception:
         latest = None
 
+    try:
+        current_version = Version(info.current)
+    except (InvalidVersion, TypeError):
+        current_version = None
     update_available = (
-        latest is not None
-        and info.current != "?"
-        and _version_tuple(latest) > _version_tuple(info.current)
+        latest_version is not None
+        and current_version is not None
+        and latest_version > current_version
     )
-    return VersionCheck(info, latest, update_available)
+    return VersionCheck(info, latest, update_available, current_valid=current_version is not None)
 
 
 def upgrade_uv_tool(
