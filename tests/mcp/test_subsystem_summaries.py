@@ -121,6 +121,34 @@ def test_get_subsystem_summaries_marks_mismatched_hash_stale():
     assert summary["stale"] is True
 
 
+def test_get_subsystem_summaries_marks_absent_current_cluster_stale():
+    c = MagicMock()
+    c.summary_store.get_summaries.return_value = [{
+        "cluster_key": "reviewer/index", "title": "Индекс", "summary": "...",
+        "source_hash": "stored-index", "updated_at": "2026-06-23T00:00:00+00:00",
+    }]
+    c.store.list_base_members.return_value = [
+        ("reviewer/mcp/service.py", "MCPReviewService", "h1", 1, "sk1")
+    ]
+
+    [summary] = _svc(c).get_subsystem_summaries("o/n", "dev")["summaries"]
+
+    assert summary["stale"] is True
+
+
+def test_get_subsystem_summaries_empty_base_has_unknown_freshness():
+    c = MagicMock()
+    c.summary_store.get_summaries.return_value = [{
+        "cluster_key": "reviewer/index", "title": "Индекс", "summary": "...",
+        "source_hash": "stored-index", "updated_at": "2026-06-23T00:00:00+00:00",
+    }]
+    c.store.list_base_members.return_value = []
+
+    [summary] = _svc(c).get_subsystem_summaries("o/n", "dev")["summaries"]
+
+    assert summary["stale"] is None
+
+
 def test_get_subsystem_summaries_derivation_failure_is_unknown():
     c = MagicMock()
     c.summary_store.get_summaries.return_value = [{
