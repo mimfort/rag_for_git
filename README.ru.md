@@ -1,14 +1,128 @@
-# rag_for_git
+# rag-reviewer
 
-> 🇬🇧 English version: [README.md](README.md)
+[English](README.md)
 
-Агент автоматического ревью pull/merge request'ов на основе **RAG + графа кода + Claude Code**.
+AI-ревью pull request с контекстом всего репозитория: гибридный поиск, граф кода и
+inline-комментарии, привязанные к изменённым строкам.
 
-На событие «появился/обновился PR» агент берёт дифф, собирает релевантный контекст **по всему репозиторию** (гибридный поиск + граф связей кода), прогоняет его через Claude Code-скилл с инструментами поиска (agentic RAG), отсеивает ложные срабатывания и постит результат обратно в GitHub: **inline-комментарии на строки диффа + сводку**.
-
-> Статус: рабочий v1. Целевой язык анализа — **Python**. VCS — **GitHub** (за интерфейсом `VCSProvider`, под GitLab/др. заложена абстракция). Проверено вживую: ловит реальные баги, видит влияние на вызывающий код и существующие тесты.
+> Нужны Python 3.11–3.13 и внешние сервисы Voyage, PostgreSQL/ParadeDB и Neo4j.
+> Для чтения и публикации ревью также нужны credentials выбранного VCS-провайдера.
 
 ---
+
+## Начните здесь
+
+Выберите кратчайший маршрут для текущей цели. После него обе аудитории переходят к общим
+сценариям и справочникам ниже.
+
+| Если вы хотите… | Маршрут |
+|---|---|
+| Попробовать reviewer и получить первый результат | [Попробовать reviewer](#попробовать-reviewer) |
+| Развернуть один reviewer для команды | [Развёртывание для команды](#развёртывание-для-команды) |
+
+## Попробовать reviewer
+
+Понадобятся Python 3.11–3.13, [uv](https://docs.astral.sh/uv/), Docker, API-ключ Voyage и токен
+GitHub, если reviewer должен читать или публиковать GitHub-ревью. Хранилища работают локально;
+текст для эмбеддингов и реранкинга отправляется в Voyage.
+
+1. Установите launcher, поднимите хранилища и настройте сервер:
+
+   ```bash
+   uv tool install --from rag-reviewer reviewer
+   docker compose up -d
+   reviewer init
+   ```
+
+2. Посмотрите поддерживаемые AI-клиенты и подключите нужный. В примере устанавливается интеграция
+   Codex:
+
+   ```bash
+   reviewer install --list
+   reviewer install codex
+   ```
+
+3. Проверьте зависимости, постройте base index всего репозитория и проверьте его свежесть:
+
+   ```bash
+   reviewer check
+   reviewer index /path/to/repo --ref main
+   reviewer status /path/to/repo --branch main --json
+   ```
+
+   `reviewer check` должен подтвердить готовность credentials и сервисов. `reviewer status`
+   должен показать indexed SHA и `drift: 0`. Полная индексация отправляет чанки кода в Voyage и
+   может быть медленной на free tier; без base index ревью видит только дифф/overlay и получает
+   более узкий контекст репозитория.
+
+4. Откройте новую сессию клиента и запустите первое ревью:
+
+   ```text
+   # Claude Code
+   /rag-reviewer:reviewer_review-pr owner/repo#123 --dry-run
+
+   # Codex
+   $rag-reviewer:reviewer_review-pr owner/repo#123
+   ```
+
+   Синтаксис вызова зависит от клиента. Dry run возвращает обоснованные findings без публикации;
+   для публикации нужны VCS write credentials и явное подтверждение внутри workflow skill.
+
+Для временного запуска launcher без постоянной установки замените первую команду на:
+
+```bash
+uvx --from rag-reviewer@latest reviewer
+```
+
+## Развёртывание для команды
+
+Общий deployment состоит из одного reviewer MCP server, PostgreSQL/ParadeDB, Neo4j, Voyage и
+выбранных VCS- или task-board providers. Credentials провайдеров остаются в окружении сервера;
+MCP-клиенты передают только несекретные repo, branch, project и provider options.
+
+1. **Поднимите хранилища и настройте секреты.**
+
+   ```bash
+   docker compose up -d
+   reviewer init
+   reviewer check
+   ```
+
+   `reviewer check` — gate перед подключением клиентов: исправьте каждую обязательную
+   credential или service, которую команда показывает как недоступную.
+
+2. **Выберите repo и branch scope.** Задайте `DEFAULT_REPO` и упорядоченный allowlist
+   `REVIEW_BRANCHES` в окружении сервера. Per-repo policy, игнорируемые пути, context limits и
+   несекретные board metadata храните в `.review.yml`.
+
+3. **Постройте и проверьте каждую отслеживаемую ветку.**
+
+   ```bash
+   reviewer index /srv/rag_for_git --ref main --repo mimfort/rag_for_git
+   reviewer status /srv/rag_for_git --branch main --json
+   ```
+
+   Status payload — операционный источник indexed SHA, chunks, graph nodes, summaries и drift.
+   Ветка вне `REVIEW_BRANCHES` не является допустимой целью ревью.
+
+4. **Подключите клиенты команды.**
+
+   ```bash
+   reviewer install --all
+   reviewer install codex --dry-run
+   ```
+
+   `--dry-run` показывает планируемые записи конфигурации. После установки откройте новую chat-
+   или CLI-сессию; интеграциям IDE также может понадобиться Reload Window.
+
+5. **Добавьте опциональный контекст доски задач.** Выберите зарегистрированный provider в
+   `.review.yml`, оставьте credentials в server-side env и проверьте project scope через
+   `reviewer check`. См. [раздел о досках](#доска-задач-опционально--глобальный-дефолт-деплоя) и
+   [справочник провайдеров](docs/board-providers.md).
+
+Дальше переходите к [основным сценариям](#скиллы-справочник-с-параметрами),
+[справочнику конфигурации](#конфигурация-справочник-env) и
+[эксплуатации](#ограничения-и-заметки).
 
 ## Содержание
 - [Зачем это и в чём идея](#зачем-это-и-в-чём-идея)

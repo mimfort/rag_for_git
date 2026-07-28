@@ -1,9 +1,12 @@
-# rag_for_git
+# rag-reviewer
 
-> **An AI pull-request reviewer that reads your whole repository — hybrid RAG + a code graph + Claude Code.**
-> Plain linters check a diff in isolation; this agent gives the model the same context a human
-> reviewer has — semantic + lexical retrieval over the entire repo and a structural code graph —
-> then posts the result back to GitHub as **inline comments on the exact diff lines, with applyable fixes**.
+[Русский](README.ru.md)
+
+AI-assisted pull-request reviews grounded in whole-repository context: hybrid search, a code
+graph, and inline comments anchored to changed lines.
+
+> Requires Python 3.11–3.13 and external Voyage, PostgreSQL/ParadeDB, and Neo4j services.
+> Publishing reviews also requires credentials for the selected version-control provider.
 
 [![PyPI](https://img.shields.io/pypi/v/rag-reviewer?color=2563eb&label=PyPI)](https://pypi.org/project/rag-reviewer/)
 [![Python 3.11–3.13](https://img.shields.io/badge/python-3.11%E2%80%933.13-2563eb)](https://pypi.org/project/rag-reviewer/)
@@ -11,9 +14,120 @@
 [![MCP server](https://img.shields.io/badge/MCP-server-8b5cf6)](#mcp-tools-reference)
 [![Claude Code plugin](https://img.shields.io/badge/Claude%20Code-plugin-d97757)](#claude-code-plugin-marketplace)
 
-> 🇷🇺 Русская версия — глубокий, сверенный с кодом разбор: [README.ru.md](README.ru.md)
-
 ---
+
+## Start here
+
+Choose the shortest route for what you need now. Both routes lead to the same workflows and
+reference sections later in this document.
+
+| If you want to… | Follow |
+|---|---|
+| Try reviewer and get a first result | [Try reviewer](#try-reviewer) |
+| Deploy one reviewer service for a team | [Deploy for a team](#deploy-for-a-team) |
+
+## Try reviewer
+
+You need Python 3.11–3.13, [uv](https://docs.astral.sh/uv/), Docker, a Voyage API key, and a
+GitHub token if you want to read or publish GitHub reviews. The services run locally; embedding
+and reranking requests go to Voyage.
+
+1. Install the launcher, start the stores, and configure the server:
+
+   ```bash
+   uv tool install --from rag-reviewer reviewer
+   docker compose up -d
+   reviewer init
+   ```
+
+2. See the supported AI clients and connect one. This example installs the Codex integration:
+
+   ```bash
+   reviewer install --list
+   reviewer install codex
+   ```
+
+3. Check dependencies, build the whole-repository base index, and inspect its freshness:
+
+   ```bash
+   reviewer check
+   reviewer index /path/to/repo --ref main
+   reviewer status /path/to/repo --branch main --json
+   ```
+
+   `reviewer check` should report ready credentials and services. `reviewer status` should show
+   an indexed SHA and `drift: 0`. Full indexing sends code chunks to Voyage and can be slow on its
+   free tier; without a base index, PR review has only the diff/overlay and therefore thinner
+   repository context.
+
+4. Open a new client session and run the first review:
+
+   ```text
+   # Claude Code
+   /rag-reviewer:reviewer_review-pr owner/repo#123 --dry-run
+
+   # Codex
+   $rag-reviewer:reviewer_review-pr owner/repo#123
+   ```
+
+   Invocation syntax differs by client. A dry run returns grounded findings without publishing;
+   publishing requires VCS write credentials and an explicit confirmation in the skill workflow.
+
+For a temporary launcher without a persistent tool installation, replace the first command with:
+
+```bash
+uvx --from rag-reviewer@latest reviewer
+```
+
+## Deploy for a team
+
+A shared deployment consists of one reviewer MCP server plus PostgreSQL/ParadeDB, Neo4j, Voyage,
+and the selected VCS or task-board providers. Keep provider credentials in the server environment;
+MCP clients send only non-secret repository, branch, project, and provider options.
+
+1. **Start the stores and configure secrets.**
+
+   ```bash
+   docker compose up -d
+   reviewer init
+   reviewer check
+   ```
+
+   `reviewer check` is the gate before client rollout: fix every required credential or service it
+   reports as unavailable.
+
+2. **Choose repository and branch scope.** Set `DEFAULT_REPO` and the ordered
+   `REVIEW_BRANCHES` allowlist in the server environment. Put repository-specific review policy,
+   ignored paths, context limits, and non-secret board metadata in `.review.yml`.
+
+3. **Build and verify each tracked branch.**
+
+   ```bash
+   reviewer index /srv/rag_for_git --ref main --repo mimfort/rag_for_git
+   reviewer status /srv/rag_for_git --branch main --json
+   ```
+
+   The status payload is the operational source for indexed SHA, chunks, graph nodes, summaries,
+   and drift. A branch outside `REVIEW_BRANCHES` is not a valid review target.
+
+4. **Connect team clients.**
+
+   ```bash
+   reviewer install --all
+   reviewer install codex --dry-run
+   ```
+
+   Use `--dry-run` to inspect planned config writes. After installation, open a new chat or CLI
+   session; IDE integrations may also require Reload Window.
+
+5. **Add optional task-board context.** Select a registered provider in `.review.yml`, keep its
+   credentials in server-side env, and validate the scoped project with `reviewer check`. See
+   [Task boards](#task-board-optional--deploy-wide-default) and
+   [the provider reference](docs/board-providers.md).
+
+Continue with [core workflows](#skills-reference), the
+[configuration reference](#configuration-reference), and
+[operations](#known-limitations--caveats).
 
 ## Table of contents
 
