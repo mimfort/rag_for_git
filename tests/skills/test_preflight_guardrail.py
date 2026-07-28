@@ -43,8 +43,11 @@ def _summary_warmth_section() -> str:
 
 
 def test_solve_task_reads_summaries_from_status():
-    # теплота сводок берётся из payload'а status, полученного в Step 0.1
-    assert "summaries" in _summary_warmth_section()
+    # теплота сводок берётся из payload'а status, полученного в Step 0.1 — а не отдельным
+    # вызовом тула; формулировки специфичны для нового текста (в старом их не было)
+    section = _summary_warmth_section()
+    assert "Step 0.1 status payload" in section
+    assert "do NOT probe" in section
 
 
 def test_solve_task_probes_summaries_only_as_fallback():
