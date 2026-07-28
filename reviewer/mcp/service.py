@@ -1041,6 +1041,59 @@ class MCPReviewService:
             out["note"] = note
         return out
 
+    def _current_subsystem_hashes(
+        self, repo: str, branch: str
+    ) -> dict[str, str] | None:
+        from reviewer.graph.summaries import Member, build_clusters
+
+        try:
+            raw = self.components.store.list_base_members(repo, branch)
+            if not raw:
+                return None
+            members = [
+                Member(
+                    node_id=f"{path}#{symbol}",
+                    path=path,
+                    content_hash=content_hash,
+                    start_line=start_line,
+                    skeleton_hash=skeleton_hash,
+                )
+                for path, symbol, content_hash, start_line, skeleton_hash in raw
+            ]
+            depth, overrides, _ = self._resolve_summary_depth(repo, branch)
+            clusters = build_clusters(
+                members,
+                None,
+                depth=depth,
+                min_size=1,
+                depth_overrides=overrides,
+            )
+            return {cluster.key: cluster.source_hash for cluster in clusters}
+        except Exception:
+            log.warning(
+                "get_subsystem_summaries: не удалось вычислить свежесть",
+                exc_info=True,
+            )
+            return None
+
+    def _annotate_summary_staleness(
+        self, repo: str, branch: str, summaries: list[dict]
+    ) -> list[dict]:
+        if not summaries:
+            return []
+        current = self._current_subsystem_hashes(repo, branch)
+        return [
+            {
+                **summary,
+                "stale": (
+                    None
+                    if current is None
+                    else summary.get("source_hash") != current.get(summary["cluster_key"])
+                ),
+            }
+            for summary in summaries
+        ]
+
     def get_subsystem_summaries(self, repo: str, branch: str | None = None,
                                 cluster_key: str | None = None, query: str | None = None,
                                 top_k: int | None = None) -> dict:
@@ -1055,13 +1108,23 @@ class MCPReviewService:
         repo, resolved = rb
         store = self.components.summary_store
         if cluster_key:
-            return {"summary": store.get_summary(repo, resolved, cluster_key)}
+            summary = store.get_summary(repo, resolved, cluster_key)
+            annotated = self._annotate_summary_staleness(
+                repo, resolved, [summary] if summary is not None else []
+            )
+            return {"summary": annotated[0] if annotated else None}
         if query:
             threshold, _ = self._resolve_summary_topk_threshold(repo, resolved)
             if store.count_summaries(repo, resolved) > threshold:
                 qvec = self.components.embedder.embed_query(query)
-                return {"summaries": store.search_summaries(repo, resolved, qvec, top_k or 8)}
-        return {"summaries": store.get_summaries(repo, resolved)}
+                summaries = store.search_summaries(repo, resolved, qvec, top_k or 8)
+                return {
+                    "summaries": [{**summary, "stale": None} for summary in summaries]
+                }
+        summaries = store.get_summaries(repo, resolved)
+        return {
+            "summaries": self._annotate_summary_staleness(repo, resolved, summaries)
+        }
 
     def prune_subsystem_summaries(self, repo: str, branch: str | None = None) -> dict:
         """Удалить сводки подсистем, осиротевшие после смены depth или удаления модулей.

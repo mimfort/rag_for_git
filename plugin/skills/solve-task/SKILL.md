@@ -147,6 +147,13 @@ brief to `superpowers:brainstorming` (which leads to writing-plans → subagent-
      note / an error is non-fatal — omit the `## Subsystems` brief section and note the gap.
      The summary is only a prior — every `path:line` in the brief still comes from
      `search_codebase` snippets, never from the summary text.
+     If a returned summary has `stale: true`, keep it only as a weak prior, do not use it for structural
+     claims, and prefix its `## Subsystems` line with `[stale]`. `stale: null` is unknown freshness and
+     gets no marker. For `stale: true`, either omit the item or use exactly this line shape:
+     `- [stale] <cluster_key> — summary content omitted; verify against code.` Do not interpolate its
+     title or summary claims. Omitting a stale summary does not change the directly-informing
+     `search_codebase` entries selected for `## Relevant code`: evaluate every code item solely against
+     the task, independently of whether it corroborates or refutes any stale-summary claim.
    - **Project scope.** Pass `project=<task_board.project>` (from Step 1; empty = unscoped) to
      `get_task`, `get_task_context`, and `search_tasks` so only this repo's project surfaces (PRI-170).
    - If you have a task key: `get_task_context(key, project=<task_board.project>)` → linked tasks, their PRs, and the code those PRs
@@ -235,7 +242,9 @@ Use the session-less tools above.
    # Brief — <KEY> <title>
    ## Task — key/title/requirements/criteria (or the user's formulation in board-less mode). ≤~6 lines.
    ## Related work — every directly-informing task, one line each: «KEY — what to reuse / follow». (dropped N: …)
-   ## Subsystems — ≤8 relevant subsystems, one line: «cluster_key — gist of summary». (omit if prior empty)
+   ## Subsystems — ≤8 relevant subsystems, one line: «cluster_key — gist of summary». For `stale: true`,
+   either omit the item or use exactly: `- [stale] <cluster_key> — summary content omitted; verify against code.`
+   (omit if prior empty)
    ## Relevant code — every directly-informing file/symbol, one line: «path:line — why» (+ blast radius from the graph). (dropped N: …)
    ## Test exemplars — every directly-informing test file/symbol, one line: «path:line — what's mocked / which pattern». (omit if none; dropped N: …)
    ## Constraints / open questions — terse bullets: limits, unknowns, context gaps (e.g. "board unavailable", "task corpus empty").
