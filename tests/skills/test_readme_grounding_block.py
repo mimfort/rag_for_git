@@ -9,7 +9,7 @@ def _read(rel: str) -> str:
 
 def test_readme_en_has_grounding_section():
     text = _read("README.md")
-    assert "## Reviewer grounding in plan/review phases (optional)" in text
+    assert "### Reviewer grounding in plan/review phases (optional)" in text
     assert "Reviewer grounding (plan/review, optional, fail-open)" in text  # копипаст-блок
     assert "search_codebase" in text and "callers" in text
     assert "drift == 0" in text
@@ -18,7 +18,7 @@ def test_readme_en_has_grounding_section():
 
 def test_readme_ru_has_grounding_section():
     text = _read("README.ru.md")
-    assert "## Грунтовка reviewer в фазах план/ревью (опционально)" in text
+    assert "### Грунтовка reviewer в фазах план/ревью (опционально)" in text
     assert "Грунтовка reviewer (план/ревью, опционально, fail-open)" in text  # копипаст-блок
     assert "search_codebase" in text and "callers" in text
 
