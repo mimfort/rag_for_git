@@ -25,7 +25,7 @@ from reviewer.config.task_board import migrate_legacy_board_args
 from reviewer.index.refs import base_ref
 from reviewer.mcp.session_serde import from_payload, to_payload
 from reviewer.mcp.session_store import SessionStore
-from reviewer.retrieval.retriever import ContextPack
+from reviewer.retrieval.retriever import ContextPack, SearchUnavailableError
 from reviewer.services.gc import purge_orphaned_overlays
 from reviewer.services.review_service import (
     BranchNotTrackedError,
@@ -843,9 +843,16 @@ class MCPReviewService:
             pack = self.components.retriever.search_base(
                 repo, query, limits=cl.search_codebase, hops=cl.graph.hops,
                 ceiling_override=top_k, branch=resolved, include_tests=include_tests)
+        except SearchUnavailableError as error:
+            log.warning("search_codebase: обязательный компонент недоступен", exc_info=True)
+            messages = {
+                "embeddings": "(поиск недоступен — embeddings)",
+                "storage": "(поиск недоступен — storage)",
+            }
+            return messages.get(error.component, "(поиск недоступен — внутренняя ошибка)")
         except Exception:
-            log.warning("search_codebase: сбой поиска", exc_info=True)
-            return "(ничего не найдено)"
+            log.warning("search_codebase: внутренний сбой поиска", exc_info=True)
+            return "(поиск недоступен — внутренняя ошибка)"
         return pack.as_context(line_numbers=True) or "(ничего не найдено)"
 
     def related_symbols(self, repo: str, node_id: str,

@@ -55,3 +55,11 @@ def test_ask_lazy_expansion_present():
     text = ASK.read_text(encoding="utf-8")
     assert "Lazy expansion (no user prompt)" in text  # шаг присутствует, без интеррапта
     assert "top_k=" in text                           # перевызов с большим потолком
+
+
+def test_ask_falls_back_without_retry_when_search_unavailable():
+    text = ASK.read_text(encoding="utf-8")
+
+    assert "starts with `(поиск недоступен`" in text
+    assert "Do not re-call `search_codebase`" in text
+    assert "`Grep`/`Glob`/`Read`" in text
