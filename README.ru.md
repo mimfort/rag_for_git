@@ -28,10 +28,12 @@ inline-комментарии, привязанные к изменённым с
 системы контроля версий (VCS), если reviewer должен читать или публиковать ревью. Хранилища
 работают локально; запросы эмбеддингов и реранкинга отправляются в Voyage.
 
-1. Установите launcher, поднимите хранилища и настройте сервер:
+1. Установите launcher, скачайте Compose-файл репозитория, поднимите хранилища и настройте
+   reviewer:
 
    ```bash
    uv tool install --from rag-reviewer reviewer
+   curl -O https://raw.githubusercontent.com/mimfort/rag_for_git/main/docker-compose.yml
    docker compose up -d
    reviewer init
    ```
@@ -43,19 +45,22 @@ inline-комментарии, привязанные к изменённым с
    reviewer install codex
    ```
 
-3. Проверьте зависимости, постройте branch-scoped поисковый snapshot — base index — и проверьте
-   его свежесть:
+3. Постройте branch-scoped поисковый snapshot — base index, затем проверьте окружение и свежесть
+   индекса:
 
    ```bash
-   reviewer check
    reviewer index /path/to/repo --ref main
+   reviewer check
    reviewer status /path/to/repo --branch main --json
    ```
 
-   `reviewer check` должен подтвердить готовность credentials и сервисов. Status payload должен
-   показать indexed SHA и `drift == 0`. Полная индексация отправляет чанки кода в Voyage и может
-   быть медленной на free tier. Без base index ревью видит только дифф и временный индекс
-   изменённых файлов (overlay), поэтому получает более узкий контекст репозитория.
+   Индексация создаёт схему `chunks`, которую запрашивает `reviewer check`, поэтому в свежей
+   установке сначала нужен index. Сейчас check требует `GITHUB_TOKEN` даже для GitLab-only
+   конфигурации; до снятия этого ограничения проверяйте `GITLAB_TOKEN` индексацией или подготовкой
+   GitLab MR. Status payload должен показать indexed SHA и `drift == 0`. Полная индексация
+   отправляет чанки кода в Voyage и может быть медленной на free tier. Без base index ревью видит
+   только дифф и временный индекс изменённых файлов (overlay), поэтому получает более узкий
+   контекст репозитория.
 
 4. Откройте новую сессию клиента и запустите первое ревью:
 
@@ -78,17 +83,18 @@ uvx --from rag-reviewer@latest reviewer
 
 ## Развёртывание для команды
 
-Общий deployment состоит из одного reviewer server, открытого через MCP (Model Context Protocol),
-PostgreSQL/ParadeDB, Neo4j, Voyage и выбранных VCS- или task-board providers. MCP открывает
-reviewer tools AI-клиентам. Credentials провайдеров остаются в окружении сервера; клиенты
-передают только несекретные repo, branch, project и `provider_options`.
+В team deployment нет одного центрального MCP daemon. Каждый установленный AI-клиент запускает
+свой stdio-процесс `reviewer-mcp`; эти процессы совместно используют PostgreSQL/ParadeDB, Neo4j,
+Voyage и одинаковую provider configuration. Credentials провайдеров остаются в окружении каждого
+процесса. MCP requests передают repo, branch, project и `provider_options`, а tool results
+возвращают выбранный контекст кода AI-клиенту.
 
 1. **Поднимите хранилища и настройте секреты.**
 
    ```bash
+   curl -O https://raw.githubusercontent.com/mimfort/rag_for_git/main/docker-compose.yml
    docker compose up -d
    reviewer init
-   reviewer check
    ```
 
 2. **Выберите repo и branch scope.** Задайте `DEFAULT_REPO` и упорядоченный allowlist
@@ -99,6 +105,7 @@ reviewer tools AI-клиентам. Credentials провайдеров оста�
 
    ```bash
    reviewer index /srv/rag_for_git --ref main --repo mimfort/rag_for_git
+   reviewer check
    reviewer status /srv/rag_for_git --branch main --json
    ```
 
@@ -109,8 +116,10 @@ reviewer tools AI-клиентам. Credentials провайдеров оста�
    reviewer install codex --dry-run
    ```
 
-   `--dry-run` показывает планируемые записи конфигурации. Затем откройте новую chat- или
-   CLI-сессию; интеграциям IDE также может понадобиться Reload Window.
+   Выполните установку на каждой рабочей станции, где нужен reviewer. `--all` настраивает
+   поддерживаемые клиенты на этой машине, а `--dry-run` показывает планируемые записи
+   конфигурации. Затем откройте новую chat- или CLI-сессию; интеграциям IDE также может
+   понадобиться Reload Window.
 
 5. **Добавьте опциональный board-контекст.** Выберите зарегистрированный provider в
    `.review.yml`, оставьте credentials в server-side env и проверьте project scope через
@@ -518,7 +527,8 @@ reviewer serve
 - Voyage, VCS, board, database и web-admin credentials хранятся в server env, а не `.review.yml`.
 - Выдавайте VCS tokens минимально нужные права; publishing и `finish-task` выполняют внешние writes.
 - Проверяйте confirmation gate перед comments, board tasks, status transitions и изменением PR body.
-- Код остаётся в настроенных stores, но embedding/query text отправляется в Voyage.
+- Сохранённые копии остаются в настроенных databases, но code chunks и search text отправляются
+  в Voyage; PR diff и retrieved context AI-клиент также передаёт своему AI model provider.
 - Вызовы внешних providers требуют сеть; обычные unit tests её не используют.
 
 ### Известные ограничения
@@ -532,6 +542,8 @@ reviewer serve
 - Base index branch-scoped и не видит незакоммиченные working-tree changes.
 - OAuth loopback не поддерживается в headless/SSH integrations; используйте документированные
   PAT/API-key credentials.
+- Сейчас `reviewer check` проверяет `GITHUB_TOKEN` и GitHub API даже в GitLab-only deployment;
+  проверяйте `GITLAB_TOKEN` индексацией или подготовкой GitLab MR.
 - Board опционален. Без provider config task-aware skills продолжают board-less, а code retrieval
   не блокируется.
 

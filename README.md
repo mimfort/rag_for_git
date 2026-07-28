@@ -28,10 +28,12 @@ You need Python 3.11–3.13, [uv](https://docs.astral.sh/uv/), Docker, a Voyage 
 version-control system (VCS) token if reviewer should read or publish pull-request reviews. The
 stores run locally; embedding and reranking requests go to Voyage.
 
-1. Install the launcher, start the stores, and configure the server:
+1. Install the launcher, download the repository's Compose file, start the stores, and configure
+   reviewer:
 
    ```bash
    uv tool install --from rag-reviewer reviewer
+   curl -O https://raw.githubusercontent.com/mimfort/rag_for_git/main/docker-compose.yml
    docker compose up -d
    reviewer init
    ```
@@ -43,19 +45,22 @@ stores run locally; embedding and reranking requests go to Voyage.
    reviewer install codex
    ```
 
-3. Check dependencies, build the branch-scoped searchable snapshot called the base index, and
-   inspect its freshness:
+3. Build the branch-scoped searchable snapshot called the base index, then check the environment
+   and inspect index freshness:
 
    ```bash
-   reviewer check
    reviewer index /path/to/repo --ref main
+   reviewer check
    reviewer status /path/to/repo --branch main --json
    ```
 
-   `reviewer check` should report ready credentials and services. The status payload should show
-   an indexed SHA and `drift == 0`. Full indexing sends code chunks to Voyage and can be slow on
-   its free tier. Without a base index, PR review has only the diff and its temporary changed-file
-   index (overlay), and therefore thinner repository context.
+   Indexing initializes the `chunks` schema that `reviewer check` queries, so a fresh installation
+   must index before checking. The check currently requires `GITHUB_TOKEN`, even for a GitLab-only
+   setup; validate `GITLAB_TOKEN` by indexing or preparing a GitLab MR until that limitation is
+   removed. The status payload should show an indexed SHA and `drift == 0`. Full indexing sends
+   code chunks to Voyage and can be slow on its free tier. Without a base index, PR review has only
+   the diff and its temporary changed-file index (overlay), and therefore thinner repository
+   context.
 
 4. Open a new client session and run the first review:
 
@@ -78,17 +83,18 @@ uvx --from rag-reviewer@latest reviewer
 
 ## Deploy for a team
 
-A shared deployment consists of one reviewer server exposed through MCP (Model Context Protocol),
-plus PostgreSQL/ParadeDB, Neo4j, Voyage, and selected VCS or task-board providers. MCP exposes
-reviewer tools to AI clients. Keep provider credentials in the server environment; clients send
-only non-secret repository, branch, project, and `provider_options`.
+A team deployment does not use one central MCP daemon. Each installed AI client launches its own
+`reviewer-mcp` stdio process; those processes share PostgreSQL/ParadeDB, Neo4j, Voyage, and the
+same provider configuration. Keep provider credentials in each process environment. MCP requests
+carry repository, branch, project, and `provider_options`, and tool results return selected code
+context to the AI client.
 
 1. **Start the stores and configure secrets.**
 
    ```bash
+   curl -O https://raw.githubusercontent.com/mimfort/rag_for_git/main/docker-compose.yml
    docker compose up -d
    reviewer init
-   reviewer check
    ```
 
 2. **Choose repository and branch scope.** Set `DEFAULT_REPO` and the ordered
@@ -99,6 +105,7 @@ only non-secret repository, branch, project, and `provider_options`.
 
    ```bash
    reviewer index /srv/rag_for_git --ref main --repo mimfort/rag_for_git
+   reviewer check
    reviewer status /srv/rag_for_git --branch main --json
    ```
 
@@ -109,8 +116,9 @@ only non-secret repository, branch, project, and `provider_options`.
    reviewer install codex --dry-run
    ```
 
-   `--dry-run` reports planned config writes. Open a new chat or CLI session afterwards; IDE
-   integrations may also require Reload Window.
+   Run installation on every workstation that needs reviewer. `--all` configures the supported
+   clients on that machine; `--dry-run` reports planned config writes. Open a new chat or CLI
+   session afterwards; IDE integrations may also require Reload Window.
 
 5. **Add optional board context.** Select a registered provider in `.review.yml`, keep its
    credentials in server-side env, and validate the project scope with `reviewer check`. See
@@ -519,7 +527,8 @@ errors are reported without preventing the process from starting where fail-soft
 - Use least-privilege VCS tokens; publishing and `finish-task` perform external writes.
 - Review every confirmation gate before comments, board tasks, status transitions, or PR-body
   changes.
-- Code stays in the configured stores, but embedding/query text is sent to Voyage.
+- Stored copies stay in the configured databases, but code chunks and search text are sent to
+  Voyage; PR diffs and retrieved context are also sent by the AI client to its AI model provider.
 - External provider calls require network access; ordinary unit tests do not.
 
 ### Known limitations
@@ -532,6 +541,8 @@ errors are reported without preventing the process from starting where fail-soft
 - The base index is branch-scoped and blind to uncommitted working-tree changes.
 - OAuth loopback flows are not supported in headless/SSH integrations; use documented PAT/API-key
   credentials.
+- `reviewer check` currently validates `GITHUB_TOKEN` and the GitHub API even in a GitLab-only
+  deployment; validate `GITLAB_TOKEN` by indexing or preparing a GitLab MR.
 - Board work is optional. Missing provider configuration keeps task-aware skills board-less rather
   than blocking code retrieval.
 

@@ -65,6 +65,12 @@ def _assert_in_order(text: str, headings: tuple[str, ...]) -> None:
     assert positions == sorted(positions)
 
 
+def _section(text: str, heading: str) -> str:
+    start = text.index(heading)
+    end = text.find("\n## ", start + len(heading))
+    return text[start:] if end == -1 else text[start:end]
+
+
 def _registered_skills() -> tuple[str, ...]:
     skills_root = ROOT / "plugin" / "skills"
     return tuple(
@@ -179,6 +185,52 @@ def test_readmes_share_critical_commands_and_contract_markers():
     for marker in PARITY_MARKERS:
         assert marker in english, ("README.md", marker)
         assert marker in russian, ("README.ru.md", marker)
+
+
+def test_quick_start_downloads_compose_and_indexes_before_checking():
+    for filename, heading in (
+        ("README.md", "## Try reviewer"),
+        ("README.ru.md", "## Попробовать reviewer"),
+    ):
+        section = _section(_read(filename), heading)
+        _assert_in_order(
+            section,
+            (
+                "curl -O https://raw.githubusercontent.com/mimfort/rag_for_git/main/docker-compose.yml",
+                "docker compose up -d",
+                "reviewer init",
+                "reviewer index /path/to/repo --ref main",
+                "reviewer check",
+                "reviewer status /path/to/repo --branch main --json",
+            ),
+        )
+
+
+def test_team_route_describes_per_client_stdio_processes():
+    for filename, heading in (
+        ("README.md", "## Deploy for a team"),
+        ("README.ru.md", "## Развёртывание для команды"),
+    ):
+        section = _section(_read(filename), heading)
+        assert "stdio" in section
+        assert "reviewer-mcp" in section
+        assert "PostgreSQL/ParadeDB" in section
+
+
+def test_security_discloses_both_external_code_data_paths():
+    for filename in ("README.md", "README.ru.md"):
+        section = _section(_read(filename), "### Security" if filename == "README.md" else "### Безопасность")
+        assert "Voyage" in section
+        assert "AI model provider" in section
+
+
+def test_gitlab_only_check_limitation_is_explicit():
+    for filename in ("README.md", "README.ru.md"):
+        text = _read(filename)
+        assert "`reviewer check`" in text
+        assert "`GITHUB_TOKEN`" in text
+        assert "`GITLAB_TOKEN`" in text
+        assert "GitLab-only" in text
 
 
 def test_all_readme_links_and_local_anchors_resolve():
