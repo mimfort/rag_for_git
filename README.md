@@ -20,7 +20,7 @@ reference sections later in this document.
 | If you want to… | Follow |
 |---|---|
 | Try reviewer and get a first result | [Try reviewer](#try-reviewer) |
-| Deploy one reviewer service for a team | [Deploy for a team](#deploy-for-a-team) |
+| Use reviewer with a team on one shared host | [Deploy for a team](#deploy-for-a-team) |
 
 ## Try reviewer
 
@@ -56,11 +56,11 @@ stores run locally; embedding and reranking requests go to Voyage.
 
    Indexing initializes the `chunks` schema that `reviewer check` queries, so a fresh installation
    must index before checking. The check currently requires `GITHUB_TOKEN`, even for a GitLab-only
-   setup; validate `GITLAB_TOKEN` by indexing or preparing a GitLab MR until that limitation is
-   removed. The status payload should show an indexed SHA and `drift == 0`. Full indexing sends
-   code chunks to Voyage and can be slow on its free tier. Without a base index, PR review has only
-   the diff and its temporary changed-file index (overlay), and therefore thinner repository
-   context.
+   setup; validate `GITLAB_TOKEN` with a dry-run `reviewer_review-pr` against a GitLab MR until
+   that limitation is removed. The status payload should show an indexed SHA and `drift == 0`.
+   Full indexing sends code chunks to Voyage and can be slow on its free tier. Without a base
+   index, PR review has only the diff and its temporary changed-file index (overlay), and therefore
+   thinner repository context.
 
 4. Open a new client session and run the first review:
 
@@ -83,13 +83,15 @@ uvx --from rag-reviewer@latest reviewer
 
 ## Deploy for a team
 
-A team deployment does not use one central MCP daemon. Each installed AI client launches its own
-`reviewer-mcp` stdio process; those processes share PostgreSQL/ParadeDB, Neo4j, Voyage, and the
-same provider configuration. Keep provider credentials in each process environment. MCP requests
-carry repository, branch, project, and `provider_options`, and tool results return selected code
-context to the AI client.
+This route assumes that team members open their AI-client sessions on one shared host under one
+service account. Each client launches its own `reviewer-mcp` stdio process; those processes share
+PostgreSQL/ParadeDB and Neo4j through the Compose services bound to `127.0.0.1`, plus the service
+account's reviewer env. It is not one central MCP daemon. MCP requests carry repository, branch,
+project, and `provider_options`, and tool results return selected code context to the AI client.
+For separate workstations, use secured network-accessible stores and configure their DSNs and
+reviewer env on every workstation instead of using the loopback Compose defaults.
 
-1. **Start the stores and configure secrets.**
+1. **On the shared host, start the stores and configure secrets for the service account.**
 
    ```bash
    curl -O https://raw.githubusercontent.com/mimfort/rag_for_git/main/docker-compose.yml
@@ -116,13 +118,18 @@ context to the AI client.
    reviewer install codex --dry-run
    ```
 
-   Run installation on every workstation that needs reviewer. `--all` configures the supported
-   clients on that machine; `--dry-run` reports planned config writes. Open a new chat or CLI
-   session afterwards; IDE integrations may also require Reload Window.
+   Run installation on the shared host as the same service account. `--all` configures the
+   supported clients for that account; `--dry-run` reports planned config writes. Open a new chat
+   or CLI session afterwards; IDE integrations may also require Reload Window.
 
 5. **Add optional board context.** Select a registered provider in `.review.yml`, keep its
-   credentials in server-side env, and validate the project scope with `reviewer check`. See
-   [Task boards](#task-boards) and the
+   credentials in the reviewer env, and validate the exact project:
+
+   ```bash
+   reviewer check --board-project TYPE=PROJECT
+   ```
+
+   Repeat `--board-project` for additional providers. See [Task boards](#task-boards) and the
    [provider reference](docs/board-providers.md).
 
 ## Core workflows
@@ -542,7 +549,7 @@ errors are reported without preventing the process from starting where fail-soft
 - OAuth loopback flows are not supported in headless/SSH integrations; use documented PAT/API-key
   credentials.
 - `reviewer check` currently validates `GITHUB_TOKEN` and the GitHub API even in a GitLab-only
-  deployment; validate `GITLAB_TOKEN` by indexing or preparing a GitLab MR.
+  deployment; validate `GITLAB_TOKEN` with a dry-run `reviewer_review-pr` against a GitLab MR.
 - Board work is optional. Missing provider configuration keeps task-aware skills board-less rather
   than blocking code retrieval.
 

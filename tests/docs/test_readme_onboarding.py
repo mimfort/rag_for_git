@@ -215,6 +215,9 @@ def test_team_route_describes_per_client_stdio_processes():
         assert "stdio" in section
         assert "reviewer-mcp" in section
         assert "PostgreSQL/ParadeDB" in section
+        assert "shared host" in section
+        assert "service account" in section
+        assert "127.0.0.1" in section
 
 
 def test_security_discloses_both_external_code_data_paths():
@@ -231,6 +234,17 @@ def test_gitlab_only_check_limitation_is_explicit():
         assert "`GITHUB_TOKEN`" in text
         assert "`GITLAB_TOKEN`" in text
         assert "GitLab-only" in text
+        assert "dry-run `reviewer_review-pr`" in text
+        assert "validate `GITLAB_TOKEN` by indexing" not in text
+
+
+def test_team_route_validates_the_selected_board_project():
+    for filename, heading in (
+        ("README.md", "## Deploy for a team"),
+        ("README.ru.md", "## Развёртывание для команды"),
+    ):
+        section = _section(_read(filename), heading)
+        assert "reviewer check --board-project TYPE=PROJECT" in section
 
 
 def test_all_readme_links_and_local_anchors_resolve():

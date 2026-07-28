@@ -20,7 +20,7 @@ inline-комментарии, привязанные к изменённым с
 | Если вы хотите… | Маршрут |
 |---|---|
 | Попробовать reviewer и получить первый результат | [Попробовать reviewer](#попробовать-reviewer) |
-| Развернуть один reviewer для команды | [Развёртывание для команды](#развёртывание-для-команды) |
+| Использовать reviewer командой на одном shared host | [Развёртывание для команды](#развёртывание-для-команды) |
 
 ## Попробовать reviewer
 
@@ -56,11 +56,11 @@ inline-комментарии, привязанные к изменённым с
 
    Индексация создаёт схему `chunks`, которую запрашивает `reviewer check`, поэтому в свежей
    установке сначала нужен index. Сейчас check требует `GITHUB_TOKEN` даже для GitLab-only
-   конфигурации; до снятия этого ограничения проверяйте `GITLAB_TOKEN` индексацией или подготовкой
-   GitLab MR. Status payload должен показать indexed SHA и `drift == 0`. Полная индексация
-   отправляет чанки кода в Voyage и может быть медленной на free tier. Без base index ревью видит
-   только дифф и временный индекс изменённых файлов (overlay), поэтому получает более узкий
-   контекст репозитория.
+   конфигурации; до снятия этого ограничения проверяйте `GITLAB_TOKEN` через dry-run
+   `reviewer_review-pr` для GitLab MR. Status payload должен показать indexed SHA и `drift == 0`.
+   Полная индексация отправляет чанки кода в Voyage и может быть медленной на free tier. Без base
+   index ревью видит только дифф и временный индекс изменённых файлов (overlay), поэтому получает
+   более узкий контекст репозитория.
 
 4. Откройте новую сессию клиента и запустите первое ревью:
 
@@ -83,13 +83,15 @@ uvx --from rag-reviewer@latest reviewer
 
 ## Развёртывание для команды
 
-В team deployment нет одного центрального MCP daemon. Каждый установленный AI-клиент запускает
-свой stdio-процесс `reviewer-mcp`; эти процессы совместно используют PostgreSQL/ParadeDB, Neo4j,
-Voyage и одинаковую provider configuration. Credentials провайдеров остаются в окружении каждого
-процесса. MCP requests передают repo, branch, project и `provider_options`, а tool results
-возвращают выбранный контекст кода AI-клиенту.
+Этот маршрут предполагает, что участники команды открывают сессии AI-клиентов на одном shared host
+под одним service account. Каждый клиент запускает собственный stdio-процесс `reviewer-mcp`; эти
+процессы совместно используют PostgreSQL/ParadeDB и Neo4j из Compose, привязанные к `127.0.0.1`, и
+reviewer env этого account. Центрального MCP daemon здесь нет. MCP requests передают repo, branch,
+project и `provider_options`, а tool results возвращают выбранный контекст кода AI-клиенту. Для
+отдельных workstations используйте защищённые network-accessible stores и настройте их DSN и
+reviewer env на каждой машине вместо loopback defaults из Compose.
 
-1. **Поднимите хранилища и настройте секреты.**
+1. **На shared host поднимите хранилища и настройте секреты service account.**
 
    ```bash
    curl -O https://raw.githubusercontent.com/mimfort/rag_for_git/main/docker-compose.yml
@@ -116,14 +118,20 @@ Voyage и одинаковую provider configuration. Credentials провай�
    reviewer install codex --dry-run
    ```
 
-   Выполните установку на каждой рабочей станции, где нужен reviewer. `--all` настраивает
-   поддерживаемые клиенты на этой машине, а `--dry-run` показывает планируемые записи
-   конфигурации. Затем откройте новую chat- или CLI-сессию; интеграциям IDE также может
-   понадобиться Reload Window.
+   Выполните установку на shared host от того же service account. `--all` настраивает
+   поддерживаемые клиенты этого account, а `--dry-run` показывает планируемые записи конфигурации.
+   Затем откройте новую chat- или CLI-сессию; интеграциям IDE также может понадобиться Reload
+   Window.
 
 5. **Добавьте опциональный board-контекст.** Выберите зарегистрированный provider в
-   `.review.yml`, оставьте credentials в server-side env и проверьте project scope через
-   `reviewer check`. См. [раздел о досках](#доски-задач) и
+   `.review.yml`, оставьте credentials в reviewer env и проверьте точный project:
+
+   ```bash
+   reviewer check --board-project TYPE=PROJECT
+   ```
+
+   Повторите `--board-project` для дополнительных providers. См.
+   [раздел о досках](#доски-задач) и
    [справочник провайдеров](docs/board-providers.md).
 
 ## Основные сценарии
@@ -543,7 +551,7 @@ reviewer serve
 - OAuth loopback не поддерживается в headless/SSH integrations; используйте документированные
   PAT/API-key credentials.
 - Сейчас `reviewer check` проверяет `GITHUB_TOKEN` и GitHub API даже в GitLab-only deployment;
-  проверяйте `GITLAB_TOKEN` индексацией или подготовкой GitLab MR.
+  проверяйте `GITLAB_TOKEN` через dry-run `reviewer_review-pr` для GitLab MR.
 - Board опционален. Без provider config task-aware skills продолжают board-less, а code retrieval
   не блокируется.
 
