@@ -61,6 +61,7 @@ def test_upsert_then_get_roundtrip(store):
     assert row["cluster_key"] == "reviewer/index"
     assert row["title"] == "Индекс"
     assert row["summary"] == "Хранилище чанков и ретрив."
+    assert row["source_hash"] == "h1"
     assert "T" in row["updated_at"]        # ISO-таймстамп (зеркало единичного get_summary)
     one = summary_store.get_summary(repo, "dev", "reviewer/index")
     assert one["member_node_ids"] == ["reviewer/index/store.py#X"]
@@ -163,6 +164,7 @@ def test_upsert_writes_embedding_and_search_returns_nearest_first(store_pri167):
                                  ["index/b.py#B"], "h-index", embedding=_vec(500))
     hits = summary_store.search_summaries(repo, "dev", _vec(0), top_k=1)
     assert [h["cluster_key"] for h in hits] == ["auth"]
+    assert hits[0]["source_hash"] == "h-auth"
     assert summary_store.count_summaries(repo, "dev") == 2
 
 

@@ -318,7 +318,10 @@ def create_server(service: MCPReviewService) -> FastMCP:
         per-repo .review.yml), returns the top-k summaries nearest the query by
         embedding; without `query` or at/below the threshold, returns all (back-compat).
         top_k defaults to 8. Empty when none built (consumer is fail-open).
-        No PR session; branch defaults to primary."""
+        No PR session; branch defaults to primary. Every returned summary has source_hash
+        and stale: true when its stored hash differs from the current cluster, false when
+        it matches, null when freshness is not computed (including the scaled ANN path)
+        or unavailable."""
         return service.get_subsystem_summaries(repo, branch, cluster_key, query, top_k)
 
     @mcp.tool()

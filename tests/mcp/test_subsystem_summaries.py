@@ -75,7 +75,7 @@ def test_index_and_get_subsystem_summaries_roundtrip_via_store():
                               ("reviewer/index/b.py#B", "sk2")])
     c.summary_store.get_summaries.return_value = [
         {"cluster_key": "reviewer/index", "title": "Индекс", "summary": "...",
-         "updated_at": "2026-06-23T00:00:00+00:00"}]
+         "source_hash": sh, "updated_at": "2026-06-23T00:00:00+00:00"}]
     svc = _svc(c)
 
     out = svc.index_subsystem_summary("o/n", "dev", "reviewer/index", "Индекс", "...", sh)
@@ -86,6 +86,105 @@ def test_index_and_get_subsystem_summaries_roundtrip_via_store():
 
     got = svc.get_subsystem_summaries("o/n", "dev")
     assert got["summaries"][0]["cluster_key"] == "reviewer/index"
+
+
+def test_get_subsystem_summaries_marks_fresh_hash():
+    from reviewer.graph.summaries import compute_source_hash
+
+    c = MagicMock()
+    current = compute_source_hash([("reviewer/index/a.py#A", "sk1")])
+    c.summary_store.get_summaries.return_value = [{
+        "cluster_key": "reviewer/index", "title": "Индекс", "summary": "...",
+        "source_hash": current, "updated_at": "2026-06-23T00:00:00+00:00",
+    }]
+    c.store.list_base_members.return_value = [
+        ("reviewer/index/a.py", "A", "h1", 1, "sk1")
+    ]
+
+    [summary] = _svc(c).get_subsystem_summaries("o/n", "dev")["summaries"]
+
+    assert summary["stale"] is False
+
+
+def test_get_subsystem_summaries_marks_mismatched_hash_stale():
+    c = MagicMock()
+    c.summary_store.get_summaries.return_value = [{
+        "cluster_key": "reviewer/index", "title": "Индекс", "summary": "...",
+        "source_hash": "old", "updated_at": "2026-06-23T00:00:00+00:00",
+    }]
+    c.store.list_base_members.return_value = [
+        ("reviewer/index/a.py", "A", "h1", 1, "sk1")
+    ]
+
+    [summary] = _svc(c).get_subsystem_summaries("o/n", "dev")["summaries"]
+
+    assert summary["stale"] is True
+
+
+def test_get_subsystem_summaries_marks_absent_current_cluster_stale():
+    c = MagicMock()
+    c.summary_store.get_summaries.return_value = [{
+        "cluster_key": "reviewer/index", "title": "Индекс", "summary": "...",
+        "source_hash": "stored-index", "updated_at": "2026-06-23T00:00:00+00:00",
+    }]
+    c.store.list_base_members.return_value = [
+        ("reviewer/mcp/service.py", "MCPReviewService", "h1", 1, "sk1")
+    ]
+
+    [summary] = _svc(c).get_subsystem_summaries("o/n", "dev")["summaries"]
+
+    assert summary["stale"] is True
+
+
+def test_get_subsystem_summaries_empty_base_has_unknown_freshness():
+    c = MagicMock()
+    c.summary_store.get_summaries.return_value = [{
+        "cluster_key": "reviewer/index", "title": "Индекс", "summary": "...",
+        "source_hash": "stored-index", "updated_at": "2026-06-23T00:00:00+00:00",
+    }]
+    c.store.list_base_members.return_value = []
+
+    [summary] = _svc(c).get_subsystem_summaries("o/n", "dev")["summaries"]
+
+    assert summary["stale"] is None
+
+
+def test_get_subsystem_summaries_derivation_failure_is_unknown():
+    c = MagicMock()
+    c.summary_store.get_summaries.return_value = [{
+        "cluster_key": "reviewer/index", "title": "Индекс", "summary": "...",
+        "source_hash": "stored", "updated_at": "2026-06-23T00:00:00+00:00",
+    }]
+    c.store.list_base_members.side_effect = RuntimeError("db down")
+
+    [summary] = _svc(c).get_subsystem_summaries("o/n", "dev")["summaries"]
+
+    assert summary["stale"] is None
+
+
+def test_get_subsystem_summaries_single_key_marks_stale():
+    c = MagicMock()
+    c.summary_store.get_summary.return_value = {
+        "cluster_key": "reviewer/index", "title": "Индекс", "summary": "...",
+        "source_hash": "old", "updated_at": "2026-06-23T00:00:00+00:00",
+    }
+    c.store.list_base_members.return_value = [
+        ("reviewer/index/a.py", "A", "h1", 1, "sk1")
+    ]
+
+    out = _svc(c).get_subsystem_summaries(
+        "o/n", "dev", cluster_key="reviewer/index"
+    )
+
+    assert out["summary"]["stale"] is True
+
+
+def test_get_subsystem_summaries_empty_does_not_scan_base():
+    c = MagicMock()
+    c.summary_store.get_summaries.return_value = []
+
+    assert _svc(c).get_subsystem_summaries("o/n", "dev") == {"summaries": []}
+    c.store.list_base_members.assert_not_called()
 
 
 def test_index_subsystem_summary_stale_hash_empties_members():
@@ -280,25 +379,34 @@ def test_get_subsystem_summaries_query_above_threshold_returns_topk():
     c.summary_store.count_summaries.return_value = 25            # > порога 20
     c.summary_store.search_summaries.return_value = [
         {"cluster_key": "auth", "title": "Авторизация", "summary": "...",
-         "updated_at": "2026-06-23T00:00:00+00:00"}]
+         "source_hash": "stored", "updated_at": "2026-06-23T00:00:00+00:00"}]
     c.embedder.embed_query.return_value = [0.1, 0.2]
     svc = _svc(c)
     out = svc.get_subsystem_summaries("o/n", "dev", query="как работает логин")
     assert out["summaries"][0]["cluster_key"] == "auth"
+    assert out["summaries"][0]["stale"] is None
     c.embedder.embed_query.assert_called_once_with("как работает логин")
     assert c.summary_store.search_summaries.call_args.args[3] == 8   # top_k по умолчанию
     c.summary_store.get_summaries.assert_not_called()
+    c.store.list_base_members.assert_not_called()
 
 
 def test_get_subsystem_summaries_query_below_threshold_returns_all():
+    from reviewer.graph.summaries import compute_source_hash
+
     c = MagicMock()
     c.summary_store.count_summaries.return_value = 5             # ≤ порога 20
+    current = compute_source_hash([("reviewer/index/a.py#A", "sk1")])
     c.summary_store.get_summaries.return_value = [
         {"cluster_key": "reviewer/index", "title": "Индекс", "summary": "...",
-         "updated_at": "2026-06-23T00:00:00+00:00"}]
+         "source_hash": current, "updated_at": "2026-06-23T00:00:00+00:00"}]
+    c.store.list_base_members.return_value = [
+        ("reviewer/index/a.py", "A", "h1", 1, "sk1")
+    ]
     svc = _svc(c)
     out = svc.get_subsystem_summaries("o/n", "dev", query="что угодно")
     assert out["summaries"][0]["cluster_key"] == "reviewer/index"
+    assert out["summaries"][0]["stale"] is False
     c.summary_store.search_summaries.assert_not_called()        # бэк-компат: отдаём все
     c.embedder.embed_query.assert_not_called()                  # Voyage не дёрнут (ниже порога)
 
