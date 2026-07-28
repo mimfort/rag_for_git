@@ -1,5 +1,7 @@
+import pytest
+
 from reviewer.policy.context_limits import CodebaseLimits
-from reviewer.retrieval.retriever import ContextPack, Retriever
+from reviewer.retrieval.retriever import ContextPack, Retriever, SearchUnavailableError
 
 
 class _Hit:
@@ -16,9 +18,10 @@ class _Hit:
 
 
 class _FakeStore:
-    def __init__(self, hits, related=None):
+    def __init__(self, hits, related=None, error: Exception | None = None):
         self._hits = hits
         self._related = related or []
+        self._error = error
         self.search_calls = []
         self.fetch_calls = []
 
@@ -28,6 +31,8 @@ class _FakeStore:
             "repo": repo, "overlay_ref": overlay_ref, "changed_paths": changed_paths,
             "top_k": top_k, "candidates": candidates,
         })
+        if self._error is not None:
+            raise self._error
         return self._hits
 
     def fetch_nodes(self, repo, node_ids, overlay_ref, changed_paths, *, base_ref="base"):
@@ -39,11 +44,14 @@ class _FakeStore:
 
 
 class _FakeEmbedder:
-    def __init__(self):
+    def __init__(self, error: Exception | None = None):
+        self._error = error
         self.queries = []
 
     def embed_query(self, text):
         self.queries.append(text)
+        if self._error is not None:
+            raise self._error
         return [0.1] * 8
 
 
@@ -113,6 +121,38 @@ def test_search_base_graph_down_falls_back_to_hybrid():
 def test_search_base_empty_returns_empty_pack():
     r = Retriever(_FakeStore([]), graph=None, embedder=_FakeEmbedder(), reranker=None)
     assert r.search_base("a/x", "nothing", limits=_cb()).as_context() == ""
+
+
+def test_search_base_wraps_embedding_failure():
+    cause = RuntimeError("voyage transport detail")
+    retriever = Retriever(
+        _FakeStore([]),
+        graph=None,
+        embedder=_FakeEmbedder(error=cause),
+        reranker=None,
+    )
+
+    with pytest.raises(SearchUnavailableError) as caught:
+        retriever.search_base("a/x", "nothing", limits=_cb())
+
+    assert caught.value.component == "embeddings"
+    assert caught.value.__cause__ is cause
+
+
+def test_search_base_wraps_storage_failure():
+    cause = RuntimeError("postgres transport detail")
+    retriever = Retriever(
+        _FakeStore([], error=cause),
+        graph=None,
+        embedder=_FakeEmbedder(),
+        reranker=None,
+    )
+
+    with pytest.raises(SearchUnavailableError) as caught:
+        retriever.search_base("a/x", "nothing", limits=_cb())
+
+    assert caught.value.component == "storage"
+    assert caught.value.__cause__ is cause
 
 
 def test_search_base_dedupes_nested_chunks():
