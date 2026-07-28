@@ -550,7 +550,7 @@ headless-CLI и по SSH. Что поддерживает каждая доск�
 | `update` | — | — | Проверить PyPI на новую версию `rag-reviewer`. |
 | `index` | `<repo>` (путь к клону) | `--ref BRANCH` (git-ref для чтения; дефолт — первичная ветка), `--branch NAME` (ключ хранения; дефолт = `--ref`), `--repo OWNER/NAME` (дефолт из git `origin`) | Построить/обновить base-индекс ветки (вектора + граф). Раз, далее инкрементально. |
 | `search` | `<query>` | `--repo OWNER/NAME` (дефолт `DEFAULT_REPO`), `--branch NAME` (дефолт — первичная) | Диагностический гибрид-поиск по base-индексу ветки. |
-| `status` | `[path]` (дефолт `.`) | `--repo OWNER/NAME` (дефолт из git `origin`), `--branch NAME` (дефолт — все `REVIEW_BRANCHES`), `--json` (машинно-читаемый вывод) | Здоровье/свежесть индекса vs HEAD клона. Квоту Voyage не тратит. |
+| `status` | `[path]` (дефолт `.`) | `--repo OWNER/NAME` (дефолт из git `origin`), `--branch NAME` (дефолт — все `REVIEW_BRANCHES`), `--json` (машинно-читаемый вывод) | Здоровье/свежесть индекса vs HEAD клона, включая число чанков, узлов графа и сводок подсистем по каждой ветке. Квоту Voyage не тратит. |
 | `gc` | — | — | Вычистить осиротевшие overlay (брошенные ревью) и просроченные сессии. |
 | `migrate-branches` | — | — | Разово: переименовать legacy `ref="base"` → `base:<primary>` после апгрейда на мульти-бранч. |
 | `serve` | — | `--host HOST` (дефолт `127.0.0.1`), `--port PORT` (дефолт `8000`) | Веб-админка наблюдаемости на хосте. |
@@ -618,7 +618,8 @@ RAG + граф кода и передаёт в **полный цикл superpowe
 - **MCP-тулы:** `get_subsystem_summaries`, `get_task`, `get_task_context`, `search_tasks`,
   `search_codebase`, `related_symbols`, `callers`, `definition`, `implementations`, `get_pr_diff` и
   server-side `sync_board`.
-- **Поток:** резолв generic board config → server-side incremental `sync_board` → идентификация
+- **Поток:** preflight (свежесть индекса и теплота сводок подсистем — оба факта из одного
+  payload'а `reviewer status --json`) → резолв generic board config → server-side incremental `sync_board` → идентификация
   задачи (ключ vs текст) → store-first `get_task(key, project=...)`; при промахе повторить после
   синка и продолжить fail-open с кодовым контекстом, если задача всё ещё недоступна → subsystem prior
   и best-effort сбор контекста (граф задач,

@@ -649,7 +649,7 @@ GEMINI.md / .cursorrules — whichever your client uses).
 | `update` | — | — | Check PyPI for a newer `rag-reviewer`; immediately upgrade the current persistent `uv tool` install when needed. In `uvx`/editable mode, only report instructions without mutating unrelated installs. |
 | `index` | `<repo>` (path to local clone) | `--ref BRANCH` (git ref to read; default = primary branch), `--branch NAME` (storage key; default = `--ref`), `--repo OWNER/NAME` (default from git `origin`) | Build/update the base index of a branch (vectors + graph). Done once, then incremental. |
 | `search` | `<query>` | `--repo OWNER/NAME` (default `DEFAULT_REPO`), `--branch NAME` (default primary) | Diagnostic hybrid search over a branch's base index. |
-| `status` | `[path]` (default `.`) | `--repo OWNER/NAME` (default from git `origin`), `--branch NAME` (default: all `REVIEW_BRANCHES`), `--json` (machine-readable output) | Index health / freshness vs the clone's HEAD. Spends no Voyage quota. |
+| `status` | `[path]` (default `.`) | `--repo OWNER/NAME` (default from git `origin`), `--branch NAME` (default: all `REVIEW_BRANCHES`), `--json` (machine-readable output) | Index health / freshness vs the clone's HEAD, including per-branch chunk, graph-node and subsystem-summary counts. Spends no Voyage quota. |
 | `gc` | — | — | Purge orphaned overlays (abandoned reviews) and expired sessions. |
 | `migrate-branches` | — | — | One-time: rename legacy `ref="base"` → `base:<primary>` after upgrading to multi-branch. |
 | `serve` | — | `--host HOST` (default `127.0.0.1`), `--port PORT` (default `8000`) | Run the observability web admin on the host. |
@@ -719,7 +719,8 @@ and enters brainstorming. It disciplines context-gathering — it does **not** w
 - **MCP tools used:** `get_subsystem_summaries`, `get_task`, `get_task_context`, `search_tasks`,
   `search_codebase`, `related_symbols`, `callers`, `definition`, `implementations`, `get_pr_diff`, and
   server-side `sync_board`. All task tools are scoped via `project=<task_board.project>`.
-- **Flow:** resolve generic board config → server-side incremental `sync_board` → identify task
+- **Flow:** preflight (index freshness and subsystem-summary warmth, both read from one
+  `reviewer status --json` payload) → resolve generic board config → server-side incremental `sync_board` → identify task
   (key vs free text) → store-first `get_task(key, project=...)`; on a miss, retry after sync and
   continue fail-open with code context if it is still unavailable → subsystem prior and best-effort context
   gathering (task graph, similar tasks, relevant code, lazy PR diffs of similar tasks) → distill a
