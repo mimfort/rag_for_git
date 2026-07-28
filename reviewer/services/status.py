@@ -22,6 +22,7 @@ class BranchStatus:
     chunks: int
     graph_nodes: int | None
     drift: int | None
+    summaries: int | None = None
 
 
 @dataclass
@@ -47,8 +48,8 @@ def _drift(repo_path: str, sha: str, branch: str) -> int | None:
 
 
 def build_status_report(store, graph, repo: str, branches: list[str],
-                        repo_path: str) -> RepoStatus:
-    """Собрать RepoStatus по веткам. Neo4j fail-soft (graph_nodes=None при сбое)."""
+                        repo_path: str, *, summary_store=None) -> RepoStatus:
+    """Собрать RepoStatus по веткам. Neo4j и стор сводок fail-soft (поле=None при сбое)."""
     branch_statuses: list[BranchStatus] = []
     for branch in branches:
         ref = base_ref(branch)
@@ -60,10 +61,14 @@ def build_status_report(store, graph, repo: str, branches: list[str],
             graph_nodes = graph.count_nodes(repo, branch)
         except Exception:  # noqa: BLE001 — Neo4j недоступен, граф недоступен
             graph_nodes = None
+        try:
+            summaries = summary_store.count_summaries(repo, branch) if summary_store else None
+        except Exception:  # noqa: BLE001 — стор сводок недоступен
+            summaries = None
         drift = _drift(repo_path, sha, branch) if sha else None
         branch_statuses.append(BranchStatus(
             branch=branch, ref=ref, indexed_sha=sha, updated_at=updated_at,
-            chunks=chunks, graph_nodes=graph_nodes, drift=drift))
+            chunks=chunks, graph_nodes=graph_nodes, drift=drift, summaries=summaries))
     overlays = [
         OverlayStatus(ref=r, chunks=store.count_chunks(repo, r))
         for r in store.list_refs(repo)
@@ -90,6 +95,7 @@ def render_status_json(report: RepoStatus) -> str:
                 "chunks": b.chunks,
                 "graph_nodes": b.graph_nodes,
                 "drift": b.drift,
+                "summaries": b.summaries,
             }
             for b in report.branches
         ],
@@ -124,7 +130,8 @@ def render_status(report: RepoStatus, backend: str) -> str:
         else:
             lines.append(f"  Статус: ↗ отстаёт на {b.drift} коммитов")
         nodes = "—  (Neo4j недоступен)" if b.graph_nodes is None else str(b.graph_nodes)
-        lines.append(f"  Чанки:  {b.chunks}   Узлы графа: {nodes}")
+        summ = "—" if b.summaries is None else str(b.summaries)
+        lines.append(f"  Чанки:  {b.chunks}   Узлы графа: {nodes}   Сводки: {summ}")
         lines.append("")
     if report.overlays:
         lines.append("Overlay:")

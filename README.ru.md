@@ -489,8 +489,8 @@ docker compose ps
 ```
 
 `reviewer check` проверяет credentials и подключение сервисов без расхода Voyage quota. `status`
-сравнивает indexed SHA с выбранным локальным ref и показывает chunks, graph nodes и commit drift
-каждой отслеживаемой ветки.
+сравнивает indexed SHA с выбранным локальным ref и показывает chunks, graph nodes, сводки
+подсистем и commit drift каждой отслеживаемой ветки.
 
 ### Свежесть индекса и восстановление
 

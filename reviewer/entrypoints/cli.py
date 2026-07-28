@@ -22,6 +22,7 @@ from reviewer.index.pathfilter import is_ignored
 from reviewer.index.refs import base_ref
 from reviewer.policy.policy import ReviewPolicy
 from reviewer.index.store import ChunkStore
+from reviewer.index.summary_store import SummaryStore
 from reviewer.mcp.session_store import SessionStore
 from reviewer.services.gc import purge_orphaned_overlays
 from reviewer.services.status import build_status_report, render_status, render_status_json
@@ -605,13 +606,17 @@ def status(path: str, repo_tag: str | None, branch_opt: str | None,
     branches = [branch_opt] if branch_opt else s.review_branches_list()
     store = ChunkStore(s.pg_dsn, min_size=s.pg_pool_min_size, max_size=s.pg_pool_max_size)
     graph = GraphStore(s.neo4j_uri, s.neo4j_user, s.neo4j_password)
+    summary_store = SummaryStore(s.pg_dsn, min_size=s.pg_pool_min_size,
+                                 max_size=s.pg_pool_max_size)
     try:
-        report = build_status_report(store, graph, repo, branches, path)
+        report = build_status_report(store, graph, repo, branches, path,
+                                     summary_store=summary_store)
     except psycopg.OperationalError as e:
         raise click.ClickException(f"Postgres недоступен: {e}")
     finally:
         store.close()
         graph.close()
+        summary_store.close()
     if as_json:
         click.echo(render_status_json(report))
         return

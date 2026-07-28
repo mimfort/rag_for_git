@@ -53,26 +53,33 @@ brief to `superpowers:brainstorming` (which leads to writing-plans → subagent-
       `status=error` → tell the user to run `reviewer init`, configure the selected registered
       provider's registry-declared credentials as documented in `docs/board-providers.md`, run
       `reviewer check`, and reconnect MCP; continue board-less.
-   4. **Summary warmth.** Call `get_subsystem_summaries(repo, branch)` (without `query`) and check
-      the returned count. Skip this check if `drift == null` (no index at all — summaries can't
-      exist). If count == 0 (summaries not built yet):
-      - Tell the user (in Russian): «Сводки подсистем не построены — архитектурный приор будет
-        пустым. Как поступим?» and present **three options**:
+   4. **Summary warmth.** Read `summaries` from the branch object of the Step 0.1 status payload —
+      do NOT probe the summaries tool here. Skip this check if `drift == null` (no index at all —
+      summaries can't exist). If Step 0.1 produced no payload at all (the fail-open path in Step
+      0.2), treat that the same as the key being absent below.
+      - `summaries > 0` → silently continue (no message needed — summaries are warm).
+      - `summaries == 0` (summaries not built yet) → tell the user (in Russian): «Сводки подсистем
+        не построены — архитектурный приор будет пустым. Как поступим?» and present **three
+        options**:
         1. «Прогреть сейчас» → delegate to `/reviewer_summarize-subsystems`, wait for it to
            complete, then continue. (Good if using the default model.)
-        2. «Прогрею сам» → **PAUSE HERE** and wait for the user to write something like
-           «готово», «прогрел», «done» or any confirmation that they have run their own tool
-           (e.g. an external CLI with a cheaper model). Once confirmed, call
-           `get_subsystem_summaries(repo, branch)` again to verify count > 0, then continue.
+        2. «Прогрею сам» → **PAUSE HERE** and wait for the user to write something like «готово»,
+           «прогрел», «done» or any confirmation that they have run their own tool (e.g. an
+           external CLI with a cheaper model). Once confirmed, re-run
+           `uvx --from rag-reviewer reviewer status <path> --branch <branch> --json` and verify
+           `summaries > 0`, then continue.
         3. «Пропустить» → note in brief under **Constraints**: «сводки подсистем не построены;
            `/reviewer_summarize-subsystems` не запускался». Continue without them.
-      - If count > 0: silently continue (no message needed — summaries are warm).
-      - Fail-open: an error from `get_subsystem_summaries` → treat as count == 0 and offer the
-        same options, but include the error detail in option 3's Constraints note.
+      - `summaries` is `null`, or the key is absent (deploy older than this field) → fall back to
+        the legacy probe: call `get_subsystem_summaries(repo, branch)` and use the returned count
+        with the same three options; unlike the main path, this fallback's option 2 re-verifies by
+        repeating the same legacy probe rather than re-reading the status payload. An error from
+        the probe counts as 0 and adds the error detail to option 3's Constraints note.
 
    Decisions: stale → confirmation, never auto (Voyage free tier is 3 RPM / 10K TPM); failures →
    reported like `sync-codebase`; `sync_board` runs incrementally at start; summaries missing →
-   three-way choice (build now / build yourself / skip).
+   three-way choice (build now / build yourself / skip), read from the status
+   payload instead of dumping every summary into context.
 
 1. **Config.** Reuse the resolved value from preflight; do not read `.review.yml` or call
    `get_board_config()` again. If no board resolved, continue board-less. For incomplete metadata
