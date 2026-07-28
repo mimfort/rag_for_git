@@ -22,6 +22,7 @@ class BranchStatus:
     chunks: int
     graph_nodes: int | None
     drift: int | None
+    summaries: int | None = None
 
 
 @dataclass
@@ -47,8 +48,8 @@ def _drift(repo_path: str, sha: str, branch: str) -> int | None:
 
 
 def build_status_report(store, graph, repo: str, branches: list[str],
-                        repo_path: str) -> RepoStatus:
-    """Собрать RepoStatus по веткам. Neo4j fail-soft (graph_nodes=None при сбое)."""
+                        repo_path: str, *, summary_store=None) -> RepoStatus:
+    """Собрать RepoStatus по веткам. Neo4j и стор сводок fail-soft (поле=None при сбое)."""
     branch_statuses: list[BranchStatus] = []
     for branch in branches:
         ref = base_ref(branch)
@@ -60,10 +61,14 @@ def build_status_report(store, graph, repo: str, branches: list[str],
             graph_nodes = graph.count_nodes(repo, branch)
         except Exception:  # noqa: BLE001 — Neo4j недоступен, граф недоступен
             graph_nodes = None
+        try:
+            summaries = summary_store.count_summaries(repo, branch) if summary_store else None
+        except Exception:  # noqa: BLE001 — стор сводок недоступен
+            summaries = None
         drift = _drift(repo_path, sha, branch) if sha else None
         branch_statuses.append(BranchStatus(
             branch=branch, ref=ref, indexed_sha=sha, updated_at=updated_at,
-            chunks=chunks, graph_nodes=graph_nodes, drift=drift))
+            chunks=chunks, graph_nodes=graph_nodes, drift=drift, summaries=summaries))
     overlays = [
         OverlayStatus(ref=r, chunks=store.count_chunks(repo, r))
         for r in store.list_refs(repo)

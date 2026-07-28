@@ -33,6 +33,16 @@ class FakeGraph:
         return self._nodes.get(branch, 0)
 
 
+class FakeSummaryStore:
+    def __init__(self, counts, fail=False):
+        self._counts, self._fail = counts, fail
+
+    def count_summaries(self, repo, branch):
+        if self._fail:
+            raise RuntimeError("postgres down")
+        return self._counts.get(branch, 0)
+
+
 @pytest.fixture
 def status_report() -> RepoStatus:
     """Возвращает отчёт с одной свежей основной веткой."""
@@ -152,3 +162,38 @@ def test_status_command_json(monkeypatch):
     assert payload["repo"] == "a/x"
     assert payload["branches"][0]["drift"] == 0
     assert payload["branches"][0]["indexed_sha"] == "abc1234567def"
+
+
+def test_build_status_report_counts_summaries(monkeypatch):
+    dt = datetime(2026, 6, 18, 14, 2)
+    store = FakeStore(
+        meta={"base:main": ("abc1234", dt), "base:dev": ("def5678", dt)},
+        chunks={"base:main": 1843, "base:dev": 1850},
+        refs=["base:main", "base:dev"])
+    graph = FakeGraph(nodes={"main": 1207, "dev": 1190})
+    monkeypatch.setattr(status_mod, "commits_behind", lambda *a: 0)
+    rep = build_status_report(store, graph, "a/x", ["main", "dev"], "/tmp/repo",
+                              summary_store=FakeSummaryStore({"main": 26, "dev": 14}))
+    assert rep.branches[0].summaries == 26
+    assert rep.branches[1].summaries == 14
+
+
+def test_build_status_report_without_summary_store(monkeypatch):
+    dt = datetime(2026, 6, 18, 14, 2)
+    store = FakeStore(meta={"base:main": ("abc1234", dt)},
+                      chunks={"base:main": 5}, refs=["base:main"])
+    graph = FakeGraph(nodes={"main": 3})
+    monkeypatch.setattr(status_mod, "commits_behind", lambda *a: 0)
+    rep = build_status_report(store, graph, "a/x", ["main"], "/tmp/repo")
+    assert rep.branches[0].summaries is None      # обратная совместимость вызовов
+
+
+def test_build_status_report_summary_store_down(monkeypatch):
+    dt = datetime(2026, 6, 18, 14, 2)
+    store = FakeStore(meta={"base:main": ("abc1234", dt)},
+                      chunks={"base:main": 5}, refs=["base:main"])
+    graph = FakeGraph(nodes={"main": 3})
+    monkeypatch.setattr(status_mod, "commits_behind", lambda *a: 0)
+    rep = build_status_report(store, graph, "a/x", ["main"], "/tmp/repo",
+                              summary_store=FakeSummaryStore({}, fail=True))
+    assert rep.branches[0].summaries is None      # fail-soft, как у graph_nodes
