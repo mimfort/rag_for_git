@@ -55,7 +55,8 @@ brief to `superpowers:brainstorming` (which leads to writing-plans → subagent-
       `reviewer check`, and reconnect MCP; continue board-less.
    4. **Summary warmth.** Read `summaries` from the branch object of the Step 0.1 status payload —
       do NOT probe the summaries tool here. Skip this check if `drift == null` (no index at all —
-      summaries can't exist).
+      summaries can't exist). If Step 0.1 produced no payload at all (the fail-open path in Step
+      0.2), treat that the same as the key being absent below.
       - `summaries > 0` → silently continue (no message needed — summaries are warm).
       - `summaries == 0` (summaries not built yet) → tell the user (in Russian): «Сводки подсистем
         не построены — архитектурный приор будет пустым. Как поступим?» and present **three
@@ -71,8 +72,9 @@ brief to `superpowers:brainstorming` (which leads to writing-plans → subagent-
            `/reviewer_summarize-subsystems` не запускался». Continue without them.
       - `summaries` is `null`, or the key is absent (deploy older than this field) → fall back to
         the legacy probe: call `get_subsystem_summaries(repo, branch)` and use the returned count
-        with the same three options; an error from that call counts as 0 and adds the error detail
-        to option 3's Constraints note.
+        with the same three options; unlike the main path, this fallback's option 2 re-verifies by
+        repeating the same legacy probe rather than re-reading the status payload. An error from
+        the probe counts as 0 and adds the error detail to option 3's Constraints note.
 
    Decisions: stale → confirmation, never auto (Voyage free tier is 3 RPM / 10K TPM); failures →
    reported like `sync-codebase`; `sync_board` runs incrementally at start; summaries missing →
