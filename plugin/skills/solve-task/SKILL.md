@@ -266,6 +266,12 @@ Use the session-less tools above.
 5. **Hand off to development.** Show the brief, state the saved file path
    (`docs/superpowers/briefs/…`), then invoke `superpowers:brainstorming` with the brief **file
    path** as the seed/context — so the brief survives compaction, not just the in-context text.
+   **Ask brainstorming to record the brief's provenance in the spec:** one line under the spec
+   heading pointing at the brief's path (`docs/superpowers/briefs/…md`), in the spec's own
+   language — the path itself is the greppable anchor for the задача→бриф→спека→PR trace, so no
+   dedicated marker is needed. Do NOT ask it to copy the brief's `## Constraints / open
+   questions` verbatim: those are open questions brainstorming exists to RESOLVE, and a verbatim
+   copy would contradict the very spec that answers them.
    From there the normal cycle takes over (brainstorming → writing-plans →
    subagent-driven-development/TDD). Your job ends at the handoff — do NOT plan or implement here.
 
