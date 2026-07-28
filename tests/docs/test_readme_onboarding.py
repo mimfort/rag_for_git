@@ -1,4 +1,7 @@
+import re
+from collections import Counter
 from pathlib import Path
+from urllib.parse import unquote, urlsplit
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -19,6 +22,39 @@ CONTENT_PAIRS = QUICK_START_PAIRS + (
     ("## Skills reference", "## Справочник skills"),
 )
 
+SECTION_PAIRS = CONTENT_PAIRS + (
+    (
+        "## Operations, troubleshooting, and limitations",
+        "## Эксплуатация, диагностика и ограничения",
+    ),
+    ("## Development", "## Разработка"),
+    ("## License", "## Лицензия"),
+)
+
+PARITY_MARKERS = (
+    "uv tool install --from rag-reviewer reviewer",
+    "docker compose up -d",
+    "reviewer init",
+    "reviewer install",
+    "reviewer check",
+    "reviewer index",
+    "reviewer status",
+    "reviewer serve",
+    "REVIEW_BRANCHES",
+    "docs/board-providers.md",
+    "provider_options",
+    "sync_board",
+    "get_task(key, project=...)",
+    "store-first",
+    "tasks:<type>:<board>",
+    "search_codebase",
+    "callers",
+    "drift == 0",
+)
+
+LINK_RE = re.compile(r"(?<!!)\[[^]]*\]\(([^)]*)\)")
+HEADING_RE = re.compile(r"^#{1,6}\s+(.+?)\s*$", re.MULTILINE)
+
 
 def _read(name: str) -> str:
     return (ROOT / name).read_text(encoding="utf-8")
@@ -38,6 +74,56 @@ def _registered_skills() -> tuple[str, ...]:
             if path.is_dir() and (path / "SKILL.md").is_file()
         )
     )
+
+
+def _link_targets(text: str) -> tuple[str, ...]:
+    targets = []
+    for raw in LINK_RE.findall(text):
+        raw = raw.strip()
+        if raw.startswith("<") and ">" in raw:
+            target = raw[1 : raw.index(">")]
+        else:
+            target = raw.split(maxsplit=1)[0]
+        targets.append(target)
+    return tuple(targets)
+
+
+def _base_slug(heading: str) -> str:
+    heading = re.sub(r"<[^>]+>", "", heading)
+    heading = heading.replace("`", "").replace("*", "")
+    lowered = heading.casefold()
+    kept = "".join(ch for ch in lowered if ch.isalnum() or ch in " _-")
+    return re.sub(r"\s+", "-", kept.strip())
+
+
+def _heading_anchors(text: str) -> set[str]:
+    counts: Counter[str] = Counter()
+    anchors = set()
+    for heading in HEADING_RE.findall(text):
+        base = _base_slug(heading)
+        suffix = counts[base]
+        counts[base] += 1
+        anchors.add(base if suffix == 0 else f"{base}-{suffix}")
+    return anchors
+
+
+def _assert_links_resolve(source: Path) -> None:
+    for target in _link_targets(source.read_text(encoding="utf-8")):
+        parsed = urlsplit(target)
+        if parsed.scheme:
+            assert parsed.scheme in {"http", "https"}, (source.name, target)
+            assert parsed.netloc, (source.name, target)
+            continue
+
+        path_text = unquote(parsed.path)
+        destination = source if not path_text else source.parent / path_text
+        destination = destination.resolve()
+        assert destination.is_relative_to(ROOT), (source.name, target)
+        assert destination.exists(), (source.name, target)
+
+        if parsed.fragment and destination.suffix.lower() == ".md":
+            anchors = _heading_anchors(destination.read_text(encoding="utf-8"))
+            assert unquote(parsed.fragment).casefold() in anchors, (source.name, target)
 
 
 def test_readmes_link_to_each_other_near_the_top():
@@ -76,3 +162,25 @@ def test_each_registered_skill_has_its_own_heading_in_both_readmes():
         marker = f"reviewer_{skill}"
         assert any(marker in heading for heading in english_headings), marker
         assert any(marker in heading for heading in russian_headings), marker
+
+
+def test_readmes_share_the_complete_section_order():
+    english = _read("README.md")
+    russian = _read("README.ru.md")
+
+    _assert_in_order(english, tuple(pair[0] for pair in SECTION_PAIRS))
+    _assert_in_order(russian, tuple(pair[1] for pair in SECTION_PAIRS))
+
+
+def test_readmes_share_critical_commands_and_contract_markers():
+    english = _read("README.md")
+    russian = _read("README.ru.md")
+
+    for marker in PARITY_MARKERS:
+        assert marker in english, ("README.md", marker)
+        assert marker in russian, ("README.ru.md", marker)
+
+
+def test_all_readme_links_and_local_anchors_resolve():
+    _assert_links_resolve(EN)
+    _assert_links_resolve(RU)

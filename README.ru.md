@@ -24,9 +24,9 @@ inline-комментарии, привязанные к изменённым с
 
 ## Попробовать reviewer
 
-Понадобятся Python 3.11–3.13, [uv](https://docs.astral.sh/uv/), Docker, API-ключ Voyage и VCS-токен,
-если reviewer должен читать или публиковать ревью. Хранилища работают локально; запросы
-эмбеддингов и реранкинга отправляются в Voyage.
+Понадобятся Python 3.11–3.13, [uv](https://docs.astral.sh/uv/), Docker, API-ключ Voyage и токен
+системы контроля версий (VCS), если reviewer должен читать или публиковать ревью. Хранилища
+работают локально; запросы эмбеддингов и реранкинга отправляются в Voyage.
 
 1. Установите launcher, поднимите хранилища и настройте сервер:
 
@@ -43,7 +43,8 @@ inline-комментарии, привязанные к изменённым с
    reviewer install codex
    ```
 
-3. Проверьте зависимости, постройте base index всего репозитория и проверьте его свежесть:
+3. Проверьте зависимости, постройте branch-scoped поисковый snapshot — base index — и проверьте
+   его свежесть:
 
    ```bash
    reviewer check
@@ -53,8 +54,8 @@ inline-комментарии, привязанные к изменённым с
 
    `reviewer check` должен подтвердить готовность credentials и сервисов. Status payload должен
    показать indexed SHA и `drift == 0`. Полная индексация отправляет чанки кода в Voyage и может
-   быть медленной на free tier. Без base index ревью видит только дифф/overlay и получает более
-   узкий контекст репозитория.
+   быть медленной на free tier. Без base index ревью видит только дифф и временный индекс
+   изменённых файлов (overlay), поэтому получает более узкий контекст репозитория.
 
 4. Откройте новую сессию клиента и запустите первое ревью:
 
@@ -67,7 +68,7 @@ inline-комментарии, привязанные к изменённым с
    ```
 
    Синтаксис вызова зависит от клиента. Dry run возвращает обоснованные findings без публикации;
-   для публикации нужны VCS write credentials и подтверждение внутри workflow skill.
+   обычный запуск публикует через `publish_review` и требует VCS write credentials.
 
 Для временного запуска launcher без постоянной установки:
 
@@ -77,10 +78,10 @@ uvx --from rag-reviewer@latest reviewer
 
 ## Развёртывание для команды
 
-Общий deployment состоит из одного reviewer MCP server, PostgreSQL/ParadeDB, Neo4j, Voyage и
-выбранных VCS- или task-board providers. MCP (Model Context Protocol) открывает reviewer tools
-AI-клиентам. Credentials провайдеров остаются в окружении сервера; клиенты передают только
-несекретные repo, branch, project и `provider_options`.
+Общий deployment состоит из одного reviewer server, открытого через MCP (Model Context Protocol),
+PostgreSQL/ParadeDB, Neo4j, Voyage и выбранных VCS- или task-board providers. MCP открывает
+reviewer tools AI-клиентам. Credentials провайдеров остаются в окружении сервера; клиенты
+передают только несекретные repo, branch, project и `provider_options`.
 
 1. **Поднимите хранилища и настройте секреты.**
 
@@ -180,11 +181,13 @@ PR → prepare_review → base + overlay retrieval → skill analysis
 ```
 
 - **Base index.** Постоянные чанки живут под `base:<branch>`. PostgreSQL/ParadeDB объединяет
-  pgvector ANN с BM25; Voyage строит эмбеддинги и реранжирует кандидатов.
+  approximate nearest-neighbor (ANN) поиск pgvector с лексическим ранжированием BM25; Voyage
+  строит эмбеддинги и реранжирует кандидатов.
 - **Overlay.** Изменённые файлы PR используют эфемерный ref `pr:N`. Retrieval берёт неизменённые
   файлы из base, а изменённые — из overlay.
-- **Code graph.** Узлы Neo4j используют `node_id = path#fqn`. SCIP даёт type-aware `CALLS` и
-  `IMPLEMENTS`; режим `auto` откатывается к tree-sitter `CALLS`, когда SCIP недоступен.
+- **Code graph.** Узлы Neo4j используют `node_id = path#fqn`, где `fqn` — fully qualified name.
+  SCIP, внешний type-aware индексатор кода, даёт `CALLS` и `IMPLEMENTS`; режим `auto`
+  откатывается к tree-sitter `CALLS`, когда SCIP недоступен.
 - **Grounded publishing.** Finding обязан цитировать реальный изменённый код. GitHub suggestion
   создаётся только для безопасной замены в RIGHT-части диффа.
 - **Idempotency.** Скрытые fingerprint не дают повторно опубликовать тот же finding. Overlay и
@@ -363,7 +366,7 @@ threshold, graph backend и retrieval ceilings меняют cost/recall; сна�
 - **Когда:** найти correctness, security, performance и maintainability проблемы в PR.
 - **Вызов:** `/rag-reviewer:reviewer_review-pr owner/repo#123 --dry-run`.
 - **Нужно:** reviewer MCP, VCS access, хранилища и желательно свежий base index/graph.
-- **Чтение/запись:** читает PR, код и task context; публикует только после gate skill.
+- **Чтение/запись:** читает PR, код и task context; публикует через `publish_review`, кроме dry-run.
 - **Результат:** grounded inline comments и summary; deterministic publish выполняет dedup.
 
 ### `reviewer_solve-task` — от задачи к brief разработки
@@ -456,22 +459,120 @@ threshold, graph backend и retrieval ceilings меняют cost/recall; сна�
 - **Чтение/запись:** читает tracked Python structure/history и меняет только одобренные YAML fields.
 - **Результат:** сохранённые посторонние keys/comments и точная rebuild guidance.
 
-## Эксплуатация
+## Эксплуатация, диагностика и ограничения
 
-`reviewer check` проверяет окружение, `reviewer status --json` — здоровье индекса каждой ветки,
-а `reviewer gc` удаляет orphaned PR overlays и истёкшие persisted sessions. Полный
-troubleshooting/limitations checklist появится на финальном проходе документации.
+### Проверка здоровья
 
-## Заметки для разработки
+Начинайте диагностику с трёх команд:
 
-Unit tests работают offline и по умолчанию исключают integration:
+```bash
+reviewer check
+reviewer status /path/to/repo --json
+docker compose ps
+```
+
+`reviewer check` проверяет credentials и подключение сервисов без расхода Voyage quota. `status`
+сравнивает indexed SHA с выбранным локальным ref и показывает chunks, graph nodes и commit drift
+каждой отслеживаемой ветки.
+
+### Свежесть индекса и восстановление
+
+- `drift == 0`: base index соответствует выбранному ref.
+- `drift > 0`: запустите `reviewer index /path/to/repo --ref BRANCH`, учитывая стоимость Voyage.
+- `drift == null` или zero chunks: у ветки нет пригодной base-записи; постройте её явно.
+- Нет рёбер `IMPLEMENTS`: установите SCIP и полностью перестройте graph с SCIP backend.
+- Остались orphaned overlays `pr:N` или истёкшие sessions: запустите `reviewer gc`.
+
+Base indexes отслеживают committed refs, а не working-tree edits. В planning/review-фазах читайте
+незакоммиченные файлы напрямую с диска.
+
+### Типовые сбои
+
+| Симптом | Вероятная причина | Следующее действие |
+|---|---|---|
+| `reviewer check` не видит Postgres/Neo4j | Stores не запущены или DSN отличается | Запустите `docker compose up -d`, затем повторите `reviewer check` |
+| Voyage отвечает 429 | Исчерпан free-tier RPM/TPM | Дождитесь quota window; повторите incremental index, не удаляя существующий |
+| PR пропущен | Target branch вне `REVIEW_BRANCHES` или draft policy его исключает | Прочитайте reason `prepare_review`; меняйте policy только для намеренной target branch |
+| Task lookup пуст | Board отключён/не настроен или corpus не прогрет | Проверьте [board setup](docs/board-providers.md), затем запустите `reviewer_sync-tasks` |
+| Q&A не видит новый локальный код | Base index содержит только committed ref | Прочитайте локальный файл или commit/index нужную ветку |
+| AI-клиент не видит новые skills | Session открыта до установки | Начните New Chat/new CLI session; в IDE выполните Reload Window |
+
+Вторичный контекст намеренно fail-open: недоступный graph, board, subsystem prior или исторический
+PR diff уменьшает контекст и даёт warning, а не порождает выдуманные данные.
+
+### Web admin
+
+Опциональная web UI показывает review runs, findings, traces и агрегированную статистику:
+
+```bash
+pip install -e ".[web]"
+cd web/frontend && npm install && npm run build && cd ../..
+reviewer serve
+```
+
+Перед доступом не только с localhost задайте `WEB_ADMIN_USER` и `WEB_ADMIN_PASSWORD`. Ошибки store
+и API сообщаются явно; там, где это безопасно, процесс сохраняет fail-soft startup.
+
+### Безопасность
+
+- Voyage, VCS, board, database и web-admin credentials хранятся в server env, а не `.review.yml`.
+- Выдавайте VCS tokens минимально нужные права; publishing и `finish-task` выполняют внешние writes.
+- Проверяйте confirmation gate перед comments, board tasks, status transitions и изменением PR body.
+- Код остаётся в настроенных stores, но embedding/query text отправляется в Voyage.
+- Вызовы внешних providers требуют сеть; обычные unit tests её не используют.
+
+### Известные ограничения
+
+- Поддерживаемый язык анализа — Python; наиболее точный graph даёт SCIP.
+- Без SCIP tree-sitter строит полезный, но name-based `CALLS` graph без точного `IMPLEMENTS`.
+- GitHub принимает inline-комментарии только на commentable diff lines; остальные findings идут в
+  summary.
+- Полная индексация может упереться в free-tier limits Voyage; updates incremental и повторно
+  используют embeddings.
+- Base index branch-scoped и не видит незакоммиченные working-tree changes.
+- OAuth loopback не поддерживается в headless/SSH integrations; используйте документированные
+  PAT/API-key credentials.
+- Board опционален. Без provider config task-aware skills продолжают board-less, а code retrieval
+  не блокируется.
+
+## Разработка
+
+Создайте изолированное окружение и установите dev dependencies:
+
+```bash
+python -m venv .venv
+.venv/bin/pip install -e ".[dev]"
+```
+
+Unit tests запрещают external/localhost sockets и по умолчанию исключают integration:
 
 ```bash
 .venv/bin/pytest -q
 .venv/bin/ruff check .
 ```
 
-Архитектура, команды проекта и инварианты описаны в [CLAUDE.md](CLAUDE.md).
+Integration services запускаются в изолированном test profile:
+
+```bash
+docker compose --profile test up -d --wait paradedb-test neo4j-test
+.venv/bin/pytest -q -m integration
+docker compose --profile test rm -sfv paradedb-test neo4j-test
+```
+
+Не используйте `docker compose --profile test down -v`: test и development services входят в один
+Compose project, поэтому команда может удалить development volumes.
+
+| Область | Ответственность |
+|---|---|
+| `reviewer/index/`, `reviewer/retrieval/` | chunking, vectors/BM25, freshness, reranking |
+| `reviewer/graph/` | построение tree-sitter/SCIP graph и доступ к Neo4j |
+| `reviewer/mcp/`, `reviewer/services/` | PR sessions, tools, prepare/publish orchestration |
+| `reviewer/tasks/` | task store, graph, sync и registered board providers |
+| `plugin/skills/` | user-facing agent workflows |
+| `tests/` | offline unit и isolated integration contracts |
+
+Перед изменением архитектуры и инвариантов прочитайте [CLAUDE.md](CLAUDE.md). Сохраняйте русские
+комментарии, docstrings и CLI messages; используйте Conventional Commits без self-attribution.
 
 ## Лицензия
 
