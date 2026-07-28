@@ -116,6 +116,7 @@ def test_status_command_smoke(monkeypatch):
     monkeypatch.setattr(cli_mod, "build_status_report", lambda *a, **k: rep)
     monkeypatch.setattr(cli_mod, "ChunkStore", MagicMock())
     monkeypatch.setattr(cli_mod, "GraphStore", MagicMock())
+    monkeypatch.setattr(cli_mod, "SummaryStore", MagicMock())
     res = CliRunner().invoke(cli_mod.cli, ["status", ".", "--repo", "a/x"])
     assert res.exit_code == 0, res.output
     assert "Ветка main" in res.output
@@ -156,6 +157,7 @@ def test_status_command_json(monkeypatch):
     monkeypatch.setattr(cli_mod, "build_status_report", lambda *a, **k: rep)
     monkeypatch.setattr(cli_mod, "ChunkStore", MagicMock())
     monkeypatch.setattr(cli_mod, "GraphStore", MagicMock())
+    monkeypatch.setattr(cli_mod, "SummaryStore", MagicMock())
     res = CliRunner().invoke(cli_mod.cli, ["status", ".", "--repo", "a/x", "--json"])
     assert res.exit_code == 0, res.output
     payload = json.loads(res.output)
@@ -225,3 +227,21 @@ def test_render_status_shows_summaries():
     out = render_status(rep, "tree-sitter (fallback)")
     assert "Сводки: 26" in out
     assert "Сводки: —" in out                   # неизвестно
+
+
+def test_status_command_passes_and_closes_summary_store(monkeypatch, status_report):
+    captured = {}
+
+    def fake_build(*a, **k):
+        captured.update(k)
+        return status_report
+
+    summary_store_cls = MagicMock()
+    monkeypatch.setattr(cli_mod, "build_status_report", fake_build)
+    monkeypatch.setattr(cli_mod, "ChunkStore", MagicMock())
+    monkeypatch.setattr(cli_mod, "GraphStore", MagicMock())
+    monkeypatch.setattr(cli_mod, "SummaryStore", summary_store_cls)
+    res = CliRunner().invoke(cli_mod.cli, ["status", ".", "--repo", "a/x", "--json"])
+    assert res.exit_code == 0, res.output
+    assert captured["summary_store"] is summary_store_cls.return_value
+    summary_store_cls.return_value.close.assert_called_once()
