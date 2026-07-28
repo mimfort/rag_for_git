@@ -95,6 +95,7 @@ def render_status_json(report: RepoStatus) -> str:
                 "chunks": b.chunks,
                 "graph_nodes": b.graph_nodes,
                 "drift": b.drift,
+                "summaries": b.summaries,
             }
             for b in report.branches
         ],
@@ -129,7 +130,8 @@ def render_status(report: RepoStatus, backend: str) -> str:
         else:
             lines.append(f"  Статус: ↗ отстаёт на {b.drift} коммитов")
         nodes = "—  (Neo4j недоступен)" if b.graph_nodes is None else str(b.graph_nodes)
-        lines.append(f"  Чанки:  {b.chunks}   Узлы графа: {nodes}")
+        summ = "—" if b.summaries is None else str(b.summaries)
+        lines.append(f"  Чанки:  {b.chunks}   Узлы графа: {nodes}   Сводки: {summ}")
         lines.append("")
     if report.overlays:
         lines.append("Overlay:")

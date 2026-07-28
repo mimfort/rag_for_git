@@ -197,3 +197,31 @@ def test_build_status_report_summary_store_down(monkeypatch):
     rep = build_status_report(store, graph, "a/x", ["main"], "/tmp/repo",
                               summary_store=FakeSummaryStore({}, fail=True))
     assert rep.branches[0].summaries is None      # fail-soft, как у graph_nodes
+
+
+def test_render_status_json_includes_summaries():
+    dt = datetime(2026, 6, 18, 14, 2)
+    rep = RepoStatus(
+        repo="a/x",
+        branches=[
+            BranchStatus("main", "base:main", "abc1234567def", dt, 1843, 1207, 0, 26),
+            BranchStatus("dev", "base:dev", "def5678901abc", dt, 1850, None, 12, None),
+        ],
+        overlays=[])
+    by = {b["branch"]: b for b in json.loads(render_status_json(rep))["branches"]}
+    assert by["main"]["summaries"] == 26
+    assert by["dev"]["summaries"] is None       # стор недоступен → null
+
+
+def test_render_status_shows_summaries():
+    dt = datetime(2026, 6, 18, 14, 2)
+    rep = RepoStatus(
+        repo="a/x",
+        branches=[
+            BranchStatus("main", "base:main", "abc1234567", dt, 1843, 1207, 0, 26),
+            BranchStatus("dev", "base:dev", "def5678901", dt, 1850, None, 12, None),
+        ],
+        overlays=[])
+    out = render_status(rep, "tree-sitter (fallback)")
+    assert "Сводки: 26" in out
+    assert "Сводки: —" in out                   # неизвестно
