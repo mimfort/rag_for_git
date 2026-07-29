@@ -37,6 +37,10 @@ class FakeGraph:
         self.branches.append(branch)
         return set()
 
+    def expand_detailed(self, repo, node_ids, hops=2, *, branch=""):
+        self.branches.append(branch)
+        return []
+
 
 class FakeEmb:
     def embed_query(self, q):
