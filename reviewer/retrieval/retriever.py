@@ -211,7 +211,10 @@ class Retriever:
         try:
             scored = self.reranker.rerank_scored(query, items)
         except Exception:
-            log.warning("search_base: rerank недоступен — deterministic fallback", exc_info=True)
+            log.warning(
+                "search_base: реранкер недоступен — применён детерминированный резервный отбор",
+                exc_info=True,
+            )
             return ContextPack(
                 items=_select_degraded_context(hybrid_items, graph_items, ceiling),
                 max_chars=self.max_context_chars,
