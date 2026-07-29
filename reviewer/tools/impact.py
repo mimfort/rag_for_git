@@ -1,4 +1,4 @@
-"""Анализ радиуса поражения (blast-radius): изменённые сигнатуры PR → вызывающие вне диффа."""
+"""Анализ радиуса поражения: изменённые сигнатуры PR → evidence вызывающих."""
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -9,31 +9,33 @@ from reviewer.index.struct_diff import extract_signature  # ре-экспорт 
 
 @dataclass
 class CallerRef:
-    """Ссылка на вызывающий символ: идентификатор, путь, строка и сниппет заголовка."""
+    """Прочитанный из индекса caller-кандидат для проверки."""
 
     node_id: str
     path: str
     line: int
     snippet: str
+    changed_file: bool = False
 
 
 @dataclass
 class ImpactItem:
-    """Символ с изменённой сигнатурой и список его внешних вызывающих."""
+    """Символ с изменённой сигнатурой и evidence его callers."""
 
     node_id: str
     old_sig: str
     new_sig: str
     callers: list[CallerRef] = field(default_factory=list)
+    unresolved_caller_ids: list[str] = field(default_factory=list)
 
 
 def compute_impact(graph, store, *, repo, branch, changed_node_ids,
                    changed_paths, overlay_ref) -> list[ImpactItem]:
-    """Символы изменённых файлов с РЕАЛЬНО изменённой сигнатурой → их вызывающие вне диффа.
+    """Символы изменённых файлов с РЕАЛЬНО изменённой сигнатурой → их callers.
 
     Гейт: сигнатура символа в overlay (head) != сигнатура в base (до PR).
     Это отсекает чисто внутренние рефакторинги (тело поменяли, контракт нет).
-    Вызывающие, чей файл входит в diff (changed_paths), отфильтрованы — их автор уже видит.
+    Callers из изменённых файлов также возвращаются и помечаются для честного scope.
     Возвращает [] при отсутствии графа/стора/изменений.
     """
     if graph is None or store is None or not changed_node_ids:
@@ -52,21 +54,38 @@ def compute_impact(graph, store, *, repo, branch, changed_node_ids,
         if not old_sig or not new_sig or old_sig == new_sig:
             continue  # ГЕЙТ: сигнатура не менялась
         caller_ids = sorted(graph.callers(repo, [nid], branch=branch))
-        external = [cid for cid in caller_ids if cid.split("#", 1)[0] not in changed]
-        if not external:
+        if not caller_ids:
             continue
-        nodes = {n.node_id: n for n in
-                 store.fetch_nodes(repo, external, overlay_ref, changed_paths,
-                                   base_ref=base_ref(branch))}
+        nodes = {
+            node.node_id: node
+            for node in store.fetch_nodes(
+                repo,
+                caller_ids,
+                overlay_ref,
+                changed_paths,
+                base_ref=base_ref(branch),
+            )
+        }
         callers: list[CallerRef] = []
-        for cid in external:
-            n = nodes.get(cid)
-            if n is None:
-                callers.append(CallerRef(cid, cid.split("#", 1)[0], 0, ""))
+        unresolved: list[str] = []
+        for cid in caller_ids:
+            node = nodes.get(cid)
+            if node is None:
+                unresolved.append(cid)
                 continue
-            snippet = extract_signature(n.text) or (n.text.splitlines()[0] if n.text else "")
-            callers.append(CallerRef(cid, n.path, n.start_line, snippet))
-        items.append(ImpactItem(nid, old_sig, new_sig, callers))
+            snippet = extract_signature(node.text) or (
+                node.text.splitlines()[0] if node.text else ""
+            )
+            callers.append(
+                CallerRef(
+                    cid,
+                    node.path,
+                    node.start_line,
+                    snippet,
+                    changed_file=node.path in changed,
+                )
+            )
+        items.append(ImpactItem(nid, old_sig, new_sig, callers, unresolved))
     return items
 
 
@@ -79,7 +98,17 @@ def format_impact(items: list[ImpactItem]) -> str:
         head = (f"{it.node_id}:\n"
                 f"  было:  {it.old_sig}\n"
                 f"  стало: {it.new_sig}\n"
-                f"  устаревшие вызывающие (вне диффа):")
-        rows = "\n".join(f"    - {c.path}:{c.line} | {c.snippet}" for c in it.callers)
-        blocks.append(head + "\n" + rows)
+                "  кандидаты callers для проверки:")
+        rows = [
+            f"    - [{'в PR' if caller.changed_file else 'вне PR'}] "
+            f"{caller.path}:{caller.line} | {caller.snippet}"
+            for caller in it.callers
+        ]
+        if it.unresolved_caller_ids:
+            rows.append(
+                "    - [пробел покрытия] метаданные callers не найдены в индексе "
+                f"({len(it.unresolved_caller_ids)}): "
+                + ", ".join(it.unresolved_caller_ids)
+            )
+        blocks.append(head + "\n" + "\n".join(rows))
     return "\n\n".join(blocks)
