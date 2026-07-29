@@ -388,7 +388,7 @@ def test_as_context_appends_degraded_note(reason, fragment):
     out = pack.as_context()
 
     assert fragment in out
-    assert "deterministic hybrid+graph fallback" in out
+    assert "детерминированный резервный отбор hybrid+graph" in out
     assert "def f():" in out
 ```
 
@@ -417,11 +417,13 @@ DegradedReason = Literal["reranker_unconfigured", "reranker_failed"]
 
 _DEGRADED_NOTES: dict[DegradedReason, str] = {
     "reranker_unconfigured": (
-        "— reranker не настроен: применён deterministic hybrid+graph fallback; "
+        "— reranker не настроен: применён детерминированный резервный отбор "
+        "hybrid+graph; "
         "качество ранжирования снижено."
     ),
     "reranker_failed": (
-        "— reranker недоступен: применён deterministic hybrid+graph fallback; "
+        "— reranker недоступен: применён детерминированный резервный отбор "
+        "hybrid+graph; "
         "качество ранжирования снижено."
     ),
 }

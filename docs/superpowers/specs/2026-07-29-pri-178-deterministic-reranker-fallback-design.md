@@ -130,7 +130,8 @@ degraded_reason: DegradedReason | None = None
 `as_context` после основного текста и cliff-note добавляет одну из двух коротких заметок:
 
 - `reranker_unconfigured` — поиск выполнен без настроенного reranker;
-- `reranker_failed` — reranker недоступен, применён deterministic hybrid+graph fallback.
+- `reranker_failed` — reranker недоступен, применён детерминированный резервный отбор
+  hybrid+graph.
 
 Текст исключения, credentials и provider details в заметку не попадают. Малый пул,
 который штатно не требует rerank, `degraded_reason` не получает. Успешный cliff-path
