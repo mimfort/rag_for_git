@@ -132,6 +132,9 @@ def test_server_registers_all_tools() -> None:
         "prune_subsystem_summaries",
         "backfill_summary_embeddings",
     }
+    impact = next(tool for tool in tools if tool.name == "get_impact")
+    assert "inside and outside changed PR files" in impact.description
+    assert "coverage gaps" in impact.description
 
 
 @patch("reviewer.services.review_service.chunk_python", side_effect=_fake_chunk)
