@@ -88,8 +88,10 @@ def test_compute_impact_flags_external_callers_on_signature_change():
     assert it.node_id == "svc.py#f"
     assert it.old_sig == "def f(a, b):"
     assert it.new_sig == "def f(a, b, c):"
-    assert {c.path for c in it.callers} == {"a.py", "b.py"}  # svc.py#local в диффе → отфильтрован
+    # svc.py#local отсутствует в overlay и поэтому остаётся unresolved.
+    assert {c.path for c in it.callers} == {"a.py", "b.py"}
     assert all(c.line == 10 for c in it.callers)
+    assert it.unresolved_caller_ids == ["svc.py#local"]
 
 
 def test_compute_impact_gate_skips_body_only_change():
@@ -109,6 +111,20 @@ def test_compute_impact_skips_added_symbol():
     store = _Store({"pr:1": {"svc.py#new": "def new(a):\n    ..."}})  # нет base-версии
     items = compute_impact(graph, store, repo="r", branch="dev",
                            changed_node_ids=["svc.py#new"], changed_paths=["svc.py"],
+                           overlay_ref="pr:1")
+    assert items == []
+
+
+def test_compute_impact_skips_removed_symbol():
+    graph = _Graph({"svc.py#removed": ["a.py#g"]})
+    store = _Store({
+        "base:dev": {
+            "svc.py#removed": "def removed(a):\n    ...",
+            "a.py#g": "def g():\n    removed(1)",
+        },
+    })
+    items = compute_impact(graph, store, repo="r", branch="dev",
+                           changed_node_ids=["svc.py#removed"], changed_paths=["svc.py"],
                            overlay_ref="pr:1")
     assert items == []
 
