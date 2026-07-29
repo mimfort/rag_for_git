@@ -48,6 +48,16 @@ def test_requirements_assembled_has_schema_and_category():
     assert 'category MUST be exactly "requirements"' in r  # фиксированная категория скилла
 
 
+def test_risk_changes_assembled_has_schema_and_evidence_guards():
+    prompt = assemble("review-pr/references/risk-changes-prompt.md")
+    assert '"severity": "low|medium|high|critical"' in prompt
+    assert "submit_findings" in prompt
+    assert "path or reason is not evidence" in prompt
+    assert "ordinary configuration" in prompt
+    assert "do not repeat a credential value" in prompt
+    assert "commentable_right" in prompt
+
+
 def test_blast_radius_assembled_has_tooling_and_confidence_tail():
     b = assemble("review-pr/references/blast-radius-prompt.md")
     assert "get_impact" in b
