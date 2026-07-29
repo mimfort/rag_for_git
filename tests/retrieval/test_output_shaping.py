@@ -71,6 +71,23 @@ def test_as_context_default_unchanged():
     assert out == "// a.py#f (a.py:10-11)\ndef f():\n    pass"
 
 
+@pytest.mark.parametrize(
+    ("reason", "fragment"),
+    [
+        ("reranker_unconfigured", "reranker не настроен"),
+        ("reranker_failed", "reranker недоступен"),
+    ],
+)
+def test_as_context_appends_degraded_note(reason, fragment):
+    pack = ContextPack(items=[_node()])
+    pack.degraded_reason = reason
+    out = pack.as_context()
+
+    assert fragment in out
+    assert "детерминированный резервный отбор hybrid+graph" in out
+    assert "def f():" in out
+
+
 def test_as_context_with_line_numbers():
     out = ContextPack(items=[_node()]).as_context(line_numbers=True)
     assert "// a.py#f (a.py:10-11)" in out

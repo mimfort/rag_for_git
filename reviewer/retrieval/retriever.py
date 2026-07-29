@@ -1,11 +1,32 @@
 from __future__ import annotations
 from dataclasses import dataclass
 import logging
+from typing import Literal
 
 from reviewer.index.refs import base_ref
 from reviewer.retrieval.cliff import format_tail_note, select_by_cliff
 
 log = logging.getLogger(__name__)
+
+
+DegradedReason = Literal["reranker_unconfigured", "reranker_failed"]
+
+_DEGRADED_NOTES: dict[DegradedReason, str] = {
+    "reranker_unconfigured": (
+        "— reranker не настроен: применён детерминированный резервный отбор "
+        "hybrid+graph; "
+        "качество ранжирования снижено."
+    ),
+    "reranker_failed": (
+        "— reranker недоступен: применён детерминированный резервный отбор "
+        "hybrid+graph; "
+        "качество ранжирования снижено."
+    ),
+}
+
+
+def _format_degraded_note(reason: DegradedReason | None) -> str | None:
+    return _DEGRADED_NOTES.get(reason) if reason is not None else None
 
 
 def _is_test_path(path: str) -> bool:
@@ -68,6 +89,7 @@ class ContextPack:
     max_chars: int = 0
     max_tokens: int = 0
     tail_meta: object = None        # TailMeta | None (PRI-202); ленивая заметка о хвосте
+    degraded_reason: DegradedReason | None = None
 
     def as_context(self, line_numbers: bool = False) -> str:
         parts = []
@@ -92,6 +114,9 @@ class ContextPack:
         note = format_tail_note(self.tail_meta) if self.tail_meta is not None else None
         if note:
             text = f"{text}\n\n{note}" if text else note
+        degraded_note = _format_degraded_note(self.degraded_reason)
+        if degraded_note:
+            text = f"{text}\n\n{degraded_note}" if text else degraded_note
         return text
 
 
@@ -178,15 +203,20 @@ class Retriever:
             )
             return ContextPack(items=selected, max_chars=self.max_context_chars)
         if self.reranker is None:
-            selected = _select_degraded_context(hybrid_items, graph_items, ceiling)
-            return ContextPack(items=selected, max_chars=self.max_context_chars)
+            return ContextPack(
+                items=_select_degraded_context(hybrid_items, graph_items, ceiling),
+                max_chars=self.max_context_chars,
+                degraded_reason="reranker_unconfigured",
+            )
         try:
             scored = self.reranker.rerank_scored(query, items)
         except Exception:
-            log.warning("search_base: реранкер недоступен — детерминированный запасной выбор",
-                        exc_info=True)
-            selected = _select_degraded_context(hybrid_items, graph_items, ceiling)
-            return ContextPack(items=selected, max_chars=self.max_context_chars)
+            log.warning("search_base: rerank недоступен — deterministic fallback", exc_info=True)
+            return ContextPack(
+                items=_select_degraded_context(hybrid_items, graph_items, ceiling),
+                max_chars=self.max_context_chars,
+                degraded_reason="reranker_failed",
+            )
         kept, tail_meta = select_by_cliff(
             scored, floor_n=lim.floor, ceiling_n=ceiling,
             ratio=lim.ratio, abs_floor=lim.abs_floor)

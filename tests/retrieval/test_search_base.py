@@ -229,6 +229,67 @@ def test_search_base_reranker_failure_falls_back_to_rrf():
     assert pack.tail_meta is None        # заметка не пишется при фолбэке
 
 
+def test_search_base_marks_unconfigured_reranker():
+    hits = [_Hit(f"h{i}.py#f") for i in range(1, 4)]
+    for hit in hits:
+        hit.bm25_hit = True
+    retriever = Retriever(
+        _FakeStore(hits),
+        _FakeGraph(),
+        _FakeEmbedder(),
+        reranker=None,
+    )
+
+    pack = retriever.search_base("a/x", "x", limits=_cb(floor=1, ceiling=2))
+
+    assert pack.degraded_reason == "reranker_unconfigured"
+
+
+def test_search_base_marks_failed_reranker():
+    hits = [_Hit(f"h{i}.py#f") for i in range(1, 4)]
+    for hit in hits:
+        hit.bm25_hit = True
+    retriever = Retriever(
+        _FakeStore(hits),
+        _FakeGraph(),
+        _FakeEmbedder(),
+        _FakeReranker(raise_=True),
+    )
+
+    pack = retriever.search_base("a/x", "x", limits=_cb(floor=1, ceiling=2))
+
+    assert pack.degraded_reason == "reranker_failed"
+
+
+def test_search_base_small_pool_is_not_marked_degraded():
+    hits = [_Hit("h1.py#f"), _Hit("h2.py#f")]
+    for hit in hits:
+        hit.bm25_hit = True
+    reranker = _FakeReranker()
+    retriever = Retriever(_FakeStore(hits), _FakeGraph(), _FakeEmbedder(), reranker)
+
+    pack = retriever.search_base("a/x", "x", limits=_cb(floor=4, ceiling=1))
+
+    assert pack.degraded_reason is None
+    assert reranker.calls == []
+
+
+def test_search_base_successful_rerank_is_not_marked_degraded():
+    hits = [_Hit(f"h{i}.py#f") for i in range(1, 4)]
+    for hit in hits:
+        hit.bm25_hit = True
+    retriever = Retriever(
+        _FakeStore(hits),
+        _FakeGraph(),
+        _FakeEmbedder(),
+        _FakeReranker(scores=[0.9, 0.8, 0.7]),
+    )
+
+    pack = retriever.search_base("a/x", "x", limits=_cb(floor=1, ceiling=3))
+
+    assert pack.degraded_reason is None
+
+
 def test_search_base_seeds_graph_with_configured_hops():
     hits = [_Hit("a.py#f1")]
     hits[0].bm25_hit = True
