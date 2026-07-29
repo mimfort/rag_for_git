@@ -99,6 +99,59 @@ def _vcs_with_files(files: list[ChangedFile], draft: bool = False) -> MagicMock:
     return vcs
 
 
+@patch("reviewer.services.review_service.chunk_python", side_effect=_fake_chunk)
+@patch("reviewer.services.review_service.build_overlay")
+def test_prepare_routes_risk_files_without_indexing(
+    build_overlay_mock: MagicMock,
+    _chunk_python_mock: MagicMock,
+    settings: Settings,
+    components: MagicMock,
+) -> None:
+    """Рисковые не-Python пути отдаются LLM без overlay/чанков."""
+    files = [
+        _changed("reviewer/app.py"),
+        _changed("migrations/001.sql"),
+        _changed("config/app.yaml"),
+    ]
+    vcs = _vcs_with_files(files)
+    vcs.get_file_at_ref.side_effect = lambda path, ref: {
+        ".review.yml": "",
+        "reviewer/app.py": "def foo(): pass\n",
+        "migrations/001.sql": "DROP TABLE old_data;\n",
+        "config/app.yaml": "debug: false\n",
+    }.get(path, "")
+
+    prepared = ReviewService(settings, components).prepare(
+        "owner", "repo", 1, vcs_provider=vcs
+    )
+
+    assert [u.path for u in prepared.units] == ["reviewer/app.py"]
+    assert prepared.changed_paths == ["reviewer/app.py"]
+    assert [item.path for item in prepared.risk_paths] == ["migrations/001.sql"]
+    assert prepared.sources["migrations/001.sql"] == "DROP TABLE old_data;\n"
+    assert build_overlay_mock.call_args.args[4] == ["reviewer/app.py"]
+
+
+@patch("reviewer.services.review_service.chunk_python", side_effect=_fake_chunk)
+@patch("reviewer.services.review_service.build_overlay")
+def test_prepare_limits_risk_paths_and_reports_overflow(
+    _build_overlay_mock: MagicMock,
+    _chunk_python_mock: MagicMock,
+    settings: Settings,
+    components: MagicMock,
+) -> None:
+    """Одиннадцатый risk path остаётся в детерминированном overflow."""
+    files = [_changed(f".env.{number}") for number in range(11)]
+    vcs = _vcs_with_files(files)
+
+    prepared = ReviewService(settings, components).prepare(
+        "owner", "repo", 1, vcs_provider=vcs
+    )
+
+    assert len(prepared.risk_paths) == 10
+    assert prepared.risk_skipped_paths == [".env.9"]
+
+
 # ---------------------------------------------------------------------------
 # Тесты: внешний vcs_provider (eval) не трогает прод base-индекс
 # ---------------------------------------------------------------------------

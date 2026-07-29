@@ -12,7 +12,7 @@ CLI остаётся тонкой обёрткой: парсит аргумен�
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from reviewer.app import Components
 from reviewer.config.settings import Settings
@@ -26,6 +26,7 @@ from reviewer.index.freshness import build_overlay, update_base
 from reviewer.web.history import ReviewHistory
 from reviewer.agent.state import ReviewUnit
 from reviewer.services.task_keys import extract_task_keys
+from reviewer.services.risk_paths import RiskPath, select_risk_paths
 
 log = logging.getLogger(__name__)
 
@@ -97,6 +98,8 @@ class PreparedReview:
     changed_status: dict[str, str]       # path -> статус файла (modified/added/removed)
     task_board: dict | None = None       # конфиг доски из policy (прокидывается в payload)
     task_keys: dict | None = None        # {"primary": str|None, "others": [...]}; None только когда task_board выкл.
+    risk_paths: list[RiskPath] = field(default_factory=list)
+    risk_skipped_paths: list[str] = field(default_factory=list)
 
 
 class ReviewService:
@@ -207,6 +210,7 @@ class ReviewService:
             ignore = ReviewPolicy.from_yaml(review_yml).ignore if review_yml else []
 
             files = vcs.get_changed_files(pr_number)
+            risk_paths, risk_skipped_paths = select_risk_paths(files)
 
             # Свежесть base-индекса: подтягиваем чанки файлов, изменённых после
             # последней индексации (граф кода обновляется только на reviewer index).
@@ -282,6 +286,14 @@ class ReviewService:
                 if src:
                     head_sources[f.path] = src
 
+            risk_sources: dict[str, str] = {}
+            for item in risk_paths:
+                if item.status == "removed":
+                    continue
+                src = vcs.get_file_at_ref(item.path, prq.head_sha)
+                if src:
+                    risk_sources[item.path] = src
+
             build_overlay(
                 self.components.store,
                 self.components.embedder,
@@ -316,6 +328,7 @@ class ReviewService:
 
             # sources нужны для проверки наличия символов
             sources = {u.path: u.new_source for u in units}
+            sources.update(risk_sources)
 
             # changed_node_ids — объединение node_id всех юнитов (для graph-expansion)
             changed_node_ids = [nid for u in units for nid in u.node_ids]
@@ -355,6 +368,8 @@ class ReviewService:
                 changed_status=changed_status,
                 task_board=task_board,
                 task_keys=task_keys,
+                risk_paths=risk_paths,
+                risk_skipped_paths=risk_skipped_paths,
             )
         except Exception:
             # При сбое подготовки чистим возможный недостроенный overlay pr:N —
