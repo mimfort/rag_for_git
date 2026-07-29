@@ -47,7 +47,7 @@ def _dedupe_overlapping(items: list) -> list:
 
 
 def _select_degraded_context(hybrid_items: list, graph_items: list, ceiling: int) -> list:
-    """Bounded fallback: hybrid приоритетен, graph даёт минимальное разнообразие."""
+    """Ограниченный запасной выбор: гибридный контекст приоритетен, граф добавляет разнообразие."""
     if ceiling <= 0:
         return []
     if not hybrid_items:
@@ -183,7 +183,8 @@ class Retriever:
         try:
             scored = self.reranker.rerank_scored(query, items)
         except Exception:
-            log.warning("search_base: rerank недоступен — deterministic fallback", exc_info=True)
+            log.warning("search_base: реранкер недоступен — детерминированный запасной выбор",
+                        exc_info=True)
             selected = _select_degraded_context(hybrid_items, graph_items, ceiling)
             return ContextPack(items=selected, max_chars=self.max_context_chars)
         kept, tail_meta = select_by_cliff(
