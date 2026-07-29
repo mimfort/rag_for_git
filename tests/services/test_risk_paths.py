@@ -40,16 +40,19 @@ def test_ordinary_config_and_python_are_quiet(path: str) -> None:
     assert select_risk_paths([_changed(path)]) == ([], [])
 
 
-def test_deduplicates_multi_reason_path_and_orders_reasons() -> None:
-    selected, _ = select_risk_paths([_changed("infra/secrets.env")])
+def test_deduplicates_normalized_paths_with_deterministic_retention() -> None:
+    upper = _changed("INFRA\\SECRETS.ENV")
+    lower = _changed("infra/secrets.env")
 
-    assert selected == [
+    expected = [
         RiskPath(
-            "infra/secrets.env",
+            "INFRA\\SECRETS.ENV",
             "modified",
             ("credential_like", "ci_deploy_infra"),
         )
     ]
+    assert select_risk_paths([upper, lower])[0] == expected
+    assert select_risk_paths([lower, upper])[0] == expected
 
 
 def test_orders_by_reason_then_diff_importance_then_path_and_caps() -> None:
