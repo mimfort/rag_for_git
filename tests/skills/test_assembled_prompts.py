@@ -51,6 +51,10 @@ def test_requirements_assembled_has_schema_and_category():
 def test_blast_radius_assembled_has_tooling_and_confidence_tail():
     b = assemble("review-pr/references/blast-radius-prompt.md")
     assert "get_impact" in b
+    assert "[в PR]" in b
+    assert "[вне PR]" in b
+    assert "does not prove that its call site was updated" in b
+    assert "coverage gap, not a finding" in b
     assert "0.8" in b                              # confidence-scale хвост остался
     # interface expansion (PRI-206): триггер + секция + lower-bound фрейминг
     assert "Interface expansion" in b             # новая секция измерения

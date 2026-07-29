@@ -31,8 +31,16 @@ class _Store:
         return [_ret(nid, m[nid]) for nid in node_ids if nid in m]
 
     def fetch_nodes(self, repo, node_ids, overlay_ref, changed_paths, *, base_ref="base"):
-        m = self._by_ref.get(base_ref, {})
-        return [_ret(nid, m[nid]) for nid in node_ids if nid in m]
+        changed = set(changed_paths or [])
+        overlay = self._by_ref.get(overlay_ref, {})
+        base = self._by_ref.get(base_ref, {})
+        out = []
+        for nid in node_ids:
+            path = nid.split("#", 1)[0]
+            source = overlay if path in changed else base
+            if nid in source:
+                out.append(_ret(nid, source[nid]))
+        return out
 
 
 def test_extract_signature_single_line():
@@ -80,8 +88,10 @@ def test_compute_impact_flags_external_callers_on_signature_change():
     assert it.node_id == "svc.py#f"
     assert it.old_sig == "def f(a, b):"
     assert it.new_sig == "def f(a, b, c):"
-    assert {c.path for c in it.callers} == {"a.py", "b.py"}  # svc.py#local в диффе → отфильтрован
+    # svc.py#local отсутствует в overlay и поэтому остаётся unresolved.
+    assert {c.path for c in it.callers} == {"a.py", "b.py"}
     assert all(c.line == 10 for c in it.callers)
+    assert it.unresolved_caller_ids == ["svc.py#local"]
 
 
 def test_compute_impact_gate_skips_body_only_change():
@@ -105,23 +115,80 @@ def test_compute_impact_skips_added_symbol():
     assert items == []
 
 
-def test_compute_impact_no_external_callers_skipped():
-    graph = _Graph({"svc.py#f": ["svc.py#local"]})  # вызывающий в том же изменённом файле
+def test_compute_impact_skips_removed_symbol():
+    graph = _Graph({"svc.py#removed": ["a.py#g"]})
     store = _Store({
-        "pr:1": {"svc.py#f": "def f(a, b, c):\n    ..."},
-        "base:dev": {"svc.py#f": "def f(a, b):\n    ..."},
+        "base:dev": {
+            "svc.py#removed": "def removed(a):\n    ...",
+            "a.py#g": "def g():\n    removed(1)",
+        },
     })
     items = compute_impact(graph, store, repo="r", branch="dev",
-                           changed_node_ids=["svc.py#f"], changed_paths=["svc.py"],
+                           changed_node_ids=["svc.py#removed"], changed_paths=["svc.py"],
                            overlay_ref="pr:1")
     assert items == []
 
 
+def test_compute_impact_keeps_callers_in_changed_files_and_marks_scope():
+    graph = _Graph({"svc.py#f": ["svc.py#local", "outside.py#g"]})
+    store = _Store({
+        "pr:1": {
+            "svc.py#f": "def f(a, b, c):\n    ...",
+            "svc.py#local": "def local():\n    f(1, 2)",
+        },
+        "base:dev": {
+            "svc.py#f": "def f(a, b):\n    ...",
+            "outside.py#g": "def g():\n    f(1, 2)",
+        },
+    })
+    items = compute_impact(graph, store, repo="r", branch="dev",
+                           changed_node_ids=["svc.py#f"], changed_paths=["svc.py"],
+                           overlay_ref="pr:1")
+    assert len(items) == 1
+    callers = {caller.node_id: caller for caller in items[0].callers}
+    assert callers["svc.py#local"].changed_file is True
+    assert callers["outside.py#g"].changed_file is False
+    assert items[0].unresolved_caller_ids == []
+
+
+def test_compute_impact_separates_unresolved_graph_callers_from_grounded_callers():
+    graph = _Graph({"svc.py#f": ["missing.py#g"]})
+    store = _Store({
+        "pr:1": {"svc.py#f": "def f(a, b):\n    ..."},
+        "base:dev": {"svc.py#f": "def f(a):\n    ..."},
+    })
+
+    items = compute_impact(graph, store, repo="r", branch="dev",
+                           changed_node_ids=["svc.py#f"], changed_paths=["svc.py"],
+                           overlay_ref="pr:1")
+
+    assert len(items) == 1
+    assert items[0].callers == []
+    assert items[0].unresolved_caller_ids == ["missing.py#g"]
+
+    rendered = format_impact(items)
+    assert "missing.py#g" in rendered
+    assert "пробел покрытия" in rendered
+    assert ":0 |" not in rendered
+
+
 def test_format_impact_renders_callers():
-    items = [ImpactItem("svc.py#f", "def f(a):", "def f(a, b):",
-                        [CallerRef("a.py#g", "a.py", 10, "def g():")])]
+    items = [
+        ImpactItem(
+            "svc.py#f",
+            "def f(a):",
+            "def f(a, b):",
+            [
+                CallerRef("svc.py#local", "svc.py", 10, "def local():", changed_file=True),
+                CallerRef("a.py#g", "a.py", 20, "def g():", changed_file=False),
+            ],
+        )
+    ]
     out = format_impact(items)
-    assert "svc.py#f" in out and "def f(a, b):" in out and "a.py:10" in out
+    assert "[в PR] svc.py:10" in out
+    assert "[вне PR] a.py:20" in out
+    assert "кандидаты" in out
+    assert "устаревшие вызывающие" not in out
 
 
 def test_format_impact_empty():
@@ -141,7 +208,7 @@ def test_get_impact_tool_registered_and_runs():
     tools = {t.name: t for t in make_tools(ctx)}
     assert "get_impact" in tools
     out = tools["get_impact"].invoke({})
-    assert "a.py:10" in out and "def f(a, b, c):" in out
+    assert "[вне PR]" in out and "def f(a, b, c):" in out
 
 
 def test_get_impact_tool_no_graph():

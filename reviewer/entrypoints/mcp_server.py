@@ -70,7 +70,8 @@ def create_server(service: MCPReviewService) -> FastMCP:
 
     @mcp.tool()
     def get_impact(repo: str, pr: int) -> str:
-        """Blast-radius: symbols whose signature changed -> their callers outside the PR diff."""
+        """Blast-radius: symbols whose signature changed -> grounded caller candidates
+        inside and outside changed PR files, plus explicit index coverage gaps."""
         return service.get_impact(repo, pr)
 
     @mcp.tool()
