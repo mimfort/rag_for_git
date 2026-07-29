@@ -80,12 +80,12 @@ def expand_detailed(self, repo, node_ids, hops=2, *, branch=""):
 
 - [ ] **Step 2: Написать падающие unit-тесты чистого selector**
 
-Добавить импорт и parameterized test в `tests/retrieval/test_search_base.py`:
+Добавить parameterized test в `tests/retrieval/test_search_base.py`. Импорт находится
+внутри теста: отсутствие новой функции превращается в осмысленный pytest failure, а не
+collection error.
 
 ```python
 import pytest
-
-from reviewer.retrieval.retriever import _select_degraded_context
 
 
 @pytest.mark.parametrize(
@@ -100,6 +100,10 @@ from reviewer.retrieval.retriever import _select_degraded_context
     ],
 )
 def test_select_degraded_context(hybrid_ids, graph_ids, ceiling, expected):
+    try:
+        from reviewer.retrieval.retriever import _select_degraded_context
+    except ImportError:
+        pytest.fail("_select_degraded_context ещё не реализован")
     hybrid = [_Hit(f"{node_id}.py#f") for node_id in hybrid_ids]
     graph = [_Hit(f"{node_id}.py#f") for node_id in graph_ids]
 
@@ -116,7 +120,7 @@ Run:
 .venv/bin/pytest -q tests/retrieval/test_search_base.py::test_select_degraded_context
 ```
 
-Expected: collection error `ImportError: cannot import name '_select_degraded_context'`.
+Expected: six assertion failures with `_select_degraded_context ещё не реализован`.
 
 - [ ] **Step 4: Реализовать минимальный чистый selector**
 
@@ -379,18 +383,17 @@ git commit -m "fix(retrieval): сохранить graph-контекст без 
     ],
 )
 def test_as_context_appends_degraded_note(reason, fragment):
-    out = ContextPack(items=[_node()], degraded_reason=reason).as_context()
+    pack = ContextPack(items=[_node()])
+    pack.degraded_reason = reason
+    out = pack.as_context()
 
     assert fragment in out
     assert "deterministic hybrid+graph fallback" in out
     assert "def f():" in out
-
-
-def test_as_context_default_has_no_degraded_note():
-    out = ContextPack(items=[_node()]).as_context()
-
-    assert "fallback" not in out
 ```
+
+Существующий `test_as_context_default_unchanged` уже проверяет отсутствие лишней заметки
+для обычного `ContextPack`; новый дублирующий compatibility-тест не добавляется.
 
 - [ ] **Step 2: Запустить output-shaping тесты и подтвердить RED**
 
@@ -398,11 +401,10 @@ Run:
 
 ```bash
 .venv/bin/pytest -q \
-  tests/retrieval/test_output_shaping.py::test_as_context_appends_degraded_note \
-  tests/retrieval/test_output_shaping.py::test_as_context_default_has_no_degraded_note
+  tests/retrieval/test_output_shaping.py::test_as_context_appends_degraded_note
 ```
 
-Expected: `TypeError: ContextPack.__init__() got an unexpected keyword argument 'degraded_reason'`.
+Expected: two assertion failures: formatter ещё не добавляет degraded-note.
 
 - [ ] **Step 3: Добавить тип и безопасный formatter**
 
@@ -625,7 +627,11 @@ git commit -m "feat(retrieval): сообщать о fallback reranker"
 
 ---
 
-### Task 3: Полная регрессия и завершение ветки
+## Final verification и SDD review
+
+Эта фаза выполняется controller-ом после завершения и task-review Tasks 1–2. Она не
+dispatch-ится как отдельная implementation task: собственного diff у неё нет, а
+whole-branch review уже является обязательной частью SDD.
 
 **Files:**
 
