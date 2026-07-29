@@ -71,10 +71,13 @@ class _FakeReranker:
         self._raise = raise_
 
     def rerank_scored(self, query, items):
-        self.calls.append({"n": len(items)})
+        items = list(items)
+        self.calls.append({
+            "n": len(items),
+            "node_ids": [item.node_id for item in items],
+        })
         if self._raise:
             raise RuntimeError("voyage down")
-        items = list(items)
         scores = self._scores or [1.0 - i * 0.01 for i in range(len(items))]
         paired = list(zip(items, scores[:len(items)]))
         return sorted(paired, key=lambda p: p[1], reverse=True)
@@ -288,6 +291,41 @@ def test_search_base_successful_rerank_is_not_marked_degraded():
     pack = retriever.search_base("a/x", "x", limits=_cb(floor=1, ceiling=3))
 
     assert pack.degraded_reason is None
+
+
+def test_search_base_successful_reranker_receives_cleaned_source_order():
+    hits = [
+        _Hit("h1.py#f"),
+        _Hit("a.py#Foo", start_line=1, end_line=50),
+    ]
+    for hit in hits:
+        hit.bm25_hit = True
+    graph = _FakeGraph([
+        _meta("g1.py#f"),
+        _meta("tests/test_graph.py#t", dist=2),
+        _meta("a.py#Foo.method", dist=3),
+        _meta("g2.py#f", dist=4),
+    ])
+    store = _FakeStore(
+        hits,
+        related=[
+            _Hit("g2.py#f"),
+            _Hit("a.py#Foo.method", start_line=10, end_line=20),
+            _Hit("g1.py#f"),
+            _Hit("tests/test_graph.py#t"),
+        ],
+    )
+    reranker = _FakeReranker()
+    retriever = Retriever(store, graph, _FakeEmbedder(), reranker)
+
+    retriever.search_base("a/x", "x", limits=_cb(floor=1, ceiling=4))
+
+    assert reranker.calls[0]["node_ids"] == [
+        "h1.py#f",
+        "a.py#Foo",
+        "g1.py#f",
+        "g2.py#f",
+    ]
 
 
 def test_search_base_seeds_graph_with_configured_hops():
