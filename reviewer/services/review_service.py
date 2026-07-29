@@ -290,7 +290,11 @@ class ReviewService:
             for item in risk_paths:
                 if item.status == "removed":
                     continue
-                src = vcs.get_file_at_ref(item.path, prq.head_sha)
+                try:
+                    src = vcs.get_file_at_ref(item.path, prq.head_sha)
+                except Exception:
+                    log.warning("Не удалось загрузить head-source risk path %s", item.path)
+                    continue
                 if src:
                     risk_sources[item.path] = src
 

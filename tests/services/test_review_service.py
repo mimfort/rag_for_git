@@ -134,6 +134,46 @@ def test_prepare_routes_risk_files_without_indexing(
 
 @patch("reviewer.services.review_service.chunk_python", side_effect=_fake_chunk)
 @patch("reviewer.services.review_service.build_overlay")
+def test_prepare_keeps_risk_item_when_its_head_source_cannot_be_loaded(
+    build_overlay_mock: MagicMock,
+    _chunk_python_mock: MagicMock,
+    settings: Settings,
+    components: MagicMock,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Сбой чтения risk-source не отменяет подготовку Python-ревью."""
+    risk_patch = "@@ -1 +1 @@\n-SELECT 1;\n+DROP TABLE old_data;"
+    files = [
+        _changed("reviewer/app.py", status="added"),
+        _changed("migrations/001.sql", patch=risk_patch),
+    ]
+    vcs = _vcs_with_files(files)
+
+    def read_file(path: str, ref: str) -> str:
+        if path == "migrations/001.sql":
+            raise RuntimeError("provider response with secret-content")
+        return {
+            ".review.yml": "",
+            "reviewer/app.py": "def foo(): pass\n",
+        }.get(path, "")
+
+    vcs.get_file_at_ref.side_effect = read_file
+
+    prepared = ReviewService(settings, components).prepare(
+        "owner", "repo", 1, vcs_provider=vcs
+    )
+
+    assert [unit.path for unit in prepared.units] == ["reviewer/app.py"]
+    assert [item.path for item in prepared.risk_paths] == ["migrations/001.sql"]
+    assert prepared.patches["migrations/001.sql"] == risk_patch
+    assert "migrations/001.sql" not in prepared.sources
+    assert build_overlay_mock.call_args.args[4] == ["reviewer/app.py"]
+    assert "migrations/001.sql" in caplog.text
+    assert "secret-content" not in caplog.text
+
+
+@patch("reviewer.services.review_service.chunk_python", side_effect=_fake_chunk)
+@patch("reviewer.services.review_service.build_overlay")
 def test_prepare_limits_risk_paths_and_reports_overflow(
     _build_overlay_mock: MagicMock,
     _chunk_python_mock: MagicMock,

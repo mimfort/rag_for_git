@@ -19,9 +19,14 @@ missing/binary, or evidence is ambiguous, submit no finding.
 <!-- include: _common/findings-schema.md -->
 
 Ground every finding on a line from `commentable_right` or `commentable_left` and
-copy that exact changed line into `code_quote`. Use `side: RIGHT` for added/changed
-lines and `side: LEFT` for removed-file evidence. When exact grounding is impossible,
-use `line: null` so the deterministic tail moves the finding to the summary.
+copy that exact changed line into `code_quote`. Use `side: RIGHT` for added/changed lines.
+
+Removed-file exception (overrides every shared NEW-file-only `line` and `code_quote`
+instruction above): when `status` is `removed`, ground against the old-file source by copying
+the exact deleted line from the diff into `code_quote`, set `line` from `commentable_left`, and
+use `side: LEFT`. If the deterministic tail cannot inline-ground that old-source evidence, use
+`line: null` and `code_quote: null` so the finding moves to the summary; never invent a
+RIGHT/new-file coordinate.
 
 Set `category` to exactly `correctness` or `security`. Write `message` and
 `suggestion` in the orchestrator's output language. Submit findings through

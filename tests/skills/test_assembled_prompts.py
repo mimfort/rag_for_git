@@ -58,6 +58,20 @@ def test_risk_changes_assembled_has_schema_and_evidence_guards():
     assert "commentable_right" in prompt
 
 
+def test_risk_changes_removed_file_exception_overrides_shared_new_file_rules():
+    prompt = assemble("review-pr/references/risk-changes-prompt.md")
+    shared_new_only = "code_quote` — exact line copied verbatim from the NEW file"
+    exception = "Removed-file exception"
+
+    assert prompt.index(exception) > prompt.index(shared_new_only)
+    removed_rules = prompt[prompt.index(exception):]
+    assert "old-file source" in removed_rules
+    assert "exact deleted line" in removed_rules
+    assert "`side: LEFT`" in removed_rules
+    assert "`commentable_left`" in removed_rules
+    assert "`line: null`" in removed_rules
+
+
 def test_blast_radius_assembled_has_tooling_and_confidence_tail():
     b = assemble("review-pr/references/blast-radius-prompt.md")
     assert "get_impact" in b
