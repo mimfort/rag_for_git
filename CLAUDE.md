@@ -53,7 +53,7 @@ reviewer-mcp                               # запустить MCP-сервер
 
 # Ревью через Claude Code-плагин:
 # 1. Открыть репозиторий как проект в Claude Code
-# 2. Использовать скилл /rag-reviewer:reviewer_review-pr (из plugin/)
+# 2. Использовать скилл /rag-reviewer:review-pr (из plugin/)
 #    Плагин вызывает prepare_review → analyze (Claude subagents) → publish_review
 
 # На хосте (для разработки фронта): pip install -e ".[web]" && (cd web/frontend && npm install && npm run build) && reviewer serve
@@ -77,7 +77,7 @@ production-сред. Сервисы Compose для разработки и те�
 
 Ядро — библиотека `reviewer/`, собираемая в `reviewer/app.py::build_components(settings)` из `Settings` (pydantic-settings, `.env`). Точка входа — `reviewer/entrypoints/cli.py` (Click) и `reviewer/entrypoints/mcp_server.py` (FastMCP).
 
-Поток ревью: **prepare_review** (MCP) → **analyze** (Claude subagents через скилл `/rag-reviewer:reviewer_review-pr`) → **publish_review** (MCP).
+Поток ревью: **prepare_review** (MCP) → **analyze** (Claude subagents через скилл `/rag-reviewer:review-pr`) → **publish_review** (MCP).
 
 1. **prepare** — `ReviewService.prepare`: `GitHubProvider` тянет PR (base/head sha), изменённые `.py` чанкуются (tree-sitter) и эмбеддятся (Voyage) в `ref="pr:N"`. Возвращает `PreparedReview` с юнитами, policy, patches.
 2. **analyze** — Claude Code-скилл (fan-out на subagents): каждый файл ревьюится параллельно с инструментами `search_code`, `get_related_symbols`, `read_file`, `get_definition`, `find_callers`, `get_changed_file_diff` через MCP.
@@ -144,10 +144,10 @@ MCP-сессия (PreparedReview + ToolContext) живёт в процессе `
 - **Наблюдаемость (`reviewer/web/`)**: каждый `publish_review` пишет в Postgres итоги прогона (`review_runs`/`review_findings`, гейт `REVIEW_HISTORY`) — fail-soft. Веб-админка (FastAPI `reviewer serve`) читает **ту же** БД.
 - **Полная воронка находок в `review_findings` (outcome/reject_reason).** `review_findings` персистит **каждого кандидата**, а не только опубликованных: колонка `outcome` — терминальный исход одного из 6 состояний (`published_inline`/`published_summary`/`verify_rejected`/`gate_dropped`/`deduped`/`already_posted`), `reject_reason` — причина отсева (текст верификатора при `verify_rejected` через `VerdictIn.reason`; сработавшее правило политики через `ReviewPolicy.gate_reason` при `gate_dropped`; иначе `NULL`). Учёт — чистый юнит `reviewer/agent/outcomes.py::account_outcomes`, инвариант `len(rows) == len(candidates)` (сумма по 6 исходам = числу кандидатов). **`deduped`-разность считается по IDENTITY (`id()`), не по fingerprint**: точный дубль имеет тот же fingerprint, что выживший (`dedup_findings` возвращает те же объекты), поэтому fingerprint-diff недосчитал бы схлопнутые. `outcome` — новое поле-истина; старые `is_real`/`published`/`inline` заполняются как прежде (обратная совместимость). Миграция аддитивна/идемпотентна (`ADD COLUMN IF NOT EXISTS` + best-effort бэкфилл). При `status='error'` строки хранят намеченный `outcome`, но `published=False`.
 - **MCP-сессия живёт в процессе сервера** между `prepare_review` и `publish_review` одного PR: `_Session(prepared, ctx)` в `MCPReviewService._sessions`. При повторном `prepare_review` для того же (repo, pr) сессия перезаписывается, старый VCS-провайдер закрывается (fail-soft).
-- **Плагин** находится в `plugin/` в корне репозитория — это корень Claude Code-плагина для скилла `/rag-reviewer:reviewer_review-pr`.
+- **Плагин** находится в `plugin/` в корне репозитория — это корень Claude Code-плагина для скилла `/rag-reviewer:review-pr`.
 - **Общие reference-блоки промптов** вынесены в `plugin/skills/_common/` (единый источник: `findings-schema.md`, `anti-hallucination.md`, `tool-usage.md`, `branch-selection.md`). Скиллы и reference-промпты подключают их маркером `<!-- include: _common/<file>.md -->` (путь от `plugin/skills/`), который LLM-оркестратор разворачивает verbatim при сборке промпта субагента; скилл-специфичные части остаются в самих скиллах. Соответствие findings-schema ↔ `Finding` (`reviewer/vcs/base.py`) и корректность сборки промптов охраняют guard-тесты в `tests/skills/`.
 - **Мульти-платформа VCS (GitHub + GitLab).** Тип провайдера — свойство репо, не PR. `reviewer index` определяет платформу из `git remote` (`derive_vcs_from_remote`) и пишет в таблицу `repo_vcs(repo→provider,base_url)`. При ревью (API-only движок) `_create_vcs_provider` читает `repo_vcs` ДО любого API-вызова и выбирает `GitHubProvider`/`GitLabProvider`; токен — из ENV по платформе (`GITHUB_TOKEN`/`GITLAB_TOKEN`, `GITLAB_URL` для self-hosted). Фолбэк при пустом `repo_vcs` — `VCS_PROVIDER` (дефолт github), что сохраняет обратную совместимость. Секретов в `.review.yml` нет (нет блока `vcs:`).
-- **Закрытие задачи после PR (`finish_task`).** Скилл `/reviewer_finish-task` после создания PR
+- **Закрытие задачи после PR (`finish_task`).** Скилл `/rag-reviewer:finish-task` после создания PR
   идемпотентно дописывает PR-ссылку и запрашивает generic done target через server-side MCP-тул
   `finish_task(..., board_type, target, provider_options)`. Провайдер возвращает отдельные
   `pr_link_added`, `done_set`, `already_closed` и warnings; общий слой затем делает write-through

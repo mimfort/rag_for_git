@@ -165,7 +165,7 @@ def test_each_registered_skill_has_its_own_heading_in_both_readmes():
     }
 
     for skill in _registered_skills():
-        marker = f"reviewer_{skill}"
+        marker = f"### `{skill}`"
         assert any(marker in heading for heading in english_headings), marker
         assert any(marker in heading for heading in russian_headings), marker
 
@@ -234,7 +234,7 @@ def test_gitlab_only_check_limitation_is_explicit():
         assert "`GITHUB_TOKEN`" in text
         assert "`GITLAB_TOKEN`" in text
         assert "GitLab-only" in text
-        assert "dry-run `reviewer_review-pr`" in text
+        assert "dry-run `/rag-reviewer:review-pr`" in text
         assert "validate `GITLAB_TOKEN` by indexing" not in text
 
 

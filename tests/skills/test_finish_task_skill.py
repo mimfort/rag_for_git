@@ -6,11 +6,6 @@ SKILL = ROOT / "plugin" / "skills" / "finish-task" / "SKILL.md"
 SOLVE = ROOT / "plugin" / "skills" / "solve-task" / "SKILL.md"
 
 
-def test_finish_task_name_follows_reviewer_prefix():
-    # Все скиллы плагина инвокаются как /reviewer_<name>; кросс-ссылки зовут /reviewer_finish-task.
-    assert "name: reviewer_finish-task" in SKILL.read_text(encoding="utf-8")
-
-
 def test_finish_task_calls_write_tool_and_resyncs():
     t = SKILL.read_text(encoding="utf-8")
     assert "finish_task(" in t          # зовёт серверный write-тул

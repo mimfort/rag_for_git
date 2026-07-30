@@ -1,6 +1,6 @@
 # rag-reviewer — Claude Code and Codex plugin payload
 
-Корень Claude Code-плагина для скиллов `/rag-reviewer:reviewer_*`. Полная документация
+Корень Claude Code-плагина для скиллов `/rag-reviewer:<short-name>`. Полная документация
 проекта — в корневых [README.md](../README.md) (англ.) и [README.ru.md](../README.ru.md) (рус.).
 
 ## Что внутри
@@ -10,14 +10,15 @@
   `_common` и вложенные references доставляются как вспомогательные файлы, но не регистрируются как
   скиллы.
 - Скиллы (`plugin/skills/*/SKILL.md`):
-  `/rag-reviewer:reviewer_review-pr` · `/rag-reviewer:reviewer_solve-task` ·
-  `/rag-reviewer:reviewer_sync-codebase` · `/rag-reviewer:reviewer_sync-tasks` ·
-  `/rag-reviewer:reviewer_performance-review` · `/rag-reviewer:reviewer_maintainability-review` ·
-  `/rag-reviewer:reviewer_ask` ·
-  `/rag-reviewer:reviewer_pr-walkthrough` ·
-  `/rag-reviewer:reviewer_configure-review` ·
-  `/rag-reviewer:reviewer_summarize-subsystems` ·
-  `/rag-reviewer:reviewer_finish-task`.
+  `/rag-reviewer:review-pr` · `/rag-reviewer:solve-task` ·
+  `/rag-reviewer:sync-codebase` · `/rag-reviewer:sync-tasks` ·
+  `/rag-reviewer:performance-review` · `/rag-reviewer:maintainability-review` ·
+  `/rag-reviewer:ask` ·
+  `/rag-reviewer:pr-walkthrough` ·
+  `/rag-reviewer:configure-review` ·
+  `/rag-reviewer:summarize-subsystems` ·
+  `/rag-reviewer:create-task` ·
+  `/rag-reviewer:finish-task`.
 
 ## Требования
 
@@ -74,5 +75,5 @@ Reviewer-тулы доступны не только в ревью PR — их �
 ## Headless
 
 ```bash
-claude --plugin-dir . -p "/rag-reviewer:reviewer_review-pr owner/repo#123 --dry-run" --permission-mode bypassPermissions
+claude --plugin-dir . -p "/rag-reviewer:review-pr owner/repo#123 --dry-run" --permission-mode bypassPermissions
 ```

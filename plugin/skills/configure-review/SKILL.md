@@ -1,5 +1,5 @@
 ---
-name: reviewer_configure-review
+name: configure-review
 description: Use when configuring or changing a repository's layered review policy, ignored tracked paths, retrieval limits, summary depth, or non-secret task-board metadata.
 ---
 
@@ -48,9 +48,9 @@ enter the index. Do not use a filesystem walk to find them.
 
 ## Rebuild guidance
 
-- Changed `paths.ignore` → suggest `/reviewer_sync-codebase`.
-- Changed `summary_cluster_depth` → suggest `/reviewer_summarize-subsystems`.
-- Changed `summary_cluster_depth_overrides` → suggest `/reviewer_summarize-subsystems`.
+- Changed `paths.ignore` → suggest `rag-reviewer:sync-codebase`.
+- Changed `summary_cluster_depth` → suggest `rag-reviewer:summarize-subsystems`.
+- Changed `summary_cluster_depth_overrides` → suggest `rag-reviewer:summarize-subsystems`.
 - Changed `summary_topk_threshold` → no rebuild needed.
 - Changed `context_limits` → no rebuild needed.
 
