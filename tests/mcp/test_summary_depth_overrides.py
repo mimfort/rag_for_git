@@ -1,8 +1,16 @@
 """Тест per-path depth overrides в list/index/prune сводок (PRI-161, Task 6)."""
 from unittest.mock import MagicMock
 
+import pytest
+
 from reviewer.config.settings import Settings
 from reviewer.mcp.service import MCPReviewService
+
+
+@pytest.fixture(autouse=True)
+def _isolated_home_config(monkeypatch, tmp_path) -> None:
+    """Изолирует резолв policy от конфигурации разработчика."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
 
 
 def _svc(review_yml: str):

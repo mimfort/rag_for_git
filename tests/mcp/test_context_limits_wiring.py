@@ -4,7 +4,7 @@ _resolve_context_limits — fail-soft резолв ContextLimits из .review.ym
 (зеркало _resolve_summary_depth). search_codebase пробрасывает limits/hops/
 ceiling_override в Retriever.search_base (новая сигнатура, Task 5).
 """
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -69,6 +69,78 @@ def test_resolve_context_limits_uses_home_repo_layer(tmp_path) -> None:
     limits = svc._resolve_context_limits("o/r", "dev")
 
     assert limits.graph.hops == 2
+
+
+def test_resolve_policy_reports_repo_home_source_and_keeps_injected_vcs_open(tmp_path) -> None:
+    """Репозиторный слой побеждает VCS и сохраняет ownership injected VCS."""
+    global_path = tmp_path / "rag-reviewer/review.yml"
+    global_path.parent.mkdir(parents=True)
+    global_path.write_text("summary_topk_threshold: 3\n", encoding="utf-8")
+    repo_path = tmp_path / "rag-reviewer/repos/o/r.yml"
+    repo_path.parent.mkdir(parents=True)
+    repo_path.write_text("summary_topk_threshold: 7\n", encoding="utf-8")
+    vcs = MagicMock()
+    vcs.get_file_at_ref.return_value = "summary_topk_threshold: 5\n"
+    svc = MCPReviewService(_settings(), MagicMock(), vcs_factory=lambda owner, name: vcs)
+
+    policy, meta = svc._resolve_policy("o/r", "dev")
+
+    assert policy.summary_topk_threshold == 7
+    assert meta.sources["summary_topk_threshold"] == "home:repos/o/r.yml"
+    vcs.close.assert_not_called()
+
+
+def test_resolve_policy_closes_internally_created_vcs() -> None:
+    """Созданный сервисом VCS закрывается после резолва policy."""
+    vcs = MagicMock()
+    vcs.get_file_at_ref.return_value = None
+    svc = MCPReviewService(_settings(), MagicMock(), vcs_factory=None)
+
+    with patch.object(svc._review_service, "_create_vcs_provider", return_value=vcs):
+        svc._resolve_policy("o/r", "dev")
+
+    vcs.close.assert_called_once_with()
+
+
+def test_resolve_context_limits_ignores_internal_vcs_close_failure() -> None:
+    """Ошибка close внутреннего provider не отменяет уже полученный policy."""
+    vcs = MagicMock()
+    vcs.get_file_at_ref.return_value = "context_limits: {graph: {hops: 2}}\n"
+    vcs.close.side_effect = RuntimeError("close failed")
+    svc = MCPReviewService(_settings(), MagicMock(), vcs_factory=None)
+
+    with patch.object(svc._review_service, "_create_vcs_provider", return_value=vcs):
+        limits = svc._resolve_context_limits("o/r", "dev")
+
+    assert limits.graph.hops == 2
+    vcs.close.assert_called_once_with()
+
+
+def test_resolve_context_limits_uses_falsey_injected_vcs_factory() -> None:
+    """Переданная VCS-фабрика остаётся caller-owned независимо от truthiness."""
+    class _FalseyFactory:
+        def __init__(self, vcs) -> None:
+            self.vcs = vcs
+
+        def __bool__(self) -> bool:
+            return False
+
+        def __call__(self, owner, name):
+            return self.vcs
+
+    injected_vcs = MagicMock()
+    injected_vcs.get_file_at_ref.return_value = None
+    internal_vcs = MagicMock()
+    internal_vcs.get_file_at_ref.return_value = None
+    svc = MCPReviewService(
+        _settings(), MagicMock(), vcs_factory=_FalseyFactory(injected_vcs)
+    )
+
+    with patch.object(svc._review_service, "_create_vcs_provider", return_value=internal_vcs) as create:
+        svc._resolve_context_limits("o/r", "dev")
+
+    create.assert_not_called()
+    injected_vcs.close.assert_not_called()
 
 
 class _FakeRetriever:

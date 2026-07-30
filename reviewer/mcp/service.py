@@ -744,7 +744,7 @@ class MCPReviewService:
         try:
             vcs = (
                 self._vcs_factory(owner, name)
-                if self._vcs_factory
+                if self._vcs_factory is not None
                 else self._review_service._create_vcs_provider(owner, name)
             )
             data, meta = resolve_policy_data(
