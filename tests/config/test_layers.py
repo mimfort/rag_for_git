@@ -6,8 +6,11 @@ from reviewer.config.layers import (
     HomeConfigError,
     home_repo_path,
     migrate_repo_config,
+    policy_to_public_data,
     resolve_policy_data,
 )
+from reviewer.config.settings import Settings
+from reviewer.policy.policy import ReviewPolicy
 
 
 def _write(path: Path, text: str) -> None:
@@ -58,6 +61,59 @@ def test_runtime_skips_bad_home_but_strict_mode_raises(tmp_path: Path) -> None:
     assert data == {"max_comments": 9}
     assert len(meta.warnings) == 1
     assert "home:review.yml" in meta.warnings[0]
+
+    with pytest.raises(HomeConfigError):
+        resolve_policy_data(
+            "o/r",
+            "main",
+            lambda ref: "max_comments: 9\n",
+            config_root=tmp_path,
+            strict_home=True,
+        )
+
+
+def test_runtime_warns_when_home_file_probe_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home_config = tmp_path / "review.yml"
+    _write(home_config, "max_comments: 4\n")
+    original_stat = Path.stat
+
+    def inaccessible_probe(path: Path, *args, **kwargs):
+        if path == home_config:
+            raise PermissionError("denied")
+        return original_stat(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "stat", inaccessible_probe)
+
+    data, meta = resolve_policy_data(
+        "o/r", "main", lambda ref: "max_comments: 9\n", config_root=tmp_path
+    )
+    assert data == {"max_comments": 9}
+    assert len(meta.warnings) == 1
+    assert "home:review.yml" in meta.warnings[0]
+
+    with pytest.raises(HomeConfigError):
+        resolve_policy_data(
+            "o/r",
+            "main",
+            lambda ref: "max_comments: 9\n",
+            config_root=tmp_path,
+            strict_home=True,
+        )
+
+
+def test_runtime_skips_recursion_during_home_yaml_parse(tmp_path: Path) -> None:
+    deep_yaml = "".join(
+        "  " * depth + "nested:\n" for depth in range(500)
+    ) + "  " * 500 + "value: true\n"
+    _write(tmp_path / "review.yml", deep_yaml)
+
+    data, meta = resolve_policy_data(
+        "o/r", "main", lambda ref: "max_comments: 9\n", config_root=tmp_path
+    )
+    assert data == {"max_comments": 9}
+    assert len(meta.warnings) == 1
 
     with pytest.raises(HomeConfigError):
         resolve_policy_data(
@@ -157,3 +213,31 @@ def test_migrate_rejects_secret_candidate_before_write(tmp_path: Path) -> None:
         )
     assert "do-not-write" not in str(exc.value)
     assert not (tmp_path / "repos/o/r.yml").exists()
+
+
+def test_policy_to_public_data_excludes_settings_secrets_and_unknown_yaml() -> None:
+    secret = "do-not-serialize"
+    policy = ReviewPolicy.load_data(
+        Settings(_env_file=None, github_token=secret, neo4j_password=secret),
+        {"max_comments": 4, "unknown_yaml_value": secret},
+    )
+
+    data = policy_to_public_data(policy)
+
+    assert set(data) == {
+        "categories",
+        "enabled_only",
+        "severity_threshold",
+        "paths",
+        "max_comments",
+        "min_confidence",
+        "output_language",
+        "task_board",
+        "grounding_max_distance",
+        "summary_cluster_depth",
+        "summary_topk_threshold",
+        "summary_cluster_depth_overrides",
+        "context_limits",
+    }
+    assert data["max_comments"] == 4
+    assert secret not in repr(data)

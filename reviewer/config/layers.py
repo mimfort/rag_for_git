@@ -6,6 +6,7 @@ from dataclasses import asdict, dataclass
 from functools import lru_cache
 import os
 from pathlib import Path
+import stat
 import tempfile
 
 import yaml
@@ -160,9 +161,9 @@ def resolve_policy_data(
             sources[key] = source
 
     def merge_home(path: Path, source: str) -> None:
-        if not path.is_file():
-            return
         try:
+            if not stat.S_ISREG(path.stat().st_mode):
+                return
             data = _read_mapping(path.read_text(encoding="utf-8"), source)
             credential = _credential_path(data)
             if credential:
@@ -170,9 +171,17 @@ def resolve_policy_data(
                     f"{source}: credential key {'.'.join(credential)} запрещён"
                 )
             merge(data, source)
+        except FileNotFoundError:
+            return
         except HomeCredentialError as exc:
             warnings.append(str(exc))
-        except (OSError, UnicodeError, yaml.YAMLError, HomeConfigError) as exc:
+        except (
+            OSError,
+            UnicodeError,
+            RecursionError,
+            yaml.YAMLError,
+            HomeConfigError,
+        ) as exc:
             wrapped = HomeConfigError(
                 f"{source}: конфиг не прочитан: {type(exc).__name__}"
             )
