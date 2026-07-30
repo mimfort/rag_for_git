@@ -377,7 +377,13 @@ def _read_destination_mapping(path: Path, source: str) -> dict[str, object] | No
         raise HomeConfigError(f"{source}: конфиг не прочитан: {type(exc).__name__}") from exc
     finally:
         if descriptor != -1:
-            os.close(descriptor)
+            try:
+                os.close(descriptor)
+            except OSError as exc:
+                if sys.exc_info()[0] is None:
+                    raise HomeConfigError(
+                        f"{source}: конфиг не прочитан: {type(exc).__name__}"
+                    ) from exc
     before_identity = before.st_dev, before.st_ino
     opened_identity = opened.st_dev, opened.st_ino
     fresh_identity = fresh.st_dev, fresh.st_ino
@@ -504,7 +510,12 @@ def migrate_repo_config(
             destination, existing, candidate, repo, ref, fetch_repo_yaml, root, before_data
         )
 
-    destination.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        destination.parent.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise HomeConfigError(
+            f"{source}: destination не подготовлен: {type(exc).__name__}"
+        ) from exc
     published_data, published_meta = _simulated_repo_layer(
         before_data, before_meta, candidate, source
     )

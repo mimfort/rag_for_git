@@ -395,6 +395,53 @@ def test_migrate_sanitizes_link_error_and_preserves_primary_cleanup_error(
     assert secret not in str(exc.value)
 
 
+def test_migrate_sanitizes_destination_parent_mkdir_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    secret = "do-not-echo"
+    original_mkdir = Path.mkdir
+
+    def fail_destination_parent(path: Path, *args, **kwargs) -> None:
+        if path == tmp_path / "repos/o":
+            raise OSError(secret)
+        original_mkdir(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "mkdir", fail_destination_parent)
+
+    with pytest.raises(HomeConfigError) as exc:
+        migrate_repo_config(
+            "o/r", "main", lambda ref: "max_comments: 7\n", config_root=tmp_path
+        )
+
+    assert secret not in str(exc.value)
+
+
+def test_migrate_preserves_fdopen_error_when_descriptor_close_also_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    destination = tmp_path / "repos/o/r.yml"
+    _write(destination, "max_comments: 3\n")
+    primary = "fdopen-secret"
+    cleanup = "close-secret"
+
+    def fail_fdopen(*args, **kwargs):
+        raise OSError(primary)
+
+    def fail_close(*args, **kwargs):
+        raise OSError(cleanup)
+
+    monkeypatch.setattr(layers.os, "fdopen", fail_fdopen)
+    monkeypatch.setattr(layers.os, "close", fail_close)
+
+    with pytest.raises(HomeConfigError) as exc:
+        migrate_repo_config(
+            "o/r", "main", lambda ref: "max_comments: 7\n", config_root=tmp_path
+        )
+
+    assert primary not in str(exc.value)
+    assert cleanup not in str(exc.value)
+
+
 def test_build_config_report_rejects_non_json_public_value() -> None:
     class SecretValue:
         def __repr__(self) -> str:
