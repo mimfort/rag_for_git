@@ -4,8 +4,15 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 from click.testing import CliRunner
+import pytest
 
 import reviewer.entrypoints.cli as cli_mod
+
+
+@pytest.fixture(autouse=True)
+def _isolated_config_home(monkeypatch, tmp_path):
+    """Каждый index-тест начинает с пустого конфигурационного дома."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
 
 
 def test_index_filters_ignored_files(monkeypatch):
@@ -40,11 +47,11 @@ def test_index_filters_ignored_files(monkeypatch):
 
 def test_index_uses_home_policy_without_committed_file(monkeypatch, tmp_path):
     """index применяет paths.ignore из home-слоя без committed policy."""
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     home = tmp_path / "rag-reviewer/repos/o/r.yml"
     home.parent.mkdir(parents=True)
     home.write_text("paths:\n  ignore:\n    - vendor\n", encoding="utf-8")
     captured = {}
+    committed_refs = []
 
     def fake_update_base(store, embedder, repo, branch, files, **kwargs):
         captured["files"] = list(files)
@@ -61,13 +68,15 @@ def test_index_uses_home_policy_without_committed_file(monkeypatch, tmp_path):
 
     def fake_file_at_ref(repo, path, ref):
         if path == ".review.yml":
+            committed_refs.append((repo, path, ref))
             return None
         return "def f():\n    pass\n"
 
     monkeypatch.setattr(cli_mod, "file_at_ref", fake_file_at_ref)
     monkeypatch.setattr(cli_mod, "update_base", fake_update_base)
 
-    result = CliRunner().invoke(cli_mod.cli, ["index", "/tmp/repo", "--ref", "main"])
+    result = CliRunner().invoke(cli_mod.cli, ["index", "/tmp/repo", "--ref", "release/2026"])
     assert result.exit_code == 0, result.output
     assert captured["files"] == ["reviewer/a.py"]
     assert captured["ignore"] == ["vendor"]
+    assert committed_refs == [("/tmp/repo", ".review.yml", "release/2026")]
