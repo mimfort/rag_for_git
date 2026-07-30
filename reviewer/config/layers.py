@@ -62,7 +62,10 @@ def home_repo_path(repo: str, config_root: Path | None = None) -> Path:
 
 
 def _read_mapping(text: str | None, source: str) -> dict[str, object]:
-    data = yaml.safe_load(text) if text else {}
+    try:
+        data = yaml.safe_load(text) if text else {}
+    except yaml.YAMLError as exc:
+        raise HomeConfigError(f"{source}: конфиг не прочитан: YAML") from exc
     if data is None:
         return {}
     if not isinstance(data, dict):
@@ -228,8 +231,11 @@ def build_config_report(
     meta: ResolutionMeta,
 ) -> dict[str, object]:
     """Собрать безопасный диагностический отчёт об эффективной policy."""
-    policy = ReviewPolicy.load_data(settings, data)
-    effective = policy_to_public_data(policy)
+    try:
+        policy = ReviewPolicy.load_data(settings, data)
+        effective = policy_to_public_data(policy)
+    except (AttributeError, KeyError, TypeError, ValueError) as exc:
+        raise HomeConfigError("effective policy: недопустимые значения") from exc
     sources = {key: meta.sources.get(key, "env") for key in effective}
     return {
         "repo": normalize_repo(repo),
@@ -243,6 +249,75 @@ def build_config_report(
 
 def _empty_meta() -> ResolutionMeta:
     return ResolutionMeta({}, {}, ())
+
+
+def _read_destination_mapping(path: Path, source: str) -> dict[str, object] | None:
+    """Прочитать существующий regular destination, не следуя symlink на POSIX."""
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(path, flags)
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        raise HomeConfigError(f"{source}: конфиг не прочитан: {type(exc).__name__}") from exc
+    try:
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            raise HomeConfigError(f"{source}: regular file обязателен")
+        with os.fdopen(descriptor, encoding="utf-8") as handle:
+            descriptor = -1
+            return _read_mapping(handle.read(), source)
+    finally:
+        if descriptor != -1:
+            os.close(descriptor)
+
+
+def _existing_migration_result(
+    destination: Path,
+    existing: dict[str, object],
+    candidate: dict[str, object],
+    repo: str,
+    ref: str,
+    fetch_repo_yaml: Callable[[str], str | None],
+    root: Path,
+    before_data: dict[str, object],
+) -> MigrationResult:
+    if _credential_path(existing):
+        raise HomeConfigError(f"home:repos/{repo}.yml: credential key запрещён")
+    if existing != candidate:
+        conflicts = tuple(sorted(
+            key
+            for key in set(existing) | set(candidate)
+            if existing.get(key, _MISSING) != candidate.get(key, _MISSING)
+        ))
+        return MigrationResult(
+            destination, False, False, conflicts, before_data, _empty_meta()
+        )
+    data, meta = resolve_policy_data(
+        repo, ref, fetch_repo_yaml, config_root=root, strict_home=True
+    )
+    return MigrationResult(destination, False, True, (), data, meta)
+
+
+def _publish_new_config(destination: Path, content: str) -> bool:
+    """Опубликовать новый config без перезаписи уже созданного destination."""
+    temp_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            "w", encoding="utf-8", dir=destination.parent, delete=False
+        ) as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+            temp_path = Path(handle.name)
+        temp_path.chmod(0o600)
+        try:
+            os.link(temp_path, destination)
+        except FileExistsError:
+            return False
+        return True
+    finally:
+        if temp_path is not None and temp_path.exists():
+            temp_path.unlink()
 
 
 def migrate_repo_config(
@@ -268,43 +343,24 @@ def migrate_repo_config(
         repo, ref, fetch_repo_yaml, config_root=root, strict_home=True
     )
     destination = home_repo_path(repo, root)
-    if destination.is_symlink():
-        raise HomeConfigError(f"{destination}: symlink запрещён")
-    if destination.exists():
-        existing = _read_mapping(destination.read_text(encoding="utf-8"), str(destination))
-        if _credential_path(existing):
-            raise HomeConfigError(f"{destination}: credential key запрещён")
-        if existing != candidate:
-            conflicts = tuple(sorted(
-                key
-                for key in set(existing) | set(candidate)
-                if existing.get(key, _MISSING) != candidate.get(key, _MISSING)
-            ))
-            return MigrationResult(
-                destination, False, False, conflicts, before_data, _empty_meta()
-            )
-        data, meta = resolve_policy_data(
-            repo, ref, fetch_repo_yaml, config_root=root, strict_home=True
+    source = f"home:repos/{repo}.yml"
+    existing = _read_destination_mapping(destination, source)
+    if existing is not None:
+        return _existing_migration_result(
+            destination, existing, candidate, repo, ref, fetch_repo_yaml, root, before_data
         )
-        return MigrationResult(destination, False, True, (), data, meta)
 
     destination.parent.mkdir(parents=True, exist_ok=True)
-    temp_path: Path | None = None
-    try:
-        with tempfile.NamedTemporaryFile(
-            "w", encoding="utf-8", dir=destination.parent, delete=False
-        ) as handle:
-            handle.write(source_text or "")
-            temp_path = Path(handle.name)
-        temp_path.chmod(0o600)
-        os.replace(temp_path, destination)
-        after_data, meta = resolve_policy_data(
-            repo, ref, fetch_repo_yaml, config_root=root, strict_home=True
+    if not _publish_new_config(destination, source_text or ""):
+        existing = _read_destination_mapping(destination, source)
+        if existing is None:
+            raise HomeConfigError(f"{source}: destination исчез во время миграции")
+        return _existing_migration_result(
+            destination, existing, candidate, repo, ref, fetch_repo_yaml, root, before_data
         )
-        if after_data != before_data:
-            destination.unlink()
-            raise HomeConfigError("effective config изменился после миграции")
-        return MigrationResult(destination, True, False, (), after_data, meta)
-    finally:
-        if temp_path is not None and temp_path.exists():
-            temp_path.unlink()
+    after_data, meta = resolve_policy_data(
+        repo, ref, fetch_repo_yaml, config_root=root, strict_home=True
+    )
+    if after_data != before_data:
+        raise HomeConfigError("effective config изменился после миграции")
+    return MigrationResult(destination, True, False, (), after_data, meta)

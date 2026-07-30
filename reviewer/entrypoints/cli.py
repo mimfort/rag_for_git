@@ -74,7 +74,22 @@ def _close_config_components(components) -> None:
     for name in ("store", "graph", "task_store", "summary_store"):
         component = getattr(components, name, None)
         if component is not None:
-            component.close()
+            _safe_config_close(component, name)
+
+
+def _safe_config_close(resource, name: str) -> None:
+    """Не дать cleanup-ошибке скрыть исход результата diagnostic команды."""
+    try:
+        resource.close()
+    except Exception:  # noqa: BLE001 — best-effort cleanup не меняет результат команды
+        log.warning("Не удалось закрыть resource config CLI: %s", name)
+
+
+def _config_error_message(exc: Exception) -> str:
+    """Вернуть публичный diagnostic без YAML/normalization payload."""
+    if isinstance(exc, HomeConfigError):
+        return str(exc)
+    return "конфиг не прочитан: YAML"
 
 
 def _render_config_report(report: Mapping[str, object]) -> None:
@@ -108,7 +123,7 @@ def _config_context(repo_opt: str, branch_opt: str | None):
         yield settings, components, vcs, repo, branch
     finally:
         if vcs is not None:
-            vcs.close()
+            _safe_config_close(vcs, "vcs")
         _close_config_components(components)
 
 
@@ -134,7 +149,7 @@ def config_show(repo: str, branch: str | None, as_json: bool) -> None:
             )
             report = build_config_report(repo_id, ref, settings, data, meta)
     except (HomeConfigError, yaml.YAMLError) as exc:
-        raise click.ClickException(str(exc)) from exc
+        raise click.ClickException(_config_error_message(exc)) from exc
     if as_json:
         click.echo(json.dumps(report, ensure_ascii=False, sort_keys=True, indent=2))
     else:
@@ -160,7 +175,7 @@ def config_migrate(repo: str, branch: str | None) -> None:
                 repo_id, ref, settings, result.data, result.meta
             )
     except (HomeConfigError, yaml.YAMLError) as exc:
-        raise click.ClickException(str(exc)) from exc
+        raise click.ClickException(_config_error_message(exc)) from exc
     if result.noop:
         click.echo(f"Конфиг уже перенесён: {result.path}")
     else:

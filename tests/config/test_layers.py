@@ -2,6 +2,7 @@ from pathlib import Path
 
 import pytest
 
+import reviewer.config.layers as layers
 from reviewer.config.layers import (
     HomeConfigError,
     ResolutionMeta,
@@ -260,3 +261,48 @@ def test_build_config_report_marks_policy_defaults_as_env() -> None:
     assert report["sources"]["max_comments"] == "env"
     assert report["sources"]["paths"] == "home:repos/o/r.yml"
     assert report["warnings"] == ["safe warning"]
+
+
+def test_migrate_does_not_clobber_destination_created_during_publish(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    destination = tmp_path / "repos/o/r.yml"
+
+    def race(temp_path, target_path) -> None:
+        Path(target_path).write_text("max_comments: 3\n", encoding="utf-8")
+        raise FileExistsError
+
+    monkeypatch.setattr(layers.os, "link", race)
+
+    result = migrate_repo_config(
+        "o/r", "main", lambda ref: "max_comments: 7\n", config_root=tmp_path
+    )
+
+    assert result.conflicting_keys == ("max_comments",)
+    assert destination.read_text(encoding="utf-8") == "max_comments: 3\n"
+
+
+def test_migrate_rollback_does_not_delete_racing_destination(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    destination = tmp_path / "repos/o/r.yml"
+    meta = ResolutionMeta({}, {}, ())
+    calls = 0
+
+    def resolve_after_race(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            destination.unlink()
+            destination.write_text("max_comments: 3\n", encoding="utf-8")
+            return {"max_comments": 3}, meta
+        return {"max_comments": 7}, meta
+
+    monkeypatch.setattr(layers, "resolve_policy_data", resolve_after_race)
+
+    with pytest.raises(HomeConfigError, match="effective config"):
+        migrate_repo_config(
+            "o/r", "main", lambda ref: "max_comments: 7\n", config_root=tmp_path
+        )
+
+    assert destination.read_text(encoding="utf-8") == "max_comments: 3\n"
