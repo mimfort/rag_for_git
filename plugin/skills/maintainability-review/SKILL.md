@@ -9,7 +9,7 @@ description: "Review code changes only for maintainability risks: unnecessary co
 
 <!-- include: _common/tool-usage.md -->
 <!-- include: _common/reviewer-grounding.md -->
-In `/reviewer_review-pr` use the PR-session tools above. Standalone (no PR session): use
+In `rag-reviewer:review-pr` use the PR-session tools above. Standalone (no PR session): use
 the session-less tools per the reviewer-grounding block when reviewer is connected and the
 index is fresh; otherwise fall back to grep/Read.
 
@@ -44,7 +44,7 @@ governs the current workspace.
 
 Prefer this order:
 
-1. In `/reviewer_review-pr`, read `CLAUDE.md` or `AGENTS.md` via `read_file`; in standalone,
+1. In `rag-reviewer:review-pr`, read `CLAUDE.md` or `AGENTS.md` via `read_file`; in standalone,
    read them from disk.
 2. Read the nearby implementation to understand existing patterns.
 3. Compare the change against the established local style before flagging it.

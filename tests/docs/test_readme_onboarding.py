@@ -234,7 +234,7 @@ def test_gitlab_only_check_limitation_is_explicit():
         assert "`GITHUB_TOKEN`" in text
         assert "`GITLAB_TOKEN`" in text
         assert "GitLab-only" in text
-        assert "dry-run `reviewer_review-pr`" in text
+        assert "dry-run `rag-reviewer:review-pr`" in text
         assert "validate `GITLAB_TOKEN` by indexing" not in text
 
 

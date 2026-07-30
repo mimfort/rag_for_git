@@ -284,7 +284,7 @@ def create_server(service: MCPReviewService) -> FastMCP:
                                 min_size: int | None = None,
                                 cap: int | None = None) -> dict:
         """Кластеризовать base-граф кода по путям модулей для скилла
-        /reviewer_summarize-subsystems. Возвращает {branch, deferred, clusters:[...]},
+        rag-reviewer:summarize-subsystems. Возвращает {branch, deferred, clusters:[...]},
         где каждый кластер содержит cluster_key, num_members, files, top_symbols
         (по центральности), source_hash и stale (true, если сводка отсутствует
         или её source_hash устарел). Без PR-сессии; branch по умолчанию —
@@ -301,7 +301,7 @@ def create_server(service: MCPReviewService) -> FastMCP:
     def index_subsystem_summary(repo: str, branch: str, cluster_key: str,
                                 title: str, summary: str, source_hash: str) -> dict:
         """Persist one subsystem summary (idempotent upsert keyed by
-        repo+branch+cluster_key). Called by /reviewer_summarize-subsystems after the
+        repo+branch+cluster_key). Called by rag-reviewer:summarize-subsystems after the
         LLM writes title+summary for a cluster. source_hash ties the summary to the
         cluster's current content for staleness."""
         return service.index_subsystem_summary(
@@ -329,7 +329,7 @@ def create_server(service: MCPReviewService) -> FastMCP:
         """Prune subsystem summaries orphaned by a depth change or removed modules.
         Re-derives current cluster_keys from the base index at the resolved depth and
         deletes summaries outside that set. Call ONLY after a full (uncapped) pass of
-        /reviewer_summarize-subsystems — deferred clusters are not orphans. Empty base
+        rag-reviewer:summarize-subsystems — deferred clusters are not orphans. Empty base
         → no-op. Returns {pruned, kept}. No PR session; branch defaults to primary."""
         return service.prune_subsystem_summaries(repo, branch)
 
@@ -337,7 +337,7 @@ def create_server(service: MCPReviewService) -> FastMCP:
     def backfill_summary_embeddings(repo: str, branch: str | None = None) -> dict:
         """Self-heal: embed any subsystem summaries with a NULL embedding from their
         stored title+summary (no LLM). Idempotent — a later run embeds nothing.
-        Called by /reviewer_summarize-subsystems after the LLM pass so older summaries
+        Called by rag-reviewer:summarize-subsystems after the LLM pass so older summaries
         become searchable by proximity. Returns {embedded}. No PR session; branch
         defaults to primary."""
         return service.backfill_summary_embeddings(repo, branch)
@@ -395,7 +395,7 @@ def create_server(service: MCPReviewService) -> FastMCP:
     def post_pr_walkthrough(repo: str, pr: int, markdown: str) -> dict:
         """Post a human-facing PR reading guide (walkthrough) as a PR review comment,
         separate from bug findings (carries a <!-- ai-walkthrough --> marker, empty
-        inline comments). Outward-facing: the /reviewer_pr-walkthrough skill calls this
+        inline comments). Outward-facing: the rag-reviewer:pr-walkthrough skill calls this
         only on explicit user request. Requires an active prepare_review session."""
         return service.post_pr_walkthrough(repo, pr, markdown)
 

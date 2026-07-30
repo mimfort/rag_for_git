@@ -956,7 +956,7 @@ class MCPReviewService:
         raw = self.components.store.list_base_members(repo, resolved)
         if not raw:
             return {"branch": resolved, "deferred": 0, "clusters": [],
-                    "note": "(base-индекс пуст — выполните /reviewer_sync-codebase)"}
+                    "note": "(base-индекс пуст — выполните rag-reviewer:sync-codebase)"}
         members = [Member(node_id=f"{p}#{s}", path=p, content_hash=h, start_line=sl,
                           skeleton_hash=sk)
                    for p, s, h, sl, sk in raw]

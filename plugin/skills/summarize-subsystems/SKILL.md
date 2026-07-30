@@ -26,7 +26,7 @@ Plus `list_subsystem_clusters`, `index_subsystem_summary` and `prune_subsystem_s
 <!-- include: _common/branch-selection.md -->
 
 2. **List clusters.** Call `list_subsystem_clusters(repo, branch)`. Empty / `note` about an empty
-   index → tell the user (in Russian) to run `/reviewer_sync-codebase` first, then stop. The response
+   index → tell the user (in Russian) to run `rag-reviewer:sync-codebase` first, then stop. The response
    carries `depth` (the applied cluster depth), `depth_source` (`env` | `.review.yml` | `arg`),
    `deferred` (stale clusters held back this pass under the cost cap, env `SUMMARY_REBUILD_CAP`),
    `orphans` (stored summaries whose `cluster_key` is no longer a current cluster), and the

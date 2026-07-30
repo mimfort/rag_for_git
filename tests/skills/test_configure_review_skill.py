@@ -94,9 +94,9 @@ def test_skill_maps_rebuilds_to_the_changed_setting_only():
     text = SKILL.read_text(encoding="utf-8")
     rules = re.search(r"## Rebuild guidance.*?(?=\n## )", text, re.DOTALL)
     assert rules
-    assert re.search(r"paths\.ignore.*reviewer_sync-codebase", rules.group())
-    assert re.search(r"summary_cluster_depth.*reviewer_summarize-subsystems", rules.group())
-    assert re.search(r"summary_cluster_depth_overrides.*reviewer_summarize-subsystems", rules.group())
+    assert re.search(r"paths\.ignore.*rag-reviewer:sync-codebase", rules.group())
+    assert re.search(r"summary_cluster_depth.*rag-reviewer:summarize-subsystems", rules.group())
+    assert re.search(r"summary_cluster_depth_overrides.*rag-reviewer:summarize-subsystems", rules.group())
     assert re.search(r"summary_topk_threshold.*no rebuild", rules.group())
     assert re.search(r"context_limits.*no rebuild", rules.group())
 
@@ -119,8 +119,8 @@ def test_skill_has_complete_deterministic_context_limit_presets():
 def test_skill_suggests_rebuilds_without_running():
     text = SKILL.read_text(encoding="utf-8")
     assert "do NOT run" in text                     # не запускает пересбор сам
-    assert "reviewer_sync-codebase" in text         # при смене ignore
-    assert "reviewer_summarize-subsystems" in text  # при смене depth/threshold
+    assert "rag-reviewer:sync-codebase" in text         # при смене ignore
+    assert "rag-reviewer:summarize-subsystems" in text  # при смене depth/threshold
 
 
 def test_skill_asks_for_project_scope():
