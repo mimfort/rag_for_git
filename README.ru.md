@@ -318,7 +318,45 @@ context_limits:
     hops: 1
 ```
 
-`reviewer_configure-review` меняет context fields, сохраняя посторонние ключи.
+### Слоистая политика репозитория
+
+Политика разрешается строго в таком порядке; более поздний источник выигрывает для одинакового
+верхнеуровневого ключа:
+
+```text
+ENV
+  < $XDG_CONFIG_HOME/rag-reviewer/review.yml
+  < committed .review.yml at the selected target ref
+  < $XDG_CONFIG_HOME/rag-reviewer/repos/<owner>/<name>.yml
+```
+
+Если `XDG_CONFIG_HOME` не задан, home-root — `~/.config/rag-reviewer`. Слияние выполняется только
+на верхнем уровне: более поздний mapping, list или `null` целиком заменяет прежнее значение;
+вложенные mappings не объединяются глубоко. Такая замена называется **shadowing**. Посмотреть
+effective policy, источник каждого ключа и перекрытые источники можно так:
+
+```bash
+reviewer config show --repo group/service --branch main --json
+```
+
+Committed-слой берётся на выбранном ref, поэтому разрешение review/config никогда не читает
+незакоммиченный `.review.yml` из worktree. Чтобы скопировать безопасную committed policy в
+repo-specific home-слой, не меняя committed-файл, выполните:
+
+```bash
+reviewer config migrate --repo group/service --branch main
+```
+
+Миграция неразрушающая: эквивалентный destination даёт no-op, а отличающийся destination
+сообщается как конфликт и остаётся без изменений. Home-файлы с credential-подобными ключами
+отклоняются как policy layers, а их значения никогда не выводятся; credentials храните только в
+server environment. Home-конфигурация принадлежит OS account, запускающему reviewer. На shared
+service account она может незаметно влиять на workloads этого account, поэтому team-visible policy
+держите в committed `.review.yml` и ограничивайте права на home-конфигурацию service account.
+
+`reviewer_configure-review` меняет context fields, сохраняя посторонние ключи. По умолчанию он
+предлагает per-repo home target, но по явному выбору обновляет committed `.review.yml` для
+team-visible policy.
 
 ### Доски задач
 
@@ -468,12 +506,13 @@ threshold, graph backend и retrieval ceilings меняют cost/recall; сна�
 - **Чтение/запись:** читает symbols кластеров и пишет grounded summaries в summary store.
 - **Результат:** fresh/pruned summaries с отчётом deferred и orphans.
 
-### `reviewer_configure-review` — обновить `.review.yml`
+### `reviewer_configure-review` — обновить слоистую политику репозитория
 
 - **Когда:** настроить ignored paths, retrieval limits, summary clustering или board metadata.
 - **Вызов:** `/rag-reviewer:reviewer_configure-review`.
 - **Нужно:** git repo; MCP и databases не нужны для baseline analysis.
-- **Чтение/запись:** читает tracked Python structure/history и меняет только одобренные YAML fields.
+- **Чтение/запись:** читает tracked Python structure/history и меняет одобренные YAML fields либо в
+  `home:repos/<owner>/<name>.yml`, либо в committed `.review.yml`.
 - **Результат:** сохранённые посторонние keys/comments и точная rebuild guidance.
 
 ## Эксплуатация, диагностика и ограничения
