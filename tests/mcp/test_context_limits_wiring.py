@@ -1,10 +1,11 @@
-"""Тесты обвязки context_limits в session-less MCP-тулах (PRI-202, Task 7).
+"""Тесты effective layered policy для context limits в session-less MCP-тулах.
 
-_resolve_context_limits — fail-soft резолв ContextLimits из .review.yml ветки
-(зеркало _resolve_summary_depth). search_codebase пробрасывает limits/hops/
-ceiling_override в Retriever.search_base (новая сигнатура, Task 5).
+_resolve_context_limits fail-soft объединяет env, home-слои и committed
+`.review.yml` (зеркало `_resolve_summary_depth`). `search_codebase` передаёт
+limits/hops/ceiling_override в `Retriever.search_base`.
 """
-from unittest.mock import MagicMock
+import logging
+from unittest.mock import MagicMock, patch
 
 from reviewer.config.settings import Settings
 from reviewer.mcp.service import MCPReviewService
@@ -20,7 +21,7 @@ def _settings() -> Settings:
 
 
 def test_resolve_context_limits_failsoft_returns_defaults() -> None:
-    """Сбой чтения .review.yml (VCS недоступен) → дефолт-константы ContextLimits."""
+    """Сбой чтения committed policy через VCS → дефолтные ContextLimits."""
     s = _settings()
     components = MagicMock()
     vcs = MagicMock()
@@ -34,7 +35,7 @@ def test_resolve_context_limits_failsoft_returns_defaults() -> None:
 
 
 def test_resolve_context_limits_no_review_yml_returns_defaults() -> None:
-    """Файла .review.yml нет (пустой текст) → тоже дефолт, без исключения."""
+    """Без committed policy effective policy даёт дефолты без исключения."""
     s = _settings()
     components = MagicMock()
     vcs = MagicMock()
@@ -45,6 +46,174 @@ def test_resolve_context_limits_no_review_yml_returns_defaults() -> None:
 
     assert isinstance(cl, ContextLimits)
     assert cl.search_codebase.ceiling == 15
+
+
+def test_resolve_context_limits_uses_home_repo_layer(
+    isolated_xdg_config_home,
+) -> None:
+    """Репозиторный home-слой задаёт graph.hops без committed policy в VCS."""
+    path = isolated_xdg_config_home / "rag-reviewer/repos/o/r.yml"
+    path.parent.mkdir(parents=True)
+    path.write_text("context_limits: {graph: {hops: 2}}\n", encoding="utf-8")
+    s = _settings()
+    components = MagicMock()
+    vcs = MagicMock()
+    vcs.get_file_at_ref.return_value = None
+    svc = MCPReviewService(s, components, vcs_factory=lambda o, n: vcs)
+
+    limits = svc._resolve_context_limits("o/r", "dev")
+
+    assert limits.graph.hops == 2
+
+
+def test_resolve_policy_reports_repo_home_source_and_keeps_injected_vcs_open(
+    isolated_xdg_config_home,
+) -> None:
+    """Репозиторный слой побеждает VCS и сохраняет ownership injected VCS."""
+    global_path = isolated_xdg_config_home / "rag-reviewer/review.yml"
+    global_path.parent.mkdir(parents=True)
+    global_path.write_text("summary_topk_threshold: 3\n", encoding="utf-8")
+    repo_path = isolated_xdg_config_home / "rag-reviewer/repos/o/r.yml"
+    repo_path.parent.mkdir(parents=True)
+    repo_path.write_text("summary_topk_threshold: 7\n", encoding="utf-8")
+    vcs = MagicMock()
+    vcs.get_file_at_ref.return_value = "summary_topk_threshold: 5\n"
+    svc = MCPReviewService(_settings(), MagicMock(), vcs_factory=lambda owner, name: vcs)
+
+    policy, meta = svc._resolve_policy("o/r", "dev")
+
+    assert policy.summary_topk_threshold == 7
+    assert meta.sources["summary_topk_threshold"] == "home:repos/o/r.yml"
+    vcs.close.assert_not_called()
+
+
+def test_resolve_policy_closes_internally_created_vcs() -> None:
+    """Созданный сервисом VCS закрывается после резолва policy."""
+    vcs = MagicMock()
+    vcs.get_file_at_ref.return_value = None
+    svc = MCPReviewService(_settings(), MagicMock(), vcs_factory=None)
+
+    with patch.object(svc._review_service, "_create_vcs_provider", return_value=vcs):
+        svc._resolve_policy("o/r", "dev")
+
+    vcs.close.assert_called_once_with()
+
+
+def test_resolve_context_limits_failsoft_closes_internal_vcs_after_fetch_error() -> None:
+    """Сбой чтения committed layer сохраняет fallback и закрывает owned VCS."""
+    vcs = MagicMock()
+    vcs.get_file_at_ref.side_effect = RuntimeError("network down")
+    svc = MCPReviewService(_settings(), MagicMock(), vcs_factory=None)
+
+    with patch.object(svc._review_service, "_create_vcs_provider", return_value=vcs):
+        limits = svc._resolve_context_limits("o/r", "dev")
+
+    assert limits == ContextLimits()
+    vcs.close.assert_called_once_with()
+
+
+def test_resolve_context_limits_ignores_internal_vcs_close_failure() -> None:
+    """Ошибка close внутреннего provider не отменяет уже полученный policy."""
+    vcs = MagicMock()
+    vcs.get_file_at_ref.return_value = "context_limits: {graph: {hops: 2}}\n"
+    vcs.close.side_effect = RuntimeError("close failed")
+    svc = MCPReviewService(_settings(), MagicMock(), vcs_factory=None)
+
+    with patch.object(svc._review_service, "_create_vcs_provider", return_value=vcs):
+        limits = svc._resolve_context_limits("o/r", "dev")
+
+    assert limits.graph.hops == 2
+    vcs.close.assert_called_once_with()
+
+
+def test_resolve_policy_logs_sanitized_home_credential_warning(
+    caplog,
+    isolated_xdg_config_home,
+) -> None:
+    """MCP warning explains skipped credential-shaped home layer without its value."""
+    path = isolated_xdg_config_home / "rag-reviewer/repos/o/r.yml"
+    path.parent.mkdir(parents=True)
+    path.write_text("github_token: leaked-value\n", encoding="utf-8")
+    vcs = MagicMock()
+    vcs.get_file_at_ref.return_value = None
+    svc = MCPReviewService(_settings(), MagicMock(), vcs_factory=lambda owner, name: vcs)
+
+    with caplog.at_level(logging.WARNING, logger="reviewer.mcp.service"):
+        policy, meta = svc._resolve_policy("o/r", "dev")
+
+    assert policy.context_limits == ContextLimits()
+    assert meta.warnings
+    assert "Домашний слой policy пропущен" in caplog.text
+    assert "github_token" in caplog.text
+    assert "leaked-value" not in caplog.text
+
+
+def test_resolve_policy_skips_invalid_home_value_without_logging_literal(
+    caplog,
+    isolated_xdg_config_home,
+) -> None:
+    secret = "do-not-echo"
+    path = isolated_xdg_config_home / "rag-reviewer/repos/o/r.yml"
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        f"context_limits: {{graph: {{hops: {secret}}}}}\n"
+        "future_policy: enabled\n",
+        encoding="utf-8",
+    )
+    vcs = MagicMock()
+    vcs.get_file_at_ref.return_value = "context_limits: {graph: {hops: 2}}\n"
+    svc = MCPReviewService(_settings(), MagicMock(), vcs_factory=lambda owner, name: vcs)
+
+    with caplog.at_level(logging.WARNING, logger="reviewer.mcp.service"):
+        policy, meta = svc._resolve_policy("o/r", "dev")
+
+    assert policy.context_limits.graph.hops == 2
+    assert meta.sources["context_limits"] == ".review.yml"
+    assert "home:repos/o/r.yml" in caplog.text
+    assert secret not in caplog.text
+
+
+def test_context_limits_failsoft_does_not_log_invalid_committed_literal(caplog) -> None:
+    secret = "do-not-echo"
+    vcs = MagicMock()
+    vcs.get_file_at_ref.return_value = (
+        f"context_limits: {{graph: {{hops: {secret}}}}}\n"
+    )
+    svc = MCPReviewService(_settings(), MagicMock(), vcs_factory=lambda owner, name: vcs)
+
+    with caplog.at_level(logging.WARNING, logger="reviewer.mcp.service"):
+        limits = svc._resolve_context_limits("o/r", "dev")
+
+    assert limits == ContextLimits()
+    assert "fail-soft" in caplog.text
+    assert secret not in caplog.text
+
+
+def test_resolve_context_limits_uses_falsey_injected_vcs_factory() -> None:
+    """Переданная VCS-фабрика остаётся caller-owned независимо от truthiness."""
+    class _FalseyFactory:
+        def __init__(self, vcs) -> None:
+            self.vcs = vcs
+
+        def __bool__(self) -> bool:
+            return False
+
+        def __call__(self, owner, name):
+            return self.vcs
+
+    injected_vcs = MagicMock()
+    injected_vcs.get_file_at_ref.return_value = None
+    internal_vcs = MagicMock()
+    internal_vcs.get_file_at_ref.return_value = None
+    svc = MCPReviewService(
+        _settings(), MagicMock(), vcs_factory=_FalseyFactory(injected_vcs)
+    )
+
+    with patch.object(svc._review_service, "_create_vcs_provider", return_value=internal_vcs) as create:
+        svc._resolve_context_limits("o/r", "dev")
+
+    create.assert_not_called()
+    injected_vcs.close.assert_not_called()
 
 
 class _FakeRetriever:

@@ -1,5 +1,8 @@
 from __future__ import annotations
+
+from collections.abc import Mapping
 from dataclasses import dataclass, field
+
 import yaml
 
 from reviewer.config.settings import SeverityLevel
@@ -81,19 +84,19 @@ class ReviewPolicy:
         )
 
     @classmethod
-    def load(cls, settings, yaml_text: str | None) -> "ReviewPolicy":
-        """Дефолты из env, поверх — переопределения из .review.yml (только заданные ключи)."""
+    def load_data(
+        cls,
+        settings,
+        data: Mapping[str, object] | None,
+    ) -> "ReviewPolicy":
+        """Apply explicit policy keys over Settings-backed defaults."""
         policy = cls.from_settings(settings)
-        if not yaml_text:
-            return policy
-        data = yaml.safe_load(yaml_text) or {}
+        data = dict(data or {})
         if "categories" in data:
             policy.categories = data["categories"] or {}
-            policy.enabled_only = []   # явная форма .yml отменяет env-вайтлист
-        if "severity_threshold" in data:
-            sev = data["severity_threshold"]
-            if sev in _SEV:
-                policy.severity_threshold = sev
+            policy.enabled_only = []
+        if "severity_threshold" in data and data["severity_threshold"] in _SEV:
+            policy.severity_threshold = data["severity_threshold"]
         if "max_comments" in data:
             policy.max_comments = data["max_comments"]
         if "min_confidence" in data:
@@ -118,6 +121,15 @@ class ReviewPolicy:
         if "context_limits" in data:
             policy.context_limits = ContextLimits.from_review_yaml(data)
         return policy
+
+    @classmethod
+    def load(cls, settings, yaml_text: str | None) -> "ReviewPolicy":
+        """Дефолты из env, поверх — переопределения из .review.yml (только заданные ключи)."""
+        data = yaml.safe_load(yaml_text) if yaml_text else {}
+        data = data or {}
+        if not isinstance(data, dict):
+            raise ValueError("review policy YAML must contain a mapping")
+        return cls.load_data(settings, data)
 
     def category_enabled(self, category: str) -> bool:
         if self.enabled_only:

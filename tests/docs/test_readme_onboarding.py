@@ -32,8 +32,8 @@ SECTION_PAIRS = CONTENT_PAIRS + (
 )
 
 PARITY_MARKERS = (
-    "uv tool install --from rag-reviewer reviewer",
-    "docker compose up -d",
+    "uv tool install rag-reviewer",
+    "docker compose -f ~/.config/rag-reviewer/docker-compose.yml up -d",
     "reviewer init",
     "reviewer install",
     "reviewer check",
@@ -196,8 +196,8 @@ def test_quick_start_downloads_compose_and_indexes_before_checking():
         _assert_in_order(
             section,
             (
-                "curl -O https://raw.githubusercontent.com/mimfort/rag_for_git/main/docker-compose.yml",
-                "docker compose up -d",
+                "curl -o ~/.config/rag-reviewer/docker-compose.yml",
+                "docker compose -f ~/.config/rag-reviewer/docker-compose.yml up -d",
                 "reviewer init",
                 "reviewer index /path/to/repo --ref main",
                 "reviewer check",

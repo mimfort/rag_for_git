@@ -4,14 +4,16 @@ from reviewer.services.repo_id import normalize_repo, derive_repo_from_remote, d
 
 @pytest.mark.parametrize("raw,expected", [
     ("Owner/Repo", "owner/repo"),
-    ("  OWNER/Name  ", "owner/name"),
-    ("owner/name", "owner/name"),
+    ("Group/Sub/Repo", "group/sub/repo"),
 ])
 def test_normalize_repo(raw, expected):
     assert normalize_repo(raw) == expected
 
 
-@pytest.mark.parametrize("bad", ["", "noslash", "a/b/c"])
+@pytest.mark.parametrize(
+    "bad",
+    ["", "noslash", "/a/b", "a/b/", "a/../b", "a/./b", "a\\b/c", "a/\x00/b"],
+)
 def test_normalize_repo_rejects_bad(bad):
     with pytest.raises(ValueError):
         normalize_repo(bad)

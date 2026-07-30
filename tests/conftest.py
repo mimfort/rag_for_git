@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 import socket
 import sys
 from types import FunctionType
@@ -161,8 +162,21 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
 
 
 @pytest.fixture(autouse=True)
+def isolated_xdg_config_home(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> Path:
+    """Изолировать policy/.env каждого теста от home конфигурации оператора."""
+    config_home = tmp_path / "xdg-config"
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(config_home))
+    return config_home
+
+
+@pytest.fixture(autouse=True)
 def infrastructure_test_settings(
-    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
+    request: pytest.FixtureRequest,
+    monkeypatch: pytest.MonkeyPatch,
+    isolated_xdg_config_home: Path,
 ) -> InfrastructureTestSettings | None:
     if request.node.get_closest_marker("integration") is None:
         enable_socket()

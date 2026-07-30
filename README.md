@@ -28,15 +28,23 @@ You need Python 3.11–3.13, [uv](https://docs.astral.sh/uv/), Docker, a Voyage 
 version-control system (VCS) token if reviewer should read or publish pull-request reviews. The
 stores run locally; embedding and reranking requests go to Voyage.
 
-1. Install the launcher, download the repository's Compose file, start the stores, and configure
-   reviewer:
+1. Install the launcher, download the repository's Compose file into reviewer's config directory,
+   start the stores, and configure reviewer:
 
    ```bash
-   uv tool install --from rag-reviewer reviewer
-   curl -O https://raw.githubusercontent.com/mimfort/rag_for_git/main/docker-compose.yml
-   docker compose up -d
+   uv tool install rag-reviewer
+   mkdir -p ~/.config/rag-reviewer
+   curl -o ~/.config/rag-reviewer/docker-compose.yml \
+     https://raw.githubusercontent.com/mimfort/rag_for_git/main/docker-compose.yml
+   docker compose -f ~/.config/rag-reviewer/docker-compose.yml up -d
    reviewer init
    ```
+
+   The Compose file lives next to the env file in `$XDG_CONFIG_HOME/rag-reviewer/`
+   (`~/.config/rag-reviewer/` by default), so one store stack serves every repository and the
+   Compose project name stays the same no matter which repository you are standing in. Plain
+   `curl -O` writes into the current directory instead; inside a clone of this repository it
+   overwrites the tracked `docker-compose.yml`.
 
 2. See the supported AI clients and connect one:
 
@@ -94,8 +102,10 @@ reviewer env on every workstation instead of using the loopback Compose defaults
 1. **On the shared host, start the stores and configure secrets for the service account.**
 
    ```bash
-   curl -O https://raw.githubusercontent.com/mimfort/rag_for_git/main/docker-compose.yml
-   docker compose up -d
+   mkdir -p ~/.config/rag-reviewer
+   curl -o ~/.config/rag-reviewer/docker-compose.yml \
+     https://raw.githubusercontent.com/mimfort/rag_for_git/main/docker-compose.yml
+   docker compose -f ~/.config/rag-reviewer/docker-compose.yml up -d
    reviewer init
    ```
 
@@ -224,9 +234,14 @@ For the module-level map and invariants, see [CLAUDE.md](CLAUDE.md).
 Persistent CLI:
 
 ```bash
-uv tool install --from rag-reviewer reviewer
+uv tool install rag-reviewer
 reviewer update
 ```
+
+`uv tool install` takes the package name and installs both of its commands, `reviewer` and
+`reviewer-mcp`. Its `--from` option only pins a different source for the same package
+(`--from rag-reviewer==0.4.2`, `--from git+…`); `--from PACKAGE COMMAND` is `uvx` syntax and
+`uv tool install` rejects it.
 
 Temporary/latest invocation:
 
@@ -321,7 +336,44 @@ context_limits:
     hops: 1
 ```
 
-Use `configure-review` to update context fields without clobbering unrelated keys.
+### Layered repository policy
+
+Policy is resolved in this exact order; each later source wins for the same top-level key:
+
+```text
+ENV
+  < $XDG_CONFIG_HOME/rag-reviewer/review.yml
+  < committed .review.yml at the selected target ref
+  < $XDG_CONFIG_HOME/rag-reviewer/repos/<owner>/<name>.yml
+```
+
+When `XDG_CONFIG_HOME` is unset, the home root is `~/.config/rag-reviewer`. Merging is only at the
+top level: a later mapping, list, or `null` replaces the complete earlier value; nested mappings
+are not deep-merged. That replacement is **shadowing**. Inspect the effective policy, source for
+each key, and shadowed sources with:
+
+```bash
+reviewer config show --repo group/service --branch main --json
+```
+
+The committed layer is fetched at the selected ref, so review/config resolution never reads an
+uncommitted worktree `.review.yml`. To copy a safe committed policy into the repo-specific home
+layer without modifying the committed file, run:
+
+```bash
+reviewer config migrate --repo group/service --branch main
+```
+
+Migration is non-destructive: an equivalent destination is a no-op, while a differing destination
+is reported as a conflict and left unchanged. Home files with credential-like keys are rejected as
+policy layers and their values are never displayed; keep credentials in server environment instead.
+Home configuration belongs to the OS account running reviewer. On a shared service account it can
+silently affect that account's workloads, so use committed `.review.yml` for team-visible policy and
+restrict the service account's home configuration permissions.
+
+Use `configure-review` to update context fields without clobbering unrelated keys. It
+recommends the per-repo home target first, or can explicitly update the committed `.review.yml` for
+team-visible policy.
 
 ### Task boards
 
@@ -477,7 +529,8 @@ namespaced skills with `$rag-reviewer:...`.
 - **When:** tune ignored paths, retrieval limits, summary clustering, or board metadata.
 - **Invoke:** `/rag-reviewer:configure-review`.
 - **Needs:** a git repository; MCP and databases are not required for baseline analysis.
-- **Reads/writes:** reads tracked Python structure/history and changes only approved YAML fields.
+- **Reads/writes:** reads tracked Python structure/history and changes approved YAML fields in either
+  `home:repos/<owner>/<name>.yml` or committed `.review.yml`.
 - **Result:** preserved foreign keys/comments plus exact rebuild guidance.
 
 ## Operations, troubleshooting, and limitations
@@ -511,7 +564,7 @@ uncommitted files directly from disk.
 
 | Symptom | Likely cause | Next action |
 |---|---|---|
-| `reviewer check` reports Postgres/Neo4j unavailable | Default stores are not running or DSNs differ | Run `docker compose up -d`, then repeat `reviewer check` |
+| `reviewer check` reports Postgres/Neo4j unavailable | Default stores are not running or DSNs differ | Run `docker compose -f ~/.config/rag-reviewer/docker-compose.yml up -d`, then repeat `reviewer check` |
 | Voyage returns 429 | Free-tier RPM/TPM quota is exhausted | Wait for the quota window; rerun incremental indexing rather than deleting the index |
 | PR is skipped | Its target branch is outside `REVIEW_BRANCHES`, or draft policy skips it | Inspect `prepare_review` reason and update policy only if the target is intentional |
 | Task lookup is empty | Board is disabled/unconfigured or the corpus is cold | Validate [board setup](docs/board-providers.md), then run `/rag-reviewer:sync-tasks` |

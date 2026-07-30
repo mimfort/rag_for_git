@@ -38,6 +38,11 @@ def _prepared(vcs) -> PreparedReview:
         changed_status={"a.py": "modified", "b.py": "added"},
         task_board={"type": "yougile"},
         task_keys={"primary": "PRI-7", "others": []},
+        config_sources={
+            "sources": {"paths": "home:repos/o/r.yml"},
+            "shadowed": {"paths": [".review.yml"]},
+            "warnings": [],
+        },
     )
 
 
@@ -63,6 +68,7 @@ def test_payload_roundtrip_preserves_fields() -> None:
     assert restored.changed_status == original.changed_status
     assert restored.task_board == original.task_board
     assert restored.task_keys == original.task_keys
+    assert restored.config_sources == original.config_sources
     assert restored.vcs is new_vcs                       # vcs не сериализуется, подставлен заново
 
 
@@ -95,3 +101,13 @@ def test_from_payload_bad_prq_raises_type_error() -> None:
     payload["prq"] = {"unexpected_field": 1}  # PullRequest(**...) → TypeError
     with pytest.raises(TypeError):
         from_payload(payload, _DummyVCS())
+
+
+def test_from_payload_without_config_sources_is_backward_compatible() -> None:
+    """Payload старой сессии восстанавливается с пустой конфигурацией источников."""
+    payload = json.loads(json.dumps(to_payload(_prepared(_DummyVCS()))))
+    payload.pop("config_sources")
+
+    restored = from_payload(payload, _DummyVCS())
+
+    assert restored.config_sources == {}

@@ -196,10 +196,17 @@ def _submit_then_publish(svc, repo, pr, findings, *, summary="s", dry_run=False,
 def test_publish_posts_inline_and_records_history(_ov, _ch) -> None:
     svc, vcs, history = _make_mcp_service_with_publish()
     svc.prepare_review("o/r", 7)
+    provenance = {
+        "sources": {"paths": "home:repos/o/r.yml"},
+        "shadowed": {"paths": [".review.yml"]},
+        "warnings": [],
+    }
+    svc._sessions[("o/r", 7)].prepared.config_sources = provenance
     report = _submit_then_publish(svc, "o/r", 7, [RAW], summary="Overall fine")
     assert report["posted"] is True
     assert vcs.published[0]["comments"][0]["path"] == "a.py"
     assert history.runs[0]["pr_number"] == 7
+    assert history.runs[0]["config_sources"] == provenance
     assert ("o/r", 7) not in svc._sessions          # сессия закрыта
 
 
