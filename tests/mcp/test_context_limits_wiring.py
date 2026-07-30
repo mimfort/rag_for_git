@@ -6,6 +6,8 @@ ceiling_override в Retriever.search_base (новая сигнатура, Task 5
 """
 from unittest.mock import MagicMock
 
+import pytest
+
 from reviewer.config.settings import Settings
 from reviewer.mcp.service import MCPReviewService
 from reviewer.policy.context_limits import CodebaseLimits, ContextLimits
@@ -17,6 +19,12 @@ def _settings() -> Settings:
     s.github_token = "test"
     s.default_repo = ""
     return s
+
+
+@pytest.fixture(autouse=True)
+def _isolated_home_config(monkeypatch, tmp_path) -> None:
+    """Изолирует MCP-резолв policy от конфигурации разработчика."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
 
 
 def test_resolve_context_limits_failsoft_returns_defaults() -> None:
@@ -45,6 +53,22 @@ def test_resolve_context_limits_no_review_yml_returns_defaults() -> None:
 
     assert isinstance(cl, ContextLimits)
     assert cl.search_codebase.ceiling == 15
+
+
+def test_resolve_context_limits_uses_home_repo_layer(tmp_path) -> None:
+    """Репозиторный home-слой задаёт лимит graph.hops без .review.yml в VCS."""
+    path = tmp_path / "rag-reviewer/repos/o/r.yml"
+    path.parent.mkdir(parents=True)
+    path.write_text("context_limits: {graph: {hops: 2}}\n", encoding="utf-8")
+    s = _settings()
+    components = MagicMock()
+    vcs = MagicMock()
+    vcs.get_file_at_ref.return_value = None
+    svc = MCPReviewService(s, components, vcs_factory=lambda o, n: vcs)
+
+    limits = svc._resolve_context_limits("o/r", "dev")
+
+    assert limits.graph.hops == 2
 
 
 class _FakeRetriever:

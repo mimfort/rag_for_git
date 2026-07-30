@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
+import pytest
+
 from reviewer.config.settings import Settings
 from reviewer.mcp.service import MCPReviewService
 
@@ -12,6 +14,12 @@ def _settings() -> Settings:
     s.voyage_api_key = "test"
     s.default_repo = ""
     return s
+
+
+@pytest.fixture(autouse=True)
+def _isolated_home_config(monkeypatch, tmp_path) -> None:
+    """Изолирует MCP-резолв policy от конфигурации разработчика."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
 
 
 def _svc(components) -> MCPReviewService:
@@ -258,6 +266,14 @@ def _svc_with_vcs(vcs_or_exc):
     return svc
 
 
+def _service_for_summary_resolution() -> tuple[MCPReviewService, MagicMock]:
+    """Сервис с VCS-фабрикой для изолированного резолва policy сводок."""
+    vcs = MagicMock()
+    svc = MCPReviewService(_settings(), components=MagicMock(),
+                           vcs_factory=lambda owner, name: vcs)
+    return svc, vcs
+
+
 def test_resolve_summary_depth_override_from_review_yml():
     svc = _svc_with_vcs(_FakeVCS("summary_cluster_depth: 3"))
     depth, overrides, source = svc._resolve_summary_depth("o/n", "dev")
@@ -368,6 +384,20 @@ def test_resolve_summary_topk_threshold_no_key_falls_back_to_env():
     val, source = svc._resolve_summary_topk_threshold("o/n", "dev")
     assert val == svc.settings.summary_topk_threshold
     assert source == "env"
+
+
+def test_summary_threshold_reports_home_repo_source(tmp_path):
+    """Источник порога указывает репозиторный home-слой, а не env."""
+    path = tmp_path / "rag-reviewer/repos/o/r.yml"
+    path.parent.mkdir(parents=True)
+    path.write_text("summary_topk_threshold: 7\n", encoding="utf-8")
+    svc, vcs = _service_for_summary_resolution()
+    vcs.get_file_at_ref.return_value = None
+
+    value, source = svc._resolve_summary_topk_threshold("o/r", "main")
+
+    assert value == 7
+    assert source == "home:repos/o/r.yml"
 
 
 def test_settings_default_summary_topk_threshold_is_20():
