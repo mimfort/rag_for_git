@@ -4,6 +4,8 @@ import pytest
 
 from reviewer.config.layers import (
     HomeConfigError,
+    ResolutionMeta,
+    build_config_report,
     home_repo_path,
     migrate_repo_config,
     policy_to_public_data,
@@ -241,3 +243,20 @@ def test_policy_to_public_data_excludes_settings_secrets_and_unknown_yaml() -> N
     }
     assert data["max_comments"] == 4
     assert secret not in repr(data)
+
+
+def test_build_config_report_marks_policy_defaults_as_env() -> None:
+    report = build_config_report(
+        "O/R",
+        "main",
+        Settings(_env_file=None, review_max_comments=12),
+        {"paths": {"ignore": ["vendor"]}},
+        ResolutionMeta({"paths": "home:repos/o/r.yml"}, {}, ("safe warning",)),
+    )
+
+    assert report["repo"] == "o/r"
+    assert report["branch"] == "main"
+    assert report["effective"]["max_comments"] == 12
+    assert report["sources"]["max_comments"] == "env"
+    assert report["sources"]["paths"] == "home:repos/o/r.yml"
+    assert report["warnings"] == ["safe warning"]

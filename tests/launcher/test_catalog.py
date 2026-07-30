@@ -10,6 +10,8 @@ from reviewer.launcher.models import Effect, ParameterPresentation
 
 VISIBLE_COMMANDS = {
     "check",
+    "config migrate",
+    "config show",
     "gc",
     "index",
     "init",

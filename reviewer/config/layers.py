@@ -220,6 +220,27 @@ def policy_to_public_data(policy: ReviewPolicy) -> dict[str, object]:
     }
 
 
+def build_config_report(
+    repo: str,
+    branch: str,
+    settings,
+    data: Mapping[str, object],
+    meta: ResolutionMeta,
+) -> dict[str, object]:
+    """Собрать безопасный диагностический отчёт об эффективной policy."""
+    policy = ReviewPolicy.load_data(settings, data)
+    effective = policy_to_public_data(policy)
+    sources = {key: meta.sources.get(key, "env") for key in effective}
+    return {
+        "repo": normalize_repo(repo),
+        "branch": branch,
+        "effective": effective,
+        "sources": sources,
+        "shadowed": {key: list(value) for key, value in meta.shadowed.items()},
+        "warnings": list(meta.warnings),
+    }
+
+
 def _empty_meta() -> ResolutionMeta:
     return ResolutionMeta({}, {}, ())
 
