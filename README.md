@@ -330,7 +330,44 @@ context_limits:
     hops: 1
 ```
 
-Use `reviewer_configure-review` to update context fields without clobbering unrelated keys.
+### Layered repository policy
+
+Policy is resolved in this exact order; each later source wins for the same top-level key:
+
+```text
+ENV
+  < $XDG_CONFIG_HOME/rag-reviewer/review.yml
+  < committed .review.yml at the selected target ref
+  < $XDG_CONFIG_HOME/rag-reviewer/repos/<owner>/<name>.yml
+```
+
+When `XDG_CONFIG_HOME` is unset, the home root is `~/.config/rag-reviewer`. Merging is only at the
+top level: a later mapping, list, or `null` replaces the complete earlier value; nested mappings
+are not deep-merged. That replacement is **shadowing**. Inspect the effective policy, source for
+each key, and shadowed sources with:
+
+```bash
+reviewer config show --repo group/service --branch main --json
+```
+
+The committed layer is fetched at the selected ref, so review/config resolution never reads an
+uncommitted worktree `.review.yml`. To copy a safe committed policy into the repo-specific home
+layer without modifying the committed file, run:
+
+```bash
+reviewer config migrate --repo group/service --branch main
+```
+
+Migration is non-destructive: an equivalent destination is a no-op, while a differing destination
+is reported as a conflict and left unchanged. Home files with credential-like keys are rejected as
+policy layers and their values are never displayed; keep credentials in server environment instead.
+Home configuration belongs to the OS account running reviewer. On a shared service account it can
+silently affect that account's workloads, so use committed `.review.yml` for team-visible policy and
+restrict the service account's home configuration permissions.
+
+Use `reviewer_configure-review` to update context fields without clobbering unrelated keys. It
+recommends the per-repo home target first, or can explicitly update the committed `.review.yml` for
+team-visible policy.
 
 ### Task boards
 
@@ -481,12 +518,13 @@ namespaced skills with `$rag-reviewer:...`.
 - **Reads/writes:** reads cluster symbols and writes grounded summaries to the summary store.
 - **Result:** fresh/pruned summaries with deferred and orphan reporting.
 
-### `reviewer_configure-review` — update `.review.yml`
+### `reviewer_configure-review` — update layered repository policy
 
 - **When:** tune ignored paths, retrieval limits, summary clustering, or board metadata.
 - **Invoke:** `/rag-reviewer:reviewer_configure-review`.
 - **Needs:** a git repository; MCP and databases are not required for baseline analysis.
-- **Reads/writes:** reads tracked Python structure/history and changes only approved YAML fields.
+- **Reads/writes:** reads tracked Python structure/history and changes approved YAML fields in either
+  `home:repos/<owner>/<name>.yml` or committed `.review.yml`.
 - **Result:** preserved foreign keys/comments plus exact rebuild guidance.
 
 ## Operations, troubleshooting, and limitations

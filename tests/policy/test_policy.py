@@ -1,3 +1,5 @@
+import yaml
+
 from reviewer.policy.policy import ReviewPolicy
 from reviewer.config.settings import Settings
 from reviewer.vcs.base import Finding
@@ -52,6 +54,24 @@ def test_load_env_defaults_then_yaml_override():
 
     p3 = ReviewPolicy.load(s, "output_language: en")
     assert p3.output_language == "en"   # YAML переопределяет env-дефолт
+
+
+def test_load_data_matches_load_for_nested_policy() -> None:
+    settings = Settings(_env_file=None, review_severity_threshold="medium")
+    data = {
+        "severity_threshold": "high",
+        "paths": {"ignore": ["vendor/**"]},
+        "context_limits": {"graph": {"hops": 2}},
+        "task_board": None,
+    }
+
+    from_data = ReviewPolicy.load_data(settings, data)
+    from_text = ReviewPolicy.load(settings, yaml.safe_dump(data))
+
+    assert from_data == from_text
+    assert from_data.ignore == ["vendor/**"]
+    assert from_data.context_limits.graph.hops == 2
+    assert from_data.task_board is None
 
 
 def test_output_language_default_and_yaml_override():

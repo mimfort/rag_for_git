@@ -36,6 +36,7 @@ def to_payload(prepared: PreparedReview) -> dict:
         "changed_status": prepared.changed_status,
         "task_board": prepared.task_board,
         "task_keys": prepared.task_keys,
+        "config_sources": prepared.config_sources,
     }
 
 
@@ -79,4 +80,5 @@ def from_payload(d: dict, vcs: VCSProvider) -> PreparedReview:
         changed_status=d["changed_status"],
         task_board=d.get("task_board"),
         task_keys=d.get("task_keys"),
+        config_sources=d.get("config_sources", {}),
     )

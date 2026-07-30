@@ -18,6 +18,26 @@ COMMAND_PRESENTATION = {
         scenarios=("После установки", "После изменения .env"),
         keywords=("health", "диагностика", "доступы"),
     ),
+    ("config", "migrate"): CommandPresentation(
+        summary="Перенести policy в домашний слой",
+        details=(
+            "Атомарно копирует committed .review.yml в repository-scoped home config; "
+            "при конфликте ничего не перезаписывает."
+        ),
+        effects=(Effect.READ, Effect.NETWORK, Effect.WRITE),
+        scenarios=("Переход на home config",),
+        keywords=("config", "migration", "policy"),
+    ),
+    ("config", "show"): CommandPresentation(
+        summary="Показать effective repository policy",
+        details=(
+            "Показывает публичные effective values, источники слоёв и затенённые ключи "
+            "без раскрытия credentials."
+        ),
+        effects=(Effect.READ, Effect.NETWORK),
+        scenarios=("Диагностика repository policy",),
+        keywords=("config", "policy", "provenance"),
+    ),
     ("gc",): CommandPresentation(
         summary="Очистить осиротевшие overlay",
         details="Удаляет только overlay без живой review session и просроченные сессии.",

@@ -50,7 +50,9 @@ from reviewer.vcs.base import ChangedFile, Finding, VCSProvider
 from reviewer.vcs.diff import commentable_lines
 
 if TYPE_CHECKING:
+    from reviewer.config.layers import ResolutionMeta
     from reviewer.policy.context_limits import ContextLimits
+    from reviewer.policy.policy import ReviewPolicy
 
 log = logging.getLogger(__name__)
 
@@ -733,93 +735,67 @@ class MCPReviewService:
                     f"({self.settings.review_branches_list()}))")
         return (repo, branch or self.settings.primary_branch())
 
-    def _resolve_summary_depth(self, repo: str, branch: str) -> tuple[int, dict[str, int], str]:
-        """Резолв глубины кластеризации сводок: env-дефолт → override из .review.yml ветки.
-
-        Возвращает (depth, depth_overrides, source). depth_overrides — карта
-        префикс→depth из .review.yml (PRI-161); пусто, если ключа нет. Fail-soft:
-        нет токена/ветки/файла/кривой yml → (settings.summary_cluster_depth, {}, "env").
-        source = ".review.yml", если файл задаёт summary_cluster_depth или _overrides."""
-        import yaml
+    def _resolve_policy(self, repo: str, branch: str) -> tuple["ReviewPolicy", "ResolutionMeta"]:
+        """Резолвит effective policy из env, home-слоёв и committed `.review.yml`."""
+        from reviewer.config.layers import resolve_policy_data
         from reviewer.policy.policy import ReviewPolicy
-        default = self.settings.summary_cluster_depth
         owner, name = repo.split("/", 1)
         vcs = None
         try:
-            vcs = (self._vcs_factory(owner, name) if self._vcs_factory
-                   else self._review_service._create_vcs_provider(owner, name))
-            text = vcs.get_file_at_ref(".review.yml", branch)
-            if not text:
-                return default, {}, "env"
-            data = yaml.safe_load(text) or {}
-            pol = ReviewPolicy.load(self.settings, text)
-            keyed = ("summary_cluster_depth" in data
-                     or "summary_cluster_depth_overrides" in data)
-            return (pol.summary_cluster_depth, pol.summary_cluster_depth_overrides,
-                    ".review.yml" if keyed else "env")
-        except Exception:
-            log.warning("_resolve_summary_depth: fail-soft → env-дефолт", exc_info=True)
-            return default, {}, "env"
+            vcs = (
+                self._vcs_factory(owner, name)
+                if self._vcs_factory is not None
+                else self._review_service._create_vcs_provider(owner, name)
+            )
+            data, meta = resolve_policy_data(
+                repo,
+                branch,
+                lambda ref: vcs.get_file_at_ref(".review.yml", ref),
+            )
+            for warning in meta.warnings:
+                log.warning("Домашний слой policy пропущен: %s", warning)
+            return ReviewPolicy.load_data(self.settings, data), meta
         finally:
             if vcs is not None and self._vcs_factory is None:
                 try:
                     vcs.close()
                 except Exception:
-                    log.warning("_resolve_summary_depth: не удалось закрыть VCS", exc_info=True)
+                    log.warning("_resolve_policy: не удалось закрыть VCS", exc_info=True)
+
+    def _resolve_summary_depth(self, repo: str, branch: str) -> tuple[int, dict[str, int], str]:
+        """Резолв глубины кластеризации сводок с сохранением fail-soft env-дефолта."""
+        default = self.settings.summary_cluster_depth
+        try:
+            policy, meta = self._resolve_policy(repo, branch)
+            source = meta.sources.get(
+                "summary_cluster_depth",
+                meta.sources.get("summary_cluster_depth_overrides", "env"),
+            )
+            return policy.summary_cluster_depth, policy.summary_cluster_depth_overrides, source
+        except Exception:
+            log.warning("_resolve_summary_depth: fail-soft → env-дефолт")
+            return default, {}, "env"
 
     def _resolve_summary_topk_threshold(self, repo: str, branch: str) -> tuple[int, str]:
-        """Резолв порога масштаба приора сводок: env-дефолт → override из .review.yml ветки.
-
-        repo уже нормализован (вызывается после _resolve_repo_branch). Fail-soft:
-        нет токена/ветки/файла/кривой yml → (settings.summary_topk_threshold, "env").
-        source = ".review.yml", только если файл явно задаёт ключ summary_topk_threshold."""
-        import yaml
-        from reviewer.policy.policy import ReviewPolicy
+        """Резолв порога масштаба приора сводок с сохранением env-дефолта."""
         default = self.settings.summary_topk_threshold
-        owner, name = repo.split("/", 1)
-        vcs = None
         try:
-            vcs = (self._vcs_factory(owner, name) if self._vcs_factory
-                   else self._review_service._create_vcs_provider(owner, name))
-            text = vcs.get_file_at_ref(".review.yml", branch)
-            if not text:
-                return default, "env"
-            data = yaml.safe_load(text) or {}
-            val = ReviewPolicy.load(self.settings, text).summary_topk_threshold
-            return val, (".review.yml" if "summary_topk_threshold" in data else "env")
+            policy, meta = self._resolve_policy(repo, branch)
+            source = meta.sources.get("summary_topk_threshold", "env")
+            return policy.summary_topk_threshold, source
         except Exception:
-            log.warning("_resolve_summary_topk_threshold: fail-soft → env-дефолт", exc_info=True)
+            log.warning("_resolve_summary_topk_threshold: fail-soft → env-дефолт")
             return default, "env"
-        finally:
-            if vcs is not None and self._vcs_factory is None:
-                try:
-                    vcs.close()
-                except Exception:
-                    log.warning("_resolve_summary_topk_threshold: не удалось закрыть VCS",
-                                exc_info=True)
 
     def _resolve_context_limits(self, repo: str, branch: str) -> "ContextLimits":
-        """Лимиты контекста из .review.yml ветки (PRI-202). Fail-soft → дефолт-константы."""
+        """Лимиты контекста из всех policy-слоёв. Fail-soft → дефолт-константы."""
         from reviewer.policy.context_limits import ContextLimits
-        from reviewer.policy.policy import ReviewPolicy
-        owner, name = repo.split("/", 1)
-        vcs = None
         try:
-            vcs = (self._vcs_factory(owner, name) if self._vcs_factory
-                   else self._review_service._create_vcs_provider(owner, name))
-            text = vcs.get_file_at_ref(".review.yml", branch)
-            if not text:
-                return ContextLimits()
-            return ReviewPolicy.load(self.settings, text).context_limits
+            policy, _ = self._resolve_policy(repo, branch)
+            return policy.context_limits
         except Exception:
-            log.warning("_resolve_context_limits: fail-soft → дефолт-константы", exc_info=True)
+            log.warning("_resolve_context_limits: fail-soft → дефолт-константы")
             return ContextLimits()
-        finally:
-            if vcs is not None and self._vcs_factory is None:
-                try:
-                    vcs.close()
-                except Exception:
-                    log.warning("_resolve_context_limits: не удалось закрыть VCS", exc_info=True)
 
     def search_codebase(self, repo: str, query: str, top_k: int | None = None,
                         branch: str | None = None,
@@ -832,7 +808,8 @@ class MCPReviewService:
         построчными номерами для цитирования path:line без повторного Read.
         include_tests=True возвращает тест-чанки. Охват адаптивен (cliff-отсечка
         реранкера, PRI-202): top_k — необязательный override потолка (ceiling)
-        для этого вызова; None → потолок берётся из .review.yml/дефолта.
+        для этого вызова; None → потолок берётся из effective layered policy
+        либо дефолта.
         """
         rb = self._resolve_repo_branch(repo, branch)
         if isinstance(rb, str):
@@ -947,7 +924,8 @@ class MCPReviewService:
         """Кластеризовать base-граф по модулям → кластеры для /summarize-subsystems.
         cap (дефолт Settings.summary_rebuild_cap; None/0=безлимит) отбрасывает наименее
         приоритетные stale-кластеры (без сводки → старейшие updated_at первыми) и считает
-        их в deferred (PRI-165)."""
+        их в deferred (PRI-165). Если depth не задан, он берётся из effective layered
+        policy с fail-soft env-дефолтом."""
         from reviewer.graph.summaries import Member, build_clusters
         rb = self._resolve_repo_branch(repo, branch)
         if isinstance(rb, str):
@@ -1100,8 +1078,8 @@ class MCPReviewService:
         """Дешёвый приор: предрасчитанные summary подсистем (fail-open у потребителя).
 
         cluster_key → одна сводка. Иначе: при query И числе сводок > порога масштаба
-        (SUMMARY_TOPK_THRESHOLD, per-repo .review.yml) — ANN top-k по близости (PRI-167);
-        иначе (без query или ≤ порога) — все (бэк-компат)."""
+        (effective `summary_topk_threshold` layered policy) — ANN top-k по близости
+        (PRI-167); иначе (без query или ≤ порога) — все (бэк-компат)."""
         rb = self._resolve_repo_branch(repo, branch)
         if isinstance(rb, str):
             return {"summaries": [], "note": rb}
@@ -1534,6 +1512,7 @@ class MCPReviewService:
                     1 for r in asm.findings_rows if r["published"] and not r["inline"]
                 ),
                 "usage": metadata.usage,
+                "config_sources": p.config_sources,
                 "total_cost": metadata.total_cost,
                 "error_text": error or None,
             }

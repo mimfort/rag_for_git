@@ -114,7 +114,7 @@ class ReviewHistory:
                 files_reviewed, files_skipped, files_failed,
                 findings_analyzed, findings_kept, verify_rejected,
                 comments_inline, comments_summary,
-                usage, total_cost, error_text
+                usage, config_sources, total_cost, error_text
             ) VALUES (
                 %(repo)s, %(pr_number)s, %(base_sha)s, %(head_sha)s,
                 %(model)s, %(model_verify)s, %(dry_run)s,
@@ -122,7 +122,7 @@ class ReviewHistory:
                 %(files_reviewed)s, %(files_skipped)s, %(files_failed)s,
                 %(findings_analyzed)s, %(findings_kept)s, %(verify_rejected)s,
                 %(comments_inline)s, %(comments_summary)s,
-                %(usage)s, %(total_cost)s, %(error_text)s
+                %(usage)s, %(config_sources)s, %(total_cost)s, %(error_text)s
             ) RETURNING id
             """
             finding_sql = """
@@ -144,10 +144,13 @@ class ReviewHistory:
                 %(text)s, %(tool_calls)s, %(tokens)s, %(cost)s
             )
             """
-            # usage должен быть jsonb-совместимой строкой
+            # JSONB-поля передаём строками; старые вызовы без provenance получают {}.
             run_row = dict(run)
-            if "usage" in run_row and not isinstance(run_row["usage"], str):
-                run_row["usage"] = json.dumps(run_row["usage"])
+            if run_row.get("config_sources") is None:
+                run_row["config_sources"] = {}
+            for field in ("usage", "config_sources"):
+                if not isinstance(run_row.get(field), str):
+                    run_row[field] = json.dumps(run_row.get(field), ensure_ascii=False)
 
             with self._connect() as conn:
                 row = conn.execute(run_sql, run_row).fetchone()
@@ -224,7 +227,8 @@ class ReviewHistory:
                files_reviewed, files_skipped, files_failed,
                findings_analyzed, findings_kept, verify_rejected,
                comments_inline, comments_summary,
-               usage, total_cost, error_text
+               usage, COALESCE(config_sources, '{{}}'::jsonb) AS config_sources,
+               total_cost, error_text
         FROM review_runs
         {where}
         ORDER BY created_at DESC
@@ -246,7 +250,8 @@ class ReviewHistory:
                files_reviewed, files_skipped, files_failed,
                findings_analyzed, findings_kept, verify_rejected,
                comments_inline, comments_summary,
-               usage, total_cost, error_text
+               usage, COALESCE(config_sources, '{}'::jsonb) AS config_sources,
+               total_cost, error_text
         FROM review_runs WHERE id = %(id)s
         """
         finding_sql = """
@@ -438,7 +443,9 @@ def _row_to_dict(cols: list[str], row: tuple) -> dict:
     """
     result: dict = {}
     for key, val in zip(cols, row):
-        if isinstance(val, Decimal):
+        if key == "config_sources" and val is None:
+            result[key] = {}
+        elif isinstance(val, Decimal):
             result[key] = float(val)
         elif hasattr(val, "isoformat"):
             result[key] = val.isoformat()

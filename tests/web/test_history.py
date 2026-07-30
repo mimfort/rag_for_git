@@ -6,6 +6,7 @@ Unit fail-soft мокает `_connect`; integration проверяет запи�
 """
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 from unittest.mock import patch
 
@@ -43,6 +44,11 @@ def _sample_run() -> dict:
         "comments_summary": 1,
         "usage": {"analyze": {"calls": 3, "input_tokens": 1000, "output_tokens": 200,
                                "cache_read_tokens": 0, "cost": 0.01}},
+        "config_sources": {
+            "sources": {"paths": "home:repos/owner/repo.yml"},
+            "shadowed": {"paths": [".review.yml"]},
+            "warnings": [],
+        },
         "total_cost": 0.01,
         "error_text": None,
     }
@@ -137,6 +143,8 @@ def test_record_run_defaults_missing_outcome_keys():
         def __enter__(self): return self
         def __exit__(self, *a): return False
         def execute(self, sql, row=None):
+            captured["run_sql"] = sql
+            captured["run_row"] = row
             class _R:
                 def fetchone(self_inner): return (1,)
             return _R()
@@ -149,6 +157,101 @@ def test_record_run_defaults_missing_outcome_keys():
     # _sample_findings() без outcome → в строках дефолт None по обоим ключам.
     assert all(r["outcome"] is None and r["reject_reason"] is None
                for r in captured["rows"])
+    assert "usage, config_sources, total_cost" in captured["run_sql"]
+    assert "%(usage)s, %(config_sources)s, %(total_cost)s" in captured["run_sql"]
+    assert json.loads(captured["run_row"]["config_sources"]) == _sample_run()["config_sources"]
+
+
+@pytest.mark.parametrize("missing", [True, False], ids=["missing", "none"])
+def test_record_run_defaults_missing_or_none_config_sources(missing: bool) -> None:
+    """Старые и частично заполненные вызовы пишут provenance как пустой объект."""
+    history = ReviewHistory("postgresql://bad:bad@localhost:1/nonexistent")
+    captured = {}
+
+    class _Conn:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def execute(self, sql, row=None):
+            captured["run_row"] = row
+
+            class _Result:
+                def fetchone(self_inner): return (1,)
+
+            return _Result()
+        def commit(self): pass
+
+    run = _sample_run()
+    if missing:
+        run.pop("config_sources")
+    else:
+        run["config_sources"] = None
+
+    with patch.object(history, "_connect", return_value=_Conn()):
+        assert history.record_run(run, []) == 1
+
+    assert json.loads(captured["run_row"]["config_sources"]) == {}
+
+
+class _Column:
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+
+class _ReadCursor:
+    def __init__(self, responses: list[tuple[list[str], list[tuple]]], sql: list[str]) -> None:
+        self._responses = iter(responses)
+        self._sql = sql
+        self._rows: list[tuple] = []
+        self.description: list[_Column] = []
+
+    def __enter__(self): return self
+    def __exit__(self, *args): return False
+
+    def execute(self, sql: str, params: dict) -> None:
+        self._sql.append(sql)
+        columns, self._rows = next(self._responses)
+        self.description = [_Column(name) for name in columns]
+
+    def fetchall(self) -> list[tuple]:
+        return self._rows
+
+    def fetchone(self) -> tuple | None:
+        return self._rows[0] if self._rows else None
+
+
+class _ReadConnection:
+    def __init__(self, cursor: _ReadCursor) -> None:
+        self._cursor = cursor
+
+    def __enter__(self): return self
+    def __exit__(self, *args): return False
+    def cursor(self) -> _ReadCursor: return self._cursor
+
+
+def test_list_runs_maps_legacy_null_config_sources_to_empty_object() -> None:
+    """Старые строки с SQL NULL получают публичный совместимый пустой provenance."""
+    history = ReviewHistory("postgresql://bad:bad@localhost:1/nonexistent")
+    sql: list[str] = []
+    cursor = _ReadCursor([(["id", "config_sources"], [(1, None)])], sql)
+
+    with patch.object(history, "_connect", return_value=_ReadConnection(cursor)):
+        assert history.list_runs() == [{"id": 1, "config_sources": {}}]
+
+    assert "COALESCE(config_sources, '{}'::jsonb) AS config_sources" in sql[0]
+
+
+def test_get_run_maps_legacy_null_config_sources_to_empty_object() -> None:
+    """Деталь прогона также нормализует provenance старой SQL-строки."""
+    history = ReviewHistory("postgresql://bad:bad@localhost:1/nonexistent")
+    sql: list[str] = []
+    cursor = _ReadCursor(
+        [(["id", "config_sources"], [(1, None)]), (["id"], [])], sql,
+    )
+
+    with patch.object(history, "_connect", return_value=_ReadConnection(cursor)):
+        assert history.get_run(1) == {"id": 1, "config_sources": {}, "findings": []}
+
+    assert "COALESCE(config_sources, '{}'::jsonb) AS config_sources" in sql[0]
 
 
 @pytest.mark.integration
@@ -168,6 +271,7 @@ def test_record_and_get_run_persists_outcome():
     ]
     run_id = history.record_run(_sample_run(), findings)
     result = history.get_run(run_id)
+    assert result["config_sources"]["sources"]["paths"] == "home:repos/owner/repo.yml"
     by_outcome = {f["outcome"]: f for f in result["findings"]}
     assert by_outcome["published_inline"]["reject_reason"] is None
     assert by_outcome["verify_rejected"]["reject_reason"] == "line does not exist"
@@ -209,6 +313,27 @@ def test_record_run_self_migrates_missing_columns():
     finally:
         # Восстанавливаем схему независимо от исхода, чтобы падение теста не
         # каскадировало на последующие integration-тесты (не полагаемся на self-heal).
+        ReviewHistory(dsn).init_schema()
+
+
+@pytest.mark.integration
+def test_record_run_self_migrates_missing_config_sources_column():
+    """Новый history writer домигрирует provenance-колонку старой review_runs."""
+    import psycopg
+
+    dsn = Settings().pg_dsn
+    ReviewHistory(dsn).init_schema()
+    with psycopg.connect(dsn) as conn:
+        conn.execute("ALTER TABLE review_runs DROP COLUMN IF EXISTS config_sources")
+        conn.commit()
+
+    try:
+        history = ReviewHistory(dsn)
+        run_id = history.record_run(_sample_run(), [])
+
+        assert run_id is not None
+        assert history.get_run(run_id)["config_sources"] == _sample_run()["config_sources"]
+    finally:
         ReviewHistory(dsn).init_schema()
 
 
