@@ -3,6 +3,13 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 SKILLS_ROOT = ROOT / "plugin" / "skills"
 TEXT_SUFFIXES = {".md", ".py", ".json", ".toml", ".yml", ".yaml"}
+ACTIVE_DOCS = (
+    ROOT / "README.md",
+    ROOT / "README.ru.md",
+    ROOT / "CLAUDE.md",
+    ROOT / "AGENTS.md",
+    ROOT / "plugin" / "README.md",
+)
 
 
 def registered_skill_files() -> tuple[Path, ...]:
@@ -75,3 +82,28 @@ def test_active_code_and_plugin_surfaces_have_no_legacy_skill_names():
         *_text_files(ROOT / "tests"),
     )
     assert _legacy_offenders(paths) == []
+
+
+def test_active_docs_have_no_legacy_skill_names():
+    assert _legacy_offenders(ACTIVE_DOCS) == []
+
+
+def test_bilingual_readmes_list_every_canonical_skill():
+    for readme in (ROOT / "README.md", ROOT / "README.ru.md"):
+        text = readme.read_text(encoding="utf-8")
+        missing = [
+            name
+            for name in registered_skill_names()
+            if f"/rag-reviewer:{name}" not in text
+        ]
+        assert missing == [], f"{readme.name}: {missing}"
+
+
+def test_migration_docs_require_fresh_sessions():
+    for readme in ACTIVE_DOCS:
+        text = readme.read_text(encoding="utf-8")
+        assert "rag-reviewer:" in text
+    combined = "\n".join(path.read_text(encoding="utf-8") for path in ACTIVE_DOCS)
+    assert "New Chat" in combined
+    assert "new CLI session" in combined
+    assert "Reload Window" in combined
