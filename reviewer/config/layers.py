@@ -9,6 +9,7 @@ import math
 import os
 from pathlib import Path
 import stat
+import sys
 import tempfile
 
 import yaml
@@ -352,10 +353,13 @@ def _empty_meta() -> ResolutionMeta:
 def _read_destination_mapping(path: Path, source: str) -> dict[str, object] | None:
     """Прочитать существующий regular destination, не следуя symlink на POSIX."""
     try:
-        if stat.S_ISLNK(os.lstat(path).st_mode):
+        before = os.lstat(path)
+        if stat.S_ISLNK(before.st_mode):
             raise HomeConfigError(f"{source}: symlink запрещён")
     except FileNotFoundError:
         return None
+    except OSError as exc:
+        raise HomeConfigError(f"{source}: конфиг не прочитан: {type(exc).__name__}") from exc
     flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
     try:
         descriptor = os.open(path, flags)
@@ -364,14 +368,28 @@ def _read_destination_mapping(path: Path, source: str) -> dict[str, object] | No
     except OSError as exc:
         raise HomeConfigError(f"{source}: конфиг не прочитан: {type(exc).__name__}") from exc
     try:
-        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
-            raise HomeConfigError(f"{source}: regular file обязателен")
+        opened = os.fstat(descriptor)
         with os.fdopen(descriptor, encoding="utf-8") as handle:
             descriptor = -1
-            return _read_mapping(handle.read(), source)
+            text = handle.read()
+        fresh = os.lstat(path)
+    except (OSError, UnicodeError) as exc:
+        raise HomeConfigError(f"{source}: конфиг не прочитан: {type(exc).__name__}") from exc
     finally:
         if descriptor != -1:
             os.close(descriptor)
+    before_identity = before.st_dev, before.st_ino
+    opened_identity = opened.st_dev, opened.st_ino
+    fresh_identity = fresh.st_dev, fresh.st_ino
+    if (
+        not stat.S_ISREG(before.st_mode)
+        or not stat.S_ISREG(opened.st_mode)
+        or stat.S_ISLNK(fresh.st_mode)
+        or before_identity != opened_identity
+        or opened_identity != fresh_identity
+    ):
+        raise HomeConfigError(f"{source}: race при чтении destination")
+    return _read_mapping(text, source)
 
 
 def _existing_migration_result(
@@ -401,24 +419,7 @@ def _existing_migration_result(
     return MigrationResult(destination, False, True, (), data, meta)
 
 
-def _path_identity(path: Path) -> tuple[int, int] | None:
-    try:
-        stat_result = os.lstat(path)
-    except FileNotFoundError:
-        return None
-    return stat_result.st_dev, stat_result.st_ino
-
-
-def _remove_owned_destination(destination: Path, identity: tuple[int, int]) -> None:
-    """Удалить destination только пока оно всё ещё inode нашей публикации."""
-    if _path_identity(destination) == identity:
-        try:
-            destination.unlink()
-        except FileNotFoundError:
-            pass
-
-
-def _publish_new_config(destination: Path, content: str) -> tuple[int, int] | None:
+def _publish_new_config(destination: Path, content: str, source: str) -> bool:
     """Опубликовать новый config без перезаписи уже созданного destination."""
     temp_path: Path | None = None
     try:
@@ -433,14 +434,44 @@ def _publish_new_config(destination: Path, content: str) -> tuple[int, int] | No
         try:
             os.link(temp_path, destination)
         except FileExistsError:
-            return None
-        identity = _path_identity(destination)
-        if identity is None:
-            raise HomeConfigError("destination исчез после публикации")
-        return identity
+            return False
+        except OSError as exc:
+            raise HomeConfigError(
+                f"{source}: публикация не выполнена: {type(exc).__name__}"
+            ) from exc
+        return True
+    except OSError as exc:
+        raise HomeConfigError(
+            f"{source}: публикация не выполнена: {type(exc).__name__}"
+        ) from exc
     finally:
-        if temp_path is not None and temp_path.exists():
-            temp_path.unlink()
+        if temp_path is not None:
+            try:
+                temp_path.unlink()
+            except FileNotFoundError:
+                pass
+            except OSError as exc:
+                if sys.exc_info()[0] is None:
+                    raise HomeConfigError(
+                        f"{source}: очистка temporary file: {type(exc).__name__}"
+                    ) from exc
+
+
+def _simulated_repo_layer(
+    data: Mapping[str, object], meta: ResolutionMeta, candidate: Mapping[str, object], source: str
+) -> tuple[dict[str, object], ResolutionMeta]:
+    """Вычислить результат repository-home layer до его атомарной публикации."""
+    merged = dict(data)
+    sources = dict(meta.sources)
+    shadowed = {key: list(value) for key, value in meta.shadowed.items()}
+    for key, value in candidate.items():
+        if key in sources:
+            shadowed.setdefault(key, []).append(sources[key])
+        merged[key] = value
+        sources[key] = source
+    return merged, ResolutionMeta(
+        sources, {key: tuple(value) for key, value in shadowed.items()}, meta.warnings
+    )
 
 
 def migrate_repo_config(
@@ -462,7 +493,7 @@ def migrate_repo_config(
         raise HomeConfigError(
             f".review.yml: credential key {'.'.join(credential)} нельзя мигрировать"
         )
-    before_data, _ = resolve_policy_data(
+    before_data, before_meta = resolve_policy_data(
         repo, ref, fetch_repo_yaml, config_root=root, strict_home=True
     )
     destination = home_repo_path(repo, root)
@@ -474,21 +505,14 @@ def migrate_repo_config(
         )
 
     destination.parent.mkdir(parents=True, exist_ok=True)
-    identity = _publish_new_config(destination, source_text or "")
-    if identity is None:
+    published_data, published_meta = _simulated_repo_layer(
+        before_data, before_meta, candidate, source
+    )
+    if not _publish_new_config(destination, source_text or "", source):
         existing = _read_destination_mapping(destination, source)
         if existing is None:
             raise HomeConfigError(f"{source}: destination исчез во время миграции")
         return _existing_migration_result(
             destination, existing, candidate, repo, ref, fetch_repo_yaml, root, before_data
         )
-    try:
-        after_data, meta = resolve_policy_data(
-            repo, ref, fetch_repo_yaml, config_root=root, strict_home=True
-        )
-        if after_data != before_data:
-            raise HomeConfigError("effective config изменился после миграции")
-    except Exception:
-        _remove_owned_destination(destination, identity)
-        raise
-    return MigrationResult(destination, True, False, (), after_data, meta)
+    return MigrationResult(destination, True, False, (), published_data, published_meta)

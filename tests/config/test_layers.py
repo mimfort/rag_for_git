@@ -282,74 +282,28 @@ def test_migrate_does_not_clobber_destination_created_during_publish(
     assert destination.read_text(encoding="utf-8") == "max_comments: 3\n"
 
 
-def test_migrate_rollback_does_not_delete_racing_destination(
+def test_migrate_precomputes_result_before_final_publish(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    destination = tmp_path / "repos/o/r.yml"
     meta = ResolutionMeta({}, {}, ())
     calls = 0
 
-    def resolve_after_race(*args, **kwargs):
+    def resolution_must_not_run_after_publish(*args, **kwargs):
         nonlocal calls
         calls += 1
-        if calls == 2:
-            destination.unlink()
-            destination.write_text("max_comments: 3\n", encoding="utf-8")
-            return {"max_comments": 3}, meta
+        if calls > 1:
+            raise AssertionError("resolver ran after publish")
         return {"max_comments": 7}, meta
 
-    monkeypatch.setattr(layers, "resolve_policy_data", resolve_after_race)
+    monkeypatch.setattr(layers, "resolve_policy_data", resolution_must_not_run_after_publish)
 
-    with pytest.raises(HomeConfigError, match="effective config"):
-        migrate_repo_config(
-            "o/r", "main", lambda ref: "max_comments: 7\n", config_root=tmp_path
-        )
+    result = migrate_repo_config(
+        "o/r", "main", lambda ref: "max_comments: 7\n", config_root=tmp_path
+    )
 
-    assert destination.read_text(encoding="utf-8") == "max_comments: 3\n"
-
-
-def test_migrate_mismatch_removes_only_its_own_new_destination(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    meta = ResolutionMeta({}, {}, ())
-    calls = 0
-
-    def mismatching_resolution(*args, **kwargs):
-        nonlocal calls
-        calls += 1
-        return ({"max_comments": 7} if calls == 1 else {"max_comments": 3}), meta
-
-    monkeypatch.setattr(layers, "resolve_policy_data", mismatching_resolution)
-
-    with pytest.raises(HomeConfigError, match="effective config"):
-        migrate_repo_config(
-            "o/r", "main", lambda ref: "max_comments: 7\n", config_root=tmp_path
-        )
-
-    assert not (tmp_path / "repos/o/r.yml").exists()
-
-
-def test_migrate_resolver_failure_removes_only_its_own_new_destination(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    meta = ResolutionMeta({}, {}, ())
-    calls = 0
-
-    def failing_resolution(*args, **kwargs):
-        nonlocal calls
-        calls += 1
-        if calls == 2:
-            raise HomeConfigError("after resolution failed")
-        return {"max_comments": 7}, meta
-
-    monkeypatch.setattr(layers, "resolve_policy_data", failing_resolution)
-
-    with pytest.raises(HomeConfigError, match="after resolution failed"):
-        migrate_repo_config(
-            "o/r", "main", lambda ref: "max_comments: 7\n", config_root=tmp_path
-        )
-
-    assert not (tmp_path / "repos/o/r.yml").exists()
+    assert result.created is True
+    assert calls == 1
+    assert (tmp_path / "repos/o/r.yml").read_text(encoding="utf-8") == "max_comments: 7\n"
 
 
 def test_migrate_refuses_symlink_destination(tmp_path: Path) -> None:
@@ -365,6 +319,80 @@ def test_migrate_refuses_symlink_destination(tmp_path: Path) -> None:
         )
 
     assert target.read_text(encoding="utf-8") == "max_comments: 3\n"
+
+
+def test_migrate_rejects_replacement_during_existing_destination_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    destination = tmp_path / "repos/o/r.yml"
+    _write(destination, "max_comments: 3\n")
+    original_open = layers.os.open
+
+    def open_then_replace(path, flags):
+        descriptor = original_open(path, flags)
+        destination.unlink()
+        destination.write_text("max_comments: 9\n", encoding="utf-8")
+        return descriptor
+
+    monkeypatch.setattr(layers.os, "open", open_then_replace)
+
+    with pytest.raises(HomeConfigError, match="race"):
+        migrate_repo_config(
+            "o/r", "main", lambda ref: "max_comments: 7\n", config_root=tmp_path
+        )
+
+    assert destination.read_text(encoding="utf-8") == "max_comments: 9\n"
+
+
+def test_migrate_rejects_symlink_swap_without_o_nofollow(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    destination = tmp_path / "repos/o/r.yml"
+    target = tmp_path / "target.yml"
+    _write(destination, "max_comments: 3\n")
+    target.write_text("max_comments: 9\n", encoding="utf-8")
+    original_open = layers.os.open
+    monkeypatch.delattr(layers.os, "O_NOFOLLOW", raising=False)
+
+    def open_after_symlink_swap(path, flags):
+        destination.unlink()
+        destination.symlink_to(target)
+        return original_open(path, flags)
+
+    monkeypatch.setattr(layers.os, "open", open_after_symlink_swap)
+
+    with pytest.raises(HomeConfigError, match="race"):
+        migrate_repo_config(
+            "o/r", "main", lambda ref: "max_comments: 7\n", config_root=tmp_path
+        )
+
+    assert target.read_text(encoding="utf-8") == "max_comments: 9\n"
+
+
+def test_migrate_sanitizes_link_error_and_preserves_primary_cleanup_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    secret = "do-not-echo"
+
+    def fail_link(*args) -> None:
+        raise OSError(secret)
+
+    monkeypatch.setattr(layers.os, "link", fail_link)
+    original_unlink = Path.unlink
+
+    def fail_temp_cleanup(path: Path, *args, **kwargs) -> None:
+        if path.parent == tmp_path / "repos/o":
+            raise OSError("cleanup-" + secret)
+        original_unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", fail_temp_cleanup)
+
+    with pytest.raises(HomeConfigError) as exc:
+        migrate_repo_config(
+            "o/r", "main", lambda ref: "max_comments: 7\n", config_root=tmp_path
+        )
+
+    assert secret not in str(exc.value)
 
 
 def test_build_config_report_rejects_non_json_public_value() -> None:
