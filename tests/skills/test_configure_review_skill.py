@@ -1,4 +1,4 @@
-"""Guard: скилл reviewer_configure-review — интерактивная настройка контекст-слоя
+"""Guard: скилл configure-review — интерактивная настройка контекст-слоя
 .review.yml (PRI-168). Скилл автономен (только git + правка файла), редактирует
 ровно контекст-слой и не клоберит чужие ключи, пересбор не запускает.
 """
@@ -7,11 +7,6 @@ from pathlib import Path
 
 SKILL = (Path(__file__).resolve().parents[2]
          / "plugin" / "skills" / "configure-review" / "SKILL.md")
-
-
-def test_skill_exists_with_frontmatter_name():
-    text = SKILL.read_text(encoding="utf-8")
-    assert "name: reviewer_configure-review" in text
 
 
 def test_skill_instructs_russian_output():

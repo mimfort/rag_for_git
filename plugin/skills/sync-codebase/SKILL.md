@@ -1,5 +1,5 @@
 ---
-name: reviewer_sync-codebase
+name: sync-codebase
 description: Build or update the reviewer base index (vector store + code graph) from a local repo clone. Use when the user asks to "index the codebase", "build the index", "sync the code", "rebuild the graph", "просиндексируй код", "построй индекс".
 ---
 

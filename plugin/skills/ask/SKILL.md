@@ -1,5 +1,5 @@
 ---
-name: reviewer_ask
+name: ask
 description: Answer grounded questions about the codebase (onboarding / Q&A) using the reviewer RAG + code graph. Use when the user asks how the code works, where something lives, or to explain a subsystem ("where is auth", "how does X work", "explain the indexing flow", "как устроено…", "где у нас…", "объясни код"). Requires a built base index + graph (reviewer MCP server). Not for reviewing PRs.
 ---
 

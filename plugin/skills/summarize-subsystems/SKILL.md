@@ -1,5 +1,5 @@
 ---
-name: reviewer_summarize-subsystems
+name: summarize-subsystems
 description: Precompute concise per-subsystem summaries (GraphRAG community summaries) over the base code index, so ask / PR-walkthrough get a cheap high-level prior. Use when the user asks to build/refresh subsystem summaries ("просуммируй подсистемы", "построй обзоры модулей", "summarize subsystems"). Requires a built base index + the reviewer MCP server.
 ---
 

@@ -1,5 +1,5 @@
 ---
-name: reviewer_configure-review
+name: configure-review
 description: Configure or update a repo's .review.yml context layer and generic task-board metadata without secrets. Use when the user asks to set up or tune review config, context depth, ignored tracked paths, retrieval limits, or board selection.
 ---
 

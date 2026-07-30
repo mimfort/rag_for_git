@@ -1,5 +1,5 @@
 ---
-name: reviewer_maintainability-review
+name: maintainability-review
 description: "Review code changes only for maintainability risks: unnecessary complexity, poor readability, duplication, weak separation of concerns, and misalignment with repository conventions. Use when the user explicitly asks for maintainability review, code quality review, clean code review, complexity review, readability review, simplification review, or how to simplify changed code without changing behavior."
 ---
 

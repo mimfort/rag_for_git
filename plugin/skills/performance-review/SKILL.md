@@ -1,5 +1,5 @@
 ---
-name: reviewer_performance-review
+name: performance-review
 description: Review code changes only for performance and efficiency risks (N+1 queries, repeated work, bad asymptotics, missing batching/caching, blocking I/O, memory growth). Use when the user explicitly asks for a performance review of a diff/PR.
 ---
 
