@@ -736,7 +736,7 @@ class MCPReviewService:
         return (repo, branch or self.settings.primary_branch())
 
     def _resolve_policy(self, repo: str, branch: str) -> tuple["ReviewPolicy", "ResolutionMeta"]:
-        """Резолвит policy из home-слоёв и .review.yml целевой ветки."""
+        """Резолвит effective policy из env, home-слоёв и committed `.review.yml`."""
         from reviewer.config.layers import resolve_policy_data
         from reviewer.policy.policy import ReviewPolicy
         owner, name = repo.split("/", 1)
@@ -808,7 +808,8 @@ class MCPReviewService:
         построчными номерами для цитирования path:line без повторного Read.
         include_tests=True возвращает тест-чанки. Охват адаптивен (cliff-отсечка
         реранкера, PRI-202): top_k — необязательный override потолка (ceiling)
-        для этого вызова; None → потолок берётся из .review.yml/дефолта.
+        для этого вызова; None → потолок берётся из effective layered policy
+        либо дефолта.
         """
         rb = self._resolve_repo_branch(repo, branch)
         if isinstance(rb, str):
@@ -923,7 +924,8 @@ class MCPReviewService:
         """Кластеризовать base-граф по модулям → кластеры для /summarize-subsystems.
         cap (дефолт Settings.summary_rebuild_cap; None/0=безлимит) отбрасывает наименее
         приоритетные stale-кластеры (без сводки → старейшие updated_at первыми) и считает
-        их в deferred (PRI-165)."""
+        их в deferred (PRI-165). Если depth не задан, он берётся из effective layered
+        policy с fail-soft env-дефолтом."""
         from reviewer.graph.summaries import Member, build_clusters
         rb = self._resolve_repo_branch(repo, branch)
         if isinstance(rb, str):
@@ -1076,8 +1078,8 @@ class MCPReviewService:
         """Дешёвый приор: предрасчитанные summary подсистем (fail-open у потребителя).
 
         cluster_key → одна сводка. Иначе: при query И числе сводок > порога масштаба
-        (SUMMARY_TOPK_THRESHOLD, per-repo .review.yml) — ANN top-k по близости (PRI-167);
-        иначе (без query или ≤ порога) — все (бэк-компат)."""
+        (effective `summary_topk_threshold` layered policy) — ANN top-k по близости
+        (PRI-167); иначе (без query или ≤ порога) — все (бэк-компат)."""
         rb = self._resolve_repo_branch(repo, branch)
         if isinstance(rb, str):
             return {"summaries": [], "note": rb}

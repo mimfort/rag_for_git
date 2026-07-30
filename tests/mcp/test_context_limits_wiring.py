@@ -1,9 +1,10 @@
-"""Тесты обвязки context_limits в session-less MCP-тулах (PRI-202, Task 7).
+"""Тесты effective layered policy для context limits в session-less MCP-тулах.
 
-_resolve_context_limits — fail-soft резолв ContextLimits из .review.yml ветки
-(зеркало _resolve_summary_depth). search_codebase пробрасывает limits/hops/
-ceiling_override в Retriever.search_base (новая сигнатура, Task 5).
+_resolve_context_limits fail-soft объединяет env, home-слои и committed
+`.review.yml` (зеркало `_resolve_summary_depth`). `search_codebase` передаёт
+limits/hops/ceiling_override в `Retriever.search_base`.
 """
+import logging
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -28,7 +29,7 @@ def _isolated_home_config(monkeypatch, tmp_path) -> None:
 
 
 def test_resolve_context_limits_failsoft_returns_defaults() -> None:
-    """Сбой чтения .review.yml (VCS недоступен) → дефолт-константы ContextLimits."""
+    """Сбой чтения committed policy через VCS → дефолтные ContextLimits."""
     s = _settings()
     components = MagicMock()
     vcs = MagicMock()
@@ -42,7 +43,7 @@ def test_resolve_context_limits_failsoft_returns_defaults() -> None:
 
 
 def test_resolve_context_limits_no_review_yml_returns_defaults() -> None:
-    """Файла .review.yml нет (пустой текст) → тоже дефолт, без исключения."""
+    """Без committed policy effective policy даёт дефолты без исключения."""
     s = _settings()
     components = MagicMock()
     vcs = MagicMock()
@@ -56,7 +57,7 @@ def test_resolve_context_limits_no_review_yml_returns_defaults() -> None:
 
 
 def test_resolve_context_limits_uses_home_repo_layer(tmp_path) -> None:
-    """Репозиторный home-слой задаёт лимит graph.hops без .review.yml в VCS."""
+    """Репозиторный home-слой задаёт graph.hops без committed policy в VCS."""
     path = tmp_path / "rag-reviewer/repos/o/r.yml"
     path.parent.mkdir(parents=True)
     path.write_text("context_limits: {graph: {hops: 2}}\n", encoding="utf-8")
@@ -102,6 +103,19 @@ def test_resolve_policy_closes_internally_created_vcs() -> None:
     vcs.close.assert_called_once_with()
 
 
+def test_resolve_context_limits_failsoft_closes_internal_vcs_after_fetch_error() -> None:
+    """Сбой чтения committed layer сохраняет fallback и закрывает owned VCS."""
+    vcs = MagicMock()
+    vcs.get_file_at_ref.side_effect = RuntimeError("network down")
+    svc = MCPReviewService(_settings(), MagicMock(), vcs_factory=None)
+
+    with patch.object(svc._review_service, "_create_vcs_provider", return_value=vcs):
+        limits = svc._resolve_context_limits("o/r", "dev")
+
+    assert limits == ContextLimits()
+    vcs.close.assert_called_once_with()
+
+
 def test_resolve_context_limits_ignores_internal_vcs_close_failure() -> None:
     """Ошибка close внутреннего provider не отменяет уже полученный policy."""
     vcs = MagicMock()
@@ -114,6 +128,25 @@ def test_resolve_context_limits_ignores_internal_vcs_close_failure() -> None:
 
     assert limits.graph.hops == 2
     vcs.close.assert_called_once_with()
+
+
+def test_resolve_policy_logs_sanitized_home_credential_warning(caplog, tmp_path) -> None:
+    """MCP warning explains skipped credential-shaped home layer without its value."""
+    path = tmp_path / "rag-reviewer/repos/o/r.yml"
+    path.parent.mkdir(parents=True)
+    path.write_text("github_token: leaked-value\n", encoding="utf-8")
+    vcs = MagicMock()
+    vcs.get_file_at_ref.return_value = None
+    svc = MCPReviewService(_settings(), MagicMock(), vcs_factory=lambda owner, name: vcs)
+
+    with caplog.at_level(logging.WARNING, logger="reviewer.mcp.service"):
+        policy, meta = svc._resolve_policy("o/r", "dev")
+
+    assert policy.context_limits == ContextLimits()
+    assert meta.warnings
+    assert "Домашний слой policy пропущен" in caplog.text
+    assert "github_token" in caplog.text
+    assert "leaked-value" not in caplog.text
 
 
 def test_resolve_context_limits_uses_falsey_injected_vcs_factory() -> None:
