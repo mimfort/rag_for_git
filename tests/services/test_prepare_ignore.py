@@ -5,8 +5,6 @@ import subprocess
 import sys
 from unittest.mock import MagicMock, call
 
-import pytest
-
 import reviewer.services.review_service as rs
 from reviewer.config.settings import Settings
 from reviewer.vcs.base import ChangedFile, PullRequest
@@ -39,12 +37,6 @@ def _minimal_vcs_for_prepare() -> MagicMock:
         ChangedFile(path="reviewer/a.py", status="modified", patch="@@"),
     ]
     return vcs
-
-
-@pytest.fixture(autouse=True)
-def _isolated_config_home(monkeypatch, tmp_path):
-    """Каждый prepare-тест начинает с пустого конфигурационного дома."""
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
 
 
 def test_prepare_test_case_isolated_from_conflicting_xdg_config(tmp_path):

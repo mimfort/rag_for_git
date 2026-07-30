@@ -4,15 +4,8 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 from click.testing import CliRunner
-import pytest
 
 import reviewer.entrypoints.cli as cli_mod
-
-
-@pytest.fixture(autouse=True)
-def _isolated_config_home(monkeypatch, tmp_path):
-    """Каждый index-тест начинает с пустого конфигурационного дома."""
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
 
 
 def test_index_filters_ignored_files(monkeypatch):
@@ -45,9 +38,12 @@ def test_index_filters_ignored_files(monkeypatch):
     assert "vendor" in captured["ignore"]
 
 
-def test_index_uses_home_policy_without_committed_file(monkeypatch, tmp_path):
+def test_index_uses_home_policy_without_committed_file(
+    monkeypatch,
+    isolated_xdg_config_home,
+):
     """index применяет paths.ignore из home-слоя без committed policy."""
-    home = tmp_path / "rag-reviewer/repos/o/r.yml"
+    home = isolated_xdg_config_home / "rag-reviewer/repos/o/r.yml"
     home.parent.mkdir(parents=True)
     home.write_text("paths:\n  ignore:\n    - vendor\n", encoding="utf-8")
     captured = {}

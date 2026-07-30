@@ -93,6 +93,26 @@ def test_config_show_skips_credential_home_yaml_without_echoing_secret(
     assert secret not in repr(result.exception)
 
 
+def test_config_show_rejects_invalid_known_home_value_without_echoing_literal(
+    monkeypatch, tmp_path
+) -> None:
+    secret = "do-not-echo"
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    home = tmp_path / "rag-reviewer/review.yml"
+    home.parent.mkdir(parents=True)
+    home.write_text(f"max_comments: {secret}\n", encoding="utf-8")
+    _install_fake_vcs(monkeypatch, "max_comments: 7\n")
+
+    result = CliRunner().invoke(
+        cli_mod.cli, ["config", "show", "--repo", "o/r", "--branch", "main"]
+    )
+
+    assert result.exit_code != 0
+    assert "home:review.yml" in result.output
+    assert secret not in result.output
+    assert secret not in repr(result.exception)
+
+
 def test_config_migrate_creates_home_file_and_reports_shadowing(
     monkeypatch, tmp_path
 ) -> None:

@@ -7,8 +7,6 @@ limits/hops/ceiling_override в `Retriever.search_base`.
 import logging
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from reviewer.config.settings import Settings
 from reviewer.mcp.service import MCPReviewService
 from reviewer.policy.context_limits import CodebaseLimits, ContextLimits
@@ -20,12 +18,6 @@ def _settings() -> Settings:
     s.github_token = "test"
     s.default_repo = ""
     return s
-
-
-@pytest.fixture(autouse=True)
-def _isolated_home_config(monkeypatch, tmp_path) -> None:
-    """Изолирует MCP-резолв policy от конфигурации разработчика."""
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
 
 
 def test_resolve_context_limits_failsoft_returns_defaults() -> None:
@@ -56,9 +48,11 @@ def test_resolve_context_limits_no_review_yml_returns_defaults() -> None:
     assert cl.search_codebase.ceiling == 15
 
 
-def test_resolve_context_limits_uses_home_repo_layer(tmp_path) -> None:
+def test_resolve_context_limits_uses_home_repo_layer(
+    isolated_xdg_config_home,
+) -> None:
     """Репозиторный home-слой задаёт graph.hops без committed policy в VCS."""
-    path = tmp_path / "rag-reviewer/repos/o/r.yml"
+    path = isolated_xdg_config_home / "rag-reviewer/repos/o/r.yml"
     path.parent.mkdir(parents=True)
     path.write_text("context_limits: {graph: {hops: 2}}\n", encoding="utf-8")
     s = _settings()
@@ -72,12 +66,14 @@ def test_resolve_context_limits_uses_home_repo_layer(tmp_path) -> None:
     assert limits.graph.hops == 2
 
 
-def test_resolve_policy_reports_repo_home_source_and_keeps_injected_vcs_open(tmp_path) -> None:
+def test_resolve_policy_reports_repo_home_source_and_keeps_injected_vcs_open(
+    isolated_xdg_config_home,
+) -> None:
     """Репозиторный слой побеждает VCS и сохраняет ownership injected VCS."""
-    global_path = tmp_path / "rag-reviewer/review.yml"
+    global_path = isolated_xdg_config_home / "rag-reviewer/review.yml"
     global_path.parent.mkdir(parents=True)
     global_path.write_text("summary_topk_threshold: 3\n", encoding="utf-8")
-    repo_path = tmp_path / "rag-reviewer/repos/o/r.yml"
+    repo_path = isolated_xdg_config_home / "rag-reviewer/repos/o/r.yml"
     repo_path.parent.mkdir(parents=True)
     repo_path.write_text("summary_topk_threshold: 7\n", encoding="utf-8")
     vcs = MagicMock()
@@ -130,9 +126,12 @@ def test_resolve_context_limits_ignores_internal_vcs_close_failure() -> None:
     vcs.close.assert_called_once_with()
 
 
-def test_resolve_policy_logs_sanitized_home_credential_warning(caplog, tmp_path) -> None:
+def test_resolve_policy_logs_sanitized_home_credential_warning(
+    caplog,
+    isolated_xdg_config_home,
+) -> None:
     """MCP warning explains skipped credential-shaped home layer without its value."""
-    path = tmp_path / "rag-reviewer/repos/o/r.yml"
+    path = isolated_xdg_config_home / "rag-reviewer/repos/o/r.yml"
     path.parent.mkdir(parents=True)
     path.write_text("github_token: leaked-value\n", encoding="utf-8")
     vcs = MagicMock()
@@ -147,6 +146,47 @@ def test_resolve_policy_logs_sanitized_home_credential_warning(caplog, tmp_path)
     assert "Домашний слой policy пропущен" in caplog.text
     assert "github_token" in caplog.text
     assert "leaked-value" not in caplog.text
+
+
+def test_resolve_policy_skips_invalid_home_value_without_logging_literal(
+    caplog,
+    isolated_xdg_config_home,
+) -> None:
+    secret = "do-not-echo"
+    path = isolated_xdg_config_home / "rag-reviewer/repos/o/r.yml"
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        f"context_limits: {{graph: {{hops: {secret}}}}}\n"
+        "future_policy: enabled\n",
+        encoding="utf-8",
+    )
+    vcs = MagicMock()
+    vcs.get_file_at_ref.return_value = "context_limits: {graph: {hops: 2}}\n"
+    svc = MCPReviewService(_settings(), MagicMock(), vcs_factory=lambda owner, name: vcs)
+
+    with caplog.at_level(logging.WARNING, logger="reviewer.mcp.service"):
+        policy, meta = svc._resolve_policy("o/r", "dev")
+
+    assert policy.context_limits.graph.hops == 2
+    assert meta.sources["context_limits"] == ".review.yml"
+    assert "home:repos/o/r.yml" in caplog.text
+    assert secret not in caplog.text
+
+
+def test_context_limits_failsoft_does_not_log_invalid_committed_literal(caplog) -> None:
+    secret = "do-not-echo"
+    vcs = MagicMock()
+    vcs.get_file_at_ref.return_value = (
+        f"context_limits: {{graph: {{hops: {secret}}}}}\n"
+    )
+    svc = MCPReviewService(_settings(), MagicMock(), vcs_factory=lambda owner, name: vcs)
+
+    with caplog.at_level(logging.WARNING, logger="reviewer.mcp.service"):
+        limits = svc._resolve_context_limits("o/r", "dev")
+
+    assert limits == ContextLimits()
+    assert "fail-soft" in caplog.text
+    assert secret not in caplog.text
 
 
 def test_resolve_context_limits_uses_falsey_injected_vcs_factory() -> None:

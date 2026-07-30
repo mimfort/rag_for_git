@@ -3,8 +3,6 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-import pytest
-
 from reviewer.config.settings import Settings
 from reviewer.mcp.service import MCPReviewService
 
@@ -14,12 +12,6 @@ def _settings() -> Settings:
     s.voyage_api_key = "test"
     s.default_repo = ""
     return s
-
-
-@pytest.fixture(autouse=True)
-def _isolated_home_config(monkeypatch, tmp_path) -> None:
-    """Изолирует MCP-резолв policy от конфигурации разработчика."""
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
 
 
 def _svc(components) -> MCPReviewService:
@@ -386,9 +378,9 @@ def test_resolve_summary_topk_threshold_no_key_falls_back_to_env():
     assert source == "env"
 
 
-def test_summary_threshold_reports_home_repo_source(tmp_path):
+def test_summary_threshold_reports_home_repo_source(isolated_xdg_config_home):
     """Источник порога указывает репозиторный home-слой, а не env."""
-    path = tmp_path / "rag-reviewer/repos/o/r.yml"
+    path = isolated_xdg_config_home / "rag-reviewer/repos/o/r.yml"
     path.parent.mkdir(parents=True)
     path.write_text("summary_topk_threshold: 7\n", encoding="utf-8")
     svc, vcs = _service_for_summary_resolution()

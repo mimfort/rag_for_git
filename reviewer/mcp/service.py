@@ -773,7 +773,7 @@ class MCPReviewService:
             )
             return policy.summary_cluster_depth, policy.summary_cluster_depth_overrides, source
         except Exception:
-            log.warning("_resolve_summary_depth: fail-soft → env-дефолт", exc_info=True)
+            log.warning("_resolve_summary_depth: fail-soft → env-дефолт")
             return default, {}, "env"
 
     def _resolve_summary_topk_threshold(self, repo: str, branch: str) -> tuple[int, str]:
@@ -784,7 +784,7 @@ class MCPReviewService:
             source = meta.sources.get("summary_topk_threshold", "env")
             return policy.summary_topk_threshold, source
         except Exception:
-            log.warning("_resolve_summary_topk_threshold: fail-soft → env-дефолт", exc_info=True)
+            log.warning("_resolve_summary_topk_threshold: fail-soft → env-дефолт")
             return default, "env"
 
     def _resolve_context_limits(self, repo: str, branch: str) -> "ContextLimits":
@@ -794,7 +794,7 @@ class MCPReviewService:
             policy, _ = self._resolve_policy(repo, branch)
             return policy.context_limits
         except Exception:
-            log.warning("_resolve_context_limits: fail-soft → дефолт-константы", exc_info=True)
+            log.warning("_resolve_context_limits: fail-soft → дефолт-константы")
             return ContextLimits()
 
     def search_codebase(self, repo: str, query: str, top_k: int | None = None,

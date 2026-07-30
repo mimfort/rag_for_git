@@ -167,6 +167,7 @@ def config_migrate(repo: str, branch: str | None) -> None:
                 repo_id,
                 ref,
                 lambda selected_ref: vcs.get_file_at_ref(".review.yml", selected_ref),
+                settings=settings,
             )
             if result.conflicting_keys:
                 keys = ", ".join(result.conflicting_keys)

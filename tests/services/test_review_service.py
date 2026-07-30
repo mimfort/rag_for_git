@@ -25,12 +25,6 @@ from reviewer.vcs.base import (
 # Фикстуры
 # ---------------------------------------------------------------------------
 
-@pytest.fixture(autouse=True)
-def _isolated_config_home(monkeypatch, tmp_path):
-    """Каждый prepare-тест начинает с пустого конфигурационного дома."""
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
-
-
 @pytest.fixture
 def settings() -> Settings:
     """Минимальные настройки для unit-тестов."""

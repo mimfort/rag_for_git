@@ -1,4 +1,7 @@
 from pathlib import Path
+import os
+import stat
+import traceback
 
 import pytest
 
@@ -53,6 +56,27 @@ def test_subgroup_repo_uses_nested_home_path(tmp_path: Path) -> None:
     assert home_repo_path("group/sub/repo", tmp_path) == (
         tmp_path / "repos/group/sub/repo.yml"
     )
+
+
+def test_dotted_repo_name_appends_yaml_suffix_without_colliding(
+    tmp_path: Path,
+) -> None:
+    dotted = tmp_path / "repos/o/api.v2.yml"
+    plain = tmp_path / "repos/o/api.yml"
+    _write(dotted, "max_comments: 7\n")
+    _write(plain, "max_comments: 3\n")
+
+    data, meta = resolve_policy_data(
+        "o/api.v2",
+        "main",
+        lambda ref: "max_comments: 5\n",
+        config_root=tmp_path,
+    )
+
+    assert home_repo_path("o/api.v2", tmp_path) == dotted
+    assert data["max_comments"] == 7
+    assert meta.sources["max_comments"] == "home:repos/o/api.v2.yml"
+    assert meta.shadowed["max_comments"] == (".review.yml",)
 
 
 def test_runtime_skips_bad_home_but_strict_mode_raises(tmp_path: Path) -> None:
@@ -154,6 +178,115 @@ def test_max_tokens_is_not_misclassified_as_secret(tmp_path: Path) -> None:
     assert meta.warnings == ()
 
 
+def test_categories_null_is_a_valid_home_override(tmp_path: Path) -> None:
+    _write(tmp_path / "repos/o/r.yml", "categories:\n")
+
+    data, meta = resolve_policy_data(
+        "o/r",
+        "main",
+        lambda ref: "categories: {security: false}\n",
+        config_root=tmp_path,
+        strict_home=True,
+    )
+
+    assert data["categories"] is None
+    assert meta.sources["categories"] == "home:repos/o/r.yml"
+    assert meta.shadowed["categories"] == (".review.yml",)
+    assert meta.warnings == ()
+
+
+def test_migrate_accepts_categories_null_as_effective_no_change(
+    tmp_path: Path,
+) -> None:
+    _write(tmp_path / "review.yml", "categories: {style: false}\n")
+
+    result = migrate_repo_config(
+        "o/r",
+        "main",
+        lambda ref: "categories:\n",
+        config_root=tmp_path,
+        settings=Settings(_env_file=None, review_categories="security"),
+    )
+
+    assert result.created is True
+    assert result.data["categories"] is None
+    assert (tmp_path / "repos/o/r.yml").read_text(encoding="utf-8") == "categories:\n"
+
+
+def test_runtime_quarantines_invalid_home_layer_even_when_value_is_shadowed(
+    tmp_path: Path,
+) -> None:
+    secret = "do-not-echo"
+    _write(
+        tmp_path / "review.yml",
+        f"max_comments: {secret}\nfuture_policy: enabled\n",
+    )
+
+    data, meta = resolve_policy_data(
+        "o/r",
+        "main",
+        lambda ref: "max_comments: 9\n",
+        config_root=tmp_path,
+    )
+
+    assert data == {"max_comments": 9}
+    assert meta.sources == {"max_comments": ".review.yml"}
+    assert meta.shadowed == {}
+    assert meta.warnings == (
+        "home:review.yml: policy содержит недопустимые значения",
+    )
+    assert secret not in repr(meta)
+
+
+def test_strict_home_rejects_invalid_known_value_without_echoing_literal(
+    tmp_path: Path,
+) -> None:
+    secret = "do-not-echo"
+    _write(
+        tmp_path / "repos/o/r.yml",
+        f"summary_cluster_depth: {secret}\nfuture_policy: enabled\n",
+    )
+
+    with pytest.raises(HomeConfigError) as captured:
+        resolve_policy_data(
+            "o/r",
+            "main",
+            lambda ref: "max_comments: 9\n",
+            config_root=tmp_path,
+            strict_home=True,
+        )
+
+    assert str(captured.value) == (
+        "home:repos/o/r.yml: policy содержит недопустимые значения"
+    )
+    assert secret not in repr(captured.value)
+
+
+def test_strict_home_exception_chain_does_not_echo_malformed_literal(
+    tmp_path: Path,
+) -> None:
+    secret = "do-not-echo"
+    _write(tmp_path / "review.yml", f"max_comments: [{secret}\n")
+
+    with pytest.raises(HomeConfigError) as captured:
+        resolve_policy_data(
+            "o/r",
+            "main",
+            lambda ref: None,
+            config_root=tmp_path,
+            strict_home=True,
+        )
+
+    rendered = "".join(
+        traceback.format_exception(
+            type(captured.value),
+            captured.value,
+            captured.value.__traceback__,
+        )
+    )
+    assert secret not in rendered
+
+
 def test_runtime_skips_home_config_with_recursive_yaml_alias(tmp_path: Path) -> None:
     _write(tmp_path / "review.yml", "loop: &loop\n  next: *loop\n")
 
@@ -206,6 +339,37 @@ def test_migrate_refuses_different_destination(tmp_path: Path) -> None:
     assert destination.read_text(encoding="utf-8") == "max_comments: 3\n"
 
 
+@pytest.mark.parametrize(
+    ("source", "existing"),
+    [
+        ("future: true\n", "future: 1\n"),
+        ("future: 1\n", "future: 1.0\n"),
+        (
+            "future:\n  nested: [true, {value: 2}]\n",
+            "future:\n  nested: [1, {value: 2.0}]\n",
+        ),
+    ],
+)
+def test_migrate_semantic_equality_is_type_sensitive_recursively(
+    tmp_path: Path,
+    source: str,
+    existing: str,
+) -> None:
+    destination = tmp_path / "repos/o/r.yml"
+    _write(destination, existing)
+
+    result = migrate_repo_config(
+        "o/r",
+        "main",
+        lambda ref: source,
+        config_root=tmp_path,
+    )
+
+    assert result.noop is False
+    assert result.conflicting_keys == ("future",)
+    assert destination.read_text(encoding="utf-8") == existing
+
+
 def test_migrate_rejects_secret_candidate_before_write(tmp_path: Path) -> None:
     with pytest.raises(HomeConfigError) as exc:
         migrate_repo_config(
@@ -215,6 +379,88 @@ def test_migrate_rejects_secret_candidate_before_write(tmp_path: Path) -> None:
             config_root=tmp_path,
         )
     assert "do-not-write" not in str(exc.value)
+    assert not (tmp_path / "repos/o/r.yml").exists()
+
+
+@pytest.mark.parametrize("existing", [False, True])
+def test_migrate_uses_one_committed_snapshot_for_create_and_noop(
+    tmp_path: Path,
+    existing: bool,
+) -> None:
+    source = "max_comments: 7\n"
+    destination = tmp_path / "repos/o/r.yml"
+    if existing:
+        _write(destination, source)
+    calls = 0
+
+    def fetch_once(ref: str) -> str:
+        nonlocal calls
+        calls += 1
+        if calls > 1:
+            raise AssertionError("committed policy was fetched more than once")
+        return source
+
+    result = migrate_repo_config(
+        "o/r",
+        "moving-branch",
+        fetch_once,
+        config_root=tmp_path,
+    )
+
+    assert calls == 1
+    assert result.noop is existing
+    assert result.created is not existing
+
+
+def test_migrate_validates_candidate_before_destination_mutation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    secret = "do-not-echo"
+
+    def publication_must_not_run(*args, **kwargs):
+        raise AssertionError("invalid candidate reached publication")
+
+    monkeypatch.setattr(layers, "_publish_new_config", publication_must_not_run)
+
+    with pytest.raises(HomeConfigError) as captured:
+        migrate_repo_config(
+            "o/r",
+            "main",
+            lambda ref: f"max_comments: {secret}\n",
+            config_root=tmp_path,
+        )
+
+    assert secret not in repr(captured.value)
+    assert not (tmp_path / "repos").exists()
+
+
+def test_migrate_validates_simulated_effective_policy_before_publication(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original_simulation = layers._simulated_repo_layer
+
+    def invalid_simulation(data, meta, candidate, source):
+        simulated, simulated_meta = original_simulation(data, meta, candidate, source)
+        simulated["context_limits"] = {"graph": {"hops": "do-not-echo"}}
+        return simulated, simulated_meta
+
+    def publication_must_not_run(*args, **kwargs):
+        raise AssertionError("invalid effective policy reached publication")
+
+    monkeypatch.setattr(layers, "_simulated_repo_layer", invalid_simulation)
+    monkeypatch.setattr(layers, "_publish_new_config", publication_must_not_run)
+
+    with pytest.raises(HomeConfigError) as captured:
+        migrate_repo_config(
+            "o/r",
+            "main",
+            lambda ref: "max_comments: 7\n",
+            config_root=tmp_path,
+        )
+
+    assert "do-not-echo" not in repr(captured.value)
     assert not (tmp_path / "repos/o/r.yml").exists()
 
 
@@ -321,6 +567,97 @@ def test_migrate_refuses_symlink_destination(tmp_path: Path) -> None:
     assert target.read_text(encoding="utf-8") == "max_comments: 3\n"
 
 
+def test_migrate_rejects_symlinked_parent_below_config_root(tmp_path: Path) -> None:
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    repos = tmp_path / "repos"
+    repos.mkdir()
+    (repos / "o").symlink_to(outside, target_is_directory=True)
+
+    with pytest.raises(HomeConfigError, match="symlink"):
+        migrate_repo_config(
+            "o/r",
+            "main",
+            lambda ref: "max_comments: 7\n",
+            config_root=tmp_path,
+        )
+
+    assert not (outside / "r.yml").exists()
+
+
+def test_migrate_allows_symlinked_ancestor_outside_config_root(tmp_path: Path) -> None:
+    real_parent = tmp_path / "real"
+    real_parent.mkdir()
+    alias = tmp_path / "alias"
+    alias.symlink_to(real_parent, target_is_directory=True)
+    config_root = alias / "reviewer-config"
+
+    result = migrate_repo_config(
+        "o/r",
+        "main",
+        lambda ref: "max_comments: 7\n",
+        config_root=config_root,
+    )
+
+    assert result.created is True
+    assert (real_parent / "reviewer-config/repos/o/r.yml").read_text(
+        encoding="utf-8"
+    ) == "max_comments: 7\n"
+
+
+def test_migrate_rejects_fifo_before_open(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    destination = tmp_path / "repos/o/r.yml"
+    destination.parent.mkdir(parents=True)
+    os.mkfifo(destination)
+
+    def nonregular_must_not_be_opened(*args, **kwargs):
+        raise AssertionError("FIFO was opened")
+
+    monkeypatch.setattr(layers.os, "open", nonregular_must_not_be_opened)
+
+    with pytest.raises(HomeConfigError, match="regular"):
+        migrate_repo_config(
+            "o/r",
+            "main",
+            lambda ref: "max_comments: 7\n",
+            config_root=tmp_path,
+        )
+
+
+def test_migrate_rejects_socket_before_open(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    destination = tmp_path / "repos/o/r.yml"
+    _write(destination, "max_comments: 3\n")
+    original_lstat = layers.os.lstat
+
+    def socket_lstat(path, *args, **kwargs):
+        result = original_lstat(path, *args, **kwargs)
+        if Path(path) == destination:
+            fields = list(result)
+            fields[0] = stat.S_IFSOCK | 0o600
+            return os.stat_result(fields)
+        return result
+
+    def nonregular_must_not_be_opened(*args, **kwargs):
+        raise AssertionError("socket was opened")
+
+    monkeypatch.setattr(layers.os, "lstat", socket_lstat)
+    monkeypatch.setattr(layers.os, "open", nonregular_must_not_be_opened)
+
+    with pytest.raises(HomeConfigError, match="regular"):
+        migrate_repo_config(
+            "o/r",
+            "main",
+            lambda ref: "max_comments: 7\n",
+            config_root=tmp_path,
+        )
+
+
 def test_migrate_rejects_replacement_during_existing_destination_read(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -399,14 +736,14 @@ def test_migrate_sanitizes_destination_parent_mkdir_error(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     secret = "do-not-echo"
-    original_mkdir = Path.mkdir
+    original_mkdir = layers.os.mkdir
 
-    def fail_destination_parent(path: Path, *args, **kwargs) -> None:
-        if path == tmp_path / "repos/o":
+    def fail_destination_parent(path, *args, **kwargs) -> None:
+        if Path(path) == tmp_path / "repos/o" or path == "o":
             raise OSError(secret)
         original_mkdir(path, *args, **kwargs)
 
-    monkeypatch.setattr(Path, "mkdir", fail_destination_parent)
+    monkeypatch.setattr(layers.os, "mkdir", fail_destination_parent)
 
     with pytest.raises(HomeConfigError) as exc:
         migrate_repo_config(
@@ -423,14 +760,20 @@ def test_migrate_preserves_fdopen_error_when_descriptor_close_also_fails(
     _write(destination, "max_comments: 3\n")
     primary = "fdopen-secret"
     cleanup = "close-secret"
+    fdopen_failed = False
 
     def fail_fdopen(*args, **kwargs):
+        nonlocal fdopen_failed
+        fdopen_failed = True
         raise OSError(primary)
 
     def fail_close(*args, **kwargs):
-        raise OSError(cleanup)
+        if fdopen_failed:
+            raise OSError(cleanup)
+        return original_close(*args, **kwargs)
 
     monkeypatch.setattr(layers.os, "fdopen", fail_fdopen)
+    original_close = layers.os.close
     monkeypatch.setattr(layers.os, "close", fail_close)
 
     with pytest.raises(HomeConfigError) as exc:
