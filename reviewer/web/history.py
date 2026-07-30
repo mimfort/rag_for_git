@@ -146,7 +146,8 @@ class ReviewHistory:
             """
             # JSONB-поля передаём строками; старые вызовы без provenance получают {}.
             run_row = dict(run)
-            run_row.setdefault("config_sources", {})
+            if run_row.get("config_sources") is None:
+                run_row["config_sources"] = {}
             for field in ("usage", "config_sources"):
                 if not isinstance(run_row.get(field), str):
                     run_row[field] = json.dumps(run_row.get(field), ensure_ascii=False)
@@ -226,7 +227,8 @@ class ReviewHistory:
                files_reviewed, files_skipped, files_failed,
                findings_analyzed, findings_kept, verify_rejected,
                comments_inline, comments_summary,
-               usage, config_sources, total_cost, error_text
+               usage, COALESCE(config_sources, '{{}}'::jsonb) AS config_sources,
+               total_cost, error_text
         FROM review_runs
         {where}
         ORDER BY created_at DESC
@@ -248,7 +250,8 @@ class ReviewHistory:
                files_reviewed, files_skipped, files_failed,
                findings_analyzed, findings_kept, verify_rejected,
                comments_inline, comments_summary,
-               usage, config_sources, total_cost, error_text
+               usage, COALESCE(config_sources, '{}'::jsonb) AS config_sources,
+               total_cost, error_text
         FROM review_runs WHERE id = %(id)s
         """
         finding_sql = """
@@ -440,7 +443,9 @@ def _row_to_dict(cols: list[str], row: tuple) -> dict:
     """
     result: dict = {}
     for key, val in zip(cols, row):
-        if isinstance(val, Decimal):
+        if key == "config_sources" and val is None:
+            result[key] = {}
+        elif isinstance(val, Decimal):
             result[key] = float(val)
         elif hasattr(val, "isoformat"):
             result[key] = val.isoformat()
