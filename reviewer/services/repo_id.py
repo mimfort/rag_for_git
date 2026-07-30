@@ -10,15 +10,19 @@ _HTTP_HOST_RE = re.compile(r"^https?://([^/]+)/")
 
 
 def normalize_repo(repo: str) -> str:
-    """Привести 'Owner/Repo' к канону 'owner/name' (нижний регистр).
+    """Привести repo к канону 'owner/name' или 'group/.../name' (нижний регистр).
 
-    :raises ValueError: пустая строка или не ровно один '/'.
+    :raises ValueError: недостаточно сегментов или небезопасный путь.
     """
     s = (repo or "").strip().lower()
+    if "\\" in s or "\x00" in s:
+        raise ValueError(f"Некорректный repo: {repo!r}")
     parts = s.split("/")
-    if len(parts) != 2 or not parts[0] or not parts[1]:
-        raise ValueError(f"Некорректный repo (ожидается owner/name): {repo!r}")
-    return f"{parts[0]}/{parts[1]}"
+    if len(parts) < 2 or any(not part or part in {".", ".."} for part in parts):
+        raise ValueError(
+            f"Некорректный repo (ожидается owner/name или group/.../name): {repo!r}"
+        )
+    return "/".join(parts)
 
 
 def derive_repo_from_remote(remote_url: str) -> str | None:
