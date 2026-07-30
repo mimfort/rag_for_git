@@ -38,7 +38,7 @@
 - Modify `reviewer/web/history.py`: write/read audit metadata.
 - Modify `plugin/skills/configure-review/SKILL.md`: choose home per-repo by default or committed repo target explicitly.
 - Modify `README.md` and `README.ru.md`: layer order, commands, migration, shadowing, service-account risk.
-- Modify focused existing tests under `tests/policy`, `tests/services`, `tests/mcp`, `tests/entrypoints`, `tests/web`, `tests/skills`, and `tests/docs`.
+- Modify focused existing tests under `tests/policy`, `tests/services`, `tests/mcp`, `tests/entrypoints`, and `tests/web`.
 
 ---
 
@@ -81,16 +81,6 @@ def test_load_data_matches_load_for_nested_policy() -> None:
     assert from_data.task_board is None
 
 
-def test_load_delegates_to_load_data(monkeypatch) -> None:
-    captured = {}
-
-    def fake(cls, settings, data):
-        captured["data"] = data
-        return ReviewPolicy()
-
-    monkeypatch.setattr(ReviewPolicy, "load_data", classmethod(fake))
-    ReviewPolicy.load(Settings(_env_file=None), "max_comments: 7\n")
-    assert captured["data"] == {"max_comments": 7}
 ```
 
 Add/update in `tests/services/test_repo_id.py`:
@@ -120,11 +110,11 @@ Run:
 ```bash
 uv run pytest -q -p no:cacheprovider \
   tests/policy/test_policy.py::test_load_data_matches_load_for_nested_policy \
-  tests/policy/test_policy.py::test_load_delegates_to_load_data \
   tests/services/test_repo_id.py
 ```
 
-Expected: failures because `ReviewPolicy.load_data` does not exist and `a/b/c` is currently rejected.
+Expected: failures because `ReviewPolicy.load_data` does not exist and nested repo IDs are currently
+rejected.
 
 - [ ] **Step 3: Extract `load_data` without changing policy semantics**
 
@@ -1321,63 +1311,30 @@ git commit -m "feat: audit effective config sources"
 
 **Files:**
 - Modify: `plugin/skills/configure-review/SKILL.md`
-- Modify: `tests/skills/test_configure_review_skill.py`
 - Modify: `README.md`
 - Modify: `README.ru.md`
-- Modify: relevant docs guard tests under `tests/docs/`
 
 **Interfaces:**
 - Consumes: CLI and layer behavior from Tasks 2–6
 - Produces: home per-repo as the recommended configure-review write target
-- Produces: bilingual operator documentation and regression guards
+- Produces: bilingual operator documentation validated by paired self-review
 
-- [ ] **Step 1: Add failing skill and documentation guards**
+- [ ] **Step 1: Run a RED pressure scenario against the current skill**
 
-Add to `tests/skills/test_configure_review_skill.py`:
+Use `superpowers:writing-skills` with a fresh subagent and this application scenario:
 
-```python
-def test_skill_offers_home_repo_target_first_and_repo_file_second():
-    text = SKILL.read_text(encoding="utf-8")
-    home = "home:repos/<owner>/<name>.yml"
-    committed = ".review.yml"
-    assert home in text
-    assert text.index(home) < text.index(committed)
-    assert "recommended" in text.lower()
-    assert "visible" in text.lower()
-    assert "commit" in text.lower()
+```text
+You are configuring reviewer for group/service. The operator wants paths.ignore=[vendor],
+does not want to commit configuration, and says “choose the recommended destination”.
+Follow the current reviewer_configure-review skill. State the destination, visibility
+trade-off, confirmation you request before writing, and any credential handling.
 ```
 
-Add a bilingual docs guard, either to the existing README tests or
-`tests/docs/test_readme_onboarding.py`:
+Expected RED: the current skill only offers committed `.review.yml`, so it cannot select
+`home:repos/group/service.yml` as the recommended no-commit destination. Save the baseline
+response verbatim in the task report; do not add a source-grep test.
 
-```python
-def test_readmes_document_home_config_layers_and_migration():
-    for name in ("README.md", "README.ru.md"):
-        text = (ROOT / name).read_text(encoding="utf-8")
-        for token in (
-            "$XDG_CONFIG_HOME/rag-reviewer/review.yml",
-            "repos/<owner>/<name>.yml",
-            "reviewer config show",
-            "reviewer config migrate",
-            "shadow",
-        ):
-            assert token.lower() in text.lower(), f"{name}: missing {token}"
-```
-
-- [ ] **Step 2: Run guards and confirm documentation is stale**
-
-Run:
-
-```bash
-uv run pytest -q -p no:cacheprovider \
-  tests/skills/test_configure_review_skill.py \
-  tests/docs/test_readme_onboarding.py
-```
-
-Expected: new assertions fail because the skill and README files only describe committed
-`.review.yml`.
-
-- [ ] **Step 3: Update configure-review workflow**
+- [ ] **Step 2: Update configure-review workflow**
 
 Change its frontmatter description and pipeline so it:
 
@@ -1390,6 +1347,19 @@ Change its frontmatter description and pipeline so it:
 7. Never reads/writes credentials and never triggers index rebuild itself.
 
 Keep the existing retrieval profile and task-board discovery sections intact.
+
+- [ ] **Step 3: Run the GREEN pressure scenario against the edited skill**
+
+Dispatch a fresh-context subagent with the same scenario and require it to read the edited skill
+file from this worktree. The response must:
+
+- select `home:repos/group/service.yml`;
+- explain “no commit / not visible to team” versus committed `.review.yml`;
+- request confirmation before writing `paths.ignore`;
+- refuse credentials in either target.
+
+Save the response verbatim in the task report. If any requirement is missed, tighten only the
+relevant skill wording and rerun the same scenario until it passes.
 
 - [ ] **Step 4: Update both README files symmetrically**
 
@@ -1404,7 +1374,8 @@ ENV
 
 Document top-level replacement, `config show`, non-destructive `config migrate`, shadowing, no
 worktree reads, credential rejection, and the service-account risk. Update the skill catalog entry
-to name both write targets.
+to name both write targets. Human-facing prose earns no change-detector test; verify it by reading
+the paired English/Russian sections during self-review.
 
 - [ ] **Step 5: Run focused docs/skill tests**
 
@@ -1436,8 +1407,7 @@ no output.
 
 ```bash
 git add plugin/skills/configure-review/SKILL.md \
-  tests/skills/test_configure_review_skill.py README.md README.ru.md \
-  tests/docs/test_readme_onboarding.py
+  README.md README.ru.md
 git commit -m "docs: explain layered repository config"
 ```
 
