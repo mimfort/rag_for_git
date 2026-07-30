@@ -14,6 +14,7 @@ import psycopg
 
 from reviewer.config.settings import Settings
 from reviewer.app import build_components
+from reviewer.config.layers import resolve_policy_data
 from reviewer.gitutil import file_at_ref, list_python_files, rev_parse, remote_url
 from reviewer.graph.backend import build_code_graph
 from reviewer.graph.store import GraphStore
@@ -503,8 +504,15 @@ def index(repo: str, ref: str | None, branch_opt: str | None, repo_tag: str | No
     try:
         c.store.init_schema()
         files = list_python_files(repo, ref)
-        review_yml = file_at_ref(repo, ".review.yml", ref)
-        ignore = ReviewPolicy.from_yaml(review_yml).ignore if review_yml else []
+        policy_data, policy_meta = resolve_policy_data(
+            repo_id,
+            ref,
+            lambda selected_ref: file_at_ref(repo, ".review.yml", selected_ref),
+        )
+        policy = ReviewPolicy.load_data(s, policy_data)
+        ignore = policy.ignore
+        for warning in policy_meta.warnings:
+            log.warning("Домашний слой policy пропущен: %s", warning)
         if ignore:
             files = [f for f in files if not is_ignored(f, ignore)]
         update_base(c.store, c.embedder, repo_id, branch, files,

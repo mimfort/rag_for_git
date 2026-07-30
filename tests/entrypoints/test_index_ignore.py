@@ -36,3 +36,38 @@ def test_index_filters_ignored_files(monkeypatch):
     assert result.exit_code == 0, result.output
     assert captured["files"] == ["reviewer/a.py"]      # vendor/x.py отфильтрован
     assert "vendor" in captured["ignore"]
+
+
+def test_index_uses_home_policy_without_committed_file(monkeypatch, tmp_path):
+    """index применяет paths.ignore из home-слоя без committed policy."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    home = tmp_path / "rag-reviewer/repos/o/r.yml"
+    home.parent.mkdir(parents=True)
+    home.write_text("paths:\n  ignore:\n    - vendor\n", encoding="utf-8")
+    captured = {}
+
+    def fake_update_base(store, embedder, repo, branch, files, **kwargs):
+        captured["files"] = list(files)
+        captured["ignore"] = list(kwargs.get("ignore", []))
+
+    fake_components = MagicMock()
+    monkeypatch.setattr(cli_mod, "build_components", lambda s: fake_components)
+    monkeypatch.setattr(cli_mod, "_resolve_repo", lambda *a: "o/r")
+    monkeypatch.setattr(cli_mod, "list_python_files",
+                        lambda repo, ref: ["vendor/x.py", "reviewer/a.py"])
+    monkeypatch.setattr(cli_mod, "rev_parse", lambda repo, ref: "deadbeef")
+    monkeypatch.setattr(cli_mod, "build_code_graph",
+                        lambda *a, **k: (set(), [], "tree-sitter"))
+
+    def fake_file_at_ref(repo, path, ref):
+        if path == ".review.yml":
+            return None
+        return "def f():\n    pass\n"
+
+    monkeypatch.setattr(cli_mod, "file_at_ref", fake_file_at_ref)
+    monkeypatch.setattr(cli_mod, "update_base", fake_update_base)
+
+    result = CliRunner().invoke(cli_mod.cli, ["index", "/tmp/repo", "--ref", "main"])
+    assert result.exit_code == 0, result.output
+    assert captured["files"] == ["reviewer/a.py"]
+    assert captured["ignore"] == ["vendor"]
