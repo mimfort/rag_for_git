@@ -4,6 +4,8 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass
 from functools import lru_cache
+import json
+import math
 import os
 from pathlib import Path
 import stat
@@ -223,6 +225,101 @@ def policy_to_public_data(policy: ReviewPolicy) -> dict[str, object]:
     }
 
 
+def _is_int(value: object) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _is_number(value: object) -> bool:
+    return (
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and math.isfinite(value)
+    )
+
+
+def _validate_mapping_shape(
+    value: object, shape: Mapping[str, Callable[[object], bool]]
+) -> None:
+    if not isinstance(value, Mapping) or set(value) != set(shape):
+        raise TypeError("invalid public mapping")
+    if any(not validator(value[key]) for key, validator in shape.items()):
+        raise TypeError("invalid public mapping value")
+
+
+def _validate_public_policy_data(effective: Mapping[str, object]) -> None:
+    """Проверить полную публичную форму до любого CLI-rendering."""
+    expected = {
+        "categories", "enabled_only", "severity_threshold", "paths", "max_comments",
+        "min_confidence", "output_language", "task_board", "grounding_max_distance",
+        "summary_cluster_depth", "summary_topk_threshold",
+        "summary_cluster_depth_overrides", "context_limits",
+    }
+    if set(effective) != expected:
+        raise TypeError("incomplete public policy")
+    categories = effective["categories"]
+    if not isinstance(categories, Mapping) or any(
+        not isinstance(key, str) or not isinstance(value, bool)
+        for key, value in categories.items()
+    ):
+        raise TypeError("invalid categories")
+    enabled_only = effective["enabled_only"]
+    if not isinstance(enabled_only, list) or not all(isinstance(item, str) for item in enabled_only):
+        raise TypeError("invalid enabled_only")
+    if effective["severity_threshold"] not in {"low", "medium", "high", "critical"}:
+        raise TypeError("invalid severity")
+    _validate_mapping_shape(effective["paths"], {"ignore": lambda value: (
+        isinstance(value, list) and all(isinstance(item, str) for item in value)
+    )})
+    if not _is_int(effective["max_comments"]) or not _is_number(effective["min_confidence"]):
+        raise TypeError("invalid review limits")
+    if not isinstance(effective["output_language"], str):
+        raise TypeError("invalid output language")
+    if effective["task_board"] is not None and not isinstance(effective["task_board"], Mapping):
+        raise TypeError("invalid task board")
+    for key in (
+        "grounding_max_distance",
+        "summary_cluster_depth",
+        "summary_topk_threshold",
+    ):
+        if not _is_int(effective[key]):
+            raise TypeError("invalid integer policy value")
+    overrides = effective["summary_cluster_depth_overrides"]
+    if not isinstance(overrides, Mapping) or any(
+        not isinstance(key, str) or not _is_int(value) for key, value in overrides.items()
+    ):
+        raise TypeError("invalid summary overrides")
+    _validate_mapping_shape(effective["context_limits"], {
+        "search_codebase": lambda value: _validate_context_limits(
+            value,
+            {
+                "floor": _is_int,
+                "ceiling": _is_int,
+                "ratio": _is_number,
+                "abs_floor": _is_number,
+                "candidate_pool": _is_int,
+                "ann_distance_max": _is_number,
+            },
+        ),
+        "search_tasks": lambda value: _validate_context_limits(
+            value, {"floor": _is_int, "ceiling": _is_int}
+        ),
+        "graph": lambda value: _validate_context_limits(
+            value, {"hops": _is_int, "callers_topk": _is_int}
+        ),
+    })
+    json.dumps(effective, ensure_ascii=False, sort_keys=True, allow_nan=False)
+
+
+def _validate_context_limits(
+    value: object, shape: Mapping[str, Callable[[object], bool]]
+) -> bool:
+    try:
+        _validate_mapping_shape(value, shape)
+    except TypeError:
+        return False
+    return True
+
+
 def build_config_report(
     repo: str,
     branch: str,
@@ -234,7 +331,8 @@ def build_config_report(
     try:
         policy = ReviewPolicy.load_data(settings, data)
         effective = policy_to_public_data(policy)
-    except (AttributeError, KeyError, TypeError, ValueError) as exc:
+        _validate_public_policy_data(effective)
+    except (AttributeError, KeyError, OverflowError, RecursionError, TypeError, ValueError) as exc:
         raise HomeConfigError("effective policy: недопустимые значения") from exc
     sources = {key: meta.sources.get(key, "env") for key in effective}
     return {
@@ -253,6 +351,11 @@ def _empty_meta() -> ResolutionMeta:
 
 def _read_destination_mapping(path: Path, source: str) -> dict[str, object] | None:
     """Прочитать существующий regular destination, не следуя symlink на POSIX."""
+    try:
+        if stat.S_ISLNK(os.lstat(path).st_mode):
+            raise HomeConfigError(f"{source}: symlink запрещён")
+    except FileNotFoundError:
+        return None
     flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
     try:
         descriptor = os.open(path, flags)
@@ -298,7 +401,24 @@ def _existing_migration_result(
     return MigrationResult(destination, False, True, (), data, meta)
 
 
-def _publish_new_config(destination: Path, content: str) -> bool:
+def _path_identity(path: Path) -> tuple[int, int] | None:
+    try:
+        stat_result = os.lstat(path)
+    except FileNotFoundError:
+        return None
+    return stat_result.st_dev, stat_result.st_ino
+
+
+def _remove_owned_destination(destination: Path, identity: tuple[int, int]) -> None:
+    """Удалить destination только пока оно всё ещё inode нашей публикации."""
+    if _path_identity(destination) == identity:
+        try:
+            destination.unlink()
+        except FileNotFoundError:
+            pass
+
+
+def _publish_new_config(destination: Path, content: str) -> tuple[int, int] | None:
     """Опубликовать новый config без перезаписи уже созданного destination."""
     temp_path: Path | None = None
     try:
@@ -313,8 +433,11 @@ def _publish_new_config(destination: Path, content: str) -> bool:
         try:
             os.link(temp_path, destination)
         except FileExistsError:
-            return False
-        return True
+            return None
+        identity = _path_identity(destination)
+        if identity is None:
+            raise HomeConfigError("destination исчез после публикации")
+        return identity
     finally:
         if temp_path is not None and temp_path.exists():
             temp_path.unlink()
@@ -351,16 +474,21 @@ def migrate_repo_config(
         )
 
     destination.parent.mkdir(parents=True, exist_ok=True)
-    if not _publish_new_config(destination, source_text or ""):
+    identity = _publish_new_config(destination, source_text or "")
+    if identity is None:
         existing = _read_destination_mapping(destination, source)
         if existing is None:
             raise HomeConfigError(f"{source}: destination исчез во время миграции")
         return _existing_migration_result(
             destination, existing, candidate, repo, ref, fetch_repo_yaml, root, before_data
         )
-    after_data, meta = resolve_policy_data(
-        repo, ref, fetch_repo_yaml, config_root=root, strict_home=True
-    )
-    if after_data != before_data:
-        raise HomeConfigError("effective config изменился после миграции")
+    try:
+        after_data, meta = resolve_policy_data(
+            repo, ref, fetch_repo_yaml, config_root=root, strict_home=True
+        )
+        if after_data != before_data:
+            raise HomeConfigError("effective config изменился после миграции")
+    except Exception:
+        _remove_owned_destination(destination, identity)
+        raise
     return MigrationResult(destination, True, False, (), after_data, meta)

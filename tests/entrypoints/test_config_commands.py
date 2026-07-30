@@ -2,6 +2,7 @@ import json
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+import pytest
 from click.testing import CliRunner
 
 import reviewer.entrypoints.cli as cli_mod
@@ -174,6 +175,25 @@ def test_config_show_sanitizes_invalid_policy_value(monkeypatch, tmp_path) -> No
     result = CliRunner().invoke(
         cli_mod.cli, ["config", "show", "--repo", "o/r", "--branch", "main"]
     )
+
+    assert result.exit_code != 0
+    assert "effective policy" in result.output
+    assert secret not in result.output
+    assert secret not in repr(result.exception)
+
+
+@pytest.mark.parametrize("as_json", [False, True])
+def test_config_show_rejects_invalid_public_type_without_echoing_value(
+    monkeypatch, tmp_path, as_json
+) -> None:
+    secret = "do-not-echo"
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    _install_fake_vcs(monkeypatch, f"max_comments: {secret}\n")
+    arguments = ["config", "show", "--repo", "o/r", "--branch", "main"]
+    if as_json:
+        arguments.append("--json")
+
+    result = CliRunner().invoke(cli_mod.cli, arguments)
 
     assert result.exit_code != 0
     assert "effective policy" in result.output

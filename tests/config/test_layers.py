@@ -306,3 +306,79 @@ def test_migrate_rollback_does_not_delete_racing_destination(
         )
 
     assert destination.read_text(encoding="utf-8") == "max_comments: 3\n"
+
+
+def test_migrate_mismatch_removes_only_its_own_new_destination(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    meta = ResolutionMeta({}, {}, ())
+    calls = 0
+
+    def mismatching_resolution(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return ({"max_comments": 7} if calls == 1 else {"max_comments": 3}), meta
+
+    monkeypatch.setattr(layers, "resolve_policy_data", mismatching_resolution)
+
+    with pytest.raises(HomeConfigError, match="effective config"):
+        migrate_repo_config(
+            "o/r", "main", lambda ref: "max_comments: 7\n", config_root=tmp_path
+        )
+
+    assert not (tmp_path / "repos/o/r.yml").exists()
+
+
+def test_migrate_resolver_failure_removes_only_its_own_new_destination(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    meta = ResolutionMeta({}, {}, ())
+    calls = 0
+
+    def failing_resolution(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise HomeConfigError("after resolution failed")
+        return {"max_comments": 7}, meta
+
+    monkeypatch.setattr(layers, "resolve_policy_data", failing_resolution)
+
+    with pytest.raises(HomeConfigError, match="after resolution failed"):
+        migrate_repo_config(
+            "o/r", "main", lambda ref: "max_comments: 7\n", config_root=tmp_path
+        )
+
+    assert not (tmp_path / "repos/o/r.yml").exists()
+
+
+def test_migrate_refuses_symlink_destination(tmp_path: Path) -> None:
+    destination = tmp_path / "repos/o/r.yml"
+    destination.parent.mkdir(parents=True)
+    target = tmp_path / "outside.yml"
+    target.write_text("max_comments: 3\n", encoding="utf-8")
+    destination.symlink_to(target)
+
+    with pytest.raises(HomeConfigError, match="symlink"):
+        migrate_repo_config(
+            "o/r", "main", lambda ref: "max_comments: 7\n", config_root=tmp_path
+        )
+
+    assert target.read_text(encoding="utf-8") == "max_comments: 3\n"
+
+
+def test_build_config_report_rejects_non_json_public_value() -> None:
+    class SecretValue:
+        def __repr__(self) -> str:
+            return "do-not-echo"
+
+    with pytest.raises(HomeConfigError) as exc:
+        build_config_report(
+            "o/r",
+            "main",
+            Settings(_env_file=None),
+            {"categories": {"security": SecretValue()}},
+            ResolutionMeta({}, {}, ()),
+        )
+
+    assert "do-not-echo" not in str(exc.value)
