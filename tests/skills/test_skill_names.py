@@ -3,12 +3,19 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 SKILLS_ROOT = ROOT / "plugin" / "skills"
 TEXT_SUFFIXES = {".md", ".py", ".json", ".toml", ".yml", ".yaml"}
-ACTIVE_DOCS = (
+SESSION_REFRESH_DOCS = (
     ROOT / "README.md",
     ROOT / "README.ru.md",
     ROOT / "CLAUDE.md",
     ROOT / "AGENTS.md",
     ROOT / "plugin" / "README.md",
+)
+ACTIVE_DOCS = (
+    *SESSION_REFRESH_DOCS,
+    ROOT / "GEMINI.md",
+    ROOT / ".mimocode" / "INSTALL.md",
+    ROOT / ".kimi-code" / "INSTALL.md",
+    ROOT / ".opencode" / "INSTALL.md",
 )
 
 
@@ -88,6 +95,15 @@ def test_active_docs_have_no_legacy_skill_names():
     assert _legacy_offenders(ACTIVE_DOCS) == []
 
 
+def test_active_docs_have_no_generic_legacy_skill_pattern():
+    offenders = [
+        path.relative_to(ROOT).as_posix()
+        for path in ACTIVE_DOCS
+        if "reviewer_*" in path.read_text(encoding="utf-8")
+    ]
+    assert offenders == []
+
+
 def test_bilingual_readmes_list_every_canonical_skill():
     for readme in (ROOT / "README.md", ROOT / "README.ru.md"):
         text = readme.read_text(encoding="utf-8")
@@ -100,10 +116,10 @@ def test_bilingual_readmes_list_every_canonical_skill():
 
 
 def test_migration_docs_require_fresh_sessions():
-    for readme in ACTIVE_DOCS:
+    for readme in SESSION_REFRESH_DOCS:
         text = readme.read_text(encoding="utf-8")
         assert "rag-reviewer:" in text
-    combined = "\n".join(path.read_text(encoding="utf-8") for path in ACTIVE_DOCS)
+    combined = "\n".join(path.read_text(encoding="utf-8") for path in SESSION_REFRESH_DOCS)
     assert "New Chat" in combined
     assert "new CLI session" in combined
     assert "Reload Window" in combined

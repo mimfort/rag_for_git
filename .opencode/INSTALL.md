@@ -52,4 +52,5 @@ uvx --from rag-reviewer reviewer install-skills opencode
 ```
 
 (or `reviewer install opencode`, which sets up the MCP server and the skills together).
-Then restart OpenCode and run `opencode debug skill` — the `reviewer_*` skills should be listed.
+Then restart OpenCode and run `opencode debug skill` — short names such as `review-pr` and
+`solve-task` should be listed.
