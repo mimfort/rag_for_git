@@ -28,15 +28,23 @@ inline-комментарии, привязанные к изменённым с
 системы контроля версий (VCS), если reviewer должен читать или публиковать ревью. Хранилища
 работают локально; запросы эмбеддингов и реранкинга отправляются в Voyage.
 
-1. Установите launcher, скачайте Compose-файл репозитория, поднимите хранилища и настройте
-   reviewer:
+1. Установите launcher, скачайте Compose-файл репозитория в каталог конфигурации reviewer,
+   поднимите хранилища и настройте reviewer:
 
    ```bash
-   uv tool install --from rag-reviewer reviewer
-   curl -O https://raw.githubusercontent.com/mimfort/rag_for_git/main/docker-compose.yml
-   docker compose up -d
+   uv tool install rag-reviewer
+   mkdir -p ~/.config/rag-reviewer
+   curl -o ~/.config/rag-reviewer/docker-compose.yml \
+     https://raw.githubusercontent.com/mimfort/rag_for_git/main/docker-compose.yml
+   docker compose -f ~/.config/rag-reviewer/docker-compose.yml up -d
    reviewer init
    ```
+
+   Compose-файл лежит рядом с env-файлом в `$XDG_CONFIG_HOME/rag-reviewer/` (по умолчанию
+   `~/.config/rag-reviewer/`), поэтому один набор хранилищ обслуживает все репозитории, а имя
+   Compose-проекта не зависит от каталога, из которого вы запускаете команду. Голый `curl -O`
+   пишет в текущий каталог; внутри клона этого репозитория он перезапишет версионируемый
+   `docker-compose.yml`.
 
 2. Посмотрите поддерживаемые AI-клиенты и подключите нужный:
 
@@ -94,8 +102,10 @@ reviewer env на каждой машине вместо loopback defaults из 
 1. **На shared host поднимите хранилища и настройте секреты service account.**
 
    ```bash
-   curl -O https://raw.githubusercontent.com/mimfort/rag_for_git/main/docker-compose.yml
-   docker compose up -d
+   mkdir -p ~/.config/rag-reviewer
+   curl -o ~/.config/rag-reviewer/docker-compose.yml \
+     https://raw.githubusercontent.com/mimfort/rag_for_git/main/docker-compose.yml
+   docker compose -f ~/.config/rag-reviewer/docker-compose.yml up -d
    reviewer init
    ```
 
@@ -227,9 +237,14 @@ PR → prepare_review → base + overlay retrieval → skill analysis
 Постоянный CLI:
 
 ```bash
-uv tool install --from rag-reviewer reviewer
+uv tool install rag-reviewer
 reviewer update
 ```
+
+`uv tool install` принимает имя пакета и ставит обе его команды — `reviewer` и `reviewer-mcp`.
+Опция `--from` здесь лишь уточняет источник того же пакета (`--from rag-reviewer==0.4.2`,
+`--from git+…`); форма `--from PACKAGE COMMAND` относится к `uvx`, и `uv tool install` её
+отвергает.
 
 Временный/latest запуск:
 
@@ -507,7 +522,7 @@ Base indexes отслеживают committed refs, а не working-tree edits. 
 
 | Симптом | Вероятная причина | Следующее действие |
 |---|---|---|
-| `reviewer check` не видит Postgres/Neo4j | Stores не запущены или DSN отличается | Запустите `docker compose up -d`, затем повторите `reviewer check` |
+| `reviewer check` не видит Postgres/Neo4j | Stores не запущены или DSN отличается | Запустите `docker compose -f ~/.config/rag-reviewer/docker-compose.yml up -d`, затем повторите `reviewer check` |
 | Voyage отвечает 429 | Исчерпан free-tier RPM/TPM | Дождитесь quota window; повторите incremental index, не удаляя существующий |
 | PR пропущен | Target branch вне `REVIEW_BRANCHES` или draft policy его исключает | Прочитайте reason `prepare_review`; меняйте policy только для намеренной target branch |
 | Task lookup пуст | Board отключён/не настроен или corpus не прогрет | Проверьте [board setup](docs/board-providers.md), затем запустите `reviewer_sync-tasks` |
