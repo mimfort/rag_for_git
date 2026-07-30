@@ -25,9 +25,13 @@ CREATE TABLE IF NOT EXISTS review_runs (
     comments_inline  INT         NOT NULL DEFAULT 0,
     comments_summary INT         NOT NULL DEFAULT 0,
     usage           JSONB,
+    config_sources  JSONB,
     total_cost      NUMERIC(12, 6),
     error_text      TEXT
 );
+
+-- Идемпотентная миграция для БД, где таблица уже существовала без provenance.
+ALTER TABLE review_runs ADD COLUMN IF NOT EXISTS config_sources JSONB;
 
 CREATE INDEX IF NOT EXISTS review_runs_created_at ON review_runs (created_at DESC);
 CREATE INDEX IF NOT EXISTS review_runs_repo ON review_runs (repo);

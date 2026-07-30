@@ -1512,6 +1512,7 @@ class MCPReviewService:
                     1 for r in asm.findings_rows if r["published"] and not r["inline"]
                 ),
                 "usage": metadata.usage,
+                "config_sources": p.config_sources,
                 "total_cost": metadata.total_cost,
                 "error_text": error or None,
             }

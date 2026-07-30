@@ -6,6 +6,7 @@ Unit fail-soft мокает `_connect`; integration проверяет запи�
 """
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 from unittest.mock import patch
 
@@ -43,6 +44,11 @@ def _sample_run() -> dict:
         "comments_summary": 1,
         "usage": {"analyze": {"calls": 3, "input_tokens": 1000, "output_tokens": 200,
                                "cache_read_tokens": 0, "cost": 0.01}},
+        "config_sources": {
+            "sources": {"paths": "home:repos/owner/repo.yml"},
+            "shadowed": {"paths": [".review.yml"]},
+            "warnings": [],
+        },
         "total_cost": 0.01,
         "error_text": None,
     }
@@ -137,6 +143,7 @@ def test_record_run_defaults_missing_outcome_keys():
         def __enter__(self): return self
         def __exit__(self, *a): return False
         def execute(self, sql, row=None):
+            captured["run_row"] = row
             class _R:
                 def fetchone(self_inner): return (1,)
             return _R()
@@ -149,6 +156,7 @@ def test_record_run_defaults_missing_outcome_keys():
     # _sample_findings() без outcome → в строках дефолт None по обоим ключам.
     assert all(r["outcome"] is None and r["reject_reason"] is None
                for r in captured["rows"])
+    assert json.loads(captured["run_row"]["config_sources"]) == _sample_run()["config_sources"]
 
 
 @pytest.mark.integration
@@ -168,6 +176,7 @@ def test_record_and_get_run_persists_outcome():
     ]
     run_id = history.record_run(_sample_run(), findings)
     result = history.get_run(run_id)
+    assert result["config_sources"]["sources"]["paths"] == "home:repos/owner/repo.yml"
     by_outcome = {f["outcome"]: f for f in result["findings"]}
     assert by_outcome["published_inline"]["reject_reason"] is None
     assert by_outcome["verify_rejected"]["reject_reason"] == "line does not exist"
