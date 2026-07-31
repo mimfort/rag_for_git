@@ -1134,20 +1134,22 @@ class MCPReviewService:
         effective_cap = cap if cap is not None else self.settings.summary_rebuild_cap
         deferred_keys: set[str] = set()
         if effective_cap and effective_cap > 0:
-            stale_clusters = [
-                cluster for cluster in state.clusters if stale[cluster.key]
+            rebuild_clusters = [
+                cluster
+                for cluster in state.clusters
+                if stale[cluster.key] or state.bootstrap
             ]
-            if len(stale_clusters) > effective_cap:
+            if len(rebuild_clusters) > effective_cap:
                 updated = self.components.summary_store.get_updated_ats(repo, resolved)
                 never = [
                     cluster
-                    for cluster in stale_clusters
+                    for cluster in rebuild_clusters
                     if cluster.key not in updated
                 ]
                 aged = sorted(
                     (
                         cluster
-                        for cluster in stale_clusters
+                        for cluster in rebuild_clusters
                         if cluster.key in updated
                     ),
                     key=lambda cluster: updated[cluster.key],

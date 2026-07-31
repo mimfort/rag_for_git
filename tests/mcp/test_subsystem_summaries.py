@@ -137,6 +137,35 @@ def test_list_subsystem_clusters_counts_pending_files_in_deferred_clusters():
     assert out["deferred_files"] == 1
 
 
+def test_list_subsystem_clusters_caps_fresh_legacy_bootstrap_work():
+    from reviewer.graph.summaries import compute_source_hash
+
+    c = MagicMock()
+    c.store.list_base_members.return_value = [
+        ("a/x/a.py", "A", "h1", 1, "sk1"),
+        ("b/y/b.py", "B", "h2", 1, "sk2"),
+    ]
+    c.graph = None
+    c.summary_store.get_source_hashes.return_value = {
+        "a/x": compute_source_hash([("a/x/a.py#A", "sk1")]),
+        "b/y": compute_source_hash([("b/y/b.py#B", "sk2")]),
+    }
+    c.summary_store.get_completed_depth.return_value = None
+    c.summary_store.get_fragments.return_value = []
+    c.summary_store.get_updated_ats.return_value = {}
+
+    out = _svc(c).list_subsystem_clusters(
+        "o/n", "dev", depth=2, min_size=1, cap=1
+    )
+
+    [cluster] = out["clusters"]
+    assert cluster["cluster_key"] == "a/x"
+    assert cluster["stale"] is False
+    assert cluster["bootstrap"] is True
+    assert out["deferred"] == 1
+    assert out["deferred_files"] == 1
+
+
 def test_list_subsystem_clusters_treats_same_key_depth_rebuild_as_stale_and_deferred():
     from datetime import datetime
 
