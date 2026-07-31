@@ -576,6 +576,110 @@ def test_set_embedding_if_source_hash_rejects_stale_and_accepts_current(store_pr
     ] == "auth"
 
 
+def test_upsert_can_atomically_reset_same_hash_embedding_for_backfill(store_pri167):
+    summary_store, repo = store_pri167
+    summary_store.upsert_summary(
+        repo,
+        "dev",
+        "auth",
+        "Старый заголовок",
+        "Старый текст",
+        ["auth/a.py#A"],
+        "same-hash",
+        embedding=_vec(0),
+    )
+    summary_store.upsert_summary(
+        repo,
+        "dev",
+        "auth",
+        "Новый заголовок",
+        "Новый текст",
+        ["auth/a.py#A"],
+        "same-hash",
+        embedding=None,
+        preserve_embedding=False,
+    )
+
+    assert [item["cluster_key"] for item in summary_store.get_pending_embeddings(
+        repo, "dev"
+    )] == ["auth"]
+    assert summary_store.search_summaries(repo, "dev", _vec(0), top_k=1) == []
+
+
+def test_commit_summary_bundle_atomically_resets_same_hash_embedding(store_pri167):
+    summary_store, repo = store_pri167
+    summary_store.upsert_summary(
+        repo,
+        "dev",
+        "auth",
+        "Старый заголовок",
+        "Старый текст",
+        ["auth/a.py#A"],
+        "same-hash",
+        embedding=_vec(0),
+    )
+
+    summary_store.commit_summary_bundle(
+        repo,
+        "dev",
+        "auth",
+        "Новый заголовок",
+        "Новый текст",
+        ["auth/a.py#A"],
+        "same-hash",
+        current_fingerprints={"auth/a.py": "file-hash"},
+        new_fragments=[
+            {
+                "path": "auth/a.py",
+                "fingerprint": "file-hash",
+                "summary": "Файл авторизации",
+                "provenance": {},
+            }
+        ],
+    )
+
+    assert [item["cluster_key"] for item in summary_store.get_pending_embeddings(
+        repo, "dev"
+    )] == ["auth"]
+    assert summary_store.search_summaries(repo, "dev", _vec(0), top_k=1) == []
+
+
+def test_set_embedding_if_source_hash_can_cas_exact_summary_text(store_pri167):
+    summary_store, repo = store_pri167
+    summary_store.upsert_summary(
+        repo,
+        "dev",
+        "auth",
+        "Авторизация",
+        "Текущий текст",
+        ["auth/a.py#A"],
+        "same-hash",
+        embedding=None,
+    )
+
+    assert summary_store.set_embedding_if_source_hash(
+        repo,
+        "dev",
+        "auth",
+        "same-hash",
+        _vec(0),
+        title="Авторизация",
+        summary="Устаревший текст",
+    ) is False
+    assert summary_store.get_pending_embeddings(repo, "dev")
+
+    assert summary_store.set_embedding_if_source_hash(
+        repo,
+        "dev",
+        "auth",
+        "same-hash",
+        _vec(0),
+        title="Авторизация",
+        summary="Текущий текст",
+    ) is True
+    assert summary_store.get_pending_embeddings(repo, "dev") == []
+
+
 def test_pending_and_set_embedding_backfill(store_pri167):
     summary_store, repo = store_pri167
     summary_store.upsert_summary(repo, "dev", "legacy", "Легаси", "...",

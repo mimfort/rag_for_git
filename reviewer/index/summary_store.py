@@ -25,7 +25,7 @@ ON CONFLICT (repo, branch, cluster_key) DO UPDATE SET
     member_node_ids=EXCLUDED.member_node_ids,
     source_hash=EXCLUDED.source_hash,
     embedding = CASE
-        WHEN subsystem_summaries.source_hash = EXCLUDED.source_hash
+        WHEN %s AND subsystem_summaries.source_hash = EXCLUDED.source_hash
         THEN COALESCE(EXCLUDED.embedding, subsystem_summaries.embedding)
         ELSE EXCLUDED.embedding
     END,
@@ -67,18 +67,20 @@ class SummaryStore:
 
     def upsert_summary(self, repo: str, branch: str, cluster_key: str, title: str,
                        summary: str, member_node_ids: list[str], source_hash: str,
-                       embedding: list[float] | None = None) -> None:
+                       embedding: list[float] | None = None,
+                       preserve_embedding: bool = True) -> None:
         """Idempotent upsert сводки.
 
-        embedding=None сохраняет существующий вектор только при неизменном
-        source_hash. Новый текст сбрасывает старый вектор до следующего бэкфилла.
+        По умолчанию embedding=None сохраняет существующий вектор при неизменном
+        source_hash. ``preserve_embedding=False`` атомарно сбрасывает его независимо
+        от hash, чтобы новый текст не был доступен через старый ANN-вектор.
         """
         vec = Vector(embedding) if embedding is not None else None
         with self._connect() as conn:
             conn.execute(
                 _UPSERT_SUMMARY_SQL,
                 (repo, branch, cluster_key, title, summary,
-                 member_node_ids, source_hash, vec),
+                 member_node_ids, source_hash, vec, preserve_embedding),
             )
             conn.commit()
 
@@ -256,6 +258,7 @@ class SummaryStore:
                     member_node_ids,
                     source_hash,
                     None,
+                    False,
                 ),
             )
         return metrics
@@ -413,13 +416,26 @@ class SummaryStore:
         cluster_key: str,
         source_hash: str,
         embedding: list[float],
+        *,
+        title: str | None = None,
+        summary: str | None = None,
     ) -> bool:
-        """Записать вектор, только если сводка не изменилась после генерации."""
+        """Записать вектор, только если сводка не изменилась после генерации.
+
+        Переданные вместе ``title``/``summary`` усиливают CAS для случая, когда
+        конкурирующая запись сохранила тот же структурный source_hash с новым текстом.
+        """
+        if (title is None) != (summary is None):
+            raise ValueError("title и summary для embedding CAS передаются вместе")
+        query = (
+            "UPDATE subsystem_summaries SET embedding=%s "
+            "WHERE repo=%s AND branch=%s AND cluster_key=%s AND source_hash=%s"
+        )
+        params: tuple = (Vector(embedding), repo, branch, cluster_key, source_hash)
+        if title is not None:
+            query += " AND title=%s AND summary=%s"
+            params += (title, summary)
         with self._connect() as conn:
-            cur = conn.execute(
-                "UPDATE subsystem_summaries SET embedding=%s "
-                "WHERE repo=%s AND branch=%s AND cluster_key=%s AND source_hash=%s",
-                (Vector(embedding), repo, branch, cluster_key, source_hash),
-            )
+            cur = conn.execute(query, params)
             conn.commit()
             return cur.rowcount == 1
