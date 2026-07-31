@@ -70,6 +70,18 @@ def compute_source_hash(items: list[tuple[str, str]]) -> str:
     return hashlib.sha256(joined.encode("utf-8")).hexdigest()
 
 
+def compute_file_fingerprints(members: list[Member]) -> dict[str, str]:
+    """Вернуть детерминированные структурные fingerprint для каждого файла.
+
+    Отпечаток зависит только от ``node_id`` и ``skeleton_hash`` его символов;
+    изменение тела символа не требует пересборки пофайловой сводки.
+    """
+    grouped: dict[str, list[tuple[str, str]]] = {}
+    for member in members:
+        grouped.setdefault(member.path, []).append((member.node_id, member.skeleton_hash))
+    return {path: compute_source_hash(items) for path, items in sorted(grouped.items())}
+
+
 def build_clusters(
     members: list[Member],
     in_degree_fn: Callable[[list[str]], dict[str, int]] | None,

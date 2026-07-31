@@ -1,5 +1,5 @@
 from reviewer.graph.summaries import (
-    Member, cluster_key, compute_source_hash, build_clusters,
+    Member, build_clusters, cluster_key, compute_file_fingerprints, compute_source_hash,
 )
 
 
@@ -24,6 +24,28 @@ def test_compute_source_hash_is_order_independent_and_changes_with_content():
     b = compute_source_hash([("y#g", "h2"), ("x#f", "h1")])
     assert a == b                       # детерминирован, не зависит от порядка
     assert a != compute_source_hash([("x#f", "h1"), ("y#g", "CHANGED")])
+
+
+def test_compute_file_fingerprints_uses_skeleton_per_path():
+    members = [
+        Member("pkg/a.py#B", "pkg/a.py", "body-1", "sk-b", 8),
+        Member("pkg/a.py#A", "pkg/a.py", "body-2", "sk-a", 1),
+        Member("pkg/b.py#C", "pkg/b.py", "body-3", "sk-c", 1),
+    ]
+    got = compute_file_fingerprints(members)
+    assert got["pkg/a.py"] == compute_source_hash([
+        ("pkg/a.py#A", "sk-a"), ("pkg/a.py#B", "sk-b")
+    ])
+    assert set(got) == {"pkg/a.py", "pkg/b.py"}
+
+
+def test_compute_file_fingerprints_ignores_body_changes_but_not_skeleton_changes():
+    base = [Member("pkg/a.py#A", "pkg/a.py", "body-1", "sk-a", 1)]
+    body_changed = [Member("pkg/a.py#A", "pkg/a.py", "body-2", "sk-a", 1)]
+    skeleton_changed = [Member("pkg/a.py#A", "pkg/a.py", "body-1", "sk-b", 1)]
+
+    assert compute_file_fingerprints(body_changed) == compute_file_fingerprints(base)
+    assert compute_file_fingerprints(skeleton_changed) != compute_file_fingerprints(base)
 
 
 def test_build_clusters_groups_by_module_and_filters_min_size():
