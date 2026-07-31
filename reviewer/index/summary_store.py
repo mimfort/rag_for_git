@@ -32,6 +32,12 @@ ON CONFLICT (repo, branch, cluster_key) DO UPDATE SET
     updated_at=now()
 """
 
+_LOCK_SUMMARY_BRANCH_SQL = """
+SELECT pg_advisory_xact_lock(
+    hashtextextended(%s, hashtextextended(%s, 0))
+)
+"""
+
 
 class SummaryStore:
     def __init__(self, dsn: str, *, min_size: int = 1, max_size: int = 4) -> None:
@@ -161,6 +167,7 @@ class SummaryStore:
         incoming = self._validate_new_fragments(current_fingerprints, new_fragments)
         metrics = {"created": len(incoming), "reused": 0, "removed": 0, "moved": 0}
         with self._connect() as conn, conn.transaction():
+            conn.execute(_LOCK_SUMMARY_BRANCH_SQL, (repo, branch))
             rows = conn.execute(
                 "SELECT cluster_key, path, fingerprint, summary, provenance "
                 "FROM subsystem_summary_fragments "
@@ -262,6 +269,7 @@ class SummaryStore:
     ) -> dict:
         """Атомарно удалить осиротевшие данные и отметить завершённый depth."""
         with self._connect() as conn, conn.transaction():
+            conn.execute(_LOCK_SUMMARY_BRANCH_SQL, (repo, branch))
             fragments = conn.execute(
                 "DELETE FROM subsystem_summary_fragments "
                 "WHERE repo=%s AND branch=%s AND NOT (cluster_key = ANY(%s))",

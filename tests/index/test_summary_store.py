@@ -5,9 +5,15 @@
 """
 from __future__ import annotations
 
+from collections.abc import Callable, Iterator
+from concurrent.futures import Future, ThreadPoolExecutor, wait
+from contextlib import contextmanager
 from uuid import uuid4
 
+import psycopg
 import pytest
+from psycopg import sql
+from psycopg.conninfo import make_conninfo
 
 from reviewer.config.settings import Settings
 from reviewer.index.store import ChunkStore
@@ -32,6 +38,138 @@ def _delete_summary_rows(summary_store: SummaryStore, repo: str) -> None:
         conn.execute("DELETE FROM subsystem_summary_state WHERE repo=%s", (repo,))
         conn.execute("DELETE FROM subsystem_summaries WHERE repo=%s", (repo,))
         conn.commit()
+
+
+@contextmanager
+def _database_trigger_barrier(
+    dsn: str,
+    repo: str,
+    table: str,
+    events: str,
+) -> Iterator[Callable[[], None]]:
+    """Остановить тестовую транзакцию перед выбранной записью без sleep."""
+    suffix = uuid4().hex
+    function_name = f"summary_barrier_fn_{suffix}"
+    trigger_name = f"summary_barrier_tr_{suffix}"
+    barrier_key = uuid4().int % (2**63)
+    event_sql = {
+        "insert": sql.SQL("INSERT"),
+        "insert_or_update": sql.SQL("INSERT OR UPDATE"),
+    }[events]
+    blocker = psycopg.connect(dsn, autocommit=True)
+    released = False
+
+    def release() -> None:
+        nonlocal released
+        if not released:
+            blocker.execute("SELECT pg_advisory_unlock(%s)", (barrier_key,))
+            released = True
+
+    try:
+        with psycopg.connect(dsn) as conn:
+            conn.execute(
+                sql.SQL(
+                    """
+                    CREATE FUNCTION {}() RETURNS trigger
+                    LANGUAGE plpgsql AS $$
+                    BEGIN
+                        IF NEW.repo = {} THEN
+                            PERFORM pg_advisory_xact_lock({});
+                        END IF;
+                        RETURN NEW;
+                    END
+                    $$
+                    """
+                ).format(
+                    sql.Identifier(function_name),
+                    sql.Literal(repo),
+                    sql.Literal(barrier_key),
+                )
+            )
+            conn.execute(
+                sql.SQL(
+                    "CREATE TRIGGER {} BEFORE {} ON {} "
+                    "FOR EACH ROW EXECUTE FUNCTION {}()"
+                ).format(
+                    sql.Identifier(trigger_name),
+                    event_sql,
+                    sql.Identifier(table),
+                    sql.Identifier(function_name),
+                )
+            )
+        blocker.execute("SELECT pg_advisory_lock(%s)", (barrier_key,))
+        yield release
+    finally:
+        release()
+        with psycopg.connect(dsn) as conn:
+            conn.execute(
+                sql.SQL("DROP TRIGGER IF EXISTS {} ON {}").format(
+                    sql.Identifier(trigger_name),
+                    sql.Identifier(table),
+                )
+            )
+            conn.execute(
+                sql.SQL("DROP FUNCTION IF EXISTS {}()").format(
+                    sql.Identifier(function_name)
+                )
+            )
+        blocker.close()
+
+
+def _wait_for_advisory_or_done(
+    dsn: str,
+    application_name: str,
+    future: Future,
+) -> str:
+    """Дождаться DB-lock wait или завершения worker без временного sleep."""
+    with psycopg.connect(dsn, autocommit=True) as conn:
+        for _ in range(300):
+            waiting = conn.execute(
+                "SELECT EXISTS ("
+                "SELECT 1 FROM pg_stat_activity "
+                "WHERE application_name=%s "
+                "AND wait_event_type='Lock' AND wait_event='advisory')",
+                (application_name,),
+            ).fetchone()[0]
+            if waiting:
+                return "waiting"
+            done, _pending = wait([future], timeout=0.01)
+            if done:
+                return "done"
+    raise AssertionError(f"Worker {application_name} не дошёл до advisory lock")
+
+
+def _commit_single_fragment(dsn: str, repo: str, cluster_key: str) -> dict:
+    """Сохранить один fragment через отдельный connection pool."""
+    store = SummaryStore(dsn, min_size=1, max_size=1)
+    try:
+        return store.commit_summary_bundle(
+            repo,
+            "dev",
+            cluster_key,
+            cluster_key,
+            f"Сводка {cluster_key}",
+            ["same.py#Same"],
+            f"hash-{cluster_key}",
+            current_fingerprints={"same.py": "fingerprint"},
+            new_fragments=[{
+                "path": "same.py",
+                "fingerprint": "fingerprint",
+                "summary": f"Fragment {cluster_key}",
+                "provenance": {},
+            }],
+        )
+    finally:
+        store.close()
+
+
+def _prune_empty_branch(dsn: str, repo: str) -> dict:
+    """Выполнить полный prune через отдельный connection pool."""
+    store = SummaryStore(dsn, min_size=1, max_size=1)
+    try:
+        return store.prune_except_and_set_depth(repo, "dev", [], 2)
+    finally:
+        store.close()
 
 
 @pytest.fixture()
@@ -234,6 +372,78 @@ def test_commit_summary_bundle_rolls_back_when_current_coverage_is_incomplete(st
 
     assert summary_store.get_fragments(repo, "dev") == fragments_before
     assert summary_store.get_summary(repo, "dev", "target") == summary_before
+
+
+def test_concurrent_empty_branch_bundles_serialize_same_path(store):
+    summary_store, repo = store
+    first_app = f"summary-empty-first-{uuid4().hex}"
+    second_app = f"summary-empty-second-{uuid4().hex}"
+    first_dsn = make_conninfo(summary_store.dsn, application_name=first_app)
+    second_dsn = make_conninfo(summary_store.dsn, application_name=second_app)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        with _database_trigger_barrier(
+            summary_store.dsn,
+            repo,
+            "subsystem_summary_fragments",
+            "insert",
+        ) as release:
+            first = executor.submit(
+                _commit_single_fragment, first_dsn, repo, "cluster-a"
+            )
+            assert _wait_for_advisory_or_done(
+                summary_store.dsn, first_app, first
+            ) == "waiting"
+            second = executor.submit(
+                _commit_single_fragment, second_dsn, repo, "cluster-b"
+            )
+            assert _wait_for_advisory_or_done(
+                summary_store.dsn, second_app, second
+            ) == "waiting"
+            release()
+            first.result(timeout=5)
+            second.result(timeout=5)
+
+    assert [
+        (fragment["cluster_key"], fragment["path"])
+        for fragment in summary_store.get_fragments(repo, "dev")
+    ] == [("cluster-b", "same.py")]
+
+
+def test_bundle_waits_until_prune_depth_transaction_finishes(store):
+    summary_store, repo = store
+    prune_app = f"summary-prune-{uuid4().hex}"
+    bundle_app = f"summary-bundle-{uuid4().hex}"
+    prune_dsn = make_conninfo(summary_store.dsn, application_name=prune_app)
+    bundle_dsn = make_conninfo(summary_store.dsn, application_name=bundle_app)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        with _database_trigger_barrier(
+            summary_store.dsn,
+            repo,
+            "subsystem_summary_state",
+            "insert_or_update",
+        ) as release:
+            prune = executor.submit(_prune_empty_branch, prune_dsn, repo)
+            assert _wait_for_advisory_or_done(
+                summary_store.dsn, prune_app, prune
+            ) == "waiting"
+            bundle = executor.submit(
+                _commit_single_fragment, bundle_dsn, repo, "new"
+            )
+            bundle_state = _wait_for_advisory_or_done(
+                summary_store.dsn, bundle_app, bundle
+            )
+            release()
+            prune.result(timeout=5)
+            bundle.result(timeout=5)
+
+    assert bundle_state == "waiting"
+    assert summary_store.get_completed_depth(repo, "dev") == 2
+    assert [
+        (fragment["cluster_key"], fragment["path"])
+        for fragment in summary_store.get_fragments(repo, "dev")
+    ] == [("new", "same.py")]
 
 
 def test_prune_except_and_set_depth_removes_summary_and_fragment_orphans(store):
