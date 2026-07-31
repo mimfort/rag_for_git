@@ -1,7 +1,18 @@
+import re
 from pathlib import Path
 
 SKILL = (Path(__file__).resolve().parents[2]
          / "plugin" / "skills" / "summarize-subsystems" / "SKILL.md")
+_INCLUDE = re.compile(r"<!-- include: (_common/[A-Za-z0-9_-]+\.md) -->")
+
+
+def _assembled_skill() -> str:
+    text = SKILL.read_text(encoding="utf-8")
+    skills_dir = SKILL.resolve().parents[1]
+    return _INCLUDE.sub(
+        lambda match: (skills_dir / match.group(1)).read_text(encoding="utf-8"),
+        text,
+    )
 
 
 def test_skill_exists_and_mentions_tools():
@@ -77,3 +88,50 @@ def test_skill_prunes_orphans_on_full_pass():
     text = SKILL.read_text(encoding="utf-8")
     assert "prune_subsystem_summaries" in text, "скилл не вызывает prune на полном прогоне"
     assert "orphan" in text.lower(), "скилл не упоминает осиротевшие сводки"
+
+
+def test_skill_uses_incremental_file_summary_protocol():
+    text = _assembled_skill()
+    assert "get_subsystem_summary_work" in text
+    assert "stale == true OR bootstrap == true" in text
+    assert "added_files + changed_files" in text
+    assert "one file-summary job" in text
+    assert "must not read unchanged" in text.lower()
+    assert "reused_fragments" in text
+    assert "moved_files" in text
+
+
+def test_skill_composes_only_from_ordered_fragment_texts():
+    text = _assembled_skill()
+    assert "ordered reused/moved/new fragment texts" in text
+    assert "composer must not call `Read`" in text
+    assert "source-code claims absent from the fragments" in text
+    assert "file prompt must name only its own path" in text
+
+
+def test_skill_persists_new_fragments_and_defers_races():
+    text = _assembled_skill()
+    normalized = " ".join(text.split())
+    assert (
+        "`index_subsystem_summary(repo, branch, cluster_key, title, summary, "
+        "source_hash, fragments=[new file results])`"
+        in normalized
+    )
+    assert "`stored=false`" in text
+    assert "deferred/raced" in text
+    assert "must not count it as success" in text
+
+
+def test_skill_reports_incremental_metrics():
+    text = _assembled_skill()
+    for metric in (
+        "created",
+        "reused",
+        "removed",
+        "moved",
+        "deferred",
+        "raced",
+        "fragments_pruned",
+        "embedded",
+    ):
+        assert metric in text, f"скилл не сообщает метрику {metric}"

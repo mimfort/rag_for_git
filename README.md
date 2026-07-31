@@ -521,8 +521,18 @@ namespaced skills with `$rag-reviewer:...`.
 - **When:** build or refresh the architectural prior used by Q&A and PR walkthroughs.
 - **Invoke:** `/rag-reviewer:summarize-subsystems`.
 - **Needs:** a fresh base index, code graph, reviewer MCP, and confirmation of cluster depth.
-- **Reads/writes:** reads cluster symbols and writes grounded summaries to the summary store.
-- **Result:** fresh/pruned summaries with deferred and orphan reporting.
+- **Reads/writes:** читает только добавленные/изменённые файлы, переиспользует сохранённые
+  пофайловые fragments и атомарно пишет fragments вместе со сводкой кластера.
+- **Result:** сводки и метрики `created`/`reused`/`removed`/`moved`,
+  `deferred`/`raced`, `fragments_pruned` и `embedded`.
+
+Первый полный прогон после обновления создаёт fragments для всех текущих файлов, но не удаляет
+старые сводки: каждый кластер заменяется только после успешной атомарной записи нового bundle.
+При настроенном cap bootstrap может занять несколько проходов. Freshness считается по
+skeleton-коду, поэтому правка только тела функции намеренно остаётся невидимой, пока не изменится
+skeleton. Смена `summary_cluster_depth` принудительно пересобирает все fragments. Частичный или
+ограниченный cap-ом прогон не запускает prune; optimistic race (`stored=false`) тоже считается
+отложенным, не успехом, и запрещает prune в этом проходе.
 
 ### `configure-review` — update `.review.yml`
 
