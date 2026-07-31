@@ -16,12 +16,24 @@ from psycopg import sql
 from psycopg.conninfo import make_conninfo
 
 from reviewer.config.settings import Settings
+from reviewer.graph.summaries import compute_layout_token
 from reviewer.index.store import ChunkStore
 from reviewer.index.summary_store import SummaryStore
 
 pytestmark = pytest.mark.integration
 
 DIM = 1024
+LAYOUT_TOKEN = compute_layout_token(2, {})
+
+
+def _generation_provenance() -> dict:
+    return {
+        "_reviewer": {
+            "generation": "summary-fragment-v1",
+            "layout_token": LAYOUT_TOKEN,
+            "depth": 2,
+        }
+    }
 
 
 def _vec(hot: int) -> list[float]:
@@ -167,7 +179,14 @@ def _prune_empty_branch(dsn: str, repo: str) -> dict:
     """Выполнить полный prune через отдельный connection pool."""
     store = SummaryStore(dsn, min_size=1, max_size=1)
     try:
-        return store.prune_except_and_set_depth(repo, "dev", [], 2)
+        return store.prune_verified_layout(
+            repo,
+            "dev",
+            {"kept": "hash-kept"},
+            {"kept": {"kept.py": "fingerprint-kept"}},
+            2,
+            LAYOUT_TOKEN,
+        )
     finally:
         store.close()
 
@@ -412,6 +431,24 @@ def test_concurrent_empty_branch_bundles_serialize_same_path(store):
 
 def test_bundle_waits_until_prune_depth_transaction_finishes(store):
     summary_store, repo = store
+    summary_store.commit_summary_bundle(
+        repo,
+        "dev",
+        "kept",
+        "Kept",
+        "Сводка kept",
+        ["kept.py#Kept"],
+        "hash-kept",
+        current_fingerprints={"kept.py": "fingerprint-kept"},
+        new_fragments=[
+            {
+                "path": "kept.py",
+                "fingerprint": "fingerprint-kept",
+                "summary": "Kept",
+                "provenance": _generation_provenance(),
+            }
+        ],
+    )
     prune_app = f"summary-prune-{uuid4().hex}"
     bundle_app = f"summary-bundle-{uuid4().hex}"
     prune_dsn = make_conninfo(summary_store.dsn, application_name=prune_app)
@@ -440,13 +477,14 @@ def test_bundle_waits_until_prune_depth_transaction_finishes(store):
 
     assert bundle_state == "waiting"
     assert summary_store.get_completed_depth(repo, "dev") == 2
+    assert summary_store.get_completed_layout(repo, "dev") == LAYOUT_TOKEN
     assert [
         (fragment["cluster_key"], fragment["path"])
         for fragment in summary_store.get_fragments(repo, "dev")
-    ] == [("new", "same.py")]
+    ] == [("kept", "kept.py"), ("new", "same.py")]
 
 
-def test_prune_except_and_set_depth_removes_summary_and_fragment_orphans(store):
+def test_prune_verified_layout_removes_orphans_and_records_layout(store):
     summary_store, repo = store
     for cluster_key in ("reviewer/index", "reviewer/old"):
         path = f"{cluster_key}/a.py"
@@ -458,43 +496,150 @@ def test_prune_except_and_set_depth_removes_summary_and_fragment_orphans(store):
                 "path": path,
                 "fingerprint": f"fingerprint-{cluster_key}",
                 "summary": "Фрагмент",
-                "provenance": {},
+                "provenance": _generation_provenance(),
             }],
         )
 
     assert summary_store.get_completed_depth(repo, "dev") is None
-    result = summary_store.prune_except_and_set_depth(
-        repo, "dev", ["reviewer/index"], 2
+    assert summary_store.get_completed_layout(repo, "dev") is None
+    result = summary_store.prune_verified_layout(
+        repo,
+        "dev",
+        {"reviewer/index": "hash-reviewer/index"},
+        {"reviewer/index": {"reviewer/index/a.py": "fingerprint-reviewer/index"}},
+        2,
+        LAYOUT_TOKEN,
     )
 
-    assert result == {"pruned": 1, "fragments_pruned": 1, "depth": 2}
+    assert result == {
+        "completed": True,
+        "race": False,
+        "deferred": 0,
+        "pruned": 1,
+        "fragments_pruned": 1,
+        "depth": 2,
+        "layout_token": LAYOUT_TOKEN,
+    }
     assert summary_store.get_completed_depth(repo, "dev") == 2
+    assert summary_store.get_completed_layout(repo, "dev") == LAYOUT_TOKEN
     assert set(summary_store.get_source_hashes(repo, "dev")) == {"reviewer/index"}
     assert [row["cluster_key"] for row in summary_store.get_fragments(repo, "dev")] == [
         "reviewer/index"
     ]
 
 
-def test_prune_except_and_set_depth_supports_empty_keep_keys(store):
+def test_prune_verified_layout_rejects_premature_bootstrap_without_summary(store):
     summary_store, repo = store
-    summary_store.commit_summary_bundle(
-        repo, "dev", "reviewer/index", "Индекс", "Сводка",
-        ["reviewer/index/a.py#A"], "cluster-hash",
-        current_fingerprints={"reviewer/index/a.py": "file-hash"},
-        new_fragments=[{
-            "path": "reviewer/index/a.py",
-            "fingerprint": "file-hash",
-            "summary": "Файл индекса.",
-            "provenance": {},
-        }],
+
+    result = summary_store.prune_verified_layout(
+        repo,
+        "dev",
+        {"reviewer/index": "cluster-hash"},
+        {"reviewer/index": {"reviewer/index/a.py": "file-hash"}},
+        2,
+        LAYOUT_TOKEN,
     )
 
-    result = summary_store.prune_except_and_set_depth(repo, "dev", [], 3)
+    assert result["completed"] is False
+    assert result["race"] is True
+    assert result["deferred"] == 1
+    assert summary_store.get_completed_depth(repo, "dev") is None
+    assert summary_store.get_completed_layout(repo, "dev") is None
 
-    assert result == {"pruned": 1, "fragments_pruned": 1, "depth": 3}
-    assert summary_store.get_source_hashes(repo, "dev") == {}
-    assert summary_store.get_fragments(repo, "dev") == []
-    assert summary_store.get_completed_depth(repo, "dev") == 3
+
+def test_prune_verified_layout_rejects_missing_cluster_fingerprint_snapshot(store):
+    summary_store, repo = store
+    summary_store.upsert_summary(
+        repo,
+        "dev",
+        "reviewer/index",
+        "Индекс",
+        "Сводка",
+        ["reviewer/index/a.py#A"],
+        "cluster-hash",
+    )
+
+    result = summary_store.prune_verified_layout(
+        repo,
+        "dev",
+        {"reviewer/index": "cluster-hash"},
+        {},
+        2,
+        LAYOUT_TOKEN,
+    )
+
+    assert result["completed"] is False
+    assert result["race"] is True
+    assert summary_store.get_completed_layout(repo, "dev") is None
+
+
+def test_prune_verified_layout_rejects_incomplete_fragment_coverage_without_delete(store):
+    summary_store, repo = store
+    summary_store.commit_summary_bundle(
+        repo,
+        "dev",
+        "reviewer/index",
+        "Индекс",
+        "Сводка",
+        ["reviewer/index/a.py#A"],
+        "cluster-hash",
+        current_fingerprints={"reviewer/index/a.py": "file-hash"},
+        new_fragments=[
+            {
+                "path": "reviewer/index/a.py",
+                "fingerprint": "file-hash",
+                "summary": "Файл индекса.",
+                "provenance": {},
+            }
+        ],
+    )
+    summary_store.upsert_summary(
+        repo,
+        "dev",
+        "orphan",
+        "Сирота",
+        "Не удалять при reject",
+        [],
+        "orphan-hash",
+    )
+
+    result = summary_store.prune_verified_layout(
+        repo,
+        "dev",
+        {"reviewer/index": "cluster-hash"},
+        {"reviewer/index": {"reviewer/index/a.py": "file-hash"}},
+        2,
+        LAYOUT_TOKEN,
+    )
+
+    assert result["completed"] is False
+    assert result["race"] is True
+    assert result["deferred"] == 1
+    assert set(summary_store.get_source_hashes(repo, "dev")) == {
+        "orphan",
+        "reviewer/index",
+    }
+    assert summary_store.get_completed_layout(repo, "dev") is None
+
+
+def test_legacy_completed_depth_without_layout_remains_incomplete_after_schema_rerun(store):
+    summary_store, repo = store
+    with summary_store._connect() as conn:
+        conn.execute(
+            "INSERT INTO subsystem_summary_state "
+            "(repo, branch, completed_depth, completed_layout) "
+            "VALUES (%s,%s,%s,NULL)",
+            (repo, "dev", 2),
+        )
+        conn.commit()
+    schema_store = ChunkStore(summary_store.dsn)
+    try:
+        schema_store.init_schema()
+    finally:
+        schema_store.close()
+
+    assert summary_store.get_completed_depth(repo, "dev") == 2
+    assert summary_store.get_completed_layout(repo, "dev") is None
 
 
 # ── PRI-167: embedding в SummaryStore + HNSW-индекс ──────────────────────────

@@ -1190,38 +1190,141 @@ def test_list_subsystem_clusters_resolves_depth_when_not_given():
     assert out["orphans"] == 0
 
 
-def test_prune_subsystem_summaries_rederives_keys_and_prunes():
+def test_prune_subsystem_summaries_verifies_list_snapshot_before_pruning():
+    from reviewer.graph.summaries import compute_file_fingerprints, compute_layout_token, Member
+
     c = MagicMock()
-    c.store.list_base_members.return_value = [
+    raw = [
         ("a/x/f.py", "F", "h", 1, "skf"),
         ("b/y/g.py", "G", "h", 1, "skg"),
     ]
-    c.summary_store.prune_except_and_set_depth.return_value = {
+    c.store.list_base_members.return_value = raw
+    c.graph = None
+    c.summary_store.get_source_hashes.return_value = {}
+    c.summary_store.get_fragments.return_value = []
+    c.summary_store.prune_verified_layout.return_value = {
+        "completed": True,
+        "race": False,
+        "deferred": 0,
         "pruned": 2,
         "fragments_pruned": 3,
         "depth": 2,
+        "layout_token": compute_layout_token(2, {}),
     }
-    svc = _svc(c)                                  # стаб _resolve_summary_depth → (2, "env")
+    svc = _svc(c)
+    listed = svc.list_subsystem_clusters("o/n", "dev", cap=0)
+    expected_hashes = {
+        cluster["cluster_key"]: cluster["source_hash"]
+        for cluster in listed["clusters"]
+    }
+
+    out = svc.prune_subsystem_summaries(
+        "o/n",
+        "dev",
+        layout_token=listed["layout_token"],
+        expected_source_hashes=expected_hashes,
+    )
+
+    assert out == {
+        "completed": True,
+        "race": False,
+        "deferred": 0,
+        "pruned": 2,
+        "kept": 2,
+        "fragments_pruned": 3,
+        "depth": 2,
+        "layout_token": compute_layout_token(2, {}),
+    }
+    members = [
+        Member(f"{path}#{symbol}", path, content_hash, skeleton_hash, start_line)
+        for path, symbol, content_hash, start_line, skeleton_hash in raw
+    ]
+    fingerprints = compute_file_fingerprints(members)
+    c.summary_store.prune_verified_layout.assert_called_once_with(
+        "o/n",
+        "dev",
+        expected_hashes,
+        {
+            "a/x": {"a/x/f.py": fingerprints["a/x/f.py"]},
+            "b/y": {"b/y/g.py": fingerprints["b/y/g.py"]},
+        },
+        2,
+        compute_layout_token(2, {}),
+    )
+
+
+def test_prune_subsystem_summaries_rejects_legacy_call_without_snapshot():
+    c = MagicMock()
+    c.store.list_base_members.return_value = [
+        ("a/x/f.py", "F", "h", 1, "skf"),
+    ]
+    c.graph = None
+    svc = _svc(c)
+
     out = svc.prune_subsystem_summaries("o/n", "dev")
-    assert out == {"pruned": 2, "kept": 2, "fragments_pruned": 3, "depth": 2}
-    # keep_keys пере-выведены на depth=2 и отсортированы
-    args = c.summary_store.prune_except_and_set_depth.call_args.args
-    assert args[0] == "o/n" and args[1] == "dev"
-    assert args[2] == ["a/x", "b/y"]
-    assert args[3] == 2
+
+    assert out["completed"] is False
+    assert out["race"] is True
+    assert out["deferred"] == 1
+    assert out["pruned"] == 0
+    assert "snapshot" in out["note"]
+    c.summary_store.prune_verified_layout.assert_not_called()
+
+
+def test_prune_subsystem_summaries_rejects_policy_change_after_list():
+    c = MagicMock()
+    c.store.list_base_members.return_value = [
+        ("a/x/f.py", "F", "h", 1, "skf"),
+    ]
+    c.graph = None
+    c.summary_store.get_source_hashes.return_value = {}
+    c.summary_store.get_fragments.return_value = []
+    svc = _svc(c)
+    listed = svc.list_subsystem_clusters("o/n", "dev", cap=0)
+    expected_hashes = {
+        cluster["cluster_key"]: cluster["source_hash"]
+        for cluster in listed["clusters"]
+    }
+    svc._resolve_summary_depth = lambda repo, branch: (
+        2,
+        {"a/x": 3},
+        ".review.yml",
+    )
+
+    out = svc.prune_subsystem_summaries(
+        "o/n",
+        "dev",
+        layout_token=listed["layout_token"],
+        expected_source_hashes=expected_hashes,
+    )
+
+    assert out["completed"] is False
+    assert out["race"] is True
+    assert out["deferred"] == 1
+    assert out["pruned"] == 0
+    assert "layout" in out["note"]
+    c.summary_store.prune_verified_layout.assert_not_called()
 
 
 def test_prune_subsystem_summaries_empty_base_is_noop():
     c = MagicMock()
     c.store.list_base_members.return_value = []
     svc = _svc(c)
-    out = svc.prune_subsystem_summaries("o/n", "dev")
+    out = svc.prune_subsystem_summaries(
+        "o/n",
+        "dev",
+        layout_token="snapshot",
+        expected_source_hashes={},
+    )
+    assert out["completed"] is False
+    assert out["race"] is True
+    assert out["deferred"] == 0
     assert out["pruned"] == 0
     assert out["kept"] == 0
     assert out["fragments_pruned"] == 0
     assert out["depth"] == 2
     assert "note" in out
-    c.summary_store.prune_except_and_set_depth.assert_not_called()  # base пуст → не вайпаем
+    c.summary_store.prune_verified_layout.assert_not_called()  # base пуст → не вайпаем
 
 
 def test_index_subsystem_summary_embeds_when_hash_changed():

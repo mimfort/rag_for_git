@@ -16,7 +16,7 @@ log = logging.getLogger(__name__)
 
 
 def create_server(service: MCPReviewService) -> FastMCP:
-    """Создать и вернуть сконфигурированный FastMCP-сервер с 36 тулами.
+    """Создать и вернуть сконфигурированный FastMCP-сервер с 37 тулами.
 
     Все тулы — обычные def (sync), а не async: сервис не потокобезопасен
     и рассчитан на последовательное исполнение sync-тулов FastMCP в event loop.
@@ -333,14 +333,24 @@ def create_server(service: MCPReviewService) -> FastMCP:
         return service.get_subsystem_summaries(repo, branch, cluster_key, query, top_k)
 
     @mcp.tool()
-    def prune_subsystem_summaries(repo: str, branch: str | None = None) -> dict:
-        """Prune subsystem summaries orphaned by a depth change or removed modules.
-        Re-derives current cluster_keys from the base index at the resolved depth and
-        deletes summaries outside that set. Call ONLY after a full (uncapped) pass of
-        rag-reviewer:summarize-subsystems — deferred clusters are not orphans. Empty base
-        → no-op. Returns {pruned, kept, fragments_pruned, depth}. No PR session;
-        branch defaults to primary."""
-        return service.prune_subsystem_summaries(repo, branch)
+    def prune_subsystem_summaries(
+        repo: str,
+        branch: str | None = None,
+        layout_token: str | None = None,
+        expected_source_hashes: dict[str, str] | None = None,
+    ) -> dict:
+        """Verify and finalize one exact uncapped list snapshot.
+        Pass layout_token and every {cluster_key: source_hash} from that list response.
+        The server re-derives layout/hashes and, under a branch lock, verifies summaries
+        plus exact file-fragment coverage before deleting orphans and advancing state.
+        Missing/changed/incomplete snapshots return completed=false/race=true without
+        deletion. Empty base is also a no-op. No PR session; branch defaults to primary."""
+        return service.prune_subsystem_summaries(
+            repo,
+            branch,
+            layout_token,
+            expected_source_hashes,
+        )
 
     @mcp.tool()
     def backfill_summary_embeddings(repo: str, branch: str | None = None) -> dict:

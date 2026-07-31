@@ -14,6 +14,11 @@ from pgvector.psycopg import register_vector
 from psycopg_pool import ConnectionPool
 from psycopg.types.json import Jsonb
 
+from reviewer.services.summary_fragments import (
+    StoredSummaryFragment,
+    has_complete_fragment_generation,
+)
+
 
 _UPSERT_SUMMARY_SQL = """
 INSERT INTO subsystem_summaries
@@ -276,16 +281,80 @@ class SummaryStore:
             )
         return metrics
 
-    def prune_except_and_set_depth(
+    def prune_verified_layout(
         self,
         repo: str,
         branch: str,
-        keep_keys: list[str],
+        expected_source_hashes: dict[str, str],
+        current_fingerprints: dict[str, dict[str, str]],
         depth: int,
+        layout_token: str,
     ) -> dict:
-        """Атомарно удалить осиротевшие данные и отметить завершённый depth."""
+        """Проверить полный layout и только затем атомарно удалить сироты."""
+        rejected = {
+            "completed": False,
+            "race": True,
+            "deferred": len(expected_source_hashes),
+            "pruned": 0,
+            "fragments_pruned": 0,
+            "depth": depth,
+            "layout_token": layout_token,
+        }
         with self._connect() as conn, conn.transaction():
             conn.execute(_LOCK_SUMMARY_BRANCH_SQL, (repo, branch))
+            if set(current_fingerprints) != set(expected_source_hashes):
+                return {
+                    **rejected,
+                    "note": "fingerprint snapshot кластеров неполон",
+                }
+            summary_rows = conn.execute(
+                "SELECT cluster_key, source_hash FROM subsystem_summaries "
+                "WHERE repo=%s AND branch=%s AND cluster_key = ANY(%s) "
+                "ORDER BY cluster_key FOR UPDATE",
+                (repo, branch, list(expected_source_hashes)),
+            ).fetchall()
+            if dict(summary_rows) != expected_source_hashes:
+                return {
+                    **rejected,
+                    "note": "summary snapshot неполон или устарел",
+                }
+
+            fragment_rows = conn.execute(
+                "SELECT cluster_key, path, fingerprint, summary, provenance "
+                "FROM subsystem_summary_fragments "
+                "WHERE repo=%s AND branch=%s AND cluster_key = ANY(%s) "
+                "ORDER BY cluster_key, path FOR UPDATE",
+                (repo, branch, list(expected_source_hashes)),
+            ).fetchall()
+            stored = [
+                StoredSummaryFragment(
+                    cluster_key=cluster_key,
+                    path=path,
+                    fingerprint=fingerprint,
+                    summary=summary,
+                    provenance=provenance,
+                )
+                for cluster_key, path, fingerprint, summary, provenance in fragment_rows
+            ]
+            incomplete = [
+                cluster_key
+                for cluster_key, fingerprints in current_fingerprints.items()
+                if not has_complete_fragment_generation(
+                    cluster_key,
+                    fingerprints,
+                    stored,
+                    depth,
+                    layout_token,
+                )
+            ]
+            if incomplete:
+                return {
+                    **rejected,
+                    "deferred": len(incomplete),
+                    "note": "покрытие summary fragments неполно",
+                }
+
+            keep_keys = list(expected_source_hashes)
             fragments = conn.execute(
                 "DELETE FROM subsystem_summary_fragments "
                 "WHERE repo=%s AND branch=%s AND NOT (cluster_key = ANY(%s))",
@@ -298,15 +367,21 @@ class SummaryStore:
             )
             conn.execute(
                 "INSERT INTO subsystem_summary_state "
-                "(repo, branch, completed_depth, updated_at) VALUES (%s,%s,%s,now()) "
+                "(repo, branch, completed_depth, completed_layout, updated_at) "
+                "VALUES (%s,%s,%s,%s,now()) "
                 "ON CONFLICT (repo, branch) DO UPDATE SET "
-                "completed_depth=EXCLUDED.completed_depth, updated_at=now()",
-                (repo, branch, depth),
+                "completed_depth=EXCLUDED.completed_depth, "
+                "completed_layout=EXCLUDED.completed_layout, updated_at=now()",
+                (repo, branch, depth, layout_token),
             )
             return {
+                "completed": True,
+                "race": False,
+                "deferred": 0,
                 "pruned": summaries.rowcount,
                 "fragments_pruned": fragments.rowcount,
                 "depth": depth,
+                "layout_token": layout_token,
             }
 
     def delete_summaries_except(self, repo: str, branch: str, keep_keys: list[str]) -> int:

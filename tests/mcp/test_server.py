@@ -186,6 +186,36 @@ def test_index_subsystem_summary_routes_typed_fragments_to_service() -> None:
     ]
 
 
+def test_prune_subsystem_summaries_routes_verified_snapshot_to_service() -> None:
+    from reviewer.entrypoints.mcp_server import create_server
+
+    service = MagicMock(spec=MCPReviewService)
+    service.prune_subsystem_summaries.return_value = {"completed": True}
+    server = create_server(service)
+
+    result = asyncio.run(
+        server.call_tool(
+            "prune_subsystem_summaries",
+            {
+                "repo": "o/r",
+                "branch": "dev",
+                "layout_token": "layout-token",
+                "expected_source_hashes": {
+                    "reviewer/index": "source-hash",
+                },
+            },
+        )
+    )
+
+    assert json.loads(result[0].text) == {"completed": True}
+    service.prune_subsystem_summaries.assert_called_once_with(
+        "o/r",
+        "dev",
+        "layout-token",
+        {"reviewer/index": "source-hash"},
+    )
+
+
 @patch("reviewer.services.review_service.chunk_python", side_effect=_fake_chunk)
 @patch("reviewer.services.review_service.build_overlay")
 def test_prepare_review_callable_via_mcp(_ov, _ch) -> None:

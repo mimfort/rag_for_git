@@ -28,11 +28,15 @@ Plus `list_subsystem_clusters`, `get_subsystem_summary_work`, `index_subsystem_s
 
 2. **List clusters.** Call `list_subsystem_clusters(repo, branch)`. Empty / `note` about an empty
    index → tell the user (in Russian) to run `rag-reviewer:sync-codebase` first, then stop. The response
-   carries `depth` (the applied cluster depth), `depth_source` (`env` | `.review.yml` | `arg`),
+   carries `depth` (the applied cluster depth), `layout_token` (server-owned identity of the
+   effective default depth plus sorted per-prefix overrides), `depth_source`
+   (`env` | `.review.yml` | `arg`),
    `deferred` (stale clusters held back this pass under the cost cap, env `SUMMARY_REBUILD_CAP`),
    `deferred_files` (their pending file jobs), `orphans` (stored summaries whose `cluster_key` is
-   no longer a current cluster), and the (already cap-capped) `clusters`. Each cluster also carries
-   `stale`, `bootstrap`, `full_rebuild`, and a file-delta preview.
+   no longer a current cluster), and the (already cap-capped) `clusters`. Save the returned
+   `layout_token` and build `expected_source_hashes = {cluster_key: source_hash}` from every
+   returned cluster; these exact list-snapshot values are required for finalization. Each cluster
+   also carries `stale`, `bootstrap`, `full_rebuild`, and a file-delta preview.
 
 3. **Preflight — echo the applied depth and ask for confirmation (gate the run).** BEFORE summarizing,
    show the user (in Russian):
@@ -87,9 +91,14 @@ Plus `list_subsystem_clusters`, `get_subsystem_summary_work`, `index_subsystem_s
 
 6. **Prune orphaned summaries (only on a full pass).** If the pass was full — `deferred == 0`, you
    have `raced == 0`, and you did NOT pass an explicit `depth`/`cap` override (so `clusters` covered
-   every current cluster) — call `prune_subsystem_summaries(repo, branch)` to delete summaries whose
-   `cluster_key` is no longer a current cluster (orphaned by a depth change or removed modules).
-   Accumulate both returned `pruned` and `fragments_pruned`. On a **partial** pass (`deferred > 0`,
+   every current cluster) — call
+   `prune_subsystem_summaries(repo, branch, layout_token, expected_source_hashes)` with the exact
+   values saved from step 2. The server re-derives the layout/hashes and verifies complete
+   same-generation fragment coverage under its branch lock before deleting summaries whose
+   `cluster_key` is no longer current. If prune returns `completed=false`, count the prune as
+   raced/partial, increment `raced`, do not treat depth/layout as finalized, and report its
+   `deferred`/`note`; do not add prune metrics. For `completed=true`, accumulate both returned
+   `pruned` and `fragments_pruned`. On a **partial** pass (`deferred > 0`,
    any race, or an override) skip pruning — deferred clusters are not orphans and an incomplete
    bootstrap must not finalize depth state — and say so in the report (mirrors `sync_board --limit`).
 

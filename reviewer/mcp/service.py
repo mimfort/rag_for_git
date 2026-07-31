@@ -1522,44 +1522,81 @@ class MCPReviewService:
             "summaries": self._annotate_summary_staleness(repo, resolved, summaries)
         }
 
-    def prune_subsystem_summaries(self, repo: str, branch: str | None = None) -> dict:
-        """Удалить сводки подсистем, осиротевшие после смены depth или удаления модулей.
-
-        Пере-выводит текущие cluster_keys из base-состава на резолвнутом depth и
-        удаляет сводки вне этого множества. Вызывать ТОЛЬКО на полном (uncapped)
-        прогоне скилла — иначе отложенные капом кластеры будут приняты за осиротевшие.
-        Пустой base → no-op (не вайпать на транзиентной пустоте). Fail-soft."""
-        from reviewer.graph.summaries import cluster_key as cluster_key_of, depth_for
+    def prune_subsystem_summaries(
+        self,
+        repo: str,
+        branch: str | None = None,
+        layout_token: str | None = None,
+        expected_source_hashes: dict[str, str] | None = None,
+    ) -> dict:
+        """Финализировать только полный подтверждённый snapshot текущего layout."""
         rb = self._resolve_repo_branch(repo, branch)
         if isinstance(rb, str):
             return {
+                "completed": False,
+                "race": True,
+                "deferred": 1,
                 "pruned": 0,
                 "kept": 0,
                 "fragments_pruned": 0,
                 "depth": None,
+                "layout_token": None,
                 "note": rb,
             }
         repo, resolved = rb
-        depth, overrides, _ = self._resolve_summary_depth(repo, resolved)
-        raw = self.components.store.list_base_members(repo, resolved)
-        if not raw:
+        state = self._summary_state(repo, resolved)
+        rejected = {
+            "completed": False,
+            "race": True,
+            "deferred": len(state.clusters),
+            "pruned": 0,
+            "kept": len(state.clusters),
+            "fragments_pruned": 0,
+            "depth": state.depth,
+            "layout_token": state.layout_token,
+        }
+        if not state.members:
             return {
-                "pruned": 0,
-                "kept": 0,
-                "fragments_pruned": 0,
-                "depth": depth,
+                **rejected,
                 "note": "(base-индекс пуст — purge пропущен)",
             }
-        keep_keys = sorted({cluster_key_of(p, depth_for(p, depth, overrides))
-                            for p, _s, _h, _sl, _sk in raw})
-        result = self.components.summary_store.prune_except_and_set_depth(
-            repo, resolved, keep_keys, depth
+        if layout_token is None or expected_source_hashes is None:
+            return {
+                **rejected,
+                "note": "обязателен snapshot из успешного uncapped list",
+            }
+        if layout_token != state.layout_token:
+            return {
+                **rejected,
+                "note": "layout изменился после list",
+            }
+        current_source_hashes = {
+            cluster.key: cluster.source_hash
+            for cluster in state.clusters
+        }
+        if expected_source_hashes != current_source_hashes:
+            return {
+                **rejected,
+                "note": "source_hash кластера изменился после list",
+            }
+        current_fingerprints = {
+            cluster.key: {
+                path: state.file_fingerprints[path]
+                for path in cluster.files
+            }
+            for cluster in state.clusters
+        }
+        result = self.components.summary_store.prune_verified_layout(
+            repo,
+            resolved,
+            expected_source_hashes,
+            current_fingerprints,
+            state.depth,
+            state.layout_token,
         )
         return {
-            "pruned": result["pruned"],
-            "kept": len(keep_keys),
-            "fragments_pruned": result["fragments_pruned"],
-            "depth": result["depth"],
+            **result,
+            "kept": len(state.clusters),
         }
 
     def backfill_summary_embeddings(self, repo: str, branch: str | None = None) -> dict:

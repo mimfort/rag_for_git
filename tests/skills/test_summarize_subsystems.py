@@ -90,6 +90,21 @@ def test_skill_prunes_orphans_on_full_pass():
     assert "orphan" in text.lower(), "скилл не упоминает осиротевшие сводки"
 
 
+def test_skill_prune_passes_exact_list_snapshot_and_defers_rejection():
+    text = _assembled_skill()
+    normalized = " ".join(text.split())
+
+    assert "layout_token" in text
+    assert "expected_source_hashes" in text
+    assert (
+        "`prune_subsystem_summaries(repo, branch, layout_token, "
+        "expected_source_hashes)`"
+        in normalized
+    )
+    assert "`completed=false`" in text
+    assert "count the prune as raced/partial" in normalized
+
+
 def test_skill_uses_incremental_file_summary_protocol():
     text = _assembled_skill()
     assert "get_subsystem_summary_work" in text
