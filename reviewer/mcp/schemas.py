@@ -8,7 +8,7 @@
 """
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator
 
 _VALID_SEVERITIES = frozenset({"low", "medium", "high", "critical"})
 
@@ -29,6 +29,17 @@ class FixIn(BaseModel):
     start_line: int | None = None
     end_line: int | None = None
     replacement: str | None = None
+
+
+class SummaryFragmentIn(BaseModel):
+    """LLM-facing пофайловый фрагмент сводки подсистемы."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    path: str = Field(min_length=1)
+    fingerprint: str = Field(min_length=1)
+    summary: str = Field(min_length=1)
+    provenance: dict[str, JsonValue] = Field(default_factory=dict)
 
 
 class FindingIn(BaseModel):

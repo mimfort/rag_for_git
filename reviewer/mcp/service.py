@@ -32,6 +32,14 @@ from reviewer.services.review_service import (
     PreparedReview,
     ReviewService,
 )
+from reviewer.services.summary_fragments import (
+    FragmentDelta,
+    FragmentFile,
+    StoredSummaryFragment,
+    build_fragment_delta,
+    has_complete_fragment_generation,
+    with_server_generation_provenance,
+)
 from reviewer.tasks.boards.base import JsonValue, TaskBoardProvider
 from reviewer.tasks.boards.errors import (
     BoardProviderError,
@@ -45,12 +53,13 @@ from reviewer.tasks.sync import SyncProvider, SyncService
 from reviewer.tasks.taskdoc import TaskDoc, render_markdown
 from reviewer.tools.code_tools import ToolContext, make_tools
 from reviewer.tools.graph_format import format_neighbors
-from reviewer.mcp.schemas import FindingIn, VerdictIn
+from reviewer.mcp.schemas import FindingIn, SummaryFragmentIn, VerdictIn
 from reviewer.vcs.base import ChangedFile, Finding, VCSProvider
 from reviewer.vcs.diff import commentable_lines
 
 if TYPE_CHECKING:
     from reviewer.config.layers import ResolutionMeta
+    from reviewer.graph.summaries import Cluster, Member
     from reviewer.policy.context_limits import ContextLimits
     from reviewer.policy.policy import ReviewPolicy
 
@@ -96,6 +105,32 @@ class _Session:
     # PRI-212: момент последнего DB-touch (троттлинг _TOUCH_INTERVAL_S).
     db_touched_at: datetime | None = None
     _seq: int = 0
+
+
+@dataclass(frozen=True)
+class _SummaryState:
+    """Единый снимок текущего состояния file-level сводок."""
+
+    depth: int
+    layout_token: str
+    depth_source: str
+    members: list["Member"]
+    clusters: list["Cluster"]
+    file_fingerprints: dict[str, str]
+    fragments: list[StoredSummaryFragment]
+    completed_depth: int | None
+    completed_layout: str | None
+
+    @property
+    def bootstrap(self) -> bool:
+        return self.completed_layout is None
+
+    @property
+    def full_rebuild(self) -> bool:
+        return (
+            self.completed_layout is not None
+            and self.completed_layout != self.layout_token
+        )
 
 
 @dataclass
@@ -918,105 +953,494 @@ class MCPReviewService:
             log.warning("definition: сбой", exc_info=True)
             return "(определение не найдено)"
 
+    def _summary_state(
+        self,
+        repo: str,
+        branch: str,
+        *,
+        depth: int | None = None,
+        min_size: int = 1,
+        with_centrality: bool = False,
+    ) -> _SummaryState:
+        """Собрать единый снимок для list/work/index без расхождения вывода."""
+        from reviewer.graph.summaries import (
+            Member,
+            build_clusters,
+            canonicalize_layout,
+            compute_file_fingerprints,
+            compute_layout_token,
+        )
+
+        raw = self.components.store.list_base_members(repo, branch)
+        if not raw:
+            resolved_depth = (
+                self.settings.summary_cluster_depth
+                if depth is None
+                else depth
+            )
+            return _SummaryState(
+                depth=resolved_depth,
+                layout_token=compute_layout_token(resolved_depth, {}),
+                depth_source="env" if depth is None else "arg",
+                members=[],
+                clusters=[],
+                file_fingerprints={},
+                fragments=[],
+                completed_depth=None,
+                completed_layout=None,
+            )
+        if depth is None:
+            resolved_depth, overrides, depth_source = self._resolve_summary_depth(
+                repo, branch
+            )
+        else:
+            resolved_depth, overrides, depth_source = depth, {}, "arg"
+        overrides, layout_token = canonicalize_layout(
+            resolved_depth,
+            overrides,
+        )
+        members = [
+            Member(
+                node_id=f"{path}#{symbol}",
+                path=path,
+                content_hash=content_hash,
+                start_line=start_line,
+                skeleton_hash=skeleton_hash,
+            )
+            for path, symbol, content_hash, start_line, skeleton_hash in raw
+        ]
+        graph = self.components.graph
+        in_degree_fn = (
+            (lambda ids: graph.in_degree(repo, ids, branch=branch))
+            if with_centrality and graph is not None
+            else None
+        )
+        clusters = build_clusters(
+            members,
+            in_degree_fn,
+            depth=resolved_depth,
+            min_size=min_size,
+            depth_overrides=overrides,
+        )
+        fragments = [
+            StoredSummaryFragment(
+                cluster_key=item["cluster_key"],
+                path=item["path"],
+                fingerprint=item["fingerprint"],
+                summary=item["summary"],
+                provenance=item.get("provenance", {}),
+            )
+            for item in self.components.summary_store.get_fragments(repo, branch)
+        ]
+        completed_layout = self.components.summary_store.get_completed_layout(
+            repo, branch
+        )
+        return _SummaryState(
+            depth=resolved_depth,
+            layout_token=layout_token,
+            depth_source=depth_source,
+            members=members,
+            clusters=clusters,
+            file_fingerprints=compute_file_fingerprints(members),
+            fragments=fragments,
+            completed_depth=self.components.summary_store.get_completed_depth(
+                repo, branch
+            ),
+            completed_layout=(
+                completed_layout
+                if isinstance(completed_layout, str)
+                else None
+            ),
+        )
+
+    @staticmethod
+    def _cluster_generation_flags(
+        state: _SummaryState,
+        cluster: "Cluster",
+    ) -> tuple[bool, bool]:
+        current = {
+            path: state.file_fingerprints[path]
+            for path in cluster.files
+        }
+        complete = has_complete_fragment_generation(
+            cluster.key,
+            current,
+            state.fragments,
+            state.depth,
+            state.layout_token,
+        )
+        return state.bootstrap and not complete, state.full_rebuild and not complete
+
+    @classmethod
+    def _summary_delta(cls, state: _SummaryState, cluster: "Cluster") -> FragmentDelta:
+        current = {
+            path: state.file_fingerprints[path]
+            for path in cluster.files
+        }
+        bootstrap, full_rebuild = cls._cluster_generation_flags(state, cluster)
+        delta = build_fragment_delta(
+            cluster.key,
+            current,
+            state.fragments,
+            bootstrap=bootstrap,
+            full_rebuild=full_rebuild,
+        )
+        if full_rebuild:
+            return FragmentDelta(
+                added=(),
+                changed=delta.added + delta.changed,
+                removed=delta.removed,
+                moved=(),
+                reused=(),
+            )
+        return delta
+
+    @staticmethod
+    def _fragment_ref(item: FragmentFile, *, include_content: bool = False) -> dict:
+        result = {"path": item.path, "fingerprint": item.fingerprint}
+        if item.from_cluster_key is not None:
+            result["from_cluster_key"] = item.from_cluster_key
+        if include_content:
+            result["summary"] = item.summary
+            result["provenance"] = dict(item.provenance)
+        return result
+
+    def _serialize_summary_delta(
+        self,
+        delta: FragmentDelta,
+        *,
+        include_reused_content: bool,
+    ) -> dict:
+        return {
+            "added_files": [self._fragment_ref(item) for item in delta.added],
+            "changed_files": [self._fragment_ref(item) for item in delta.changed],
+            "removed_files": [item.path for item in delta.removed],
+            "moved_files": [
+                self._fragment_ref(item, include_content=include_reused_content)
+                for item in delta.moved
+            ],
+            "reused_fragments": (
+                [
+                    self._fragment_ref(item, include_content=True)
+                    for item in delta.reused
+                ]
+                if include_reused_content
+                else []
+            ),
+        }
+
     def list_subsystem_clusters(self, repo: str, branch: str | None = None,
                                 depth: int | None = None, min_size: int | None = None,
                                 cap: int | None = None) -> dict:
         """Кластеризовать base-граф по модулям → кластеры для /summarize-subsystems.
         cap (дефолт Settings.summary_rebuild_cap; None/0=безлимит) отбрасывает наименее
         приоритетные stale-кластеры (без сводки → старейшие updated_at первыми) и считает
-        их в deferred (PRI-165). Если depth не задан, он берётся из effective layered
+        их в deferred (PRI-165). Ответ содержит layout_token — canonical identity default
+        depth + normalized overrides. Если depth не задан, он берётся из effective layered
         policy с fail-soft env-дефолтом."""
-        from reviewer.graph.summaries import Member, build_clusters
         rb = self._resolve_repo_branch(repo, branch)
         if isinstance(rb, str):
-            return {"branch": branch or "", "deferred": 0, "clusters": [], "note": rb}
+            return {
+                "branch": branch or "",
+                "deferred": 0,
+                "deferred_files": 0,
+                "clusters": [],
+                "note": rb,
+            }
         repo, resolved = rb
-        raw = self.components.store.list_base_members(repo, resolved)
-        if not raw:
-            return {"branch": resolved, "deferred": 0, "clusters": [],
-                    "note": "(base-индекс пуст — выполните rag-reviewer:sync-codebase)"}
-        members = [Member(node_id=f"{p}#{s}", path=p, content_hash=h, start_line=sl,
-                          skeleton_hash=sk)
-                   for p, s, h, sl, sk in raw]
-        graph = self.components.graph
-        in_degree_fn = (
-            (lambda ids: graph.in_degree(repo, ids, branch=resolved))
-            if graph is not None else None)
-        if depth is None:
-            resolved_depth, overrides, depth_source = self._resolve_summary_depth(repo, resolved)
-        else:
-            resolved_depth, overrides, depth_source = depth, {}, "arg"
-        clusters = build_clusters(
-            members, in_degree_fn, depth=resolved_depth, min_size=min_size or 1,
-            depth_overrides=overrides)
+        state = self._summary_state(
+            repo,
+            resolved,
+            depth=depth,
+            min_size=min_size or 1,
+            with_centrality=True,
+        )
+        if not state.members:
+            return {
+                "branch": resolved,
+                "deferred": 0,
+                "deferred_files": 0,
+                "clusters": [],
+                "note": "(base-индекс пуст — выполните rag-reviewer:sync-codebase)",
+            }
         stored = self.components.summary_store.get_source_hashes(repo, resolved)
-        stale = {c.key: (stored.get(c.key) != c.source_hash) for c in clusters}
-        orphans = len(set(stored) - {c.key for c in clusters})
+        generation_flags = {
+            cluster.key: self._cluster_generation_flags(state, cluster)
+            for cluster in state.clusters
+        }
+        stale = {
+            cluster.key: (
+                generation_flags[cluster.key][1]
+                or stored.get(cluster.key) != cluster.source_hash
+            )
+            for cluster in state.clusters
+        }
+        deltas = {
+            cluster.key: self._summary_delta(state, cluster)
+            for cluster in state.clusters
+        }
+        orphans = len(set(stored) - {cluster.key for cluster in state.clusters})
         effective_cap = cap if cap is not None else self.settings.summary_rebuild_cap
         deferred_keys: set[str] = set()
         if effective_cap and effective_cap > 0:
-            stale_cl = [c for c in clusters if stale[c.key]]
-            if len(stale_cl) > effective_cap:
+            rebuild_clusters = [
+                cluster
+                for cluster in state.clusters
+                if stale[cluster.key] or generation_flags[cluster.key][0]
+            ]
+            if len(rebuild_clusters) > effective_cap:
                 updated = self.components.summary_store.get_updated_ats(repo, resolved)
-                never = [c for c in stale_cl if c.key not in updated]      # без сводки — первыми
-                aged = sorted((c for c in stale_cl if c.key in updated),
-                              key=lambda c: updated[c.key])                # старейшие — раньше
-                deferred_keys = {c.key for c in (never + aged)[effective_cap:]}
-        return {"branch": resolved, "depth": resolved_depth, "depth_source": depth_source,
-                "deferred": len(deferred_keys), "orphans": orphans, "clusters": [
-            {"cluster_key": c.key, "num_members": c.num_members, "files": c.files,
-             "top_symbols": c.top_symbols, "source_hash": c.source_hash,
-             "stale": stale[c.key]}
-            for c in clusters if c.key not in deferred_keys]}
+                never = [
+                    cluster
+                    for cluster in rebuild_clusters
+                    if cluster.key not in updated
+                ]
+                aged = sorted(
+                    (
+                        cluster
+                        for cluster in rebuild_clusters
+                        if cluster.key in updated
+                    ),
+                    key=lambda cluster: updated[cluster.key],
+                )
+                deferred_keys = {
+                    cluster.key
+                    for cluster in (never + aged)[effective_cap:]
+                }
+        deferred_files = sum(
+            len(deltas[key].pending_paths) for key in deferred_keys
+        )
+        clusters = []
+        for cluster in state.clusters:
+            if cluster.key in deferred_keys:
+                continue
+            delta = deltas[cluster.key]
+            serialized = self._serialize_summary_delta(
+                delta, include_reused_content=False
+            )
+            clusters.append(
+                {
+                    "cluster_key": cluster.key,
+                    "num_members": cluster.num_members,
+                    "files": cluster.files,
+                    "top_symbols": cluster.top_symbols,
+                    "source_hash": cluster.source_hash,
+                    "stale": stale[cluster.key],
+                    "added_files": serialized["added_files"],
+                    "changed_files": serialized["changed_files"],
+                    "removed_files": serialized["removed_files"],
+                    "moved_files": serialized["moved_files"],
+                    "reused_files": len(delta.reused),
+                    "bootstrap": generation_flags[cluster.key][0],
+                    "full_rebuild": generation_flags[cluster.key][1],
+                }
+            )
+        return {
+            "branch": resolved,
+            "depth": state.depth,
+            "layout_token": state.layout_token,
+            "depth_source": state.depth_source,
+            "deferred": len(deferred_keys),
+            "deferred_files": deferred_files,
+            "orphans": orphans,
+            "clusters": clusters,
+        }
 
-    def index_subsystem_summary(self, repo: str, branch: str, cluster_key: str,
-                                title: str, summary: str, source_hash: str) -> dict:
-        """Персистнуть один summary подсистемы (idempotent upsert).
+    def get_subsystem_summary_work(
+        self,
+        repo: str,
+        branch: str,
+        cluster_key: str,
+        source_hash: str,
+    ) -> dict:
+        """Вернуть read-only file-level работу для одной актуальной сводки."""
+        rb = self._resolve_repo_branch(repo, branch)
+        if isinstance(rb, str):
+            return {"ready": False, "note": rb}
+        repo, resolved = rb
+        state = self._summary_state(repo, resolved)
+        cluster = next(
+            (item for item in state.clusters if item.key == cluster_key),
+            None,
+        )
+        if cluster is None or cluster.source_hash != source_hash:
+            return {
+                "ready": False,
+                "note": "состав кластера изменился с момента list",
+            }
+        bootstrap, full_rebuild = self._cluster_generation_flags(state, cluster)
+        delta = self._summary_delta(state, cluster)
+        return {
+            "ready": True,
+            "branch": resolved,
+            "cluster_key": cluster.key,
+            "source_hash": cluster.source_hash,
+            **self._serialize_summary_delta(
+                delta, include_reused_content=True
+            ),
+            "bootstrap": bootstrap,
+            "full_rebuild": full_rebuild,
+        }
 
-        member_node_ids выводятся сервером (re-derive по cluster_key над base-составом)
-        и пишутся только при совпадении пере-вычисленного source_hash с переданным —
-        иначе [] + note (состав базы изменился между list и index; самозалечивается
-        следующим проходом summarize-subsystems)."""
-        from reviewer.graph.summaries import (cluster_key as cluster_key_of,
-                                              compute_source_hash, depth_for)
+    def _embed_subsystem_summary(
+        self,
+        repo: str,
+        branch: str,
+        cluster_key: str,
+        title: str,
+        summary: str,
+        source_hash: str,
+    ) -> bool:
+        """Вычислить post-commit embedding и записать его через source-hash CAS."""
+        try:
+            embedding = self.components.embedder.embed_documents(
+                [f"{title}\n{summary}"]
+            )[0]
+            return self.components.summary_store.set_embedding_if_source_hash(
+                repo,
+                branch,
+                cluster_key,
+                source_hash,
+                embedding,
+                title=title,
+                summary=summary,
+            )
+        except Exception:
+            log.warning(
+                "index_subsystem_summary: сбой post-commit эмбеддинга",
+                exc_info=True,
+            )
+            return False
+
+    def index_subsystem_summary(
+        self,
+        repo: str,
+        branch: str,
+        cluster_key: str,
+        title: str,
+        summary: str,
+        source_hash: str,
+        fragments: list[SummaryFragmentIn] | list[dict] | None = None,
+    ) -> dict:
+        """Строго проверить и атомарно сохранить summary с file fragments."""
         rb = self._resolve_repo_branch(repo, branch)
         if isinstance(rb, str):
             return {"stored": False, "note": rb}
         repo, resolved = rb
-        # depth резолвится тем же хелпером, что list_subsystem_clusters без явного depth:
-        # cluster_key и source_hash зависят от depth, поэтому совпадение хешей гарантировано
-        # только когда кластеры листались тем же дефолтом. При нестандартном depth —
-        # fail-soft []+note ниже.
-        depth, overrides, _ = self._resolve_summary_depth(repo, resolved)
-        raw = self.components.store.list_base_members(repo, resolved)
-        members = [(f"{p}#{s}", sk) for p, s, _h, _sl, sk in raw
-                   if cluster_key_of(p, depth_for(p, depth, overrides)) == cluster_key]
-        consistent = compute_source_hash(members) == source_hash
-        member_node_ids = sorted(nid for nid, _ in members) if consistent else []
-        # Дедуп эмбеддинга по source_hash (PRI-167): пересчитываем вектор только если
-        # хеш кластера изменился; иначе embedding=None → COALESCE сохранит старый вектор,
-        # Voyage не дёргается. Сбой Voyage → embedding=None + note (бэкфилл доберёт).
-        note: str | None = None
-        embedding: list[float] | None = None
-        # Свежесть эмбеддинга держится на source_hash (зависит только от node_id+skeleton_hash):
-        # неизменный hash → embedding=None → COALESCE сохраняет старый вектор. Скилл зовёт index
-        # только для stale-кластеров, поэтому «тот же hash, иной текст» в норме не возникает.
-        stored_hash = self.components.summary_store.get_source_hashes(repo, resolved).get(cluster_key)
-        if stored_hash != source_hash:
+        state = self._summary_state(repo, resolved)
+        cluster = next(
+            (item for item in state.clusters if item.key == cluster_key),
+            None,
+        )
+        if cluster is None or cluster.source_hash != source_hash:
+            return {
+                "cluster_key": cluster_key,
+                "stored": False,
+                "race": True,
+                "note": "состав кластера изменился с момента list",
+            }
+
+        member_node_ids = cluster.member_node_ids
+        metrics: dict[str, int] = {}
+        if fragments is None:
+            self.components.summary_store.upsert_summary(
+                repo,
+                resolved,
+                cluster_key,
+                title,
+                summary,
+                member_node_ids,
+                source_hash,
+                embedding=None,
+                preserve_embedding=False,
+            )
+        else:
             try:
-                embedding = self.components.embedder.embed_documents([f"{title}\n{summary}"])[0]
+                validated = [
+                    (
+                        fragment
+                        if isinstance(fragment, SummaryFragmentIn)
+                        else SummaryFragmentIn.model_validate(fragment)
+                    )
+                    for fragment in fragments
+                ]
             except Exception:
-                log.warning("index_subsystem_summary: сбой эмбеддинга — бэкфилл доберёт",
-                            exc_info=True)
-                note = "эмбеддинг не вычислен (Voyage недоступен) — будет добран бэкфиллом"
-        self.components.summary_store.upsert_summary(
-            repo, resolved, cluster_key, title, summary, member_node_ids, source_hash,
-            embedding=embedding)
-        out = {"cluster_key": cluster_key, "stored": True, "members": len(member_node_ids)}
-        if not consistent:
-            out["note"] = "состав кластера изменился с момента list — member_node_ids не сохранены"
-        elif note:
-            out["note"] = note
+                return {
+                    "cluster_key": cluster_key,
+                    "stored": False,
+                    "note": "некорректный payload summary fragments",
+                }
+            delta = self._summary_delta(state, cluster)
+            incoming_paths = [fragment.path for fragment in validated]
+            pending_paths = list(delta.pending_paths)
+            if (
+                len(incoming_paths) != len(set(incoming_paths))
+                or sorted(incoming_paths) != sorted(pending_paths)
+            ):
+                return {
+                    "cluster_key": cluster_key,
+                    "stored": False,
+                    "note": "payload не покрывает ровно все pending summary fragments",
+                }
+            current_fingerprints = {
+                path: state.file_fingerprints[path] for path in cluster.files
+            }
+            if any(
+                current_fingerprints.get(fragment.path) != fragment.fingerprint
+                for fragment in validated
+            ):
+                return {
+                    "cluster_key": cluster_key,
+                    "stored": False,
+                    "note": "fingerprint summary fragment устарел",
+                }
+            new_fragments = []
+            for fragment in validated:
+                payload = fragment.model_dump(mode="python")
+                payload["provenance"] = with_server_generation_provenance(
+                    fragment.provenance,
+                    state.depth,
+                    state.layout_token,
+                )
+                new_fragments.append(payload)
+            try:
+                metrics = self.components.summary_store.commit_summary_bundle(
+                    repo,
+                    resolved,
+                    cluster_key,
+                    title,
+                    summary,
+                    member_node_ids,
+                    source_hash,
+                    current_fingerprints=current_fingerprints,
+                    new_fragments=new_fragments,
+                )
+            except ValueError as exc:
+                return {
+                    "cluster_key": cluster_key,
+                    "stored": False,
+                    "note": str(exc),
+                }
+
+        embedded = self._embed_subsystem_summary(
+            repo,
+            resolved,
+            cluster_key,
+            title,
+            summary,
+            source_hash,
+        )
+        out = {
+            "cluster_key": cluster_key,
+            "stored": True,
+            "members": len(member_node_ids),
+            **metrics,
+            "embedded": embedded,
+        }
+        if not embedded:
+            out["note"] = (
+                "эмбеддинг не сохранён — будет добран бэкфиллом"
+            )
         return out
 
     def _current_subsystem_hashes(
@@ -1104,26 +1528,82 @@ class MCPReviewService:
             "summaries": self._annotate_summary_staleness(repo, resolved, summaries)
         }
 
-    def prune_subsystem_summaries(self, repo: str, branch: str | None = None) -> dict:
-        """Удалить сводки подсистем, осиротевшие после смены depth или удаления модулей.
-
-        Пере-выводит текущие cluster_keys из base-состава на резолвнутом depth и
-        удаляет сводки вне этого множества. Вызывать ТОЛЬКО на полном (uncapped)
-        прогоне скилла — иначе отложенные капом кластеры будут приняты за осиротевшие.
-        Пустой base → no-op (не вайпать на транзиентной пустоте). Fail-soft."""
-        from reviewer.graph.summaries import cluster_key as cluster_key_of, depth_for
+    def prune_subsystem_summaries(
+        self,
+        repo: str,
+        branch: str | None = None,
+        layout_token: str | None = None,
+        expected_source_hashes: dict[str, str] | None = None,
+    ) -> dict:
+        """Финализировать только полный подтверждённый snapshot текущего layout."""
         rb = self._resolve_repo_branch(repo, branch)
         if isinstance(rb, str):
-            return {"pruned": 0, "kept": 0, "note": rb}
+            return {
+                "completed": False,
+                "race": True,
+                "deferred": 1,
+                "pruned": 0,
+                "kept": 0,
+                "fragments_pruned": 0,
+                "depth": None,
+                "layout_token": None,
+                "note": rb,
+            }
         repo, resolved = rb
-        depth, overrides, _ = self._resolve_summary_depth(repo, resolved)
-        raw = self.components.store.list_base_members(repo, resolved)
-        if not raw:
-            return {"pruned": 0, "kept": 0, "note": "(base-индекс пуст — purge пропущен)"}
-        keep_keys = sorted({cluster_key_of(p, depth_for(p, depth, overrides))
-                            for p, _s, _h, _sl, _sk in raw})
-        pruned = self.components.summary_store.delete_summaries_except(repo, resolved, keep_keys)
-        return {"pruned": pruned, "kept": len(keep_keys)}
+        state = self._summary_state(repo, resolved)
+        rejected = {
+            "completed": False,
+            "race": True,
+            "deferred": len(state.clusters),
+            "pruned": 0,
+            "kept": len(state.clusters),
+            "fragments_pruned": 0,
+            "depth": state.depth,
+            "layout_token": state.layout_token,
+        }
+        if not state.members:
+            return {
+                **rejected,
+                "note": "(base-индекс пуст — purge пропущен)",
+            }
+        if layout_token is None or expected_source_hashes is None:
+            return {
+                **rejected,
+                "note": "обязателен snapshot из успешного uncapped list",
+            }
+        if layout_token != state.layout_token:
+            return {
+                **rejected,
+                "note": "layout изменился после list",
+            }
+        current_source_hashes = {
+            cluster.key: cluster.source_hash
+            for cluster in state.clusters
+        }
+        if expected_source_hashes != current_source_hashes:
+            return {
+                **rejected,
+                "note": "source_hash кластера изменился после list",
+            }
+        current_fingerprints = {
+            cluster.key: {
+                path: state.file_fingerprints[path]
+                for path in cluster.files
+            }
+            for cluster in state.clusters
+        }
+        result = self.components.summary_store.prune_verified_layout(
+            repo,
+            resolved,
+            expected_source_hashes,
+            current_fingerprints,
+            state.depth,
+            state.layout_token,
+        )
+        return {
+            **result,
+            "kept": len(state.clusters),
+        }
 
     def backfill_summary_embeddings(self, repo: str, branch: str | None = None) -> dict:
         """Self-heal: дозаполнить эмбеддинги сводок с embedding IS NULL из хранимого
@@ -1143,9 +1623,19 @@ class MCPReviewService:
         except Exception:
             log.warning("backfill_summary_embeddings: сбой эмбеддинга", exc_info=True)
             return {"embedded": 0, "note": "Voyage недоступен — бэкфилл пропущен"}
-        for p, vec in zip(pending, vecs):
-            store.set_embedding(repo, resolved, p["cluster_key"], vec)
-        return {"embedded": len(pending)}
+        embedded = sum(
+            store.set_embedding_if_source_hash(
+                repo,
+                resolved,
+                item["cluster_key"],
+                item["source_hash"],
+                vec,
+                title=item["title"],
+                summary=item["summary"],
+            )
+            for item, vec in zip(pending, vecs)
+        )
+        return {"embedded": embedded}
 
     def get_pr_diff(self, repo: str, number: int) -> str:
         """Unified diff изменённых файлов PR (session-less) — ленивая подтяжка для /solve-task.

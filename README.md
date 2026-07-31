@@ -521,8 +521,24 @@ namespaced skills with `$rag-reviewer:...`.
 - **When:** build or refresh the architectural prior used by Q&A and PR walkthroughs.
 - **Invoke:** `/rag-reviewer:summarize-subsystems`.
 - **Needs:** a fresh base index, code graph, reviewer MCP, and confirmation of cluster depth.
-- **Reads/writes:** reads cluster symbols and writes grounded summaries to the summary store.
-- **Result:** fresh/pruned summaries with deferred and orphan reporting.
+- **Reads/writes:** читает только добавленные/изменённые файлы, переиспользует сохранённые
+  пофайловые fragments и атомарно пишет fragments вместе со сводкой кластера.
+- **Result:** сводки и метрики `created`/`reused`/`removed`/`moved`,
+  `deferred`/`raced`, `fragments_pruned` и `embedded`.
+
+Первый полный прогон после обновления создаёт fragments для всех текущих файлов, но не удаляет
+старые сводки: каждый кластер заменяется только после успешной атомарной записи нового bundle.
+При настроенном cap bootstrap может занять несколько проходов. Freshness считается по
+skeleton-коду, поэтому правка только тела функции намеренно остаётся невидимой, пока не изменится
+skeleton. Layout identity — canonical token от default `summary_cluster_depth` и
+нормализованных `summary_cluster_depth_overrides`: смена любого из них принудительно пересобирает
+все fragments, даже если default depth прежний. Частичный или ограниченный cap-ом прогон не
+запускает prune; optimistic race (`stored=false`) тоже считается отложенным, не успехом, и
+запрещает prune в этом проходе. Полный проход передаёт в prune token и точную карту
+`cluster_key → source_hash`; сервер повторно выводит layout и под advisory lock проверяет каждую
+summary и same-generation fragment coverage до удаления сирот и финализации state. Embedding
+backfill пишет вектор только по exact CAS `source_hash + title + summary`, поэтому конкурентная
+перезапись текста не получает устаревший вектор и не увеличивает `embedded`.
 
 ### `configure-review` — update `.review.yml`
 

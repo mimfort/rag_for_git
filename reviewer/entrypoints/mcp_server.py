@@ -9,14 +9,14 @@ import sys
 
 from mcp.server.fastmcp import FastMCP
 
-from reviewer.mcp.schemas import FindingIn, VerdictIn
+from reviewer.mcp.schemas import FindingIn, SummaryFragmentIn, VerdictIn
 from reviewer.mcp.service import MCPReviewService
 
 log = logging.getLogger(__name__)
 
 
 def create_server(service: MCPReviewService) -> FastMCP:
-    """Создать и вернуть сконфигурированный FastMCP-сервер с 36 тулами.
+    """Создать и вернуть сконфигурированный FastMCP-сервер с 37 тулами.
 
     Все тулы — обычные def (sync), а не async: сервис не потокобезопасен
     и рассчитан на последовательное исполнение sync-тулов FastMCP в event loop.
@@ -284,11 +284,13 @@ def create_server(service: MCPReviewService) -> FastMCP:
                                 min_size: int | None = None,
                                 cap: int | None = None) -> dict:
         """Кластеризовать base-граф кода по путям модулей для скилла
-        rag-reviewer:summarize-subsystems. Возвращает {branch, deferred, clusters:[...]},
-        где каждый кластер содержит cluster_key, num_members, files, top_symbols
-        (по центральности), source_hash и stale (true, если сводка отсутствует
-        или её source_hash устарел). Без PR-сессии; branch по умолчанию —
-        первичная отслеживаемая ветка.
+        rag-reviewer:summarize-subsystems. Возвращает
+        {branch, depth, layout_token, deferred, deferred_files, clusters:[...]},
+        где layout_token — обязательная canonical identity default depth +
+        normalized overrides для последующего verified prune. Каждый кластер
+        содержит cluster_key, num_members, files, top_symbols
+        (по центральности), source_hash, stale и file-level delta. Без PR-сессии;
+        branch по умолчанию — первичная отслеживаемая ветка.
 
         cap (по умолчанию — env SUMMARY_REBUILD_CAP; None/0 = без ограничений)
         отбрасывает наименее приоритетные stale-кластеры за один проход: сначала
@@ -298,14 +300,22 @@ def create_server(service: MCPReviewService) -> FastMCP:
         return service.list_subsystem_clusters(repo, branch, depth, min_size, cap)
 
     @mcp.tool()
+    def get_subsystem_summary_work(repo: str, branch: str, cluster_key: str,
+                                   source_hash: str) -> dict:
+        """Вернуть file-level delta и тексты переиспользуемых fragments для
+        актуального кластера. Read-only; stale source_hash возвращает ready=false."""
+        return service.get_subsystem_summary_work(
+            repo, branch, cluster_key, source_hash
+        )
+
+    @mcp.tool()
     def index_subsystem_summary(repo: str, branch: str, cluster_key: str,
-                                title: str, summary: str, source_hash: str) -> dict:
-        """Persist one subsystem summary (idempotent upsert keyed by
-        repo+branch+cluster_key). Called by rag-reviewer:summarize-subsystems after the
-        LLM writes title+summary for a cluster. source_hash ties the summary to the
-        cluster's current content for staleness."""
+                                title: str, summary: str, source_hash: str,
+                                fragments: list[SummaryFragmentIn] | None = None) -> dict:
+        """Сохранить сводку подсистемы и опциональные file fragments.
+        source_hash и fingerprints проходят строгую optimistic-проверку."""
         return service.index_subsystem_summary(
-            repo, branch, cluster_key, title, summary, source_hash)
+            repo, branch, cluster_key, title, summary, source_hash, fragments)
 
     @mcp.tool()
     def get_subsystem_summaries(repo: str, branch: str | None = None,
@@ -325,13 +335,24 @@ def create_server(service: MCPReviewService) -> FastMCP:
         return service.get_subsystem_summaries(repo, branch, cluster_key, query, top_k)
 
     @mcp.tool()
-    def prune_subsystem_summaries(repo: str, branch: str | None = None) -> dict:
-        """Prune subsystem summaries orphaned by a depth change or removed modules.
-        Re-derives current cluster_keys from the base index at the resolved depth and
-        deletes summaries outside that set. Call ONLY after a full (uncapped) pass of
-        rag-reviewer:summarize-subsystems — deferred clusters are not orphans. Empty base
-        → no-op. Returns {pruned, kept}. No PR session; branch defaults to primary."""
-        return service.prune_subsystem_summaries(repo, branch)
+    def prune_subsystem_summaries(
+        repo: str,
+        branch: str | None = None,
+        layout_token: str | None = None,
+        expected_source_hashes: dict[str, str] | None = None,
+    ) -> dict:
+        """Verify and finalize one exact uncapped list snapshot.
+        Pass layout_token and every {cluster_key: source_hash} from that list response.
+        The server re-derives layout/hashes and, under a branch lock, verifies summaries
+        plus exact file-fragment coverage before deleting orphans and advancing state.
+        Missing/changed/incomplete snapshots return completed=false/race=true without
+        deletion. Empty base is also a no-op. No PR session; branch defaults to primary."""
+        return service.prune_subsystem_summaries(
+            repo,
+            branch,
+            layout_token,
+            expected_source_hashes,
+        )
 
     @mcp.tool()
     def backfill_summary_embeddings(repo: str, branch: str | None = None) -> dict:

@@ -12,6 +12,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from reviewer.config.settings import Settings
+from reviewer.mcp.schemas import SummaryFragmentIn
 from reviewer.mcp.service import MCPReviewService
 from reviewer.vcs.base import ChangedFile, PullRequest
 
@@ -88,7 +89,7 @@ def _make_mcp_service(number: int = 7) -> MCPReviewService:
 # ---------------------------------------------------------------------------
 
 def test_server_registers_all_tools() -> None:
-    """create_server регистрирует ровно 36 ожидаемых MCP-тула."""
+    """create_server регистрирует ровно 37 ожидаемых MCP-тулов."""
     from reviewer.entrypoints.mcp_server import create_server
 
     server = create_server(_make_mcp_service())
@@ -127,11 +128,101 @@ def test_server_registers_all_tools() -> None:
         "definition",
         "get_pr_diff",
         "list_subsystem_clusters",
+        "get_subsystem_summary_work",
         "index_subsystem_summary",
         "get_subsystem_summaries",
         "prune_subsystem_summaries",
         "backfill_summary_embeddings",
     }
+
+
+def test_list_subsystem_clusters_tool_describes_layout_token() -> None:
+    from reviewer.entrypoints.mcp_server import create_server
+
+    tools = asyncio.run(create_server(_make_mcp_service()).list_tools())
+    tool = next(item for item in tools if item.name == "list_subsystem_clusters")
+
+    assert "layout_token" in (tool.description or "")
+
+
+def test_index_subsystem_summary_routes_typed_fragments_to_service() -> None:
+    """FastMCP валидирует file fragments и передаёт Pydantic-модели сервису."""
+    from reviewer.entrypoints.mcp_server import create_server
+
+    service = MagicMock(spec=MCPReviewService)
+    service.index_subsystem_summary.return_value = {"stored": True}
+    server = create_server(service)
+
+    result = asyncio.run(
+        server.call_tool(
+            "index_subsystem_summary",
+            {
+                "repo": "o/r",
+                "branch": "dev",
+                "cluster_key": "reviewer/index",
+                "title": "Индекс",
+                "summary": "Тело",
+                "source_hash": "hash",
+                "fragments": [
+                    {
+                        "path": "reviewer/index/a.py",
+                        "fingerprint": "file-hash",
+                        "summary": "A",
+                        "provenance": {"generator": "test"},
+                    }
+                ],
+            },
+        )
+    )
+
+    assert json.loads(result[0].text) == {"stored": True}
+    args = service.index_subsystem_summary.call_args.args
+    assert args[:6] == (
+        "o/r",
+        "dev",
+        "reviewer/index",
+        "Индекс",
+        "Тело",
+        "hash",
+    )
+    assert args[6] == [
+        SummaryFragmentIn(
+            path="reviewer/index/a.py",
+            fingerprint="file-hash",
+            summary="A",
+            provenance={"generator": "test"},
+        )
+    ]
+
+
+def test_prune_subsystem_summaries_routes_verified_snapshot_to_service() -> None:
+    from reviewer.entrypoints.mcp_server import create_server
+
+    service = MagicMock(spec=MCPReviewService)
+    service.prune_subsystem_summaries.return_value = {"completed": True}
+    server = create_server(service)
+
+    result = asyncio.run(
+        server.call_tool(
+            "prune_subsystem_summaries",
+            {
+                "repo": "o/r",
+                "branch": "dev",
+                "layout_token": "layout-token",
+                "expected_source_hashes": {
+                    "reviewer/index": "source-hash",
+                },
+            },
+        )
+    )
+
+    assert json.loads(result[0].text) == {"completed": True}
+    service.prune_subsystem_summaries.assert_called_once_with(
+        "o/r",
+        "dev",
+        "layout-token",
+        {"reviewer/index": "source-hash"},
+    )
 
 
 @patch("reviewer.services.review_service.chunk_python", side_effect=_fake_chunk)
