@@ -49,6 +49,8 @@ def test_list_subsystem_clusters_fresh_when_hash_matches():
     from reviewer.graph.summaries import compute_source_hash
     sh = compute_source_hash([("reviewer/index/a.py#A", "sk1")])   # по skeleton_hash, не "h1"
     c.summary_store.get_source_hashes.return_value = {"reviewer/index": sh}
+    c.summary_store.get_completed_depth.return_value = 2
+    c.summary_store.get_fragments.return_value = []
     svc = _svc(c)
     [cl] = svc.list_subsystem_clusters("o/n", "dev")["clusters"]
     assert cl["stale"] is False
@@ -133,6 +135,50 @@ def test_list_subsystem_clusters_counts_pending_files_in_deferred_clusters():
     assert [cluster["cluster_key"] for cluster in out["clusters"]] == ["a/x"]
     assert out["deferred"] == 1
     assert out["deferred_files"] == 1
+
+
+def test_list_subsystem_clusters_treats_same_key_depth_rebuild_as_stale_and_deferred():
+    from datetime import datetime
+
+    from reviewer.graph.summaries import compute_source_hash
+
+    c = MagicMock()
+    c.store.list_base_members.return_value = [
+        ("a.py", "A", "h1", 1, "sk1"),
+        ("pkg/deep/b.py", "B", "h2", 1, "sk2"),
+    ]
+    c.graph = None
+    root_hash = compute_source_hash([("a.py#A", "sk1")])
+    c.summary_store.get_source_hashes.return_value = {"<root>": root_hash}
+    c.summary_store.get_completed_depth.return_value = 3
+    c.summary_store.get_fragments.return_value = []
+
+    uncapped = _svc(c).list_subsystem_clusters(
+        "o/n", "dev", depth=2, min_size=1, cap=0
+    )
+
+    root = next(
+        cluster for cluster in uncapped["clusters"]
+        if cluster["cluster_key"] == "<root>"
+    )
+    assert root["source_hash"] == root_hash
+    assert root["full_rebuild"] is True
+    assert root["stale"] is True
+    assert root["added_files"] == []
+    assert [item["path"] for item in root["changed_files"]] == ["a.py"]
+
+    c.summary_store.get_updated_ats.return_value = {
+        "<root>": datetime(2026, 1, 1)
+    }
+    capped = _svc(c).list_subsystem_clusters(
+        "o/n", "dev", depth=2, min_size=1, cap=1
+    )
+
+    assert [cluster["cluster_key"] for cluster in capped["clusters"]] == [
+        "pkg/deep"
+    ]
+    assert capped["deferred"] == 1
+    assert capped["deferred_files"] == 1
 
 
 def test_get_subsystem_summary_work_returns_delta_and_reusable_fragment_texts():

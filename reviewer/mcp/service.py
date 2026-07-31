@@ -1120,7 +1120,10 @@ class MCPReviewService:
             }
         stored = self.components.summary_store.get_source_hashes(repo, resolved)
         stale = {
-            cluster.key: stored.get(cluster.key) != cluster.source_hash
+            cluster.key: (
+                state.full_rebuild
+                or stored.get(cluster.key) != cluster.source_hash
+            )
             for cluster in state.clusters
         }
         deltas = {
