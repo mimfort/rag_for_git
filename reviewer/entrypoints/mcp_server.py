@@ -285,8 +285,10 @@ def create_server(service: MCPReviewService) -> FastMCP:
                                 cap: int | None = None) -> dict:
         """Кластеризовать base-граф кода по путям модулей для скилла
         rag-reviewer:summarize-subsystems. Возвращает
-        {branch, deferred, deferred_files, clusters:[...]},
-        где каждый кластер содержит cluster_key, num_members, files, top_symbols
+        {branch, depth, layout_token, deferred, deferred_files, clusters:[...]},
+        где layout_token — обязательная canonical identity default depth +
+        normalized overrides для последующего verified prune. Каждый кластер
+        содержит cluster_key, num_members, files, top_symbols
         (по центральности), source_hash, stale и file-level delta. Без PR-сессии;
         branch по умолчанию — первичная отслеживаемая ветка.
 

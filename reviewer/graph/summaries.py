@@ -136,7 +136,7 @@ def build_clusters(
     ``depth_overrides`` задаёт per-prefix глубину: longest-prefix-match по
     сегментам директории; при отсутствии совпадения используется ``depth``.
     """
-    overrides = depth_overrides or {}
+    overrides = normalize_depth_overrides(depth_overrides or {})
     groups: dict[str, list[Member]] = {}
     for m in members:
         groups.setdefault(cluster_key(m.path, depth_for(m.path, depth, overrides)), []).append(m)

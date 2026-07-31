@@ -136,6 +136,15 @@ def test_server_registers_all_tools() -> None:
     }
 
 
+def test_list_subsystem_clusters_tool_describes_layout_token() -> None:
+    from reviewer.entrypoints.mcp_server import create_server
+
+    tools = asyncio.run(create_server(_make_mcp_service()).list_tools())
+    tool = next(item for item in tools if item.name == "list_subsystem_clusters")
+
+    assert "layout_token" in (tool.description or "")
+
+
 def test_index_subsystem_summary_routes_typed_fragments_to_service() -> None:
     """FastMCP валидирует file fragments и передаёт Pydantic-модели сервису."""
     from reviewer.entrypoints.mcp_server import create_server

@@ -89,6 +89,23 @@ def test_normalized_overrides_reject_conflicting_alias_depths():
         })
 
 
+def test_build_clusters_rejects_raw_conflicting_aliases_in_any_order():
+    import pytest
+
+    member = _m("x/y/z.py#Z", "x/y/z.py")
+    for overrides in (
+        {"/x/": 1, "x": 2},
+        {"x": 2, "/x/": 1},
+    ):
+        with pytest.raises(ValueError, match="Конфликтующие"):
+            build_clusters(
+                [member],
+                None,
+                depth=2,
+                depth_overrides=overrides,
+            )
+
+
 def test_compute_file_fingerprints_uses_skeleton_per_path():
     members = [
         Member("pkg/a.py#B", "pkg/a.py", "body-1", "sk-b", 8),
