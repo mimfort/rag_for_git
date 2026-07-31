@@ -51,8 +51,9 @@ Plus `list_subsystem_clusters`, `get_subsystem_summary_work`, `index_subsystem_s
    - If any cluster has `bootstrap == true`, explain that this is the first post-upgrade fragment
      bootstrap: all current files in selected clusters get fragments, cap-deferred clusters wait for
      later passes, and old cluster summaries remain available until their replacements are stored.
-   - State the invariant explicitly: `cluster_key` depends on depth, so **changing depth triggers a
-     full rebuild of every summary** (old-depth summaries orphan and get pruned).
+   - State the invariant explicitly: `cluster_key` depends on the whole layout policy, so
+     **changing default depth or any depth override triggers a full rebuild of every summary**
+     (old-layout summaries orphan and get pruned).
    Then **ask the user to confirm** before running. If they decline, stop without summarizing or pruning.
 
 4. **Choose the summary model (only if work is selected).** Select clusters where

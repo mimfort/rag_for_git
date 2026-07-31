@@ -432,6 +432,18 @@ def test_capped_override_layout_rebuild_converges_at_fixed_default_depth():
     assert second_selected["cluster_key"] == "b/y"
     assert second["deferred"] == 0
 
+    second_stored = _persist_single_pending_fragment(svc, c, second_selected)
+    c.summary_store.get_fragments.return_value = [first_stored, second_stored]
+
+    final = svc.list_subsystem_clusters(
+        "o/n", "dev", depth=None, min_size=1, cap=1
+    )
+    assert final["deferred"] == 0
+    assert not [
+        cluster for cluster in final["clusters"]
+        if cluster["full_rebuild"]
+    ]
+
 
 def test_list_subsystem_clusters_treats_same_key_depth_rebuild_as_stale_and_deferred():
     from datetime import datetime
