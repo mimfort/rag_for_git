@@ -1617,9 +1617,19 @@ class MCPReviewService:
         except Exception:
             log.warning("backfill_summary_embeddings: сбой эмбеддинга", exc_info=True)
             return {"embedded": 0, "note": "Voyage недоступен — бэкфилл пропущен"}
-        for p, vec in zip(pending, vecs):
-            store.set_embedding(repo, resolved, p["cluster_key"], vec)
-        return {"embedded": len(pending)}
+        embedded = sum(
+            store.set_embedding_if_source_hash(
+                repo,
+                resolved,
+                item["cluster_key"],
+                item["source_hash"],
+                vec,
+                title=item["title"],
+                summary=item["summary"],
+            )
+            for item, vec in zip(pending, vecs)
+        )
+        return {"embedded": embedded}
 
     def get_pr_diff(self, repo: str, number: int) -> str:
         """Unified diff изменённых файлов PR (session-less) — ленивая подтяжка для /solve-task.

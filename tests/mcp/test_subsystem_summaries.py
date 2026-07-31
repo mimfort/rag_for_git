@@ -1444,13 +1444,53 @@ def test_get_subsystem_summaries_no_query_returns_all_without_counting():
 def test_backfill_summary_embeddings_fills_pending():
     c = MagicMock()
     c.summary_store.get_pending_embeddings.return_value = [
-        {"cluster_key": "auth", "title": "Авторизация", "summary": "тело"}]
+        {
+            "cluster_key": "auth",
+            "title": "Авторизация",
+            "summary": "тело",
+            "source_hash": "auth-hash",
+        }
+    ]
     c.embedder.embed_documents.return_value = [[0.3, 0.4]]
+    c.summary_store.set_embedding_if_source_hash.return_value = True
     svc = _svc(c)
     out = svc.backfill_summary_embeddings("o/n", "dev")
     assert out == {"embedded": 1}
     c.embedder.embed_documents.assert_called_once_with(["Авторизация\nтело"])
-    c.summary_store.set_embedding.assert_called_once_with("o/n", "dev", "auth", [0.3, 0.4])
+    c.summary_store.set_embedding_if_source_hash.assert_called_once_with(
+        "o/n",
+        "dev",
+        "auth",
+        "auth-hash",
+        [0.3, 0.4],
+        title="Авторизация",
+        summary="тело",
+    )
+
+
+def test_backfill_summary_embeddings_counts_only_successful_exact_cas():
+    c = MagicMock()
+    c.summary_store.get_pending_embeddings.return_value = [
+        {
+            "cluster_key": "auth",
+            "title": "Авторизация",
+            "summary": "старый текст",
+            "source_hash": "same-hash",
+        },
+        {
+            "cluster_key": "index",
+            "title": "Индекс",
+            "summary": "текущий текст",
+            "source_hash": "index-hash",
+        },
+    ]
+    c.embedder.embed_documents.return_value = [[0.1, 0.2], [0.3, 0.4]]
+    c.summary_store.set_embedding_if_source_hash.side_effect = [False, True]
+
+    out = _svc(c).backfill_summary_embeddings("o/n", "dev")
+
+    assert out == {"embedded": 1}
+    assert c.summary_store.set_embedding_if_source_hash.call_count == 2
 
 
 def test_backfill_summary_embeddings_noop_when_none_pending():
@@ -1479,10 +1519,16 @@ def test_index_subsystem_summary_failsoft_when_embed_raises():
 def test_backfill_summary_embeddings_failsoft_when_embed_raises():
     c = MagicMock()
     c.summary_store.get_pending_embeddings.return_value = [
-        {"cluster_key": "auth", "title": "Авторизация", "summary": "тело"}]
+        {
+            "cluster_key": "auth",
+            "title": "Авторизация",
+            "summary": "тело",
+            "source_hash": "auth-hash",
+        }
+    ]
     c.embedder.embed_documents.side_effect = RuntimeError("voyage down")
     svc = _svc(c)
     out = svc.backfill_summary_embeddings("o/n", "dev")
     assert out["embedded"] == 0
     assert "note" in out
-    c.summary_store.set_embedding.assert_not_called()            # без вектора не пишем
+    c.summary_store.set_embedding_if_source_hash.assert_not_called()

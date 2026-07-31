@@ -480,12 +480,21 @@ class SummaryStore:
         try:
             with self._connect() as conn:
                 rows = conn.execute(
-                    "SELECT cluster_key, title, summary FROM subsystem_summaries "
+                    "SELECT cluster_key, title, summary, source_hash "
+                    "FROM subsystem_summaries "
                     "WHERE repo=%s AND branch=%s AND embedding IS NULL ORDER BY cluster_key",
                     (repo, branch)).fetchall()
         except psycopg.errors.UndefinedTable:
             return []
-        return [{"cluster_key": k, "title": t, "summary": s} for k, t, s in rows]
+        return [
+            {
+                "cluster_key": cluster_key,
+                "title": title,
+                "summary": summary,
+                "source_hash": source_hash,
+            }
+            for cluster_key, title, summary, source_hash in rows
+        ]
 
     def set_embedding(self, repo: str, branch: str, cluster_key: str,
                       embedding: list[float]) -> None:

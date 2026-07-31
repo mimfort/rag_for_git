@@ -118,11 +118,17 @@ def build_fragment_delta(
     by_current_path: dict[str, list[StoredSummaryFragment]] = {}
     for item in current_cluster:
         by_current_path.setdefault(item.path, []).append(item)
-    by_exact_cross_cluster: dict[tuple[str, str], StoredSummaryFragment] = {}
+    by_exact_cross_cluster: dict[
+        tuple[str, str],
+        list[StoredSummaryFragment],
+    ] = {}
     if not bootstrap and not full_rebuild:
         for item in stored:
             if item.cluster_key != cluster_key:
-                by_exact_cross_cluster.setdefault((item.path, item.fingerprint), item)
+                by_exact_cross_cluster.setdefault(
+                    (item.path, item.fingerprint),
+                    [],
+                ).append(item)
 
     added: list[FragmentFile] = []
     changed: list[FragmentFile] = []
@@ -145,9 +151,16 @@ def build_fragment_delta(
             changed.append(fresh)
             continue
 
-        previous = by_exact_cross_cluster.get((path, fingerprint))
-        if previous is not None:
-            moved.append(_from_stored(previous, from_cluster_key=previous.cluster_key))
+        previous = by_exact_cross_cluster.get((path, fingerprint), [])
+        if len(previous) == 1:
+            moved.append(
+                _from_stored(
+                    previous[0],
+                    from_cluster_key=previous[0].cluster_key,
+                )
+            )
+        elif len(previous) > 1:
+            changed.append(fresh)
         else:
             added.append(fresh)
 

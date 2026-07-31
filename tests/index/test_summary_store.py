@@ -14,6 +14,7 @@ import psycopg
 import pytest
 from psycopg import sql
 from psycopg.conninfo import make_conninfo
+from psycopg.types.json import Jsonb
 
 from reviewer.config.settings import Settings
 from reviewer.graph.summaries import compute_layout_token
@@ -391,6 +392,70 @@ def test_commit_summary_bundle_rolls_back_when_current_coverage_is_incomplete(st
 
     assert summary_store.get_fragments(repo, "dev") == fragments_before
     assert summary_store.get_summary(repo, "dev", "target") == summary_before
+
+
+def test_ambiguous_cross_cluster_fragments_roll_back_then_regeneration_self_heals(store):
+    summary_store, repo = store
+    with summary_store._connect() as conn:
+        for cluster_key, fragment_summary in (("old-a", "A"), ("old-b", "B")):
+            conn.execute(
+                "INSERT INTO subsystem_summary_fragments "
+                "(repo, branch, cluster_key, path, fingerprint, summary, provenance) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s)",
+                (
+                    repo,
+                    "dev",
+                    cluster_key,
+                    "same.py",
+                    "same",
+                    fragment_summary,
+                    Jsonb({}),
+                ),
+            )
+        conn.commit()
+
+    with pytest.raises(ValueError, match="однозначного"):
+        summary_store.commit_summary_bundle(
+            repo,
+            "dev",
+            "target",
+            "Target",
+            "Не сохраняется",
+            ["same.py#Same"],
+            "target-hash",
+            current_fingerprints={"same.py": "same"},
+            new_fragments=[],
+        )
+    assert [
+        (fragment["cluster_key"], fragment["summary"])
+        for fragment in summary_store.get_fragments(repo, "dev")
+    ] == [("old-a", "A"), ("old-b", "B")]
+    assert summary_store.get_summary(repo, "dev", "target") is None
+
+    metrics = summary_store.commit_summary_bundle(
+        repo,
+        "dev",
+        "target",
+        "Target",
+        "Сохранено после regeneration",
+        ["same.py#Same"],
+        "target-hash",
+        current_fingerprints={"same.py": "same"},
+        new_fragments=[
+            {
+                "path": "same.py",
+                "fingerprint": "same",
+                "summary": "Regenerated",
+                "provenance": _generation_provenance(),
+            }
+        ],
+    )
+
+    assert metrics["created"] == 1
+    assert [
+        (fragment["cluster_key"], fragment["summary"])
+        for fragment in summary_store.get_fragments(repo, "dev")
+    ] == [("target", "Regenerated")]
 
 
 def test_concurrent_empty_branch_bundles_serialize_same_path(store):
@@ -802,14 +867,33 @@ def test_set_embedding_if_source_hash_can_cas_exact_summary_text(store_pri167):
         embedding=None,
     )
 
+    [snapshot] = summary_store.get_pending_embeddings(repo, "dev")
+    assert snapshot == {
+        "cluster_key": "auth",
+        "title": "Авторизация",
+        "summary": "Текущий текст",
+        "source_hash": "same-hash",
+    }
+    summary_store.upsert_summary(
+        repo,
+        "dev",
+        "auth",
+        "Авторизация",
+        "Конкурирующий текст",
+        ["auth/a.py#A"],
+        "same-hash",
+        embedding=None,
+        preserve_embedding=False,
+    )
+
     assert summary_store.set_embedding_if_source_hash(
         repo,
         "dev",
         "auth",
-        "same-hash",
+        snapshot["source_hash"],
         _vec(0),
-        title="Авторизация",
-        summary="Устаревший текст",
+        title=snapshot["title"],
+        summary=snapshot["summary"],
     ) is False
     assert summary_store.get_pending_embeddings(repo, "dev")
 
@@ -820,7 +904,7 @@ def test_set_embedding_if_source_hash_can_cas_exact_summary_text(store_pri167):
         "same-hash",
         _vec(0),
         title="Авторизация",
-        summary="Текущий текст",
+        summary="Конкурирующий текст",
     ) is True
     assert summary_store.get_pending_embeddings(repo, "dev") == []
 

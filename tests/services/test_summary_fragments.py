@@ -71,6 +71,26 @@ def test_delta_prefers_matching_current_cluster_fragment_among_duplicates():
     assert delta.reused[0].provenance == {"source": "db"}
 
 
+def test_delta_regenerates_ambiguous_exact_cross_cluster_candidates():
+    current = {"same.py": "same"}
+    stored = [
+        StoredSummaryFragment("old-a", "same.py", "same", "A", {}),
+        StoredSummaryFragment("old-b", "same.py", "same", "B", {}),
+    ]
+
+    delta = build_fragment_delta(
+        "target",
+        current,
+        stored,
+        bootstrap=False,
+        full_rebuild=False,
+    )
+
+    assert [item.path for item in delta.changed] == ["same.py"]
+    assert delta.pending_paths == ("same.py",)
+    assert not delta.moved
+
+
 def test_delta_sorts_each_classification_by_path():
     current = {"z.py": "new", "a.py": "new"}
 
