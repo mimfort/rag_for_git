@@ -94,6 +94,29 @@ CREATE TABLE IF NOT EXISTS subsystem_summaries (
 CREATE INDEX IF NOT EXISTS subsystem_summaries_hnsw ON subsystem_summaries
 USING hnsw (embedding vector_cosine_ops) WITH (m = 16, ef_construction = 64);
 
+CREATE TABLE IF NOT EXISTS subsystem_summary_fragments (
+    repo text NOT NULL DEFAULT '',
+    branch text NOT NULL,
+    cluster_key text NOT NULL,
+    path text NOT NULL,
+    fingerprint text NOT NULL,
+    summary text NOT NULL,
+    provenance jsonb NOT NULL DEFAULT '{}',
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (repo, branch, cluster_key, path)
+);
+
+CREATE INDEX IF NOT EXISTS subsystem_summary_fragments_path
+ON subsystem_summary_fragments (repo, branch, path);
+
+CREATE TABLE IF NOT EXISTS subsystem_summary_state (
+    repo text NOT NULL DEFAULT '',
+    branch text NOT NULL,
+    completed_depth integer NOT NULL,
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (repo, branch)
+);
+
 -- Карта платформы VCS репозитория (PRI-133): auto-derive из git remote при
 -- `reviewer index`. Читается _create_vcs_provider при ревью (API-only движок)
 -- ДО любого API-вызова. Ключ по repo (платформа — свойство репо, не ветки).

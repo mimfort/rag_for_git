@@ -25,6 +25,15 @@ def _vec(hot: int) -> list[float]:
     return v
 
 
+def _delete_summary_rows(summary_store: SummaryStore, repo: str) -> None:
+    """Удалить все тестовые summary-данные одного репозитория."""
+    with summary_store._connect() as conn:
+        conn.execute("DELETE FROM subsystem_summary_fragments WHERE repo=%s", (repo,))
+        conn.execute("DELETE FROM subsystem_summary_state WHERE repo=%s", (repo,))
+        conn.execute("DELETE FROM subsystem_summaries WHERE repo=%s", (repo,))
+        conn.commit()
+
+
 @pytest.fixture()
 def store():
     dsn = Settings().pg_dsn
@@ -36,15 +45,11 @@ def store():
         schema_store.close()
     summary_store = SummaryStore(dsn)
     try:
-        with summary_store._connect() as conn:
-            conn.execute("DELETE FROM subsystem_summaries WHERE repo=%s", (repo,))
-            conn.commit()
+        _delete_summary_rows(summary_store, repo)
         yield summary_store, repo
     finally:
         try:
-            with summary_store._connect() as conn:
-                conn.execute("DELETE FROM subsystem_summaries WHERE repo=%s", (repo,))
-                conn.commit()
+            _delete_summary_rows(summary_store, repo)
         finally:
             summary_store.close()
 
@@ -130,6 +135,158 @@ def test_delete_summaries_except_empty_keep_deletes_all(store):
     assert summary_store.get_source_hashes(repo, "dev") == {}
 
 
+def test_fragment_roundtrip_keeps_provenance_and_timestamp(store):
+    summary_store, repo = store
+    metrics = summary_store.commit_summary_bundle(
+        repo, "dev", "reviewer/index", "Индекс", "Сводка",
+        ["reviewer/index/a.py#A"], "cluster-hash",
+        current_fingerprints={"reviewer/index/a.py": "file-hash"},
+        new_fragments=[{
+            "path": "reviewer/index/a.py",
+            "fingerprint": "file-hash",
+            "summary": "Файл индекса.",
+            "provenance": {"generator": "summarize-subsystems"},
+        }],
+    )
+    assert metrics == {"created": 1, "reused": 0, "removed": 0, "moved": 0}
+    [fragment] = summary_store.get_fragments(repo, "dev")
+    assert fragment["provenance"] == {"generator": "summarize-subsystems"}
+    assert "T" in fragment["updated_at"]
+
+
+def test_commit_summary_bundle_atomically_creates_reuses_removes_and_moves(store):
+    summary_store, repo = store
+    summary_store.commit_summary_bundle(
+        repo, "dev", "target", "Целевой кластер", "Старая сводка",
+        ["same.py#Same", "removed.py#Removed"], "target-old",
+        current_fingerprints={"same.py": "same", "removed.py": "removed"},
+        new_fragments=[
+            {"path": "same.py", "fingerprint": "same", "summary": "Same", "provenance": {}},
+            {
+                "path": "removed.py",
+                "fingerprint": "removed",
+                "summary": "Removed",
+                "provenance": {},
+            },
+        ],
+    )
+    summary_store.commit_summary_bundle(
+        repo, "dev", "source", "Исходный кластер", "Сводка источника",
+        ["moved.py#Moved"], "source-old",
+        current_fingerprints={"moved.py": "moved"},
+        new_fragments=[
+            {"path": "moved.py", "fingerprint": "moved", "summary": "Moved", "provenance": {}},
+        ],
+    )
+
+    metrics = summary_store.commit_summary_bundle(
+        repo, "dev", "target", "Целевой кластер", "Новая сводка",
+        ["same.py#Same", "moved.py#Moved", "changed.py#Changed"], "target-new",
+        current_fingerprints={
+            "same.py": "same",
+            "moved.py": "moved",
+            "changed.py": "changed-new",
+        },
+        new_fragments=[{
+            "path": "changed.py",
+            "fingerprint": "changed-new",
+            "summary": "Changed",
+            "provenance": {"mode": "incremental"},
+        }],
+    )
+
+    assert metrics == {"created": 1, "reused": 1, "removed": 1, "moved": 1}
+    fragments = summary_store.get_fragments(repo, "dev")
+    assert [(row["cluster_key"], row["path"], row["fingerprint"]) for row in fragments] == [
+        ("target", "changed.py", "changed-new"),
+        ("target", "moved.py", "moved"),
+        ("target", "same.py", "same"),
+    ]
+    assert summary_store.get_summary(repo, "dev", "target")["summary"] == "Новая сводка"
+
+
+def test_commit_summary_bundle_rolls_back_when_current_coverage_is_incomplete(store):
+    summary_store, repo = store
+    summary_store.commit_summary_bundle(
+        repo, "dev", "target", "Целевой кластер", "Стабильная сводка",
+        ["same.py#Same", "removed.py#Removed"], "stable-hash",
+        current_fingerprints={"same.py": "same", "removed.py": "removed"},
+        new_fragments=[
+            {"path": "same.py", "fingerprint": "same", "summary": "Same", "provenance": {}},
+            {
+                "path": "removed.py",
+                "fingerprint": "removed",
+                "summary": "Removed",
+                "provenance": {},
+            },
+        ],
+    )
+    fragments_before = summary_store.get_fragments(repo, "dev")
+    summary_before = summary_store.get_summary(repo, "dev", "target")
+
+    with pytest.raises(ValueError):
+        summary_store.commit_summary_bundle(
+            repo, "dev", "target", "Целевой кластер", "Не должна сохраниться",
+            ["same.py#Same", "z-missing.py#Missing"], "new-hash",
+            current_fingerprints={"same.py": "same", "z-missing.py": "missing"},
+            new_fragments=[],
+        )
+
+    assert summary_store.get_fragments(repo, "dev") == fragments_before
+    assert summary_store.get_summary(repo, "dev", "target") == summary_before
+
+
+def test_prune_except_and_set_depth_removes_summary_and_fragment_orphans(store):
+    summary_store, repo = store
+    for cluster_key in ("reviewer/index", "reviewer/old"):
+        path = f"{cluster_key}/a.py"
+        summary_store.commit_summary_bundle(
+            repo, "dev", cluster_key, cluster_key, "Сводка",
+            [f"{path}#A"], f"hash-{cluster_key}",
+            current_fingerprints={path: f"fingerprint-{cluster_key}"},
+            new_fragments=[{
+                "path": path,
+                "fingerprint": f"fingerprint-{cluster_key}",
+                "summary": "Фрагмент",
+                "provenance": {},
+            }],
+        )
+
+    assert summary_store.get_completed_depth(repo, "dev") is None
+    result = summary_store.prune_except_and_set_depth(
+        repo, "dev", ["reviewer/index"], 2
+    )
+
+    assert result == {"pruned": 1, "fragments_pruned": 1, "depth": 2}
+    assert summary_store.get_completed_depth(repo, "dev") == 2
+    assert set(summary_store.get_source_hashes(repo, "dev")) == {"reviewer/index"}
+    assert [row["cluster_key"] for row in summary_store.get_fragments(repo, "dev")] == [
+        "reviewer/index"
+    ]
+
+
+def test_prune_except_and_set_depth_supports_empty_keep_keys(store):
+    summary_store, repo = store
+    summary_store.commit_summary_bundle(
+        repo, "dev", "reviewer/index", "Индекс", "Сводка",
+        ["reviewer/index/a.py#A"], "cluster-hash",
+        current_fingerprints={"reviewer/index/a.py": "file-hash"},
+        new_fragments=[{
+            "path": "reviewer/index/a.py",
+            "fingerprint": "file-hash",
+            "summary": "Файл индекса.",
+            "provenance": {},
+        }],
+    )
+
+    result = summary_store.prune_except_and_set_depth(repo, "dev", [], 3)
+
+    assert result == {"pruned": 1, "fragments_pruned": 1, "depth": 3}
+    assert summary_store.get_source_hashes(repo, "dev") == {}
+    assert summary_store.get_fragments(repo, "dev") == []
+    assert summary_store.get_completed_depth(repo, "dev") == 3
+
+
 # ── PRI-167: embedding в SummaryStore + HNSW-индекс ──────────────────────────
 
 @pytest.fixture()
@@ -143,15 +300,11 @@ def store_pri167():
         schema_store.close()
     summary_store = SummaryStore(dsn)
     try:
-        with summary_store._connect() as conn:
-            conn.execute("DELETE FROM subsystem_summaries WHERE repo=%s", (repo,))
-            conn.commit()
+        _delete_summary_rows(summary_store, repo)
         yield summary_store, repo
     finally:
         try:
-            with summary_store._connect() as conn:
-                conn.execute("DELETE FROM subsystem_summaries WHERE repo=%s", (repo,))
-                conn.commit()
+            _delete_summary_rows(summary_store, repo)
         finally:
             summary_store.close()
 
@@ -178,6 +331,39 @@ def test_upsert_none_embedding_preserves_existing(store_pri167):
     hits = summary_store.search_summaries(repo, "dev", _vec(0), top_k=1)
     assert hits and hits[0]["cluster_key"] == "auth"
     assert hits[0]["summary"] == "v2"          # текст обновился, вектор сохранён
+
+
+def test_upsert_none_embedding_resets_vector_when_source_hash_changes(store_pri167):
+    summary_store, repo = store_pri167
+    summary_store.upsert_summary(repo, "dev", "auth", "Авторизация", "v1",
+                                 ["auth/a.py#A"], "h1", embedding=_vec(0))
+
+    summary_store.upsert_summary(repo, "dev", "auth", "Авторизация", "v2",
+                                 ["auth/a.py#A"], "h2", embedding=None)
+
+    assert [p["cluster_key"] for p in summary_store.get_pending_embeddings(repo, "dev")] == [
+        "auth"
+    ]
+    assert summary_store.search_summaries(repo, "dev", _vec(0), top_k=1) == []
+
+
+def test_set_embedding_if_source_hash_rejects_stale_and_accepts_current(store_pri167):
+    summary_store, repo = store_pri167
+    summary_store.upsert_summary(repo, "dev", "auth", "Авторизация", "...",
+                                 ["auth/a.py#A"], "current", embedding=None)
+
+    assert summary_store.set_embedding_if_source_hash(
+        repo, "dev", "auth", "stale", _vec(0)
+    ) is False
+    assert summary_store.get_pending_embeddings(repo, "dev")
+    assert summary_store.set_embedding_if_source_hash(
+        repo, "dev", "auth", "current", _vec(0)
+    ) is True
+
+    assert summary_store.get_pending_embeddings(repo, "dev") == []
+    assert summary_store.search_summaries(repo, "dev", _vec(0), top_k=1)[0][
+        "cluster_key"
+    ] == "auth"
 
 
 def test_pending_and_set_embedding_backfill(store_pri167):
