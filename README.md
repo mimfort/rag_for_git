@@ -530,9 +530,15 @@ namespaced skills with `$rag-reviewer:...`.
 старые сводки: каждый кластер заменяется только после успешной атомарной записи нового bundle.
 При настроенном cap bootstrap может занять несколько проходов. Freshness считается по
 skeleton-коду, поэтому правка только тела функции намеренно остаётся невидимой, пока не изменится
-skeleton. Смена `summary_cluster_depth` принудительно пересобирает все fragments. Частичный или
-ограниченный cap-ом прогон не запускает prune; optimistic race (`stored=false`) тоже считается
-отложенным, не успехом, и запрещает prune в этом проходе.
+skeleton. Layout identity — canonical token от default `summary_cluster_depth` и
+нормализованных `summary_cluster_depth_overrides`: смена любого из них принудительно пересобирает
+все fragments, даже если default depth прежний. Частичный или ограниченный cap-ом прогон не
+запускает prune; optimistic race (`stored=false`) тоже считается отложенным, не успехом, и
+запрещает prune в этом проходе. Полный проход передаёт в prune token и точную карту
+`cluster_key → source_hash`; сервер повторно выводит layout и под advisory lock проверяет каждую
+summary и same-generation fragment coverage до удаления сирот и финализации state. Embedding
+backfill пишет вектор только по exact CAS `source_hash + title + summary`, поэтому конкурентная
+перезапись текста не получает устаревший вектор и не увеличивает `embedded`.
 
 ### `configure-review` — update `.review.yml`
 

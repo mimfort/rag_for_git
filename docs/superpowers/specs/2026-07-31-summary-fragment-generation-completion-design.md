@@ -14,6 +14,7 @@ Every newly generated file fragment receives server-owned provenance:
 {
   "_reviewer": {
     "generation": "summary-fragment-v1",
+    "layout_token": "<canonical-sha256>",
     "depth": 2
   }
 }
@@ -27,6 +28,7 @@ has a same-cluster stored fragment with:
 
 - the exact current file fingerprint;
 - `_reviewer.generation == "summary-fragment-v1"`;
+- `_reviewer.layout_token == effective_layout_token`;
 - `_reviewer.depth == effective_depth`.
 
 Unstamped, wrong-depth, cross-cluster, missing, or stale-fingerprint fragments
@@ -34,10 +36,13 @@ do not prove completion.
 
 ## Cluster-specific state
 
-Global `completed_depth` still records only a fully completed branch pass.
-While it is missing, a cluster is `bootstrap=true` only until that cluster has
-complete current-generation evidence. While it differs from effective depth, a
-cluster is `full_rebuild=true` only until that cluster has complete
+Global `completed_layout` records the canonical identity of the fully completed
+branch pass; `completed_depth` remains diagnostic. The token covers default depth
+and normalized/sorted depth overrides. A legacy state row without
+`completed_layout` is incomplete. While layout completion is missing, a cluster
+is `bootstrap=true` only until that cluster has
+complete current-generation evidence. While completed layout differs from the
+effective token, a cluster is `full_rebuild=true` only until that cluster has complete
 current-generation evidence.
 
 Pending bootstrap/full-rebuild applies to the entire incomplete cluster, so all
@@ -59,7 +64,10 @@ With `cap=1` and multiple incomplete clusters:
    work and selects the next incomplete cluster.
 4. After the last cluster persists, the next list reports `deferred=0`; no
    completed cluster has pending file jobs.
-5. The skill may then prune/finalize global `completed_depth`.
+5. The skill may then pass the exact list `layout_token` and cluster source hashes
+   to verified prune. Service re-derives them; store validates every summary and
+   exact fragment coverage under the branch advisory lock before deleting orphans
+   and finalizing `completed_depth + completed_layout`.
 
 ## Compatibility and failure behavior
 
@@ -69,7 +77,8 @@ With `cap=1` and multiple incomplete clusters:
 - Client provenance cannot spoof generation completion because `_reviewer` is
   overwritten server-side.
 - Optimistic source-hash/fingerprint validation remains unchanged.
-- No database schema migration is required.
+- Schema migration idempotently adds nullable `completed_layout`; existing rows
+  remain intentionally incomplete until a verified full pass.
 
 ## Tests
 
