@@ -12,6 +12,9 @@ task_board:
   create_target: null
   done_target: Готово
   options: {}
+  # sync_filter:
+  #   max_age_days: 180
+  #   include_archived: false
 
 # --- Скилл solve-task ---
 

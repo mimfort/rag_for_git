@@ -123,7 +123,8 @@ def test_raw_task_fields_are_mapped_from_flat_listing_payload() -> None:
     assert row.title == "Задача 1"
     assert row.description == "<body>Описание <em>1</em></body>"
     assert row.status == "Todo"
-    assert row.completed is True
+    assert row.archived is None
+    assert row.terminal is True
     assert row.timestamp == 1784917845123
     assert row.subtask_ids == []
     assert row.provider_data["num_subtasks"] == 3
@@ -132,17 +133,45 @@ def test_raw_task_fields_are_mapped_from_flat_listing_payload() -> None:
     board.close()
 
 
-def test_timestamp_is_epoch_ms_and_missing_modified_at_is_zero() -> None:
+def test_timestamp_is_epoch_ms_and_invalid_or_missing_modified_at_is_unknown() -> None:
     board = _board(
         lambda _request: httpx.Response(
             200,
-            json={"data": [_task(1), _task(2, modified_at=None)], "next_page": None},
+            json={
+                "data": [
+                    _task(1),
+                    _task(2, modified_at=None),
+                    _task(3, modified_at="не дата"),
+                ],
+                "next_page": None,
+            },
         )
     )
     rows = list(board.iter_raw("ASN", None))
 
     assert rows[0].timestamp == 1784797920000
-    assert rows[1].timestamp == 0
+    assert rows[1].timestamp is None
+    assert rows[2].timestamp is None
+    board.close()
+
+
+def test_completed_lifecycle_preserves_true_false_and_absence() -> None:
+    missing = _task(3)
+    missing.pop("completed")
+    board = _board(
+        lambda _request: httpx.Response(
+            200,
+            json={
+                "data": [_task(1, completed=True), _task(2, completed=False), missing],
+                "next_page": None,
+            },
+        )
+    )
+
+    rows = list(board.iter_raw("ASN", None))
+
+    assert [row.terminal for row in rows] == [True, False, None]
+    assert [row.archived for row in rows] == [None, None, None]
     board.close()
 
 

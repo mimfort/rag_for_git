@@ -102,15 +102,18 @@ def create_server(service: MCPReviewService) -> FastMCP:
         return service.purge_orphaned_tasks(active_keys, keep_with_prs)
 
     @mcp.tool()
-    def sync_board(board: str | None = None, limit: int | None = None,
+    def sync_board(repo: str | None = None, branch: str | None = None,
+                   board: str | None = None, limit: int | None = None,
                    purge_orphaned: bool = False, keep_with_prs: bool = True,
                    board_type: str | None = None,
                    provider_options: dict[str, object] | None = None,
-                   force_renormalize: bool = False) -> dict:
+                   force_renormalize: bool = False,
+                   sync_filter: dict[str, object] | None = None) -> dict:
         """Server-side ETL: enumerate the configured task board via REST, normalize,
-        and index it (vector store + task graph). board_type is a registered provider
-        type; provider_options is its non-secret JSON options object. board limits the
-        operation to one project/board.
+        and index it (vector store + task graph). Pass repo (and optionally branch) to
+        use that repository's effective task_board policy. Without repo, board_type,
+        provider_options and sync_filter explicitly configure this run; board limits
+        the operation to one project/board.
         Incremental via a per-(type,board) timestamp watermark; --limit disables purge
         and cursor advance.
         force_renormalize=True ignores the watermark and re-normalizes every task —
@@ -118,13 +121,16 @@ def create_server(service: MCPReviewService) -> FastMCP:
         the embedding cost to actually-changed descriptions.
         Returns a compact counts summary with by_board breakdown."""
         return service.sync_board(
-            board,
-            limit,
-            purge_orphaned,
-            keep_with_prs,
-            board_type,
-            provider_options,
-            force_renormalize,
+            board=board,
+            limit=limit,
+            purge_orphaned=purge_orphaned,
+            keep_with_prs=keep_with_prs,
+            board_type=board_type,
+            provider_options=provider_options,
+            force_renormalize=force_renormalize,
+            repo=repo,
+            branch=branch,
+            sync_filter=sync_filter,
         )
 
     @mcp.tool()

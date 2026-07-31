@@ -21,7 +21,7 @@ from reviewer.agent.outcomes import account_outcomes
 from reviewer.app import Components
 from reviewer.config.provider_credentials import ProviderCredentialSource
 from reviewer.config.settings import Settings
-from reviewer.config.task_board import migrate_legacy_board_args
+from reviewer.config.task_board import migrate_legacy_board_args, normalize_task_sync_filter
 from reviewer.index.refs import base_ref
 from reviewer.mcp.session_serde import from_payload, to_payload
 from reviewer.mcp.session_store import SessionStore
@@ -552,9 +552,190 @@ class MCPReviewService:
         provider_options: Mapping[str, JsonValue] | None = None,
         force_renormalize: bool = False,
         *,
+        repo: str | None = None,
+        branch: str | None = None,
+        sync_filter: Mapping[str, JsonValue] | None = None,
         status_field: str | None = None,
     ) -> dict:
-        """Server-side ETL зарегистрированной доски через generic provider options."""
+        """Server-side ETL в explicit-режиме или из effective policy репозитория."""
+        if repo is None and branch is not None:
+            return self._board_error(
+                "sync_board",
+                BoardProviderError(
+                    "configuration",
+                    "branch requires repo in sync_board.",
+                ),
+            )
+
+        if repo is not None:
+            if not isinstance(repo, str) or not repo.strip():
+                return self._board_error(
+                    "sync_board",
+                    BoardProviderError(
+                        "configuration",
+                        "repo must be a non-empty owner/name value.",
+                    ),
+                )
+            mixed = [
+                name
+                for name, supplied in (
+                    ("board", board is not None),
+                    ("board_type", board_type is not None),
+                    ("provider_options", provider_options is not None),
+                    ("sync_filter", sync_filter is not None),
+                    ("status_field", status_field is not None),
+                )
+                if supplied
+            ]
+            if mixed:
+                return self._board_error(
+                    "sync_board",
+                    BoardProviderError(
+                        "configuration",
+                        "repo mode cannot be combined with explicit board arguments: "
+                        + ", ".join(mixed),
+                    ),
+                )
+
+            repo_secrets = self._board_secrets() | frozenset(
+                secret
+                for secret in (
+                    self.settings.github_token,
+                    self.settings.gitlab_token,
+                )
+                if secret
+            )
+            resolved_repo_branch = self._resolve_repo_branch(repo, branch)
+            if isinstance(resolved_repo_branch, str):
+                reason = resolved_repo_branch.removeprefix("(").removesuffix(")")
+                return self._board_error(
+                    "sync_board",
+                    BoardProviderError(
+                        "configuration",
+                        reason,
+                        secrets=repo_secrets,
+                    ),
+                    repo_secrets,
+                )
+            normalized_repo, resolved_branch = resolved_repo_branch
+            try:
+                policy, meta = self._resolve_policy(normalized_repo, resolved_branch)
+            except Exception as error:
+                return self._board_error(
+                    "sync_board",
+                    BoardProviderError(
+                        "configuration",
+                        "Task board policy could not be resolved: "
+                        f"{type(error).__name__}: {error}",
+                        secrets=repo_secrets,
+                    ),
+                    repo_secrets,
+                )
+            if meta.warnings:
+                return self._board_error(
+                    "sync_board",
+                    BoardProviderError(
+                        "configuration",
+                        "Task board policy resolution warnings: "
+                        + "; ".join(meta.warnings),
+                        secrets=repo_secrets,
+                    ),
+                    repo_secrets,
+                )
+            task_board = policy.task_board
+            if task_board is None:
+                return {
+                    "status": "error",
+                    "reason": "task board REST is not configured",
+                }
+            if not isinstance(task_board, Mapping):
+                return self._board_error(
+                    "sync_board",
+                    BoardProviderError(
+                        "configuration",
+                        "Effective task_board policy must be a mapping.",
+                    ),
+                )
+            repo_board_type = task_board.get("type")
+            if not isinstance(repo_board_type, str) or not repo_board_type.strip():
+                return self._board_error(
+                    "sync_board",
+                    BoardProviderError(
+                        "configuration",
+                        "Effective task_board.type must be an explicit non-empty string.",
+                        secrets=repo_secrets,
+                    ),
+                    repo_secrets,
+                )
+            options = task_board.get("options")
+            if options is not None and not isinstance(options, Mapping):
+                return self._board_error(
+                    "sync_board",
+                    BoardProviderError(
+                        "configuration",
+                        "Effective task_board.options must be a mapping.",
+                    ),
+                )
+            try:
+                typed_filter = (
+                    normalize_task_sync_filter(task_board["sync_filter"])
+                    if "sync_filter" in task_board
+                    else None
+                )
+            except (TypeError, ValueError) as error:
+                return self._board_error(
+                    "sync_board",
+                    BoardProviderError(
+                        "configuration",
+                        str(error),
+                        secrets=repo_secrets,
+                    ),
+                    repo_secrets,
+                )
+
+            registry, credentials = self._board_runtime()
+            try:
+                with resolved_provider(
+                    self.settings,
+                    repo_board_type,
+                    options,
+                    registry=registry,
+                    credential_source=credentials,
+                ) as resolved:
+                    scoped = SyncService(
+                        [SyncProvider(resolved.provider, resolved.secrets)],
+                        self.components.task_service,
+                        self.components.store,
+                    )
+                    result = scoped.run(
+                        board=task_board.get("project"),
+                        limit=limit,
+                        purge_orphaned=purge_orphaned,
+                        keep_with_prs=keep_with_prs,
+                        board_type=resolved.board_type,
+                        force_renormalize=force_renormalize,
+                        sync_filter=typed_filter,
+                        filter_source=meta.sources.get("task_board", "env"),
+                    )
+                    result.setdefault("warnings", []).extend(
+                        policy.task_board_warnings
+                    )
+                    return self._safe_board_payload(result, resolved.secrets)
+            except BoardProviderError as error:
+                return self._board_error("sync_board", error)
+
+        try:
+            typed_filter = (
+                normalize_task_sync_filter(sync_filter)
+                if sync_filter is not None
+                else None
+            )
+        except (TypeError, ValueError) as error:
+            return self._board_error(
+                "sync_board",
+                BoardProviderError("configuration", str(error)),
+            )
+        filter_source = "explicit" if sync_filter is not None else None
         _, options, migration_warnings = migrate_legacy_board_args(
             target=None,
             provider_options=provider_options,
@@ -575,6 +756,8 @@ class MCPReviewService:
                     purge_orphaned=purge_orphaned,
                     keep_with_prs=keep_with_prs,
                     force_renormalize=force_renormalize,
+                    sync_filter=typed_filter,
+                    filter_source=filter_source,
                 )
             except Exception as error:
                 return self._board_error("sync_board", error, secrets)
@@ -602,6 +785,8 @@ class MCPReviewService:
                     keep_with_prs=keep_with_prs,
                     board_type=resolved.board_type,
                     force_renormalize=force_renormalize,
+                    sync_filter=typed_filter,
+                    filter_source=filter_source,
                 )
                 result.setdefault("warnings", []).extend(migration_warnings)
                 return self._safe_board_payload(result, resolved.secrets)

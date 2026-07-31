@@ -45,6 +45,56 @@ def test_board_tools_advertise_generic_targets_and_options_only():
     assert "{board_type, project, targets, options, warnings}" in discovery
     assert "required_for" in discovery
     assert "choices" in discovery
+    sync_schema = tools["sync_board"].inputSchema["properties"]
+    assert list(sync_schema) == [
+        "repo",
+        "branch",
+        "board",
+        "limit",
+        "purge_orphaned",
+        "keep_with_prs",
+        "board_type",
+        "provider_options",
+        "force_renormalize",
+        "sync_filter",
+    ]
+
+
+def test_sync_board_tool_forwards_every_argument_by_keyword():
+    import asyncio
+
+    svc = _service()
+    svc.sync_board.return_value = {"status": "ok", "warnings": []}
+    server = create_server(svc)
+
+    asyncio.run(server.call_tool(
+        "sync_board",
+        {
+            "board": "PRI",
+            "limit": 5,
+            "purge_orphaned": True,
+            "keep_with_prs": False,
+            "board_type": "fake",
+            "provider_options": {"lane": "Backend"},
+            "force_renormalize": True,
+            "repo": "owner/repo",
+            "branch": "main",
+            "sync_filter": {"max_age_days": 30},
+        },
+    ))
+
+    svc.sync_board.assert_called_once_with(
+        board="PRI",
+        limit=5,
+        purge_orphaned=True,
+        keep_with_prs=False,
+        board_type="fake",
+        provider_options={"lane": "Backend"},
+        force_renormalize=True,
+        repo="owner/repo",
+        branch="main",
+        sync_filter={"max_age_days": 30},
+    )
 
 
 def test_publish_review_tool_forwards_task_key():

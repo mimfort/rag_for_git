@@ -10,13 +10,13 @@ from __future__ import annotations
 import logging
 import re
 from collections.abc import Iterable, Mapping
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from urllib.parse import quote, urljoin, urlsplit
 
 import httpx
 
 from reviewer.tasks.boards.attachments import fetch_attachment, host_allowed, _registrable_domain
-from reviewer.tasks.boards.base import RawTask, project_prefix
+from reviewer.tasks.boards.base import RawTask, TaskListing, TaskListingStats, project_prefix
 from reviewer.tasks.boards.errors import BoardProviderError
 from reviewer.tasks.boards.http import BoardHttpClient
 from reviewer.tasks.boards.registry import (
@@ -26,6 +26,9 @@ from reviewer.tasks.boards.registry import (
     ProviderOptionSpec,
     ProviderSetupSpec,
 )
+
+if TYPE_CHECKING:
+    from reviewer.config.task_board import TaskSyncFilter
 
 log = logging.getLogger(__name__)
 
@@ -165,6 +168,15 @@ def _origin(base_url: str) -> str:
     return f"{p.scheme}://{p.netloc}"
 
 
+def _timestamp(value: object) -> int | None:
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+
 def _issue_to_raw(issue: dict, status_field: str = "State") -> RawTask:
     """YouTrack issue JSON → RawTask. Чистая: без I/O."""
     key = issue.get("idReadable", "")
@@ -175,9 +187,11 @@ def _issue_to_raw(issue: dict, status_field: str = "State") -> RawTask:
         description=issue.get("description", "") or "",
         status=_state_of(issue, status_field),
         subtask_ids=[],
-        timestamp=int(issue.get("updated", 0) or 0),
+        timestamp=_timestamp(issue.get("updated")),
         links=_links_of(issue),
         attachments=_attachments_of(issue),
+        archived=None,
+        terminal=None,
     )
 
 
@@ -297,8 +311,10 @@ class YouTrackBoard:
             "warnings": [],
         }
 
-    def iter_raw(self, board: str | None, limit: int | None) -> Iterable[RawTask]:
+    def _iter_raw_rows(self, board: str | None, limit: int | None) -> Iterable[RawTask]:
         count = 0
+        if limit is not None and count >= limit:
+            return
         skip = 0
         while True:
             params: dict = {"fields": _FIELDS, "$top": _PAGE, "$skip": skip}
@@ -308,11 +324,26 @@ class YouTrackBoard:
             for issue in page:
                 yield _issue_to_raw(issue, self._status_field)
                 count += 1
-                if limit and count >= limit:
+                if limit is not None and count >= limit:
                     return
             if len(page) < _PAGE:
                 return
             skip += len(page)
+
+    def iter_raw(
+        self,
+        board: str | None,
+        limit: int | None,
+        *,
+        sync_filter: TaskSyncFilter | None = None,
+        now_ms: int | None = None,
+    ) -> TaskListing:
+        if limit == 0:
+            return TaskListing(rows=iter(()))
+        return TaskListing(
+            rows=self._iter_raw_rows(board, limit),
+            stats=TaskListingStats(),
+        )
 
     def normalize(self, raw: RawTask) -> dict:
         origin = _origin(self._base)

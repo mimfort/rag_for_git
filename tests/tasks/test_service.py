@@ -153,6 +153,7 @@ def test_index_task_graph_none_still_embeds_and_warns():
     out = TaskService(store, None, emb).index_task(_brief())
     assert out["embedded"] is True
     assert any("graph unavailable" in w for w in out["warnings"])
+    assert out["retry_required"] is False
 
 
 def test_index_task_graph_error_is_warning_not_raise():
@@ -161,6 +162,7 @@ def test_index_task_graph_error_is_warning_not_raise():
     out = TaskService(store, graph, emb).index_task(_brief())
     assert out["embedded"] is True       # store layer succeeded
     assert any("graph:" in w for w in out["warnings"])
+    assert out["retry_required"] is False
 
 
 def test_index_task_store_error_is_warning_not_raise():
@@ -170,6 +172,7 @@ def test_index_task_store_error_is_warning_not_raise():
     out = TaskService(_BrokenStore(), _FakeGraph(), _FakeEmbedder()).index_task(_brief())
     assert out["embedded"] is False
     assert any("store:" in w for w in out["warnings"])
+    assert out["retry_required"] is True
     # graph layer still runs despite the store failure
 
 
@@ -177,6 +180,7 @@ def test_index_task_no_key():
     out = TaskService(_FakeStore(), _FakeGraph(), _FakeEmbedder()).index_task({"title": "x"})
     assert out["key"] is None
     assert out["embedded"] is False
+    assert out["retry_required"] is False
 
 
 def test_search_tasks_formats_hits():

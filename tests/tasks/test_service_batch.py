@@ -128,6 +128,7 @@ def test_index_batch_task_no_key_gets_warning_others_continue():
 
     assert results[0]["key"] is None
     assert any("has no key" in w for w in results[0]["warnings"])
+    assert results[0]["retry_required"] is False
     assert results[1]["embedded"] is True    # вторая задача обработана
 
 
@@ -150,6 +151,7 @@ def test_index_batch_embed_error_marks_changed_warns_but_meta_only_ok():
     assert store.meta_updates                # meta обновлена
     assert results[1]["embedded"] is False
     assert any("embedder:" in w for w in results[1]["warnings"])
+    assert results[1]["retry_required"] is True
 
 
 def test_index_batch_store_error_one_task_others_continue():
@@ -170,6 +172,7 @@ def test_index_batch_store_error_one_task_others_continue():
     results = TaskService(store, _FakeGraph(), emb).index_batch(tasks)
 
     assert any("store:" in w for w in results[0]["warnings"])
+    assert results[0]["retry_required"] is True
     assert results[1]["embedded"] is True
 
 
@@ -180,6 +183,37 @@ def test_index_batch_graph_none_adds_warning():
 
     assert results[0]["embedded"] is True
     assert any("graph unavailable" in w for w in results[0]["warnings"])
+    assert results[0]["retry_required"] is False
+
+
+def test_index_batch_existing_hash_error_requires_retry():
+    class _BrokenStore(_FakeStore):
+        def existing_hash(self, key):
+            raise RuntimeError("pg lookup error")
+
+    result = TaskService(
+        _BrokenStore(), _FakeGraph(), _FakeEmbedder()
+    ).index_batch([_brief()])[0]
+
+    assert any("store:" in warning for warning in result["warnings"])
+    assert result["retry_required"] is True
+
+
+def test_index_batch_update_meta_error_requires_retry():
+    text = build_task_text("Add logout", "Clear session", ["redirects"])
+
+    class _BrokenStore(_FakeStore):
+        def update_meta(self, key, title, status, url, aliases, project=""):
+            raise RuntimeError("pg metadata error")
+
+    result = TaskService(
+        _BrokenStore(hashes={"ID-1": task_content_hash(text)}),
+        _FakeGraph(),
+        _FakeEmbedder(),
+    ).index_batch([_brief()])[0]
+
+    assert any("store:" in warning for warning in result["warnings"])
+    assert result["retry_required"] is True
 
 
 def test_index_batch_result_order_matches_input():

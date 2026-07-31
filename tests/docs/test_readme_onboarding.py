@@ -47,6 +47,9 @@ PARITY_MARKERS = (
     "get_task(key, project=...)",
     "store-first",
     "tasks:<type>:<board>",
+    "sync_filter",
+    "max_age_days",
+    "include_archived",
     "search_codebase",
     "callers",
     "drift == 0",
@@ -245,6 +248,73 @@ def test_team_route_validates_the_selected_board_project():
     ):
         section = _section(_read(filename), heading)
         assert "reviewer check --board-project TYPE=PROJECT" in section
+
+
+def test_readmes_document_task_retention_policy_and_repo_mode():
+    cases = (
+        (
+            "README.md",
+            "### Task boards",
+            "### `sync-tasks`",
+            (
+                "inclusive cutoff",
+                "unknown age is not filtered by age",
+                "only while `include_archived: false`",
+                "unknown archive does not itself exclude the row",
+                "archive warning is emitted only then",
+                "age filtering runs first and may still exclude the row",
+                "same `task_board.project` share one task corpus",
+                "purge is explicit",
+                "next successful full sync",
+            ),
+        ),
+        (
+            "README.ru.md",
+            "### Доски задач",
+            "### `sync-tasks`",
+            (
+                "inclusive cutoff",
+                "unknown age не фильтруется по возрасту",
+                "только при `include_archived: false`",
+                "unknown archive сам по себе не исключает строку",
+                "archive warning появляется только тогда",
+                "age filtering выполняется первым и всё ещё может исключить строку",
+                "одинаковым `task_board.project` используют один task corpus",
+                "purge включается явно",
+                "следующем успешном полном sync",
+            ),
+        ),
+    )
+
+    for filename, board_heading, sync_heading, prose in cases:
+        text = _read(filename)
+        board = _section(text, board_heading)
+        sync = _section(text, sync_heading)
+        normalized_board = " ".join(board.split()).casefold()
+        for marker in (
+            "sync_filter:",
+            "max_age_days: 180",
+            "include_archived: false",
+            "include_archived: true",
+        ):
+            assert marker in normalized_board, (filename, marker)
+        for marker in prose:
+            assert marker in normalized_board, (filename, marker)
+        assert "repo mode" in sync
+        for field in (
+            "eligible",
+            "filtered_by_age",
+            "filtered_archived",
+            "age_unknown",
+            "archive_unknown",
+            "filter_applied",
+            "filter_fingerprint",
+            "filter_source",
+            "by_board",
+            "purge",
+            "warnings",
+        ):
+            assert field in sync, (filename, field)
 
 
 def test_all_readme_links_and_local_anchors_resolve():

@@ -13,13 +13,13 @@ import html
 import logging
 import re
 from collections.abc import Iterable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from urllib.parse import quote, unquote, urlsplit
 
 import httpx
 
 from reviewer.tasks.boards.attachments import fetch_attachment, host_allowed, _registrable_domain
-from reviewer.tasks.boards.base import RawTask, project_prefix
+from reviewer.tasks.boards.base import RawTask, TaskListing, project_prefix
 from reviewer.tasks.boards.errors import BoardProviderError
 from reviewer.tasks.boards.http import BoardHttpClient
 from reviewer.tasks.boards.markup import html_to_md, md_to_html
@@ -30,6 +30,9 @@ from reviewer.tasks.boards.registry import (
     ProviderSetupSpec,
 )
 from reviewer.tasks.boards.setup import acquire_yougile_key
+
+if TYPE_CHECKING:
+    from reviewer.config.task_board import TaskSyncFilter
 
 log = logging.getLogger(__name__)
 
@@ -43,6 +46,19 @@ _PAGE = 1000
 _FILE_MARKER = re.compile(r"/root/#file:(\S+)")
 _HREF = re.compile(r"""href=["']([^"']+)["']""")
 _USER_DATA = "/user-data/"  # путь хранилища загруженных файлов YouGile
+
+
+def _optional_timestamp(value: object) -> int | None:
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+
+def _optional_bool(value: object) -> bool | None:
+    return value if isinstance(value, bool) else None
 
 
 def _build_provider(context: ProviderBuildContext) -> YougileBoard:
@@ -163,7 +179,7 @@ def normalize_yougile(
         "title": raw.title,
         "description": html_to_md(raw.description),
         "criteria": [],
-        "status": "done" if raw.completed else raw.status,
+        "status": "done" if raw.terminal is True else raw.status,
         "url": url,
         "links": links,
         "project": project_prefix(raw.project_code or key),
@@ -277,8 +293,10 @@ class YougileBoard:
             offset += len(content)
         return out
 
-    def iter_raw(self, board: str | None, limit: int | None) -> Iterable[RawTask]:
+    def _iter_raw_rows(self, board: str | None, limit: int | None) -> Iterable[RawTask]:
         count = 0
+        if limit is not None and count >= limit:
+            return
         for proj in self._get_all("/projects"):
             for brd in self._get_all("/boards", {"projectId": proj["id"]}):
                 col_title = {c["id"]: c.get("title")
@@ -297,13 +315,26 @@ class YougileBoard:
                             description=t.get("description", "") or "",
                             status=col_title.get(t.get("columnId")),
                             subtask_ids=list(t.get("subtasks", []) or []),
-                            timestamp=int(t.get("timestamp", 0) or 0),
+                            timestamp=_optional_timestamp(t.get("timestamp")),
                             board_id=t["id"],
-                            completed=bool(t.get("completed", False)),
+                            archived=None,
+                            terminal=_optional_bool(t.get("completed")),
                         )
                         count += 1
-                        if limit and count >= limit:
+                        if limit is not None and count >= limit:
                             return
+
+    def iter_raw(
+        self,
+        board: str | None,
+        limit: int | None,
+        *,
+        sync_filter: TaskSyncFilter | None = None,
+        now_ms: int | None = None,
+    ) -> TaskListing:
+        if limit == 0:
+            return TaskListing(rows=iter(()))
+        return TaskListing(rows=self._iter_raw_rows(board, limit))
 
     def _chat_texts(self, task_uuid: str) -> list[str]:
         """text + textHtml всех сообщений чата задачи (best-effort, fail-soft → []).
@@ -401,9 +432,10 @@ class YougileBoard:
             description=t.get("description", "") or "",
             status=status,
             subtask_ids=list(t.get("subtasks", []) or []),
-            timestamp=int(t.get("timestamp", 0) or 0),
+            timestamp=_optional_timestamp(t.get("timestamp")),
             board_id=t.get("id") or key,
-            completed=bool(t.get("completed", False)),
+            archived=None,
+            terminal=_optional_bool(t.get("completed")),
         )
 
     def _resolve_column(

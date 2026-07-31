@@ -9,6 +9,30 @@ from reviewer.tasks.boards.base import JsonValue
 
 
 @dataclass(frozen=True)
+class TaskSyncFilter:
+    """Общие ограничения набора задач для синхронизации."""
+
+    max_age_days: int | None = None
+    include_archived: bool = True
+
+    def as_dict(self) -> dict[str, JsonValue]:
+        """Вернуть только значения, отличающиеся от значений по умолчанию."""
+        result: dict[str, JsonValue] = {}
+        if self.max_age_days is not None:
+            result["max_age_days"] = self.max_age_days
+        if not self.include_archived:
+            result["include_archived"] = False
+        return result
+
+    def canonical_dict(self) -> dict[str, JsonValue]:
+        """Вернуть полную каноническую форму с явными значениями по умолчанию."""
+        return {
+            "max_age_days": self.max_age_days,
+            "include_archived": self.include_archived,
+        }
+
+
+@dataclass(frozen=True)
 class TaskBoardConfig:
     """Нормализованный, не содержащий credential-ов конфиг task board."""
 
@@ -21,6 +45,7 @@ class TaskBoardConfig:
     done_target: str | None
     options: Mapping[str, JsonValue]
     warnings: tuple[str, ...] = ()
+    sync_filter: TaskSyncFilter | None = None
 
     def as_dict(self) -> dict[str, object]:
         """Совместимая для callers плоская форма блока ``task_board``."""
@@ -38,6 +63,8 @@ class TaskBoardConfig:
                 result[field] = value
         if self.options:
             result["options"] = dict(self.options)
+        if self.sync_filter is not None:
+            result["sync_filter"] = self.sync_filter.as_dict()
         return result
 
 
@@ -165,6 +192,30 @@ def _json_mapping(value: object, *, field: str) -> dict[str, JsonValue]:
     return {key: normalize(item) for key, item in value.items()}
 
 
+def normalize_task_sync_filter(raw: object) -> TaskSyncFilter:
+    """Проверить и нормализовать общий фильтр синхронизации задач."""
+    values = _json_mapping(raw, field="task_board.sync_filter")
+    if set(values) - {"max_age_days", "include_archived"}:
+        raise ValueError("task_board.sync_filter contains unknown fields")
+
+    max_age_days = values.get("max_age_days")
+    if max_age_days is not None and (
+        not isinstance(max_age_days, int)
+        or isinstance(max_age_days, bool)
+        or max_age_days < 1
+    ):
+        raise ValueError("task_board.sync_filter.max_age_days must be an integer >= 1 or null")
+
+    include_archived = values.get("include_archived", True)
+    if not isinstance(include_archived, bool):
+        raise ValueError("task_board.sync_filter.include_archived must be a boolean")
+
+    return TaskSyncFilter(
+        max_age_days=max_age_days,
+        include_archived=include_archived,
+    )
+
+
 def _secret_env_names() -> frozenset[str]:
     """Credential names come only from registry metadata, never from config values."""
     from reviewer.tasks.boards.registry import default_board_registry
@@ -209,6 +260,11 @@ def normalize_task_board_config(raw: Mapping[str, object] | None) -> TaskBoardCo
     options = _json_mapping(raw_options, field="task_board.options")
     if _contains_secret_key(_json_mapping(raw, field="task_board"), _secret_env_names()):
         raise ValueError("task_board must not contain credentials")
+    sync_filter = (
+        normalize_task_sync_filter(raw["sync_filter"])
+        if "sync_filter" in raw
+        else None
+    )
     done_target, options, warnings = _migrate_legacy_values(
         target=_optional_string(raw, "done_target"),
         options=options,
@@ -230,4 +286,5 @@ def normalize_task_board_config(raw: Mapping[str, object] | None) -> TaskBoardCo
         done_target=done_target,
         options=MappingProxyType(options),
         warnings=tuple(warnings),
+        sync_filter=sync_filter,
     )

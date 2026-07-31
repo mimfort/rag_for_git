@@ -30,7 +30,8 @@ class TaskService:
         key = task.get("key") if isinstance(task, dict) else None
         if not key:
             return {"key": None, "embedded": False, "links_upserted": 0,
-                    "prs_linked": 0, "warnings": ["task has no key"]}
+                    "prs_linked": 0, "warnings": ["task has no key"],
+                    "retry_required": False}
         aliases = [a for a in (task.get("aliases") or []) if a and a != key]
         title = task.get("title") or ""
         description = task.get("description") or ""
@@ -45,6 +46,7 @@ class TaskService:
                                embed_chars=self._attachment_embed_chars)
         chash = task_content_hash(text)
         warnings: list[str] = []
+        retry_required = False
 
         embedded = False
         try:
@@ -59,6 +61,7 @@ class TaskService:
                     embedding=vec, project=project, attachments=attachments))
                 embedded = True
         except Exception as e:
+            retry_required = True
             log.warning("index_task: сбой store для %s", key, exc_info=True)
             warnings.append(f"store: {type(e).__name__}: {e}")
 
@@ -85,7 +88,7 @@ class TaskService:
 
         return {"key": key, "embedded": embedded,
                 "links_upserted": links_upserted, "prs_linked": prs_linked,
-                "warnings": warnings}
+                "warnings": warnings, "retry_required": retry_required}
 
     def index_batch(self, tasks: list[dict]) -> list[dict]:
         """Батчевая индексация: один Voyage-вызов для всех изменившихся задач."""
@@ -100,7 +103,8 @@ class TaskService:
             key = task.get("key") if isinstance(task, dict) else None
             if not key:
                 results[i] = {"key": None, "embedded": False, "links_upserted": 0,
-                              "prs_linked": 0, "warnings": ["task has no key"]}
+                              "prs_linked": 0, "warnings": ["task has no key"],
+                              "retry_required": False}
                 parsed.append(None)
                 continue
             aliases = [a for a in (task.get("aliases") or []) if a and a != key]
@@ -133,7 +137,9 @@ class TaskService:
             except Exception as e:
                 log.warning("index_batch: existing_hash сбой для %s", p["key"], exc_info=True)
                 results[i] = {"key": p["key"], "embedded": False, "links_upserted": 0,
-                              "prs_linked": 0, "warnings": [f"store: {type(e).__name__}: {e}"]}
+                              "prs_linked": 0,
+                              "warnings": [f"store: {type(e).__name__}: {e}"],
+                              "retry_required": True}
                 continue
             (meta_only if prev == p["chash"] else to_embed).append(i)
 
@@ -153,8 +159,10 @@ class TaskService:
             p = parsed[i]
             warnings: list[str] = []
             embedded = False
+            retry_required = False
             if embed_err:
                 warnings.append(embed_err)
+                retry_required = True
             else:
                 try:
                     self._store.upsert_task(TaskRow(
@@ -164,23 +172,28 @@ class TaskService:
                         project=p["project"], attachments=p["attachments"]))
                     embedded = True
                 except Exception as e:
+                    retry_required = True
                     log.warning("index_batch: сбой store для %s", p["key"], exc_info=True)
                     warnings.append(f"store: {type(e).__name__}: {e}")
             results[i] = {"key": p["key"], "embedded": embedded,
-                          "links_upserted": 0, "warnings": warnings}
+                          "links_upserted": 0, "warnings": warnings,
+                          "retry_required": retry_required}
 
         # Шаг 5: update_meta для неизменившихся задач
         for i in meta_only:
             p = parsed[i]
             warnings: list[str] = []
+            retry_required = False
             try:
                 self._store.update_meta(p["key"], p["title"], p["status"],
                                         p["url"], p["aliases"], p["project"])
             except Exception as e:
+                retry_required = True
                 log.warning("index_batch: сбой update_meta для %s", p["key"], exc_info=True)
                 warnings.append(f"store: {type(e).__name__}: {e}")
             results[i] = {"key": p["key"], "embedded": False,
-                          "links_upserted": 0, "warnings": warnings}
+                          "links_upserted": 0, "warnings": warnings,
+                          "retry_required": retry_required}
 
         # Шаг 6: граф для всех валидных задач (+ сбор PR-пар для батч-линковки)
         pr_pairs: list[tuple[str, PRRef]] = []

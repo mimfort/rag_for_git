@@ -1,7 +1,7 @@
 from reviewer.config.provider_credentials import ProviderCredentialSource
 from reviewer.config.settings import Settings
 from reviewer.mcp.service import MCPReviewService
-from reviewer.tasks.boards.base import RawTask
+from reviewer.tasks.boards.base import RawTask, TaskListing
 from reviewer.tasks.boards.registry import (
     BoardProviderRegistry,
     BoardProviderSpec,
@@ -30,13 +30,13 @@ class _Provider:
         self.fetched = None
         self._raw = raw if raw is not None else RawTask(
             key="ID-10", project_code="PRI-10", title="T", description="d",
-            status=None, subtask_ids=[], timestamp=1, completed=True)
+            status=None, subtask_ids=[], timestamp=1, terminal=True)
 
     def validate_connection(self, project=None):
         return {}
 
-    def iter_raw(self, board, limit):
-        return []
+    def iter_raw(self, board, limit, *, sync_filter=None, now_ms=None):
+        return TaskListing(rows=())
 
     def normalize_meta(self, raw):
         return self.normalize(raw)

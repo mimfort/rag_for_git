@@ -21,7 +21,7 @@ import re
 import time
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from urllib.parse import quote, urlsplit
 
 import httpx
@@ -32,7 +32,7 @@ from reviewer.tasks.boards.attachments import (
     fetch_attachment,
     host_allowed,
 )
-from reviewer.tasks.boards.base import RawTask, project_prefix
+from reviewer.tasks.boards.base import RawTask, TaskListing, TaskListingStats, project_prefix
 from reviewer.tasks.boards.errors import BoardProviderError
 from reviewer.tasks.boards.pagination import paginate_cursor
 from reviewer.tasks.boards.registry import (
@@ -43,6 +43,9 @@ from reviewer.tasks.boards.registry import (
     ProviderSetupSpec,
 )
 from reviewer.tasks.boards.restbase import RestBoardBase
+
+if TYPE_CHECKING:
+    from reviewer.config.task_board import TaskSyncFilter
 
 log = logging.getLogger(__name__)
 
@@ -147,18 +150,25 @@ def _normalize_api_base(value: str, *, secrets: tuple[str, ...]) -> str:
     return f"https://{hostname}{suffix}{parsed.path.rstrip('/')}"
 
 
-def _timestamp(value: object) -> int:
-    """``dateLastActivity`` Trello (ISO 8601, UTC) → epoch ms; мусор → 0."""
+def _timestamp(value: object) -> int | None:
+    """``dateLastActivity`` Trello (ISO 8601, UTC) → epoch ms; мусор → None."""
     if not isinstance(value, str) or not value:
-        return 0
+        return None
     text = f"{value[:-1]}+00:00" if value[-1:] in {"Z", "z"} else value
     try:
         parsed = datetime.fromisoformat(text)
     except ValueError:
-        return 0
+        return None
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=UTC)
-    return int(parsed.timestamp() * 1000)
+    try:
+        return int(parsed.timestamp() * 1000)
+    except (OverflowError, OSError):
+        return None
+
+
+def _optional_bool(value: object) -> bool | None:
+    return value if isinstance(value, bool) else None
 
 
 def _rate_limit_hint(status: int, headers: Mapping[str, str]) -> float | None:
@@ -330,13 +340,15 @@ class TrelloBoard(RestBoardBase):
             links=[],
             attachments=[],
             board_id=card_id,
+            archived=_optional_bool(card.get("closed")),
+            terminal=None,
             provider_data={
                 "id_short": card.get("idShort"),
                 "id_list": str(card.get("idList") or ""),
                 "id_board": str(card.get("idBoard") or ""),
                 "short_link": str(card.get("shortLink") or ""),
                 "short_url": str(card.get("shortUrl") or ""),
-                "closed": bool(card.get("closed")),
+                "closed": _optional_bool(card.get("closed")),
             },
         )
 
@@ -349,7 +361,7 @@ class TrelloBoard(RestBoardBase):
         страница строго старше всего уже прочитанного. Повторы (известная особенность
         листинга) отбрасываются по id, что заодно исключает зацикливание.
         """
-        path = f"/boards/{quote(board_id, safe='')}/cards"
+        path = f"/boards/{quote(board_id, safe='')}/cards/all"
         seen: set[str] = set()
         fresh = 0
 
@@ -385,7 +397,7 @@ class TrelloBoard(RestBoardBase):
 
         return paginate_cursor(fetch, items=items, next_cursor=next_cursor)
 
-    def iter_raw(self, board: str | None, limit: int | None) -> Iterable[RawTask]:
+    def _iter_raw_rows(self, board: str | None, limit: int | None) -> Iterable[RawTask]:
         """Карточки доски, отсортированные по свежести активности (свежие первыми).
 
         ``board`` — project-скоуп синка; сама доска задаётся опцией ``board_id``
@@ -397,8 +409,23 @@ class TrelloBoard(RestBoardBase):
         board_id = self._board_id(board)
         statuses = {item["id"]: item["name"] for item in self._lists(board_id)}
         rows = [self._raw_from_card(card, statuses) for card in self._iter_cards(board_id)]
-        rows.sort(key=lambda row: (-row.timestamp, row.key))
+        rows.sort(key=lambda row: (row.timestamp is None, -(row.timestamp or 0), row.key))
         yield from (rows if limit is None else rows[: max(limit, 0)])
+
+    def iter_raw(
+        self,
+        board: str | None,
+        limit: int | None,
+        *,
+        sync_filter: TaskSyncFilter | None = None,
+        now_ms: int | None = None,
+    ) -> TaskListing:
+        if limit == 0:
+            return TaskListing(rows=iter(()))
+        return TaskListing(
+            rows=self._iter_raw_rows(board, limit),
+            stats=TaskListingStats(),
+        )
 
     def _card_by_key(self, key: str) -> dict | None:
         """Карточка по каноническому ключу без перебора доски.

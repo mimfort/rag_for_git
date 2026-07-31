@@ -6,6 +6,7 @@ from click.testing import CliRunner
 
 from reviewer.config.provider_credentials import ProviderCredentialSource
 from reviewer.entrypoints.cli import _check_board_providers, check
+from reviewer.tasks.boards.base import TaskListing
 from reviewer.tasks.boards.errors import BoardProviderError
 from reviewer.tasks.boards.registry import (
     BoardProviderRegistry,
@@ -35,8 +36,8 @@ class CheckProvider:
             raise self.error
         return self.result
 
-    def iter_raw(self, board, limit):
-        return []
+    def iter_raw(self, board, limit, *, sync_filter=None, now_ms=None):
+        return TaskListing(rows=())
 
     def normalize(self, raw):
         return {}

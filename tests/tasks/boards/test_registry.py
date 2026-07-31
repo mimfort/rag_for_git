@@ -4,6 +4,7 @@ from dataclasses import replace
 
 import pytest
 
+from reviewer.tasks.boards.base import TaskListing
 from reviewer.tasks.boards.registry import (
     BoardProviderRegistry,
     BoardProviderSpec,
@@ -44,8 +45,8 @@ class _CompleteProvider:
     def validate_connection(self, project=None):
         return {}
 
-    def iter_raw(self, board, limit):
-        return []
+    def iter_raw(self, board, limit, *, sync_filter=None, now_ms=None):
+        return TaskListing(rows=())
 
     def normalize(self, raw):
         return {}

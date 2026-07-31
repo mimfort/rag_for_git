@@ -52,7 +52,8 @@ def test_fetch_one_builds_rawtask_like_iter_raw():
     assert raw.subtask_ids == ["s1", "s2"]
     assert raw.timestamp == 123
     assert raw.board_id == "u1"
-    assert raw.completed is True
+    assert raw.terminal is True
+    assert raw.archived is None
 
 
 def test_fetch_one_none_on_http_error():
@@ -62,7 +63,7 @@ def test_fetch_one_none_on_http_error():
 
 
 def test_fetch_one_survives_column_resolve_failure():
-    # колонка не резолвится → status=None, но RawTask собран (completed даст done).
+    # колонка не резолвится → status=None, но RawTask собран (terminal даст done).
     b = _board({
         "/tasks/PRI-10": _Resp(200, {
             "id": "u1", "idTaskProject": "PRI-10", "title": "T",
@@ -72,4 +73,21 @@ def test_fetch_one_survives_column_resolve_failure():
     raw = b.fetch_one("PRI-10")
     assert raw is not None
     assert raw.status is None
-    assert raw.completed is True
+    assert raw.timestamp is None
+    assert raw.terminal is True
+    assert raw.archived is None
+
+
+def test_fetch_one_ignores_nonboolean_completed_value():
+    b = _board({
+        "/tasks/PRI-10": _Resp(200, {
+            "id": "u1", "idTaskProject": "PRI-10", "completed": "true",
+            "timestamp": "invalid"}),
+    })
+
+    raw = b.fetch_one("PRI-10")
+
+    assert raw is not None
+    assert raw.timestamp is None
+    assert raw.terminal is None
+    assert raw.archived is None
