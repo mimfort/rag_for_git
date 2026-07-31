@@ -268,7 +268,7 @@ Run:
 
 ```bash
 docker compose --profile test up -d --wait paradedb-test
-TEST_PG_DSN=postgresql://reviewer_test:reviewer_test@localhost:55433/reviewer_test \
+TEST_PG_DSN='postgresql://reviewer_test:reviewer_test@localhost:55433/reviewer_test?connect_timeout=2' \
   ../../.venv/bin/pytest tests/index/test_summary_store.py -q -m integration
 ```
 
@@ -336,7 +336,7 @@ the store, while the service retains the existing empty-base no-op gate.
 Run:
 
 ```bash
-TEST_PG_DSN=postgresql://reviewer_test:reviewer_test@localhost:55433/reviewer_test \
+TEST_PG_DSN='postgresql://reviewer_test:reviewer_test@localhost:55433/reviewer_test?connect_timeout=2' \
   ../../.venv/bin/pytest tests/index/test_summary_store.py -q -m integration
 ../../.venv/bin/ruff check reviewer/index/summary_store.py tests/index/test_summary_store.py
 docker compose --profile test rm -sfv paradedb-test neo4j-test
@@ -664,7 +664,7 @@ If `tests/skills/test_assembled_prompts.py` did not change, omit it from `git ad
 ```bash
 ../../.venv/bin/pytest tests/graph/test_summaries.py tests/services/test_summary_fragments.py tests/mcp/test_subsystem_summaries.py tests/mcp/test_server.py tests/skills/test_summarize_subsystems.py -q
 docker compose --profile test up -d --wait paradedb-test neo4j-test
-TEST_PG_DSN=postgresql://reviewer_test:reviewer_test@localhost:55433/reviewer_test \
+TEST_PG_DSN='postgresql://reviewer_test:reviewer_test@localhost:55433/reviewer_test?connect_timeout=2' \
 TEST_NEO4J_URI=neo4j://localhost:17687 \
 TEST_NEO4J_USER=neo4j \
 TEST_NEO4J_PASSWORD=reviewer_test_pass \
