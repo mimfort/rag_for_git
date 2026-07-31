@@ -33,6 +33,7 @@ def _two_cluster_generation_state(
     from reviewer.graph.summaries import (
         Member,
         compute_file_fingerprints,
+        compute_layout_token,
         compute_source_hash,
     )
 
@@ -54,6 +55,11 @@ def _two_cluster_generation_state(
     c.graph = None
     c.summary_store.get_source_hashes.return_value = source_hashes
     c.summary_store.get_completed_depth.return_value = completed_depth
+    c.summary_store.get_completed_layout.return_value = (
+        compute_layout_token(completed_depth, {})
+        if completed_depth is not None
+        else None
+    )
     c.summary_store.get_updated_ats.return_value = {}
     c.summary_store.get_fragments.return_value = (
         [
@@ -65,6 +71,7 @@ def _two_cluster_generation_state(
                 "provenance": {
                     "_reviewer": {
                         "generation": "summary-fragment-v1",
+                        "layout_token": compute_layout_token(fragment_depth, {}),
                         "depth": fragment_depth,
                     }
                 },
@@ -155,7 +162,12 @@ def test_list_subsystem_clusters_fresh_when_hash_matches():
 
 
 def test_list_subsystem_clusters_adds_file_delta_without_changing_old_fields():
-    from reviewer.graph.summaries import compute_file_fingerprints, compute_source_hash, Member
+    from reviewer.graph.summaries import (
+        Member,
+        compute_file_fingerprints,
+        compute_layout_token,
+        compute_source_hash,
+    )
 
     c = MagicMock()
     raw = [("reviewer/index/a.py", "A", "h1", 1, "sk1")]
@@ -174,6 +186,7 @@ def test_list_subsystem_clusters_adds_file_delta_without_changing_old_fields():
     source_hash = compute_source_hash([("reviewer/index/a.py#A", "sk1")])
     c.summary_store.get_source_hashes.return_value = {"reviewer/index": source_hash}
     c.summary_store.get_completed_depth.return_value = 2
+    c.summary_store.get_completed_layout.return_value = compute_layout_token(2, {})
     c.summary_store.get_fragments.return_value = [
         {
             "cluster_key": "reviewer/index",
@@ -366,10 +379,64 @@ def test_capped_depth_rebuild_converges_without_regenerating_completed_cluster()
     assert not [cluster for cluster in final["clusters"] if cluster["stale"]]
 
 
+def test_capped_override_layout_rebuild_converges_at_fixed_default_depth():
+    from reviewer.graph.summaries import compute_layout_token
+
+    c, _source_hashes, _fingerprints = _two_cluster_generation_state(
+        completed_depth=2,
+        fragment_depth=2,
+    )
+    svc = _svc(c)
+    svc._resolve_summary_depth = lambda repo, branch: (
+        2,
+        {"a/x": 3},
+        ".review.yml",
+    )
+    old_layout = compute_layout_token(2, {})
+    new_layout = compute_layout_token(2, {"a/x": 3})
+    assert old_layout != new_layout
+
+    first = svc.list_subsystem_clusters(
+        "o/n", "dev", depth=None, min_size=1, cap=1
+    )
+
+    assert first["layout_token"] == new_layout
+    [first_selected] = [
+        cluster for cluster in first["clusters"] if cluster["full_rebuild"]
+    ]
+    assert first_selected["cluster_key"] == "a/x"
+    assert first["deferred"] == 1
+
+    first_stored = _persist_single_pending_fragment(svc, c, first_selected)
+    old_second = next(
+        fragment
+        for fragment in c.summary_store.get_fragments.return_value
+        if fragment["cluster_key"] == "b/y"
+    )
+    c.summary_store.get_fragments.return_value = [first_stored, old_second]
+    c.summary_store.commit_summary_bundle.reset_mock()
+
+    second = svc.list_subsystem_clusters(
+        "o/n", "dev", depth=None, min_size=1, cap=1
+    )
+
+    completed = next(
+        cluster for cluster in second["clusters"]
+        if cluster["cluster_key"] == "a/x"
+    )
+    [second_selected] = [
+        cluster for cluster in second["clusters"] if cluster["full_rebuild"]
+    ]
+    assert completed["full_rebuild"] is False
+    assert completed["reused_files"] == 1
+    assert second_selected["cluster_key"] == "b/y"
+    assert second["deferred"] == 0
+
+
 def test_list_subsystem_clusters_treats_same_key_depth_rebuild_as_stale_and_deferred():
     from datetime import datetime
 
-    from reviewer.graph.summaries import compute_source_hash
+    from reviewer.graph.summaries import compute_layout_token, compute_source_hash
 
     c = MagicMock()
     c.store.list_base_members.return_value = [
@@ -380,6 +447,7 @@ def test_list_subsystem_clusters_treats_same_key_depth_rebuild_as_stale_and_defe
     root_hash = compute_source_hash([("a.py#A", "sk1")])
     c.summary_store.get_source_hashes.return_value = {"<root>": root_hash}
     c.summary_store.get_completed_depth.return_value = 3
+    c.summary_store.get_completed_layout.return_value = compute_layout_token(3, {})
     c.summary_store.get_fragments.return_value = []
 
     uncapped = _svc(c).list_subsystem_clusters(
@@ -411,7 +479,12 @@ def test_list_subsystem_clusters_treats_same_key_depth_rebuild_as_stale_and_defe
 
 
 def test_get_subsystem_summary_work_returns_delta_and_reusable_fragment_texts():
-    from reviewer.graph.summaries import Member, compute_file_fingerprints, compute_source_hash
+    from reviewer.graph.summaries import (
+        Member,
+        compute_file_fingerprints,
+        compute_layout_token,
+        compute_source_hash,
+    )
 
     c = MagicMock()
     c.store.list_base_members.return_value = [
@@ -428,6 +501,7 @@ def test_get_subsystem_summary_work_returns_delta_and_reusable_fragment_texts():
         [("reviewer/index/a.py#A", "sk1"), ("reviewer/index/b.py#B", "sk2")]
     )
     c.summary_store.get_completed_depth.return_value = 2
+    c.summary_store.get_completed_layout.return_value = compute_layout_token(2, {})
     c.summary_store.get_fragments.return_value = [
         {
             "cluster_key": "reviewer/index",
@@ -513,7 +587,12 @@ def test_get_subsystem_summary_work_bootstraps_every_current_path_without_depth_
 
 
 def test_get_subsystem_summary_work_rebuilds_all_files_when_depth_changed():
-    from reviewer.graph.summaries import Member, compute_file_fingerprints, compute_source_hash
+    from reviewer.graph.summaries import (
+        Member,
+        compute_file_fingerprints,
+        compute_layout_token,
+        compute_source_hash,
+    )
 
     c = MagicMock()
     c.store.list_base_members.return_value = [
@@ -527,6 +606,7 @@ def test_get_subsystem_summary_work_rebuilds_all_files_when_depth_changed():
     ]
     fingerprints = compute_file_fingerprints(members)
     c.summary_store.get_completed_depth.return_value = 3
+    c.summary_store.get_completed_layout.return_value = compute_layout_token(3, {})
     c.summary_store.get_fragments.return_value = [
         {
             "cluster_key": "reviewer/index",
@@ -699,7 +779,12 @@ def test_index_subsystem_summary_rejects_invalid_fragment_coverage(payload):
 
 
 def test_index_subsystem_summary_commits_bundle_before_embedding_with_hash_cas():
-    from reviewer.graph.summaries import Member, compute_file_fingerprints, compute_source_hash
+    from reviewer.graph.summaries import (
+        Member,
+        compute_file_fingerprints,
+        compute_layout_token,
+        compute_source_hash,
+    )
 
     c = MagicMock()
     c.store.list_base_members.return_value = [
@@ -763,10 +848,11 @@ def test_index_subsystem_summary_commits_bundle_before_embedding_with_hash_cas()
                 "summary": "A",
                 "provenance": {
                     "generator": "test",
-                    "_reviewer": {
-                        "generation": "summary-fragment-v1",
-                        "depth": 2,
-                    },
+                        "_reviewer": {
+                            "generation": "summary-fragment-v1",
+                            "layout_token": compute_layout_token(2, {}),
+                            "depth": 2,
+                        },
                 },
             }
         ],

@@ -86,10 +86,12 @@ def test_server_generation_provenance_overwrites_reserved_client_value():
             "_reviewer": {"generation": "forged", "depth": 999},
         },
         2,
+        "layout-v2",
     ) == {
         "model": "cheap",
         "_reviewer": {
             "generation": "summary-fragment-v1",
+            "layout_token": "layout-v2",
             "depth": 2,
         },
     }
@@ -100,6 +102,7 @@ def test_generation_completion_requires_every_exact_same_cluster_fragment_at_dep
     stamped = {
         "_reviewer": {
             "generation": "summary-fragment-v1",
+            "layout_token": "layout-v2",
             "depth": 2,
         }
     }
@@ -109,10 +112,10 @@ def test_generation_completion_requires_every_exact_same_cluster_fragment_at_dep
     ]
 
     assert summary_fragments.has_complete_fragment_generation(
-        "cluster", current, complete, 2
+        "cluster", current, complete, 2, "layout-v2"
     )
     assert not summary_fragments.has_complete_fragment_generation(
-        "cluster", current, complete[:1], 2
+        "cluster", current, complete[:1], 2, "layout-v2"
     )
     assert not summary_fragments.has_complete_fragment_generation(
         "cluster",
@@ -122,6 +125,7 @@ def test_generation_completion_requires_every_exact_same_cluster_fragment_at_dep
             StoredSummaryFragment("other", "b.py", "fp-b", "B", stamped),
         ],
         2,
+        "layout-v2",
     )
     assert not summary_fragments.has_complete_fragment_generation(
         "cluster",
@@ -137,7 +141,11 @@ def test_generation_completion_requires_every_exact_same_cluster_fragment_at_dep
             ),
         ],
         2,
+        "layout-v2",
     )
     assert not summary_fragments.has_complete_fragment_generation(
-        "cluster", current, complete, 3
+        "cluster", current, complete, 3, "layout-v2"
+    )
+    assert not summary_fragments.has_complete_fragment_generation(
+        "cluster", current, complete, 2, "other-layout"
     )

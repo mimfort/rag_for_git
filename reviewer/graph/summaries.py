@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from dataclasses import dataclass
 from typing import Callable
 
@@ -58,6 +59,23 @@ def depth_for(path: str, default: int, overrides: dict[str, int]) -> int:
         if dir_parts[:len(kparts)] == kparts and len(kparts) > best_len:
             best_depth, best_len = d, len(kparts)
     return best_depth
+
+
+def compute_layout_token(default_depth: int, overrides: dict[str, int]) -> str:
+    """Вернуть canonical identity effective layout policy."""
+    normalized = sorted(
+        (str(prefix).strip("/"), int(depth))
+        for prefix, depth in overrides.items()
+    )
+    payload = json.dumps(
+        {
+            "default_depth": int(default_depth),
+            "overrides": normalized,
+        },
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 def compute_source_hash(items: list[tuple[str, str]]) -> str:

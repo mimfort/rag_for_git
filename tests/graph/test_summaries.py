@@ -1,5 +1,10 @@
 from reviewer.graph.summaries import (
-    Member, build_clusters, cluster_key, compute_file_fingerprints, compute_source_hash,
+    Member,
+    build_clusters,
+    cluster_key,
+    compute_file_fingerprints,
+    compute_layout_token,
+    compute_source_hash,
 )
 
 
@@ -24,6 +29,26 @@ def test_compute_source_hash_is_order_independent_and_changes_with_content():
     b = compute_source_hash([("y#g", "h2"), ("x#f", "h1")])
     assert a == b                       # детерминирован, не зависит от порядка
     assert a != compute_source_hash([("x#f", "h1"), ("y#g", "CHANGED")])
+
+
+def test_layout_token_is_canonical_and_covers_default_and_sorted_overrides():
+    token = compute_layout_token(
+        2,
+        {"reviewer/mcp": 1, "reviewer/index": 3},
+    )
+
+    assert token == compute_layout_token(
+        2,
+        {"reviewer/index": 3, "reviewer/mcp": 1},
+    )
+    assert token != compute_layout_token(
+        3,
+        {"reviewer/index": 3, "reviewer/mcp": 1},
+    )
+    assert token != compute_layout_token(
+        2,
+        {"reviewer/index": 3},
+    )
 
 
 def test_compute_file_fingerprints_uses_skeleton_per_path():

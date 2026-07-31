@@ -51,12 +51,14 @@ class FragmentDelta:
 def with_server_generation_provenance(
     provenance: Mapping[str, JsonValue],
     depth: int,
+    layout_token: str,
 ) -> dict[str, JsonValue]:
     """Добавить серверную метку поколения, перезаписав зарезервированный ключ."""
     return {
         **provenance,
         _SERVER_PROVENANCE_KEY: {
             "generation": _GENERATION,
+            "layout_token": layout_token,
             "depth": depth,
         },
     }
@@ -67,6 +69,7 @@ def has_complete_fragment_generation(
     current: Mapping[str, str],
     stored: list[StoredSummaryFragment],
     depth: int,
+    layout_token: str,
 ) -> bool:
     """Проверить полноту текущего поколения фрагментов конкретного кластера."""
     by_path = {
@@ -76,6 +79,7 @@ def has_complete_fragment_generation(
     }
     expected_stamp = {
         "generation": _GENERATION,
+        "layout_token": layout_token,
         "depth": depth,
     }
     return bool(current) and all(

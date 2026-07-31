@@ -117,6 +117,9 @@ CREATE TABLE IF NOT EXISTS subsystem_summary_state (
     PRIMARY KEY (repo, branch)
 );
 
+ALTER TABLE subsystem_summary_state
+ADD COLUMN IF NOT EXISTS completed_layout text;
+
 -- Карта платформы VCS репозитория (PRI-133): auto-derive из git remote при
 -- `reviewer index`. Читается _create_vcs_provider при ревью (API-only движок)
 -- ДО любого API-вызова. Ключ по repo (платформа — свойство репо, не ветки).

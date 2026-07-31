@@ -112,20 +112,25 @@ class _SummaryState:
     """Единый снимок текущего состояния file-level сводок."""
 
     depth: int
+    layout_token: str
     depth_source: str
     members: list["Member"]
     clusters: list["Cluster"]
     file_fingerprints: dict[str, str]
     fragments: list[StoredSummaryFragment]
     completed_depth: int | None
+    completed_layout: str | None
 
     @property
     def bootstrap(self) -> bool:
-        return self.completed_depth is None
+        return self.completed_layout is None
 
     @property
     def full_rebuild(self) -> bool:
-        return self.completed_depth is not None and self.completed_depth != self.depth
+        return (
+            self.completed_layout is not None
+            and self.completed_layout != self.layout_token
+        )
 
 
 @dataclass
@@ -962,22 +967,26 @@ class MCPReviewService:
             Member,
             build_clusters,
             compute_file_fingerprints,
+            compute_layout_token,
         )
 
         raw = self.components.store.list_base_members(repo, branch)
         if not raw:
+            resolved_depth = (
+                self.settings.summary_cluster_depth
+                if depth is None
+                else depth
+            )
             return _SummaryState(
-                depth=(
-                    self.settings.summary_cluster_depth
-                    if depth is None
-                    else depth
-                ),
+                depth=resolved_depth,
+                layout_token=compute_layout_token(resolved_depth, {}),
                 depth_source="env" if depth is None else "arg",
                 members=[],
                 clusters=[],
                 file_fingerprints={},
                 fragments=[],
                 completed_depth=None,
+                completed_layout=None,
             )
         if depth is None:
             resolved_depth, overrides, depth_source = self._resolve_summary_depth(
@@ -1018,8 +1027,12 @@ class MCPReviewService:
             )
             for item in self.components.summary_store.get_fragments(repo, branch)
         ]
+        completed_layout = self.components.summary_store.get_completed_layout(
+            repo, branch
+        )
         return _SummaryState(
             depth=resolved_depth,
+            layout_token=compute_layout_token(resolved_depth, overrides),
             depth_source=depth_source,
             members=members,
             clusters=clusters,
@@ -1027,6 +1040,11 @@ class MCPReviewService:
             fragments=fragments,
             completed_depth=self.components.summary_store.get_completed_depth(
                 repo, branch
+            ),
+            completed_layout=(
+                completed_layout
+                if isinstance(completed_layout, str)
+                else None
             ),
         )
 
@@ -1044,6 +1062,7 @@ class MCPReviewService:
             current,
             state.fragments,
             state.depth,
+            state.layout_token,
         )
         return state.bootstrap and not complete, state.full_rebuild and not complete
 
@@ -1213,6 +1232,7 @@ class MCPReviewService:
         return {
             "branch": resolved,
             "depth": state.depth,
+            "layout_token": state.layout_token,
             "depth_source": state.depth_source,
             "deferred": len(deferred_keys),
             "deferred_files": deferred_files,
@@ -1374,6 +1394,7 @@ class MCPReviewService:
                 payload["provenance"] = with_server_generation_provenance(
                     fragment.provenance,
                     state.depth,
+                    state.layout_token,
                 )
                 new_fragments.append(payload)
             try:

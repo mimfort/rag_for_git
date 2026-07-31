@@ -121,6 +121,19 @@ class SummaryStore:
             return None
         return int(row[0]) if row is not None else None
 
+    def get_completed_layout(self, repo: str, branch: str) -> str | None:
+        """Вернуть token последнего полностью завершённого layout."""
+        try:
+            with self._connect() as conn:
+                row = conn.execute(
+                    "SELECT completed_layout FROM subsystem_summary_state "
+                    "WHERE repo=%s AND branch=%s",
+                    (repo, branch),
+                ).fetchone()
+        except (psycopg.errors.UndefinedTable, psycopg.errors.UndefinedColumn):
+            return None
+        return str(row[0]) if row is not None and row[0] is not None else None
+
     @staticmethod
     def _validate_new_fragments(
         current_fingerprints: dict[str, str],
