@@ -146,6 +146,10 @@ def test_list_subsystem_clusters_marks_stale():
     assert cl["stale"] is True
 
 
+def test_list_subsystem_clusters_docstring_describes_layout_token():
+    assert "layout_token" in MCPReviewService.list_subsystem_clusters.__doc__
+
+
 def test_list_subsystem_clusters_fresh_when_hash_matches():
     c = MagicMock()
     c.store.list_base_members.return_value = [("reviewer/index/a.py", "A", "h1", 1, "sk1")]

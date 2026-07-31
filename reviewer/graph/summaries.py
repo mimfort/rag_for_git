@@ -61,21 +61,43 @@ def depth_for(path: str, default: int, overrides: dict[str, int]) -> int:
     return best_depth
 
 
-def compute_layout_token(default_depth: int, overrides: dict[str, int]) -> str:
-    """Вернуть canonical identity effective layout policy."""
-    normalized = sorted(
-        (str(prefix).strip("/"), int(depth))
-        for prefix, depth in overrides.items()
-    )
+def normalize_depth_overrides(overrides: dict[str, int]) -> dict[str, int]:
+    """Нормализовать aliases префиксов и отклонить противоречивые depth."""
+    normalized: dict[str, int] = {}
+    for raw_prefix, raw_depth in overrides.items():
+        prefix = str(raw_prefix).strip("/")
+        depth = int(raw_depth)
+        previous = normalized.get(prefix)
+        if previous is not None and previous != depth:
+            raise ValueError(
+                f"Конфликтующие summary depth overrides для {prefix!r}: "
+                f"{previous} и {depth}"
+            )
+        normalized[prefix] = depth
+    return dict(sorted(normalized.items()))
+
+
+def canonicalize_layout(
+    default_depth: int,
+    overrides: dict[str, int],
+) -> tuple[dict[str, int], str]:
+    """Вернуть единые normalized overrides и token для clustering/state."""
+    normalized = normalize_depth_overrides(overrides)
     payload = json.dumps(
         {
             "default_depth": int(default_depth),
-            "overrides": normalized,
+            "overrides": list(normalized.items()),
         },
         ensure_ascii=False,
         separators=(",", ":"),
     )
-    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+    token = hashlib.sha256(payload.encode("utf-8")).hexdigest()
+    return normalized, token
+
+
+def compute_layout_token(default_depth: int, overrides: dict[str, int]) -> str:
+    """Вернуть canonical identity effective layout policy."""
+    return canonicalize_layout(default_depth, overrides)[1]
 
 
 def compute_source_hash(items: list[tuple[str, str]]) -> str:

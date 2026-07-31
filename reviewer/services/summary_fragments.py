@@ -82,7 +82,7 @@ def has_complete_fragment_generation(
         "layout_token": layout_token,
         "depth": depth,
     }
-    return bool(current) and all(
+    return set(by_path) == set(current) and bool(current) and all(
         (fragment := by_path.get(path)) is not None
         and fragment.fingerprint == fingerprint
         and fragment.provenance.get(_SERVER_PROVENANCE_KEY) == expected_stamp

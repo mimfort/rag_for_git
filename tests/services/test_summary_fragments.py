@@ -169,3 +169,13 @@ def test_generation_completion_requires_every_exact_same_cluster_fragment_at_dep
     assert not summary_fragments.has_complete_fragment_generation(
         "cluster", current, complete, 2, "other-layout"
     )
+    assert not summary_fragments.has_complete_fragment_generation(
+        "cluster",
+        current,
+        [
+            *complete,
+            StoredSummaryFragment("cluster", "stale.py", "old", "Stale", stamped),
+        ],
+        2,
+        "layout-v2",
+    )

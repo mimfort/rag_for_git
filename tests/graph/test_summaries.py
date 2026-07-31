@@ -5,6 +5,7 @@ from reviewer.graph.summaries import (
     compute_file_fingerprints,
     compute_layout_token,
     compute_source_hash,
+    normalize_depth_overrides,
 )
 
 
@@ -49,6 +50,43 @@ def test_layout_token_is_canonical_and_covers_default_and_sorted_overrides():
         2,
         {"reviewer/index": 3},
     )
+
+
+def test_normalized_overrides_drive_same_token_and_depth_in_reversed_order():
+    first = {
+        "/reviewer/index/": 3,
+        "reviewer/mcp": 1,
+    }
+    reversed_aliases = {
+        "/reviewer/mcp/": 1,
+        "reviewer/index": 3,
+    }
+
+    assert normalize_depth_overrides(first) == {
+        "reviewer/index": 3,
+        "reviewer/mcp": 1,
+    }
+    assert normalize_depth_overrides(reversed_aliases) == normalize_depth_overrides(first)
+    assert compute_layout_token(2, reversed_aliases) == compute_layout_token(2, first)
+
+    normalized = normalize_depth_overrides(reversed_aliases)
+    [cluster] = build_clusters(
+        [_m("reviewer/index/sub/a.py#A", "reviewer/index/sub/a.py")],
+        None,
+        depth=2,
+        depth_overrides=normalized,
+    )
+    assert cluster.key == "reviewer/index/sub"
+
+
+def test_normalized_overrides_reject_conflicting_alias_depths():
+    import pytest
+
+    with pytest.raises(ValueError, match="Конфликтующие"):
+        normalize_depth_overrides({
+            "/reviewer/index/": 3,
+            "reviewer/index": 4,
+        })
 
 
 def test_compute_file_fingerprints_uses_skeleton_per_path():

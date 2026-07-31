@@ -966,6 +966,7 @@ class MCPReviewService:
         from reviewer.graph.summaries import (
             Member,
             build_clusters,
+            canonicalize_layout,
             compute_file_fingerprints,
             compute_layout_token,
         )
@@ -994,6 +995,10 @@ class MCPReviewService:
             )
         else:
             resolved_depth, overrides, depth_source = depth, {}, "arg"
+        overrides, layout_token = canonicalize_layout(
+            resolved_depth,
+            overrides,
+        )
         members = [
             Member(
                 node_id=f"{path}#{symbol}",
@@ -1032,7 +1037,7 @@ class MCPReviewService:
         )
         return _SummaryState(
             depth=resolved_depth,
-            layout_token=compute_layout_token(resolved_depth, overrides),
+            layout_token=layout_token,
             depth_source=depth_source,
             members=members,
             clusters=clusters,
@@ -1130,7 +1135,8 @@ class MCPReviewService:
         """Кластеризовать base-граф по модулям → кластеры для /summarize-subsystems.
         cap (дефолт Settings.summary_rebuild_cap; None/0=безлимит) отбрасывает наименее
         приоритетные stale-кластеры (без сводки → старейшие updated_at первыми) и считает
-        их в deferred (PRI-165). Если depth не задан, он берётся из effective layered
+        их в deferred (PRI-165). Ответ содержит layout_token — canonical identity default
+        depth + normalized overrides. Если depth не задан, он берётся из effective layered
         policy с fail-soft env-дефолтом."""
         rb = self._resolve_repo_branch(repo, branch)
         if isinstance(rb, str):

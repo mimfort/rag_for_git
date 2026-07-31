@@ -687,6 +687,75 @@ def test_prune_verified_layout_rejects_incomplete_fragment_coverage_without_dele
     assert summary_store.get_completed_layout(repo, "dev") is None
 
 
+def test_prune_rejects_extra_same_cluster_fragment_without_mutation(store):
+    summary_store, repo = store
+    summary_store.commit_summary_bundle(
+        repo,
+        "dev",
+        "reviewer/index",
+        "Индекс",
+        "Сводка",
+        ["reviewer/index/a.py#A"],
+        "cluster-hash",
+        current_fingerprints={"reviewer/index/a.py": "file-hash"},
+        new_fragments=[
+            {
+                "path": "reviewer/index/a.py",
+                "fingerprint": "file-hash",
+                "summary": "Current",
+                "provenance": _generation_provenance(),
+            }
+        ],
+    )
+    with summary_store._connect() as conn:
+        conn.execute(
+            "INSERT INTO subsystem_summary_fragments "
+            "(repo, branch, cluster_key, path, fingerprint, summary, provenance) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s)",
+            (
+                repo,
+                "dev",
+                "reviewer/index",
+                "reviewer/index/stale.py",
+                "stale-hash",
+                "Stale",
+                Jsonb(_generation_provenance()),
+            ),
+        )
+        conn.commit()
+    summary_store.upsert_summary(
+        repo,
+        "dev",
+        "orphan",
+        "Сирота",
+        "Не удалять",
+        [],
+        "orphan-hash",
+    )
+
+    result = summary_store.prune_verified_layout(
+        repo,
+        "dev",
+        {"reviewer/index": "cluster-hash"},
+        {"reviewer/index": {"reviewer/index/a.py": "file-hash"}},
+        2,
+        LAYOUT_TOKEN,
+    )
+
+    assert result["completed"] is False
+    assert result["race"] is True
+    assert set(summary_store.get_source_hashes(repo, "dev")) == {
+        "orphan",
+        "reviewer/index",
+    }
+    assert {
+        fragment["path"]
+        for fragment in summary_store.get_fragments(repo, "dev")
+        if fragment["cluster_key"] == "reviewer/index"
+    } == {"reviewer/index/a.py", "reviewer/index/stale.py"}
+    assert summary_store.get_completed_layout(repo, "dev") is None
+
+
 def test_legacy_completed_depth_without_layout_remains_incomplete_after_schema_rerun(store):
     summary_store, repo = store
     with summary_store._connect() as conn:
