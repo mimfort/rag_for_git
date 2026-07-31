@@ -37,6 +37,8 @@ from reviewer.services.summary_fragments import (
     FragmentFile,
     StoredSummaryFragment,
     build_fragment_delta,
+    has_complete_fragment_generation,
+    with_server_generation_provenance,
 )
 from reviewer.tasks.boards.base import JsonValue, TaskBoardProvider
 from reviewer.tasks.boards.errors import (
@@ -1029,19 +1031,37 @@ class MCPReviewService:
         )
 
     @staticmethod
-    def _summary_delta(state: _SummaryState, cluster: "Cluster") -> FragmentDelta:
+    def _cluster_generation_flags(
+        state: _SummaryState,
+        cluster: "Cluster",
+    ) -> tuple[bool, bool]:
         current = {
             path: state.file_fingerprints[path]
             for path in cluster.files
         }
+        complete = has_complete_fragment_generation(
+            cluster.key,
+            current,
+            state.fragments,
+            state.depth,
+        )
+        return state.bootstrap and not complete, state.full_rebuild and not complete
+
+    @classmethod
+    def _summary_delta(cls, state: _SummaryState, cluster: "Cluster") -> FragmentDelta:
+        current = {
+            path: state.file_fingerprints[path]
+            for path in cluster.files
+        }
+        bootstrap, full_rebuild = cls._cluster_generation_flags(state, cluster)
         delta = build_fragment_delta(
             cluster.key,
             current,
             state.fragments,
-            bootstrap=state.bootstrap,
-            full_rebuild=state.full_rebuild,
+            bootstrap=bootstrap,
+            full_rebuild=full_rebuild,
         )
-        if state.full_rebuild:
+        if full_rebuild:
             return FragmentDelta(
                 added=(),
                 changed=delta.added + delta.changed,
@@ -1119,9 +1139,13 @@ class MCPReviewService:
                 "note": "(base-индекс пуст — выполните rag-reviewer:sync-codebase)",
             }
         stored = self.components.summary_store.get_source_hashes(repo, resolved)
+        generation_flags = {
+            cluster.key: self._cluster_generation_flags(state, cluster)
+            for cluster in state.clusters
+        }
         stale = {
             cluster.key: (
-                state.full_rebuild
+                generation_flags[cluster.key][1]
                 or stored.get(cluster.key) != cluster.source_hash
             )
             for cluster in state.clusters
@@ -1137,7 +1161,7 @@ class MCPReviewService:
             rebuild_clusters = [
                 cluster
                 for cluster in state.clusters
-                if stale[cluster.key] or state.bootstrap
+                if stale[cluster.key] or generation_flags[cluster.key][0]
             ]
             if len(rebuild_clusters) > effective_cap:
                 updated = self.components.summary_store.get_updated_ats(repo, resolved)
@@ -1182,8 +1206,8 @@ class MCPReviewService:
                     "removed_files": serialized["removed_files"],
                     "moved_files": serialized["moved_files"],
                     "reused_files": len(delta.reused),
-                    "bootstrap": state.bootstrap,
-                    "full_rebuild": state.full_rebuild,
+                    "bootstrap": generation_flags[cluster.key][0],
+                    "full_rebuild": generation_flags[cluster.key][1],
                 }
             )
         return {
@@ -1218,6 +1242,7 @@ class MCPReviewService:
                 "ready": False,
                 "note": "состав кластера изменился с момента list",
             }
+        bootstrap, full_rebuild = self._cluster_generation_flags(state, cluster)
         delta = self._summary_delta(state, cluster)
         return {
             "ready": True,
@@ -1227,8 +1252,8 @@ class MCPReviewService:
             **self._serialize_summary_delta(
                 delta, include_reused_content=True
             ),
-            "bootstrap": state.bootstrap,
-            "full_rebuild": state.full_rebuild,
+            "bootstrap": bootstrap,
+            "full_rebuild": full_rebuild,
         }
 
     def _embed_subsystem_summary(
@@ -1343,9 +1368,14 @@ class MCPReviewService:
                     "stored": False,
                     "note": "fingerprint summary fragment устарел",
                 }
-            new_fragments = [
-                fragment.model_dump(mode="python") for fragment in validated
-            ]
+            new_fragments = []
+            for fragment in validated:
+                payload = fragment.model_dump(mode="python")
+                payload["provenance"] = with_server_generation_provenance(
+                    fragment.provenance,
+                    state.depth,
+                )
+                new_fragments.append(payload)
             try:
                 metrics = self.components.summary_store.commit_summary_bundle(
                     repo,

@@ -6,6 +6,9 @@ from typing import Mapping
 
 from reviewer.tasks.boards.base import JsonValue
 
+_SERVER_PROVENANCE_KEY = "_reviewer"
+_GENERATION = "summary-fragment-v1"
+
 
 @dataclass(frozen=True)
 class FragmentFile:
@@ -43,6 +46,44 @@ class FragmentDelta:
     def pending_paths(self) -> tuple[str, ...]:
         """Пути, для которых нужно сгенерировать новую сводку."""
         return tuple(item.path for item in self.added + self.changed)
+
+
+def with_server_generation_provenance(
+    provenance: Mapping[str, JsonValue],
+    depth: int,
+) -> dict[str, JsonValue]:
+    """Добавить серверную метку поколения, перезаписав зарезервированный ключ."""
+    return {
+        **provenance,
+        _SERVER_PROVENANCE_KEY: {
+            "generation": _GENERATION,
+            "depth": depth,
+        },
+    }
+
+
+def has_complete_fragment_generation(
+    cluster_key: str,
+    current: Mapping[str, str],
+    stored: list[StoredSummaryFragment],
+    depth: int,
+) -> bool:
+    """Проверить полноту текущего поколения фрагментов конкретного кластера."""
+    by_path = {
+        item.path: item
+        for item in stored
+        if item.cluster_key == cluster_key
+    }
+    expected_stamp = {
+        "generation": _GENERATION,
+        "depth": depth,
+    }
+    return bool(current) and all(
+        (fragment := by_path.get(path)) is not None
+        and fragment.fingerprint == fingerprint
+        and fragment.provenance.get(_SERVER_PROVENANCE_KEY) == expected_stamp
+        for path, fingerprint in current.items()
+    )
 
 
 def _from_stored(fragment: StoredSummaryFragment, *, from_cluster_key: str | None = None) -> FragmentFile:

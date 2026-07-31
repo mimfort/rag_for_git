@@ -1,3 +1,4 @@
+import reviewer.services.summary_fragments as summary_fragments
 from reviewer.services.summary_fragments import (
     StoredSummaryFragment,
     build_fragment_delta,
@@ -76,3 +77,67 @@ def test_delta_sorts_each_classification_by_path():
     delta = build_fragment_delta("cluster", current, [], bootstrap=False, full_rebuild=False)
 
     assert [item.path for item in delta.added] == ["a.py", "z.py"]
+
+
+def test_server_generation_provenance_overwrites_reserved_client_value():
+    assert summary_fragments.with_server_generation_provenance(
+        {
+            "model": "cheap",
+            "_reviewer": {"generation": "forged", "depth": 999},
+        },
+        2,
+    ) == {
+        "model": "cheap",
+        "_reviewer": {
+            "generation": "summary-fragment-v1",
+            "depth": 2,
+        },
+    }
+
+
+def test_generation_completion_requires_every_exact_same_cluster_fragment_at_depth():
+    current = {"a.py": "fp-a", "b.py": "fp-b"}
+    stamped = {
+        "_reviewer": {
+            "generation": "summary-fragment-v1",
+            "depth": 2,
+        }
+    }
+    complete = [
+        StoredSummaryFragment("cluster", "a.py", "fp-a", "A", stamped),
+        StoredSummaryFragment("cluster", "b.py", "fp-b", "B", stamped),
+    ]
+
+    assert summary_fragments.has_complete_fragment_generation(
+        "cluster", current, complete, 2
+    )
+    assert not summary_fragments.has_complete_fragment_generation(
+        "cluster", current, complete[:1], 2
+    )
+    assert not summary_fragments.has_complete_fragment_generation(
+        "cluster",
+        current,
+        [
+            complete[0],
+            StoredSummaryFragment("other", "b.py", "fp-b", "B", stamped),
+        ],
+        2,
+    )
+    assert not summary_fragments.has_complete_fragment_generation(
+        "cluster",
+        current,
+        [
+            complete[0],
+            StoredSummaryFragment(
+                "cluster",
+                "b.py",
+                "wrong",
+                "B",
+                stamped,
+            ),
+        ],
+        2,
+    )
+    assert not summary_fragments.has_complete_fragment_generation(
+        "cluster", current, complete, 3
+    )

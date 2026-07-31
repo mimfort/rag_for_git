@@ -25,6 +25,104 @@ def _svc(components) -> MCPReviewService:
     return svc
 
 
+def _two_cluster_generation_state(
+    *,
+    completed_depth: int | None,
+    fragment_depth: int | None,
+):
+    from reviewer.graph.summaries import (
+        Member,
+        compute_file_fingerprints,
+        compute_source_hash,
+    )
+
+    raw = [
+        ("a/x/a.py", "A", "h1", 1, "sk1"),
+        ("b/y/b.py", "B", "h2", 1, "sk2"),
+    ]
+    members = [
+        Member("a/x/a.py#A", "a/x/a.py", "h1", "sk1", 1),
+        Member("b/y/b.py#B", "b/y/b.py", "h2", "sk2", 1),
+    ]
+    fingerprints = compute_file_fingerprints(members)
+    source_hashes = {
+        "a/x": compute_source_hash([("a/x/a.py#A", "sk1")]),
+        "b/y": compute_source_hash([("b/y/b.py#B", "sk2")]),
+    }
+    c = MagicMock()
+    c.store.list_base_members.return_value = raw
+    c.graph = None
+    c.summary_store.get_source_hashes.return_value = source_hashes
+    c.summary_store.get_completed_depth.return_value = completed_depth
+    c.summary_store.get_updated_ats.return_value = {}
+    c.summary_store.get_fragments.return_value = (
+        [
+            {
+                "cluster_key": cluster_key,
+                "path": path,
+                "fingerprint": fingerprints[path],
+                "summary": title,
+                "provenance": {
+                    "_reviewer": {
+                        "generation": "summary-fragment-v1",
+                        "depth": fragment_depth,
+                    }
+                },
+            }
+            for cluster_key, path, title in (
+                ("a/x", "a/x/a.py", "A"),
+                ("b/y", "b/y/b.py", "B"),
+            )
+        ]
+        if fragment_depth is not None
+        else []
+    )
+    c.summary_store.commit_summary_bundle.return_value = {
+        "created": 1,
+        "reused": 0,
+        "removed": 0,
+        "moved": 0,
+    }
+    c.embedder.embed_documents.return_value = [[0.5, 0.5]]
+    c.summary_store.set_embedding_if_source_hash.return_value = True
+    return c, source_hashes, fingerprints
+
+
+def _persist_single_pending_fragment(
+    svc: MCPReviewService,
+    components,
+    cluster: dict,
+) -> dict:
+    work = svc.get_subsystem_summary_work(
+        "o/n",
+        "dev",
+        cluster["cluster_key"],
+        cluster["source_hash"],
+    )
+    pending = work["added_files"] + work["changed_files"]
+    [file_work] = pending
+    result = svc.index_subsystem_summary(
+        "o/n",
+        "dev",
+        cluster["cluster_key"],
+        cluster["cluster_key"],
+        "Сводка",
+        cluster["source_hash"],
+        fragments=[
+            {
+                **file_work,
+                "summary": f"Фрагмент {file_work['path']}",
+                "provenance": {"model": "cheap"},
+            }
+        ],
+    )
+    assert result["stored"] is True
+    [stored] = components.summary_store.commit_summary_bundle.call_args.kwargs[
+        "new_fragments"
+    ]
+    return {"cluster_key": cluster["cluster_key"], **stored}
+
+
 def test_list_subsystem_clusters_marks_stale():
     c = MagicMock()
     c.store.list_base_members.return_value = [
@@ -137,33 +235,135 @@ def test_list_subsystem_clusters_counts_pending_files_in_deferred_clusters():
     assert out["deferred_files"] == 1
 
 
-def test_list_subsystem_clusters_caps_fresh_legacy_bootstrap_work():
-    from reviewer.graph.summaries import compute_source_hash
+def test_capped_bootstrap_converges_without_regenerating_completed_cluster():
+    c, _source_hashes, _fingerprints = _two_cluster_generation_state(
+        completed_depth=None,
+        fragment_depth=None,
+    )
+    svc = _svc(c)
 
-    c = MagicMock()
-    c.store.list_base_members.return_value = [
-        ("a/x/a.py", "A", "h1", 1, "sk1"),
-        ("b/y/b.py", "B", "h2", 1, "sk2"),
-    ]
-    c.graph = None
-    c.summary_store.get_source_hashes.return_value = {
-        "a/x": compute_source_hash([("a/x/a.py#A", "sk1")]),
-        "b/y": compute_source_hash([("b/y/b.py#B", "sk2")]),
-    }
-    c.summary_store.get_completed_depth.return_value = None
-    c.summary_store.get_fragments.return_value = []
-    c.summary_store.get_updated_ats.return_value = {}
-
-    out = _svc(c).list_subsystem_clusters(
+    first = svc.list_subsystem_clusters(
         "o/n", "dev", depth=2, min_size=1, cap=1
     )
 
-    [cluster] = out["clusters"]
-    assert cluster["cluster_key"] == "a/x"
-    assert cluster["stale"] is False
-    assert cluster["bootstrap"] is True
-    assert out["deferred"] == 1
-    assert out["deferred_files"] == 1
+    [first_selected] = [
+        cluster
+        for cluster in first["clusters"]
+        if cluster["stale"] or cluster["bootstrap"]
+    ]
+    assert first_selected["cluster_key"] == "a/x"
+    assert first_selected["stale"] is False
+    assert first_selected["bootstrap"] is True
+    assert first["deferred"] == 1
+    assert first["deferred_files"] == 1
+
+    first_stored = _persist_single_pending_fragment(svc, c, first_selected)
+    c.summary_store.get_fragments.return_value = [first_stored]
+    c.summary_store.commit_summary_bundle.reset_mock()
+
+    second = svc.list_subsystem_clusters(
+        "o/n", "dev", depth=2, min_size=1, cap=1
+    )
+
+    assert second["deferred"] == 0
+    [second_selected] = [
+        cluster
+        for cluster in second["clusters"]
+        if cluster["stale"] or cluster["bootstrap"]
+    ]
+    assert second_selected["cluster_key"] == "b/y"
+    completed = next(
+        cluster for cluster in second["clusters"]
+        if cluster["cluster_key"] == "a/x"
+    )
+    assert completed["stale"] is False
+    assert completed["bootstrap"] is False
+    assert completed["added_files"] == []
+    assert completed["changed_files"] == []
+    assert completed["reused_files"] == 1
+    completed_work = svc.get_subsystem_summary_work(
+        "o/n", "dev", "a/x", completed["source_hash"]
+    )
+    assert completed_work["bootstrap"] is False
+    assert completed_work["added_files"] == []
+    assert completed_work["changed_files"] == []
+    assert [item["path"] for item in completed_work["reused_fragments"]] == [
+        "a/x/a.py"
+    ]
+
+    second_stored = _persist_single_pending_fragment(svc, c, second_selected)
+    c.summary_store.get_fragments.return_value = [first_stored, second_stored]
+
+    final = svc.list_subsystem_clusters(
+        "o/n", "dev", depth=2, min_size=1, cap=1
+    )
+    assert final["deferred"] == 0
+    assert not [
+        cluster
+        for cluster in final["clusters"]
+        if cluster["stale"] or cluster["bootstrap"]
+    ]
+
+
+def test_capped_depth_rebuild_converges_without_regenerating_completed_cluster():
+    c, _source_hashes, _fingerprints = _two_cluster_generation_state(
+        completed_depth=1,
+        fragment_depth=1,
+    )
+    svc = _svc(c)
+
+    first = svc.list_subsystem_clusters(
+        "o/n", "dev", depth=2, min_size=1, cap=1
+    )
+
+    [first_selected] = [
+        cluster for cluster in first["clusters"] if cluster["stale"]
+    ]
+    assert first_selected["cluster_key"] == "a/x"
+    assert first_selected["full_rebuild"] is True
+    assert first["deferred"] == 1
+
+    first_stored = _persist_single_pending_fragment(svc, c, first_selected)
+    old_second = next(
+        fragment
+        for fragment in c.summary_store.get_fragments.return_value
+        if fragment["cluster_key"] == "b/y"
+    )
+    c.summary_store.get_fragments.return_value = [first_stored, old_second]
+    c.summary_store.commit_summary_bundle.reset_mock()
+
+    second = svc.list_subsystem_clusters(
+        "o/n", "dev", depth=2, min_size=1, cap=1
+    )
+
+    assert second["deferred"] == 0
+    [second_selected] = [
+        cluster for cluster in second["clusters"] if cluster["stale"]
+    ]
+    assert second_selected["cluster_key"] == "b/y"
+    completed = next(
+        cluster for cluster in second["clusters"]
+        if cluster["cluster_key"] == "a/x"
+    )
+    assert completed["stale"] is False
+    assert completed["full_rebuild"] is False
+    assert completed["changed_files"] == []
+    assert completed["reused_files"] == 1
+    completed_work = svc.get_subsystem_summary_work(
+        "o/n", "dev", "a/x", completed["source_hash"]
+    )
+    assert completed_work["full_rebuild"] is False
+    assert completed_work["added_files"] == []
+    assert completed_work["changed_files"] == []
+
+    second_stored = _persist_single_pending_fragment(svc, c, second_selected)
+    c.summary_store.get_fragments.return_value = [first_stored, second_stored]
+
+    final = svc.list_subsystem_clusters(
+        "o/n", "dev", depth=2, min_size=1, cap=1
+    )
+    assert final["deferred"] == 0
+    assert not [cluster for cluster in final["clusters"] if cluster["stale"]]
 
 
 def test_list_subsystem_clusters_treats_same_key_depth_rebuild_as_stale_and_deferred():
@@ -535,7 +735,13 @@ def test_index_subsystem_summary_commits_bundle_before_embedding_with_hash_cas()
                 "path": "reviewer/index/a.py",
                 "fingerprint": file_hash,
                 "summary": "A",
-                "provenance": {"generator": "test"},
+                "provenance": {
+                    "generator": "test",
+                    "_reviewer": {
+                        "generation": "forged",
+                        "depth": 999,
+                    },
+                },
             }
         ],
     )
@@ -555,7 +761,13 @@ def test_index_subsystem_summary_commits_bundle_before_embedding_with_hash_cas()
                 "path": "reviewer/index/a.py",
                 "fingerprint": file_hash,
                 "summary": "A",
-                "provenance": {"generator": "test"},
+                "provenance": {
+                    "generator": "test",
+                    "_reviewer": {
+                        "generation": "summary-fragment-v1",
+                        "depth": 2,
+                    },
+                },
             }
         ],
     )
