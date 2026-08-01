@@ -345,7 +345,86 @@ def test_main_closes_components_when_server_construction_fails_without_masking_e
     assert captured.value.code == 1
     components.close.assert_called_once_with()
     assert "server construction failed" in capsys.readouterr().err
-    assert "cleanup failed" in caplog.text
+    assert "RuntimeError" in caplog.text
+    assert "cleanup failed" not in caplog.text
+
+
+class _FatalConstruction(BaseException):
+    pass
+
+
+def test_main_closes_components_and_reraises_non_exception_construction_failure(
+    monkeypatch,
+    capsys,
+) -> None:
+    import reviewer.app as app_module
+    import reviewer.config.settings as settings_module
+    import reviewer.entrypoints.mcp_server as server_module
+
+    components = MagicMock()
+    failure = _FatalConstruction("fatal construction")
+    monkeypatch.setattr(settings_module, "Settings", MagicMock(return_value=MagicMock()))
+    monkeypatch.setattr(app_module, "build_components", MagicMock(return_value=components))
+    monkeypatch.setattr(server_module, "MCPReviewService", MagicMock(return_value=MagicMock()))
+    monkeypatch.setattr(server_module, "create_server", MagicMock(side_effect=failure))
+
+    with pytest.raises(_FatalConstruction) as captured:
+        server_module.main()
+
+    assert captured.value is failure
+    components.close.assert_called_once_with()
+    assert capsys.readouterr().err == ""
+
+
+def test_main_preserves_run_base_exception_when_close_also_fails(
+    monkeypatch,
+    caplog,
+) -> None:
+    import reviewer.app as app_module
+    import reviewer.config.settings as settings_module
+    import reviewer.entrypoints.mcp_server as server_module
+
+    run_failure = KeyboardInterrupt("run interrupted")
+    components = MagicMock()
+    components.close.side_effect = RuntimeError("sensitive cleanup detail")
+    server = MagicMock()
+    server.run.side_effect = run_failure
+    monkeypatch.setattr(settings_module, "Settings", MagicMock(return_value=MagicMock()))
+    monkeypatch.setattr(app_module, "build_components", MagicMock(return_value=components))
+    monkeypatch.setattr(server_module, "MCPReviewService", MagicMock(return_value=MagicMock()))
+    monkeypatch.setattr(server_module, "create_server", MagicMock(return_value=server))
+
+    with caplog.at_level(logging.WARNING), pytest.raises(KeyboardInterrupt) as captured:
+        server_module.main()
+
+    assert captured.value is run_failure
+    assert any("RuntimeError" in note for note in run_failure.__notes__)
+    assert "sensitive cleanup detail" not in caplog.text
+    components.close.assert_called_once_with()
+
+
+def test_main_propagates_close_failure_after_successful_run_without_double_close(
+    monkeypatch,
+) -> None:
+    import reviewer.app as app_module
+    import reviewer.config.settings as settings_module
+    import reviewer.entrypoints.mcp_server as server_module
+
+    close_failure = RuntimeError("close failed")
+    components = MagicMock()
+    components.close.side_effect = close_failure
+    server = MagicMock()
+    monkeypatch.setattr(settings_module, "Settings", MagicMock(return_value=MagicMock()))
+    monkeypatch.setattr(app_module, "build_components", MagicMock(return_value=components))
+    monkeypatch.setattr(server_module, "MCPReviewService", MagicMock(return_value=MagicMock()))
+    monkeypatch.setattr(server_module, "create_server", MagicMock(return_value=server))
+
+    with pytest.raises(RuntimeError, match="close failed") as captured:
+        server_module.main()
+
+    assert captured.value is close_failure
+    server.run.assert_called_once_with()
+    components.close.assert_called_once_with()
 
 
 def test_search_code_without_prepare_reports_error() -> None:

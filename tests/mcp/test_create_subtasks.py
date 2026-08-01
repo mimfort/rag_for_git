@@ -127,7 +127,9 @@ class _Provider:
         self.parent_point_read_effect = _UNSET
         self.child_point_read_effect = _UNSET
         self.brief_overrides = {}
+        self.parent_links_override = _UNSET
         self.identity_uuid_fallback = False
+        self.child_sequence = 0
         self.normalize_calls = []
         self.missing_child = False
         self.normalize_error = None
@@ -180,10 +182,18 @@ class _Provider:
         if raw.board_id in self.brief_overrides:
             return deepcopy(self.brief_overrides[raw.board_id])
         links = (
-            [{"key": self.children[subtask_id].key} for subtask_id in raw.subtask_ids]
+            [
+                {
+                    "type": "subtask",
+                    "key": self.children[subtask_id].key,
+                }
+                for subtask_id in raw.subtask_ids
+            ]
             if raw.board_id == self.parent.board_id
-            else [{"key": self.parent.key}]
+            else [{"type": "parent", "key": self.parent.key}]
         )
+        if raw.board_id == self.parent.board_id and self.parent_links_override is not _UNSET:
+            links = deepcopy(self.parent_links_override)
         return {
             "key": raw.key,
             "aliases": [],
@@ -202,7 +212,13 @@ class _Provider:
 
     def create_native_subtask(self, doc_md, *, title, source_column_id, marker):
         self.board_writes += 1
-        child = _raw("PRI-225", "child-id", title=title)
+        self.child_sequence += 1
+        child_number = 224 + self.child_sequence
+        child = _raw(
+            f"PRI-{child_number}",
+            "child-id" if self.child_sequence == 1 else f"child-id-{self.child_sequence}",
+            title=title,
+        )
         self.children[child.board_id] = child
         self.children[child.key] = child
         return NativeSubtaskIdentity(
@@ -573,6 +589,63 @@ def test_normalized_brief_requires_explicit_well_typed_links(links):
     assert out["category"] == "reindex_pending"
     assert state_machine._store.operation.status == "board_complete"
     assert tasks.calls == []
+
+
+@pytest.mark.parametrize(
+    "parent_links",
+    [
+        [],
+        [{"type": "relates", "key": "PRI-225"}],
+        [{"type": "subtask", "key": "OTHER-1"}],
+        [
+            {"type": "subtask", "key": "PRI-225"},
+            {"type": 42, "key": "PRI-100"},
+        ],
+    ],
+    ids=["empty", "wrong-type", "wrong-key", "malformed-type"],
+)
+def test_parent_links_must_cover_normalized_child_as_native_subtask(parent_links):
+    provider = _Provider()
+    provider.parent_links_override = parent_links
+    service, provider, tasks, _, state_machine = _service(provider=provider)
+
+    out = _create(service)
+
+    assert out["status"] == "partial"
+    assert out["category"] == "reindex_pending"
+    assert state_machine._store.operation.status == "board_complete"
+    assert tasks.calls == []
+
+
+def test_parent_subtask_links_cover_multiple_normalized_children():
+    provider = _Provider()
+    service, provider, tasks, _, state_machine = _service(provider=provider)
+    second = {**SUBTASK, "title": "Вторая дочерняя задача"}
+
+    out = _create(service, subtasks=[SUBTASK, second])
+
+    assert out["status"] == "ok"
+    assert state_machine._store.operation.status == "complete"
+    assert [brief["key"] for brief in tasks.calls[0]] == [
+        "PRI-224",
+        "PRI-225",
+        "PRI-226",
+    ]
+
+
+def test_parent_subtask_links_allow_valid_extra_relations():
+    provider = _Provider()
+    provider.parent_links_override = [
+        {"type": "relates", "key": "PRI-100"},
+        {"type": "subtask", "key": "PRI-225"},
+    ]
+    service, provider, tasks, _, state_machine = _service(provider=provider)
+
+    out = _create(service)
+
+    assert out["status"] == "ok"
+    assert state_machine._store.operation.status == "complete"
+    assert len(tasks.calls) == 1
 
 
 @pytest.mark.parametrize(

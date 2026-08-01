@@ -617,6 +617,8 @@ class MCPReviewService:
                     or type(brief.get("links")) is not list
                     or not all(
                         isinstance(link, dict)
+                        and isinstance(link.get("type"), str)
+                        and link["type"].strip()
                         and isinstance(link.get("key"), str)
                         and link["key"].strip()
                         for link in brief["links"]
@@ -630,6 +632,16 @@ class MCPReviewService:
                     return WriteThroughResult(False, tuple(warnings))
                 seen_keys.add(key)
                 briefs.append(brief)
+
+            child_keys = {brief["key"] for brief in briefs[1:]}
+            parent_subtask_keys = {
+                link["key"]
+                for link in briefs[0]["links"]
+                if link["type"] == "subtask"
+            }
+            if not child_keys.issubset(parent_subtask_keys):
+                warning("write-through parent links do not cover normalized subtasks")
+                return WriteThroughResult(False, tuple(warnings))
 
             results = self.components.task_service.index_batch(briefs)
             if not isinstance(results, list) or len(results) != len(briefs):

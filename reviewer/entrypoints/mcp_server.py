@@ -443,6 +443,23 @@ def create_server(service: MCPReviewService) -> FastMCP:
     return mcp
 
 
+def _close_components(components, primary_error: BaseException | None = None) -> None:
+    close = getattr(components, "close", None)
+    if not callable(close):
+        return
+    try:
+        close()
+    except BaseException as cleanup_error:
+        if primary_error is None:
+            raise
+        safe_note = (
+            "Не удалось закрыть компоненты reviewer-mcp: "
+            f"{type(cleanup_error).__name__}"
+        )
+        primary_error.add_note(safe_note)
+        log.warning(safe_note)
+
+
 def main() -> None:
     # logging.basicConfig по умолчанию пишет в stderr — не в stdout,
     # иначе JSON-RPC-фреймы MCP-протокола в stdio-режиме будут повреждены.
@@ -455,15 +472,11 @@ def main() -> None:
         settings = Settings()
         components = build_components(settings)
         server = create_server(MCPReviewService(settings, components))
-    except Exception as e:
+    except BaseException as e:
         if components is not None:
-            try:
-                components.close()
-            except Exception:
-                log.warning(
-                    "Не удалось закрыть компоненты после сбоя инициализации reviewer-mcp",
-                    exc_info=True,
-                )
+            _close_components(components, e)
+        if not isinstance(e, Exception):
+            raise
         # Одна ясная строка в stderr без сырого traceback (детали — в debug-логе).
         log.debug("Сбой инициализации reviewer-mcp", exc_info=True)
         print(
@@ -474,10 +487,11 @@ def main() -> None:
         sys.exit(1)
     try:
         server.run()  # stdio
-    finally:
-        close = getattr(components, "close", None)
-        if callable(close):
-            close()
+    except BaseException as error:
+        _close_components(components, error)
+        raise
+    else:
+        _close_components(components)
 
 
 if __name__ == "__main__":
