@@ -238,6 +238,7 @@ class SubtaskOperationStore:
                     if unlock_row is None or not unlock_row or unlock_row[0] is not True:
                         raise LedgerUnavailableError("Postgres не подтвердил освобождение lock")
                 except BaseException as cleanup_error:
+                    conn.close()
                     if primary_error is None:
                         raise
                     primary_error.add_note(f"Ошибка cleanup advisory lock: {cleanup_error!r}")

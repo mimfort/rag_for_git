@@ -57,6 +57,7 @@ class _Database:
         self.acquire_error: Exception | None = None
         self.acquire_commit_error: Exception | None = None
         self.unlock_error: Exception | None = None
+        self.unlock_commit_error: Exception | None = None
         self.lock_results: dict[str, bool] = {}
         self.lock_calls: list[tuple[_Connection, tuple]] = []
         self.unlock_calls: list[tuple[_Connection, tuple]] = []
@@ -107,6 +108,7 @@ class _Database:
             self.unlock_calls.append((connection, params))
             if self.unlock_error is not None:
                 raise self.unlock_error
+            connection.next_commit_error = self.unlock_commit_error
             return _Result((True,))
         if compact_sql == "SELECT 1":
             if connection.health_error is not None:
@@ -121,6 +123,9 @@ class _Connection:
         self.checked_out = False
         self.commits = 0
         self.alive = True
+        self.closed = False
+        self.close_calls = 0
+        self.closed_while_checked_out = False
         self.health_error: Exception | None = None
         self.next_commit_error: Exception | None = None
 
@@ -133,6 +138,12 @@ class _Connection:
             error = self.next_commit_error
             self.next_commit_error = None
             raise error
+
+    def close(self) -> None:
+        self.close_calls += 1
+        self.closed_while_checked_out = self.checked_out
+        self.closed = True
+        self.alive = False
 
 
 class _ConnectionContext:
@@ -341,6 +352,7 @@ def test_parent_lock_holds_same_connection_and_unlocks_in_finally() -> None:
     assert factory.database.unlock_calls == [(connection, ("yougile", "parent-1"))]
     assert connection.checked_out is False
     assert connection.commits == 2
+    assert connection.closed is False
 
 
 def test_contended_parent_lock_yields_none_without_unlock() -> None:
@@ -355,6 +367,7 @@ def test_contended_parent_lock_yields_none_without_unlock() -> None:
     connection = factory.database.lock_calls[0][0]
     assert connection.commits == 1
     assert connection.checked_out is False
+    assert connection.closed is False
 
 
 def test_acquired_parent_lock_commit_failure_attempts_unlock_and_propagates() -> None:
@@ -386,6 +399,55 @@ def test_acquisition_error_remains_primary_when_unlock_also_fails() -> None:
     assert exc_info.value is commit_error
     connection = factory.database.lock_calls[0][0]
     assert factory.database.unlock_calls == [(connection, ("yougile", "parent-1"))]
+    assert connection.checked_out is False
+
+
+@pytest.mark.parametrize("failure_phase", ["execute", "commit"])
+def test_unlock_failure_discards_connection_and_propagates_cleanup_error(
+    failure_phase: str,
+) -> None:
+    factory = _PoolFactory()
+    cleanup_error = RuntimeError(f"unlock {failure_phase} failed")
+    if failure_phase == "execute":
+        factory.database.unlock_error = cleanup_error
+    else:
+        factory.database.unlock_commit_error = cleanup_error
+    store = SubtaskOperationStore("postgresql://ledger", pool_factory=factory)
+
+    with pytest.raises(RuntimeError) as exc_info:
+        _enter_parent_lock(store)
+
+    assert exc_info.value is cleanup_error
+    connection = factory.database.lock_calls[0][0]
+    assert connection.close_calls == 1
+    assert connection.closed is True
+    assert connection.closed_while_checked_out is True
+    assert connection.checked_out is False
+
+
+@pytest.mark.parametrize("failure_phase", ["execute", "commit"])
+def test_unlock_failure_discards_connection_and_preserves_primary_error(
+    failure_phase: str,
+) -> None:
+    factory = _PoolFactory()
+    cleanup_error = RuntimeError(f"unlock {failure_phase} failed")
+    if failure_phase == "execute":
+        factory.database.unlock_error = cleanup_error
+    else:
+        factory.database.unlock_commit_error = cleanup_error
+    store = SubtaskOperationStore("postgresql://ledger", pool_factory=factory)
+    primary_error = RuntimeError("body failed")
+
+    with pytest.raises(RuntimeError) as exc_info, store.try_parent_lock(
+        "yougile", "parent-1"
+    ):
+        raise primary_error
+
+    assert exc_info.value is primary_error
+    connection = factory.database.lock_calls[0][0]
+    assert connection.close_calls == 1
+    assert connection.closed is True
+    assert connection.closed_while_checked_out is True
     assert connection.checked_out is False
 
 
