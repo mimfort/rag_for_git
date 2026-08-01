@@ -32,6 +32,7 @@ from reviewer.tasks.subtasks import (
     SubtaskService,
     WriteThroughResult,
     marker_for,
+    merge_subtask_ids,
     validate_subtask_request,
 )
 
@@ -101,6 +102,7 @@ class MemoryStore:
         self.inserted_snapshots = []
         self.checkpoint_snapshots = []
         self.checkpoint_history = []
+        self.lock_active = False
 
     def load(self, idempotency_key):
         operation = self.operations.get(idempotency_key)
@@ -159,21 +161,44 @@ class MemoryStore:
                 if store.dead:
                     raise LedgerUnavailableError("dead lock")
 
-        yield Lock()
+        self.lock_active = True
+        try:
+            yield Lock()
+        finally:
+            self.lock_active = False
 
 
 class FakeProvider:
-    def __init__(self, parent, *, events=None, reconciled=None, create_effects=None):
+    def __init__(
+        self,
+        parent,
+        *,
+        events=None,
+        reconciled=None,
+        create_effects=None,
+        fetch_effects=None,
+        replace_effects=None,
+    ):
         self.parent = parent
         self.events = events if events is not None else []
         self.reconciled = list(reconciled or [])
         self.create_effects = list(create_effects or [])
+        self.fetch_effects = list(fetch_effects or [])
+        self.replace_effects = list(replace_effects or [])
         self.fetch_calls = []
         self.reconcile_calls = []
         self.create_calls = []
+        self.replace_calls = []
 
     def fetch_one(self, key):
         self.fetch_calls.append(key)
+        if self.fetch_effects:
+            effect = self.fetch_effects.pop(0)
+            if callable(effect):
+                return effect(key)
+            if isinstance(effect, BaseException):
+                raise effect
+            return effect
         return self.parent
 
     def reconcile_native_subtasks(self, source_board_id, markers):
@@ -203,6 +228,18 @@ class FakeProvider:
             raise effect
         return effect
 
+    def replace_native_subtasks(self, parent_task_id, subtask_ids):
+        snapshot = list(subtask_ids)
+        self.replace_calls.append((parent_task_id, snapshot))
+        self.events.append(("put", parent_task_id, tuple(snapshot)))
+        if self.replace_effects:
+            effect = self.replace_effects.pop(0)
+            if callable(effect):
+                return effect(parent_task_id, snapshot)
+            if isinstance(effect, BaseException):
+                raise effect
+        return None
+
 
 def _parent(**overrides):
     values = {
@@ -223,11 +260,28 @@ def _parent(**overrides):
     return RawTask(**values)
 
 
-def _run(service, request, provider, *, operation=None, sanitize=None, write_calls=None):
+def _run(
+    service,
+    request,
+    provider,
+    *,
+    operation=None,
+    sanitize=None,
+    write_calls=None,
+    write_effects=None,
+):
     write_calls = write_calls if write_calls is not None else []
+    write_effects = list(write_effects or [])
 
     def write_through(parent, identities):
         write_calls.append((parent, identities))
+        if write_effects:
+            effect = write_effects.pop(0)
+            if callable(effect):
+                return effect(parent, identities)
+            if isinstance(effect, BaseException):
+                raise effect
+            return effect
         return WriteThroughResult(True)
 
     return service.run(
@@ -451,6 +505,379 @@ def test_contract_constants_and_literal_values():
     }
 
 
+def test_merge_subtask_ids_preserves_first_seen_order_and_removes_empty_duplicates():
+    assert merge_subtask_ids(
+        ["old", "", "child-1", "old"],
+        ["child-0", "child-1", "", "child-2", "child-0"],
+    ) == ["old", "child-1", "child-0", "child-2"]
+
+
+def test_parent_attachment_puts_exact_existing_and_confirmed_union():
+    request = _validate(subtasks=[CHILD, {**CHILD, "title": "Вторая задача"}])
+    store = MemoryStore()
+    provider = FakeProvider(
+        None,
+        create_effects=[
+            NativeSubtaskIdentity("child-0", "PRI-225", "Первая задача"),
+            NativeSubtaskIdentity("child-1", "PRI-226", "Вторая задача"),
+        ],
+        fetch_effects=[
+            _parent(),
+            _parent(subtask_ids=["old", "child-1"]),
+            _parent(subtask_ids=["old", "child-1", "child-0"]),
+        ],
+    )
+    write_calls = []
+
+    result = _run(
+        SubtaskService(store),
+        request,
+        provider,
+        write_calls=write_calls,
+    )
+
+    assert provider.replace_calls == [
+        ("parent-uuid", ["old", "child-1", "child-0"]),
+    ]
+    assert result.status == "ok"
+    assert tuple(child.board_id for child in result.created) == ("child-0", "child-1")
+    assert result.created == result.attached
+    assert result.unattached == result.pending == ()
+    assert tuple(identity.board_id for identity in write_calls[0][1]) == (
+        "child-0",
+        "child-1",
+    )
+    assert store.operations["attempt-1"].status == "complete"
+
+
+def test_exact_existing_union_skips_put_and_checkpoints_board_complete_before_complete():
+    request = _validate()
+    store = MemoryStore()
+    parent_with_child = _parent(subtask_ids=["child-uuid"])
+    provider = FakeProvider(
+        None,
+        create_effects=[NativeSubtaskIdentity("child-uuid", "PRI-225", "Child")],
+        fetch_effects=[_parent(), parent_with_child],
+    )
+    write_calls = []
+
+    result = _run(
+        SubtaskService(store),
+        request,
+        provider,
+        write_calls=write_calls,
+    )
+
+    assert provider.replace_calls == []
+    assert [snapshot.status for snapshot in store.checkpoint_snapshots[-2:]] == [
+        "board_complete",
+        "complete",
+    ]
+    assert write_calls == [
+        (
+            parent_with_child,
+            (
+                NativeSubtaskIdentity(
+                    board_id="child-uuid",
+                    key="PRI-225",
+                    title="Дочерняя задача",
+                ),
+            ),
+        )
+    ]
+    assert result.status == "ok"
+    assert result.reindexed is True
+
+
+def test_successful_put_without_verified_board_state_does_not_claim_attachment():
+    request = _validate()
+    store = MemoryStore()
+    provider = FakeProvider(
+        None,
+        create_effects=[NativeSubtaskIdentity("child-uuid", "PRI-225", "Child")],
+        fetch_effects=[_parent(), _parent(), _parent()],
+    )
+    write_calls = []
+
+    result = _run(
+        SubtaskService(store),
+        request,
+        provider,
+        write_calls=write_calls,
+    )
+
+    assert provider.replace_calls == [("parent-uuid", ["child-uuid"])]
+    assert result.status == "partial"
+    assert result.attached == ()
+    assert result.unattached == result.created
+    assert store.operations["attempt-1"].state["items"][0]["phase"] == "created"
+    assert write_calls == []
+
+
+def test_partial_board_verification_persists_accurate_attachment_buckets_and_snapshots():
+    request = _validate(subtasks=[CHILD, {**CHILD, "title": "Вторая задача"}])
+    store = MemoryStore()
+    provider = FakeProvider(
+        None,
+        create_effects=[
+            NativeSubtaskIdentity("child-0", "PRI-225", "Первая"),
+            NativeSubtaskIdentity("child-1", "PRI-226", "Вторая"),
+        ],
+        fetch_effects=[
+            _parent(),
+            _parent(),
+            _parent(subtask_ids=["child-0"]),
+        ],
+    )
+
+    result = _run(SubtaskService(store), request, provider)
+
+    assert tuple(child.index for child in result.created) == (0, 1)
+    assert tuple(child.index for child in result.attached) == (0,)
+    assert tuple(child.index for child in result.unattached) == (1,)
+    assert result.pending == ()
+    assert [item["phase"] for item in store.operations["attempt-1"].state["items"]] == [
+        "attached",
+        "created",
+    ]
+    attachment_snapshot = store.checkpoint_snapshots[-1]
+    attachment_snapshot.state["items"][1]["phase"] = "mutated"
+    assert store.operations["attempt-1"].state["items"][1]["phase"] == "created"
+
+
+def test_confirmed_child_attaches_while_sibling_remains_manual_pending():
+    request = _validate(subtasks=[CHILD, {**CHILD, "title": "Вторая задача"}])
+    store = MemoryStore()
+    provider = FakeProvider(
+        None,
+        create_effects=[
+            RuntimeError("token=SECRET"),
+            NativeSubtaskIdentity("child-1", "PRI-226", "Вторая"),
+        ],
+        fetch_effects=[
+            _parent(),
+            _parent(),
+            _parent(subtask_ids=["child-1"]),
+        ],
+    )
+
+    result = _run(
+        SubtaskService(store),
+        request,
+        provider,
+        sanitize=lambda _value: "safe create failure",
+    )
+
+    assert provider.replace_calls == [("parent-uuid", ["child-1"])]
+    assert tuple(child.index for child in result.attached) == (1,)
+    assert tuple(child.index for child in result.pending) == (0,)
+    assert result.pending[0].manual_required is True
+    assert [item["phase"] for item in store.operations["attempt-1"].state["items"]] == [
+        "in_flight",
+        "attached",
+    ]
+
+
+def test_lock_health_is_checked_immediately_before_parent_put():
+    request = _validate()
+    events = []
+    store = MemoryStore(events=events)
+    provider = FakeProvider(
+        None,
+        events=events,
+        create_effects=[NativeSubtaskIdentity("child-uuid", "PRI-225", "Child")],
+        fetch_effects=[_parent(), _parent(), _parent()],
+    )
+
+    _run(SubtaskService(store), request, provider)
+
+    put_index = events.index(("put", "parent-uuid", ("child-uuid",)))
+    assert events[put_index - 1] == ("ensure_alive",)
+
+
+@pytest.mark.parametrize("failure_point", ["reread", "put", "verification"])
+def test_attachment_transport_failure_is_retryable_without_losing_child_identity(
+    failure_point,
+):
+    request = _validate()
+    secret_error = RuntimeError("password=VERY_SECRET")
+    fetch_effects = [_parent()]
+    replace_effects = []
+    if failure_point == "reread":
+        fetch_effects.append(secret_error)
+    elif failure_point == "put":
+        fetch_effects.append(_parent())
+        replace_effects.append(secret_error)
+    else:
+        fetch_effects.extend([_parent(), secret_error])
+    store = MemoryStore()
+    provider = FakeProvider(
+        None,
+        create_effects=[NativeSubtaskIdentity("child-uuid", "PRI-225", "Child")],
+        fetch_effects=fetch_effects,
+        replace_effects=replace_effects,
+    )
+
+    result = _run(
+        SubtaskService(store),
+        request,
+        provider,
+        sanitize=lambda _value: "safe attachment failure",
+    )
+
+    persisted = store.operations["attempt-1"]
+    assert result.status == "partial"
+    assert result.retryable is True
+    assert result.created[0].board_id == "child-uuid"
+    assert result.unattached == result.created
+    assert result.warnings[-1] == "safe attachment failure"
+    assert persisted.state["items"][0]["board_id"] == "child-uuid"
+    assert persisted.state["items"][0]["phase"] == "created"
+    assert "VERY_SECRET" not in json.dumps(persisted.state)
+    assert "VERY_SECRET" not in json.dumps(result.payload())
+
+
+def test_write_through_false_stays_board_complete_and_replay_retries_only_callback():
+    request = _validate()
+    store = MemoryStore()
+    provider = FakeProvider(
+        None,
+        create_effects=[NativeSubtaskIdentity("child-uuid", "PRI-225", "Child")],
+        fetch_effects=[
+            _parent(),
+            _parent(subtask_ids=["child-uuid"]),
+            _parent(subtask_ids=["child-uuid"], timestamp=2),
+        ],
+    )
+    service = SubtaskService(store)
+    write_calls = []
+
+    first = _run(
+        service,
+        request,
+        provider,
+        write_calls=write_calls,
+        write_effects=[WriteThroughResult(False, ("index unavailable",))],
+    )
+    persisted_after_first = deepcopy(store.operations["attempt-1"])
+    calls_after_first = (
+        len(provider.reconcile_calls),
+        len(provider.create_calls),
+        len(provider.replace_calls),
+    )
+    second = _run(
+        service,
+        request,
+        provider,
+        operation=service.preflight(request).operation,
+        write_calls=write_calls,
+    )
+
+    assert first.status == "partial"
+    assert first.category == "reindex_pending"
+    assert first.retryable is True
+    assert first.reindexed is False
+    assert persisted_after_first.status == "board_complete"
+    assert persisted_after_first.state["reindexed"] is False
+    assert store.checkpoint_snapshots[-2].status == "board_complete"
+    assert calls_after_first == (0, 1, 0)
+    assert (
+        len(provider.reconcile_calls),
+        len(provider.create_calls),
+        len(provider.replace_calls),
+    ) == calls_after_first
+    assert provider.fetch_calls == ["PRI-224", "parent-uuid", "parent-uuid"]
+    assert len(write_calls) == 2
+    assert second.status == "ok"
+    assert second.reindexed is True
+    assert store.operations["attempt-1"].status == "complete"
+
+
+def test_write_through_exception_is_sanitized_and_persists_no_secret():
+    request = _validate()
+    store = MemoryStore()
+    provider = FakeProvider(
+        None,
+        create_effects=[NativeSubtaskIdentity("child-uuid", "PRI-225", "Child")],
+        fetch_effects=[_parent(), _parent(subtask_ids=["child-uuid"])],
+    )
+
+    result = _run(
+        SubtaskService(store),
+        request,
+        provider,
+        write_effects=[RuntimeError("token=VERY_SECRET")],
+        sanitize=lambda _value: "safe callback failure",
+    )
+
+    persisted = store.operations["attempt-1"]
+    assert persisted.status == "board_complete"
+    assert result.status == "partial"
+    assert result.category == "reindex_pending"
+    assert result.warnings[-1] == "safe callback failure"
+    assert "VERY_SECRET" not in json.dumps(persisted.state)
+    assert "VERY_SECRET" not in json.dumps(result.payload())
+
+
+def test_callback_success_runs_under_parent_lock_after_board_complete_checkpoint():
+    request = _validate()
+    events = []
+    store = MemoryStore(events=events)
+    provider = FakeProvider(
+        None,
+        events=events,
+        create_effects=[NativeSubtaskIdentity("child-uuid", "PRI-225", "Child")],
+        fetch_effects=[_parent(), _parent(subtask_ids=["child-uuid"])],
+    )
+
+    def successful_callback(_parent_task, _identities):
+        assert store.lock_active is True
+        assert store.operations["attempt-1"].status == "board_complete"
+        return WriteThroughResult(True, ("safe callback warning",))
+
+    result = _run(
+        SubtaskService(store),
+        request,
+        provider,
+        write_effects=[successful_callback],
+    )
+
+    assert [snapshot.status for snapshot in store.checkpoint_snapshots[-2:]] == [
+        "board_complete",
+        "complete",
+    ]
+    assert result.status == "ok"
+    assert result.warnings[-1] == "safe callback warning"
+    assert result.reindexed is True
+
+
+def test_board_complete_replay_reads_current_parent_and_calls_only_write_through():
+    request = _validate()
+    operation = replace(_attached_operation(request), status="board_complete")
+    store = MemoryStore(operation)
+    current_parent = _parent(subtask_ids=["child-uuid"], timestamp=5)
+    provider = FakeProvider(None, fetch_effects=[current_parent])
+    write_calls = []
+
+    result = _run(
+        SubtaskService(store),
+        request,
+        provider,
+        operation=operation,
+        write_calls=write_calls,
+    )
+
+    assert provider.fetch_calls == ["parent-uuid"]
+    assert provider.reconcile_calls == []
+    assert provider.create_calls == []
+    assert provider.replace_calls == []
+    assert write_calls[0][0] == current_parent
+    assert tuple(identity.board_id for identity in write_calls[0][1]) == ("child-uuid",)
+    assert result.status == "ok"
+    assert result.resumed is True
+    assert result.created == result.attached
+
+
 def test_service_result_contracts_are_frozen_and_have_safe_payloads():
     child = SubtaskChildResult(
         index=0,
@@ -594,7 +1021,7 @@ def test_fresh_run_checkpoints_before_post_and_persists_created_identity():
 
     marker = marker_for("yougile", "parent-uuid", "attempt-1", 0, request.subtasks[0])
     input_hash = _input_hash(request.subtasks[0])
-    assert events[-4:] == [
+    assert events[1:5] == [
         ("checkpoint", "in_flight", 0),
         ("ensure_alive",),
         ("post", marker),
@@ -1199,7 +1626,7 @@ def test_run_reloads_incomplete_row_before_parent_fetch_after_stale_preflight():
 
     result = _run(service, request, provider)
 
-    assert provider.fetch_calls == []
+    assert provider.fetch_calls == ["parent-uuid", "parent-uuid"]
     assert provider.create_calls == []
     assert result.resumed is True
     assert result.created[0].board_id == "child-uuid"
@@ -1231,7 +1658,10 @@ def test_failed_parent_fetch_reloads_concurrent_progress_instead_of_not_found():
     class RacingProvider(FakeProvider):
         def fetch_one(self, key):
             self.fetch_calls.append(key)
-            store.operations[request.idempotency_key] = deepcopy(operation)
+            if len(self.fetch_calls) == 1:
+                store.operations[request.idempotency_key] = deepcopy(operation)
+                return None
+            return _parent()
 
     provider = RacingProvider(
         None,
@@ -1248,7 +1678,7 @@ def test_failed_parent_fetch_reloads_concurrent_progress_instead_of_not_found():
     assert result.category != "parent_not_found"
     assert result.resumed is True
     assert result.created[0].board_id == "child-uuid"
-    assert provider.fetch_calls == ["PRI-224"]
+    assert provider.fetch_calls == ["PRI-224", "parent-uuid", "parent-uuid"]
     assert provider.create_calls == []
 
 
@@ -1319,8 +1749,10 @@ def test_run_reloads_concurrent_conflict_without_provider_write_or_callback():
 
     assert result.category == "conflict"
     assert result.retryable is False
+    assert provider.fetch_calls == []
     assert provider.reconcile_calls == []
     assert provider.create_calls == []
+    assert provider.replace_calls == []
     assert write_calls == []
 
 
@@ -1346,6 +1778,7 @@ def test_run_replays_complete_operation_without_provider_or_callback():
     assert provider.fetch_calls == []
     assert provider.reconcile_calls == []
     assert provider.create_calls == []
+    assert provider.replace_calls == []
     assert write_calls == []
 
 

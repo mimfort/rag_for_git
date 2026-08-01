@@ -25,6 +25,17 @@ SubtaskPhase = Literal["pending", "in_flight", "created", "attached"]
 OperationStatus = Literal["running", "partial", "board_complete", "complete"]
 
 
+def merge_subtask_ids(existing: list[str], created: list[str]) -> list[str]:
+    """Merge board UUIDs in first-seen order, omitting empty values and duplicates."""
+    merged: list[str] = []
+    seen: set[str] = set()
+    for subtask_id in (*existing, *created):
+        if subtask_id and subtask_id not in seen:
+            seen.add(subtask_id)
+            merged.append(subtask_id)
+    return merged
+
+
 @dataclass(frozen=True)
 class SubtaskChildResult:
     index: int
@@ -151,6 +162,10 @@ def _result_from_operation(
         status: Literal["ok", "partial", "error"] = "ok"
         category = None
         retryable = None
+    elif operation.status == "board_complete":
+        status = "partial"
+        category = "reindex_pending"
+        retryable = True
     else:
         status = "partial"
         category = (
@@ -402,6 +417,51 @@ def _operation_with_item(
     return replace(operation, state=state, status=_operation_status(raw_items))
 
 
+def _operation_with_state(
+    operation: SubtaskOperation,
+    *,
+    status: OperationStatus | None = None,
+    warnings: tuple[str, ...] = (),
+    reindexed: bool | None = None,
+) -> SubtaskOperation:
+    state = deepcopy(operation.state)
+    persisted_warnings = state.setdefault("warnings", [])
+    if not isinstance(persisted_warnings, list):
+        raise LedgerUnavailableError("Ledger содержит некорректные warnings операции")
+    for warning in warnings:
+        if warning not in persisted_warnings:
+            persisted_warnings.append(warning)
+    if reindexed is not None:
+        state["reindexed"] = reindexed
+    return replace(operation, state=state, status=status or operation.status)
+
+
+def _confirmed_identities(
+    operation: SubtaskOperation,
+) -> tuple[NativeSubtaskIdentity, ...]:
+    identities: list[NativeSubtaskIdentity] = []
+    raw_items = operation.state.get("items")
+    if not isinstance(raw_items, list):
+        raise LedgerUnavailableError("Ledger содержит некорректные items")
+    for raw_item in raw_items:
+        child, warnings = _child_from_state(raw_item)
+        if child.phase not in ("created", "attached"):
+            continue
+        if child.board_id is None or child.key is None:
+            raise LedgerUnavailableError("Созданная подзадача не содержит identity")
+        identities.append(
+            NativeSubtaskIdentity(
+                board_id=child.board_id,
+                key=child.key,
+                title=child.title,
+                aliases=child.aliases,
+                url=child.url,
+                warnings=warnings,
+            )
+        )
+    return tuple(identities)
+
+
 def _fresh_operation(
     request: SubtaskRequest,
     *,
@@ -557,7 +617,19 @@ class SubtaskService:
         resumed = operation is not None
         fresh = None
         if operation is None:
-            parent = provider.fetch_one(request.parent_key)  # type: ignore[attr-defined]
+            try:
+                parent = provider.fetch_one(request.parent_key)  # type: ignore[attr-defined]
+            except Exception as error:  # noqa: BLE001 - provider boundary
+                return SubtaskBatchResult(
+                    status="partial",
+                    board_type=board_type,
+                    parent_key=request.parent_key,
+                    idempotency_key=request.idempotency_key,
+                    resumed=False,
+                    warnings=(_safe_warning(sanitize, error),),
+                    category="incomplete",
+                    retryable=True,
+                )
             if parent is None:
                 no_write_result = SubtaskBatchResult(
                     status="error",
@@ -663,93 +735,270 @@ class SubtaskService:
             if current.parent_task_id != parent_task_id or current.board_type != board_type:
                 raise LedgerUnavailableError("Операция загружена под другой parent lock")
 
-            raw_items = validated.items
-            in_flight: list[tuple[int, str]] = []
-            for index, item in enumerate(raw_items):
-                if _persisted_phase(item.get("phase")) == "in_flight":
-                    in_flight.append((index, item["marker"]))
+            parent_after_attachment: RawTask | None = None
+            if current.status != "board_complete":
+                raw_items = validated.items
+                in_flight: list[tuple[int, str]] = []
+                for index, item in enumerate(raw_items):
+                    if _persisted_phase(item.get("phase")) == "in_flight":
+                        in_flight.append((index, item["marker"]))
 
-            if in_flight:
-                markers = frozenset(marker for _, marker in in_flight)
-                grouped: dict[str, list[NativeSubtaskIdentity]] = {
-                    marker: [] for marker in markers
-                }
-                for match in provider.reconcile_native_subtasks(
-                    current.source_board_id,
-                    markers,
-                ):
-                    if match.marker in grouped:
-                        grouped[match.marker].append(match.identity)
+                if in_flight:
+                    markers = frozenset(marker for _, marker in in_flight)
+                    grouped: dict[str, list[NativeSubtaskIdentity]] = {
+                        marker: [] for marker in markers
+                    }
+                    try:
+                        reconciled = provider.reconcile_native_subtasks(
+                            current.source_board_id,
+                            markers,
+                        )
+                    except Exception as error:  # noqa: BLE001 - provider boundary
+                        warning = _safe_warning(sanitize, error)
+                        failed = _operation_with_state(current, warnings=(warning,))
+                        current = self._store.checkpoint(
+                            failed,
+                            expected_revision=current.revision,
+                        )
+                        return _result_from_operation(current, resumed=resumed)
+                    for match in reconciled:
+                        if match.marker in grouped:
+                            grouped[match.marker].append(match.identity)
 
-                for index, marker in in_flight:
-                    identities = grouped[marker]
-                    if len(identities) == 1:
-                        candidate = _operation_with_item(
-                            current,
-                            index,
-                            **_identity_changes(identities[0], sanitize),
+                    for index, marker in in_flight:
+                        identities = grouped[marker]
+                        if len(identities) == 1:
+                            candidate = _operation_with_item(
+                                current,
+                                index,
+                                **_identity_changes(identities[0], sanitize),
+                            )
+                        else:
+                            warning = (
+                                "multiple board cards contain the same idempotency marker"
+                                if identities
+                                else "board card with idempotency marker was not found; "
+                                "manual verification required"
+                            )
+                            candidate = _operation_with_item(
+                                current,
+                                index,
+                                manual_required=True,
+                                warnings=[_safe_warning(sanitize, warning)],
+                            )
+                        current = self._store.checkpoint(
+                            candidate,
+                            expected_revision=current.revision,
                         )
-                    else:
-                        warning = (
-                            "multiple board cards contain the same idempotency marker"
-                            if identities
-                            else "board card with idempotency marker was not found; "
-                            "manual verification required"
-                        )
-                        candidate = _operation_with_item(
-                            current,
-                            index,
-                            manual_required=True,
-                            warnings=[_safe_warning(sanitize, warning)],
-                        )
+
+                for index, draft in enumerate(validated.drafts):
+                    item = current.state["items"][index]
+                    if _persisted_phase(item.get("phase")) != "pending":
+                        continue
+                    doc_md = _render_child_doc(draft)
+                    in_flight_item = _operation_with_item(current, index, phase="in_flight")
                     current = self._store.checkpoint(
-                        candidate,
+                        in_flight_item,
+                        expected_revision=current.revision,
+                    )
+                    lock.ensure_alive()
+                    try:
+                        identity = provider.create_native_subtask(
+                            doc_md,
+                            title=draft.title,
+                            source_column_id=current.source_column_id,
+                            marker=item["marker"],
+                        )
+                    except Exception as error:  # noqa: BLE001 - provider boundary
+                        warning = _safe_warning(sanitize, error)
+                        failed = _operation_with_item(
+                            current,
+                            index,
+                            phase="in_flight",
+                            manual_required=True,
+                            warnings=[warning],
+                        )
+                        current = self._store.checkpoint(
+                            failed,
+                            expected_revision=current.revision,
+                        )
+                        continue
+                    identity_changes = _identity_changes(identity, sanitize)
+                    created = _operation_with_item(
+                        current,
+                        index,
+                        **identity_changes,
+                    )
+                    current = self._store.checkpoint(
+                        created,
                         expected_revision=current.revision,
                     )
 
-            for index, draft in enumerate(validated.drafts):
-                item = current.state["items"][index]
-                if _persisted_phase(item.get("phase")) != "pending":
-                    continue
-                doc_md = _render_child_doc(draft)
-                in_flight = _operation_with_item(current, index, phase="in_flight")
+                confirmed = _confirmed_identities(current)
+                if confirmed:
+                    try:
+                        parent_before_attachment = provider.fetch_one(  # type: ignore[attr-defined]
+                            current.parent_task_id
+                        )
+                    except Exception as error:  # noqa: BLE001 - provider boundary
+                        warning = _safe_warning(sanitize, error)
+                        failed = _operation_with_state(current, warnings=(warning,))
+                        current = self._store.checkpoint(
+                            failed,
+                            expected_revision=current.revision,
+                        )
+                        return _result_from_operation(current, resumed=resumed)
+                    if not isinstance(parent_before_attachment, RawTask):
+                        warning = _safe_warning(sanitize, "parent board state unavailable")
+                        failed = _operation_with_state(current, warnings=(warning,))
+                        current = self._store.checkpoint(
+                            failed,
+                            expected_revision=current.revision,
+                        )
+                        return _result_from_operation(current, resumed=resumed)
+
+                    confirmed_ids = [identity.board_id for identity in confirmed]
+                    exact_union = merge_subtask_ids(
+                        parent_before_attachment.subtask_ids,
+                        confirmed_ids,
+                    )
+                    if parent_before_attachment.subtask_ids != exact_union:
+                        lock.ensure_alive()
+                        try:
+                            provider.replace_native_subtasks(
+                                current.parent_task_id,
+                                exact_union,
+                            )
+                        except Exception as error:  # noqa: BLE001 - provider boundary
+                            warning = _safe_warning(sanitize, error)
+                            failed = _operation_with_state(current, warnings=(warning,))
+                            current = self._store.checkpoint(
+                                failed,
+                                expected_revision=current.revision,
+                            )
+                            return _result_from_operation(current, resumed=resumed)
+                        try:
+                            parent_after_attachment = provider.fetch_one(  # type: ignore[attr-defined]
+                                current.parent_task_id
+                            )
+                        except Exception as error:  # noqa: BLE001 - provider boundary
+                            warning = _safe_warning(sanitize, error)
+                            failed = _operation_with_state(current, warnings=(warning,))
+                            current = self._store.checkpoint(
+                                failed,
+                                expected_revision=current.revision,
+                            )
+                            return _result_from_operation(current, resumed=resumed)
+                        if not isinstance(parent_after_attachment, RawTask):
+                            warning = _safe_warning(
+                                sanitize,
+                                "parent attachment verification unavailable",
+                            )
+                            failed = _operation_with_state(current, warnings=(warning,))
+                            current = self._store.checkpoint(
+                                failed,
+                                expected_revision=current.revision,
+                            )
+                            return _result_from_operation(current, resumed=resumed)
+                    else:
+                        parent_after_attachment = parent_before_attachment
+
+                    attached_ids = frozenset(parent_after_attachment.subtask_ids)
+                    for index, item in enumerate(current.state["items"]):
+                        phase = _persisted_phase(item.get("phase"))
+                        if phase not in ("created", "attached"):
+                            continue
+                        desired_phase: SubtaskPhase = (
+                            "attached" if item.get("board_id") in attached_ids else "created"
+                        )
+                        if phase == desired_phase:
+                            continue
+                        changed = _operation_with_item(
+                            current,
+                            index,
+                            phase=desired_phase,
+                        )
+                        current = self._store.checkpoint(
+                            changed,
+                            expected_revision=current.revision,
+                        )
+
+                phases = {
+                    _persisted_phase(item.get("phase"))
+                    for item in current.state["items"]
+                }
+                if phases != {"attached"}:
+                    return _result_from_operation(current, resumed=resumed)
+                board_complete = _operation_with_state(
+                    current,
+                    status="board_complete",
+                    reindexed=False,
+                )
                 current = self._store.checkpoint(
-                    in_flight,
+                    board_complete,
                     expected_revision=current.revision,
                 )
-                lock.ensure_alive()
+
+            if parent_after_attachment is None:
                 try:
-                    identity = provider.create_native_subtask(
-                        doc_md,
-                        title=draft.title,
-                        source_column_id=current.source_column_id,
-                        marker=item["marker"],
+                    parent_after_attachment = provider.fetch_one(  # type: ignore[attr-defined]
+                        current.parent_task_id
                     )
                 except Exception as error:  # noqa: BLE001 - provider boundary
                     warning = _safe_warning(sanitize, error)
-                    failed = _operation_with_item(
-                        current,
-                        index,
-                        phase="in_flight",
-                        manual_required=True,
-                        warnings=[warning],
-                    )
+                    failed = _operation_with_state(current, warnings=(warning,))
                     current = self._store.checkpoint(
                         failed,
                         expected_revision=current.revision,
                     )
-                    continue
-                identity_changes = _identity_changes(identity, sanitize)
-                created = _operation_with_item(
-                    current,
-                    index,
-                    **identity_changes,
-                )
+                    return _result_from_operation(current, resumed=resumed)
+                if not isinstance(parent_after_attachment, RawTask):
+                    warning = _safe_warning(sanitize, "parent board state unavailable")
+                    failed = _operation_with_state(current, warnings=(warning,))
+                    current = self._store.checkpoint(
+                        failed,
+                        expected_revision=current.revision,
+                    )
+                    return _result_from_operation(current, resumed=resumed)
+
+            confirmed = _confirmed_identities(current)
+            try:
+                write_result = write_through(parent_after_attachment, confirmed)
+            except Exception as error:  # noqa: BLE001 - callback boundary
+                warning = _safe_warning(sanitize, error)
+                failed = _operation_with_state(current, warnings=(warning,), reindexed=False)
                 current = self._store.checkpoint(
-                    created,
+                    failed,
                     expected_revision=current.revision,
                 )
+                return _result_from_operation(current, resumed=resumed)
+            if not isinstance(write_result, WriteThroughResult):
+                raise LedgerUnavailableError("Write-through вернул некорректный результат")
+            callback_warnings = tuple(
+                _safe_warning(sanitize, warning) for warning in write_result.warnings
+            )
+            if not write_result.success:
+                pending_reindex = _operation_with_state(
+                    current,
+                    warnings=callback_warnings,
+                    reindexed=False,
+                )
+                current = self._store.checkpoint(
+                    pending_reindex,
+                    expected_revision=current.revision,
+                )
+                return _result_from_operation(current, resumed=resumed)
 
+            complete = _operation_with_state(
+                current,
+                status="complete",
+                warnings=callback_warnings,
+                reindexed=True,
+            )
+            current = self._store.checkpoint(
+                complete,
+                expected_revision=current.revision,
+            )
             return _result_from_operation(current, resumed=resumed)
 
 
