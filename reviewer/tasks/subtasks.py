@@ -733,6 +733,13 @@ class SubtaskService:
             return SubtaskPreflight(None, None)
         return _evaluate_loaded_operation(operation, request)
 
+    def recover_result(self, request: SubtaskRequest) -> SubtaskBatchResult | None:
+        operation = self._store.load(request.idempotency_key)
+        if operation is None:
+            return None
+        preflight = _evaluate_loaded_operation(operation, request)
+        return preflight.result or _result_from_operation(operation, resumed=True)
+
     def run(
         self,
         request: SubtaskRequest,

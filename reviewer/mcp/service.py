@@ -57,6 +57,7 @@ from reviewer.tasks.boards.runtime import resolved_provider
 from reviewer.tasks.graph import PRRef
 from reviewer.tasks.subtasks import (
     ConfirmedSubtaskIdentityError,
+    SubtaskBatchResult,
     WriteThroughResult,
     validate_confirmed_subtask_identities,
     validate_subtask_request,
@@ -690,9 +691,6 @@ class MCPReviewService:
             raise BoardProviderError(
                 "configuration", "Board provider type is not registered."
             ) from None
-        if resolved_type not in configured:
-            raise BoardProviderError("configuration", "Board provider is not configured.")
-
         default_project = defaults.get("project") if isinstance(defaults, dict) else None
         resolved_project = project if project is not None else default_project
         default_options = defaults.get("options", {}) if isinstance(defaults, dict) else {}
@@ -975,19 +973,42 @@ class MCPReviewService:
                 def sanitize(value: object) -> str:
                     return sanitize_provider_text(value, resolved.secrets)
 
-                result = self.components.subtask_service.run(
-                    request,
-                    operation=preflight.operation,
-                    provider=resolved.provider,
-                    board_type=resolved.board_type,
-                    write_through=lambda parent, identities: self._write_through_subtasks(
-                        resolved.provider,
-                        parent,
-                        identities,
-                        sanitize,
-                    ),
-                    sanitize=sanitize,
-                )
+                try:
+                    result = self.components.subtask_service.run(
+                        request,
+                        operation=preflight.operation,
+                        provider=resolved.provider,
+                        board_type=resolved.board_type,
+                        write_through=lambda parent, identities: self._write_through_subtasks(
+                            resolved.provider,
+                            parent,
+                            identities,
+                            sanitize,
+                        ),
+                        sanitize=sanitize,
+                    )
+                except BoardProviderError:
+                    raise
+                except Exception as error:  # noqa: BLE001 - durable recovery boundary
+                    warnings = [sanitize(error)]
+                    try:
+                        result = self.components.subtask_service.recover_result(request)
+                    except Exception as recovery_error:  # noqa: BLE001 - ledger boundary
+                        warnings.append(sanitize(recovery_error))
+                        result = None
+                    if result is None:
+                        result = SubtaskBatchResult(
+                            status="partial",
+                            board_type=request.board_type or resolved.board_type,
+                            parent_key=request.parent_key,
+                            idempotency_key=request.idempotency_key,
+                            resumed=False,
+                            category="unknown_outcome",
+                            retryable=True,
+                        )
+                    payload = result.payload()
+                    payload["warnings"] = [*payload.get("warnings", ()), *warnings]
+                    return self._safe_board_payload(payload, resolved.secrets)
                 return self._safe_board_payload(result.payload(), resolved.secrets)
         except BoardProviderError as error:
             return self._safe_board_payload(

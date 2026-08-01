@@ -4,6 +4,7 @@ from contextlib import contextmanager
 from copy import deepcopy
 from dataclasses import replace
 from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -11,6 +12,7 @@ from reviewer.config.provider_credentials import ProviderCredentialSource
 from reviewer.config.settings import Settings
 from reviewer.mcp.service import MCPReviewService
 from reviewer.tasks.boards.base import NativeSubtaskIdentity, RawTask
+from reviewer.tasks.boards.errors import BoardProviderError
 from reviewer.tasks.boards.registry import (
     BoardProviderRegistry,
     BoardProviderSpec,
@@ -19,6 +21,7 @@ from reviewer.tasks.boards.registry import (
     ProviderOptionSpec,
     ProviderSetupSpec,
 )
+from reviewer.tasks.subtask_store import OperationConflictError
 from reviewer.tasks.subtasks import (
     SubtaskBatchResult,
     SubtaskPreflight,
@@ -67,6 +70,7 @@ class _Lock:
 class _MemoryLedger:
     def __init__(self):
         self.operation = None
+        self.fail_complete_checkpoint_once = False
 
     def load(self, idempotency_key):
         if self.operation is None or self.operation.idempotency_key != idempotency_key:
@@ -79,6 +83,9 @@ class _MemoryLedger:
 
     def checkpoint(self, operation, *, expected_revision):
         assert self.operation.revision == expected_revision
+        if operation.status == "complete" and self.fail_complete_checkpoint_once:
+            self.fail_complete_checkpoint_once = False
+            raise OperationConflictError("complete checkpoint stale runtime-secret")
         state = deepcopy(operation.state)
         state["revision"] = expected_revision + 1
         self.operation = replace(operation, state=state)
@@ -289,6 +296,10 @@ def _create(service, **overrides):
     return service.create_subtasks(**values)
 
 
+def _drop_credentials(service):
+    service._board_credentials = ProviderCredentialSource(values={})
+
+
 class _PreflightOnly:
     def __init__(self, result):
         self.result = result
@@ -337,6 +348,72 @@ def test_terminal_preflight_returns_before_provider_factory(result):
     assert request.board_type == "fake"
     assert request.project == "PRI"
     assert request.provider_options == {"lane": "Backend"}
+
+
+@pytest.mark.parametrize("mode", ["explicit", "default"])
+def test_complete_replay_runs_durable_preflight_without_current_credentials(mode):
+    service, _, _, factory, state_machine = _service()
+    assert _create(service, board_type="fake")["status"] == "ok"
+    preflight = MagicMock(wraps=state_machine.preflight)
+    state_machine.preflight = preflight
+    _drop_credentials(service)
+    if mode == "default":
+        service.settings = SimpleNamespace(
+            task_board_default=lambda: {"type": "fake"},
+        )
+
+    out = _create(service, board_type="fake" if mode == "explicit" else None)
+
+    assert out["status"] == "ok"
+    assert out["reindexed"] is True
+    preflight.assert_called_once()
+    assert factory.calls == 1
+
+
+def test_hash_conflict_runs_durable_preflight_without_current_credentials():
+    service, _, _, factory, state_machine = _service()
+    assert _create(service, board_type="fake")["status"] == "ok"
+    preflight = MagicMock(wraps=state_machine.preflight)
+    state_machine.preflight = preflight
+    _drop_credentials(service)
+    changed = {**SUBTASK, "problem": "Другой payload"}
+
+    out = _create(service, board_type="fake", subtasks=[changed])
+
+    assert out["status"] == "error"
+    assert out["category"] == "conflict"
+    preflight.assert_called_once()
+    assert factory.calls == 1
+
+
+def test_new_operation_without_credentials_fails_configuration_before_board_write():
+    service, provider, _, factory, state_machine = _service()
+    _drop_credentials(service)
+
+    out = _create(service, board_type="fake")
+
+    assert out["status"] == "error"
+    assert out["category"] == "configuration"
+    assert provider.board_writes == 0
+    assert factory.calls == 0
+    assert state_machine._store.operation is None
+
+
+def test_incomplete_operation_without_credentials_cannot_resume_board_work():
+    service, provider, _, factory, state_machine = _service()
+    provider.missing_child = True
+    first = _create(service, board_type="fake")
+    assert first["category"] == "reindex_pending"
+    writes = provider.board_writes
+    _drop_credentials(service)
+
+    out = _create(service, board_type="fake")
+
+    assert out["status"] == "error"
+    assert out["category"] == "configuration"
+    assert state_machine._store.operation.status == "board_complete"
+    assert provider.board_writes == writes
+    assert factory.calls == 1
 
 
 def test_unsupported_registry_capability_does_not_write_and_closes_provider():
@@ -780,14 +857,87 @@ class _ExplodingSubtaskService:
     def run(self, *args, **kwargs):
         raise RuntimeError("state machine exploded runtime-secret")
 
+    def recover_result(self, request):
+        return None
 
-def test_state_machine_exception_returns_safe_error_and_closes_provider():
+
+def test_consumer_exception_before_durable_row_returns_unknown_outcome():
     service, provider, _, _, _ = _service(
         subtask_service=_ExplodingSubtaskService()
     )
 
     out = _create(service)
 
+    assert out["status"] == "partial"
+    assert out["category"] == "unknown_outcome"
+    assert out["retryable"] is True
+    assert out["board_type"] == "fake"
+    assert out["parent_key"] == "PRI-224"
+    assert out["idempotency_key"] == "attempt-1"
+    assert "runtime-secret" not in repr(out)
+    assert out["category"] != "unsupported"
+    assert provider.closed == 1
+
+
+class _ReloadFailingSubtaskService(_ExplodingSubtaskService):
+    def recover_result(self, request):
+        raise RuntimeError("durable reload failed runtime-secret")
+
+
+def test_durable_reload_failure_returns_safe_unknown_outcome():
+    service, provider, _, _, _ = _service(
+        subtask_service=_ReloadFailingSubtaskService()
+    )
+
+    out = _create(service, board_type="fake")
+
+    assert out["status"] == "partial"
+    assert out["category"] == "unknown_outcome"
+    assert out["retryable"] is True
+    assert "runtime-secret" not in repr(out)
+    assert out["category"] != "unsupported"
+    assert provider.closed == 1
+
+
+class _BoardExplodingSubtaskService(_ExplodingSubtaskService):
+    def run(self, *args, **kwargs):
+        raise BoardProviderError(
+            "authentication",
+            "state machine rejected runtime-secret",
+            retryable=False,
+        )
+
+
+def test_explicit_board_error_from_state_machine_preserves_category():
+    service, provider, _, _, _ = _service(
+        subtask_service=_BoardExplodingSubtaskService()
+    )
+
+    out = _create(service)
+
     assert out["status"] == "error"
+    assert out["category"] == "authentication"
+    assert out["retryable"] is False
     assert "runtime-secret" not in repr(out)
     assert provider.closed == 1
+
+
+def test_complete_checkpoint_cas_failure_recovers_board_complete_and_retry_finishes():
+    service, provider, _, _, state_machine = _service()
+    state_machine._store.fail_complete_checkpoint_once = True
+
+    first = _create(service, board_type="fake")
+
+    assert first["status"] == "partial"
+    assert first["category"] == "reindex_pending"
+    assert first["retryable"] is True
+    assert state_machine._store.operation.status == "board_complete"
+    assert "runtime-secret" not in repr(first)
+    writes = provider.board_writes
+
+    second = _create(service, board_type="fake")
+
+    assert second["status"] == "ok"
+    assert second["reindexed"] is True
+    assert state_machine._store.operation.status == "complete"
+    assert provider.board_writes == writes

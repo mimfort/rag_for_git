@@ -1547,6 +1547,20 @@ def test_preflight_distinguishes_missing_conflict_incomplete_and_complete_operat
     assert replay.result.reindexed is True
 
 
+def test_recover_result_reconstructs_current_incomplete_operation_without_provider():
+    request = _validate()
+    operation = _board_complete_operation(request)
+    service = SubtaskService(MemoryStore(operation))
+
+    result = service.recover_result(request)
+
+    assert result is not None
+    assert result.status == "partial"
+    assert result.category == "reindex_pending"
+    assert result.retryable is True
+    assert result.reindexed is False
+
+
 def test_fresh_run_checkpoints_before_post_and_persists_created_identity():
     request = _validate()
     events = []
