@@ -226,6 +226,10 @@ def test_reconcile_scans_every_board_column_and_page_and_returns_duplicates():
 
 
 def test_reconcile_matches_markers_only_in_visible_description_text():
+    href_only = _child(
+        "child-href", "ID-2100", "PRI-2100", MARKER, title="Href child"
+    )
+    href_only["description"] = f'<a href="https://example.test/{MARKER}">Ссылка</a>'
     attribute_only = _child(
         "child-attribute", "ID-2101", "PRI-2101", MARKER, title="Attribute child"
     )
@@ -234,16 +238,51 @@ def test_reconcile_matches_markers_only_in_visible_description_text():
         "child-comment", "ID-2102", "PRI-2102", MARKER, title="Comment child"
     )
     comment_only["description"] = f"<!-- {MARKER} --><p>Обычный текст</p>"
-    visible = _child(
-        "child-visible", "ID-2103", "PRI-2103", MARKER, title="Visible child"
+    script_only = _child(
+        "child-script", "ID-2103", "PRI-2103", MARKER, title="Script child"
     )
+    script_only["description"] = f"<script>{MARKER}</script><p>Обычный текст</p>"
+    style_only = _child(
+        "child-style", "ID-2104", "PRI-2104", MARKER, title="Style child"
+    )
+    style_only["description"] = f"<style>.x{{content:'{MARKER}'}}</style><p>Текст</p>"
+    malformed_attribute = _child(
+        "child-malformed", "ID-2108", "PRI-2108", MARKER, title="Malformed child"
+    )
+    malformed_attribute["description"] = f'<a href="https://example.test/{MARKER}"'
+    visible_anchor = _child(
+        "child-visible-anchor", "ID-2105", "PRI-2105", MARKER, title="Anchor child"
+    )
+    visible_anchor["description"] = (
+        f'<a href="https://example.test/task">{MARKER}</a>'
+    )
+    visible_small = _child(
+        "child-visible-small", "ID-2106", "PRI-2106", MARKER, title="Small child"
+    )
+    lookalike = _child(
+        "child-lookalike", "ID-2107", "PRI-2107", MARKER, title="Lookalike child"
+    )
+    lookalike["description"] = "<small>reviewer-subtask:not-a-hash</small>"
     provider, _ = build(state=State(tasks_by_column={
-        "done-id": [attribute_only, comment_only, visible],
+        "done-id": [
+            href_only,
+            attribute_only,
+            comment_only,
+            script_only,
+            style_only,
+            malformed_attribute,
+            visible_anchor,
+            visible_small,
+            lookalike,
+        ],
     }))
 
     found = provider.reconcile_native_subtasks("board-1", frozenset({MARKER}))
 
-    assert [item.identity.board_id for item in found] == ["child-visible"]
+    assert [item.identity.board_id for item in found] == [
+        "child-visible-anchor",
+        "child-visible-small",
+    ]
 
 
 def test_reconcile_scopes_task_scanning_to_source_board_columns():

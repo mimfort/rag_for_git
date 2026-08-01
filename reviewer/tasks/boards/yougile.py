@@ -13,6 +13,7 @@ import html
 import logging
 import re
 from collections.abc import Iterable
+from html.parser import HTMLParser
 from typing import Any
 from urllib.parse import quote, unquote, urlsplit
 
@@ -132,6 +133,56 @@ def _yougile_code(value: object) -> str:
     """Вернуть только строковый код YouGile вида PREFIX-N."""
     code = value.strip() if isinstance(value, str) else ""
     return code if project_prefix(code) else ""
+
+
+class _VisibleTextParser(HTMLParser):
+    """Текстовые узлы HTML без атрибутов, комментариев и script/style."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=False)
+        self._hidden_depth = 0
+        self._malformed = False
+        self._parts: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list) -> None:
+        if tag in {"script", "style"}:
+            self._hidden_depth += 1
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag in {"script", "style"} and self._hidden_depth:
+            self._hidden_depth -= 1
+
+    def handle_data(self, data: str) -> None:
+        if self._hidden_depth:
+            return
+        if "<" in data:
+            self._malformed = True
+            return
+        self._parts.append(data)
+
+    def handle_entityref(self, name: str) -> None:
+        if not self._hidden_depth:
+            self._parts.append(html.unescape(f"&{name};"))
+
+    def handle_charref(self, name: str) -> None:
+        if not self._hidden_depth:
+            self._parts.append(html.unescape(f"&#{name};"))
+
+    def text(self) -> str:
+        return "" if self._malformed else "".join(self._parts)
+
+
+def _visible_description_text(description: object) -> str:
+    if not isinstance(description, str):
+        return ""
+    parser = _VisibleTextParser()
+    try:
+        parser.feed(description)
+        parser.close()
+    except Exception:
+        log.warning("yougile: не удалось разобрать видимый текст описания", exc_info=True)
+        return ""
+    return parser.text()
 
 
 def normalize_yougile(
@@ -539,7 +590,9 @@ class YougileBoard:
         for column in columns:
             for task in self._get_all("/tasks", {"columnId": column["id"]}):
                 matched = markers.intersection(
-                    SUBTASK_MARKER_RE.findall(html_to_md(task.get("description") or ""))
+                    SUBTASK_MARKER_RE.findall(
+                        _visible_description_text(task.get("description"))
+                    )
                 )
                 if not matched:
                     continue
