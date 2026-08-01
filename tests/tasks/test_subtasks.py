@@ -9,6 +9,7 @@ from typing import get_args
 
 import pytest
 
+import reviewer.tasks.subtasks as subtasks_module
 from reviewer.tasks.boards.base import (
     NativeSubtaskIdentity,
     RawTask,
@@ -59,6 +60,17 @@ def _validate(**overrides):
 def _input_hash(draft):
     canonical = json.dumps(
         draft.payload(),
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        allow_nan=False,
+    )
+    return hashlib.sha256(canonical.encode()).hexdigest()
+
+
+def _request_payload_hash(payload):
+    canonical = json.dumps(
+        payload,
         sort_keys=True,
         separators=(",", ":"),
         ensure_ascii=False,
@@ -251,36 +263,46 @@ def _operation(request=None, *, status="running", request_hash=None, state=None)
     )
 
 
+def _pending_operation(request=None):
+    request = request or _validate()
+    items = []
+    for index, draft in enumerate(request.subtasks):
+        items.append(
+            {
+                "index": index,
+                "title": draft.title,
+                "input_hash": _input_hash(draft),
+                "marker": marker_for(
+                    "yougile",
+                    "parent-uuid",
+                    request.idempotency_key,
+                    index,
+                    draft,
+                ),
+                "phase": "pending",
+                "key": None,
+                "aliases": [],
+                "board_id": None,
+                "url": None,
+                "manual_required": False,
+                "warnings": [],
+            }
+        )
+    return _operation(request, state={"revision": 0, "items": items})
+
+
 def _in_flight_operation(request=None, *, revision=0, manual_required=False, warnings=None):
     request = request or _validate()
-    marker = marker_for(
-        "yougile",
-        "parent-uuid",
-        request.idempotency_key,
-        0,
-        request.subtasks[0],
+    operation = _pending_operation(request)
+    operation.state["revision"] = revision
+    operation.state["items"][0].update(
+        {
+            "phase": "in_flight",
+            "manual_required": manual_required,
+            "warnings": list(warnings or []),
+        }
     )
-    return _operation(
-        request,
-        state={
-            "revision": revision,
-            "items": [
-                {
-                    "index": 0,
-                    "title": request.subtasks[0].title,
-                    "input_hash": _input_hash(request.subtasks[0]),
-                    "marker": marker,
-                    "phase": "in_flight",
-                    "key": None,
-                    "aliases": [],
-                    "board_id": None,
-                    "url": None,
-                    "manual_required": manual_required,
-                    "warnings": list(warnings or []),
-                }
-            ],
-        },
-    )
+    return replace(operation, status="partial")
 
 
 def _attached_operation(request=None):
@@ -297,6 +319,93 @@ def _attached_operation(request=None):
         }
     )
     return replace(operation, status="complete")
+
+
+def _malformed_operation(request, case):
+    operation = _pending_operation(request)
+    state = deepcopy(operation.state)
+    payload = deepcopy(operation.request_payload)
+    items = state["items"]
+
+    def created(item, *, phase="created"):
+        item.update(
+            {
+                "phase": phase,
+                "key": "PRI-225",
+                "aliases": [],
+                "board_id": "child-uuid",
+                "url": None,
+            }
+        )
+
+    if case == "state_not_object":
+        return replace(operation, state=[])
+    if case == "request_payload_not_object":
+        return replace(operation, request_payload=[])
+    if case == "revision_negative":
+        state["revision"] = -1
+    elif case == "revision_bool":
+        state["revision"] = True
+    elif case == "items_not_list":
+        state["items"] = {}
+    elif case == "item_count":
+        items.pop()
+    elif case == "duplicate_indices":
+        items[1]["index"] = 0
+    elif case == "wrong_title":
+        items[0]["title"] = "Другой заголовок"
+    elif case == "wrong_input_hash":
+        items[0]["input_hash"] = "f" * 64
+    elif case == "wrong_marker":
+        items[0]["marker"] = "reviewer-subtask:" + "f" * 64
+    elif case == "invalid_phase":
+        items[0]["phase"] = "unknown"
+    elif case == "invalid_manual":
+        items[0]["manual_required"] = "yes"
+    elif case == "invalid_warnings":
+        items[0]["warnings"] = [object()]
+    elif case == "pending_identity":
+        items[0]["board_id"] = "possible-side-effect"
+    elif case == "created_without_board_id":
+        created(items[0])
+        items[0]["board_id"] = ""
+        operation = replace(operation, status="partial")
+    elif case == "attached_without_key":
+        created(items[0], phase="attached")
+        items[0]["key"] = None
+        operation = replace(operation, status="partial")
+    elif case == "invalid_aliases":
+        created(items[0])
+        items[0]["aliases"] = [1]
+        operation = replace(operation, status="partial")
+    elif case == "blank_alias":
+        created(items[0])
+        items[0]["aliases"] = ["  "]
+        operation = replace(operation, status="partial")
+    elif case == "invalid_url":
+        created(items[0])
+        items[0]["url"] = 42
+        operation = replace(operation, status="partial")
+    elif case == "invalid_status":
+        operation = replace(operation, status="mystery")
+    elif case == "running_in_flight":
+        items[0]["phase"] = "in_flight"
+    elif case == "complete_pending":
+        operation = replace(operation, status="complete")
+    elif case == "board_complete_created":
+        for item in items:
+            created(item)
+        operation = replace(operation, status="board_complete")
+    elif case == "request_subtasks_not_list":
+        payload["subtasks"] = {}
+    elif case == "request_hash_mismatch":
+        operation = replace(operation, request_hash="f" * 64)
+    elif case == "board_type_mismatch":
+        payload["board_type"] = "other"
+        operation = replace(operation, request_hash=_request_payload_hash(payload))
+    else:
+        raise AssertionError(f"unknown malformed case: {case}")
+    return replace(operation, state=state, request_payload=payload)
 
 
 def test_contract_constants_and_literal_values():
@@ -368,7 +477,7 @@ def test_preflight_distinguishes_missing_conflict_incomplete_and_complete_operat
 
     assert service.preflight(request) == SubtaskPreflight(None, None)
 
-    conflicting = _operation(request, request_hash="another-hash")
+    conflicting = _pending_operation(_validate(parent_key="PRI-999"))
     conflict = SubtaskService(MemoryStore(conflicting)).preflight(request)
     assert conflict.operation == conflicting
     assert conflict.result is not None
@@ -377,7 +486,7 @@ def test_preflight_distinguishes_missing_conflict_incomplete_and_complete_operat
     assert conflict.result.category == "conflict"
     assert conflict.result.retryable is False
 
-    incomplete = _operation(request)
+    incomplete = _pending_operation(request)
     assert SubtaskService(MemoryStore(incomplete)).preflight(request) == SubtaskPreflight(
         incomplete,
         None,
@@ -489,7 +598,7 @@ def test_fresh_run_checkpoints_before_post_and_persists_created_identity():
     assert persisted.status == "partial"
     assert persisted.state["items"][0] == {
         "index": 0,
-        "title": "Канонический заголовок доски",
+        "title": "Дочерняя задача",
         "input_hash": input_hash,
         "marker": marker,
         "phase": "created",
@@ -507,7 +616,7 @@ def test_fresh_run_checkpoints_before_post_and_persists_created_identity():
     assert result.created == (
         SubtaskChildResult(
             index=0,
-            title="Канонический заголовок доски",
+            title="Дочерняя задача",
             key="PRI-225",
             aliases=("TASK-2",),
             board_id="child-uuid",
@@ -544,13 +653,11 @@ def test_persisted_in_flight_item_reconciles_unique_identity_without_post():
     assert provider.create_calls == []
     assert store.operations["attempt-1"].revision == 4
     assert store.operations["attempt-1"].state["items"][0]["board_id"] == "child-uuid"
-    assert store.operations["attempt-1"].state["items"][0]["title"] == (
-        "Канонический заголовок доски"
-    )
+    assert store.operations["attempt-1"].state["items"][0]["title"] == "Дочерняя задача"
     assert result.status == "partial"
     assert result.resumed is True
     assert result.created[0].key == "PRI-225"
-    assert result.created[0].title == "Канонический заголовок доски"
+    assert result.created[0].title == "Дочерняя задача"
     assert result.unattached == result.created
 
 
@@ -643,6 +750,120 @@ def test_committed_then_timeout_reconciles_on_retry_with_only_one_total_post():
     assert second.status == "partial"
     assert second.created[0].board_id == "child-uuid"
     assert second.unattached == second.created
+
+
+def test_render_failure_happens_before_in_flight_checkpoint_and_post(monkeypatch):
+    request = _validate()
+    store = MemoryStore()
+    provider = FakeProvider(
+        _parent(),
+        create_effects=[NativeSubtaskIdentity("child-1", "PRI-225", "Child")],
+    )
+
+    def fail_render(_doc):
+        raise ValueError("invalid canonical doc")
+
+    monkeypatch.setattr(subtasks_module, "render_markdown", fail_render)
+
+    with pytest.raises(ValueError, match="invalid canonical doc"):
+        _run(SubtaskService(store), request, provider)
+
+    persisted = store.operations["attempt-1"]
+    assert persisted.revision == 0
+    assert persisted.state["items"][0]["phase"] == "pending"
+    assert provider.create_calls == []
+
+
+def test_identity_warning_sanitizer_failure_stays_in_flight_and_never_reposts():
+    request = _validate()
+    identity = NativeSubtaskIdentity(
+        "child-uuid",
+        "PRI-225",
+        "Child",
+        warnings=("token=VERY_SECRET",),
+    )
+    provider = FakeProvider(_parent(), create_effects=[identity])
+    store = MemoryStore()
+    service = SubtaskService(store)
+    sanitize_calls = []
+
+    def fail_sanitize(value):
+        sanitize_calls.append(value)
+        raise RuntimeError("sanitizer failed")
+
+    with pytest.raises(RuntimeError, match="sanitizer failed"):
+        _run(service, request, provider, sanitize=fail_sanitize)
+
+    persisted = deepcopy(store.operations["attempt-1"])
+    assert len(sanitize_calls) == 1
+    assert persisted.revision == 1
+    assert persisted.state["items"][0]["phase"] == "in_flight"
+    assert persisted.state["items"][0]["warnings"] == []
+    assert "VERY_SECRET" not in json.dumps(persisted.state)
+
+    marker = persisted.state["items"][0]["marker"]
+    provider.reconciled = [
+        ReconciledNativeSubtask(
+            marker,
+            NativeSubtaskIdentity("child-uuid", "PRI-225", "Child"),
+        )
+    ]
+    resumed = service.preflight(request).operation
+    result = _run(service, request, provider, operation=resumed)
+
+    assert len(provider.create_calls) == 1
+    assert result.created[0].board_id == "child-uuid"
+
+
+def test_provider_error_sanitizer_failure_is_called_once_and_persists_no_secret():
+    request = _validate()
+    provider = FakeProvider(
+        _parent(),
+        create_effects=[RuntimeError("password=VERY_SECRET")],
+    )
+    store = MemoryStore()
+    service = SubtaskService(store)
+    sanitize_calls = []
+
+    def fail_sanitize(value):
+        sanitize_calls.append(value)
+        raise RuntimeError("sanitizer unavailable")
+
+    with pytest.raises(RuntimeError, match="sanitizer unavailable"):
+        _run(service, request, provider, sanitize=fail_sanitize)
+
+    persisted = store.operations["attempt-1"]
+    assert len(sanitize_calls) == 1
+    assert persisted.revision == 1
+    assert persisted.state["items"][0]["phase"] == "in_flight"
+    assert persisted.state["items"][0]["warnings"] == []
+    assert "VERY_SECRET" not in json.dumps(persisted.state)
+
+    resumed = service.preflight(request).operation
+    result = _run(service, request, provider, operation=resumed)
+    assert result.pending[0].manual_required is True
+    assert len(provider.create_calls) == 1
+
+
+def test_invalid_returned_identity_propagates_without_persisting_provider_data():
+    request = _validate()
+    provider = FakeProvider(_parent(), create_effects=[object()])
+    store = MemoryStore()
+    service = SubtaskService(store)
+
+    with pytest.raises(LedgerUnavailableError, match="identity"):
+        _run(service, request, provider)
+
+    persisted = store.operations["attempt-1"]
+    assert persisted.revision == 1
+    assert persisted.state["items"][0]["phase"] == "in_flight"
+    assert persisted.state["items"][0]["warnings"] == []
+    assert len(provider.create_calls) == 1
+
+    resumed = service.preflight(request).operation
+    result = _run(service, request, provider, operation=resumed)
+    assert result.pending[0].manual_required is True
+    assert len(provider.create_calls) == 1
 
 
 def test_multi_child_failure_is_sanitized_and_later_child_still_completes():
@@ -774,6 +995,83 @@ def test_stale_checkpoint_propagates_without_lock_health_check_or_post():
     assert provider.create_calls == []
 
 
+@pytest.mark.parametrize(
+    "case",
+    [
+        "state_not_object",
+        "request_payload_not_object",
+        "revision_negative",
+        "revision_bool",
+        "items_not_list",
+        "item_count",
+        "duplicate_indices",
+        "wrong_title",
+        "wrong_input_hash",
+        "wrong_marker",
+        "invalid_phase",
+        "invalid_manual",
+        "invalid_warnings",
+        "pending_identity",
+        "created_without_board_id",
+        "attached_without_key",
+        "invalid_aliases",
+        "blank_alias",
+        "invalid_url",
+        "invalid_status",
+        "running_in_flight",
+        "complete_pending",
+        "board_complete_created",
+        "request_subtasks_not_list",
+        "request_hash_mismatch",
+        "board_type_mismatch",
+    ],
+)
+def test_malformed_persisted_operation_fails_closed_before_provider_or_callback(case):
+    request = _validate(subtasks=[CHILD, {**CHILD, "title": "Вторая задача"}])
+    operation = _malformed_operation(request, case)
+    store = MemoryStore(operation)
+    provider = FakeProvider(
+        _parent(),
+        create_effects=[
+            NativeSubtaskIdentity("child-1", "PRI-225", "Первая"),
+            NativeSubtaskIdentity("child-2", "PRI-226", "Вторая"),
+        ],
+    )
+    write_calls = []
+
+    with pytest.raises(LedgerUnavailableError):
+        _run(
+            SubtaskService(store),
+            request,
+            provider,
+            operation=operation,
+            write_calls=write_calls,
+        )
+
+    assert provider.fetch_calls == []
+    assert provider.reconcile_calls == []
+    assert provider.create_calls == []
+    assert write_calls == []
+
+
+def test_validator_ignores_safe_unknown_additive_ledger_fields():
+    request = _validate()
+    operation = _pending_operation(request)
+    operation.state["future_state"] = {"version": 2}
+    operation.state["items"][0]["future_item"] = ["safe"]
+    operation.request_payload["future_payload"] = {"enabled": True}
+    operation = replace(
+        operation,
+        request_hash=_request_payload_hash(operation.request_payload),
+    )
+
+    preflight = SubtaskService(MemoryStore(operation)).preflight(request)
+
+    assert preflight.operation == operation
+    assert preflight.result is not None
+    assert preflight.result.category == "conflict"
+
+
 def test_incomplete_ledger_with_missing_item_fails_closed_without_post():
     request = _validate()
     operation = _operation(request, state={"revision": 2, "items": []})
@@ -842,6 +1140,101 @@ def test_missing_parent_is_deterministic_nonretryable_error():
     assert provider.create_calls == []
 
 
+def test_run_reloads_incomplete_row_before_parent_fetch_after_stale_preflight():
+    request = _validate()
+    store = MemoryStore()
+    service = SubtaskService(store)
+    assert service.preflight(request) == SubtaskPreflight(None, None)
+
+    operation = _in_flight_operation(request)
+    marker = operation.state["items"][0]["marker"]
+    store.operations[request.idempotency_key] = deepcopy(operation)
+    provider = FakeProvider(
+        _parent(),
+        reconciled=[
+            ReconciledNativeSubtask(
+                marker,
+                NativeSubtaskIdentity("child-uuid", "PRI-225", "Child"),
+            )
+        ],
+    )
+
+    result = _run(service, request, provider)
+
+    assert provider.fetch_calls == []
+    assert provider.create_calls == []
+    assert result.resumed is True
+    assert result.created[0].board_id == "child-uuid"
+
+
+def test_run_replays_row_completed_after_stale_preflight_without_parent_fetch():
+    request = _validate()
+    store = MemoryStore()
+    service = SubtaskService(store)
+    assert service.preflight(request) == SubtaskPreflight(None, None)
+
+    store.operations[request.idempotency_key] = _attached_operation(request)
+    provider = FakeProvider(None)
+
+    result = _run(service, request, provider)
+
+    assert result.status == "ok"
+    assert result.resumed is True
+    assert provider.fetch_calls == []
+    assert provider.create_calls == []
+
+
+def test_failed_parent_fetch_reloads_concurrent_progress_instead_of_not_found():
+    request = _validate()
+    operation = _in_flight_operation(request)
+    marker = operation.state["items"][0]["marker"]
+    store = MemoryStore()
+
+    class RacingProvider(FakeProvider):
+        def fetch_one(self, key):
+            self.fetch_calls.append(key)
+            store.operations[request.idempotency_key] = deepcopy(operation)
+
+    provider = RacingProvider(
+        None,
+        reconciled=[
+            ReconciledNativeSubtask(
+                marker,
+                NativeSubtaskIdentity("child-uuid", "PRI-225", "Child"),
+            )
+        ],
+    )
+
+    result = _run(SubtaskService(store), request, provider)
+
+    assert result.category != "parent_not_found"
+    assert result.resumed is True
+    assert result.created[0].board_id == "child-uuid"
+    assert provider.fetch_calls == ["PRI-224"]
+    assert provider.create_calls == []
+
+
+def test_invalid_source_metadata_reloads_concurrent_complete_row_before_error():
+    request = _validate()
+    complete = _attached_operation(request)
+    store = MemoryStore()
+
+    class RacingProvider(FakeProvider):
+        def fetch_one(self, key):
+            self.fetch_calls.append(key)
+            store.operations[request.idempotency_key] = deepcopy(complete)
+            return _parent(provider_data=None)
+
+    provider = RacingProvider(None)
+
+    result = _run(SubtaskService(store), request, provider)
+
+    assert result.status == "ok"
+    assert result.category is None
+    assert provider.fetch_calls == ["PRI-224"]
+    assert provider.create_calls == []
+
+
 @pytest.mark.parametrize(
     "parent",
     [
@@ -874,7 +1267,7 @@ def test_missing_required_source_identity_fails_before_ledger_or_child_write(par
 
 def test_run_reloads_concurrent_conflict_without_provider_write_or_callback():
     request = _validate()
-    conflicting = _operation(request, request_hash="different")
+    conflicting = _pending_operation(_validate(parent_key="PRI-999"))
     store = MemoryStore(conflicting)
     provider = FakeProvider(_parent())
     write_calls = []

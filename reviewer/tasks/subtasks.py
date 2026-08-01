@@ -69,6 +69,12 @@ class SubtaskPreflight:
     result: SubtaskBatchResult | None
 
 
+@dataclass(frozen=True)
+class _ValidatedOperation:
+    drafts: tuple[SubtaskDraft, ...]
+    items: tuple[dict[str, Any], ...]
+
+
 def _persisted_phase(value: object) -> SubtaskPhase:
     if value not in ("pending", "in_flight", "created", "attached"):
         raise LedgerUnavailableError("Ledger содержит неизвестную фазу подзадачи")
@@ -119,17 +125,16 @@ def _result_from_operation(
     operation: SubtaskOperation,
     *,
     resumed: bool,
+    validated: _ValidatedOperation | None = None,
 ) -> SubtaskBatchResult:
-    raw_items = operation.state.get("items", [])
-    if not isinstance(raw_items, list):
-        raise LedgerUnavailableError("Ledger содержит некорректный список подзадач")
+    validated = validated or _validate_persisted_operation(operation)
 
     created: list[SubtaskChildResult] = []
     attached: list[SubtaskChildResult] = []
     unattached: list[SubtaskChildResult] = []
     pending: list[SubtaskChildResult] = []
     warnings: list[str] = []
-    for raw_item in raw_items:
+    for raw_item in validated.items:
         child, child_warnings = _child_from_state(raw_item)
         warnings.extend(child_warnings)
         if child.phase == "created":
@@ -187,20 +192,119 @@ def _draft_input_hash(draft: SubtaskDraft) -> str:
     return hashlib.sha256(_canonical_json(draft.payload()).encode("utf-8")).hexdigest()
 
 
-def _validated_items(
-    operation: SubtaskOperation,
-    request: SubtaskRequest,
-) -> list[dict[str, Any]]:
-    raw_items = operation.state.get("items")
-    if not isinstance(raw_items, list):
-        raise LedgerUnavailableError("Ledger содержит некорректный список подзадач")
-    if len(raw_items) != len(request.subtasks):
+def _persisted_draft(value: object) -> SubtaskDraft:
+    if not isinstance(value, dict):
+        raise LedgerUnavailableError("Ledger содержит некорректный draft подзадачи")
+    title = value.get("title")
+    problem = value.get("problem")
+    steps = value.get("steps")
+    criteria = value.get("criteria")
+    context = value.get("context")
+    if not isinstance(title, str) or not title or title != title.strip():
+        raise LedgerUnavailableError("Ledger содержит некорректный title draft")
+    if not isinstance(problem, str) or not problem or problem != problem.strip():
+        raise LedgerUnavailableError("Ledger содержит некорректный problem draft")
+    if (
+        not isinstance(steps, list)
+        or not steps
+        or not all(isinstance(item, str) and item and item == item.strip() for item in steps)
+    ):
+        raise LedgerUnavailableError("Ledger содержит некорректные steps draft")
+    if (
+        not isinstance(criteria, list)
+        or not criteria
+        or not all(
+            isinstance(item, str) and item and item == item.strip() for item in criteria
+        )
+    ):
+        raise LedgerUnavailableError("Ledger содержит некорректные criteria draft")
+    if context is not None and (
+        not isinstance(context, str) or not context or context != context.strip()
+    ):
+        raise LedgerUnavailableError("Ledger содержит некорректный context draft")
+    return SubtaskDraft(
+        title=title,
+        problem=problem,
+        steps=tuple(steps),
+        criteria=tuple(criteria),
+        context=context,
+    )
+
+
+def _usable_identity_text(value: object) -> bool:
+    return isinstance(value, str) and bool(value.strip())
+
+
+def _validate_persisted_operation(operation: SubtaskOperation) -> _ValidatedOperation:
+    state = operation.state
+    payload = operation.request_payload
+    if not isinstance(state, dict) or not isinstance(payload, dict):
+        raise LedgerUnavailableError("Ledger operation state/request_payload должен быть object")
+
+    revision = state.get("revision")
+    if type(revision) is not int or revision < 0:
+        raise LedgerUnavailableError("Ledger содержит некорректную revision")
+    raw_items = state.get("items")
+    raw_drafts = payload.get("subtasks")
+    if not isinstance(raw_items, list) or not isinstance(raw_drafts, list):
+        raise LedgerUnavailableError("Ledger содержит некорректные items/subtasks")
+    if not 1 <= len(raw_drafts) <= MAX_SUBTASKS or len(raw_items) != len(raw_drafts):
         raise LedgerUnavailableError("Ledger содержит неверное число подзадач")
 
+    if payload.get("parent_key") != operation.parent_input_key:
+        raise LedgerUnavailableError("Ledger содержит другой parent_key")
+    if payload.get("idempotency_key") != operation.idempotency_key:
+        raise LedgerUnavailableError("Ledger содержит другой idempotency_key")
+    if not isinstance(payload.get("provider_options"), dict):
+        raise LedgerUnavailableError("Ledger содержит некорректные provider_options")
+    if payload.get("board_type") is not None and not isinstance(
+        payload.get("board_type"), str
+    ):
+        raise LedgerUnavailableError("Ledger содержит некорректный board_type payload")
+    if payload.get("board_type") is not None and payload.get("board_type") != operation.board_type:
+        raise LedgerUnavailableError("Ledger содержит другой board_type")
+    if payload.get("project") is not None and not isinstance(payload.get("project"), str):
+        raise LedgerUnavailableError("Ledger содержит некорректный project payload")
+    if not all(
+        _usable_identity_text(value)
+        for value in (
+            operation.idempotency_key,
+            operation.board_type,
+            operation.parent_input_key,
+            operation.parent_task_id,
+            operation.source_board_id,
+            operation.source_column_id,
+            operation.request_hash,
+        )
+    ):
+        raise LedgerUnavailableError("Ledger содержит неполную identity операции")
+    try:
+        expected_request_hash = hashlib.sha256(
+            _canonical_json(payload).encode("utf-8")
+        ).hexdigest()
+    except (TypeError, ValueError) as error:
+        raise LedgerUnavailableError("Ledger содержит неканонический request_payload") from error
+    if operation.request_hash != expected_request_hash:
+        raise LedgerUnavailableError("Ledger request_hash не соответствует request_payload")
+
+    state_warnings = state.get("warnings", [])
+    if not isinstance(state_warnings, list) or not all(
+        isinstance(item, str) for item in state_warnings
+    ):
+        raise LedgerUnavailableError("Ledger содержит некорректные warnings операции")
+    if "reindexed" in state and not isinstance(state["reindexed"], bool):
+        raise LedgerUnavailableError("Ledger содержит некорректный reindexed")
+
+    drafts = tuple(_persisted_draft(value) for value in raw_drafts)
     items: list[dict[str, Any]] = []
-    for index, (item, draft) in enumerate(zip(raw_items, request.subtasks)):
+    phases: list[SubtaskPhase] = []
+    for index, (item, draft) in enumerate(zip(raw_items, drafts)):
         if not isinstance(item, dict):
             raise LedgerUnavailableError("Ledger содержит некорректную подзадачу")
+        if type(item.get("index")) is not int or item.get("index") != index:
+            raise LedgerUnavailableError("Ledger содержит некорректные индексы подзадач")
+        if item.get("title") != draft.title:
+            raise LedgerUnavailableError("Ledger содержит некорректный title подзадачи")
         if item.get("input_hash") != _draft_input_hash(draft):
             raise LedgerUnavailableError("Ledger содержит некорректный input_hash")
         expected_marker = marker_for(
@@ -210,11 +314,63 @@ def _validated_items(
             index,
             draft,
         )
-        if item.get("index") != index or item.get("marker") != expected_marker:
+        if item.get("marker") != expected_marker:
             raise LedgerUnavailableError("Ledger содержит некорректный marker")
-        _persisted_phase(item.get("phase"))
+
+        phase = _persisted_phase(item.get("phase"))
+        manual_required = item.get("manual_required")
+        warnings = item.get("warnings")
+        aliases = item.get("aliases")
+        url = item.get("url")
+        key = item.get("key")
+        board_id = item.get("board_id")
+        if not isinstance(manual_required, bool):
+            raise LedgerUnavailableError("Ledger содержит некорректный manual_required")
+        if not isinstance(warnings, list) or not all(
+            isinstance(warning, str) for warning in warnings
+        ):
+            raise LedgerUnavailableError("Ledger содержит некорректные warnings подзадачи")
+        if not isinstance(aliases, list) or not all(
+            _usable_identity_text(alias) for alias in aliases
+        ):
+            raise LedgerUnavailableError("Ledger содержит некорректные aliases подзадачи")
+        if url is not None and not _usable_identity_text(url):
+            raise LedgerUnavailableError("Ledger содержит некорректный url подзадачи")
+
+        if phase == "pending":
+            if (
+                key is not None
+                or board_id is not None
+                or aliases
+                or url is not None
+                or manual_required
+                or warnings
+            ):
+                raise LedgerUnavailableError("Pending подзадача содержит side-effect state")
+        elif phase in ("created", "attached"):
+            if not _usable_identity_text(key) or not _usable_identity_text(board_id):
+                raise LedgerUnavailableError("Созданная подзадача не содержит identity")
+        elif key is not None or board_id is not None:
+            if not _usable_identity_text(key) or not _usable_identity_text(board_id):
+                raise LedgerUnavailableError("In-flight подзадача содержит неполную identity")
+        elif aliases or url is not None:
+            raise LedgerUnavailableError("In-flight подзадача содержит неполную identity")
+
+        phases.append(phase)
         items.append(item)
-    return items
+
+    if operation.status not in ("running", "partial", "board_complete", "complete"):
+        raise LedgerUnavailableError("Ledger содержит неизвестный operation status")
+    if operation.status == "running" and any(phase != "pending" for phase in phases):
+        raise LedgerUnavailableError("Running operation содержит side-effect state")
+    if operation.status == "partial" and all(phase == "pending" for phase in phases):
+        raise LedgerUnavailableError("Partial operation не содержит progress")
+    if operation.status in ("board_complete", "complete") and any(
+        phase != "attached" for phase in phases
+    ):
+        raise LedgerUnavailableError("Terminal operation содержит unattached подзадачу")
+
+    return _ValidatedOperation(drafts=drafts, items=tuple(items))
 
 
 def _safe_warning(sanitize: Callable[[object], str], value: object) -> str:
@@ -293,12 +449,24 @@ def _fresh_operation(
 
 
 def _identity_changes(
-    identity: NativeSubtaskIdentity,
+    identity: object,
     sanitize: Callable[[object], str],
 ) -> dict[str, object]:
+    if not isinstance(identity, NativeSubtaskIdentity):
+        raise LedgerUnavailableError("Provider вернул некорректную identity")
+    if (
+        not _usable_identity_text(identity.board_id)
+        or not _usable_identity_text(identity.key)
+        or not _usable_identity_text(identity.title)
+        or not isinstance(identity.aliases, tuple)
+        or not all(_usable_identity_text(alias) for alias in identity.aliases)
+        or (identity.url is not None and not _usable_identity_text(identity.url))
+        or not isinstance(identity.warnings, tuple)
+        or not all(isinstance(warning, str) for warning in identity.warnings)
+    ):
+        raise LedgerUnavailableError("Provider вернул неполную identity")
     return {
         "phase": "created",
-        "title": identity.title,
         "key": identity.key,
         "aliases": list(identity.aliases),
         "board_id": identity.board_id,
@@ -306,6 +474,51 @@ def _identity_changes(
         "manual_required": False,
         "warnings": [_safe_warning(sanitize, warning) for warning in identity.warnings],
     }
+
+
+def _render_child_doc(draft: SubtaskDraft) -> str:
+    doc_md = render_markdown(
+        TaskDoc(
+            title=draft.title,
+            problem=draft.problem,
+            steps=list(draft.steps),
+            criteria=list(draft.criteria),
+            context=draft.context,
+        )
+    )
+    if not isinstance(doc_md, str) or not doc_md.strip():
+        raise LedgerUnavailableError("Canonical child document пуст или некорректен")
+    return doc_md
+
+
+def _evaluate_loaded_operation(
+    operation: SubtaskOperation,
+    request: SubtaskRequest,
+) -> SubtaskPreflight:
+    validated = _validate_persisted_operation(operation)
+    if operation.request_hash != request.request_hash:
+        return SubtaskPreflight(
+            operation,
+            SubtaskBatchResult(
+                status="error",
+                board_type=operation.board_type,
+                parent_key=request.parent_key,
+                idempotency_key=request.idempotency_key,
+                resumed=True,
+                category="conflict",
+                retryable=False,
+            ),
+        )
+    if operation.status == "complete":
+        return SubtaskPreflight(
+            operation,
+            _result_from_operation(
+                operation,
+                resumed=True,
+                validated=validated,
+            ),
+        )
+    return SubtaskPreflight(operation, None)
 
 
 class SubtaskService:
@@ -316,26 +529,7 @@ class SubtaskService:
         operation = self._store.load(request.idempotency_key)
         if operation is None:
             return SubtaskPreflight(None, None)
-        if operation.request_hash != request.request_hash:
-            return SubtaskPreflight(
-                operation,
-                SubtaskBatchResult(
-                    status="error",
-                    board_type=operation.board_type,
-                    parent_key=request.parent_key,
-                    idempotency_key=request.idempotency_key,
-                    resumed=True,
-                    category="conflict",
-                    retryable=False,
-                ),
-            )
-        if operation.status == "complete":
-            _validated_items(operation, request)
-            return SubtaskPreflight(
-                operation,
-                _result_from_operation(operation, resumed=True),
-            )
-        return SubtaskPreflight(operation, None)
+        return _evaluate_loaded_operation(operation, request)
 
     def run(
         self,
@@ -349,11 +543,24 @@ class SubtaskService:
         ],
         sanitize: Callable[[object], str],
     ) -> SubtaskBatchResult:
+        supplied_operation = operation
+        latest = self._store.load(request.idempotency_key)
+        if latest is None:
+            if supplied_operation is not None:
+                raise LedgerUnavailableError("Ledger потерял операцию возобновления")
+            operation = None
+        else:
+            initial = _evaluate_loaded_operation(latest, request)
+            if initial.result is not None:
+                return initial.result
+            operation = initial.operation
+
         resumed = operation is not None
+        fresh = None
         if operation is None:
             parent = provider.fetch_one(request.parent_key)  # type: ignore[attr-defined]
             if parent is None:
-                return SubtaskBatchResult(
+                no_write_result = SubtaskBatchResult(
                     status="error",
                     board_type=board_type,
                     parent_key=request.parent_key,
@@ -362,41 +569,55 @@ class SubtaskService:
                     category="parent_not_found",
                     retryable=False,
                 )
-            parent_task_id = parent.board_id
-            provider_data = parent.provider_data
-            source_board_id = (
-                provider_data.get("source_board_id")
-                if isinstance(provider_data, dict)
-                else None
-            )
-            source_column_id = (
-                provider_data.get("source_column_id")
-                if isinstance(provider_data, dict)
-                else None
-            )
-            if not all(
-                isinstance(value, str) and value.strip()
-                for value in (parent_task_id, source_board_id, source_column_id)
-            ):
-                return SubtaskBatchResult(
-                    status="error",
-                    board_type=board_type,
-                    parent_key=request.parent_key,
-                    idempotency_key=request.idempotency_key,
-                    resumed=False,
-                    category="source_metadata_missing",
-                    retryable=False,
+            else:
+                parent_task_id = parent.board_id
+                provider_data = parent.provider_data
+                source_board_id = (
+                    provider_data.get("source_board_id")
+                    if isinstance(provider_data, dict)
+                    else None
                 )
-            fresh = _fresh_operation(
-                request,
-                board_type=board_type,
-                parent_task_id=parent_task_id,
-                source_board_id=source_board_id,
-                source_column_id=source_column_id,
-            )
-        else:
+                source_column_id = (
+                    provider_data.get("source_column_id")
+                    if isinstance(provider_data, dict)
+                    else None
+                )
+                if not all(
+                    isinstance(value, str) and value.strip()
+                    for value in (parent_task_id, source_board_id, source_column_id)
+                ):
+                    no_write_result = SubtaskBatchResult(
+                        status="error",
+                        board_type=board_type,
+                        parent_key=request.parent_key,
+                        idempotency_key=request.idempotency_key,
+                        resumed=False,
+                        category="source_metadata_missing",
+                        retryable=False,
+                    )
+                else:
+                    no_write_result = None
+
+            if no_write_result is not None:
+                late = self._store.load(request.idempotency_key)
+                if late is None:
+                    return no_write_result
+                late_preflight = _evaluate_loaded_operation(late, request)
+                if late_preflight.result is not None:
+                    return late_preflight.result
+                operation = late_preflight.operation
+                resumed = True
+            else:
+                fresh = _fresh_operation(
+                    request,
+                    board_type=board_type,
+                    parent_task_id=parent_task_id,
+                    source_board_id=source_board_id,
+                    source_column_id=source_column_id,
+                )
+
+        if operation is not None:
             parent_task_id = operation.parent_task_id
-            fresh = None
 
         with self._store.try_parent_lock(board_type, parent_task_id) as lock:
             if lock is None:
@@ -423,6 +644,7 @@ class SubtaskService:
                     resumed = True
             else:
                 resumed = True
+            validated = _validate_persisted_operation(current)
             if current.request_hash != request.request_hash:
                 return SubtaskBatchResult(
                     status="error",
@@ -434,12 +656,15 @@ class SubtaskService:
                     retryable=False,
                 )
             if current.status == "complete":
-                _validated_items(current, request)
-                return _result_from_operation(current, resumed=True)
+                return _result_from_operation(
+                    current,
+                    resumed=True,
+                    validated=validated,
+                )
             if current.parent_task_id != parent_task_id or current.board_type != board_type:
                 raise LedgerUnavailableError("Операция загружена под другой parent lock")
 
-            raw_items = _validated_items(current, request)
+            raw_items = validated.items
             in_flight: list[tuple[int, str]] = []
             for index, item in enumerate(raw_items):
                 if _persisted_phase(item.get("phase")) == "in_flight":
@@ -483,10 +708,11 @@ class SubtaskService:
                         expected_revision=current.revision,
                     )
 
-            for index, draft in enumerate(request.subtasks):
+            for index, draft in enumerate(validated.drafts):
                 item = current.state["items"][index]
                 if _persisted_phase(item.get("phase")) != "pending":
                     continue
+                doc_md = _render_child_doc(draft)
                 in_flight = _operation_with_item(current, index, phase="in_flight")
                 current = self._store.checkpoint(
                     in_flight,
@@ -495,33 +721,26 @@ class SubtaskService:
                 lock.ensure_alive()
                 try:
                     identity = provider.create_native_subtask(
-                        render_markdown(
-                            TaskDoc(
-                                title=draft.title,
-                                problem=draft.problem,
-                                steps=list(draft.steps),
-                                criteria=list(draft.criteria),
-                                context=draft.context,
-                            )
-                        ),
+                        doc_md,
                         title=draft.title,
                         source_column_id=current.source_column_id,
                         marker=item["marker"],
                     )
-                    identity_changes = _identity_changes(identity, sanitize)
                 except Exception as error:  # noqa: BLE001 - provider boundary
+                    warning = _safe_warning(sanitize, error)
                     failed = _operation_with_item(
                         current,
                         index,
                         phase="in_flight",
                         manual_required=True,
-                        warnings=[_safe_warning(sanitize, error)],
+                        warnings=[warning],
                     )
                     current = self._store.checkpoint(
                         failed,
                         expected_revision=current.revision,
                     )
                     continue
+                identity_changes = _identity_changes(identity, sanitize)
                 created = _operation_with_item(
                     current,
                     index,
