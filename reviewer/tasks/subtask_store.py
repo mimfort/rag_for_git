@@ -123,13 +123,15 @@ class SubtaskOperationStore:
         min_size: int = 1,
         max_size: int = 4,
         pool_factory: Callable[..., ConnectionPool] = ConnectionPool,
-        lock_connection_factory: Callable[..., psycopg.Connection] = psycopg.connect,
+        lock_connection_factory: Callable[..., psycopg.Connection] | None = None,
     ) -> None:
         self.pg_dsn = pg_dsn
         self._min_size = min_size
         self._max_size = max_size
         self._pool_factory = pool_factory
-        self._lock_connection_factory = lock_connection_factory
+        self._lock_connection_factory = (
+            psycopg.connect if lock_connection_factory is None else lock_connection_factory
+        )
         self._pool: ConnectionPool | None = None
         self._init_lock = threading.Lock()
         self._schema_ready = False

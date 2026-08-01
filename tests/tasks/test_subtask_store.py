@@ -11,6 +11,7 @@ from threading import Barrier, Event, Lock
 import pytest
 from psycopg.types.json import Jsonb
 
+from reviewer.tasks import subtask_store as subtask_store_module
 from reviewer.tasks.subtask_store import (
     LedgerUnavailableError,
     OperationConflictError,
@@ -523,6 +524,19 @@ def test_direct_lock_connection_opens_only_when_context_is_entered() -> None:
         assert parent_lock is not None
         assert factory.lock_factory.calls == ["postgresql://ledger"]
 
+    assert factory.lock_factory.connections[0].closed is True
+
+
+def test_default_lock_connector_honors_module_guard(monkeypatch) -> None:
+    factory = _PoolFactory()
+    monkeypatch.setattr(subtask_store_module.psycopg, "connect", factory.lock_factory)
+    store = SubtaskOperationStore("postgresql://ledger", pool_factory=factory)
+
+    assert store._lock_connection_factory is factory.lock_factory
+    with store.try_parent_lock("yougile", "parent-1") as parent_lock:
+        assert parent_lock is not None
+
+    assert factory.lock_factory.calls == ["postgresql://ledger"]
     assert factory.lock_factory.connections[0].closed is True
 
 
