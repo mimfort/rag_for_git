@@ -741,9 +741,10 @@ class MCPReviewService:
                 result = resolved.provider.list_targets(project)
                 return self._safe_board_payload(
                     {
+                        **result,
                         "board_type": resolved.board_type,
                         "project": project,
-                        **result,
+                        "capabilities": sorted(resolved.capabilities),
                     },
                     resolved.secrets,
                 )

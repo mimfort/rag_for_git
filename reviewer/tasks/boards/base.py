@@ -43,6 +43,50 @@ class RawTask:
     provider_data: dict = field(default_factory=dict)  # нейтральные расширенные метаданные
 
 
+@dataclass(frozen=True)
+class NativeSubtaskIdentity:
+    board_id: str
+    key: str
+    title: str
+    aliases: tuple[str, ...] = ()
+    url: str | None = None
+    warnings: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class ReconciledNativeSubtask:
+    marker: str
+    identity: NativeSubtaskIdentity
+
+
+class NativeSubtaskProvider(Protocol):
+    """Опциональные операции провайдера с нативными подзадачами."""
+
+    def reconcile_native_subtasks(
+        self,
+        source_board_id: str,
+        markers: frozenset[str],
+    ) -> list[ReconciledNativeSubtask]:
+        ...
+
+    def create_native_subtask(
+        self,
+        doc_md: str,
+        *,
+        title: str,
+        source_column_id: str,
+        marker: str,
+    ) -> NativeSubtaskIdentity:
+        ...
+
+    def replace_native_subtasks(
+        self,
+        parent_task_id: str,
+        subtask_ids: list[str],
+    ) -> None:
+        ...
+
+
 class TaskBoardProvider(Protocol):
     """Перечисление и нормализация задач доски.
 

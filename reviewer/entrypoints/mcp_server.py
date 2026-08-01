@@ -222,9 +222,10 @@ def create_server(service: MCPReviewService) -> FastMCP:
                           provider_options: dict[str, object] | None = None) -> dict:
         """Discover normalized board metadata (read-only).
         board_type is a registered provider type and provider_options is a non-secret
-        JSON object. Returns {board_type, project, targets, options, warnings}, where
-        targets are {id, label, purposes} and options are {key, label, required_for,
-        choices}. Credentials are never returned; failures are safe for fallback."""
+        JSON object. Returns {board_type, project, capabilities, targets, options, warnings},
+        where capabilities are registry-declared optional provider features, targets are
+        {id, label, purposes}, and options are {key, label, required_for, choices}.
+        Credentials are never returned; failures are safe for fallback."""
         return service.get_board_targets(board_type, project, provider_options)
 
     @mcp.tool()
