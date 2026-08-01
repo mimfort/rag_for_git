@@ -10,6 +10,7 @@ import pytest
 from reviewer.tasks.subtasks import (
     MAX_SUBTASKS,
     SUBTASK_MARKER_RE,
+    SUBTASK_MARKER_TOKEN_RE,
     OperationStatus,
     SubtaskDraft,
     SubtaskPhase,
@@ -87,6 +88,35 @@ def test_draft_payload_uses_json_compatible_lists_and_is_frozen():
 def test_blank_or_non_string_identity_is_rejected(field, value):
     with pytest.raises(ValueError):
         _validate(**{field: value})
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("parent_key", "PRI\0-224"),
+        ("idempotency_key", "attempt\0-1"),
+        ("board_type", "you\0gile"),
+        ("project", "P\0RI"),
+    ],
+)
+def test_nul_in_request_identity_is_rejected(field, value):
+    with pytest.raises(ValueError):
+        _validate(**{field: value})
+
+
+@pytest.mark.parametrize("value", [None, "", " \t"])
+def test_optional_board_text_is_normalized_to_none(value):
+    request = _validate(board_type=value, project=value)
+
+    assert request.board_type is None
+    assert request.project is None
+
+
+def test_optional_board_text_is_trimmed():
+    request = _validate(board_type="  yougile  ", project="  PRI  ")
+
+    assert request.board_type == "yougile"
+    assert request.project == "PRI"
 
 
 @pytest.mark.parametrize("field", ["title", "problem"])
@@ -207,9 +237,57 @@ def test_provider_options_are_copied_not_aliased():
         request.request_hash = "another-hash"
 
 
+def test_provider_options_default_and_none_are_normalized_to_empty_dict():
+    default_options = validate_subtask_request(
+        parent_key="PRI-224",
+        subtasks=[CHILD],
+        idempotency_key="attempt-1",
+        board_type=None,
+        project=None,
+    )
+    explicit_none = _validate(provider_options=None)
+
+    assert default_options.provider_options == {}
+    assert explicit_none.provider_options == {}
+
+
+def test_nested_provider_options_are_snapshotted_before_hashing():
+    options = {"mapping": {"columns": ["todo"]}}
+
+    request = _validate(provider_options=options)
+    original_hash = request.request_hash
+    options["mapping"]["columns"].append("done")
+
+    assert request.provider_options == {"mapping": {"columns": ["todo"]}}
+    assert request.request_hash == original_hash
+
+
 def test_non_finite_option_is_rejected_by_canonical_json():
     with pytest.raises(ValueError):
         _validate(provider_options={"weight": float("nan")})
+
+
+def test_non_json_option_is_rejected_by_canonical_json():
+    with pytest.raises(TypeError):
+        _validate(provider_options={"value": object()})
+
+
+def test_validated_request_can_generate_marker():
+    request = _validate(
+        parent_key="  PRI-224  ",
+        idempotency_key="  attempt-1  ",
+        board_type="  yougile  ",
+    )
+
+    marker = marker_for(
+        request.board_type,
+        request.parent_key,
+        request.idempotency_key,
+        0,
+        request.subtasks[0],
+    )
+
+    assert SUBTASK_MARKER_RE.fullmatch(marker)
 
 
 def test_marker_is_stable_lowercase_and_index_specific():
@@ -262,3 +340,16 @@ def test_marker_rejects_nul_in_input_components(
 
     with pytest.raises(ValueError):
         marker_for(board_type, parent_task_id, idempotency_key, 0, draft)
+
+
+@pytest.mark.parametrize(
+    ("token", "expected"),
+    [
+        ("reviewer-subtask:" + "a" * 64, True),
+        ("reviewer-subtask:" + "a" * 63, False),
+        ("reviewer-subtask:" + "a" * 65, False),
+        ("reviewer-subtask:" + "A" * 64, False),
+    ],
+)
+def test_bounded_marker_token_regex_rejects_lookalikes(token, expected):
+    assert bool(SUBTASK_MARKER_TOKEN_RE.search(f"before {token} after")) is expected
