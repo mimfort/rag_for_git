@@ -250,6 +250,46 @@ def _usable_identity_text(value: object) -> bool:
     return isinstance(value, str) and bool(value.strip())
 
 
+class _ProviderParentError(ValueError):
+    pass
+
+
+def _validated_provider_parent(
+    value: object,
+    *,
+    expected_parent_task_id: str | None = None,
+    expected_source_board_id: str | None = None,
+    expected_source_column_id: str | None = None,
+) -> tuple[RawTask, str, str]:
+    if not isinstance(value, RawTask):
+        raise _ProviderParentError("provider parent is not a RawTask")
+    if not _usable_identity_text(value.board_id):
+        raise _ProviderParentError("provider parent has no transport board_id")
+    if expected_parent_task_id is not None and value.board_id != expected_parent_task_id:
+        raise _ProviderParentError("provider returned a different parent board_id")
+    if type(value.subtask_ids) is not list or not all(
+        _usable_identity_text(subtask_id) for subtask_id in value.subtask_ids
+    ):
+        raise _ProviderParentError("provider parent has invalid subtask_ids")
+    provider_data = value.provider_data
+    if not isinstance(provider_data, dict):
+        raise _ProviderParentError("provider parent has no source metadata")
+    source_board_id = provider_data.get("source_board_id")
+    source_column_id = provider_data.get("source_column_id")
+    if not _usable_identity_text(source_board_id) or not _usable_identity_text(
+        source_column_id
+    ):
+        raise _ProviderParentError("provider parent has incomplete source metadata")
+    if expected_source_board_id is not None and source_board_id != expected_source_board_id:
+        raise _ProviderParentError("provider returned a different source board_id")
+    if (
+        expected_source_column_id is not None
+        and source_column_id != expected_source_column_id
+    ):
+        raise _ProviderParentError("provider returned a different source column_id")
+    return value, cast(str, source_board_id), cast(str, source_column_id)
+
+
 def _persisted_target_subtask_ids(state: dict[str, Any]) -> list[str] | None:
     if "target_subtask_ids" not in state:
         return None
@@ -321,9 +361,9 @@ def _validate_persisted_operation(operation: SubtaskOperation) -> _ValidatedOper
         isinstance(item, str) for item in state_warnings
     ):
         raise LedgerUnavailableError("Ledger содержит некорректные warnings операции")
-    if "reindexed" in state and not isinstance(state["reindexed"], bool):
+    if "reindexed" in state and type(state["reindexed"]) is not bool:
         raise LedgerUnavailableError("Ledger содержит некорректный reindexed")
-    _persisted_target_subtask_ids(state)
+    target_subtask_ids = _persisted_target_subtask_ids(state)
 
     drafts = tuple(_persisted_draft(value) for value in raw_drafts)
     items: list[dict[str, Any]] = []
@@ -398,6 +438,14 @@ def _validate_persisted_operation(operation: SubtaskOperation) -> _ValidatedOper
         phase != "attached" for phase in phases
     ):
         raise LedgerUnavailableError("Terminal operation содержит unattached подзадачу")
+    if operation.status in ("board_complete", "complete"):
+        if target_subtask_ids is None:
+            raise LedgerUnavailableError("Terminal operation не содержит target_subtask_ids")
+        expected_reindexed = operation.status == "complete"
+        if state.get("reindexed") is not expected_reindexed:
+            raise LedgerUnavailableError("Terminal operation содержит неверный reindexed")
+        if any(item.get("board_id") not in target_subtask_ids for item in items):
+            raise LedgerUnavailableError("Attached подзадача отсутствует в target_subtask_ids")
 
     return _ValidatedOperation(drafts=drafts, items=tuple(items))
 
@@ -645,13 +693,13 @@ class SubtaskService:
                 parent = provider.fetch_one(request.parent_key)  # type: ignore[attr-defined]
             except Exception as error:  # noqa: BLE001 - provider boundary
                 return SubtaskBatchResult(
-                    status="partial",
+                    status="error",
                     board_type=board_type,
                     parent_key=request.parent_key,
                     idempotency_key=request.idempotency_key,
                     resumed=False,
                     warnings=(_safe_warning(sanitize, error),),
-                    category="incomplete",
+                    category="provider_read",
                     retryable=True,
                 )
             if parent is None:
@@ -665,32 +713,23 @@ class SubtaskService:
                     retryable=False,
                 )
             else:
-                parent_task_id = parent.board_id
-                provider_data = parent.provider_data
-                source_board_id = (
-                    provider_data.get("source_board_id")
-                    if isinstance(provider_data, dict)
-                    else None
-                )
-                source_column_id = (
-                    provider_data.get("source_column_id")
-                    if isinstance(provider_data, dict)
-                    else None
-                )
-                if not all(
-                    isinstance(value, str) and value.strip()
-                    for value in (parent_task_id, source_board_id, source_column_id)
-                ):
+                try:
+                    parent, source_board_id, source_column_id = (
+                        _validated_provider_parent(parent)
+                    )
+                except _ProviderParentError as error:
                     no_write_result = SubtaskBatchResult(
                         status="error",
                         board_type=board_type,
                         parent_key=request.parent_key,
                         idempotency_key=request.idempotency_key,
                         resumed=False,
-                        category="source_metadata_missing",
-                        retryable=False,
+                        warnings=(_safe_warning(sanitize, error),),
+                        category="provider_read",
+                        retryable=True,
                     )
                 else:
+                    parent_task_id = parent.board_id
                     no_write_result = None
 
             if no_write_result is not None:
@@ -758,6 +797,16 @@ class SubtaskService:
                 )
             if current.parent_task_id != parent_task_id or current.board_type != board_type:
                 raise LedgerUnavailableError("Операция загружена под другой parent lock")
+
+            def fetch_parent_snapshot() -> RawTask:
+                value = provider.fetch_one(current.parent_task_id)  # type: ignore[attr-defined]
+                parent_snapshot, _, _ = _validated_provider_parent(
+                    value,
+                    expected_parent_task_id=current.parent_task_id,
+                    expected_source_board_id=current.source_board_id,
+                    expected_source_column_id=current.source_column_id,
+                )
+                return parent_snapshot
 
             parent_after_attachment: RawTask | None = None
             if current.status != "board_complete":
@@ -861,19 +910,9 @@ class SubtaskService:
                 confirmed = _confirmed_identities(current)
                 if confirmed:
                     try:
-                        parent_before_attachment = provider.fetch_one(  # type: ignore[attr-defined]
-                            current.parent_task_id
-                        )
+                        parent_before_attachment = fetch_parent_snapshot()
                     except Exception as error:  # noqa: BLE001 - provider boundary
                         warning = _safe_warning(sanitize, error)
-                        failed = _operation_with_state(current, warnings=(warning,))
-                        current = self._store.checkpoint(
-                            failed,
-                            expected_revision=current.revision,
-                        )
-                        return _result_from_operation(current, resumed=resumed)
-                    if not isinstance(parent_before_attachment, RawTask):
-                        warning = _safe_warning(sanitize, "parent board state unavailable")
                         failed = _operation_with_state(current, warnings=(warning,))
                         current = self._store.checkpoint(
                             failed,
@@ -916,22 +955,9 @@ class SubtaskService:
                             )
                             return _result_from_operation(current, resumed=resumed)
                         try:
-                            parent_after_attachment = provider.fetch_one(  # type: ignore[attr-defined]
-                                current.parent_task_id
-                            )
+                            parent_after_attachment = fetch_parent_snapshot()
                         except Exception as error:  # noqa: BLE001 - provider boundary
                             warning = _safe_warning(sanitize, error)
-                            failed = _operation_with_state(current, warnings=(warning,))
-                            current = self._store.checkpoint(
-                                failed,
-                                expected_revision=current.revision,
-                            )
-                            return _result_from_operation(current, resumed=resumed)
-                        if not isinstance(parent_after_attachment, RawTask):
-                            warning = _safe_warning(
-                                sanitize,
-                                "parent attachment verification unavailable",
-                            )
                             failed = _operation_with_state(current, warnings=(warning,))
                             current = self._store.checkpoint(
                                 failed,
@@ -981,9 +1007,7 @@ class SubtaskService:
 
             if parent_after_attachment is None:
                 try:
-                    parent_after_attachment = provider.fetch_one(  # type: ignore[attr-defined]
-                        current.parent_task_id
-                    )
+                    parent_after_attachment = fetch_parent_snapshot()
                 except Exception as error:  # noqa: BLE001 - provider boundary
                     warning = _safe_warning(sanitize, error)
                     failed = _operation_with_state(current, warnings=(warning,))
@@ -992,16 +1016,16 @@ class SubtaskService:
                         expected_revision=current.revision,
                     )
                     return _result_from_operation(current, resumed=resumed)
-                if not isinstance(parent_after_attachment, RawTask):
-                    warning = _safe_warning(sanitize, "parent board state unavailable")
-                    failed = _operation_with_state(current, warnings=(warning,))
-                    current = self._store.checkpoint(
-                        failed,
-                        expected_revision=current.revision,
-                    )
-                    return _result_from_operation(current, resumed=resumed)
+
+            intended_target = _persisted_target_subtask_ids(current.state)
+            if intended_target is None:
+                raise LedgerUnavailableError("Board-complete operation потеряла target")
+            current_parent_ids = frozenset(parent_after_attachment.subtask_ids)
+            if not all(subtask_id in current_parent_ids for subtask_id in intended_target):
+                return _result_from_operation(current, resumed=resumed)
 
             confirmed = _confirmed_identities(current)
+            lock.ensure_alive()
             try:
                 write_result = write_through(parent_after_attachment, confirmed)
             except Exception as error:  # noqa: BLE001 - callback boundary
@@ -1012,7 +1036,12 @@ class SubtaskService:
                     expected_revision=current.revision,
                 )
                 return _result_from_operation(current, resumed=resumed)
-            if not isinstance(write_result, WriteThroughResult):
+            if (
+                type(write_result) is not WriteThroughResult
+                or type(write_result.success) is not bool
+                or type(write_result.warnings) is not tuple
+                or not all(isinstance(warning, str) for warning in write_result.warnings)
+            ):
                 raise LedgerUnavailableError("Write-through вернул некорректный результат")
             callback_warnings = tuple(
                 _safe_warning(sanitize, warning) for warning in write_result.warnings
@@ -1035,6 +1064,7 @@ class SubtaskService:
                 warnings=callback_warnings,
                 reindexed=True,
             )
+            lock.ensure_alive()
             current = self._store.checkpoint(
                 complete,
                 expected_revision=current.revision,

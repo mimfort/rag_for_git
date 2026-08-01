@@ -359,20 +359,35 @@ def _in_flight_operation(request=None, *, revision=0, manual_required=False, war
     return replace(operation, status="partial")
 
 
-def _attached_operation(request=None):
+def _created_operation(request=None):
     request = request or _validate()
     operation = _in_flight_operation(request)
-    item = operation.state["items"][0]
-    item.update(
+    operation.state["items"][0].update(
         {
-            "phase": "attached",
+            "phase": "created",
             "key": "PRI-225",
             "aliases": ["TASK-2"],
             "board_id": "child-uuid",
             "url": "https://board/child-uuid",
         }
     )
+    return operation
+
+
+def _attached_operation(request=None):
+    request = request or _validate()
+    operation = _created_operation(request)
+    item = operation.state["items"][0]
+    item["phase"] = "attached"
+    operation.state["target_subtask_ids"] = ["child-uuid"]
+    operation.state["reindexed"] = True
     return replace(operation, status="complete")
+
+
+def _board_complete_operation(request=None):
+    operation = _attached_operation(request)
+    operation.state["reindexed"] = False
+    return replace(operation, status="board_complete")
 
 
 def _malformed_operation(request, case):
@@ -934,6 +949,52 @@ def test_attachment_transport_failure_is_retryable_without_losing_child_identity
     assert "VERY_SECRET" not in json.dumps(result.payload())
 
 
+@pytest.mark.parametrize(
+    "verification_parent",
+    [
+        _parent(subtask_ids="child-uuid"),
+        _parent(subtask_ids=["child-uuid", 7]),
+        _parent(board_id="wrong-parent", subtask_ids=["child-uuid"]),
+        _parent(
+            subtask_ids=["child-uuid"],
+            provider_data={
+                "source_board_id": "wrong-board",
+                "source_column_id": "column-uuid",
+            },
+        ),
+    ],
+)
+def test_malformed_parent_verification_never_advances_phase_or_calls_write_through(
+    verification_parent,
+):
+    request = _validate()
+    store = MemoryStore()
+    provider = FakeProvider(
+        None,
+        create_effects=[NativeSubtaskIdentity("child-uuid", "PRI-225", "Child")],
+        fetch_effects=[_parent(), _parent(), verification_parent],
+    )
+    write_calls = []
+
+    result = _run(
+        SubtaskService(store),
+        request,
+        provider,
+        write_calls=write_calls,
+        sanitize=lambda _value: "safe malformed verification",
+    )
+
+    persisted = store.operations["attempt-1"]
+    assert result.status == "partial"
+    assert result.retryable is True
+    assert result.warnings[-1] == "safe malformed verification"
+    assert persisted.state["items"][0]["phase"] == "created"
+    assert persisted.state["target_subtask_ids"] == ["child-uuid"]
+    assert persisted.status == "partial"
+    assert provider.replace_calls == [("parent-uuid", ["child-uuid"])]
+    assert write_calls == []
+
+
 def test_write_through_false_stays_board_complete_and_replay_retries_only_callback():
     request = _validate()
     store = MemoryStore()
@@ -1048,9 +1109,178 @@ def test_callback_success_runs_under_parent_lock_after_board_complete_checkpoint
     assert result.reindexed is True
 
 
+def test_write_through_lock_checks_immediately_surround_successful_callback():
+    request = _validate()
+    operation = _board_complete_operation(request)
+    events = []
+    store = MemoryStore(operation, events=events)
+    provider = FakeProvider(
+        None,
+        fetch_effects=[_parent(subtask_ids=["child-uuid"])],
+    )
+
+    def successful_callback(_parent_task, _identities):
+        events.append(("callback",))
+        return WriteThroughResult(True)
+
+    result = _run(
+        SubtaskService(store),
+        request,
+        provider,
+        operation=operation,
+        write_effects=[successful_callback],
+    )
+
+    assert events == [
+        ("lock", "yougile", "parent-uuid"),
+        ("ensure_alive",),
+        ("callback",),
+        ("ensure_alive",),
+        ("checkpoint", "attached", 0),
+    ]
+    assert result.status == "ok"
+    assert store.operations["attempt-1"].status == "complete"
+
+
+def test_dead_lock_before_write_through_propagates_without_callback_or_complete():
+    request = _validate()
+    operation = _board_complete_operation(request)
+    store = MemoryStore(operation, dead=True)
+    provider = FakeProvider(
+        None,
+        fetch_effects=[_parent(subtask_ids=["child-uuid"])],
+    )
+    write_calls = []
+
+    with pytest.raises(LedgerUnavailableError, match="dead lock"):
+        _run(
+            SubtaskService(store),
+            request,
+            provider,
+            operation=operation,
+            write_calls=write_calls,
+        )
+
+    assert write_calls == []
+    assert store.operations["attempt-1"].status == "board_complete"
+    assert store.operations["attempt-1"].state["reindexed"] is False
+
+
+def test_lock_death_after_successful_callback_propagates_before_complete_checkpoint():
+    request = _validate()
+    operation = _board_complete_operation(request)
+    events = []
+    store = MemoryStore(operation, events=events)
+    provider = FakeProvider(
+        None,
+        fetch_effects=[_parent(subtask_ids=["child-uuid"])],
+    )
+
+    def kill_lock_after_callback(_parent_task, _identities):
+        events.append(("callback",))
+        store.dead = True
+        return WriteThroughResult(True)
+
+    with pytest.raises(LedgerUnavailableError, match="dead lock"):
+        _run(
+            SubtaskService(store),
+            request,
+            provider,
+            operation=operation,
+            write_effects=[kill_lock_after_callback],
+        )
+
+    assert events[-3:] == [("ensure_alive",), ("callback",), ("ensure_alive",)]
+    assert store.operations["attempt-1"].status == "board_complete"
+    assert store.operations["attempt-1"].state["reindexed"] is False
+
+
+def test_complete_checkpoint_cas_failure_propagates_after_callback_without_false_complete():
+    request = _validate()
+    operation = _board_complete_operation(request)
+    store = MemoryStore(operation, stale=True)
+    provider = FakeProvider(
+        None,
+        fetch_effects=[_parent(subtask_ids=["child-uuid"])],
+    )
+    write_calls = []
+
+    with pytest.raises(OperationConflictError, match="stale revision"):
+        _run(
+            SubtaskService(store),
+            request,
+            provider,
+            operation=operation,
+            write_calls=write_calls,
+        )
+
+    assert len(write_calls) == 1
+    assert store.operations["attempt-1"].status == "board_complete"
+    assert store.operations["attempt-1"].state["reindexed"] is False
+
+
+@pytest.mark.parametrize(
+    "callback_result",
+    [
+        WriteThroughResult("yes", ()),
+        WriteThroughResult(True, ["warning"]),
+        WriteThroughResult(True, (object(),)),
+    ],
+)
+def test_malformed_write_through_result_fails_closed_without_complete_or_leak(
+    callback_result,
+):
+    request = _validate()
+    operation = _board_complete_operation(request)
+    store = MemoryStore(operation)
+    provider = FakeProvider(
+        None,
+        fetch_effects=[_parent(subtask_ids=["child-uuid"])],
+    )
+
+    with pytest.raises(LedgerUnavailableError, match="Write-through") as raised:
+        _run(
+            SubtaskService(store),
+            request,
+            provider,
+            operation=operation,
+            write_effects=[callback_result],
+            sanitize=lambda _value: "VERY_SECRET",
+        )
+
+    assert "VERY_SECRET" not in str(raised.value)
+    assert "VERY_SECRET" not in json.dumps(store.operations["attempt-1"].state)
+    assert store.operations["attempt-1"].status == "board_complete"
+    assert store.operations["attempt-1"].state["reindexed"] is False
+
+
+def test_write_through_result_subclass_is_rejected_without_complete():
+    class DerivedWriteThroughResult(WriteThroughResult):
+        pass
+
+    request = _validate()
+    operation = _board_complete_operation(request)
+    store = MemoryStore(operation)
+    provider = FakeProvider(
+        None,
+        fetch_effects=[_parent(subtask_ids=["child-uuid"])],
+    )
+
+    with pytest.raises(LedgerUnavailableError, match="Write-through"):
+        _run(
+            SubtaskService(store),
+            request,
+            provider,
+            operation=operation,
+            write_effects=[DerivedWriteThroughResult(True)],
+        )
+
+    assert store.operations["attempt-1"].status == "board_complete"
+
+
 def test_board_complete_replay_reads_current_parent_and_calls_only_write_through():
     request = _validate()
-    operation = replace(_attached_operation(request), status="board_complete")
+    operation = _board_complete_operation(request)
     store = MemoryStore(operation)
     current_parent = _parent(subtask_ids=["child-uuid"], timestamp=5)
     provider = FakeProvider(None, fetch_effects=[current_parent])
@@ -1073,6 +1303,92 @@ def test_board_complete_replay_reads_current_parent_and_calls_only_write_through
     assert result.status == "ok"
     assert result.resumed is True
     assert result.created == result.attached
+
+
+def test_board_complete_parent_drift_skips_callback_and_remains_reindex_pending():
+    request = _validate()
+    operation = _board_complete_operation(request)
+    store = MemoryStore(operation)
+    provider = FakeProvider(None, fetch_effects=[_parent(subtask_ids=[])])
+    write_calls = []
+
+    result = _run(
+        SubtaskService(store),
+        request,
+        provider,
+        operation=operation,
+        write_calls=write_calls,
+    )
+
+    assert result.status == "partial"
+    assert result.category == "reindex_pending"
+    assert result.retryable is True
+    assert result.reindexed is False
+    assert write_calls == []
+    assert provider.replace_calls == []
+    assert store.operations["attempt-1"].status == "board_complete"
+
+
+@pytest.mark.parametrize(
+    "current_parent",
+    [
+        _parent(board_id="wrong-parent", subtask_ids=["child-uuid"]),
+        _parent(subtask_ids="child-uuid"),
+        _parent(
+            subtask_ids=["child-uuid"],
+            provider_data={
+                "source_board_id": "board-uuid",
+                "source_column_id": "wrong-column",
+            },
+        ),
+    ],
+)
+def test_board_complete_malformed_parent_skips_callback_and_complete(current_parent):
+    request = _validate()
+    operation = _board_complete_operation(request)
+    store = MemoryStore(operation)
+    provider = FakeProvider(None, fetch_effects=[current_parent])
+    write_calls = []
+
+    result = _run(
+        SubtaskService(store),
+        request,
+        provider,
+        operation=operation,
+        write_calls=write_calls,
+        sanitize=lambda _value: "safe malformed parent",
+    )
+
+    assert result.status == "partial"
+    assert result.category == "reindex_pending"
+    assert result.retryable is True
+    assert result.warnings[-1] == "safe malformed parent"
+    assert write_calls == []
+    assert provider.replace_calls == []
+    assert store.operations["attempt-1"].status == "board_complete"
+
+
+def test_board_complete_parent_concurrent_extras_allow_callback_only_completion():
+    request = _validate()
+    operation = _board_complete_operation(request)
+    store = MemoryStore(operation)
+    current_parent = _parent(subtask_ids=["child-uuid", "concurrent"])
+    provider = FakeProvider(None, fetch_effects=[current_parent])
+    write_calls = []
+
+    result = _run(
+        SubtaskService(store),
+        request,
+        provider,
+        operation=operation,
+        write_calls=write_calls,
+    )
+
+    assert result.status == "ok"
+    assert write_calls[0][0] == current_parent
+    assert provider.reconcile_calls == []
+    assert provider.create_calls == []
+    assert provider.replace_calls == []
 
 
 def test_service_result_contracts_are_frozen_and_have_safe_payloads():
@@ -1173,6 +1489,7 @@ def test_preflight_distinguishes_missing_conflict_incomplete_and_complete_operat
                     "warnings": [],
                 }
             ],
+            "target_subtask_ids": ["child-uuid"],
             "warnings": ["safe warning"],
             "reindexed": True,
         },
@@ -1663,6 +1980,58 @@ def test_stale_checkpoint_propagates_without_lock_health_check_or_post():
 @pytest.mark.parametrize(
     "case",
     [
+        "board_complete_missing_target",
+        "complete_missing_target",
+        "board_complete_target_missing_child",
+        "complete_target_missing_child",
+        "board_complete_missing_reindexed",
+        "complete_missing_reindexed",
+        "board_complete_reindexed_true",
+        "complete_reindexed_false",
+    ],
+)
+def test_terminal_state_contradictions_fail_before_provider_or_callback(case):
+    request = _validate()
+    operation = (
+        _board_complete_operation(request)
+        if case.startswith("board_complete")
+        else _attached_operation(request)
+    )
+    if case.endswith("missing_target"):
+        operation.state.pop("target_subtask_ids")
+    elif case.endswith("target_missing_child"):
+        operation.state["target_subtask_ids"] = ["other-child"]
+    elif case.endswith("missing_reindexed"):
+        operation.state.pop("reindexed")
+    elif case == "board_complete_reindexed_true":
+        operation.state["reindexed"] = True
+    elif case == "complete_reindexed_false":
+        operation.state["reindexed"] = False
+    else:
+        raise AssertionError(case)
+    store = MemoryStore(operation)
+    provider = FakeProvider(_parent(subtask_ids=["child-uuid"]))
+    write_calls = []
+
+    with pytest.raises(LedgerUnavailableError):
+        _run(
+            SubtaskService(store),
+            request,
+            provider,
+            operation=operation,
+            write_calls=write_calls,
+        )
+
+    assert provider.fetch_calls == []
+    assert provider.reconcile_calls == []
+    assert provider.create_calls == []
+    assert provider.replace_calls == []
+    assert write_calls == []
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
         "state_not_object",
         "request_payload_not_object",
         "revision_negative",
@@ -1812,6 +2181,55 @@ def test_missing_parent_is_deterministic_nonretryable_error():
     assert provider.create_calls == []
 
 
+def test_initial_parent_fetch_exception_is_sanitized_retryable_provider_read_error():
+    request = _validate()
+    store = MemoryStore()
+    provider = FakeProvider(
+        None,
+        fetch_effects=[RuntimeError("token=VERY_SECRET")],
+    )
+
+    result = _run(
+        SubtaskService(store),
+        request,
+        provider,
+        sanitize=lambda _value: "safe provider read failure",
+    )
+
+    assert result.status == "error"
+    assert result.category == "provider_read"
+    assert result.retryable is True
+    assert result.warnings == ("safe provider read failure",)
+    assert "VERY_SECRET" not in json.dumps(result.payload())
+    assert store.operations == {}
+    assert provider.create_calls == []
+    assert provider.replace_calls == []
+
+
+def test_initial_parent_fetch_sanitizer_failure_propagates_without_persistence():
+    request = _validate()
+    store = MemoryStore()
+    provider = FakeProvider(
+        None,
+        fetch_effects=[RuntimeError("token=VERY_SECRET")],
+    )
+
+    def fail_sanitize(_value):
+        raise RuntimeError("sanitizer unavailable")
+
+    with pytest.raises(RuntimeError, match="sanitizer unavailable"):
+        _run(
+            SubtaskService(store),
+            request,
+            provider,
+            sanitize=fail_sanitize,
+        )
+
+    assert store.operations == {}
+    assert provider.create_calls == []
+    assert provider.replace_calls == []
+
+
 def test_run_reloads_incomplete_row_before_parent_fetch_after_stale_preflight():
     request = _validate()
     store = MemoryStore()
@@ -1913,6 +2331,10 @@ def test_invalid_source_metadata_reloads_concurrent_complete_row_before_error():
 @pytest.mark.parametrize(
     "parent",
     [
+        object(),
+        _parent(subtask_ids="child-uuid"),
+        _parent(subtask_ids=["child-uuid", 7]),
+        _parent(subtask_ids=["  "]),
         _parent(board_id=""),
         _parent(board_id="  "),
         _parent(provider_data=None),
@@ -1926,18 +2348,78 @@ def test_invalid_source_metadata_reloads_concurrent_complete_row_before_error():
         ),
     ],
 )
-def test_missing_required_source_identity_fails_before_ledger_or_child_write(parent):
+def test_malformed_initial_parent_is_sanitized_before_ledger_or_child_write(parent):
     request = _validate()
     store = MemoryStore()
     provider = FakeProvider(parent)
 
-    result = _run(SubtaskService(store), request, provider)
+    result = _run(
+        SubtaskService(store),
+        request,
+        provider,
+        sanitize=lambda _value: "safe malformed parent",
+    )
 
     assert result.status == "error"
-    assert result.category == "source_metadata_missing"
-    assert result.retryable is False
+    assert result.category == "provider_read"
+    assert result.retryable is True
+    assert result.warnings == ("safe malformed parent",)
     assert store.operations == {}
     assert provider.create_calls == []
+    assert provider.replace_calls == []
+
+
+@pytest.mark.parametrize(
+    "parent",
+    [
+        _parent(board_id="wrong-parent"),
+        _parent(subtask_ids="child-uuid"),
+        _parent(subtask_ids=["child-uuid", 7]),
+        _parent(subtask_ids=["  "]),
+        _parent(provider_data=None),
+        _parent(
+            provider_data={
+                "source_board_id": "wrong-board",
+                "source_column_id": "column-uuid",
+            }
+        ),
+        _parent(
+            provider_data={
+                "source_board_id": "board-uuid",
+                "source_column_id": "wrong-column",
+            }
+        ),
+    ],
+)
+def test_malformed_resumed_parent_fails_safely_before_target_or_board_mutation(parent):
+    request = _validate()
+    operation = _created_operation(request)
+    store = MemoryStore(operation)
+    provider = FakeProvider(None, fetch_effects=[parent])
+    write_calls = []
+
+    result = _run(
+        SubtaskService(store),
+        request,
+        provider,
+        operation=operation,
+        write_calls=write_calls,
+        sanitize=lambda _value: "safe malformed parent",
+    )
+
+    persisted = store.operations[request.idempotency_key]
+    assert result.status == "partial"
+    assert result.retryable is True
+    assert result.warnings[-1] == "safe malformed parent"
+    assert persisted.state["items"][0]["board_id"] == "child-uuid"
+    assert "target_subtask_ids" not in persisted.state
+    assert all(
+        "target_subtask_ids" not in snapshot.state
+        for snapshot in store.checkpoint_snapshots
+    )
+    assert provider.create_calls == []
+    assert provider.replace_calls == []
+    assert write_calls == []
 
 
 def test_run_reloads_concurrent_conflict_without_provider_write_or_callback():
