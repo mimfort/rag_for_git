@@ -1,13 +1,16 @@
 """Контракт пользовательской документации расширяемых провайдеров досок."""
 
+import asyncio
 import re
 from pathlib import Path
+from unittest.mock import MagicMock
 
 from dotenv import dotenv_values
 
 from reviewer.config.provider_credentials import ProviderCredentialSource
 from reviewer.config.settings import Settings
 from reviewer.config.task_board import normalize_task_board_config
+from reviewer.entrypoints.mcp_server import create_server
 from reviewer.tasks.boards.registry import default_board_registry
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -106,14 +109,17 @@ def test_decompose_task_is_in_every_public_skill_inventory():
     assert "/rag-reviewer:decompose-task" in plugin_commands
 
 
-def test_public_docs_guard_current_mcp_tool_count():
+def test_public_docs_tool_count_matches_registered_server():
+    runtime_count = len(asyncio.run(create_server(MagicMock()).list_tools()))
+    assert runtime_count == 38
+
     count_pattern = re.compile(
         r"MCP(?:-сервер| server)[^\n]*?\b(\d+)\s+(?:tools|тул)\b",
         re.IGNORECASE,
     )
     for rel in ("README.md", "README.ru.md", "AGENTS.md", "plugin/README.md"):
-        counts = count_pattern.findall(_read(rel))
-        assert counts == ["38"], (rel, counts)
+        documented_counts = [int(value) for value in count_pattern.findall(_read(rel))]
+        assert documented_counts == [runtime_count], (rel, documented_counts, runtime_count)
 
 
 def test_provider_reference_defines_generic_native_subtask_contract():
@@ -195,6 +201,50 @@ def test_provider_reference_structures_result_buckets_and_retry_safety():
         section,
         re.IGNORECASE | re.DOTALL,
     )
+
+
+def test_provider_reference_structures_durable_recovery_by_persisted_state():
+    section = (
+        _read("docs/board-providers.md")
+        .split("## Native subtask writes", maxsplit=1)[1]
+        .split("\n## ", maxsplit=1)[0]
+    )
+    recovery = section.split("### Durable recovery", maxsplit=1)[1].split("\n### ", maxsplit=1)[0]
+    rows: dict[str, str] = {}
+    for line in recovery.splitlines():
+        if not line.startswith("| `"):
+            continue
+        cells = [cell.strip() for cell in line.strip("|").split("|")]
+        rows[cells[0].strip("`")] = " ".join(cells[1:])
+
+    assert set(rows) == {"in_flight", "board_complete"}
+    in_flight = rows["in_flight"]
+    assert re.search(
+        r"same-key retry.*reconcile.*persisted.*markers.*before any create",
+        in_flight,
+        re.IGNORECASE,
+    )
+    assert re.search(
+        r"(?:no|zero) exact marker match.*multiple matches.*never.*POST",
+        in_flight,
+        re.IGNORECASE,
+    )
+    assert "`pending`" in in_flight
+    assert "`manual_required=true`" in in_flight
+    assert re.search(
+        r"operator.*manual board verification.*repeated retry.*progress",
+        in_flight,
+        re.IGNORECASE,
+    )
+
+    board_complete = rows["board_complete"]
+    assert re.search(
+        r"only.*strict parent-and-children write-through/reindex",
+        board_complete,
+        re.IGNORECASE,
+    )
+    assert re.search(r"no child `POST`", board_complete, re.IGNORECASE)
+    assert re.search(r"no parent attachment `PUT`", board_complete, re.IGNORECASE)
 
 
 def test_provider_reference_documents_every_registered_credential_env():

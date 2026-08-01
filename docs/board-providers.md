@@ -77,6 +77,16 @@ The operation reports overlapping lifecycle views rather than one ambiguous task
 | `pending` | Children not yet known to be created, including unresolved in-flight work. |
 | `warnings` | Sanitized reconciliation, provider, write-through, or manual-recovery details. |
 
+### Durable recovery
+
+Durable retries prefer safety over liveness. Persisted state determines the only allowed retry
+work; an ambiguous board outcome is never converted into another speculative write.
+
+| Persisted state | Retry behavior | Safety boundary |
+|---|---|---|
+| `in_flight` | A same-key retry reconciles all persisted `in_flight` markers before any create attempt. | With no exact marker match or multiple matches, reviewer never issues a child `POST` again. That child remains in `pending` output with `manual_required=true`; operator/manual board verification is required, and repeated retry must not be expected to make progress. |
+| `board_complete` | A retry performs only strict parent-and-children write-through/reindex. | It performs no child `POST` and no parent attachment `PUT`; the completed board relationships are only verified and reindexed. |
+
 ### Retry safety
 
 A retry with the same idempotency key and the same full payload is safe: the durable operation
