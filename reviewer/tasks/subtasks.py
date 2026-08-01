@@ -9,10 +9,7 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 MAX_SUBTASKS = 20
-SUBTASK_MARKER_RE = re.compile(r"reviewer-subtask:[0-9a-f]{64}")
-SUBTASK_MARKER_TOKEN_RE = re.compile(
-    r"(?<![0-9A-Za-z_])reviewer-subtask:[0-9a-f]{64}(?![0-9A-Za-z_])"
-)
+SUBTASK_MARKER_RE = re.compile(r"reviewer-subtask:[0-9a-f]{64}(?![0-9A-Fa-f])")
 
 SubtaskPhase = Literal["pending", "in_flight", "created", "attached"]
 OperationStatus = Literal["running", "partial", "board_complete", "complete"]

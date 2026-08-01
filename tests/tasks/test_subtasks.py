@@ -10,7 +10,6 @@ import pytest
 from reviewer.tasks.subtasks import (
     MAX_SUBTASKS,
     SUBTASK_MARKER_RE,
-    SUBTASK_MARKER_TOKEN_RE,
     OperationStatus,
     SubtaskDraft,
     SubtaskPhase,
@@ -42,7 +41,7 @@ def _validate(**overrides):
 
 def test_contract_constants_and_literal_values():
     assert MAX_SUBTASKS == 20
-    assert SUBTASK_MARKER_RE.pattern == r"reviewer-subtask:[0-9a-f]{64}"
+    assert SUBTASK_MARKER_RE.pattern == r"reviewer-subtask:[0-9a-f]{64}(?![0-9A-Fa-f])"
     assert set(get_args(SubtaskPhase)) == {"pending", "in_flight", "created", "attached"}
     assert set(get_args(OperationStatus)) == {
         "running",
@@ -351,5 +350,8 @@ def test_marker_rejects_nul_in_input_components(
         ("reviewer-subtask:" + "A" * 64, False),
     ],
 )
-def test_bounded_marker_token_regex_rejects_lookalikes(token, expected):
-    assert bool(SUBTASK_MARKER_TOKEN_RE.search(f"before {token} after")) is expected
+def test_public_marker_regex_matches_and_strips_only_exact_tokens(token, expected):
+    text = f"before {token} after"
+
+    assert bool(SUBTASK_MARKER_RE.search(text)) is expected
+    assert (SUBTASK_MARKER_RE.sub("", text) != text) is expected
