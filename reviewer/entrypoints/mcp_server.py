@@ -450,11 +450,20 @@ def main() -> None:
     from reviewer.app import build_components
     from reviewer.config.settings import Settings
 
+    components = None
     try:
         settings = Settings()
         components = build_components(settings)
         server = create_server(MCPReviewService(settings, components))
     except Exception as e:
+        if components is not None:
+            try:
+                components.close()
+            except Exception:
+                log.warning(
+                    "Не удалось закрыть компоненты после сбоя инициализации reviewer-mcp",
+                    exc_info=True,
+                )
         # Одна ясная строка в stderr без сырого traceback (детали — в debug-логе).
         log.debug("Сбой инициализации reviewer-mcp", exc_info=True)
         print(

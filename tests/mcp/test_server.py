@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -316,6 +317,35 @@ def test_publish_review_dry_run_callable_via_mcp(_ov, _ch) -> None:
     assert data["dry_run"] is True
     assert data["posted"] is False
     assert "inline" in data
+
+
+def test_main_closes_components_when_server_construction_fails_without_masking_error(
+    monkeypatch,
+    caplog,
+    capsys,
+) -> None:
+    import reviewer.app as app_module
+    import reviewer.config.settings as settings_module
+    import reviewer.entrypoints.mcp_server as server_module
+
+    components = MagicMock()
+    components.close.side_effect = RuntimeError("cleanup failed")
+    monkeypatch.setattr(settings_module, "Settings", MagicMock(return_value=MagicMock()))
+    monkeypatch.setattr(app_module, "build_components", MagicMock(return_value=components))
+    monkeypatch.setattr(server_module, "MCPReviewService", MagicMock(return_value=MagicMock()))
+    monkeypatch.setattr(
+        server_module,
+        "create_server",
+        MagicMock(side_effect=RuntimeError("server construction failed")),
+    )
+
+    with caplog.at_level(logging.WARNING), pytest.raises(SystemExit) as captured:
+        server_module.main()
+
+    assert captured.value.code == 1
+    components.close.assert_called_once_with()
+    assert "server construction failed" in capsys.readouterr().err
+    assert "cleanup failed" in caplog.text
 
 
 def test_search_code_without_prepare_reports_error() -> None:

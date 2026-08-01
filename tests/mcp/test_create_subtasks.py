@@ -42,10 +42,11 @@ def _raw(
     *,
     title: str,
     subtask_ids: list[str] | None = None,
+    project_code: str | None = None,
 ) -> RawTask:
     return RawTask(
         key=key,
-        project_code=key,
+        project_code=project_code or key,
         title=title,
         description="Описание",
         status="Новые",
@@ -124,6 +125,9 @@ class _Provider:
         self.fetch_calls = []
         self.parent_fetches = 0
         self.parent_point_read_effect = _UNSET
+        self.child_point_read_effect = _UNSET
+        self.brief_overrides = {}
+        self.identity_uuid_fallback = False
         self.normalize_calls = []
         self.missing_child = False
         self.normalize_error = None
@@ -160,6 +164,11 @@ class _Provider:
                 return deepcopy(effect)
             return deepcopy(self.parent)
         child = self.children.get(key)
+        if child is not None and self.child_point_read_effect is not _UNSET:
+            effect = self.child_point_read_effect
+            if isinstance(effect, BaseException):
+                raise effect
+            return deepcopy(effect)
         if child is not None and self.missing_child:
             return None
         return deepcopy(child)
@@ -168,6 +177,8 @@ class _Provider:
         self.normalize_calls.append(raw.board_id)
         if self.normalize_error is not None and raw.board_id != self.parent.board_id:
             raise self.normalize_error
+        if raw.board_id in self.brief_overrides:
+            return deepcopy(self.brief_overrides[raw.board_id])
         links = (
             [{"key": self.children[subtask_id].key} for subtask_id in raw.subtask_ids]
             if raw.board_id == self.parent.board_id
@@ -196,7 +207,7 @@ class _Provider:
         self.children[child.key] = child
         return NativeSubtaskIdentity(
             board_id=child.board_id,
-            key=child.key,
+            key=child.board_id if self.identity_uuid_fallback else child.key,
             title=child.title,
             url="https://board/child-id",
         )
@@ -402,6 +413,112 @@ def test_parent_point_read_failure_remains_reindex_pending_without_stale_index(
     assert provider.closed == 1
 
 
+@pytest.mark.parametrize(
+    "child_effect",
+    [
+        _raw("PRI-225", "other-child-id", title="Подменённая задача"),
+        _raw("OTHER-1", "child-id", title="Несовместимая задача"),
+    ],
+    ids=["transport-mismatch", "canonical-mismatch"],
+)
+def test_child_point_read_identity_mismatch_never_indexes_or_completes(child_effect):
+    provider = _Provider()
+    provider.child_point_read_effect = child_effect
+    service, provider, tasks, _, state_machine = _service(provider=provider)
+
+    out = _create(service)
+
+    assert out["status"] == "partial"
+    assert out["category"] == "reindex_pending"
+    assert state_machine._store.operation.status == "board_complete"
+    assert tasks.calls == []
+    assert provider.normalize_calls == []
+    assert provider.closed == 1
+
+
+@pytest.mark.parametrize(
+    "identity",
+    [
+        NativeSubtaskIdentity("", "PRI-225", "Child"),
+        NativeSubtaskIdentity("child-id", " ", "Child"),
+        NativeSubtaskIdentity("child-id", "PRI-225", "Child", aliases=["TASK-2"]),
+        NativeSubtaskIdentity("child-id", "PRI-225", "Child", aliases=(" ",)),
+    ],
+    ids=["blank-board-id", "blank-key", "aliases-not-tuple", "blank-alias"],
+)
+def test_malformed_persisted_child_identity_fails_before_index(identity):
+    service, provider, tasks, _, _ = _service()
+    provider.parent.subtask_ids = [identity.board_id]
+    if identity.board_id:
+        child = _raw("PRI-225", identity.board_id, title="Child")
+        provider.children[identity.board_id] = child
+
+    result = service._write_through_subtasks(
+        provider,
+        provider.parent,
+        (identity,),
+        str,
+    )
+
+    assert result.success is False
+    assert tasks.calls == []
+    assert provider.fetch_calls == ["parent-id"]
+
+
+def test_uuid_fallback_child_identity_enriches_to_canonical_key():
+    provider = _Provider()
+    provider.identity_uuid_fallback = True
+    service, provider, tasks, _, state_machine = _service(provider=provider)
+
+    out = _create(service)
+
+    assert out["status"] == "ok"
+    assert state_machine._store.operation.status == "complete"
+    assert [brief["key"] for brief in tasks.calls[0]] == ["PRI-224", "PRI-225"]
+
+
+def test_child_identity_may_match_fetched_project_alias():
+    service, provider, tasks, _, _ = _service()
+    child = _raw(
+        "ID-225",
+        "child-id",
+        title="Child",
+        project_code="PRI-225",
+    )
+    provider.children[child.board_id] = child
+    provider.parent.subtask_ids = [child.board_id]
+
+    result = service._write_through_subtasks(
+        provider,
+        provider.parent,
+        (NativeSubtaskIdentity(child.board_id, "PRI-225", child.title),),
+        str,
+    )
+
+    assert result.success is True
+    assert [brief["key"] for brief in tasks.calls[0]] == ["PRI-224", "ID-225"]
+
+
+def test_duplicate_transport_still_validates_every_persisted_canonical_identity():
+    service, provider, tasks, _, _ = _service()
+    child = _raw("PRI-225", "child-id", title="Child")
+    provider.children[child.board_id] = child
+    provider.parent.subtask_ids = [child.board_id]
+
+    result = service._write_through_subtasks(
+        provider,
+        provider.parent,
+        (
+            NativeSubtaskIdentity(child.board_id, child.key, child.title),
+            NativeSubtaskIdentity(child.board_id, "OTHER-1", child.title),
+        ),
+        str,
+    )
+
+    assert result.success is False
+    assert tasks.calls == []
+
+
 def test_write_through_deduplicates_repeated_child_identity_but_rejects_parent_collision():
     service, provider, tasks, _, _ = _service()
     child = _raw("PRI-225", "child-id", title="Дочерняя задача")
@@ -431,6 +548,33 @@ def test_write_through_deduplicates_repeated_child_identity_but_rejects_parent_c
     assert len(tasks.calls) == 1
 
 
+@pytest.mark.parametrize("links", [_UNSET, None, {}], ids=["missing", "none", "not-list"])
+def test_normalized_brief_requires_explicit_well_typed_links(links):
+    provider = _Provider()
+    brief = {
+        "key": "PRI-224",
+        "aliases": [],
+        "title": "Parent",
+        "description": "",
+        "criteria": [],
+        "status": "New",
+        "url": None,
+        "project": "PRI",
+        "attachments": [],
+    }
+    if links is not _UNSET:
+        brief["links"] = links
+    provider.brief_overrides["parent-id"] = brief
+    service, provider, tasks, _, state_machine = _service(provider=provider)
+
+    out = _create(service)
+
+    assert out["status"] == "partial"
+    assert out["category"] == "reindex_pending"
+    assert state_machine._store.operation.status == "board_complete"
+    assert tasks.calls == []
+
+
 @pytest.mark.parametrize(
     ("case", "effect"),
     [
@@ -455,6 +599,27 @@ def test_write_through_deduplicates_repeated_child_identity_but_rejects_parent_c
             "links_none",
             [
                 {"key": "PRI-224", "warnings": [], "links_stored": None},
+                {"key": "PRI-225", "warnings": [], "links_stored": True},
+            ],
+        ),
+        (
+            "result_keys_reordered",
+            [
+                {"key": "PRI-225", "warnings": [], "links_stored": True},
+                {"key": "PRI-224", "warnings": [], "links_stored": True},
+            ],
+        ),
+        (
+            "result_key_missing",
+            [
+                {"warnings": [], "links_stored": True},
+                {"key": "PRI-225", "warnings": [], "links_stored": True},
+            ],
+        ),
+        (
+            "warnings_malformed",
+            [
+                {"key": "PRI-224", "warnings": None, "links_stored": True},
                 {"key": "PRI-225", "warnings": [], "links_stored": True},
             ],
         ),

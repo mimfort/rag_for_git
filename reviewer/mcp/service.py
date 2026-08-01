@@ -555,6 +555,22 @@ class MCPReviewService:
                 warning("write-through parent point-read returned a different or malformed task")
                 return WriteThroughResult(False, tuple(warnings))
 
+            for identity in identities:
+                if (
+                    not isinstance(identity, NativeSubtaskIdentity)
+                    or not isinstance(identity.board_id, str)
+                    or not identity.board_id.strip()
+                    or not isinstance(identity.key, str)
+                    or not identity.key.strip()
+                    or type(identity.aliases) is not tuple
+                    or not all(
+                        isinstance(alias, str) and alias.strip()
+                        for alias in identity.aliases
+                    )
+                ):
+                    warning("write-through child has a malformed persisted identity")
+                    return WriteThroughResult(False, tuple(warnings))
+
             confirmed_ids = {identity.board_id for identity in identities}
             if not confirmed_ids.issubset(current_parent.subtask_ids):
                 warning("write-through parent no longer contains all confirmed subtasks")
@@ -562,27 +578,53 @@ class MCPReviewService:
 
             raw_tasks = [current_parent]
             seen_board_ids = {current_parent.board_id}
+            fetched_children: dict[str, RawTask] = {}
             for identity in identities:
                 if identity.board_id == current_parent.board_id:
                     warning("write-through child identity collides with parent")
                     return WriteThroughResult(False, tuple(warnings))
-                if identity.board_id in seen_board_ids:
-                    continue
-                seen_board_ids.add(identity.board_id)
-                raw = provider.fetch_one(identity.board_id)
+                raw = fetched_children.get(identity.board_id)
                 if raw is None:
-                    warning(f"write-through task not found: {identity.key}")
+                    fetched = provider.fetch_one(identity.board_id)
+                    if fetched is None:
+                        warning(f"write-through task not found: {identity.key}")
+                        return WriteThroughResult(False, tuple(warnings))
+                    if not isinstance(fetched, RawTask) or fetched.board_id != identity.board_id:
+                        warning("write-through child point-read returned a different task")
+                        return WriteThroughResult(False, tuple(warnings))
+                    raw = fetched
+                    fetched_children[identity.board_id] = raw
+                canonical_keys = {
+                    value
+                    for value in (raw.key, raw.project_code)
+                    if isinstance(value, str) and value.strip()
+                }
+                if identity.key != identity.board_id and identity.key not in canonical_keys:
+                    warning("write-through child canonical identity does not match point-read")
                     return WriteThroughResult(False, tuple(warnings))
-                raw_tasks.append(raw)
+                if identity.board_id not in seen_board_ids:
+                    seen_board_ids.add(identity.board_id)
+                    raw_tasks.append(raw)
 
             briefs: list[dict] = []
             seen_keys: set[str] = set()
             for raw in raw_tasks:
                 brief = provider.normalize(raw)
-                if not isinstance(brief, dict) or not brief.get("key"):
+                if (
+                    not isinstance(brief, dict)
+                    or not isinstance(brief.get("key"), str)
+                    or not brief["key"].strip()
+                    or type(brief.get("links")) is not list
+                    or not all(
+                        isinstance(link, dict)
+                        and isinstance(link.get("key"), str)
+                        and link["key"].strip()
+                        for link in brief["links"]
+                    )
+                ):
                     warning("write-through normalize returned an incomplete TaskBrief")
                     return WriteThroughResult(False, tuple(warnings))
-                key = str(brief["key"])
+                key = brief["key"]
                 if key in seen_keys:
                     warning(f"write-through duplicate normalized task key: {key}")
                     return WriteThroughResult(False, tuple(warnings))
@@ -595,16 +637,18 @@ class MCPReviewService:
                 return WriteThroughResult(False, tuple(warnings))
 
             for brief, result in zip(briefs, results):
-                if not isinstance(result, dict):
-                    warning("write-through index returned an invalid result")
+                if not isinstance(result, dict) or result.get("key") != brief["key"]:
+                    warning("write-through index result does not match TaskBrief")
                     continue
-                result_warnings = result.get("warnings", [])
-                if not isinstance(result_warnings, (list, tuple)):
+                result_warnings = result.get("warnings")
+                if type(result_warnings) is not list or not all(
+                    isinstance(item, str) for item in result_warnings
+                ):
                     warning("write-through index returned invalid warnings")
                 else:
                     for item in result_warnings:
                         warning(item)
-                if "links" in brief and result.get("links_stored") is not True:
+                if result.get("links_stored") is not True:
                     warning(f"write-through links were not stored for {brief['key']}")
         except Exception as error:  # noqa: BLE001 - provider/store boundary
             warning(error)
