@@ -26,6 +26,20 @@ def _flat(text: str) -> str:
     return " ".join(text.replace("`", "").lower().split())
 
 
+def _load_unique_yaml(header: str) -> object:
+    node = yaml.compose(header, Loader=yaml.SafeLoader)
+    if isinstance(node, yaml.MappingNode):
+        seen: set[tuple[str, str]] = set()
+        for key_node, _ in node.value:
+            if not isinstance(key_node, yaml.ScalarNode):
+                continue
+            key = (key_node.tag, key_node.value)
+            if key in seen:
+                raise yaml.YAMLError(f"duplicate frontmatter key: {key_node.value}")
+            seen.add(key)
+    return yaml.safe_load(header)
+
+
 def _frontmatter(text: str) -> tuple[object, str]:
     lines = text.splitlines()
     assert lines and lines[0] == "---"
@@ -34,7 +48,7 @@ def _frontmatter(text: str) -> tuple[object, str]:
     except ValueError as error:
         raise AssertionError("missing closing frontmatter delimiter") from error
     assert closing > 1
-    parsed = yaml.safe_load("\n".join(lines[1:closing]))
+    parsed = _load_unique_yaml("\n".join(lines[1:closing]))
     return parsed, "\n".join(lines[closing + 1 :])
 
 
@@ -51,6 +65,13 @@ def test_frontmatter_parser_rejects_invalid_yaml():
     malformed = "---\nbroken: [\n---\n# Body\n"
     with pytest.raises(yaml.YAMLError):
         _frontmatter(malformed)
+
+
+@pytest.mark.parametrize("field", ("name", "description"))
+def test_frontmatter_parser_rejects_duplicate_semantic_keys(field):
+    duplicate = f"---\n{field}: first\n{field}: second\n---\n# Body\n"
+    with pytest.raises(yaml.YAMLError, match="duplicate"):
+        _frontmatter(duplicate)
 
 
 def test_decompose_task_frontmatter_is_trigger_only():
