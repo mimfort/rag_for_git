@@ -51,8 +51,8 @@ class SubtaskOperation:
     request_payload: dict
     state: dict
     status: str
-    created_at: datetime | None
-    updated_at: datetime | None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
 
     @property
     def revision(self) -> int:
@@ -191,7 +191,7 @@ class SubtaskOperationStore:
         UPDATE subtask_operations
         SET state = %s::jsonb, status = %s, updated_at = now()
         WHERE idempotency_key = %s
-          AND COALESCE((state ->> 'revision')::integer, 0) = %s
+          AND COALESCE((state ->> 'revision')::bigint, 0) = %s
         RETURNING {_COLUMNS}
         """
         with self._connect() as conn:
@@ -217,17 +217,27 @@ class SubtaskOperationStore:
         params = (board_type, parent_task_id)
         with pool.connection() as conn:
             row = conn.execute(_PARENT_LOCK_SQL, params).fetchone()
-            conn.commit()
             if not row or not isinstance(row[0], bool):
                 raise LedgerUnavailableError("Postgres не вернул результат захвата lock")
             if row[0] is False:
+                conn.commit()
                 yield None
                 return
 
+            primary_error: BaseException | None = None
             try:
-                yield ParentOperationLock(conn)
-            finally:
-                unlock_row = conn.execute(_PARENT_UNLOCK_SQL, params).fetchone()
                 conn.commit()
-                if unlock_row is None or not unlock_row or unlock_row[0] is not True:
-                    raise LedgerUnavailableError("Postgres не подтвердил освобождение lock")
+                yield ParentOperationLock(conn)
+            except BaseException as exc:
+                primary_error = exc
+                raise
+            finally:
+                try:
+                    unlock_row = conn.execute(_PARENT_UNLOCK_SQL, params).fetchone()
+                    conn.commit()
+                    if unlock_row is None or not unlock_row or unlock_row[0] is not True:
+                        raise LedgerUnavailableError("Postgres не подтвердил освобождение lock")
+                except BaseException as cleanup_error:
+                    if primary_error is None:
+                        raise
+                    primary_error.add_note(f"Ошибка cleanup advisory lock: {cleanup_error!r}")

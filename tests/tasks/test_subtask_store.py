@@ -55,6 +55,7 @@ class _Database:
         self.schema_error: Exception | None = None
         self.load_error: Exception | None = None
         self.acquire_error: Exception | None = None
+        self.acquire_commit_error: Exception | None = None
         self.unlock_error: Exception | None = None
         self.lock_results: dict[str, bool] = {}
         self.lock_calls: list[tuple[_Connection, tuple]] = []
@@ -97,12 +98,15 @@ class _Database:
                 raise self.acquire_error
             assert params is not None
             self.lock_calls.append((connection, params))
-            return _Result((self.lock_results.get(params[1], True),))
+            acquired = self.lock_results.get(params[1], True)
+            if acquired:
+                connection.next_commit_error = self.acquire_commit_error
+            return _Result((acquired,))
         if "pg_advisory_unlock" in compact_sql:
-            if self.unlock_error is not None:
-                raise self.unlock_error
             assert params is not None
             self.unlock_calls.append((connection, params))
+            if self.unlock_error is not None:
+                raise self.unlock_error
             return _Result((True,))
         if compact_sql == "SELECT 1":
             if connection.health_error is not None:
@@ -118,12 +122,17 @@ class _Connection:
         self.commits = 0
         self.alive = True
         self.health_error: Exception | None = None
+        self.next_commit_error: Exception | None = None
 
     def execute(self, sql: str, params: tuple | None = None) -> _Result:
         return self.database.execute(self, sql, params)
 
     def commit(self) -> None:
         self.commits += 1
+        if self.next_commit_error is not None:
+            error = self.next_commit_error
+            self.next_commit_error = None
+            raise error
 
 
 class _ConnectionContext:
@@ -194,6 +203,24 @@ def test_operation_is_frozen_and_exposes_revision() -> None:
     ]
     with pytest.raises(FrozenInstanceError):
         operation.status = "complete"  # type: ignore[misc]
+
+
+def test_operation_database_timestamps_default_to_none() -> None:
+    operation = SubtaskOperation(
+        idempotency_key="idem-1",
+        board_type="yougile",
+        parent_input_key="PRI-224",
+        parent_task_id="parent-1",
+        source_board_id="board-1",
+        source_column_id="column-1",
+        request_hash="hash-1",
+        request_payload={},
+        state={},
+        status="running",
+    )
+
+    assert operation.created_at is None
+    assert operation.updated_at is None
 
 
 def test_construction_is_lazy_and_first_load_opens_pool_and_installs_schema() -> None:
@@ -278,6 +305,8 @@ def test_checkpoint_increments_revision_without_mutating_input_or_identity() -> 
     assert checkpointed.request_payload == persisted.request_payload
     update_sql = factory.database.last_checkpoint_sql
     assert "SET state = %s::jsonb, status = %s, updated_at = now()" in update_sql
+    assert "(state ->> 'revision')::bigint" in update_sql
+    assert "::integer" not in update_sql
     assert "request_hash =" not in update_sql
     assert "request_payload =" not in update_sql
 
@@ -325,6 +354,38 @@ def test_contended_parent_lock_yields_none_without_unlock() -> None:
     assert factory.database.unlock_calls == []
     connection = factory.database.lock_calls[0][0]
     assert connection.commits == 1
+    assert connection.checked_out is False
+
+
+def test_acquired_parent_lock_commit_failure_attempts_unlock_and_propagates() -> None:
+    factory = _PoolFactory()
+    commit_error = RuntimeError("acquisition commit failed")
+    factory.database.acquire_commit_error = commit_error
+    store = SubtaskOperationStore("postgresql://ledger", pool_factory=factory)
+
+    with pytest.raises(RuntimeError) as exc_info:
+        _enter_parent_lock(store)
+
+    assert exc_info.value is commit_error
+    connection = factory.database.lock_calls[0][0]
+    assert factory.database.unlock_calls == [(connection, ("yougile", "parent-1"))]
+    assert connection.commits == 2
+    assert connection.checked_out is False
+
+
+def test_acquisition_error_remains_primary_when_unlock_also_fails() -> None:
+    factory = _PoolFactory()
+    commit_error = RuntimeError("acquisition commit failed")
+    factory.database.acquire_commit_error = commit_error
+    factory.database.unlock_error = RuntimeError("unlock failed")
+    store = SubtaskOperationStore("postgresql://ledger", pool_factory=factory)
+
+    with pytest.raises(RuntimeError) as exc_info:
+        _enter_parent_lock(store)
+
+    assert exc_info.value is commit_error
+    connection = factory.database.lock_calls[0][0]
+    assert factory.database.unlock_calls == [(connection, ("yougile", "parent-1"))]
     assert connection.checked_out is False
 
 
