@@ -113,6 +113,12 @@ def test_child_count_outside_limits_is_rejected(count):
         _validate(subtasks=[CHILD] * count)
 
 
+def test_maximum_child_count_is_accepted():
+    request = _validate(subtasks=[CHILD] * MAX_SUBTASKS)
+
+    assert len(request.subtasks) == MAX_SUBTASKS
+
+
 def test_child_must_be_a_dict():
     with pytest.raises(TypeError):
         _validate(subtasks=["not-a-dict"])
@@ -216,7 +222,13 @@ def test_marker_is_stable_lowercase_and_index_specific():
         allow_nan=False,
     )
     child_hash = hashlib.sha256(child_json.encode()).hexdigest()
-    marker_payload = f"yougile\0task-42\0attempt-1\0{0}\0{child_hash}"
+    marker_payload = json.dumps(
+        ["yougile", "task-42", "attempt-1", 0, child_hash],
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        allow_nan=False,
+    )
     expected = "reviewer-subtask:" + hashlib.sha256(marker_payload.encode()).hexdigest()
 
     first = marker_for("yougile", "task-42", "attempt-1", 0, draft)
@@ -230,3 +242,12 @@ def test_marker_is_stable_lowercase_and_index_specific():
     ).lower()
     assert len(first.removeprefix("reviewer-subtask:")) == 64
     assert another_index != first
+
+
+def test_marker_does_not_collide_when_nul_moves_between_inputs():
+    draft = _validate().subtasks[0]
+
+    embedded_in_board = marker_for("board\0parent", "task", "key", 0, draft)
+    embedded_in_key = marker_for("board", "parent", "task\0key", 0, draft)
+
+    assert embedded_in_board != embedded_in_key

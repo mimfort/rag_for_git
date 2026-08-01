@@ -145,7 +145,7 @@ def marker_for(
 ) -> str:
     """Стабильный маркер одной дочерней задачи для поиска на доске."""
     child_hash = hashlib.sha256(_canonical_json(draft.payload()).encode("utf-8")).hexdigest()
-    marker_payload = "\0".join(
-        (board_type, parent_task_id, idempotency_key, str(index), child_hash)
+    marker_payload = _canonical_json(
+        [board_type, parent_task_id, idempotency_key, index, child_hash]
     )
     return "reviewer-subtask:" + hashlib.sha256(marker_payload.encode("utf-8")).hexdigest()
