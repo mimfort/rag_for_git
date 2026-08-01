@@ -18,8 +18,13 @@ from urllib.parse import quote, unquote, urlsplit
 
 import httpx
 
-from reviewer.tasks.boards.attachments import fetch_attachment, host_allowed, _registrable_domain
-from reviewer.tasks.boards.base import RawTask, project_prefix
+from reviewer.tasks.boards.attachments import _registrable_domain, fetch_attachment, host_allowed
+from reviewer.tasks.boards.base import (
+    NativeSubtaskIdentity,
+    RawTask,
+    ReconciledNativeSubtask,
+    project_prefix,
+)
 from reviewer.tasks.boards.errors import BoardProviderError
 from reviewer.tasks.boards.http import BoardHttpClient
 from reviewer.tasks.boards.markup import html_to_md, md_to_html
@@ -30,6 +35,7 @@ from reviewer.tasks.boards.registry import (
     ProviderSetupSpec,
 )
 from reviewer.tasks.boards.setup import acquire_yougile_key
+from reviewer.tasks.subtasks import SUBTASK_MARKER_RE
 
 log = logging.getLogger(__name__)
 
@@ -89,6 +95,7 @@ def provider_spec() -> BoardProviderSpec:
         default_api_base="https://yougile.com/api-v2",
         create_target_label="Колонка создания",
         done_target_label="Колонка завершения",
+        capabilities=frozenset({"native_subtasks"}),
     )
 
 
@@ -124,6 +131,7 @@ def normalize_yougile(
     url_template: str,
     subtask_titles: dict[str, str] | None = None,
     attachments: list[dict] | None = None,
+    subtask_refs: dict[str, dict] | None = None,
 ) -> dict:
     """RawTask → TaskBrief dict. Чистая: без I/O (titles подзадач инжектятся).
 
@@ -131,18 +139,25 @@ def normalize_yougile(
     видят чистый текст, а не <br />, &gt; и <div> транспорта YouGile.
     """
     subtask_titles = subtask_titles or {}
+    subtask_refs = subtask_refs or {}
     key = raw.key
     aliases = [raw.project_code] if raw.project_code and raw.project_code != key else []
 
     links: list[dict] = []
     covered: set[str] = {key, *aliases}
     for sid in raw.subtask_ids:
-        link = {"type": "subtask", "key": sid}
-        title = subtask_titles.get(sid)
+        ref = subtask_refs.get(sid) or {}
+        canonical_key = str(ref.get("key") or ref.get("common_key") or sid)
+        link = {"type": "subtask", "key": canonical_key}
+        title = ref.get("title") or subtask_titles.get(sid)
         if title:
             link["title"] = title
         links.append(link)
-        covered.add(sid)
+        ref_aliases = list(ref.get("aliases") or [])
+        project_alias = ref.get("project_alias") or ref.get("project_code")
+        if project_alias:
+            ref_aliases.append(project_alias)
+        covered.update({sid, canonical_key, *ref_aliases})
 
     if key_pattern:
         seen_rel: set[str] = set()
@@ -161,13 +176,14 @@ def normalize_yougile(
         "key": key,
         "aliases": aliases,
         "title": raw.title,
-        "description": html_to_md(raw.description),
+        "description": SUBTASK_MARKER_RE.sub("", html_to_md(raw.description)),
         "criteria": [],
         "status": "done" if raw.completed else raw.status,
         "url": url,
         "links": links,
         "project": project_prefix(raw.project_code or key),
         "attachments": attachments or [],
+        "provider_data": dict(raw.provider_data),
     }
 
 
@@ -300,6 +316,10 @@ class YougileBoard:
                             timestamp=int(t.get("timestamp", 0) or 0),
                             board_id=t["id"],
                             completed=bool(t.get("completed", False)),
+                            provider_data={
+                                "source_board_id": brd["id"],
+                                "source_column_id": col_id,
+                            },
                         )
                         count += 1
                         if limit and count >= limit:
@@ -357,17 +377,26 @@ class YougileBoard:
         return out
 
     def normalize(self, raw: RawTask) -> dict:
-        subtask_titles: dict[str, str] = {}
+        subtask_refs: dict[str, dict] = {}
         for sid in raw.subtask_ids:
             try:
                 st = self._read(f"/tasks/{sid}") or {}
-                code = st.get("idTaskCommon") or sid
-                subtask_titles[sid] = f"{code}:{st.get('title', '')}"
+                project_alias = st.get("idTaskProject")
+                subtask_refs[sid] = {
+                    "key": st.get("idTaskCommon") or sid,
+                    "title": st.get("title") or "",
+                    "aliases": [project_alias] if project_alias else [],
+                }
             except Exception:
                 log.warning("yougile: не резолвится подзадача %s", sid, exc_info=True)
         attachments = self._collect_attachments(raw.description, raw.board_id)
-        return normalize_yougile(raw, self._key_pattern, self._url_template,
-                                 subtask_titles, attachments=attachments)
+        return normalize_yougile(
+            raw,
+            self._key_pattern,
+            self._url_template,
+            attachments=attachments,
+            subtask_refs=subtask_refs,
+        )
 
     def normalize_meta(self, raw: RawTask) -> dict:
         """Дешёвая нормализация без I/O (PRI-207): чистый normalize_yougile без
@@ -385,12 +414,12 @@ class YougileBoard:
             log.warning("yougile: fetch_one(%s) не удался", key, exc_info=True)
             return None
         status = None
+        column: dict = {}
         col_id = t.get("columnId")
         if col_id:
             try:
-                status = (
-                    self._read(f"/columns/{quote(str(col_id), safe='')}") or {}
-                ).get("title")
+                column = self._read(f"/columns/{quote(str(col_id), safe='')}") or {}
+                status = column.get("title")
             except Exception:
                 log.warning("yougile: колонка задачи %s недоступна — status=None",
                             key, exc_info=True)
@@ -404,7 +433,101 @@ class YougileBoard:
             timestamp=int(t.get("timestamp", 0) or 0),
             board_id=t.get("id") or key,
             completed=bool(t.get("completed", False)),
+            provider_data={
+                "source_board_id": column.get("boardId"),
+                "source_column_id": col_id,
+            },
         )
+
+    def _native_subtask_identity(
+        self,
+        task: dict,
+        *,
+        fallback_id: str = "",
+        fallback_title: str = "",
+        warnings: tuple[str, ...] = (),
+    ) -> NativeSubtaskIdentity:
+        board_id = str(task.get("id") or fallback_id)
+        key = str(task.get("idTaskCommon") or board_id)
+        project_alias = str(task.get("idTaskProject") or "")
+        aliases = (project_alias,) if project_alias and project_alias != key else ()
+        url_code = project_alias or key
+        url = self._url_template.replace("{code}", url_code) if self._url_template else None
+        return NativeSubtaskIdentity(
+            board_id=board_id,
+            key=key,
+            title=str(task.get("title") or fallback_title),
+            aliases=aliases,
+            url=url,
+            warnings=warnings,
+        )
+
+    def create_native_subtask(
+        self,
+        doc_md: str,
+        *,
+        title: str,
+        source_column_id: str,
+        marker: str,
+    ) -> NativeSubtaskIdentity:
+        description = md_to_html(doc_md) + f"<p><small>{html.escape(marker)}</small></p>"
+        created = self._write(
+            "POST",
+            "/tasks",
+            json={
+                "title": title,
+                "columnId": source_column_id,
+                "description": description,
+            },
+        )
+        uuid = str((created or {}).get("id") or "")
+        if not uuid:
+            raise BoardProviderError(
+                "unsupported",
+                "YouGile create response did not include a task id.",
+                hint="Check the YouGile API response format.",
+            )
+        try:
+            task = self._read(f"/tasks/{quote(uuid, safe='')}") or {}
+        except Exception:
+            log.warning("yougile: созданная подзадача %s не дочитана", uuid, exc_info=True)
+            return NativeSubtaskIdentity(
+                board_id=uuid,
+                key=uuid,
+                title=title,
+                warnings=("созданная подзадача не дочитана — вернули внутренний id",),
+            )
+        return self._native_subtask_identity(task, fallback_id=uuid, fallback_title=title)
+
+    def replace_native_subtasks(self, parent_task_id: str, subtask_ids: list[str]) -> None:
+        self._write(
+            "PUT",
+            f"/tasks/{quote(str(parent_task_id), safe='')}",
+            json={"subtasks": subtask_ids},
+        )
+
+    def reconcile_native_subtasks(
+        self,
+        source_board_id: str,
+        markers: frozenset[str],
+    ) -> list[ReconciledNativeSubtask]:
+        if not markers:
+            return []
+        found: list[ReconciledNativeSubtask] = []
+        columns = self._get_all("/columns", {"boardId": source_board_id})
+        for column in columns:
+            for task in self._get_all("/tasks", {"columnId": column["id"]}):
+                matched = markers.intersection(
+                    SUBTASK_MARKER_RE.findall(task.get("description") or "")
+                )
+                if not matched:
+                    continue
+                identity = self._native_subtask_identity(task)
+                found.extend(
+                    ReconciledNativeSubtask(marker=marker, identity=identity)
+                    for marker in sorted(matched)
+                )
+        return found
 
     def _resolve_column(
         self,

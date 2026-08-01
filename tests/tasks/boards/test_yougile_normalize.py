@@ -6,8 +6,10 @@ URL = "https://ru.yougile.com/team/T/#{code}"
 
 
 def _raw(**kw):
-    base = dict(key="ID-10", project_code="PRI-10", title="T", description="",
-                status="Backlog", subtask_ids=[], timestamp=1)
+    base = {
+        "key": "ID-10", "project_code": "PRI-10", "title": "T", "description": "",
+        "status": "Backlog", "subtask_ids": [], "timestamp": 1,
+    }
     base.update(kw)
     return RawTask(**base)
 
@@ -40,6 +42,27 @@ def test_subtask_links_with_titles_and_related_dedup():
     assert sub == [{"type": "subtask", "key": "u1", "title": "ID-55:Подзадача"}]
     rels = {lk["key"] for lk in b["links"] if lk["type"] == "related"}
     assert "ID-55" in rels                     # код ID-55 — отдельный от UUID u1
+
+
+def test_subtask_link_uses_canonical_common_key_and_covers_all_child_aliases():
+    raw = _raw(description="см. ID-55 и PRI-55", subtask_ids=["uuid-55"])
+
+    brief = normalize_yougile(
+        raw,
+        KP,
+        URL,
+        subtask_refs={
+            "uuid-55": {
+                "key": "ID-55",
+                "title": "Подзадача",
+                "aliases": ["PRI-55"],
+            }
+        },
+    )
+
+    assert brief["links"] == [
+        {"type": "subtask", "key": "ID-55", "title": "Подзадача"}
+    ]
 
 
 def test_alias_omitted_when_equals_key():
@@ -134,7 +157,7 @@ def test_yougile_normalize_dedups_repeated_file_url():
         f"/chats/{UUID}/messages": _FakeYResp(json_data={"content": [
             {"text": "/root/#file:https://yougile.com/f/x/a.md"},
             {"text": "повтор /root/#file:https://yougile.com/f/x/a.md"}]}),
-        "https://yougile.com/f/x/a.md": _FakeYResp(content="A".encode()),
+        "https://yougile.com/f/x/a.md": _FakeYResp(content=b"A"),
     }
     board = _board_with(routes)
     brief = board.normalize(_raw(board_id=UUID, subtask_ids=[]))
@@ -159,7 +182,7 @@ def test_yougile_normalize_marker_in_texthtml():
         f"/chats/{UUID}/messages": _FakeYResp(json_data={"content": [
             {"text": "", "properties": {
                 "textHtml": "<p>/root/#file:https://yougile.com/f/d.txt</p>"}}]}),
-        "https://yougile.com/f/d.txt": _FakeYResp(content="D".encode()),
+        "https://yougile.com/f/d.txt": _FakeYResp(content=b"D"),
     }
     board = _board_with(routes)
     brief = board.normalize(_raw(board_id=UUID, subtask_ids=[]))
@@ -199,7 +222,7 @@ def test_yougile_normalize_unescapes_amp_in_href():
     href = '<a href="https://yougile.com/user-data/x/d.txt?a=1&amp;b=2">d.txt</a>'
     routes = {
         f"/chats/{UUID}/messages": _FakeYResp(json_data={"content": []}),
-        "https://yougile.com/user-data/x/d.txt?a=1&b=2": _FakeYResp(content="D".encode()),
+        "https://yougile.com/user-data/x/d.txt?a=1&b=2": _FakeYResp(content=b"D"),
     }
     board = _board_with(routes)
     brief = board.normalize(_raw(board_id=UUID, description=href, subtask_ids=[]))
@@ -277,3 +300,38 @@ def test_normalize_keeps_plain_markdown_intact():
                   subtask_ids=[], timestamp=1)
     out = normalize_yougile(raw, r"PRI-\d+", "https://b/#{code}")
     assert out["description"] == "## Проблема\n\nтекст"
+
+
+def test_normalize_strips_only_exact_subtask_marker():
+    exact = f"reviewer-subtask:{'a' * 64}"
+    lookalike = "reviewer-subtask:not-a-hash"
+    too_long = f"reviewer-subtask:{'b' * 65}"
+    raw = _raw(description=f"<p>Текст</p><p>{exact}</p><p>{lookalike}</p><p>{too_long}</p>")
+
+    out = normalize_yougile(raw, KP, URL)
+
+    assert exact not in out["description"]
+    assert lookalike in out["description"]
+    assert too_long in out["description"]
+
+
+def test_board_normalize_builds_canonical_child_reference_from_get():
+    routes = {
+        "/tasks/uuid-55": _FakeYResp(json_data={
+            "id": "uuid-55",
+            "idTaskCommon": "ID-55",
+            "idTaskProject": "PRI-55",
+            "title": "Подзадача",
+        }),
+    }
+    board = _board_with(routes)
+
+    brief = board.normalize(_raw(
+        board_id="",
+        description="см. ID-55 и PRI-55",
+        subtask_ids=["uuid-55"],
+    ))
+
+    assert brief["links"] == [
+        {"type": "subtask", "key": "ID-55", "title": "Подзадача"}
+    ]

@@ -40,7 +40,7 @@ def test_fetch_one_builds_rawtask_like_iter_raw():
             "id": "u1", "idTaskCommon": "ID-10", "idTaskProject": "PRI-10",
             "title": "Заголовок", "description": "тело", "columnId": "c1",
             "subtasks": ["s1", "s2"], "timestamp": 123, "completed": True}),
-        "/columns/c1": _Resp(200, {"title": "Готово"}),
+        "/columns/c1": _Resp(200, {"title": "Готово", "boardId": "board-1"}),
     })
     raw = b.fetch_one("PRI-10")
     assert raw is not None
@@ -53,6 +53,10 @@ def test_fetch_one_builds_rawtask_like_iter_raw():
     assert raw.timestamp == 123
     assert raw.board_id == "u1"
     assert raw.completed is True
+    assert raw.provider_data == {
+        "source_board_id": "board-1",
+        "source_column_id": "c1",
+    }
 
 
 def test_fetch_one_none_on_http_error():
