@@ -7,6 +7,7 @@ from copy import deepcopy
 from dataclasses import FrozenInstanceError, replace
 from typing import get_args
 
+import httpx
 import pytest
 
 import reviewer.tasks.subtasks as subtasks_module
@@ -15,6 +16,7 @@ from reviewer.tasks.boards.base import (
     RawTask,
     ReconciledNativeSubtask,
 )
+from reviewer.tasks.boards.yougile import YougileBoard
 from reviewer.tasks.subtask_store import (
     LedgerUnavailableError,
     OperationConflictError,
@@ -2582,6 +2584,39 @@ def test_missing_parent_is_deterministic_nonretryable_error():
     assert first.retryable is False
     assert store.operations == {}
     assert provider.create_calls == []
+
+
+@pytest.mark.parametrize(
+    ("status", "category", "retryable"),
+    [
+        (404, "parent_not_found", False),
+        (503, "provider_read", True),
+    ],
+)
+def test_fresh_yougile_parent_read_preserves_not_found_and_transient_semantics(
+    status,
+    category,
+    retryable,
+):
+    def handle(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(status, json={})
+
+    provider = YougileBoard(
+        api_key="secret",
+        api_base="https://yougile.test/api-v2",
+        key_pattern=r"PRI-\d+",
+        url_template="https://yougile.test/#task/{code}",
+    )
+    provider._client.close()  # type: ignore[attr-defined]
+    provider._client = httpx.Client(  # type: ignore[attr-defined]
+        base_url="https://yougile.test/api-v2",
+        transport=httpx.MockTransport(handle),
+    )
+
+    result = _run(SubtaskService(MemoryStore()), _validate(), provider)
+
+    assert result.category == category
+    assert result.retryable is retryable
 
 
 def test_initial_parent_fetch_exception_is_sanitized_retryable_provider_read_error():

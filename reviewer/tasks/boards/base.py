@@ -137,8 +137,8 @@ class TaskBoardProvider(Protocol):
 
         После finish закрытую задачу надо сразу переиндексировать в стор reviewer,
         не дожидаясь инкрементального sync_board (тот отсекает задачи с
-        timestamp <= watermark-курсор). fail-soft: сетевой сбой / 404 / нет задачи
-        → None (write-through пропускается, стор догонит обычным синком)."""
+        timestamp <= watermark-курсор). ``None`` означает только достоверное
+        отсутствие задачи; ошибки чтения провайдер обязан пробрасывать."""
         ...
 
     def create(self, doc_md: str, *, title: str, target: str | None,

@@ -33,8 +33,10 @@ def _child(
     }
 
 
-def _create_board(enrichment: dict) -> YougileBoard:
+def _create_board(enrichment: object, *, calls: list[tuple[str, str]] | None = None) -> YougileBoard:
     def handle(request: httpx.Request) -> httpx.Response:
+        if calls is not None:
+            calls.append((request.method, request.url.path))
         if request.method == "POST" and request.url.path.endswith("/tasks"):
             return httpx.Response(200, json={"id": "uuid-created"})
         if request.method == "GET" and request.url.path.endswith("/tasks/uuid-created"):
@@ -117,6 +119,45 @@ def test_create_native_subtask_point_read_failure_returns_uuid_warning():
     assert identity.url is None
     assert identity.warnings
     assert state.created == 1
+
+
+@pytest.mark.parametrize(
+    "enrichment",
+    [
+        {
+            "idTaskCommon": "ID-999",
+            "idTaskProject": "PRI-999",
+            "title": "Чужая задача",
+        },
+        {
+            "id": "different-uuid",
+            "idTaskCommon": "ID-999",
+            "idTaskProject": "PRI-999",
+            "title": "Чужая задача",
+        },
+        [{"id": "uuid-created", "idTaskCommon": "ID-999"}],
+    ],
+)
+def test_create_native_subtask_discards_unconfirmed_enrichment_identity(enrichment):
+    calls: list[tuple[str, str]] = []
+    provider = _create_board(enrichment, calls=calls)
+
+    identity = provider.create_native_subtask(
+        "Текст",
+        title="Дочерняя",
+        source_column_id="open-id",
+        marker=MARKER,
+    )
+
+    assert identity.board_id == "uuid-created"
+    assert identity.key == "uuid-created"
+    assert identity.title == "Дочерняя"
+    assert identity.aliases == ()
+    assert identity.url is None
+    assert len(identity.warnings) == 2
+    assert any("enrichment" in warning for warning in identity.warnings)
+    assert any("каноничес" in warning for warning in identity.warnings)
+    assert sum(method == "POST" for method, _path in calls) == 1
 
 
 @pytest.mark.parametrize(

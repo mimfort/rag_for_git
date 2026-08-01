@@ -44,6 +44,9 @@ _PAGE = 1000
 _CANONICAL_UNAVAILABLE_WARNING = (
     "канонический код созданной подзадачи недоступен — вернули внутренний id"
 )
+_ENRICHMENT_UNCONFIRMED_WARNING = (
+    "enrichment созданной подзадачи не подтверждён transport id — использован id из POST"
+)
 
 # Структурного списка файлов YouGile в API не отдаёт. Файл попадает в задачу двумя путями:
 #  1) прикреплённый к задаче — HTML-ссылкой <a href="…/user-data/…"> в description
@@ -467,12 +470,14 @@ class YougileBoard:
         """Один RawTask по ключу (проектный/компанийный код) — write-through после finish.
 
         GET /tasks/{key} (тот же вызов, что и в finish); title колонки резолвится
-        best-effort через GET /columns/{columnId}. fail-soft: сбой/404 → None."""
+        best-effort через GET /columns/{columnId}. Только достоверный 404 → None;
+        остальные ошибки чтения пробрасываются вызывающему коду."""
         try:
             t = self._read(f"/tasks/{quote(key, safe='')}") or {}
-        except Exception:
-            log.warning("yougile: fetch_one(%s) не удался", key, exc_info=True)
-            return None
+        except BoardProviderError as error:
+            if error.category == "not_found":
+                return None
+            raise
         status = None
         column: dict = {}
         col_id = t.get("columnId")
@@ -569,6 +574,18 @@ class YougileBoard:
         except Exception:
             log.warning("yougile: созданная подзадача %s не дочитана", uuid, exc_info=True)
             return self._native_subtask_identity({}, fallback_id=uuid, fallback_title=title)
+        enriched_id = task.get("id") if isinstance(task, dict) else None
+        if (
+            not isinstance(enriched_id, str)
+            or not enriched_id.strip()
+            or enriched_id != uuid
+        ):
+            return self._native_subtask_identity(
+                {},
+                fallback_id=uuid,
+                fallback_title=title,
+                warnings=(_ENRICHMENT_UNCONFIRMED_WARNING,),
+            )
         return self._native_subtask_identity(task, fallback_id=uuid, fallback_title=title)
 
     def replace_native_subtasks(self, parent_task_id: str, subtask_ids: list[str]) -> None:
