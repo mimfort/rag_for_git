@@ -42,7 +42,7 @@ def test_board_tools_advertise_generic_targets_and_options_only():
     assert "target" in tools["finish_task"].inputSchema["properties"]
     discovery = tools["get_board_targets"].description or ""
     assert "registered provider type" in discovery
-    assert "{board_type, project, targets, options, warnings}" in discovery
+    assert "{board_type, project, capabilities, targets, options, warnings}" in discovery
     assert "required_for" in discovery
     assert "choices" in discovery
 
