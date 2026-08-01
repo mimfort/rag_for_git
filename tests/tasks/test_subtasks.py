@@ -392,10 +392,19 @@ def _malformed_operation(request, case):
         created(items[0])
         items[0]["board_id"] = ""
         operation = replace(operation, status="partial")
+    elif case == "created_manual_required":
+        created(items[0])
+        items[0]["manual_required"] = True
+        operation = replace(operation, status="partial")
     elif case == "attached_without_key":
         created(items[0], phase="attached")
         items[0]["key"] = None
         operation = replace(operation, status="partial")
+    elif case == "complete_attached_manual_required":
+        for item in items:
+            created(item, phase="attached")
+        items[0]["manual_required"] = True
+        operation = replace(operation, status="complete")
     elif case == "invalid_aliases":
         created(items[0])
         items[0]["aliases"] = [1]
@@ -1040,7 +1049,9 @@ def test_stale_checkpoint_propagates_without_lock_health_check_or_post():
         "in_flight_url_only",
         "in_flight_complete_identity",
         "created_without_board_id",
+        "created_manual_required",
         "attached_without_key",
+        "complete_attached_manual_required",
         "invalid_aliases",
         "blank_alias",
         "invalid_url",
