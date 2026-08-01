@@ -942,8 +942,6 @@ class SubtaskService:
                         parent_after_attachment = parent_before_attachment
 
                     attached_ids = frozenset(parent_after_attachment.subtask_ids)
-                    if not all(subtask_id in attached_ids for subtask_id in intended_target):
-                        return _result_from_operation(current, resumed=resumed)
                     for index, item in enumerate(current.state["items"]):
                         phase = _persisted_phase(item.get("phase"))
                         if phase not in ("created", "attached"):
@@ -962,6 +960,8 @@ class SubtaskService:
                             changed,
                             expected_revision=current.revision,
                         )
+                    if not all(subtask_id in attached_ids for subtask_id in intended_target):
+                        return _result_from_operation(current, resumed=resumed)
 
                 phases = {
                     _persisted_phase(item.get("phase"))

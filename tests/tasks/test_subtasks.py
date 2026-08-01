@@ -619,7 +619,7 @@ def test_successful_put_without_verified_board_state_does_not_claim_attachment()
     assert write_calls == []
 
 
-def test_incomplete_target_verification_keeps_all_child_phases_created():
+def test_partial_target_verification_reconciles_each_child_bucket():
     request = _validate(subtasks=[CHILD, {**CHILD, "title": "Вторая задача"}])
     store = MemoryStore()
     provider = FakeProvider(
@@ -638,11 +638,11 @@ def test_incomplete_target_verification_keeps_all_child_phases_created():
     result = _run(SubtaskService(store), request, provider)
 
     assert tuple(child.index for child in result.created) == (0, 1)
-    assert result.attached == ()
-    assert tuple(child.index for child in result.unattached) == (0, 1)
+    assert tuple(child.index for child in result.attached) == (0,)
+    assert tuple(child.index for child in result.unattached) == (1,)
     assert result.pending == ()
     assert [item["phase"] for item in store.operations["attempt-1"].state["items"]] == [
-        "created",
+        "attached",
         "created",
     ]
 
@@ -671,13 +671,72 @@ def test_missing_preexisting_target_id_keeps_verified_child_nonterminal():
     persisted = store.operations["attempt-1"]
     assert provider.replace_calls == [("parent-uuid", ["old", "child-uuid"])]
     assert persisted.state["target_subtask_ids"] == ["old", "child-uuid"]
-    assert persisted.state["items"][0]["phase"] == "created"
+    assert persisted.state["items"][0]["phase"] == "attached"
     assert persisted.status == "partial"
     assert result.status == "partial"
     assert result.retryable is True
-    assert result.attached == ()
-    assert result.unattached == result.created
+    assert result.attached == result.created
+    assert result.unattached == ()
     assert write_calls == []
+
+
+def test_retry_empty_refetch_reverts_attached_children_before_later_target_repair():
+    request = _validate(subtasks=[CHILD, {**CHILD, "title": "Вторая задача"}])
+    store = MemoryStore()
+    provider = FakeProvider(
+        None,
+        create_effects=[
+            NativeSubtaskIdentity("child-0", "PRI-225", "Первая"),
+            NativeSubtaskIdentity("child-1", "PRI-226", "Вторая"),
+        ],
+        fetch_effects=[
+            _parent(),
+            _parent(subtask_ids=["old"]),
+            _parent(subtask_ids=["child-0", "child-1"]),
+            _parent(subtask_ids=["child-0", "child-1"]),
+            _parent(),
+            _parent(),
+            _parent(subtask_ids=["old", "child-0", "child-1"]),
+        ],
+    )
+    service = SubtaskService(store)
+
+    first = _run(service, request, provider)
+    second = _run(
+        service,
+        request,
+        provider,
+        operation=service.preflight(request).operation,
+    )
+    phases_after_empty_refetch = [
+        item["phase"] for item in store.operations["attempt-1"].state["items"]
+    ]
+    third = _run(
+        service,
+        request,
+        provider,
+        operation=service.preflight(request).operation,
+    )
+
+    assert tuple(child.index for child in first.attached) == (0, 1)
+    assert first.unattached == ()
+    assert second.status == "partial"
+    assert second.attached == ()
+    assert tuple(child.index for child in second.unattached) == (0, 1)
+    assert phases_after_empty_refetch == ["created", "created"]
+    assert provider.replace_calls == [
+        ("parent-uuid", ["old", "child-0", "child-1"]),
+        ("parent-uuid", ["old", "child-0", "child-1"]),
+        ("parent-uuid", ["old", "child-0", "child-1"]),
+    ]
+    assert len(provider.create_calls) == 2
+    assert store.operations["attempt-1"].state["target_subtask_ids"] == [
+        "old",
+        "child-0",
+        "child-1",
+    ]
+    assert third.status == "ok"
+    assert third.created == third.attached
 
 
 def test_retry_restores_durable_target_before_current_extras_without_recreating_child():
