@@ -5,6 +5,13 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 SKILL = ROOT / "plugin" / "skills" / "decompose-task" / "SKILL.md"
+PRESSURE_RATIONALIZATIONS = (
+    "Exactly one batch means retries are forbidden.",
+    "The original preview confirmation authorizes automatic retries.",
+    "No confirmed child keys means there is nothing to verify.",
+    "A small preview edit can reuse the same key.",
+    "A tool error is the same as an empty context result.",
+)
 
 
 def _text() -> str:
@@ -105,6 +112,84 @@ def test_decompose_task_retries_only_identical_request_and_never_guesses_in_flig
         assert phrase in text
 
 
+def test_decompose_task_distinguishes_initial_batch_from_exact_full_retry():
+    text = _text()
+    flat = _flat(text)
+    assert text.count("create_subtasks(") == 1
+    for phrase in (
+        "exactly one initial native batch request",
+        "repeat the same full batch request",
+        "byte-for-byte",
+        "logically exact",
+        "same idempotency_key",
+        "not an individual request",
+        "not a remaining-items request",
+    ):
+        assert phrase in flat
+
+
+def test_decompose_task_requires_user_choice_before_exact_retry():
+    text = _flat(_text())
+    for phrase in (
+        "no automatic retry",
+        "ask the user to choose",
+        "exact retry or stop",
+        "original preview confirmation",
+        "does not authorize",
+        "explicitly request the exact retry",
+        "do not require a new preview",
+    ):
+        assert phrase in text
+
+
+def test_decompose_task_verifies_ambiguous_attempt_before_offering_retry():
+    text = _text()
+    verify = _flat(text[text.index("## Verify") : text.index("## Quick Reference")])
+    for phrase in (
+        "partial",
+        "timeout",
+        "in_flight",
+        "no confirmed child keys",
+        "available parent and context verification",
+        "same-key retry",
+        "only marker reconciliation mechanism",
+        "board search",
+    ):
+        assert phrase in verify
+    assert verify.index("sync_board(board=<project") < verify.index("offer the exact retry")
+
+
+def test_decompose_task_rotates_key_for_prewrite_edits_but_never_for_recovery():
+    text = _text()
+    preview = _flat(text[text.index("## Preview") : text.index("## Write")])
+    for phrase in (
+        "freeze payload, order, and key",
+        "any edit before the first confirmed write",
+        "invalidates",
+        "new opaque idempotency_key",
+        "full revised preview",
+        "new explicit confirmation",
+    ):
+        assert phrase in preview
+    recovery = _flat(text[text.index("## Write") : text.index("## Verify")])
+    assert "after any attempted or uncertain write" in recovery
+    assert "edits and a new key are forbidden" in recovery
+
+
+def test_decompose_task_attempts_required_context_and_distinguishes_empty_from_error():
+    text = _text()
+    lookup = _flat(text[text.index("## Lookup") : text.index("## Context")])
+    assert re.search(r"parent.{0,120}required", lookup)
+    assert re.search(r"native_subtasks.{0,120}required", lookup)
+    context = _flat(text[text.index("## Context") : text.index("## Draft")])
+    assert "attempt all three" in context
+    assert "empty successful results" in context
+    assert "report" in context
+    assert "tool error is not an empty result" in context
+    assert "stop drafting until resolved" in context
+    assert "optional context" not in context
+
+
 def test_decompose_task_resyncs_and_verifies_parent_graph_and_children():
     text = _text()
     verify = text[text.index("## Verify") :]
@@ -147,6 +232,15 @@ def test_decompose_task_has_scannable_guidance_for_pressure_shortcuts():
     assert "five individual" in lower
     assert "capability" in lower
     assert "search_codebase" in lower
+
+
+def test_decompose_task_repeats_exact_pressure_rationalizations_in_both_scan_sections():
+    text = _text()
+    mistakes = text[text.index("## Common Mistakes") : text.index("## Red Flags")].lower()
+    red_flags = text[text.index("## Red Flags") :].lower()
+    for rationalization in PRESSURE_RATIONALIZATIONS:
+        assert rationalization.lower() in mistakes
+        assert rationalization.lower() in red_flags
 
 
 def test_readmes_document_full_decompose_flow_and_tool_count():

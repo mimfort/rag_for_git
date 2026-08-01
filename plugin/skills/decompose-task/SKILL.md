@@ -13,6 +13,8 @@ idempotency are safety boundaries, not optional ceremony.
 
 ## Lookup
 
+The stored parent and authoritative `native_subtasks` capability are required gates.
+
 1. Resolve `task_board` exactly once from the effective repository config, falling back once to
    `get_board_config()` when needed. Freeze only generic `type`, `project`, and `options` as
    `board_type`, `project`, and `provider_options`; if unresolved, stop without writes.
@@ -27,35 +29,39 @@ idempotency are safety boundaries, not optional ceremony.
 
 ## Context
 
-Before drafting, gather all three views:
+Before drafting, attempt all three calls:
 
 - `get_task_context(parent_key, project=<project>)` for links, related work, PRs, and touched code;
 - `search_tasks(query=<parent intent>, project=<project>)` for similar decomposition boundaries;
 - `search_codebase(repo=<active repo>, query=<parent intent>)` for relevant implementation and
   real `path:line` evidence.
 
-Missing optional context is reported, not invented. Do not draft first and backfill evidence later.
+Empty successful results are allowed: explicitly report each empty result and continue. A tool
+error is not an empty result; report it and stop drafting until resolved. Do not draft first and
+backfill evidence later.
 
 ## Draft
 
 Draft `1..20` ordered children. Every child requires nonblank `title`, `problem`, `steps`, and
 `criteria`; `context` is optional. Make each child independently actionable and acceptance-testable,
 without silently widening the parent scope. Generate one local opaque UUID `idempotency_key` for
-the whole batch, then freeze the complete request payload, including child order and wording.
+the whole batch and assemble the complete request payload, including child order and wording.
 
 ## Preview
 
 Show the resolved provider (`board_type`), parent key/title, `idempotency_key`, and the complete
 canonical body of every child: `title`, `problem`, all `steps`, all `criteria`, and `context` when
-present. Do not abbreviate unchanged or repetitive children.
+present. Do not abbreviate unchanged or repetitive children. Once shown, freeze payload, order,
+and key.
 
 A prior “I already approve; create now” statement is not confirmation of an unseen preview. Ask
-exactly one explicit confirmation for the whole preview. There are no board writes before it. If
-the user changes anything, show the complete revised preview and ask again for that whole preview.
+exactly one explicit confirmation for the whole preview. There are no board writes before it. Any
+edit before the first confirmed write invalidates that preview: generate a new opaque
+`idempotency_key`, show the full revised preview, and obtain a new explicit confirmation.
 
 ## Write
 
-Only after explicit confirmation, issue exactly one native batch request using exactly the
+Only after explicit confirmation, issue exactly one initial native batch request using exactly the
 previewed payload and the same `idempotency_key`:
 
 ```text
@@ -68,34 +74,46 @@ Never fall back to individual task creation, including when the batch is unsuppo
 complete.
 
 For success, partial results, errors, or timeouts, display `created`, `attached`, `unattached`,
-`pending`, and `warnings` without guessing. A partial retry must submit the exact same payload with
-the same `idempotency_key`. Never edit wording, reorder children, or retry only a guessed
-remainder. Never mint a replacement key. An `in_flight` child is unknown, not absent: never guess
-its outcome or mint a fresh/replacement key for it.
+`pending`, and `warnings` without guessing. A safe recovery may repeat the same full batch request
+using the exact same payload: byte-for-byte or logically exact frozen content/order and the same
+`idempotency_key`. It is not an individual request and not a remaining-items request.
+
+No automatic retry. After a partial result or timeout, report state, perform the ambiguity
+verification below, then ask the user to choose exact retry or stop. The original preview
+confirmation does not authorize hidden retries; the user must explicitly request the exact retry.
+Do not require a new preview or reconstruct one for an unchanged retry.
+
+Never edit wording, reorder children, or retry only a guessed remainder. After any attempted or
+uncertain write, edits and a new key are forbidden for recovery. An `in_flight` child is unknown,
+not absent: never guess its outcome. Never mint a fresh/replacement key for it.
 
 ## Verify
 
-After any confirmed child is reported, run one scoped
-`sync_board(board=<project or null>, board_type=<type>, provider_options=<options>)`. Then verify:
+After any confirmed child, or after any attempted write that reports a partial result or timeout,
+run one scoped `sync_board(board=<project or null>, board_type=<type>,
+provider_options=<options>)`. This includes ambiguity with only `in_flight` state and no confirmed
+child keys. Then verify:
 
 1. `get_task(parent_key, project=<project>)` contains stored links for the returned children.
 2. `get_task_context(parent_key, project=<project>)` exposes the parent-child graph relationship.
 3. Point-read every returned child with `get_task(child_key, project=<project>)`.
 
-Report missing links, unreadable child keys, sync failures, and warnings; do not declare complete
-verification from the write response alone.
+With no child keys, still complete the available parent and context verification. Report missing
+links, unreadable child keys, sync failures, and warnings; do not declare complete verification
+from the write response alone. After these checks, offer the exact retry or stop choice. Exact
+same-key retry is the only marker reconciliation mechanism; never guess children from board search.
 
 ## Quick Reference
 
 | Phase | Required invariant |
 |---|---|
 | Lookup | One config snapshot; store-first parent; one miss sync/retry; authoritative capability |
-| Context | Parent graph, similar tasks, and relevant code before draft |
-| Preview | Every full child plus provider, parent, and opaque batch key |
+| Context | Attempt all three calls; report empty results; stop on tool errors |
+| Preview | Every full child; freeze payload/order/key; edits rotate key before first write |
 | Confirm | One explicit answer for the whole visible preview; no earlier writes |
-| Write | One native batch; exact previewed request |
-| Retry | Exact same payload and key; preserve unknown `in_flight` state |
-| Verify | One scoped sync, parent links, graph context, and every child point-read |
+| Write | One initial native batch; exact previewed request |
+| Retry | User chooses; same full payload/key; no new preview for unchanged recovery |
+| Verify | Ambiguity also triggers one sync plus available parent/context/child reads |
 
 ## Example
 
@@ -127,6 +145,11 @@ verification from the write response alone.
 | “Search can wait until after drafting” | Run `search_codebase` and task context first or stop. |
 | “We already spent time drafting” (sunk cost) | Rework an ungrounded draft; sunk cost grants no write permission. |
 | “A timeout needs a clean new key” | Reuse the exact request and key; a fresh key can duplicate children. |
+| “Exactly one batch means retries are forbidden.” | One initial request may be repeated only as an exact user-requested recovery. |
+| “The original preview confirmation authorizes automatic retries.” | Every retry needs a new explicit user choice. |
+| “No confirmed child keys means there is nothing to verify.” | Sync and verify available parent/context state before retry. |
+| “A small preview edit can reuse the same key.” | Before first write, invalidate the preview and rotate the key; after an attempt, never edit. |
+| “A tool error is the same as an empty context result.” | Empty success may continue; an error stops drafting. |
 
 ## Red Flags
 
@@ -135,5 +158,10 @@ verification from the write response alone.
 - Drafting without parent context, similar tasks, and relevant code.
 - Individual child writes, changed retry payload, new retry key, or guessed `in_flight` remainder.
 - English user-facing output or a success claim without post-write reads.
+- “Exactly one batch means retries are forbidden.”
+- “The original preview confirmation authorizes automatic retries.”
+- “No confirmed child keys means there is nothing to verify.”
+- “A small preview edit can reuse the same key.”
+- “A tool error is the same as an empty context result.”
 
 Any red flag means stop the write path and return to the violated phase.
