@@ -366,6 +366,28 @@ def _malformed_operation(request, case):
         items[0]["warnings"] = [object()]
     elif case == "pending_identity":
         items[0]["board_id"] = "possible-side-effect"
+    elif case.startswith("in_flight_"):
+        items[0]["phase"] = "in_flight"
+        operation = replace(operation, status="partial")
+        if case == "in_flight_key_only":
+            items[0]["key"] = "PRI-225"
+        elif case == "in_flight_board_only":
+            items[0]["board_id"] = "child-uuid"
+        elif case == "in_flight_aliases_only":
+            items[0]["aliases"] = ["TASK-2"]
+        elif case == "in_flight_url_only":
+            items[0]["url"] = "https://board/child-uuid"
+        elif case == "in_flight_complete_identity":
+            items[0].update(
+                {
+                    "key": "PRI-225",
+                    "board_id": "child-uuid",
+                    "aliases": ["TASK-2"],
+                    "url": "https://board/child-uuid",
+                }
+            )
+        else:
+            raise AssertionError(f"unknown in-flight case: {case}")
     elif case == "created_without_board_id":
         created(items[0])
         items[0]["board_id"] = ""
@@ -1012,6 +1034,11 @@ def test_stale_checkpoint_propagates_without_lock_health_check_or_post():
         "invalid_manual",
         "invalid_warnings",
         "pending_identity",
+        "in_flight_key_only",
+        "in_flight_board_only",
+        "in_flight_aliases_only",
+        "in_flight_url_only",
+        "in_flight_complete_identity",
         "created_without_board_id",
         "attached_without_key",
         "invalid_aliases",

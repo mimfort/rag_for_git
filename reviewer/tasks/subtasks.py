@@ -350,11 +350,8 @@ def _validate_persisted_operation(operation: SubtaskOperation) -> _ValidatedOper
         elif phase in ("created", "attached"):
             if not _usable_identity_text(key) or not _usable_identity_text(board_id):
                 raise LedgerUnavailableError("Созданная подзадача не содержит identity")
-        elif key is not None or board_id is not None:
-            if not _usable_identity_text(key) or not _usable_identity_text(board_id):
-                raise LedgerUnavailableError("In-flight подзадача содержит неполную identity")
-        elif aliases or url is not None:
-            raise LedgerUnavailableError("In-flight подзадача содержит неполную identity")
+        elif key is not None or board_id is not None or aliases or url is not None:
+            raise LedgerUnavailableError("In-flight подзадача содержит identity")
 
         phases.append(phase)
         items.append(item)
