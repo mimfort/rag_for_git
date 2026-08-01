@@ -500,6 +500,10 @@ namespaced skills with `$rag-reviewer:...`.
 - **Invoke:** `/rag-reviewer:decompose-task PRI-224`.
 - **Needs:** a stored parent, configured board, authoritative `native_subtasks` capability, task
   context, similar tasks, and relevant code from `search_codebase`.
+- **Board config:** inspect the repository `task_board` key once. A present null/empty/disabled
+  explicitly disables board work and never calls deploy-wide `get_board_config`. Only an absent
+  repository key may call `get_board_config` once; a mapping freezes generic `type`, `project`, and
+  `options` for the entire flow.
 - **Preview/confirmation:** shows the provider, parent, idempotency key, and complete canonical body
   of every child, then asks for one explicit confirmation of the whole preview; no earlier write.
 - **Write/verification:** sends exactly one confirmed initial batch. Every actually attempted batch
@@ -508,10 +512,12 @@ namespaced skills with `$rag-reviewer:...`.
 - **Verification:** performs exactly one project-scoped sync, re-reads the parent with `get_task`
   and graph/context with `get_task_context` even when no child keys were returned, and point-reads
   every returned child key with `get_task`.
-- **Recovery:** partial, timeout, or error recovery is never automatic. After verification, request
-  a new explicit user choice between exact retry or stop. Exact retry replays the same full payload,
-  order, and idempotency key; it never mints a new key, never edits wording, and never sends only
-  the remainder.
+- **Recovery:** partial, timeout, or error recovery is never automatic. The skill preserves and
+  reports `status`, `category`, and `retryable`. After verification, only transport timeout or
+  unknown outcome or `retryable=true` reaches a new explicit user choice between exact retry or
+  stop; `retryable=false`, and `unsupported`, `conflict`, and `parent_not_found` stop without retry.
+  Exact retry replays the same full payload, order, and idempotency key; it never mints a new key,
+  never edits wording, and never sends only the remainder.
 - **Result:** created/attached/unattached/pending children and warnings, reported without guessing.
 
 ### `finish-task` — close a task after its PR

@@ -15,9 +15,14 @@ idempotency are safety boundaries, not optional ceremony.
 
 The stored parent and authoritative `native_subtasks` capability are required gates.
 
-1. Resolve `task_board` exactly once from the effective repository config, falling back once to
-   `get_board_config()` when needed. Freeze only generic `type`, `project`, and `options` as
-   `board_type`, `project`, and `provider_options`; if unresolved, stop without writes.
+1. Inspect the repository `task_board` key once and resolve exactly one state:
+   - If the key is present with a null, empty, or disabled value, board work is explicitly
+     disabled: stop no-write and never call deploy-wide `get_board_config`.
+   - Only if the repository key is absent, use the deploy fallback: call `get_board_config()`
+     exactly once.
+   - If a mapping exists, freeze its generic `type`, `project`, and `options` as `board_type`,
+     `project`, and `provider_options` for the whole flow. Never re-resolve mid-flow. If no mapping
+     resolves, stop without writes.
 2. Read the store first with `get_task(parent_key, project=<project>)`. On miss only, run exactly
    one scoped `sync_board(board=<project or null>, board_type=<type>,
    provider_options=<options>)`, then make one retry of the same parent read. If it is still
@@ -73,11 +78,12 @@ create_subtasks(parent_key=<parent_key>, subtasks=<previewed children>,
 Never fall back to individual task creation, including when the batch is unsupported or partially
 complete.
 
-For any result or timeout, retain status plus `created`, `attached`, `unattached`, `pending`, and
-`warnings` without guessing; do not declare outcome or offer recovery yet. Follow **Verify** unless
-the response explicitly says capability/preflight stopped before a write. A safe recovery may
-repeat the same full batch request using the exact same payload: byte-for-byte or logically exact
-frozen content/order and the same `idempotency_key`. It is not an individual request and not a
+For any result, retain `status`, `category`, and `retryable` plus `created`, `attached`,
+`unattached`, `pending`, and `warnings` exactly as returned. On timeout, retain the unknown outcome
+without guessing. Do not declare outcome or offer recovery yet. Follow **Verify** unless the
+response explicitly says capability/preflight stopped before a write. A safe recovery may repeat
+the same full batch request using the exact same payload: byte-for-byte or logically exact frozen
+content/order and the same `idempotency_key`. It is not an individual request and not a
 remaining-items request.
 
 No automatic retry. After required verification, report state, then ask the user to choose exact
@@ -104,19 +110,27 @@ write do not trigger this post-write verification. Then verify:
 With no child keys, still complete the available parent and context verification. Report missing
 links, unreadable child keys, sync failures, and warnings. Complete these checks before declaring
 outcome or offering recovery; never declare complete verification from the write response alone.
-Only then offer the exact retry or stop, and execute it only after an explicit user choice. Exact
-same-key retry is the only marker reconciliation mechanism; never guess children from board search.
+Display `status`, `category`, and `retryable` exactly as returned.
+
+After mandatory attempted-write verification, offer the exact retry only for a transport timeout
+or unknown outcome, or when `retryable is true`; still require an explicit user choice between
+exact retry and stop. If `retryable == false`, or `category` is `unsupported`, `conflict`, or
+`parent_not_found`, report the terminal result and stop without retry. Unsupported detected before
+a write remains a no-write stop and does not trigger post-write verification. The recovery uses
+the same full payload, same order, and same `idempotency_key`; never mint a key and never edit the
+recovery payload. Exact same-key retry is the only marker reconciliation mechanism; never guess
+children from board search.
 
 ## Quick Reference
 
 | Phase | Required invariant |
 |---|---|
-| Lookup | One config snapshot; store-first parent; one miss sync/retry; authoritative capability |
+| Lookup | Absent vs explicit disable; one frozen generic snapshot; fallback only for absent |
 | Context | Attempt all three calls; report empty results; stop on tool errors |
 | Preview | Every full child; freeze payload/order/key; edits rotate key before first write |
 | Confirm | One explicit answer for the whole visible preview; no earlier writes |
 | Write | One initial native batch; exact previewed request |
-| Retry | User chooses; same full payload/key; no new preview for unchanged recovery |
+| Retry | User chooses; retryable gate; timeout/unknown or true; `unsupported`/`conflict`/`parent_not_found` stop |
 | Verify | Any actually attempted batch, every status: one sync and available reads before outcome/recovery |
 
 ## Example
@@ -155,6 +169,8 @@ same-key retry is the only marker reconciliation mechanism; never guess children
 | “A small preview edit can reuse the same key.” | Before first write, invalidate the preview and rotate the key; after an attempt, never edit. |
 | “A tool error is the same as an empty context result.” | Empty success may continue; an error stops drafting. |
 | “Only partial/timeout outcomes need verification.” | Every attempted write is verified, including `ok`/`error`; preflight no-write stops are not. |
+| “Explicitly disabled board config can use deploy fallback.” | Present disable wins; fallback is only for an absent repository key. |
+| “Any error is safe to retry with the same key.” | Retry only unknown/timeout or `retryable=true`; terminal categories stop. |
 
 ## Red Flags
 
@@ -170,5 +186,7 @@ same-key retry is the only marker reconciliation mechanism; never guess children
 - “A tool error is the same as an empty context result.”
 - Declaring an attempted-write outcome before its scoped sync and available reads.
 - “Only partial/timeout outcomes need verification.”
+- “Explicitly disabled board config can use deploy fallback.”
+- “Any error is safe to retry with the same key.”
 
 Any red flag means stop the write path and return to the violated phase.

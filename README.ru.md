@@ -504,6 +504,10 @@ threshold, graph backend и retrieval ceilings меняют cost/recall; сна�
 - **Вызов:** `/rag-reviewer:decompose-task PRI-224`.
 - **Нужно:** сохранённый parent, настроенная доска, authoritative capability `native_subtasks`, task
   context, похожие задачи и релевантный код из `search_codebase`.
+- **Board config:** один раз проверяет repository key `task_board`. Значение null/empty/disabled
+  явно отключает board work и не вызывает deploy-wide `get_board_config`. Только отсутствующий
+  repository key разрешает один вызов `get_board_config`; mapping фиксирует generic `type`,
+  `project` и `options` на весь flow.
 - **Preview/confirmation:** показывает provider, parent, idempotency key и полное каноническое тело
   каждого child, затем запрашивает одно явное confirmation всего preview; до него записей нет.
 - **Запись/проверка:** отправляет ровно один подтверждённый initial batch. Каждая фактически начатая
@@ -513,9 +517,11 @@ threshold, graph backend и retrieval ceilings меняют cost/recall; сна�
   graph/context через `get_task_context` даже если child keys не возвращены, затем точечно читает
   каждый возвращённый child key через `get_task`.
 - **Recovery:** recovery после partial, timeout или error никогда не запускается автоматически.
-  После проверки skill запрашивает новый явный выбор: точный retry или stop. Точный retry повторяет
-  те же полные payload, order и idempotency key; не создаёт новый key, не редактирует wording и не
-  отправляет только remainder.
+  Skill сохраняет и показывает `status`, `category` и `retryable`. После проверки только transport
+  timeout/unknown outcome или `retryable=true` допускает новый явный выбор: точный retry или stop;
+  `retryable=false`, а `unsupported`, `conflict` и `parent_not_found` останавливают flow без retry.
+  Точный retry повторяет те же полные payload, order и idempotency key; не создаёт новый key, не
+  редактирует wording и не отправляет только remainder.
 - **Результат:** created/attached/unattached/pending children и warnings без догадок.
 
 ### `finish-task` — закрыть задачу после PR

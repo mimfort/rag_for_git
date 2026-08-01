@@ -15,6 +15,8 @@ PRESSURE_RATIONALIZATIONS = (
     "No confirmed child keys means there is nothing to verify.",
     "A small preview edit can reuse the same key.",
     "A tool error is the same as an empty context result.",
+    "Explicitly disabled board config can use deploy fallback.",
+    "Any error is safe to retry with the same key.",
 )
 
 
@@ -102,6 +104,26 @@ def test_decompose_task_is_store_first_with_one_scoped_miss_retry():
     assert "one retry" in flat
     assert "still missing" in flat
     assert "stop" in flat
+
+
+def test_decompose_task_resolves_board_config_once_with_explicit_tristate():
+    text = _text()
+    lookup = _flat(text[text.index("## Lookup") : text.index("## Context")])
+    for phrase in (
+        "inspect the repository task_board key",
+        "present with a null, empty, or disabled value",
+        "explicitly disabled",
+        "stop no-write",
+        "never call deploy-wide get_board_config",
+        "only if the repository key is absent",
+        "deploy fallback",
+        "call get_board_config() exactly once",
+        "mapping exists",
+        "freeze its generic type, project, and options",
+        "never re-resolve",
+    ):
+        assert phrase in lookup
+    assert text.count("get_board_config()") == 1
 
 
 def test_decompose_task_discovers_authoritative_native_capability_before_context():
@@ -196,6 +218,37 @@ def test_decompose_task_requires_user_choice_before_exact_retry():
         "do not require a new preview",
     ):
         assert phrase in text
+
+
+def test_decompose_task_preserves_metadata_and_gates_exact_retry():
+    text = _text()
+    write = _flat(text[text.index("## Write") : text.index("## Verify")])
+    assert "retain status, category, and retryable" in write
+    verify = _flat(text[text.index("## Verify") : text.index("## Quick Reference")])
+    assert "display status, category, and retryable exactly as returned" in verify
+    assert "after mandatory attempted-write verification" in verify
+    assert "transport timeout or unknown outcome" in verify
+    assert "retryable is true" in verify
+    assert "retryable == false" in verify
+    for category in ("unsupported", "conflict", "parent_not_found"):
+        assert category in verify
+    assert "stop without retry" in verify
+    assert "unsupported detected before a write" in verify
+    assert "no-write stop" in verify
+    for phrase in (
+        "same full payload",
+        "same order",
+        "same idempotency_key",
+        "never mint",
+        "never edit",
+    ):
+        assert phrase in verify
+
+    quick = _flat(text[text.index("## Quick Reference") : text.index("## Example")])
+    assert "absent vs explicit disable" in quick
+    assert "retryable gate" in quick
+    for category in ("unsupported", "conflict", "parent_not_found"):
+        assert category in quick
 
 
 def test_decompose_task_verifies_ambiguous_attempt_before_offering_retry():
@@ -351,6 +404,15 @@ def test_english_readme_documents_full_decompose_safety_flow():
         "never mints a new key",
         "never edits",
         "never sends only the remainder",
+        "inspect the repository task_board key once",
+        "present null/empty/disabled explicitly disables board work",
+        "never calls deploy-wide get_board_config",
+        "only an absent repository key may call get_board_config once",
+        "mapping freezes generic type, project, and options for the entire flow",
+        "preserves and reports status, category, and retryable",
+        "transport timeout or unknown outcome or retryable=true",
+        "retryable=false",
+        "unsupported, conflict, and parent_not_found stop without retry",
     ):
         assert phrase in section
     assert "yougile" not in section
@@ -379,6 +441,15 @@ def test_russian_readme_documents_full_decompose_safety_flow():
         "не создаёт новый key",
         "не редактирует",
         "не отправляет только remainder",
+        "один раз проверяет repository key task_board",
+        "null/empty/disabled явно отключает board work",
+        "не вызывает deploy-wide get_board_config",
+        "только отсутствующий repository key разрешает один вызов get_board_config",
+        "mapping фиксирует generic type, project и options на весь flow",
+        "сохраняет и показывает status, category и retryable",
+        "transport timeout/unknown outcome или retryable=true",
+        "retryable=false",
+        "unsupported, conflict и parent_not_found останавливают flow без retry",
     ):
         assert phrase in section
     assert "yougile" not in section
