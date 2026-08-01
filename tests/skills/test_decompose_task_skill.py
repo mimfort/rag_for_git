@@ -1,7 +1,11 @@
 """Guardrail: decompose-task безопасно создаёт нативные подзадачи одним batch-вызовом."""
 
 import re
+from collections.abc import Mapping
 from pathlib import Path
+
+import pytest
+import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
 SKILL = ROOT / "plugin" / "skills" / "decompose-task" / "SKILL.md"
@@ -22,7 +26,7 @@ def _flat(text: str) -> str:
     return " ".join(text.replace("`", "").lower().split())
 
 
-def _frontmatter(text: str) -> tuple[list[str], str]:
+def _frontmatter(text: str) -> tuple[object, str]:
     lines = text.splitlines()
     assert lines and lines[0] == "---"
     try:
@@ -30,7 +34,8 @@ def _frontmatter(text: str) -> tuple[list[str], str]:
     except ValueError as error:
         raise AssertionError("missing closing frontmatter delimiter") from error
     assert closing > 1
-    return lines[1:closing], "\n".join(lines[closing + 1 :])
+    parsed = yaml.safe_load("\n".join(lines[1:closing]))
+    return parsed, "\n".join(lines[closing + 1 :])
 
 
 def _readme_command_section(path: Path) -> str:
@@ -42,18 +47,21 @@ def _readme_command_section(path: Path) -> str:
     return _flat(text[start:end])
 
 
+def test_frontmatter_parser_rejects_invalid_yaml():
+    malformed = "---\nbroken: [\n---\n# Body\n"
+    with pytest.raises(yaml.YAMLError):
+        _frontmatter(malformed)
+
+
 def test_decompose_task_frontmatter_is_trigger_only():
     text = _text()
     header, body = _frontmatter(text)
-    names = [line.removeprefix("name:").strip() for line in header if line.startswith("name:")]
-    descriptions = [
-        line.removeprefix("description:").strip()
-        for line in header
-        if line.startswith("description:")
-    ]
-    assert names == ["decompose-task"]
-    assert len(descriptions) == 1
-    value = descriptions[0]
+    assert isinstance(header, Mapping)
+    assert tuple(header).count("name") == 1
+    assert tuple(header).count("description") == 1
+    assert header["name"] == "decompose-task"
+    value = header["description"]
+    assert isinstance(value, str)
     assert value.startswith("Use when ")
     assert "you" not in value.lower().split()
     for workflow_word in ("preview", "confirm", "create", "sync", "verify", "batch"):
