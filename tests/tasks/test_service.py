@@ -204,6 +204,42 @@ def test_index_task_missing_links_preserves_store_and_graph():
     assert out["links_upserted"] == 0
 
 
+def test_index_task_normalizes_links_once_for_store_and_graph():
+    links = [
+        {"key": "ID-2", "title": "child"},
+        {"title": "keyless"},
+        {"key": ""},
+        "not a link",
+    ]
+    expected = [{"key": "ID-2", "title": "child"}]
+    store, graph = _FakeStore(), _FakeGraph()
+
+    TaskService(store, graph, _FakeEmbedder()).index_task(_brief(links=links))
+
+    assert store.upserted[0].links == expected
+    assert graph.replaced_links == [("ID-1", expected)]
+
+
+def test_index_task_warns_when_links_row_is_missing_but_still_updates_graph():
+    text = build_task_text("Add logout", "Clear session", ["redirects"])
+
+    class _MissingRowStore(_FakeStore):
+        def update_links(self, key, links):
+            self.link_updates.append((key, links))
+            return False
+
+    links = [{"key": "ID-2"}]
+    store = _MissingRowStore(hashes={"ID-1": task_content_hash(text)})
+    graph = _FakeGraph()
+
+    out = TaskService(store, graph, _FakeEmbedder()).index_task(_brief(links=links))
+
+    assert out["links_stored"] is False
+    assert any("store links" in warning and "not found" in warning
+               for warning in out["warnings"])
+    assert graph.replaced_links == [("ID-1", links)]
+
+
 def test_index_task_graph_none_still_embeds_and_warns():
     store, emb = _FakeStore(), _FakeEmbedder()
     out = TaskService(store, None, emb).index_task(_brief())

@@ -41,7 +41,8 @@ class TaskService:
         url = task.get("url")
         project = task.get("project") or ""
         links_supplied = "links" in task
-        links = ([lk for lk in (task.get("links") or []) if isinstance(lk, dict)]
+        links = ([lk for lk in (task.get("links") or [])
+                  if isinstance(lk, dict) and lk.get("key")]
                  if links_supplied else None)
         text = build_task_text(title, description, criteria, attachments,
                                embed_chars=self._attachment_embed_chars)
@@ -71,6 +72,8 @@ class TaskService:
         if links_supplied and links_stored is not True:
             try:
                 links_stored = self._store.update_links(key, links)
+                if links_stored is False:
+                    warnings.append(f"store links: task {key} not found")
             except Exception as e:
                 log.warning("index_task: сбой store links для %s", key, exc_info=True)
                 warnings.append(f"store links: {type(e).__name__}: {e}")
@@ -127,7 +130,8 @@ class TaskService:
             status = task.get("status")
             url = task.get("url")
             links_supplied = "links" in task
-            links = ([lk for lk in (task.get("links") or []) if isinstance(lk, dict)]
+            links = ([lk for lk in (task.get("links") or [])
+                      if isinstance(lk, dict) and lk.get("key")]
                      if links_supplied else None)
             text = build_task_text(title, description, criteria, attachments,
                                    embed_chars=self._attachment_embed_chars)
@@ -212,6 +216,9 @@ class TaskService:
                 continue
             try:
                 results[i]["links_stored"] = self._store.update_links(p["key"], p["links"])
+                if results[i]["links_stored"] is False:
+                    results[i]["warnings"].append(
+                        f"store links: task {p['key']} not found")
             except Exception as e:
                 log.warning("index_batch: сбой store links для %s", p["key"], exc_info=True)
                 results[i]["warnings"].append(f"store links: {type(e).__name__}: {e}")

@@ -247,6 +247,46 @@ def test_index_batch_meta_only_replaces_links_without_embedding():
     assert result["links_upserted"] == 1
 
 
+def test_index_batch_normalizes_links_once_for_store_and_graph():
+    text = build_task_text("Add logout", "Clear session", ["redirects"])
+    links = [
+        {"key": "ID-3", "type": "subtask"},
+        {"title": "keyless"},
+        {"key": None},
+        42,
+    ]
+    expected = [{"key": "ID-3", "type": "subtask"}]
+    store = _FakeStore(hashes={"ID-1": task_content_hash(text)})
+    graph = _FakeGraph()
+
+    TaskService(store, graph, _FakeEmbedder()).index_batch([_brief(links=links)])
+
+    assert store.link_updates == [("ID-1", expected)]
+    assert graph.replaced_links == [("ID-1", expected)]
+
+
+def test_index_batch_warns_when_links_row_is_missing_but_still_updates_graph():
+    text = build_task_text("Add logout", "Clear session", ["redirects"])
+
+    class _MissingRowStore(_FakeStore):
+        def update_links(self, key, links):
+            self.link_updates.append((key, links))
+            return False
+
+    links = [{"key": "ID-2"}]
+    store = _MissingRowStore(hashes={"ID-1": task_content_hash(text)})
+    graph = _FakeGraph()
+
+    result = TaskService(store, graph, _FakeEmbedder()).index_batch([
+        _brief(links=links),
+    ])[0]
+
+    assert result["links_stored"] is False
+    assert any("store links" in warning and "not found" in warning
+               for warning in result["warnings"])
+    assert graph.replaced_links == [("ID-1", links)]
+
+
 def test_index_batch_passes_attachments_to_row():
     """Поле attachments из брифа прокидывается в TaskRow при батчевом upsert."""
     store, graph, emb = _FakeStore(), _FakeGraph(), _FakeEmbedder()
