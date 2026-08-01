@@ -56,6 +56,17 @@ def _validate(**overrides):
     return validate_subtask_request(**values)
 
 
+def _input_hash(draft):
+    canonical = json.dumps(
+        draft.payload(),
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        allow_nan=False,
+    )
+    return hashlib.sha256(canonical.encode()).hexdigest()
+
+
 class MemoryStore:
     def __init__(
         self,
@@ -77,6 +88,7 @@ class MemoryStore:
         self.insert_race = insert_race
         self.inserted_snapshots = []
         self.checkpoint_snapshots = []
+        self.checkpoint_history = []
 
     def load(self, idempotency_key):
         operation = self.operations.get(idempotency_key)
@@ -103,6 +115,16 @@ class MemoryStore:
             raise OperationConflictError("stale revision")
         snapshot = deepcopy(operation)
         self.checkpoint_snapshots.append(snapshot)
+        self.checkpoint_history.append(
+            (
+                expected_revision,
+                snapshot.status,
+                tuple(
+                    (item["index"], item["phase"], item["input_hash"])
+                    for item in snapshot.state["items"]
+                ),
+            )
+        )
         phase = snapshot.state["items"][0]["phase"]
         self.events.append(("checkpoint", phase, expected_revision))
         state = deepcopy(snapshot.state)
@@ -246,6 +268,7 @@ def _in_flight_operation(request=None, *, revision=0, manual_required=False, war
                 {
                     "index": 0,
                     "title": request.subtasks[0].title,
+                    "input_hash": _input_hash(request.subtasks[0]),
                     "marker": marker,
                     "phase": "in_flight",
                     "key": None,
@@ -258,6 +281,22 @@ def _in_flight_operation(request=None, *, revision=0, manual_required=False, war
             ],
         },
     )
+
+
+def _attached_operation(request=None):
+    request = request or _validate()
+    operation = _in_flight_operation(request)
+    item = operation.state["items"][0]
+    item.update(
+        {
+            "phase": "attached",
+            "key": "PRI-225",
+            "aliases": ["TASK-2"],
+            "board_id": "child-uuid",
+            "url": "https://board/child-uuid",
+        }
+    )
+    return replace(operation, status="complete")
 
 
 def test_contract_constants_and_literal_values():
@@ -331,11 +370,11 @@ def test_preflight_distinguishes_missing_conflict_incomplete_and_complete_operat
 
     conflicting = _operation(request, request_hash="another-hash")
     conflict = SubtaskService(MemoryStore(conflicting)).preflight(request)
-    assert conflict.operation is None
+    assert conflict.operation == conflicting
     assert conflict.result is not None
     assert conflict.result.status == "error"
     assert conflict.result.resumed is True
-    assert conflict.result.category == "idempotency_conflict"
+    assert conflict.result.category == "conflict"
     assert conflict.result.retryable is False
 
     incomplete = _operation(request)
@@ -353,7 +392,14 @@ def test_preflight_distinguishes_missing_conflict_incomplete_and_complete_operat
                 {
                     "index": 0,
                     "title": "Дочерняя задача",
-                    "marker": "reviewer-subtask:" + "a" * 64,
+                    "input_hash": _input_hash(request.subtasks[0]),
+                    "marker": marker_for(
+                        "yougile",
+                        "parent-uuid",
+                        request.idempotency_key,
+                        0,
+                        request.subtasks[0],
+                    ),
                     "phase": "attached",
                     "key": "PRI-225",
                     "aliases": ["TASK-2"],
@@ -369,11 +415,13 @@ def test_preflight_distinguishes_missing_conflict_incomplete_and_complete_operat
     )
     replay = SubtaskService(MemoryStore(complete)).preflight(request)
 
-    assert replay.operation is None
+    assert replay.operation == complete
     assert replay.result is not None
     assert replay.result.status == "ok"
     assert replay.result.resumed is True
     assert replay.result.attached[0].key == "PRI-225"
+    assert replay.result.created == replay.result.attached
+    assert replay.result.unattached == ()
     assert replay.result.warnings == ("safe warning",)
     assert replay.result.reindexed is True
 
@@ -405,6 +453,7 @@ def test_fresh_run_checkpoints_before_post_and_persists_created_identity():
     )
 
     marker = marker_for("yougile", "parent-uuid", "attempt-1", 0, request.subtasks[0])
+    input_hash = _input_hash(request.subtasks[0])
     assert events[-4:] == [
         ("checkpoint", "in_flight", 0),
         ("ensure_alive",),
@@ -437,10 +486,11 @@ def test_fresh_run_checkpoints_before_post_and_persists_created_identity():
         "provider_options": {"column": "todo"},
     }
     assert persisted.revision == 2
-    assert persisted.status == "board_complete"
+    assert persisted.status == "partial"
     assert persisted.state["items"][0] == {
         "index": 0,
         "title": "Канонический заголовок доски",
+        "input_hash": input_hash,
         "marker": marker,
         "phase": "created",
         "key": "PRI-225",
@@ -453,7 +503,7 @@ def test_fresh_run_checkpoints_before_post_and_persists_created_identity():
     assert store.inserted_snapshots[0].state["revision"] == 0
     assert store.inserted_snapshots[0].state["items"][0]["phase"] == "pending"
     assert store.checkpoint_snapshots[0].state["items"][0]["phase"] == "in_flight"
-    assert result.status == "ok"
+    assert result.status == "partial"
     assert result.created == (
         SubtaskChildResult(
             index=0,
@@ -465,6 +515,8 @@ def test_fresh_run_checkpoints_before_post_and_persists_created_identity():
             phase="created",
         ),
     )
+    assert result.unattached == result.created
+    assert result.attached == ()
     assert result.warnings == ("safe provider warning",)
     assert write_calls == []
 
@@ -495,10 +547,11 @@ def test_persisted_in_flight_item_reconciles_unique_identity_without_post():
     assert store.operations["attempt-1"].state["items"][0]["title"] == (
         "Канонический заголовок доски"
     )
-    assert result.status == "ok"
+    assert result.status == "partial"
     assert result.resumed is True
     assert result.created[0].key == "PRI-225"
     assert result.created[0].title == "Канонический заголовок доски"
+    assert result.unattached == result.created
 
 
 def test_unresolved_in_flight_item_is_manual_required_without_post_across_replay():
@@ -514,9 +567,12 @@ def test_unresolved_in_flight_item_is_manual_required_without_post_across_replay
 
     assert provider.create_calls == []
     assert len(provider.reconcile_calls) == 2
+    assert first.status == second.status == "partial"
+    assert first.retryable is second.retryable is True
     assert first.pending[0].manual_required is True
     assert second.pending[0].manual_required is True
     persisted_item = store.operations["attempt-1"].state["items"][0]
+    assert store.operations["attempt-1"].status == "partial"
     assert persisted_item["phase"] == "in_flight"
     assert persisted_item["manual_required"] is True
 
@@ -584,8 +640,9 @@ def test_committed_then_timeout_reconciles_on_retry_with_only_one_total_post():
     assert persisted_after_timeout.state["items"][0]["warnings"] == ["redacted failure"]
     assert "SECRET" not in json.dumps(persisted_after_timeout.state)
     assert "SECRET" not in json.dumps(first.payload())
-    assert second.status == "ok"
+    assert second.status == "partial"
     assert second.created[0].board_id == "child-uuid"
+    assert second.unattached == second.created
 
 
 def test_multi_child_failure_is_sanitized_and_later_child_still_completes():
@@ -620,6 +677,55 @@ def test_multi_child_failure_is_sanitized_and_later_child_still_completes():
     assert "VERY_SECRET" not in json.dumps(persisted.state)
 
 
+def test_multi_child_checkpoints_capture_independent_immutable_transitions():
+    second_child = {**CHILD, "title": "Вторая задача"}
+    request = _validate(subtasks=[CHILD, second_child])
+    store = MemoryStore()
+    provider = FakeProvider(
+        _parent(),
+        create_effects=[
+            NativeSubtaskIdentity("child-1", "PRI-225", "Первая задача"),
+            NativeSubtaskIdentity("child-2", "PRI-226", "Вторая задача"),
+        ],
+    )
+
+    result = _run(SubtaskService(store), request, provider)
+
+    first_hash, second_hash = (_input_hash(draft) for draft in request.subtasks)
+    assert store.checkpoint_history == [
+        (
+            0,
+            "partial",
+            ((0, "in_flight", first_hash), (1, "pending", second_hash)),
+        ),
+        (
+            1,
+            "partial",
+            ((0, "created", first_hash), (1, "pending", second_hash)),
+        ),
+        (
+            2,
+            "partial",
+            ((0, "created", first_hash), (1, "in_flight", second_hash)),
+        ),
+        (
+            3,
+            "partial",
+            ((0, "created", first_hash), (1, "created", second_hash)),
+        ),
+    ]
+    assert store.operations["attempt-1"].revision == 4
+    assert result.status == "partial"
+    assert tuple(child.index for child in result.unattached) == (0, 1)
+
+    store.checkpoint_snapshots[-1].state["items"][0]["phase"] = "mutated"
+    store.checkpoint_snapshots[-1].state["items"][0]["input_hash"] = "mutated"
+    assert store.checkpoint_snapshots[0].state["items"][0]["phase"] == "in_flight"
+    assert store.checkpoint_snapshots[0].state["items"][0]["input_hash"] == first_hash
+    assert store.checkpoint_history[-1][2][0] == (0, "created", first_hash)
+    assert store.operations["attempt-1"].state["items"][0]["phase"] == "created"
+
+
 def test_busy_parent_lock_returns_retryable_error_without_child_write():
     request = _validate()
     store = MemoryStore(busy=True)
@@ -628,7 +734,7 @@ def test_busy_parent_lock_returns_retryable_error_without_child_write():
     result = _run(SubtaskService(store), request, provider)
 
     assert result.status == "error"
-    assert result.category == "busy"
+    assert result.category == "in_progress"
     assert result.retryable is True
     assert provider.create_calls == []
     assert store.operations == {}
@@ -695,6 +801,31 @@ def test_pending_item_with_wrong_marker_fails_closed_without_post():
     assert provider.create_calls == []
 
 
+def test_resume_rejects_item_input_hash_that_does_not_match_canonical_draft():
+    request = _validate()
+    operation = _in_flight_operation(request)
+    operation.state["items"][0]["input_hash"] = "f" * 64
+    store = MemoryStore(operation)
+    provider = FakeProvider(_parent())
+
+    with pytest.raises(LedgerUnavailableError, match="input_hash"):
+        _run(SubtaskService(store), request, provider, operation=operation)
+
+    assert provider.reconcile_calls == []
+    assert provider.create_calls == []
+
+
+def test_complete_preflight_rejects_malformed_item_input_hash():
+    request = _validate()
+    operation = _in_flight_operation(request)
+    operation.state["items"][0]["phase"] = "attached"
+    operation.state["items"][0]["input_hash"] = "f" * 64
+    complete = replace(operation, status="complete")
+
+    with pytest.raises(LedgerUnavailableError, match="input_hash"):
+        SubtaskService(MemoryStore(complete)).preflight(request)
+
+
 def test_missing_parent_is_deterministic_nonretryable_error():
     request = _validate()
     store = MemoryStore()
@@ -755,7 +886,7 @@ def test_run_reloads_concurrent_conflict_without_provider_write_or_callback():
         write_calls=write_calls,
     )
 
-    assert result.category == "idempotency_conflict"
+    assert result.category == "conflict"
     assert result.retryable is False
     assert provider.reconcile_calls == []
     assert provider.create_calls == []
@@ -764,7 +895,7 @@ def test_run_reloads_concurrent_conflict_without_provider_write_or_callback():
 
 def test_run_replays_complete_operation_without_provider_or_callback():
     request = _validate()
-    complete = _operation(request, status="complete")
+    complete = _attached_operation(request)
     store = MemoryStore(complete)
     provider = FakeProvider(_parent())
     write_calls = []
@@ -779,6 +910,8 @@ def test_run_replays_complete_operation_without_provider_or_callback():
 
     assert result.status == "ok"
     assert result.resumed is True
+    assert result.created == result.attached
+    assert result.unattached == ()
     assert provider.fetch_calls == []
     assert provider.reconcile_calls == []
     assert provider.create_calls == []
@@ -787,7 +920,7 @@ def test_run_replays_complete_operation_without_provider_or_callback():
 
 def test_concurrent_same_key_insert_is_reloaded_and_terminal_replay_is_safe():
     request = _validate()
-    complete = _operation(request, status="complete")
+    complete = _attached_operation(request)
     store = MemoryStore(insert_race=complete)
     provider = FakeProvider(_parent())
 

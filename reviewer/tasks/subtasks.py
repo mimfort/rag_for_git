@@ -126,6 +126,7 @@ def _result_from_operation(
 
     created: list[SubtaskChildResult] = []
     attached: list[SubtaskChildResult] = []
+    unattached: list[SubtaskChildResult] = []
     pending: list[SubtaskChildResult] = []
     warnings: list[str] = []
     for raw_item in raw_items:
@@ -133,24 +134,26 @@ def _result_from_operation(
         warnings.extend(child_warnings)
         if child.phase == "created":
             created.append(child)
+            unattached.append(child)
         elif child.phase == "attached":
+            created.append(child)
             attached.append(child)
         else:
             pending.append(child)
     warnings.extend(_persisted_warnings(operation.state.get("warnings")))
 
-    if not pending:
+    if operation.status == "complete" and not pending and not unattached:
         status: Literal["ok", "partial", "error"] = "ok"
         category = None
         retryable = None
-    elif created or attached:
-        status = "partial"
-        category = "manual_required" if any(item.manual_required for item in pending) else "incomplete"
-        retryable = not any(item.manual_required for item in pending)
     else:
-        status = "error"
-        category = "manual_required" if any(item.manual_required for item in pending) else "incomplete"
-        retryable = not any(item.manual_required for item in pending)
+        status = "partial"
+        category = (
+            "manual_required"
+            if any(item.manual_required for item in pending)
+            else "incomplete"
+        )
+        retryable = True
 
     return SubtaskBatchResult(
         status=status,
@@ -160,6 +163,7 @@ def _result_from_operation(
         resumed=resumed,
         created=tuple(created),
         attached=tuple(attached),
+        unattached=tuple(unattached),
         pending=tuple(pending),
         warnings=tuple(warnings),
         reindexed=bool(operation.state.get("reindexed", False)),
@@ -179,6 +183,40 @@ def _request_payload(request: SubtaskRequest) -> dict[str, Any]:
     }
 
 
+def _draft_input_hash(draft: SubtaskDraft) -> str:
+    return hashlib.sha256(_canonical_json(draft.payload()).encode("utf-8")).hexdigest()
+
+
+def _validated_items(
+    operation: SubtaskOperation,
+    request: SubtaskRequest,
+) -> list[dict[str, Any]]:
+    raw_items = operation.state.get("items")
+    if not isinstance(raw_items, list):
+        raise LedgerUnavailableError("Ledger содержит некорректный список подзадач")
+    if len(raw_items) != len(request.subtasks):
+        raise LedgerUnavailableError("Ledger содержит неверное число подзадач")
+
+    items: list[dict[str, Any]] = []
+    for index, (item, draft) in enumerate(zip(raw_items, request.subtasks)):
+        if not isinstance(item, dict):
+            raise LedgerUnavailableError("Ledger содержит некорректную подзадачу")
+        if item.get("input_hash") != _draft_input_hash(draft):
+            raise LedgerUnavailableError("Ledger содержит некорректный input_hash")
+        expected_marker = marker_for(
+            operation.board_type,
+            operation.parent_task_id,
+            operation.idempotency_key,
+            index,
+            draft,
+        )
+        if item.get("index") != index or item.get("marker") != expected_marker:
+            raise LedgerUnavailableError("Ledger содержит некорректный marker")
+        _persisted_phase(item.get("phase"))
+        items.append(item)
+    return items
+
+
 def _safe_warning(sanitize: Callable[[object], str], value: object) -> str:
     warning = sanitize(value)
     if not isinstance(warning, str):
@@ -188,9 +226,7 @@ def _safe_warning(sanitize: Callable[[object], str], value: object) -> str:
 
 def _operation_status(items: list[dict[str, Any]]) -> OperationStatus:
     phases = {item.get("phase") for item in items}
-    if phases <= {"created", "attached"}:
-        return "board_complete"
-    if phases & {"created", "attached"}:
+    if phases & {"in_flight", "created", "attached"}:
         return "partial"
     return "running"
 
@@ -225,6 +261,7 @@ def _fresh_operation(
             {
                 "index": index,
                 "title": draft.title,
+                "input_hash": _draft_input_hash(draft),
                 "marker": marker_for(
                     board_type,
                     parent_task_id,
@@ -281,19 +318,23 @@ class SubtaskService:
             return SubtaskPreflight(None, None)
         if operation.request_hash != request.request_hash:
             return SubtaskPreflight(
-                None,
+                operation,
                 SubtaskBatchResult(
                     status="error",
                     board_type=operation.board_type,
                     parent_key=request.parent_key,
                     idempotency_key=request.idempotency_key,
                     resumed=True,
-                    category="idempotency_conflict",
+                    category="conflict",
                     retryable=False,
                 ),
             )
         if operation.status == "complete":
-            return SubtaskPreflight(None, _result_from_operation(operation, resumed=True))
+            _validated_items(operation, request)
+            return SubtaskPreflight(
+                operation,
+                _result_from_operation(operation, resumed=True),
+            )
         return SubtaskPreflight(operation, None)
 
     def run(
@@ -365,7 +406,7 @@ class SubtaskService:
                     parent_key=request.parent_key,
                     idempotency_key=request.idempotency_key,
                     resumed=resumed,
-                    category="busy",
+                    category="in_progress",
                     retryable=True,
                 )
 
@@ -389,35 +430,20 @@ class SubtaskService:
                     parent_key=request.parent_key,
                     idempotency_key=request.idempotency_key,
                     resumed=True,
-                    category="idempotency_conflict",
+                    category="conflict",
                     retryable=False,
                 )
             if current.status == "complete":
+                _validated_items(current, request)
                 return _result_from_operation(current, resumed=True)
             if current.parent_task_id != parent_task_id or current.board_type != board_type:
                 raise LedgerUnavailableError("Операция загружена под другой parent lock")
 
-            raw_items = current.state.get("items")
-            if not isinstance(raw_items, list):
-                raise LedgerUnavailableError("Ledger содержит некорректный список подзадач")
-            if len(raw_items) != len(request.subtasks):
-                raise LedgerUnavailableError("Ledger содержит неверное число подзадач")
+            raw_items = _validated_items(current, request)
             in_flight: list[tuple[int, str]] = []
-            for index, (item, draft) in enumerate(zip(raw_items, request.subtasks)):
-                if not isinstance(item, dict):
-                    raise LedgerUnavailableError("Ledger содержит некорректную подзадачу")
-                marker = item.get("marker")
-                expected_marker = marker_for(
-                    current.board_type,
-                    current.parent_task_id,
-                    current.idempotency_key,
-                    index,
-                    draft,
-                )
-                if item.get("index") != index or marker != expected_marker:
-                    raise LedgerUnavailableError("Ledger содержит некорректный marker")
+            for index, item in enumerate(raw_items):
                 if _persisted_phase(item.get("phase")) == "in_flight":
-                    in_flight.append((index, marker))
+                    in_flight.append((index, item["marker"]))
 
             if in_flight:
                 markers = frozenset(marker for _, marker in in_flight)
@@ -666,6 +692,6 @@ def marker_for(
     if any("\0" in component for component in input_components):
         raise ValueError("компоненты marker не должны содержать NUL")
 
-    child_hash = hashlib.sha256(_canonical_json(draft.payload()).encode("utf-8")).hexdigest()
+    child_hash = _draft_input_hash(draft)
     marker_payload = "\0".join((*input_components, str(index), child_hash))
     return "reviewer-subtask:" + hashlib.sha256(marker_payload.encode("utf-8")).hexdigest()
