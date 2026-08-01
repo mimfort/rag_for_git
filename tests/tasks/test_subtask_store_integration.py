@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import replace
 from uuid import uuid4
 
@@ -18,6 +19,20 @@ pytestmark = pytest.mark.integration
 
 def _key(prefix: str) -> str:
     return f"{prefix}-{uuid4().hex}"
+
+
+def _run_cleanups(*cleanups: Callable[[], object]) -> None:
+    first_error: Exception | None = None
+    for cleanup in cleanups:
+        try:
+            cleanup()
+        except Exception as error:  # noqa: BLE001 - остальные cleanup должны выполниться
+            if first_error is None:
+                first_error = error
+            else:
+                first_error.add_note(f"Дополнительная ошибка cleanup: {error!r}")
+    if first_error is not None:
+        raise first_error
 
 
 def _operation(
@@ -91,10 +106,11 @@ def test_complete_operation_survives_store_restart_with_exact_snapshot() -> None
         assert loaded.status == "complete"
         assert loaded.revision == 0
     finally:
-        first.close()
+        cleanups: list[Callable[[], object]] = [first.close]
         if second is not None:
-            second.close()
-        _delete_operations(dsn, [operation.idempotency_key])
+            cleanups.append(second.close)
+        cleanups.append(lambda: _delete_operations(dsn, [operation.idempotency_key]))
+        _run_cleanups(*cleanups)
 
 
 def test_parent_lock_contends_by_parent_and_reacquires_after_release() -> None:
@@ -121,11 +137,13 @@ def test_parent_lock_contends_by_parent_and_reacquires_after_release() -> None:
         with second.try_parent_lock("yougile", parent_task_id) as reacquired:
             assert reacquired is not None
     finally:
-        first.close()
-        second.close()
-        _delete_operations(
-            dsn,
-            [first_operation.idempotency_key, second_operation.idempotency_key],
+        _run_cleanups(
+            first.close,
+            second.close,
+            lambda: _delete_operations(
+                dsn,
+                [first_operation.idempotency_key, second_operation.idempotency_key],
+            ),
         )
 
 
@@ -165,6 +183,8 @@ def test_checkpoint_cas_rejects_stale_revision_across_store_instances() -> None:
         assert reloaded.status == winner.status == "complete"
         assert reloaded.revision == winner.revision == 1
     finally:
-        first.close()
-        second.close()
-        _delete_operations(dsn, [operation.idempotency_key])
+        _run_cleanups(
+            first.close,
+            second.close,
+            lambda: _delete_operations(dsn, [operation.idempotency_key]),
+        )

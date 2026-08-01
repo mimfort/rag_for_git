@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import replace
 from uuid import uuid4
 
@@ -17,6 +18,20 @@ pytestmark = pytest.mark.integration
 
 def _key(prefix: str) -> str:
     return f"{prefix}-{uuid4().hex}"
+
+
+def _run_cleanups(*cleanups: Callable[[], object]) -> None:
+    first_error: Exception | None = None
+    for cleanup in cleanups:
+        try:
+            cleanup()
+        except Exception as error:  # noqa: BLE001 - остальные cleanup должны выполниться
+            if first_error is None:
+                first_error = error
+            else:
+                first_error.add_note(f"Дополнительная ошибка cleanup: {error!r}")
+    if first_error is not None:
+        raise first_error
 
 
 def _init_task_schema(settings: Settings) -> None:
@@ -53,7 +68,7 @@ def _row(
     )
 
 
-def _link_snapshot(links: list[dict]) -> set[tuple[str, str, str]]:
+def _neo4j_link_snapshot(links: list[dict]) -> set[tuple[str, str, str]]:
     return {
         (link["key"], link.get("title") or "", link.get("type") or "relates")
         for link in links
@@ -64,8 +79,14 @@ def test_authoritative_links_survive_restart_preserve_when_omitted_and_clear() -
     settings = Settings()
     _init_task_schema(settings)
     task_key = _key("task")
+    first_link = {
+        "key": _key("child"),
+        "title": "Первый ребёнок",
+        "type": "subtask",
+    }
     links = [
-        {"key": _key("child"), "title": "Первый ребёнок", "type": "subtask"},
+        first_link,
+        dict(first_link),
         {"key": _key("related"), "title": "Связанная задача", "type": "related"},
     ]
     first = TaskStore(settings.pg_dsn)
@@ -79,26 +100,24 @@ def test_authoritative_links_survive_restart_preserve_when_omitted_and_clear() -
         second = TaskStore(settings.pg_dsn)
         reopened = second.get_task(task_key)
         assert reopened is not None
-        assert _link_snapshot(reopened.links or []) == _link_snapshot(links)
+        assert reopened.links == links
 
         second.upsert_task(replace(original, status="In Progress", links=None))
         preserved = second.get_task(task_key)
         assert preserved is not None
-        assert _link_snapshot(preserved.links or []) == _link_snapshot(links)
+        assert preserved.links == links
 
         second.upsert_task(replace(original, status="Done", links=[]))
         cleared = second.get_task(task_key)
         assert cleared is not None
         assert cleared.links == []
     finally:
-        first.close()
+        cleanups: list[Callable[[], object]] = [first.close]
         if second is not None:
-            second.close()
+            cleanups.append(second.close)
         cleanup = TaskStore(settings.pg_dsn)
-        try:
-            cleanup.delete_tasks([task_key])
-        finally:
-            cleanup.close()
+        cleanups.extend((lambda: cleanup.delete_tasks([task_key]), cleanup.close))
+        _run_cleanups(*cleanups)
 
 
 class _NoEmbeddingExpected:
@@ -122,7 +141,6 @@ def test_task_service_writes_same_filtered_links_to_postgres_and_neo4j() -> None
         settings.neo4j_user,
         settings.neo4j_password,
     )
-    graph_store.init_schema()
     graph = TaskGraph(graph_store.driver)
     store = TaskStore(settings.pg_dsn)
     title = "Service authoritative links"
@@ -140,6 +158,7 @@ def test_task_service_writes_same_filtered_links_to_postgres_and_neo4j() -> None
     embedder = _NoEmbeddingExpected()
 
     try:
+        graph_store.init_schema()
         store.upsert_task(
             _row(
                 settings,
@@ -182,10 +201,17 @@ def test_task_service_writes_same_filtered_links_to_postgres_and_neo4j() -> None
         assert result["links_upserted"] == 2
         assert result["warnings"] == []
         assert embedder.doc_calls == []
-        assert _link_snapshot(postgres_row.links or []) == _link_snapshot(expected_links)
-        assert neo4j_links == _link_snapshot(expected_links)
+        assert postgres_row.links == expected_links
+        assert neo4j_links == _neo4j_link_snapshot(expected_links)
     finally:
-        store.delete_tasks([parent_key])
-        store.close()
-        graph.delete_tasks([parent_key, old_child_key, child_key, related_key])
-        graph_store.close()
+        _run_cleanups(
+            lambda: store.delete_tasks([parent_key]),
+            store.close,
+            lambda: graph.delete_tasks([
+                parent_key,
+                old_child_key,
+                child_key,
+                related_key,
+            ]),
+            graph_store.close,
+        )

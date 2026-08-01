@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Callable
 from uuid import uuid4
 
 import pytest
@@ -18,6 +19,20 @@ from reviewer.tasks.service import TaskService
 from reviewer.tasks.store import TaskRow, TaskStore, build_task_text, task_content_hash
 
 pytestmark = pytest.mark.integration
+
+
+def _run_cleanups(*cleanups: Callable[[], object]) -> None:
+    first_error: Exception | None = None
+    for cleanup in cleanups:
+        try:
+            cleanup()
+        except Exception as error:  # noqa: BLE001 - остальные cleanup должны выполниться
+            if first_error is None:
+                first_error = error
+            else:
+                first_error.add_note(f"Дополнительная ошибка cleanup: {error!r}")
+    if first_error is not None:
+        raise first_error
 
 
 def _vec(seed: str) -> list[float]:
@@ -368,7 +383,6 @@ def test_replace_links_is_authoritative_only_for_parent_outgoing_edges():
         settings.neo4j_user,
         settings.neo4j_password,
     )
-    graph_store.init_schema()
     task_graph = TaskGraph(graph_store.driver)
     suffix = uuid4().hex
     parent_key = f"parent-{suffix}"
@@ -395,6 +409,7 @@ def test_replace_links_is_authoritative_only_for_parent_outgoing_edges():
         return {(record["key"], record["type"]) for record in records}
 
     try:
+        graph_store.init_schema()
         for key in keys:
             task_graph.upsert_task(key, [], key, "Open", None)
         task_graph.upsert_links(
@@ -422,5 +437,7 @@ def test_replace_links_is_authoritative_only_for_parent_outgoing_edges():
         assert outgoing_snapshot() == set()
         assert incoming_snapshot() == {(incoming_key, "blocks")}
     finally:
-        task_graph.delete_tasks(keys)
-        graph_store.close()
+        _run_cleanups(
+            lambda: task_graph.delete_tasks(keys),
+            graph_store.close,
+        )
