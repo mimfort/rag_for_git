@@ -50,6 +50,9 @@ Every directory under `plugin/skills/` containing `SKILL.md` is registered in th
 `rag-reviewer` namespace. `_common` and nested references are delivered as support files, not
 registered skills.
 
+The reviewer MCP server exposes 38 tools; skills provide the guarded user-facing workflows over
+those generic operations.
+
 Available skills include:
 
 - `rag-reviewer:review-pr`
@@ -63,4 +66,5 @@ Available skills include:
 - `rag-reviewer:configure-review`
 - `rag-reviewer:summarize-subsystems`
 - `rag-reviewer:create-task`
+- `rag-reviewer:decompose-task`
 - `rag-reviewer:finish-task`
