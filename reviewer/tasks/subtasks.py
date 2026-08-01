@@ -670,7 +670,7 @@ def _identity_changes(
     def sanitized(value: str, *, unchanged: bool) -> str:
         try:
             safe = sanitize(value)
-        except Exception as error:  # noqa: BLE001 - provider identity boundary
+        except Exception as error:
             raise ConfirmedSubtaskIdentityError(
                 "confirmed child identity could not be sanitized"
             ) from error
