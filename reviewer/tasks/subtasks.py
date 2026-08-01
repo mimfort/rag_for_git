@@ -250,6 +250,20 @@ def _usable_identity_text(value: object) -> bool:
     return isinstance(value, str) and bool(value.strip())
 
 
+def _persisted_target_subtask_ids(state: dict[str, Any]) -> list[str] | None:
+    if "target_subtask_ids" not in state:
+        return None
+    target = state["target_subtask_ids"]
+    if (
+        not isinstance(target, list)
+        or not target
+        or not all(_usable_identity_text(item) for item in target)
+        or len(set(target)) != len(target)
+    ):
+        raise LedgerUnavailableError("Ledger содержит некорректный target_subtask_ids")
+    return list(target)
+
+
 def _validate_persisted_operation(operation: SubtaskOperation) -> _ValidatedOperation:
     state = operation.state
     payload = operation.request_payload
@@ -309,6 +323,7 @@ def _validate_persisted_operation(operation: SubtaskOperation) -> _ValidatedOper
         raise LedgerUnavailableError("Ledger содержит некорректные warnings операции")
     if "reindexed" in state and not isinstance(state["reindexed"], bool):
         raise LedgerUnavailableError("Ledger содержит некорректный reindexed")
+    _persisted_target_subtask_ids(state)
 
     drafts = tuple(_persisted_draft(value) for value in raw_drafts)
     items: list[dict[str, Any]] = []
@@ -434,6 +449,15 @@ def _operation_with_state(
     if reindexed is not None:
         state["reindexed"] = reindexed
     return replace(operation, state=state, status=status or operation.status)
+
+
+def _operation_with_target(
+    operation: SubtaskOperation,
+    target_subtask_ids: list[str],
+) -> SubtaskOperation:
+    state = deepcopy(operation.state)
+    state["target_subtask_ids"] = list(target_subtask_ids)
+    return replace(operation, state=state)
 
 
 def _confirmed_identities(
@@ -858,16 +882,30 @@ class SubtaskService:
                         return _result_from_operation(current, resumed=resumed)
 
                     confirmed_ids = [identity.board_id for identity in confirmed]
+                    persisted_target = _persisted_target_subtask_ids(current.state) or []
                     exact_union = merge_subtask_ids(
+                        persisted_target,
                         parent_before_attachment.subtask_ids,
+                    )
+                    exact_union = merge_subtask_ids(
+                        exact_union,
                         confirmed_ids,
                     )
-                    if parent_before_attachment.subtask_ids != exact_union:
+                    if persisted_target != exact_union:
+                        targeted = _operation_with_target(current, exact_union)
+                        current = self._store.checkpoint(
+                            targeted,
+                            expected_revision=current.revision,
+                        )
+                    intended_target = _persisted_target_subtask_ids(current.state)
+                    if intended_target is None:
+                        raise LedgerUnavailableError("Ledger потерял target_subtask_ids")
+                    if parent_before_attachment.subtask_ids != intended_target:
                         lock.ensure_alive()
                         try:
                             provider.replace_native_subtasks(
                                 current.parent_task_id,
-                                exact_union,
+                                list(intended_target),
                             )
                         except Exception as error:  # noqa: BLE001 - provider boundary
                             warning = _safe_warning(sanitize, error)
@@ -904,6 +942,8 @@ class SubtaskService:
                         parent_after_attachment = parent_before_attachment
 
                     attached_ids = frozenset(parent_after_attachment.subtask_ids)
+                    if not all(subtask_id in attached_ids for subtask_id in intended_target):
+                        return _result_from_operation(current, resumed=resumed)
                     for index, item in enumerate(current.state["items"]):
                         phase = _persisted_phase(item.get("phase"))
                         if phase not in ("created", "attached"):

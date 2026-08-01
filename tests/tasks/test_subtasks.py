@@ -547,6 +547,11 @@ def test_parent_attachment_puts_exact_existing_and_confirmed_union():
         "child-0",
         "child-1",
     )
+    assert store.operations["attempt-1"].state["target_subtask_ids"] == [
+        "old",
+        "child-1",
+        "child-0",
+    ]
     assert store.operations["attempt-1"].status == "complete"
 
 
@@ -614,7 +619,7 @@ def test_successful_put_without_verified_board_state_does_not_claim_attachment()
     assert write_calls == []
 
 
-def test_partial_board_verification_persists_accurate_attachment_buckets_and_snapshots():
+def test_incomplete_target_verification_keeps_all_child_phases_created():
     request = _validate(subtasks=[CHILD, {**CHILD, "title": "Вторая задача"}])
     store = MemoryStore()
     provider = FakeProvider(
@@ -633,16 +638,149 @@ def test_partial_board_verification_persists_accurate_attachment_buckets_and_sna
     result = _run(SubtaskService(store), request, provider)
 
     assert tuple(child.index for child in result.created) == (0, 1)
-    assert tuple(child.index for child in result.attached) == (0,)
-    assert tuple(child.index for child in result.unattached) == (1,)
+    assert result.attached == ()
+    assert tuple(child.index for child in result.unattached) == (0, 1)
     assert result.pending == ()
     assert [item["phase"] for item in store.operations["attempt-1"].state["items"]] == [
-        "attached",
+        "created",
         "created",
     ]
-    attachment_snapshot = store.checkpoint_snapshots[-1]
-    attachment_snapshot.state["items"][1]["phase"] = "mutated"
-    assert store.operations["attempt-1"].state["items"][1]["phase"] == "created"
+
+
+def test_missing_preexisting_target_id_keeps_verified_child_nonterminal():
+    request = _validate()
+    store = MemoryStore()
+    provider = FakeProvider(
+        None,
+        create_effects=[NativeSubtaskIdentity("child-uuid", "PRI-225", "Child")],
+        fetch_effects=[
+            _parent(),
+            _parent(subtask_ids=["old"]),
+            _parent(subtask_ids=["child-uuid"]),
+        ],
+    )
+    write_calls = []
+
+    result = _run(
+        SubtaskService(store),
+        request,
+        provider,
+        write_calls=write_calls,
+    )
+
+    persisted = store.operations["attempt-1"]
+    assert provider.replace_calls == [("parent-uuid", ["old", "child-uuid"])]
+    assert persisted.state["target_subtask_ids"] == ["old", "child-uuid"]
+    assert persisted.state["items"][0]["phase"] == "created"
+    assert persisted.status == "partial"
+    assert result.status == "partial"
+    assert result.retryable is True
+    assert result.attached == ()
+    assert result.unattached == result.created
+    assert write_calls == []
+
+
+def test_retry_restores_durable_target_before_current_extras_without_recreating_child():
+    request = _validate()
+    store = MemoryStore()
+    provider = FakeProvider(
+        None,
+        create_effects=[NativeSubtaskIdentity("child-uuid", "PRI-225", "Child")],
+        fetch_effects=[
+            _parent(),
+            _parent(subtask_ids=["old"]),
+            _parent(subtask_ids=["child-uuid"]),
+            _parent(subtask_ids=["child-uuid", "concurrent"]),
+            _parent(subtask_ids=["old", "child-uuid", "concurrent"]),
+        ],
+    )
+    service = SubtaskService(store)
+
+    first = _run(service, request, provider)
+    second = _run(
+        service,
+        request,
+        provider,
+        operation=service.preflight(request).operation,
+    )
+
+    assert first.status == "partial"
+    assert provider.create_calls and len(provider.create_calls) == 1
+    assert provider.replace_calls == [
+        ("parent-uuid", ["old", "child-uuid"]),
+        ("parent-uuid", ["old", "child-uuid", "concurrent"]),
+    ]
+    assert store.operations["attempt-1"].state["target_subtask_ids"] == [
+        "old",
+        "child-uuid",
+        "concurrent",
+    ]
+    assert second.status == "ok"
+    assert second.created == second.attached
+
+
+@pytest.mark.parametrize(
+    "malformed_target",
+    [None, [], [""], ["old", "old"], ["  "]],
+)
+def test_malformed_persisted_target_fails_closed_without_provider_or_callback(
+    malformed_target,
+):
+    request = _validate()
+    operation = _attached_operation(request)
+    operation.state["target_subtask_ids"] = malformed_target
+    store = MemoryStore(operation)
+    provider = FakeProvider(_parent())
+    write_calls = []
+
+    with pytest.raises(LedgerUnavailableError, match="target_subtask_ids"):
+        _run(
+            SubtaskService(store),
+            request,
+            provider,
+            operation=operation,
+            write_calls=write_calls,
+        )
+
+    assert provider.fetch_calls == []
+    assert provider.reconcile_calls == []
+    assert provider.create_calls == []
+    assert provider.replace_calls == []
+    assert write_calls == []
+
+
+def test_target_snapshot_is_checkpointed_before_put_and_remains_immutable():
+    request = _validate()
+    events = []
+    store = MemoryStore(events=events)
+    provider = FakeProvider(
+        None,
+        events=events,
+        create_effects=[NativeSubtaskIdentity("child-uuid", "PRI-225", "Child")],
+        fetch_effects=[
+            _parent(),
+            _parent(subtask_ids=["old"]),
+            _parent(subtask_ids=["old", "child-uuid"]),
+        ],
+    )
+
+    result = _run(SubtaskService(store), request, provider)
+
+    target_snapshots = [
+        snapshot
+        for snapshot in store.checkpoint_snapshots
+        if snapshot.state.get("target_subtask_ids") == ["old", "child-uuid"]
+    ]
+    put_index = events.index(("put", "parent-uuid", ("old", "child-uuid")))
+    assert target_snapshots
+    assert events[put_index - 2][0] == "checkpoint"
+    assert events[put_index - 1] == ("ensure_alive",)
+    target_snapshots[0].state["target_subtask_ids"].append("mutated")
+    assert store.operations["attempt-1"].state["target_subtask_ids"] == [
+        "old",
+        "child-uuid",
+    ]
+    assert result.status == "ok"
 
 
 def test_confirmed_child_attaches_while_sibling_remains_manual_pending():
@@ -1052,8 +1190,9 @@ def test_fresh_run_checkpoints_before_post_and_persists_created_identity():
         "project": "PRI",
         "provider_options": {"column": "todo"},
     }
-    assert persisted.revision == 2
+    assert persisted.revision == 3
     assert persisted.status == "partial"
+    assert persisted.state["target_subtask_ids"] == ["child-uuid"]
     assert persisted.state["items"][0] == {
         "index": 0,
         "title": "Дочерняя задача",
@@ -1109,7 +1248,7 @@ def test_persisted_in_flight_item_reconciles_unique_identity_without_post():
 
     assert provider.reconcile_calls == [("board-uuid", frozenset({marker}))]
     assert provider.create_calls == []
-    assert store.operations["attempt-1"].revision == 4
+    assert store.operations["attempt-1"].revision == 5
     assert store.operations["attempt-1"].state["items"][0]["board_id"] == "child-uuid"
     assert store.operations["attempt-1"].state["items"][0]["title"] == "Дочерняя задача"
     assert result.status == "partial"
@@ -1392,8 +1531,17 @@ def test_multi_child_checkpoints_capture_independent_immutable_transitions():
             "partial",
             ((0, "created", first_hash), (1, "created", second_hash)),
         ),
+        (
+            4,
+            "partial",
+            ((0, "created", first_hash), (1, "created", second_hash)),
+        ),
     ]
-    assert store.operations["attempt-1"].revision == 4
+    assert store.operations["attempt-1"].revision == 5
+    assert store.operations["attempt-1"].state["target_subtask_ids"] == [
+        "child-1",
+        "child-2",
+    ]
     assert result.status == "partial"
     assert tuple(child.index for child in result.unattached) == (0, 1)
 
