@@ -179,9 +179,12 @@ callers влияет правка. Это отдельный сценарий, �
 caching и памяти. `maintainability-review` ищет сложность, дублирование, проблемы
 читаемости, границ и соглашений репозитория. Оба остаются в явно выбранном измерении.
 
-### Создание и завершение задач доски
+### Создание, декомпозиция и завершение задач доски
 
 `create-task` собирает каноническое тело и пишет только после подтверждения.
+`decompose-task` превращает одного сохранённого родителя в полностью показанный preview batch
+нативных дочерних задач, запрашивает одно подтверждение, сохраняет previewed idempotency key при
+retry, затем синхронизирует и проверяет каждую связь и child read.
 `finish-task` добавляет PR, переводит задачу в обнаруженный done target, добавляет ссылку
 на задачу в PR body и повторно синхронизирует корпус—тоже только после подтверждения.
 
@@ -408,6 +411,8 @@ Server-side workflow — **store-first**:
    context tools.
 3. Client models не перечисляют provider напрямую и не передают credentials.
 
+MCP server сейчас предоставляет **38 tools**, включая batch-операцию нативных подзадач.
+
 Legacy aliases остаются как **legacy metadata for older clients** на одно compatibility window:
 `TASK_BOARD_API_KEY → YOUGILE_API_KEY` и
 `TASK_BOARD_API_BASE → YOUGILE_API_BASE`. Новые deployments используют registry-declared
@@ -492,6 +497,20 @@ threshold, graph backend и retrieval ceilings меняют cost/recall; сна�
 - **Нужно:** registered board config, обнаруженные create target/options и credentials.
 - **Чтение/запись:** читает код; вызывает `create_task` только после явного подтверждения.
 - **Результат:** каноническое тело, key/URL и обновлённый task corpus.
+
+### `decompose-task` — создать нативные дочерние задачи
+
+- **Когда:** разложить существующую board task на grounded и независимо выполнимые native children.
+- **Вызов:** `/rag-reviewer:decompose-task PRI-224`.
+- **Нужно:** сохранённый parent, настроенная доска, authoritative capability `native_subtasks`, task
+  context, похожие задачи и релевантный код из `search_codebase`.
+- **Preview/confirmation:** показывает provider, parent, idempotency key и полное каноническое тело
+  каждого child, затем запрашивает одно явное confirmation всего preview; до него записей нет.
+- **Запись/retry:** отправляет только один native batch. Partial result или timeout повторяется с
+  точно теми же previewed payload и idempotency key, без individual writes и replacement key.
+- **Проверка:** выполняет один project-scoped sync, проверяет stored links родителя и graph context,
+  затем отдельно читает каждый возвращённый child.
+- **Результат:** created/attached/unattached/pending children и warnings без догадок.
 
 ### `finish-task` — закрыть задачу после PR
 

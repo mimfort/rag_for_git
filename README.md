@@ -176,9 +176,12 @@ Use `performance-review` for repeated I/O, N+1 work, poor asymptotics, batching,
 and memory risks. Use `maintainability-review` for complexity, duplication, readability,
 separation of concerns, and repository conventions. Both stay within the requested dimension.
 
-### Create and finish board tasks
+### Create, decompose, and finish board tasks
 
 `create-task` drafts a canonical task body and writes only after confirmation.
+`decompose-task` turns one stored parent into a fully previewed native-child batch, asks for one
+confirmation, preserves the previewed idempotency key on retries, then re-syncs and verifies every
+relationship and child read.
 `finish-task` links the PR, moves the task to a discovered done target, adds a task link
 to the PR body, and re-syncs the task corpus—also only after confirmation.
 
@@ -403,6 +406,8 @@ The server-side flow is **store-first**:
 2. Skills call `get_task(key, project=...)`; linked tasks/PRs/code come from task context tools.
 3. Client models never enumerate the provider directly and never send credentials.
 
+The MCP server currently exposes **38 tools**, including the native-subtask batch operation.
+
 Legacy aliases remain **legacy metadata for older clients** for one compatibility window:
 `TASK_BOARD_API_KEY → YOUGILE_API_KEY` and
 `TASK_BOARD_API_BASE → YOUGILE_API_BASE`. New deployments should use registry-declared
@@ -488,6 +493,20 @@ namespaced skills with `$rag-reviewer:...`.
 - **Needs:** registered board config, discovered create target/options, and project credentials.
 - **Reads/writes:** reads code for evidence; calls `create_task` only after explicit confirmation.
 - **Result:** canonical body, task key/URL, and a refreshed task corpus.
+
+### `decompose-task` — create native child tasks from one parent
+
+- **When:** split an existing board task into grounded, independently actionable native children.
+- **Invoke:** `/rag-reviewer:decompose-task PRI-224`.
+- **Needs:** a stored parent, configured board, authoritative `native_subtasks` capability, task
+  context, similar tasks, and relevant code from `search_codebase`.
+- **Preview/confirmation:** shows the provider, parent, idempotency key, and complete canonical body
+  of every child, then asks for one explicit confirmation of the whole preview; no earlier write.
+- **Write/retry:** sends one native batch only. A partial result or timeout is retried with the exact
+  same previewed payload and idempotency key, never individual child writes or a replacement key.
+- **Verification:** runs one project-scoped sync, verifies the parent's stored links and graph
+  context, and point-reads every returned child.
+- **Result:** created/attached/unattached/pending children and warnings, reported without guessing.
 
 ### `finish-task` — close a task after its PR
 
