@@ -506,10 +506,16 @@ threshold, graph backend и retrieval ceilings меняют cost/recall; сна�
   context, похожие задачи и релевантный код из `search_codebase`.
 - **Preview/confirmation:** показывает provider, parent, idempotency key и полное каноническое тело
   каждого child, затем запрашивает одно явное confirmation всего preview; до него записей нет.
-- **Запись/retry:** отправляет только один native batch. Partial result или timeout повторяется с
-  точно теми же previewed payload и idempotency key, без individual writes и replacement key.
-- **Проверка:** выполняет один project-scoped sync, проверяет stored links родителя и graph context,
-  затем отдельно читает каждый возвращённый child.
+- **Запись/проверка:** отправляет ровно один подтверждённый initial batch. Каждая фактически начатая
+  batch-запись проверяется независимо от статуса (`ok`, `partial`, `error` или timeout) до
+  объявления результата или предложения recovery.
+- **Проверка:** выполняет ровно один project-scoped sync, перечитывает parent через `get_task` и
+  graph/context через `get_task_context` даже если child keys не возвращены, затем точечно читает
+  каждый возвращённый child key через `get_task`.
+- **Recovery:** recovery после partial, timeout или error никогда не запускается автоматически.
+  После проверки skill запрашивает новый явный выбор: точный retry или stop. Точный retry повторяет
+  те же полные payload, order и idempotency key; не создаёт новый key, не редактирует wording и не
+  отправляет только remainder.
 - **Результат:** created/attached/unattached/pending children и warnings без догадок.
 
 ### `finish-task` — закрыть задачу после PR

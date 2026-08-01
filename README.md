@@ -502,10 +502,16 @@ namespaced skills with `$rag-reviewer:...`.
   context, similar tasks, and relevant code from `search_codebase`.
 - **Preview/confirmation:** shows the provider, parent, idempotency key, and complete canonical body
   of every child, then asks for one explicit confirmation of the whole preview; no earlier write.
-- **Write/retry:** sends one native batch only. A partial result or timeout is retried with the exact
-  same previewed payload and idempotency key, never individual child writes or a replacement key.
-- **Verification:** runs one project-scoped sync, verifies the parent's stored links and graph
-  context, and point-reads every returned child.
+- **Write/verification:** sends exactly one confirmed initial batch. Every actually attempted batch
+  write is verified regardless of status (`ok`, `partial`, `error`, or timeout) before declaring
+  its outcome or offering recovery.
+- **Verification:** performs exactly one project-scoped sync, re-reads the parent with `get_task`
+  and graph/context with `get_task_context` even when no child keys were returned, and point-reads
+  every returned child key with `get_task`.
+- **Recovery:** partial, timeout, or error recovery is never automatic. After verification, request
+  a new explicit user choice between exact retry or stop. Exact retry replays the same full payload,
+  order, and idempotency key; it never mints a new key, never edits wording, and never sends only
+  the remainder.
 - **Result:** created/attached/unattached/pending children and warnings, reported without guessing.
 
 ### `finish-task` — close a task after its PR

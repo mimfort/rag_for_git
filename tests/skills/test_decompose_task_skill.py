@@ -22,16 +22,43 @@ def _flat(text: str) -> str:
     return " ".join(text.replace("`", "").lower().split())
 
 
+def _frontmatter(text: str) -> tuple[list[str], str]:
+    lines = text.splitlines()
+    assert lines and lines[0] == "---"
+    try:
+        closing = lines.index("---", 1)
+    except ValueError as error:
+        raise AssertionError("missing closing frontmatter delimiter") from error
+    assert closing > 1
+    return lines[1:closing], "\n".join(lines[closing + 1 :])
+
+
+def _readme_command_section(path: Path) -> str:
+    text = path.read_text(encoding="utf-8")
+    command = text.index("/rag-reviewer:decompose-task")
+    start = text.rfind("\n### ", 0, command)
+    end = text.find("\n### ", command)
+    assert start >= 0 and end > command
+    return _flat(text[start:end])
+
+
 def test_decompose_task_frontmatter_is_trigger_only():
     text = _text()
-    assert text.startswith("---\nname: decompose-task\n")
-    description = re.search(r"^description: (.+)$", text, re.MULTILINE)
-    assert description is not None
-    value = description.group(1)
+    header, body = _frontmatter(text)
+    names = [line.removeprefix("name:").strip() for line in header if line.startswith("name:")]
+    descriptions = [
+        line.removeprefix("description:").strip()
+        for line in header
+        if line.startswith("description:")
+    ]
+    assert names == ["decompose-task"]
+    assert len(descriptions) == 1
+    value = descriptions[0]
     assert value.startswith("Use when ")
     assert "you" not in value.lower().split()
     for workflow_word in ("preview", "confirm", "create", "sync", "verify", "batch"):
         assert workflow_word not in value.lower()
+    assert body.startswith(("\n# Decompose Task", "# Decompose Task"))
 
 
 def test_decompose_task_is_store_first_with_one_scoped_miss_retry():
@@ -274,12 +301,57 @@ def test_decompose_task_repeats_exact_pressure_rationalizations_in_both_scan_sec
         assert rationalization.lower() in red_flags
 
 
-def test_readmes_document_full_decompose_flow_and_tool_count():
-    for path in (ROOT / "README.md", ROOT / "README.ru.md"):
-        text = path.read_text(encoding="utf-8")
-        assert "/rag-reviewer:decompose-task" in text
-        section = text[text.index("/rag-reviewer:decompose-task") :]
-        verification = "verif" if path.name == "README.md" else "проверк"
-        for token in ("preview", "confirmation", "idempotency", "sync", verification):
-            assert token in section[:2500].lower(), f"{path.name}: {token}"
-        assert re.search(r"\b38\b.{0,80}MCP|MCP.{0,80}\b38\b", text, re.IGNORECASE | re.DOTALL)
+def test_english_readme_documents_full_decompose_safety_flow():
+    path = ROOT / "README.md"
+    section = _readme_command_section(path)
+    for phrase in (
+        "complete canonical body of every child",
+        "one explicit confirmation of the whole preview",
+        "every actually attempted batch write",
+        "regardless of status (ok, partial, error, or timeout)",
+        "before declaring its outcome or offering recovery",
+        "exactly one project-scoped sync",
+        "re-reads the parent with get_task",
+        "graph/context with get_task_context",
+        "even when no child keys were returned",
+        "point-reads every returned child key with get_task",
+        "partial, timeout, or error recovery is never automatic",
+        "new explicit user choice",
+        "exact retry or stop",
+        "same full payload, order, and idempotency key",
+        "never mints a new key",
+        "never edits",
+        "never sends only the remainder",
+    ):
+        assert phrase in section
+    assert "yougile" not in section
+    text = path.read_text(encoding="utf-8")
+    assert re.search(r"\b38\b.{0,80}MCP|MCP.{0,80}\b38\b", text, re.IGNORECASE | re.DOTALL)
+
+
+def test_russian_readme_documents_full_decompose_safety_flow():
+    path = ROOT / "README.ru.md"
+    section = _readme_command_section(path)
+    for phrase in (
+        "полное каноническое тело каждого child",
+        "одно явное confirmation всего preview",
+        "каждая фактически начатая batch-запись",
+        "независимо от статуса (ok, partial, error или timeout)",
+        "до объявления результата или предложения recovery",
+        "ровно один project-scoped sync",
+        "parent через get_task",
+        "graph/context через get_task_context",
+        "даже если child keys не возвращены",
+        "точечно читает каждый возвращённый child key через get_task",
+        "recovery после partial, timeout или error никогда не запускается автоматически",
+        "новый явный выбор",
+        "точный retry или stop",
+        "те же полные payload, order и idempotency key",
+        "не создаёт новый key",
+        "не редактирует",
+        "не отправляет только remainder",
+    ):
+        assert phrase in section
+    assert "yougile" not in section
+    text = path.read_text(encoding="utf-8")
+    assert re.search(r"\b38\b.{0,80}MCP|MCP.{0,80}\b38\b", text, re.IGNORECASE | re.DOTALL)
