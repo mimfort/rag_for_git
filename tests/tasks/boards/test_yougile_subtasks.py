@@ -285,6 +285,30 @@ def test_reconcile_matches_markers_only_in_visible_description_text():
     ]
 
 
+def test_reconcile_ignores_matching_tasks_without_transport_id():
+    missing_id = _child(
+        "unused", "ID-2198", "PRI-2198", MARKER, title="Missing id"
+    )
+    missing_id.pop("id")
+    blank_id = _child(
+        "   ", "ID-2199", "PRI-2199", MARKER, title="Blank id"
+    )
+    invalid_id = _child(
+        "unused", "ID-2201", "PRI-2201", MARKER, title="Invalid id"
+    )
+    invalid_id["id"] = {"unsupported": "child-id"}
+    valid = _child(
+        "child-valid", "ID-2200", "PRI-2200", MARKER, title="Valid child"
+    )
+    provider, _ = build(state=State(tasks_by_column={
+        "done-id": [missing_id, blank_id, invalid_id, valid],
+    }))
+
+    found = provider.reconcile_native_subtasks("board-1", frozenset({MARKER}))
+
+    assert [item.identity.board_id for item in found] == ["child-valid"]
+
+
 def test_reconcile_scopes_task_scanning_to_source_board_columns():
     local = _child("child-local", "ID-2201", "PRI-2201", MARKER, title="Local child")
     local["columnId"] = "local-id"

@@ -589,6 +589,9 @@ class YougileBoard:
         columns = self._get_all("/columns", {"boardId": source_board_id})
         for column in columns:
             for task in self._get_all("/tasks", {"columnId": column["id"]}):
+                transport_id = task.get("id")
+                if not isinstance(transport_id, str) or not transport_id.strip():
+                    continue
                 matched = markers.intersection(
                     SUBTASK_MARKER_RE.findall(
                         _visible_description_text(task.get("description"))

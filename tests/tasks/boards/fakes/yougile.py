@@ -63,8 +63,9 @@ def _yougile_task(
 
 def _task_with_parent_subtasks(state: State, task: dict[str, Any]) -> dict[str, Any]:
     task = dict(task)
-    if task["id"] in state.parent_subtasks:
-        task["subtasks"] = list(state.parent_subtasks[task["id"]])
+    task_id = task.get("id")
+    if isinstance(task_id, str) and task_id in state.parent_subtasks:
+        task["subtasks"] = list(state.parent_subtasks[task_id])
     return task
 
 
