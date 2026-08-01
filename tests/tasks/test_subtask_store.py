@@ -52,24 +52,42 @@ class _Database:
     def __init__(self) -> None:
         self.rows: dict[str, tuple] = {}
         self.schema_calls = 0
+        self.schema_connections: list[_Connection] = []
         self.schema_error: Exception | None = None
         self.load_error: Exception | None = None
         self.acquire_error: Exception | None = None
         self.acquire_commit_error: Exception | None = None
         self.unlock_error: Exception | None = None
         self.unlock_commit_error: Exception | None = None
+        self.health_commit_error: Exception | None = None
+        self.health_row: tuple | None = (1,)
         self.lock_results: dict[str, bool] = {}
+        self.lock_rows: dict[str, tuple | None] = {}
         self.lock_calls: list[tuple[_Connection, tuple]] = []
         self.unlock_calls: list[tuple[_Connection, tuple]] = []
+        self.health_calls: list[_Connection] = []
         self.last_insert_params: tuple | None = None
+        self.last_checkpoint_params: tuple | None = None
+        self.last_result_row: tuple | None = None
         self.last_checkpoint_sql = ""
         self._lock = Lock()
+
+    @staticmethod
+    def _jsonb_roundtrip(row: tuple) -> tuple:
+        return (*row[:7], copy.deepcopy(row[7]), copy.deepcopy(row[8]), *row[9:])
+
+    def _result(self, row: tuple | None) -> _Result:
+        if row is None:
+            return _Result(None)
+        self.last_result_row = self._jsonb_roundtrip(row)
+        return _Result(self.last_result_row)
 
     def execute(self, connection: _Connection, sql: str, params: tuple | None) -> _Result:
         compact_sql = " ".join(sql.split())
         if compact_sql.startswith("CREATE TABLE IF NOT EXISTS subtask_operations"):
             with self._lock:
                 self.schema_calls += 1
+                self.schema_connections.append(connection)
             if self.schema_error is not None:
                 raise self.schema_error
             return _Result(None)
@@ -77,28 +95,38 @@ class _Database:
             if self.load_error is not None:
                 raise self.load_error
             assert params is not None
-            return _Result(self.rows.get(params[0]))
+            return self._result(self.rows.get(params[0]))
         if compact_sql.startswith("INSERT INTO subtask_operations"):
             assert params is not None
             self.last_insert_params = params
-            row = (*params[:7], params[7].obj, params[8].obj, params[9], _CREATED_AT, _UPDATED_AT)
+            row = (
+                *params[:7],
+                copy.deepcopy(params[7].obj),
+                copy.deepcopy(params[8].obj),
+                params[9],
+                _CREATED_AT,
+                _UPDATED_AT,
+            )
             self.rows[params[0]] = row
-            return _Result(row)
+            return self._result(row)
         if compact_sql.startswith("UPDATE subtask_operations"):
             assert params is not None
             self.last_checkpoint_sql = compact_sql
+            self.last_checkpoint_params = params
             state, status, idempotency_key, expected_revision = params
             old = self.rows.get(idempotency_key)
             if old is None or int(old[8].get("revision", 0)) != expected_revision:
                 return _Result(None)
-            row = (*old[:8], state.obj, status, old[10], _UPDATED_AT)
+            row = (*old[:8], copy.deepcopy(state.obj), status, old[10], _UPDATED_AT)
             self.rows[idempotency_key] = row
-            return _Result(row)
+            return self._result(row)
         if "pg_try_advisory_lock" in compact_sql:
             if self.acquire_error is not None:
                 raise self.acquire_error
             assert params is not None
             self.lock_calls.append((connection, params))
+            if params[1] in self.lock_rows:
+                return _Result(self.lock_rows[params[1]])
             acquired = self.lock_results.get(params[1], True)
             if acquired:
                 connection.next_commit_error = self.acquire_commit_error
@@ -111,71 +139,105 @@ class _Database:
             connection.next_commit_error = self.unlock_commit_error
             return _Result((True,))
         if compact_sql == "SELECT 1":
+            self.health_calls.append(connection)
             if connection.health_error is not None:
                 raise connection.health_error
-            return _Result((1,) if connection.alive else None)
+            connection.next_commit_error = self.health_commit_error
+            return _Result(self.health_row if connection.alive else None)
         raise AssertionError(f"Unexpected SQL: {compact_sql}")
 
 
 class _Connection:
-    def __init__(self, database: _Database) -> None:
-        self.database = database
+    def __init__(self, pool: _Pool) -> None:
+        self.pool = pool
+        self.database = pool.database
         self.checked_out = False
         self.commits = 0
         self.alive = True
         self.closed = False
         self.close_calls = 0
         self.closed_while_checked_out = False
+        self.in_transaction = False
         self.health_error: Exception | None = None
         self.next_commit_error: Exception | None = None
 
     def execute(self, sql: str, params: tuple | None = None) -> _Result:
+        if self.closed:
+            raise ConnectionError("fake connection is closed")
+        self.in_transaction = True
         return self.database.execute(self, sql, params)
 
     def commit(self) -> None:
         self.commits += 1
+        if self.closed:
+            raise ConnectionError("fake connection is closed")
         if self.next_commit_error is not None:
             error = self.next_commit_error
             self.next_commit_error = None
             raise error
+        self.in_transaction = False
 
     def close(self) -> None:
         self.close_calls += 1
         self.closed_while_checked_out = self.checked_out
         self.closed = True
         self.alive = False
+        self.in_transaction = False
 
 
 class _ConnectionContext:
     def __init__(self, pool: _Pool) -> None:
         self.pool = pool
-        self.connection = _Connection(pool.database)
+        self.connection: _Connection | None = None
 
     def __enter__(self) -> _Connection:
-        if self.pool.connection_error is not None:
-            raise self.pool.connection_error
-        self.connection.checked_out = True
-        self.pool.connections.append(self.connection)
+        self.connection = self.pool.checkout()
         return self.connection
 
     def __exit__(self, *_args) -> bool:
-        self.connection.checked_out = False
+        assert self.connection is not None
+        if not self.connection.closed:
+            self.connection.in_transaction = False
+        self.pool.return_connection(self.connection)
         return False
 
 
 class _Pool:
-    def __init__(self, database: _Database) -> None:
+    def __init__(self, database: _Database, *, max_size: int) -> None:
         self.database = database
+        self.max_size = max_size
         self.connections: list[_Connection] = []
+        self.available: list[_Connection] = []
         self.open_calls = 0
         self.close_calls = 0
         self.connection_error: Exception | None = None
+        self._lock = Lock()
 
     def open(self) -> None:
         self.open_calls += 1
 
     def connection(self) -> _ConnectionContext:
         return _ConnectionContext(self)
+
+    def checkout(self) -> _Connection:
+        if self.connection_error is not None:
+            raise self.connection_error
+        with self._lock:
+            if self.available:
+                connection = self.available.pop()
+            elif sum(not connection.closed for connection in self.connections) < self.max_size:
+                connection = _Connection(self)
+                self.connections.append(connection)
+            else:
+                raise TimeoutError("fake pool exhausted")
+            connection.checked_out = True
+            return connection
+
+    def return_connection(self, connection: _Connection) -> None:
+        with self._lock:
+            connection.checked_out = False
+            if not connection.closed:
+                self.available.append(connection)
 
     def close(self) -> None:
         self.close_calls += 1
@@ -189,7 +251,7 @@ class _PoolFactory:
 
     def __call__(self, dsn: str, **kwargs) -> _Pool:
         self.calls.append((dsn, kwargs))
-        pool = _Pool(self.database)
+        pool = _Pool(self.database, max_size=kwargs["max_size"])
         self.pools.append(pool)
         return pool
 
@@ -291,6 +353,60 @@ def test_insert_and_load_convert_rows_and_use_jsonb_params() -> None:
     assert params[8].obj == {"created": [], "revision": 0}
 
 
+def test_nested_json_values_do_not_alias_inputs_cursor_rows_or_durable_state() -> None:
+    factory = _PoolFactory()
+    store = SubtaskOperationStore("postgresql://ledger", pool_factory=factory)
+    operation = _operation(
+        request_payload={"nested": {"items": []}},
+        state={"nested": {"items": []}, "revision": 0},
+    )
+
+    inserted = store.insert(operation)
+    insert_params = factory.database.last_insert_params
+    insert_result_row = factory.database.last_result_row
+    assert insert_params is not None
+    assert insert_result_row is not None
+
+    operation.request_payload["nested"]["items"].append("caller")
+    operation.state["nested"]["items"].append("caller")
+    inserted.request_payload["nested"]["items"].append("returned")
+    inserted.state["nested"]["items"].append("returned")
+
+    assert insert_params[7].obj["nested"]["items"] == []
+    assert insert_params[8].obj["nested"]["items"] == []
+    assert insert_result_row[7]["nested"]["items"] == []
+    assert insert_result_row[8]["nested"]["items"] == []
+    loaded = store.load(operation.idempotency_key)
+    assert loaded is not None
+    assert loaded.request_payload["nested"]["items"] == []
+    assert loaded.state["nested"]["items"] == []
+
+    load_result_row = factory.database.last_result_row
+    assert load_result_row is not None
+    loaded.request_payload["nested"]["items"].append("loaded")
+    loaded.state["nested"]["items"].append("loaded")
+    assert load_result_row[7]["nested"]["items"] == []
+    assert load_result_row[8]["nested"]["items"] == []
+
+    candidate = replace(
+        store.load(operation.idempotency_key),
+        state={"nested": {"items": []}, "revision": 0},
+    )
+    checkpointed = store.checkpoint(candidate, expected_revision=0)
+    checkpoint_params = factory.database.last_checkpoint_params
+    checkpoint_result_row = factory.database.last_result_row
+    assert checkpoint_params is not None
+    assert checkpoint_result_row is not None
+
+    candidate.state["nested"]["items"].append("caller")
+    checkpointed.state["nested"]["items"].append("returned")
+    assert checkpoint_params[0].obj["nested"]["items"] == []
+    assert checkpoint_result_row[8]["nested"]["items"] == []
+    reloaded = store.load(operation.idempotency_key)
+    assert reloaded is not None
+    assert reloaded.state["nested"]["items"] == []
+
+
 def test_checkpoint_increments_revision_without_mutating_input_or_identity() -> None:
     factory = _PoolFactory()
     store = SubtaskOperationStore("postgresql://ledger", pool_factory=factory)
@@ -369,6 +485,54 @@ def test_contended_parent_lock_yields_none_without_unlock() -> None:
     assert connection.checked_out is False
     assert connection.closed is False
 
+    factory.database.lock_results["parent-busy"] = True
+    with store.try_parent_lock("yougile", "parent-busy") as parent_lock:
+        assert parent_lock is not None
+        assert factory.database.lock_calls[-1][0] is connection
+
+
+def test_parent_lock_does_not_starve_max_size_one_ledger_pool() -> None:
+    factory = _PoolFactory()
+    store = SubtaskOperationStore(
+        "postgresql://ledger",
+        min_size=1,
+        max_size=1,
+        pool_factory=factory,
+    )
+    inserted = store.insert(_operation())
+
+    with store.try_parent_lock("yougile", "parent-1") as parent_lock:
+        assert parent_lock is not None
+        loaded = store.load(inserted.idempotency_key)
+        assert loaded is not None
+        checkpointed = store.checkpoint(loaded, expected_revision=0)
+        assert checkpointed.revision == 1
+
+    assert len(factory.pools) == 2
+    ledger_pool, lock_pool = factory.pools
+    lock_connection = factory.database.lock_calls[0][0]
+    assert lock_connection.pool is lock_pool
+    assert factory.database.schema_connections[0].pool is ledger_pool
+    assert factory.database.schema_calls == 1
+    assert len(ledger_pool.connections) == 1
+    assert len(lock_pool.connections) == 1
+    assert ledger_pool.connections[0].in_transaction is False
+    assert lock_pool.connections[0].in_transaction is False
+
+
+def test_lock_first_does_not_initialize_schema_on_lock_pool() -> None:
+    factory = _PoolFactory()
+    store = SubtaskOperationStore("postgresql://ledger", pool_factory=factory)
+
+    with store.try_parent_lock("yougile", "parent-1"):
+        assert factory.database.schema_calls == 0
+
+    lock_pool = factory.pools[0]
+    assert store.load("missing") is None
+    ledger_pool = factory.pools[1]
+    assert factory.database.schema_connections == [ledger_pool.connections[0]]
+    assert lock_pool is not ledger_pool
+
 
 def test_acquired_parent_lock_commit_failure_attempts_unlock_and_propagates() -> None:
     factory = _PoolFactory()
@@ -383,6 +547,8 @@ def test_acquired_parent_lock_commit_failure_attempts_unlock_and_propagates() ->
     connection = factory.database.lock_calls[0][0]
     assert factory.database.unlock_calls == [(connection, ("yougile", "parent-1"))]
     assert connection.commits == 2
+    assert connection.closed is True
+    assert connection.closed_while_checked_out is True
     assert connection.checked_out is False
 
 
@@ -400,6 +566,37 @@ def test_acquisition_error_remains_primary_when_unlock_also_fails() -> None:
     connection = factory.database.lock_calls[0][0]
     assert factory.database.unlock_calls == [(connection, ("yougile", "parent-1"))]
     assert connection.checked_out is False
+
+
+def test_acquisition_execute_failure_discards_lock_connection() -> None:
+    factory = _PoolFactory()
+    acquire_error = RuntimeError("acquire failed indeterminately")
+    factory.database.acquire_error = acquire_error
+    store = SubtaskOperationStore("postgresql://ledger", pool_factory=factory)
+
+    with pytest.raises(RuntimeError) as exc_info:
+        _enter_parent_lock(store)
+
+    assert exc_info.value is acquire_error
+    connection = factory.pools[0].connections[0]
+    assert connection.close_calls == 1
+    assert connection.closed is True
+    assert connection.closed_while_checked_out is True
+
+
+@pytest.mark.parametrize("row", [None, (), (None,), (True, False)])
+def test_malformed_acquisition_result_discards_lock_connection(row: tuple | None) -> None:
+    factory = _PoolFactory()
+    factory.database.lock_rows["parent-1"] = row
+    store = SubtaskOperationStore("postgresql://ledger", pool_factory=factory)
+
+    with pytest.raises(LedgerUnavailableError):
+        _enter_parent_lock(store)
+
+    connection = factory.database.lock_calls[0][0]
+    assert connection.close_calls == 1
+    assert connection.closed is True
+    assert connection.closed_while_checked_out is True
 
 
 @pytest.mark.parametrize("failure_phase", ["execute", "commit"])
@@ -475,13 +672,69 @@ def test_parent_lock_ensure_alive_fails_closed_with_original_cause() -> None:
     store = SubtaskOperationStore("postgresql://ledger", pool_factory=factory)
     disconnect = OSError("connection lost")
 
-    with store.try_parent_lock("yougile", "parent-1") as parent_lock:
+    with pytest.raises(LedgerUnavailableError) as exc_info, store.try_parent_lock(
+        "yougile", "parent-1"
+    ) as parent_lock:
         assert parent_lock is not None
         parent_lock._connection.health_error = disconnect
-        with pytest.raises(LedgerUnavailableError) as exc_info:
-            parent_lock.ensure_alive()
+        parent_lock.ensure_alive()
 
     assert exc_info.value.__cause__ is disconnect
+    connection = factory.database.lock_calls[0][0]
+    assert connection.closed is True
+    assert connection.closed_while_checked_out is True
+
+
+def test_parent_lock_ensure_alive_commits_health_query_on_same_connection() -> None:
+    factory = _PoolFactory()
+    store = SubtaskOperationStore("postgresql://ledger", pool_factory=factory)
+
+    with store.try_parent_lock("yougile", "parent-1") as parent_lock:
+        assert parent_lock is not None
+        connection = factory.database.lock_calls[0][0]
+
+        parent_lock.ensure_alive()
+
+        assert factory.database.health_calls == [connection]
+        assert connection.commits == 2
+        assert connection.in_transaction is False
+        assert connection.closed is False
+
+
+def test_parent_lock_ensure_alive_commit_failure_discards_with_cause() -> None:
+    factory = _PoolFactory()
+    commit_error = RuntimeError("health commit failed")
+    factory.database.health_commit_error = commit_error
+    store = SubtaskOperationStore("postgresql://ledger", pool_factory=factory)
+
+    with pytest.raises(LedgerUnavailableError) as exc_info, store.try_parent_lock(
+        "yougile", "parent-1"
+    ) as parent_lock:
+        assert parent_lock is not None
+        parent_lock.ensure_alive()
+
+    assert exc_info.value.__cause__ is commit_error
+    connection = factory.database.lock_calls[0][0]
+    assert factory.database.health_calls == [connection]
+    assert connection.closed is True
+    assert connection.closed_while_checked_out is True
+
+
+def test_parent_lock_ensure_alive_rejects_malformed_result_and_discards() -> None:
+    factory = _PoolFactory()
+    factory.database.health_row = (1, 2)
+    store = SubtaskOperationStore("postgresql://ledger", pool_factory=factory)
+
+    with pytest.raises(LedgerUnavailableError) as exc_info, store.try_parent_lock(
+        "yougile", "parent-1"
+    ) as parent_lock:
+        assert parent_lock is not None
+        parent_lock.ensure_alive()
+
+    assert isinstance(exc_info.value.__cause__, ConnectionError)
+    connection = factory.database.lock_calls[0][0]
+    assert connection.closed is True
+    assert connection.closed_while_checked_out is True
 
 
 @pytest.mark.parametrize("failure", ["schema", "load", "acquire", "unlock", "connection"])
@@ -529,6 +782,26 @@ def test_close_resets_pool_and_schema_for_safe_reuse() -> None:
     assert store.load("missing") is None
     assert len(factory.pools) == 2
     assert factory.pools[1].open_calls == 1
+    assert factory.database.schema_calls == 2
+
+
+def test_close_resets_ledger_and_lock_pools_for_safe_reuse() -> None:
+    factory = _PoolFactory()
+    store = SubtaskOperationStore("postgresql://ledger", pool_factory=factory)
+
+    assert store.load("missing") is None
+    with store.try_parent_lock("yougile", "parent-1"):
+        pass
+    ledger_pool, lock_pool = factory.pools
+
+    store.close()
+
+    assert ledger_pool.close_calls == 1
+    assert lock_pool.close_calls == 1
+    assert store.load("missing") is None
+    with store.try_parent_lock("yougile", "parent-1"):
+        pass
+    assert len(factory.pools) == 4
     assert factory.database.schema_calls == 2
 
 
