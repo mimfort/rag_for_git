@@ -12,10 +12,9 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from reviewer.config.settings import Settings
-from reviewer.mcp.schemas import SummaryFragmentIn
+from reviewer.mcp.schemas import SubtaskIn, SummaryFragmentIn
 from reviewer.mcp.service import MCPReviewService
 from reviewer.vcs.base import ChangedFile, PullRequest
-
 
 # ---------------------------------------------------------------------------
 # Фейки (по образцу tests/mcp/test_service.py)
@@ -89,7 +88,7 @@ def _make_mcp_service(number: int = 7) -> MCPReviewService:
 # ---------------------------------------------------------------------------
 
 def test_server_registers_all_tools() -> None:
-    """create_server регистрирует ровно 37 ожидаемых MCP-тулов."""
+    """create_server регистрирует ровно 38 ожидаемых MCP-тулов."""
     from reviewer.entrypoints.mcp_server import create_server
 
     server = create_server(_make_mcp_service())
@@ -110,6 +109,7 @@ def test_server_registers_all_tools() -> None:
         "sync_board",
         "finish_task",
         "create_task",
+        "create_subtasks",
         "search_tasks",
         "get_task_context",
         "get_task",
@@ -134,6 +134,48 @@ def test_server_registers_all_tools() -> None:
         "prune_subsystem_summaries",
         "backfill_summary_embeddings",
     }
+
+
+def test_create_subtasks_routes_validated_items_to_service_once() -> None:
+    from reviewer.entrypoints.mcp_server import create_server
+
+    service = MagicMock(spec=MCPReviewService)
+    service.create_subtasks.return_value = {"status": "ok"}
+    server = create_server(service)
+    payload = {
+        "parent_key": "PRI-224",
+        "subtasks": [{
+            "title": " Child ",
+            "problem": " Problem ",
+            "steps": [" Step "],
+            "criteria": [" Done "],
+            "context": " ",
+        }],
+        "idempotency_key": "attempt-1",
+        "board_type": "yougile",
+        "project": "PRI",
+        "provider_options": {"lane": "Backend"},
+    }
+
+    result = asyncio.run(server.call_tool("create_subtasks", payload))
+
+    assert json.loads(result[0].text) == {"status": "ok"}
+    service.create_subtasks.assert_called_once_with(
+        "PRI-224",
+        [
+            SubtaskIn(
+                title="Child",
+                problem="Problem",
+                steps=["Step"],
+                criteria=["Done"],
+                context=None,
+            ).model_dump()
+        ],
+        "attempt-1",
+        "yougile",
+        "PRI",
+        {"lane": "Backend"},
+    )
 
 
 def test_list_subsystem_clusters_tool_describes_layout_token() -> None:
@@ -255,9 +297,8 @@ def test_publish_review_dry_run_callable_via_mcp(_ov, _ch) -> None:
     Находки сдаются через submit_findings (schema-enforced FindingIn),
     publish_review вызывается без findings и возвращает dict-отчёт.
     """
-    from tests.mcp.test_publish import RAW
-
     from reviewer.entrypoints.mcp_server import create_server
+    from tests.mcp.test_publish import RAW
 
     server = create_server(_make_mcp_service())
     asyncio.run(server.call_tool("prepare_review", {"repo": "o/r", "pr": 7}))

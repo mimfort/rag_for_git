@@ -8,7 +8,11 @@
 """
 from __future__ import annotations
 
+from typing import Annotated
+
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator
+
+from reviewer.tasks.subtasks import MAX_SUBTASKS
 
 _VALID_SEVERITIES = frozenset({"low", "medium", "high", "critical"})
 
@@ -40,6 +44,50 @@ class SummaryFragmentIn(BaseModel):
     fingerprint: str = Field(min_length=1)
     summary: str = Field(min_length=1)
     provenance: dict[str, JsonValue] = Field(default_factory=dict)
+
+
+class SubtaskIn(BaseModel):
+    """Строгий LLM-facing черновик нативной дочерней задачи."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    title: str
+    problem: str
+    steps: list[str]
+    criteria: list[str]
+    context: str | None = None
+
+    @field_validator("title", "problem", mode="before")
+    @classmethod
+    def _required_text(cls, value: object) -> str:
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError("значение должно быть непустой строкой")
+        return value.strip()
+
+    @field_validator("steps", "criteria", mode="before")
+    @classmethod
+    def _required_items(cls, value: object) -> list[str]:
+        if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+            raise ValueError("значение должно быть списком строк")
+        cleaned = [item.strip() for item in value if item.strip()]
+        if not cleaned:
+            raise ValueError("список должен содержать непустой элемент")
+        return cleaned
+
+    @field_validator("context", mode="before")
+    @classmethod
+    def _context(cls, value: object) -> str | None:
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            raise ValueError("context должен быть строкой или null")  # noqa: TRY004
+        return value.strip() or None
+
+
+SubtasksIn = Annotated[
+    list[SubtaskIn],
+    Field(min_length=1, max_length=MAX_SUBTASKS),
+]
 
 
 class FindingIn(BaseModel):

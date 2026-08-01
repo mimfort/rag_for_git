@@ -1,20 +1,24 @@
 from __future__ import annotations
+
 from dataclasses import dataclass
 
+from reviewer.config.provider_credentials import ProviderCredentialSource
 from reviewer.config.settings import Settings
-from reviewer.index.store import ChunkStore
+from reviewer.graph.store import GraphStore
 from reviewer.index.embeddings import VoyageEmbedder
 from reviewer.index.reranker import VoyageReranker
+from reviewer.index.store import ChunkStore
 from reviewer.index.summary_store import SummaryStore
-from reviewer.graph.store import GraphStore
 from reviewer.retrieval.retriever import Retriever
-from reviewer.tasks.store import TaskStore
+from reviewer.tasks.boards import make_board_providers
+from reviewer.tasks.boards.registry import default_board_registry
 from reviewer.tasks.graph import TaskGraph
 from reviewer.tasks.service import TaskService
-from reviewer.tasks.boards import make_board_providers
-from reviewer.config.provider_credentials import ProviderCredentialSource
-from reviewer.tasks.boards.registry import default_board_registry
+from reviewer.tasks.store import TaskStore
+from reviewer.tasks.subtask_store import SubtaskOperationStore
+from reviewer.tasks.subtasks import SubtaskService
 from reviewer.tasks.sync import SyncProvider, SyncService
+
 
 @dataclass
 class Components:
@@ -27,8 +31,31 @@ class Components:
     task_store: TaskStore
     task_graph: TaskGraph | None
     task_service: TaskService
+    subtask_operation_store: SubtaskOperationStore
+    subtask_service: SubtaskService
     sync_service: SyncService | None
     summary_store: SummaryStore
+
+    def close(self) -> None:
+        """Закрыть долгоживущие store/graph ресурсы приложения."""
+        first_error: Exception | None = None
+        resources = (
+            self.store,
+            self.graph,
+            self.task_store,
+            self.subtask_operation_store,
+            self.summary_store,
+        )
+        for resource in resources:
+            if resource is None:
+                continue
+            try:
+                resource.close()
+            except Exception as error:  # noqa: BLE001 - shutdown должен закрыть остальные stores
+                first_error = first_error or error
+        if first_error is not None:
+            raise first_error
+
 
 def _voyage_client(settings: Settings):
     import voyageai
@@ -61,6 +88,12 @@ def build_components(settings: Settings, connect: bool = True) -> Components:
         max_chars=settings.max_tool_result_chars,
         attachment_embed_chars=settings.task_attachment_embed_chars,
     )
+    subtask_operation_store = SubtaskOperationStore(
+        settings.pg_dsn,
+        min_size=settings.pg_pool_min_size,
+        max_size=settings.pg_pool_max_size,
+    )
+    subtask_service = SubtaskService(subtask_operation_store)
     # server-side синк досок: все настроенные провайдеры (связка ключей в env).
     # Пустой список → sync_service=None, sync_board вернёт понятный error-summary.
     board_registry = default_board_registry()
@@ -87,6 +120,18 @@ def build_components(settings: Settings, connect: bool = True) -> Components:
         min_size=settings.pg_pool_min_size,
         max_size=settings.pg_pool_max_size,
     )
-    return Components(settings, store, graph, embedder, reranker, retriever,
-                      task_store, task_graph, task_service, sync_service,
-                      summary_store)
+    return Components(
+        settings=settings,
+        store=store,
+        graph=graph,
+        embedder=embedder,
+        reranker=reranker,
+        retriever=retriever,
+        task_store=task_store,
+        task_graph=task_graph,
+        task_service=task_service,
+        subtask_operation_store=subtask_operation_store,
+        subtask_service=subtask_service,
+        sync_service=sync_service,
+        summary_store=summary_store,
+    )

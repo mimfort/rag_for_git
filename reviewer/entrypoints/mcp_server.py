@@ -9,14 +9,14 @@ import sys
 
 from mcp.server.fastmcp import FastMCP
 
-from reviewer.mcp.schemas import FindingIn, SummaryFragmentIn, VerdictIn
+from reviewer.mcp.schemas import FindingIn, SubtasksIn, SummaryFragmentIn, VerdictIn
 from reviewer.mcp.service import MCPReviewService
 
 log = logging.getLogger(__name__)
 
 
 def create_server(service: MCPReviewService) -> FastMCP:
-    """Создать и вернуть сконфигурированный FastMCP-сервер с 37 тулами.
+    """Создать и вернуть сконфигурированный FastMCP-сервер с 38 тулами.
 
     Все тулы — обычные def (sync), а не async: сервис не потокобезопасен
     и рассчитан на последовательное исполнение sync-тулов FastMCP в event loop.
@@ -173,6 +173,25 @@ def create_server(service: MCPReviewService) -> FastMCP:
             board_type,
             project,
             target,
+            provider_options,
+        )
+
+    @mcp.tool()
+    def create_subtasks(
+        parent_key: str,
+        subtasks: SubtasksIn,
+        idempotency_key: str,
+        board_type: str | None = None,
+        project: str | None = None,
+        provider_options: dict[str, object] | None = None,
+    ) -> dict:
+        """Create and attach a confirmed native-subtask batch with durable idempotency."""
+        return service.create_subtasks(
+            parent_key,
+            [item.model_dump() for item in subtasks],
+            idempotency_key,
+            board_type,
+            project,
             provider_options,
         )
 
@@ -444,7 +463,12 @@ def main() -> None:
             file=sys.stderr,
         )
         sys.exit(1)
-    server.run()  # stdio
+    try:
+        server.run()  # stdio
+    finally:
+        close = getattr(components, "close", None)
+        if callable(close):
+            close()
 
 
 if __name__ == "__main__":

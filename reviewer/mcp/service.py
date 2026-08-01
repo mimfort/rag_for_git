@@ -23,6 +23,7 @@ from reviewer.config.provider_credentials import ProviderCredentialSource
 from reviewer.config.settings import Settings
 from reviewer.config.task_board import migrate_legacy_board_args
 from reviewer.index.refs import base_ref
+from reviewer.mcp.schemas import FindingIn, SummaryFragmentIn, VerdictIn
 from reviewer.mcp.session_serde import from_payload, to_payload
 from reviewer.mcp.session_store import SessionStore
 from reviewer.retrieval.retriever import ContextPack
@@ -40,7 +41,12 @@ from reviewer.services.summary_fragments import (
     has_complete_fragment_generation,
     with_server_generation_provenance,
 )
-from reviewer.tasks.boards.base import JsonValue, TaskBoardProvider
+from reviewer.tasks.boards.base import (
+    JsonValue,
+    NativeSubtaskIdentity,
+    RawTask,
+    TaskBoardProvider,
+)
 from reviewer.tasks.boards.errors import (
     BoardProviderError,
     sanitize_provider_payload,
@@ -49,11 +55,11 @@ from reviewer.tasks.boards.errors import (
 from reviewer.tasks.boards.registry import BoardProviderRegistry, default_board_registry
 from reviewer.tasks.boards.runtime import resolved_provider
 from reviewer.tasks.graph import PRRef
+from reviewer.tasks.subtasks import WriteThroughResult, validate_subtask_request
 from reviewer.tasks.sync import SyncProvider, SyncService
 from reviewer.tasks.taskdoc import TaskDoc, render_markdown
 from reviewer.tools.code_tools import ToolContext, make_tools
 from reviewer.tools.graph_format import format_neighbors
-from reviewer.mcp.schemas import FindingIn, SummaryFragmentIn, VerdictIn
 from reviewer.vcs.base import ChangedFile, Finding, VCSProvider
 from reviewer.vcs.diff import commentable_lines
 
@@ -507,6 +513,129 @@ class MCPReviewService:
             log.warning("board write-through реиндекс не удался")
             return None
 
+    def _write_through_subtasks(
+        self,
+        provider: TaskBoardProvider,
+        parent: RawTask,
+        identities: tuple[NativeSubtaskIdentity, ...],
+        sanitize: Callable[[object], str],
+    ) -> WriteThroughResult:
+        """Строго переиндексировать parent и подтверждённых children одним батчем."""
+        warnings: list[str] = []
+
+        def warning(value: object) -> None:
+            safe = sanitize(value)
+            warnings.append(safe if isinstance(safe, str) else "write-through failed")
+
+        try:
+            raw_tasks = [parent]
+            seen_board_ids = {parent.board_id}
+            for identity in identities:
+                if identity.board_id == parent.board_id:
+                    warning("write-through child identity collides with parent")
+                    return WriteThroughResult(False, tuple(warnings))
+                if identity.board_id in seen_board_ids:
+                    continue
+                seen_board_ids.add(identity.board_id)
+                raw = provider.fetch_one(identity.board_id)
+                if raw is None:
+                    warning(f"write-through task not found: {identity.key}")
+                    return WriteThroughResult(False, tuple(warnings))
+                raw_tasks.append(raw)
+
+            briefs: list[dict] = []
+            seen_keys: set[str] = set()
+            for raw in raw_tasks:
+                brief = provider.normalize(raw)
+                if not isinstance(brief, dict) or not brief.get("key"):
+                    warning("write-through normalize returned an incomplete TaskBrief")
+                    return WriteThroughResult(False, tuple(warnings))
+                key = str(brief["key"])
+                if key in seen_keys:
+                    warning(f"write-through duplicate normalized task key: {key}")
+                    return WriteThroughResult(False, tuple(warnings))
+                seen_keys.add(key)
+                briefs.append(brief)
+
+            results = self.components.task_service.index_batch(briefs)
+            if not isinstance(results, list) or len(results) != len(briefs):
+                warning("write-through index result count does not match TaskBrief count")
+                return WriteThroughResult(False, tuple(warnings))
+
+            for brief, result in zip(briefs, results):
+                if not isinstance(result, dict):
+                    warning("write-through index returned an invalid result")
+                    continue
+                result_warnings = result.get("warnings", [])
+                if not isinstance(result_warnings, (list, tuple)):
+                    warning("write-through index returned invalid warnings")
+                else:
+                    for item in result_warnings:
+                        warning(item)
+                if "links" in brief and result.get("links_stored") is not True:
+                    warning(f"write-through links were not stored for {brief['key']}")
+        except Exception as error:  # noqa: BLE001 - provider/store boundary
+            warning(error)
+            return WriteThroughResult(False, tuple(warnings))
+        return WriteThroughResult(not warnings, tuple(warnings))
+
+    def _resolved_subtask_request(
+        self,
+        parent_key: str,
+        subtasks: list[dict],
+        idempotency_key: str,
+        board_type: str | None,
+        project: str | None,
+        provider_options: Mapping[str, JsonValue] | None,
+    ):
+        """Резолв generic board config без создания provider и нормализация hash input."""
+        registry, credentials = self._board_runtime()
+        configured = registry.configured_types(credentials)
+        defaults = self.settings.task_board_default() or {}
+
+        requested_type = board_type
+        if requested_type is None:
+            default_type = defaults.get("type") if isinstance(defaults, dict) else None
+            if isinstance(default_type, str):
+                requested_type = default_type
+        if requested_type is not None:
+            if not isinstance(requested_type, str) or not requested_type.strip():
+                raise BoardProviderError("configuration", "board_type must be a non-empty string.")
+            resolved_type = requested_type.strip()
+        elif len(configured) == 1:
+            resolved_type = configured[0]
+        else:
+            raise BoardProviderError(
+                "configuration",
+                "board_type is required unless exactly one provider is configured.",
+            )
+        try:
+            registry.get(resolved_type)
+        except KeyError:
+            raise BoardProviderError(
+                "configuration", "Board provider type is not registered."
+            ) from None
+        if resolved_type not in configured:
+            raise BoardProviderError("configuration", "Board provider is not configured.")
+
+        default_project = defaults.get("project") if isinstance(defaults, dict) else None
+        resolved_project = project if project is not None else default_project
+        default_options = defaults.get("options", {}) if isinstance(defaults, dict) else {}
+        if not isinstance(default_options, Mapping):
+            raise BoardProviderError("configuration", "Board provider options are invalid.")
+        if provider_options is not None and not isinstance(provider_options, Mapping):
+            raise BoardProviderError("configuration", "Board provider options are invalid.")
+        options = {**default_options, **dict(provider_options or {})}
+        request = validate_subtask_request(
+            parent_key,
+            subtasks,
+            idempotency_key,
+            resolved_type,
+            resolved_project,
+            options,
+        )
+        return request, registry, credentials
+
     def _backlink_pr(self, pr_url: str, key: str, task_url: str) -> tuple[bool, list[str]]:
         """Дописать ссылку на задачу в начало тела PR. Возвращает (added, warnings).
 
@@ -721,6 +850,80 @@ class MCPReviewService:
                 )
         except BoardProviderError as error:
             return self._board_error("create_task", error)
+
+    def create_subtasks(
+        self,
+        parent_key: str,
+        subtasks: list[dict],
+        idempotency_key: str,
+        board_type: str | None = None,
+        project: str | None = None,
+        provider_options: Mapping[str, JsonValue] | None = None,
+    ) -> dict:
+        """Создать и привязать batch нативных подзадач с durable idempotency."""
+        secrets = frozenset()
+        try:
+            secrets = self._board_secrets()
+            request, registry, credentials = self._resolved_subtask_request(
+                parent_key,
+                subtasks,
+                idempotency_key,
+                board_type,
+                project,
+                provider_options,
+            )
+            secrets = credentials.secret_values(registry.get(request.board_type))
+            preflight = self.components.subtask_service.preflight(request)
+            if preflight.result is not None:
+                return self._safe_board_payload(preflight.result.payload(), secrets)
+
+            with resolved_provider(
+                self.settings,
+                request.board_type,
+                request.provider_options,
+                registry=registry,
+                credential_source=credentials,
+            ) as resolved:
+                if "native_subtasks" not in resolved.capabilities:
+                    return self._safe_board_payload(
+                        {
+                            "status": "error",
+                            "board_type": resolved.board_type,
+                            "parent_key": request.parent_key,
+                            "idempotency_key": request.idempotency_key,
+                            "category": "unsupported",
+                            "retryable": False,
+                            "reason": "Board provider does not support native subtasks.",
+                        },
+                        resolved.secrets,
+                    )
+                def sanitize(value: object) -> str:
+                    return sanitize_provider_text(value, resolved.secrets)
+
+                result = self.components.subtask_service.run(
+                    request,
+                    operation=preflight.operation,
+                    provider=resolved.provider,
+                    board_type=resolved.board_type,
+                    write_through=lambda parent, identities: self._write_through_subtasks(
+                        resolved.provider,
+                        parent,
+                        identities,
+                        sanitize,
+                    ),
+                    sanitize=sanitize,
+                )
+                return self._safe_board_payload(result.payload(), resolved.secrets)
+        except BoardProviderError as error:
+            return self._safe_board_payload(
+                self._board_error("create_subtasks", error, secrets),
+                secrets,
+            )
+        except Exception as error:  # noqa: BLE001 - ledger/config boundary
+            return self._safe_board_payload(
+                self._board_error("create_subtasks", error, secrets),
+                secrets,
+            )
 
     def get_board_targets(
         self,
@@ -1696,6 +1899,7 @@ class MCPReviewService:
     def get_candidate_findings(self, repo: str, pr: int) -> str:
         """Вернуть накопленных кандидатов с id для verify (JSON-строка)."""
         import json
+
         from reviewer.services.repo_id import normalize_repo
         repo = normalize_repo(repo)
         s = self._session(repo, pr)
