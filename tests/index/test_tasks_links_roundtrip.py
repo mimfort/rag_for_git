@@ -149,12 +149,14 @@ def test_task_service_writes_same_filtered_links_to_postgres_and_neo4j() -> None
     initial_links = [{"key": old_child_key, "title": "Старая", "type": "related"}]
     input_links = [
         {"key": child_key, "title": "Дочерняя", "type": "subtask"},
+        {"key": child_key, "title": "Дубликат", "type": "subtask"},
         {"title": "Без ключа", "type": "related"},
         42,
         {"key": related_key, "title": "Связанная", "type": "related"},
+        {"key": related_key, "title": "Дубликат связи", "type": "related"},
         {"key": None, "title": "Пустой ключ"},
     ]
-    expected_links = [input_links[0], input_links[3]]
+    expected_links = [input_links[0], input_links[4]]
     embedder = _NoEmbeddingExpected()
 
     try:

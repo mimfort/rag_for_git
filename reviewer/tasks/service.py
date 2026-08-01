@@ -14,6 +14,24 @@ from reviewer.tasks.store import TaskRow, build_task_text, task_content_hash
 log = logging.getLogger(__name__)
 
 
+def _normalize_links(links: object) -> list[dict]:
+    """Filter and deduplicate one authoritative links snapshot."""
+    result: list[dict] = []
+    seen: set[tuple[object, object]] = set()
+    for link in links or ():
+        if not isinstance(link, dict) or not link.get("key"):
+            continue
+        identity = (link["key"], link.get("type") or "relates")
+        try:
+            if identity in seen:
+                continue
+            seen.add(identity)
+        except TypeError:
+            continue
+        result.append(dict(link))
+    return result
+
+
 class TaskService:
     """Оркестрация индексации и обхода графа задач."""
 
@@ -41,9 +59,7 @@ class TaskService:
         url = task.get("url")
         project = task.get("project") or ""
         links_supplied = "links" in task
-        links = ([lk for lk in (task.get("links") or [])
-                  if isinstance(lk, dict) and lk.get("key")]
-                 if links_supplied else None)
+        links = _normalize_links(task.get("links")) if links_supplied else None
         text = build_task_text(title, description, criteria, attachments,
                                embed_chars=self._attachment_embed_chars)
         chash = task_content_hash(text)
@@ -130,9 +146,7 @@ class TaskService:
             status = task.get("status")
             url = task.get("url")
             links_supplied = "links" in task
-            links = ([lk for lk in (task.get("links") or [])
-                      if isinstance(lk, dict) and lk.get("key")]
-                     if links_supplied else None)
+            links = _normalize_links(task.get("links")) if links_supplied else None
             text = build_task_text(title, description, criteria, attachments,
                                    embed_chars=self._attachment_embed_chars)
             chash = task_content_hash(text)

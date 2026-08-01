@@ -251,11 +251,17 @@ def test_index_batch_normalizes_links_once_for_store_and_graph():
     text = build_task_text("Add logout", "Clear session", ["redirects"])
     links = [
         {"key": "ID-3", "type": "subtask"},
+        {"key": "ID-3", "title": "duplicate", "type": "subtask"},
+        {"key": "ID-3", "title": "related"},
+        {"key": "ID-3", "title": "duplicate related", "type": ""},
         {"title": "keyless"},
         {"key": None},
         42,
     ]
-    expected = [{"key": "ID-3", "type": "subtask"}]
+    expected = [
+        {"key": "ID-3", "type": "subtask"},
+        {"key": "ID-3", "title": "related"},
+    ]
     store = _FakeStore(hashes={"ID-1": task_content_hash(text)})
     graph = _FakeGraph()
 

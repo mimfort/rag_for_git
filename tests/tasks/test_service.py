@@ -207,11 +207,17 @@ def test_index_task_missing_links_preserves_store_and_graph():
 def test_index_task_normalizes_links_once_for_store_and_graph():
     links = [
         {"key": "ID-2", "title": "child"},
+        {"key": "ID-2", "title": "duplicate", "type": ""},
+        {"key": "ID-2", "title": "subtask", "type": "subtask"},
+        {"key": "ID-2", "title": "duplicate subtask", "type": "subtask"},
         {"title": "keyless"},
         {"key": ""},
         "not a link",
     ]
-    expected = [{"key": "ID-2", "title": "child"}]
+    expected = [
+        {"key": "ID-2", "title": "child"},
+        {"key": "ID-2", "title": "subtask", "type": "subtask"},
+    ]
     store, graph = _FakeStore(), _FakeGraph()
 
     TaskService(store, graph, _FakeEmbedder()).index_task(_brief(links=links))
