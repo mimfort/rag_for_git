@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
+import psycopg
 from psycopg.types.json import Jsonb
 from psycopg_pool import ConnectionPool
 
@@ -122,17 +123,14 @@ class SubtaskOperationStore:
         min_size: int = 1,
         max_size: int = 4,
         pool_factory: Callable[..., ConnectionPool] = ConnectionPool,
-        lock_pool_factory: Callable[..., ConnectionPool] | None = None,
+        lock_connection_factory: Callable[..., psycopg.Connection] = psycopg.connect,
     ) -> None:
         self.pg_dsn = pg_dsn
         self._min_size = min_size
         self._max_size = max_size
         self._pool_factory = pool_factory
-        self._lock_pool_factory = (
-            lock_pool_factory if lock_pool_factory is not None else pool_factory
-        )
+        self._lock_connection_factory = lock_connection_factory
         self._pool: ConnectionPool | None = None
-        self._lock_pool: ConnectionPool | None = None
         self._init_lock = threading.Lock()
         self._schema_ready = False
 
@@ -161,37 +159,14 @@ class SubtaskOperationStore:
     def _connect(self):
         return self._ensure_ready().connection()
 
-    def _ensure_lock_pool(self) -> ConnectionPool:
-        pool = self._lock_pool
-        if pool is not None:
-            return pool
-        with self._init_lock:
-            pool = self._lock_pool
-            if pool is None:
-                pool = self._lock_pool_factory(
-                    self.pg_dsn,
-                    min_size=self._min_size,
-                    max_size=self._max_size,
-                    open=False,
-                )
-                pool.open()
-                self._lock_pool = pool
-            return pool
-
     def close(self) -> None:
         """Закрыть текущий пул и разрешить повторную ленивую инициализацию."""
         with self._init_lock:
             pool = self._pool
-            lock_pool = self._lock_pool
             self._pool = None
-            self._lock_pool = None
             self._schema_ready = False
-            try:
-                if pool is not None:
-                    pool.close()
-            finally:
-                if lock_pool is not None and lock_pool is not pool:
-                    lock_pool.close()
+            if pool is not None:
+                pool.close()
 
     def load(self, idempotency_key: str) -> SubtaskOperation | None:
         sql = f"SELECT {_COLUMNS} FROM subtask_operations WHERE idempotency_key = %s"
@@ -261,33 +236,21 @@ class SubtaskOperationStore:
         parent_task_id: str,
     ) -> Iterator[ParentOperationLock | None]:
         """Попытаться удержать session lock на одном соединении до выхода из context."""
-        pool = self._ensure_lock_pool()
+        conn = self._lock_connection_factory(self.pg_dsn)
+        context_error: BaseException | None = None
         params = (board_type, parent_task_id)
-        with pool.connection() as conn:
-            try:
-                row = conn.execute(_PARENT_LOCK_SQL, params).fetchone()
-                if not row or len(row) != 1 or not isinstance(row[0], bool):
-                    raise LedgerUnavailableError("Postgres не вернул результат захвата lock")
-            except BaseException as acquisition_error:
-                _discard_preserving_error(conn, acquisition_error)
-                raise
+        try:
+            row = conn.execute(_PARENT_LOCK_SQL, params).fetchone()
+            if not row or len(row) != 1 or not isinstance(row[0], bool):
+                raise LedgerUnavailableError("Postgres не вернул результат захвата lock")
             if row[0] is False:
-                try:
-                    conn.commit()
-                except BaseException as contention_error:
-                    _discard_preserving_error(conn, contention_error)
-                    raise
+                conn.commit()
                 yield None
                 return
 
             primary_error: BaseException | None = None
-            acquisition_failed = False
             try:
-                try:
-                    conn.commit()
-                except BaseException:
-                    acquisition_failed = True
-                    raise
+                conn.commit()
                 yield ParentOperationLock(conn)
             except BaseException as exc:
                 primary_error = exc
@@ -299,11 +262,14 @@ class SubtaskOperationStore:
                     if unlock_row is None or not unlock_row or unlock_row[0] is not True:
                         raise LedgerUnavailableError("Postgres не подтвердил освобождение lock")
                 except BaseException as cleanup_error:
-                    _discard_preserving_error(conn, cleanup_error)
                     if primary_error is None:
                         raise
                     primary_error.add_note(f"Ошибка cleanup advisory lock: {cleanup_error!r}")
-                else:
-                    if acquisition_failed:
-                        assert primary_error is not None
-                        _discard_preserving_error(conn, primary_error)
+        except BaseException as exc:
+            context_error = exc
+            raise
+        finally:
+            if context_error is None:
+                _discard_connection(conn)
+            else:
+                _discard_preserving_error(conn, context_error)
