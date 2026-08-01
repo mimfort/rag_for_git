@@ -744,10 +744,22 @@ class MCPReviewService:
     ):
         """Резолв generic board config без создания provider и нормализация hash input."""
         registry, credentials = self._board_runtime()
-        configured = registry.configured_types(credentials)
-        defaults = self.settings.task_board_default() or {}
+        durable_request = None
+        if board_type is None or project is None or provider_options is None:
+            durable_request = self.components.subtask_service.lookup_request(idempotency_key)
+        defaults = (
+            self.settings.task_board_default() or {}
+            if durable_request is None
+            else {}
+        )
 
-        requested_type = board_type
+        requested_type = (
+            board_type
+            if board_type is not None
+            else durable_request.board_type
+            if durable_request is not None
+            else None
+        )
         if requested_type is None:
             default_type = defaults.get("type") if isinstance(defaults, dict) else None
             if isinstance(default_type, str):
@@ -756,16 +768,9 @@ class MCPReviewService:
             if not isinstance(requested_type, str) or not requested_type.strip():
                 raise BoardProviderError("configuration", "board_type must be a non-empty string.")
             resolved_type: str | None = requested_type.strip()
-        elif len(configured) == 1:
-            resolved_type = configured[0]
         else:
-            resolved_type = None
-
-        durable_request = None
-        if resolved_type is None or project is None or provider_options is None:
-            durable_request = self.components.subtask_service.lookup_request(idempotency_key)
-        if resolved_type is None:
-            resolved_type = durable_request.board_type if durable_request is not None else None
+            configured = registry.configured_types(credentials)
+            resolved_type = configured[0] if len(configured) == 1 else None
         if resolved_type is None:
             raise BoardProviderError(
                 "configuration",
@@ -791,7 +796,11 @@ class MCPReviewService:
         if provider_options is not None and not isinstance(provider_options, Mapping):
             raise BoardProviderError("configuration", "Board provider options are invalid.")
         if provider_options is not None:
-            options = {**default_options, **dict(provider_options)}
+            options = (
+                dict(provider_options)
+                if durable_request is not None
+                else {**default_options, **dict(provider_options)}
+            )
         elif durable_request is not None:
             options = durable_request.provider_options
         else:

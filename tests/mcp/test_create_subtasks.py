@@ -302,6 +302,26 @@ def _drop_credentials(service):
     service._board_credentials = ProviderCredentialSource(values={})
 
 
+def _switch_runtime_to_other_provider(service):
+    fake_spec = service._board_registry.get("fake")
+    service._board_registry = BoardProviderRegistry(
+        [
+            fake_spec,
+            replace(
+                fake_spec,
+                board_type="other",
+                credential_fields=(
+                    CredentialFieldSpec("OTHER_TOKEN", "Other token", secret=True),
+                ),
+            ),
+        ]
+    )
+    service._board_credentials = ProviderCredentialSource(
+        values={"OTHER_TOKEN": "other-secret"}
+    )
+    service.settings = SimpleNamespace(task_board_default=lambda: {"type": "other"})
+
+
 class _PreflightOnly:
     def __init__(self, result):
         self.result = result
@@ -310,6 +330,9 @@ class _PreflightOnly:
     def preflight(self, request):
         self.requests.append(request)
         return SubtaskPreflight(None, self.result)
+
+    def lookup_request(self, idempotency_key):
+        return None
 
     def run(self, *args, **kwargs):
         raise AssertionError("run не должен вызываться для terminal preflight")
@@ -383,6 +406,53 @@ def test_complete_replay_restores_omitted_config_from_durable_request():
 
     assert out["status"] == "ok"
     assert out["reindexed"] is True
+    assert factory.calls == 1
+
+
+def test_complete_replay_prefers_durable_type_over_changed_runtime_default():
+    service, _, _, factory, _ = _service()
+    assert _create(service, board_type="fake")["status"] == "ok"
+    _switch_runtime_to_other_provider(service)
+
+    replay = _create(
+        service,
+        board_type=None,
+        project=None,
+        provider_options=None,
+    )
+    conflict = _create(
+        service,
+        board_type="other",
+        project=None,
+        provider_options=None,
+    )
+
+    assert replay["status"] == "ok"
+    assert replay["board_type"] == "fake"
+    assert conflict["status"] == "error"
+    assert conflict["category"] == "conflict"
+    assert factory.calls == 1
+
+
+def test_incomplete_omitted_type_uses_durable_provider_before_credential_check():
+    service, provider, _, factory, state_machine = _service()
+    provider.missing_child = True
+    first = _create(service, board_type="fake")
+    assert first["category"] == "reindex_pending"
+    writes = provider.board_writes
+    _switch_runtime_to_other_provider(service)
+
+    out = _create(
+        service,
+        board_type=None,
+        project=None,
+        provider_options=None,
+    )
+
+    assert out["status"] == "error"
+    assert out["category"] == "configuration"
+    assert state_machine._store.operation.status == "board_complete"
+    assert provider.board_writes == writes
     assert factory.calls == 1
 
 
@@ -477,6 +547,52 @@ def test_hash_conflict_runs_durable_preflight_without_current_credentials():
     assert out["status"] == "error"
     assert out["category"] == "conflict"
     preflight.assert_called_once()
+    assert factory.calls == 1
+
+
+def test_completed_replay_keeps_secret_url_redacted_without_credentials():
+    secret = "identity-url-secret"
+
+    class _SecretIdentityProvider(_Provider):
+        def create_native_subtask(self, doc_md, *, title, source_column_id, marker):
+            identity = super().create_native_subtask(
+                doc_md,
+                title=title,
+                source_column_id=source_column_id,
+                marker=marker,
+            )
+            return replace(
+                identity,
+                title=f"provider title {secret}",
+                url=f"https://board/child-id?token={secret}",
+            )
+
+    service, provider, _, factory, state_machine = _service(
+        provider=_SecretIdentityProvider(secret)
+    )
+
+    first = _create(service, board_type="fake")
+    persisted = deepcopy(state_machine._store.operation)
+    _drop_credentials(service)
+    replay = _create(
+        service,
+        board_type=None,
+        project=None,
+        provider_options=None,
+    )
+
+    safe_url = "https://board/child-id?token=[REDACTED]"
+    assert first["status"] == "ok"
+    assert first["attached"][0]["url"] == safe_url
+    assert first["attached"][0]["title"] == SUBTASK["title"]
+    assert persisted.state["items"][0]["url"] == safe_url
+    assert persisted.state["items"][0]["title"] == SUBTASK["title"]
+    assert replay["status"] == "ok"
+    assert replay["attached"][0]["url"] == safe_url
+    assert secret not in repr(first)
+    assert secret not in repr(persisted.state)
+    assert secret not in repr(replay)
+    assert provider.board_writes > 0
     assert factory.calls == 1
 
 
@@ -958,6 +1074,9 @@ def test_partial_provider_warning_is_scrubbed_from_checkpoint_and_result():
 
 
 class _ExplodingSubtaskService:
+    def lookup_request(self, idempotency_key):
+        return None
+
     def preflight(self, request):
         return SubtaskPreflight(None, None)
 
@@ -1036,8 +1155,10 @@ def test_recovery_survives_sanitizer_failure_and_keeps_durable_result(monkeypatc
     service, provider, _, _, state_machine = _service()
     state_machine._store.fail_complete_checkpoint_once = True
 
-    def explode_sanitizer(*_args, **_kwargs):
-        raise RuntimeError("sanitizer failed runtime-secret")
+    def explode_sanitizer(value, *_args, **_kwargs):
+        if isinstance(value, OperationConflictError):
+            raise TypeError("sanitizer failed runtime-secret")
+        return str(value).replace("runtime-secret", "[REDACTED]")
 
     monkeypatch.setattr(service_module, "sanitize_provider_text", explode_sanitizer)
 

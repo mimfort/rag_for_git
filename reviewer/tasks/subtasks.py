@@ -667,14 +667,36 @@ def _identity_changes(
     identity: NativeSubtaskIdentity,
     sanitize: Callable[[object], str],
 ) -> dict[str, object]:
+    def sanitized(value: str, *, unchanged: bool) -> str:
+        try:
+            safe = sanitize(value)
+        except Exception as error:  # noqa: BLE001 - provider identity boundary
+            raise ConfirmedSubtaskIdentityError(
+                "confirmed child identity could not be sanitized"
+            ) from error
+        if not _usable_identity_text(safe) or (unchanged and safe != value):
+            raise ConfirmedSubtaskIdentityError(
+                "confirmed child operational identity is unsafe"
+            )
+        return cast(str, safe)
+
+    board_id = sanitized(identity.board_id, unchanged=True)
+    key = sanitized(identity.key, unchanged=True)
+    aliases = [sanitized(alias, unchanged=True) for alias in identity.aliases]
+    url = (
+        sanitized(identity.url, unchanged=False)
+        if identity.url is not None
+        else None
+    )
+    warnings = [_safe_warning(sanitize, warning) for warning in identity.warnings]
     return {
         "phase": "created",
-        "key": identity.key,
-        "aliases": list(identity.aliases),
-        "board_id": identity.board_id,
-        "url": identity.url,
+        "key": key,
+        "aliases": aliases,
+        "board_id": board_id,
+        "url": url,
         "manual_required": False,
-        "warnings": [_safe_warning(sanitize, warning) for warning in identity.warnings],
+        "warnings": warnings,
     }
 
 

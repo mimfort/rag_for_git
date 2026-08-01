@@ -294,6 +294,12 @@ def _run(
     )
 
 
+def _sanitize_failure(value, replacement):
+    if isinstance(value, str) and "SECRET" not in value:
+        return value
+    return replacement
+
+
 def _operation(request=None, *, status="running", request_hash=None, state=None):
     request = request or _validate()
     return SubtaskOperation(
@@ -877,7 +883,7 @@ def test_confirmed_child_attaches_while_sibling_remains_manual_pending():
         SubtaskService(store),
         request,
         provider,
-        sanitize=lambda _value: "safe create failure",
+        sanitize=lambda value: _sanitize_failure(value, "safe create failure"),
     )
 
     assert provider.replace_calls == [("parent-uuid", ["child-1"])]
@@ -934,7 +940,7 @@ def test_attachment_transport_failure_is_retryable_without_losing_child_identity
         SubtaskService(store),
         request,
         provider,
-        sanitize=lambda _value: "safe attachment failure",
+        sanitize=lambda value: _sanitize_failure(value, "safe attachment failure"),
     )
 
     persisted = store.operations["attempt-1"]
@@ -981,7 +987,7 @@ def test_malformed_parent_verification_never_advances_phase_or_calls_write_throu
         request,
         provider,
         write_calls=write_calls,
-        sanitize=lambda _value: "safe malformed verification",
+        sanitize=lambda value: _sanitize_failure(value, "safe malformed verification"),
     )
 
     persisted = store.operations["attempt-1"]
@@ -1065,7 +1071,7 @@ def test_write_through_exception_is_sanitized_and_persists_no_secret():
         request,
         provider,
         write_effects=[RuntimeError("token=VERY_SECRET")],
-        sanitize=lambda _value: "safe callback failure",
+        sanitize=lambda value: _sanitize_failure(value, "safe callback failure"),
     )
 
     persisted = store.operations["attempt-1"]
@@ -1775,7 +1781,7 @@ def test_committed_then_timeout_reconciles_on_retry_with_only_one_total_post():
         service,
         request,
         provider,
-        sanitize=lambda _value: "redacted failure",
+        sanitize=lambda value: _sanitize_failure(value, "redacted failure"),
     )
     persisted_after_timeout = deepcopy(store.operations["attempt-1"])
     resumed = service.preflight(request).operation
@@ -1784,7 +1790,7 @@ def test_committed_then_timeout_reconciles_on_retry_with_only_one_total_post():
         request,
         provider,
         operation=resumed,
-        sanitize=lambda _value: "redacted failure",
+        sanitize=lambda value: _sanitize_failure(value, "redacted failure"),
     )
 
     assert len(provider.create_calls) == 1
@@ -1835,13 +1841,15 @@ def test_identity_warning_sanitizer_failure_stays_in_flight_and_never_reposts():
 
     def fail_sanitize(value):
         sanitize_calls.append(value)
-        raise RuntimeError("sanitizer failed")
+        if value == "token=VERY_SECRET":
+            raise RuntimeError("sanitizer failed")
+        return str(value)
 
     with pytest.raises(RuntimeError, match="sanitizer failed"):
         _run(service, request, provider, sanitize=fail_sanitize)
 
     persisted = deepcopy(store.operations["attempt-1"])
-    assert len(sanitize_calls) == 1
+    assert sanitize_calls == ["child-uuid", "PRI-225", "token=VERY_SECRET"]
     assert persisted.revision == 1
     assert persisted.state["items"][0]["phase"] == "in_flight"
     assert persisted.state["items"][0]["warnings"] == []
@@ -1859,6 +1867,98 @@ def test_identity_warning_sanitizer_failure_stays_in_flight_and_never_reposts():
 
     assert len(provider.create_calls) == 1
     assert result.created[0].board_id == "child-uuid"
+
+
+@pytest.mark.parametrize(
+    "identity",
+    [
+        NativeSubtaskIdentity("child-VERY_SECRET", "PRI-225", "Provider title"),
+        NativeSubtaskIdentity("child-uuid", "PRI-VERY_SECRET", "Provider title"),
+        NativeSubtaskIdentity(
+            "child-uuid",
+            "PRI-225",
+            "Provider title",
+            aliases=("ALIAS-VERY_SECRET",),
+        ),
+    ],
+    ids=["board-id", "key", "alias"],
+)
+def test_secret_bearing_operational_identity_is_manual_and_never_reposts(identity):
+    request = _validate()
+    provider = FakeProvider(_parent(), create_effects=[identity])
+    store = MemoryStore()
+    service = SubtaskService(store)
+
+    def sanitize(value):
+        return str(value).replace("VERY_SECRET", "[REDACTED]")
+
+    first = _run(service, request, provider, sanitize=sanitize)
+    persisted = deepcopy(store.operations["attempt-1"])
+    resumed = service.preflight(request).operation
+    second = _run(service, request, provider, operation=resumed, sanitize=sanitize)
+
+    assert len(provider.create_calls) == 1
+    assert first.pending[0].manual_required is True
+    assert second.pending[0].manual_required is True
+    assert persisted.state["items"][0]["phase"] == "in_flight"
+    assert persisted.state["items"][0]["board_id"] is None
+    assert "VERY_SECRET" not in json.dumps(persisted.state)
+
+
+def test_invalid_operational_identity_sanitizer_output_never_checkpoints_identity():
+    request = _validate()
+    identity = NativeSubtaskIdentity("child-uuid", "PRI-225", "Provider title")
+    provider = FakeProvider(_parent(), create_effects=[identity])
+    store = MemoryStore()
+    service = SubtaskService(store)
+
+    def sanitize(value):
+        return None if value == "child-uuid" else str(value)
+
+    first = _run(service, request, provider, sanitize=sanitize)
+    persisted = deepcopy(store.operations["attempt-1"])
+    resumed = service.preflight(request).operation
+    second = _run(service, request, provider, operation=resumed)
+
+    assert len(provider.create_calls) == 1
+    assert first.pending[0].manual_required is True
+    assert second.pending[0].manual_required is True
+    assert persisted.state["items"][0]["phase"] == "in_flight"
+    assert persisted.state["items"][0]["board_id"] is None
+
+
+@pytest.mark.parametrize("failure", ["invalid", "raises"])
+def test_unsafe_url_sanitization_leaves_safe_in_flight_without_repost(failure):
+    request = _validate()
+    raw_url = "https://board/child?token=VERY_SECRET"
+    identity = NativeSubtaskIdentity(
+        "child-uuid",
+        "PRI-225",
+        "Provider title VERY_SECRET",
+        url=raw_url,
+    )
+    provider = FakeProvider(_parent(), create_effects=[identity])
+    store = MemoryStore()
+    service = SubtaskService(store)
+
+    def sanitize(value):
+        if value == raw_url:
+            if failure == "raises":
+                raise RuntimeError("url sanitizer failed VERY_SECRET")
+            return None
+        return str(value)
+
+    first = _run(service, request, provider, sanitize=sanitize)
+    persisted = deepcopy(store.operations["attempt-1"])
+    resumed = service.preflight(request).operation
+    second = _run(service, request, provider, operation=resumed)
+
+    assert len(provider.create_calls) == 1
+    assert first.pending[0].manual_required is True
+    assert second.pending[0].manual_required is True
+    assert persisted.state["items"][0]["phase"] == "in_flight"
+    assert persisted.state["items"][0]["url"] is None
+    assert "VERY_SECRET" not in json.dumps(persisted.state)
 
 
 def test_provider_error_sanitizer_failure_is_called_once_and_persists_no_secret():
@@ -1933,7 +2033,7 @@ def test_parent_identity_after_post_stays_manual_then_unique_reconciliation_reco
         request,
         provider,
         write_calls=write_calls,
-        sanitize=lambda _value: "safe identity collision",
+        sanitize=lambda value: _sanitize_failure(value, "safe identity collision"),
     )
     persisted_after_first = deepcopy(store.operations["attempt-1"])
     replace_calls_after_first = list(provider.replace_calls)
@@ -1943,7 +2043,7 @@ def test_parent_identity_after_post_stays_manual_then_unique_reconciliation_reco
         provider,
         operation=service.preflight(request).operation,
         write_calls=write_calls,
-        sanitize=lambda _value: "safe identity collision",
+        sanitize=lambda value: _sanitize_failure(value, "safe identity collision"),
     )
     marker = store.operations["attempt-1"].state["items"][0]["marker"]
     provider.reconciled = [
@@ -2004,7 +2104,7 @@ def test_second_post_identity_collision_leaves_only_second_draft_manual(identiti
         SubtaskService(store),
         request,
         provider,
-        sanitize=lambda _value: "safe identity collision",
+        sanitize=lambda value: _sanitize_failure(value, "safe identity collision"),
     )
 
     items = store.operations["attempt-1"].state["items"]
@@ -2042,7 +2142,7 @@ def test_reconciliation_same_card_for_two_markers_accepts_only_first_draft():
         request,
         provider,
         operation=operation,
-        sanitize=lambda _value: "safe identity collision",
+        sanitize=lambda value: _sanitize_failure(value, "safe identity collision"),
     )
 
     items = store.operations["attempt-1"].state["items"]
@@ -2072,7 +2172,7 @@ def test_multi_child_failure_is_sanitized_and_later_child_still_completes():
         SubtaskService(store),
         request,
         provider,
-        sanitize=lambda _value: "safe create failure",
+        sanitize=lambda value: _sanitize_failure(value, "safe create failure"),
     )
 
     assert len(provider.create_calls) == 2
