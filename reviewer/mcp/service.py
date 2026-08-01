@@ -58,6 +58,7 @@ from reviewer.tasks.graph import PRRef
 from reviewer.tasks.subtasks import (
     ConfirmedSubtaskIdentityError,
     SubtaskBatchResult,
+    SubtaskRequest,
     WriteThroughResult,
     validate_confirmed_subtask_identities,
     validate_subtask_request,
@@ -87,6 +88,9 @@ _MAX_SESSION_STEPS = 1000
 # _TOUCH_INTERVAL_S. Тулы зовутся LLM-темпом; при TTL в часах минутная
 # гранулярность ничего не теряет и убирает бессмысленно частые UPDATE.
 _TOUCH_INTERVAL_S = 60
+_SUBTASK_RECOVERY_WARNING = (
+    "subtask operation failed; durable recovery used a safe fallback"
+)
 
 
 @dataclass
@@ -485,6 +489,80 @@ class MCPReviewService:
         return sanitized if isinstance(sanitized, dict) else {}
 
     @staticmethod
+    def _unknown_subtask_outcome(
+        request: SubtaskRequest,
+        board_type: str,
+        warning: str = _SUBTASK_RECOVERY_WARNING,
+    ) -> dict:
+        return {
+            "status": "partial",
+            "board_type": board_type,
+            "parent_key": request.parent_key,
+            "idempotency_key": request.idempotency_key,
+            "resumed": False,
+            "created": [],
+            "attached": [],
+            "unattached": [],
+            "pending": [],
+            "warnings": [warning],
+            "reindexed": False,
+            "category": "unknown_outcome",
+            "retryable": True,
+        }
+
+    def _recover_subtask_failure(
+        self,
+        request: SubtaskRequest,
+        board_type: str,
+        secrets: frozenset[str],
+        error: Exception,
+    ) -> dict:
+        warning = _SUBTASK_RECOVERY_WARNING
+        try:
+            rendered = sanitize_provider_text(error, secrets)
+            if isinstance(rendered, str) and rendered:
+                warning = rendered
+        except Exception:  # noqa: BLE001 - rendering must be total
+            warning = _SUBTASK_RECOVERY_WARNING
+
+        try:
+            result = self.components.subtask_service.recover_result(request)
+        except Exception:  # noqa: BLE001 - durable reload must be fail-safe
+            result = None
+            warning = _SUBTASK_RECOVERY_WARNING
+        if type(result) is not SubtaskBatchResult:
+            return self._unknown_subtask_outcome(request, board_type, warning)
+
+        try:
+            payload = result.payload()
+            persisted_warnings = payload.get("warnings", ())
+            if not isinstance(persisted_warnings, (list, tuple)) or not all(
+                isinstance(item, str) for item in persisted_warnings
+            ):
+                persisted_warnings = ()
+            payload["warnings"] = [*persisted_warnings, warning]
+            safe_payload = self._safe_board_payload(payload, secrets)
+            if not safe_payload:
+                raise ValueError("recovery payload sanitizer returned no payload")
+            return safe_payload
+        except Exception:  # noqa: BLE001 - final rendering fallback is literal-only
+            return {
+                "status": result.status,
+                "board_type": result.board_type,
+                "parent_key": result.parent_key,
+                "idempotency_key": result.idempotency_key,
+                "resumed": result.resumed,
+                "created": [],
+                "attached": [],
+                "unattached": [],
+                "pending": [],
+                "warnings": [_SUBTASK_RECOVERY_WARNING],
+                "reindexed": result.reindexed,
+                "category": result.category,
+                "retryable": result.retryable,
+            }
+
+    @staticmethod
     def _board_error(operation: str, error: Exception,
                      secrets: frozenset[str] = frozenset()) -> dict:
         reason = sanitize_provider_text(error, secrets)
@@ -677,10 +755,18 @@ class MCPReviewService:
         if requested_type is not None:
             if not isinstance(requested_type, str) or not requested_type.strip():
                 raise BoardProviderError("configuration", "board_type must be a non-empty string.")
-            resolved_type = requested_type.strip()
+            resolved_type: str | None = requested_type.strip()
         elif len(configured) == 1:
             resolved_type = configured[0]
         else:
+            resolved_type = None
+
+        durable_request = None
+        if resolved_type is None or project is None or provider_options is None:
+            durable_request = self.components.subtask_service.lookup_request(idempotency_key)
+        if resolved_type is None:
+            resolved_type = durable_request.board_type if durable_request is not None else None
+        if resolved_type is None:
             raise BoardProviderError(
                 "configuration",
                 "board_type is required unless exactly one provider is configured.",
@@ -692,13 +778,24 @@ class MCPReviewService:
                 "configuration", "Board provider type is not registered."
             ) from None
         default_project = defaults.get("project") if isinstance(defaults, dict) else None
-        resolved_project = project if project is not None else default_project
+        resolved_project = (
+            project
+            if project is not None
+            else durable_request.project
+            if durable_request is not None
+            else default_project
+        )
         default_options = defaults.get("options", {}) if isinstance(defaults, dict) else {}
         if not isinstance(default_options, Mapping):
             raise BoardProviderError("configuration", "Board provider options are invalid.")
         if provider_options is not None and not isinstance(provider_options, Mapping):
             raise BoardProviderError("configuration", "Board provider options are invalid.")
-        options = {**default_options, **dict(provider_options or {})}
+        if provider_options is not None:
+            options = {**default_options, **dict(provider_options)}
+        elif durable_request is not None:
+            options = durable_request.provider_options
+        else:
+            options = dict(default_options)
         request = validate_subtask_request(
             parent_key,
             subtasks,
@@ -990,25 +1087,12 @@ class MCPReviewService:
                 except BoardProviderError:
                     raise
                 except Exception as error:  # noqa: BLE001 - durable recovery boundary
-                    warnings = [sanitize(error)]
-                    try:
-                        result = self.components.subtask_service.recover_result(request)
-                    except Exception as recovery_error:  # noqa: BLE001 - ledger boundary
-                        warnings.append(sanitize(recovery_error))
-                        result = None
-                    if result is None:
-                        result = SubtaskBatchResult(
-                            status="partial",
-                            board_type=request.board_type or resolved.board_type,
-                            parent_key=request.parent_key,
-                            idempotency_key=request.idempotency_key,
-                            resumed=False,
-                            category="unknown_outcome",
-                            retryable=True,
-                        )
-                    payload = result.payload()
-                    payload["warnings"] = [*payload.get("warnings", ()), *warnings]
-                    return self._safe_board_payload(payload, resolved.secrets)
+                    return self._recover_subtask_failure(
+                        request,
+                        request.board_type or resolved.board_type,
+                        resolved.secrets,
+                        error,
+                    )
                 return self._safe_board_payload(result.payload(), resolved.secrets)
         except BoardProviderError as error:
             return self._safe_board_payload(

@@ -733,6 +733,23 @@ class SubtaskService:
             return SubtaskPreflight(None, None)
         return _evaluate_loaded_operation(operation, request)
 
+    def lookup_request(self, idempotency_key: str) -> SubtaskRequest | None:
+        """Вернуть проверенный снимок immutable request metadata из ledger."""
+        operation = self._store.load(idempotency_key)
+        if operation is None:
+            return None
+        validated = _validate_persisted_operation(operation)
+        payload = operation.request_payload
+        return SubtaskRequest(
+            parent_key=operation.parent_input_key,
+            subtasks=validated.drafts,
+            idempotency_key=operation.idempotency_key,
+            board_type=operation.board_type,
+            project=cast(str | None, payload.get("project")),
+            provider_options=deepcopy(payload["provider_options"]),
+            request_hash=operation.request_hash,
+        )
+
     def recover_result(self, request: SubtaskRequest) -> SubtaskBatchResult | None:
         operation = self._store.load(request.idempotency_key)
         if operation is None:

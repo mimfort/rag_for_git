@@ -8,6 +8,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+import reviewer.mcp.service as service_module
 from reviewer.config.provider_credentials import ProviderCredentialSource
 from reviewer.config.settings import Settings
 from reviewer.mcp.service import MCPReviewService
@@ -36,6 +37,7 @@ SUBTASK = {
     "context": None,
 }
 _UNSET = object()
+RECOVERY_WARNING = "subtask operation failed; durable recovery used a safe fallback"
 
 
 def _raw(
@@ -350,23 +352,115 @@ def test_terminal_preflight_returns_before_provider_factory(result):
     assert request.provider_options == {"lane": "Backend"}
 
 
-@pytest.mark.parametrize("mode", ["explicit", "default"])
-def test_complete_replay_runs_durable_preflight_without_current_credentials(mode):
+def test_complete_replay_runs_durable_preflight_without_current_credentials():
     service, _, _, factory, state_machine = _service()
     assert _create(service, board_type="fake")["status"] == "ok"
     preflight = MagicMock(wraps=state_machine.preflight)
     state_machine.preflight = preflight
     _drop_credentials(service)
-    if mode == "default":
-        service.settings = SimpleNamespace(
-            task_board_default=lambda: {"type": "fake"},
-        )
 
-    out = _create(service, board_type="fake" if mode == "explicit" else None)
+    out = _create(service, board_type="fake")
 
     assert out["status"] == "ok"
     assert out["reindexed"] is True
     preflight.assert_called_once()
+    assert factory.calls == 1
+
+
+def test_complete_replay_restores_omitted_config_from_durable_request():
+    service, _, _, factory, _ = _service()
+    assert isinstance(service.settings, Settings)
+    assert _create(service)["status"] == "ok"
+    _drop_credentials(service)
+    assert service.settings.task_board_default() is None
+
+    out = _create(
+        service,
+        board_type=None,
+        project=None,
+        provider_options=None,
+    )
+
+    assert out["status"] == "ok"
+    assert out["reindexed"] is True
+    assert factory.calls == 1
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"project": "OTHER"},
+        {"provider_options": {"lane": "Other"}},
+        {"parent_key": "PRI-999"},
+        {"subtasks": [{**SUBTASK, "problem": "Другой payload"}]},
+    ],
+    ids=["project", "provider_options", "parent", "subtasks"],
+)
+def test_durable_config_does_not_hide_explicit_or_payload_conflicts(overrides):
+    service, _, _, factory, _ = _service()
+    assert _create(service)["status"] == "ok"
+    _drop_credentials(service)
+    replay_args = {
+        "board_type": None,
+        "project": None,
+        "provider_options": None,
+        **overrides,
+    }
+
+    out = _create(service, **replay_args)
+
+    assert out["status"] == "error"
+    assert out["category"] == "conflict"
+    assert factory.calls == 1
+
+
+def test_explicit_board_type_wins_over_durable_config_and_conflicts():
+    service, _, _, factory, _ = _service()
+    assert _create(service)["status"] == "ok"
+    fake_spec = service._board_registry.get("fake")
+    service._board_registry = BoardProviderRegistry(
+        [
+            fake_spec,
+            replace(
+                fake_spec,
+                board_type="other",
+                credential_fields=(
+                    CredentialFieldSpec("OTHER_TOKEN", "Other token", secret=True),
+                ),
+            ),
+        ]
+    )
+    _drop_credentials(service)
+
+    out = _create(
+        service,
+        board_type="other",
+        project=None,
+        provider_options=None,
+    )
+
+    assert out["status"] == "error"
+    assert out["category"] == "conflict"
+    assert factory.calls == 1
+
+
+def test_malformed_durable_request_never_supplies_omitted_config():
+    service, provider, _, factory, state_machine = _service()
+    assert _create(service)["status"] == "ok"
+    state_machine._store.operation.state["revision"] = -1
+    writes = provider.board_writes
+    _drop_credentials(service)
+
+    out = _create(
+        service,
+        board_type=None,
+        project=None,
+        provider_options=None,
+    )
+
+    assert out["status"] == "error"
+    assert "revision" in out["reason"]
+    assert provider.board_writes == writes
     assert factory.calls == 1
 
 
@@ -390,7 +484,12 @@ def test_new_operation_without_credentials_fails_configuration_before_board_writ
     service, provider, _, factory, state_machine = _service()
     _drop_credentials(service)
 
-    out = _create(service, board_type="fake")
+    out = _create(
+        service,
+        board_type=None,
+        project=None,
+        provider_options=None,
+    )
 
     assert out["status"] == "error"
     assert out["category"] == "configuration"
@@ -405,14 +504,22 @@ def test_incomplete_operation_without_credentials_cannot_resume_board_work():
     first = _create(service, board_type="fake")
     assert first["category"] == "reindex_pending"
     writes = provider.board_writes
+    preflight = MagicMock(wraps=state_machine.preflight)
+    state_machine.preflight = preflight
     _drop_credentials(service)
 
-    out = _create(service, board_type="fake")
+    out = _create(
+        service,
+        board_type=None,
+        project=None,
+        provider_options=None,
+    )
 
     assert out["status"] == "error"
     assert out["category"] == "configuration"
     assert state_machine._store.operation.status == "board_complete"
     assert provider.board_writes == writes
+    preflight.assert_called_once()
     assert factory.calls == 1
 
 
@@ -894,8 +1001,53 @@ def test_durable_reload_failure_returns_safe_unknown_outcome():
     assert out["status"] == "partial"
     assert out["category"] == "unknown_outcome"
     assert out["retryable"] is True
+    assert RECOVERY_WARNING in out["warnings"]
     assert "runtime-secret" not in repr(out)
     assert out["category"] != "unsupported"
+    assert provider.closed == 1
+
+
+class _UnrenderableError(RuntimeError):
+    def __str__(self):
+        raise RuntimeError("error rendering failed runtime-secret")
+
+
+class _UnrenderableErrorSubtaskService(_ExplodingSubtaskService):
+    def run(self, *args, **kwargs):
+        raise _UnrenderableError()
+
+
+def test_recovery_survives_exception_with_broken_str():
+    service, provider, _, _, _ = _service(
+        subtask_service=_UnrenderableErrorSubtaskService()
+    )
+
+    out = _create(service)
+
+    assert out["status"] == "partial"
+    assert out["category"] == "unknown_outcome"
+    assert out["retryable"] is True
+    assert out["warnings"] == [RECOVERY_WARNING]
+    assert "runtime-secret" not in repr(out)
+    assert provider.closed == 1
+
+
+def test_recovery_survives_sanitizer_failure_and_keeps_durable_result(monkeypatch):
+    service, provider, _, _, state_machine = _service()
+    state_machine._store.fail_complete_checkpoint_once = True
+
+    def explode_sanitizer(*_args, **_kwargs):
+        raise RuntimeError("sanitizer failed runtime-secret")
+
+    monkeypatch.setattr(service_module, "sanitize_provider_text", explode_sanitizer)
+
+    out = _create(service, board_type="fake")
+
+    assert out["status"] == "partial"
+    assert out["category"] == "reindex_pending"
+    assert out["retryable"] is True
+    assert out["warnings"] == [RECOVERY_WARNING]
+    assert "runtime-secret" not in repr(out)
     assert provider.closed == 1
 
 

@@ -1561,6 +1561,25 @@ def test_recover_result_reconstructs_current_incomplete_operation_without_provid
     assert result.reindexed is False
 
 
+def test_lookup_request_returns_validated_durable_request():
+    request = _validate()
+    service = SubtaskService(MemoryStore(_attached_operation(request)))
+
+    durable = service.lookup_request(request.idempotency_key)
+
+    assert durable == request
+    assert service.lookup_request("missing") is None
+
+
+def test_lookup_request_rejects_malformed_durable_operation():
+    request = _validate()
+    operation = _attached_operation(request)
+    operation.state["revision"] = -1
+
+    with pytest.raises(LedgerUnavailableError, match="revision"):
+        SubtaskService(MemoryStore(operation)).lookup_request(request.idempotency_key)
+
+
 def test_fresh_run_checkpoints_before_post_and_persists_created_identity():
     request = _validate()
     events = []
