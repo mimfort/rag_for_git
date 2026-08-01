@@ -528,10 +528,42 @@ class MCPReviewService:
             warnings.append(safe if isinstance(safe, str) else "write-through failed")
 
         try:
-            raw_tasks = [parent]
-            seen_board_ids = {parent.board_id}
+            if (
+                not isinstance(parent, RawTask)
+                or not isinstance(parent.board_id, str)
+                or not parent.board_id.strip()
+                or not isinstance(parent.key, str)
+                or not parent.key.strip()
+            ):
+                warning("write-through parent snapshot has no usable identity")
+                return WriteThroughResult(False, tuple(warnings))
+
+            current_parent = provider.fetch_one(parent.board_id)
+            if current_parent is None:
+                warning(f"write-through parent not found: {parent.key}")
+                return WriteThroughResult(False, tuple(warnings))
+            if (
+                not isinstance(current_parent, RawTask)
+                or current_parent.board_id != parent.board_id
+                or current_parent.key != parent.key
+                or type(current_parent.subtask_ids) is not list
+                or not all(
+                    isinstance(subtask_id, str) and subtask_id.strip()
+                    for subtask_id in current_parent.subtask_ids
+                )
+            ):
+                warning("write-through parent point-read returned a different or malformed task")
+                return WriteThroughResult(False, tuple(warnings))
+
+            confirmed_ids = {identity.board_id for identity in identities}
+            if not confirmed_ids.issubset(current_parent.subtask_ids):
+                warning("write-through parent no longer contains all confirmed subtasks")
+                return WriteThroughResult(False, tuple(warnings))
+
+            raw_tasks = [current_parent]
+            seen_board_ids = {current_parent.board_id}
             for identity in identities:
-                if identity.board_id == parent.board_id:
+                if identity.board_id == current_parent.board_id:
                     warning("write-through child identity collides with parent")
                     return WriteThroughResult(False, tuple(warnings))
                 if identity.board_id in seen_board_ids:

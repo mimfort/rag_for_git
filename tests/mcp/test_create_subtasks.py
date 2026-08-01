@@ -33,6 +33,7 @@ SUBTASK = {
     "criteria": ["Результат проверен"],
     "context": None,
 }
+_UNSET = object()
 
 
 def _raw(
@@ -121,6 +122,8 @@ class _Provider:
         self.closed = 0
         self.board_writes = 0
         self.fetch_calls = []
+        self.parent_fetches = 0
+        self.parent_point_read_effect = _UNSET
         self.normalize_calls = []
         self.missing_child = False
         self.normalize_error = None
@@ -149,6 +152,12 @@ class _Provider:
     def fetch_one(self, key):
         self.fetch_calls.append(key)
         if key in {self.parent.key, self.parent.board_id}:
+            self.parent_fetches += 1
+            if self.parent_fetches == 4 and self.parent_point_read_effect is not _UNSET:
+                effect = self.parent_point_read_effect
+                if isinstance(effect, BaseException):
+                    raise effect
+                return deepcopy(effect)
             return deepcopy(self.parent)
         child = self.children.get(key)
         if child is not None and self.missing_child:
@@ -335,7 +344,14 @@ def test_provider_capability_attribute_cannot_spoof_registry_metadata():
 
 
 def test_strict_write_through_indexes_parent_then_children_once_and_completes():
-    service, provider, tasks, _, state_machine = _service()
+    provider = _Provider()
+    provider.parent_point_read_effect = _raw(
+        "PRI-224",
+        "parent-id",
+        title="Родитель обновлён на доске",
+        subtask_ids=["child-id"],
+    )
+    service, provider, tasks, _, state_machine = _service(provider=provider)
 
     out = _create(service)
 
@@ -344,7 +360,45 @@ def test_strict_write_through_indexes_parent_then_children_once_and_completes():
     assert state_machine._store.operation.status == "complete"
     assert len(tasks.calls) == 1
     assert [brief["key"] for brief in tasks.calls[0]] == ["PRI-224", "PRI-225"]
+    assert tasks.calls[0][0]["title"] == "Родитель обновлён на доске"
+    assert provider.fetch_calls[-2:] == ["parent-id", "child-id"]
     assert provider.normalize_calls == ["parent-id", "child-id"]
+    assert provider.closed == 1
+
+
+@pytest.mark.parametrize(
+    "parent_effect",
+    [
+        None,
+        _raw(
+            "PRI-999",
+            "other-parent-id",
+            title="Другой parent",
+            subtask_ids=["child-id"],
+        ),
+        _raw("PRI-224", "parent-id", title="Связь удалена", subtask_ids=[]),
+        RuntimeError("parent read failed with runtime-secret"),
+    ],
+    ids=["deleted", "identity-changed", "attachment-changed", "read-failed"],
+)
+def test_parent_point_read_failure_remains_reindex_pending_without_stale_index(
+    parent_effect,
+):
+    provider = _Provider()
+    provider.parent_point_read_effect = parent_effect
+    service, provider, tasks, _, state_machine = _service(provider=provider)
+
+    out = _create(service)
+
+    assert out["status"] == "partial"
+    assert out["category"] == "reindex_pending"
+    assert out["reindexed"] is False
+    assert state_machine._store.operation.status == "board_complete"
+    assert tasks.calls == []
+    assert provider.fetch_calls[-1] == "parent-id"
+    assert provider.normalize_calls == []
+    assert "runtime-secret" not in repr(out)
+    assert "runtime-secret" not in repr(state_machine._store.operation.state)
     assert provider.closed == 1
 
 
@@ -352,6 +406,7 @@ def test_write_through_deduplicates_repeated_child_identity_but_rejects_parent_c
     service, provider, tasks, _, _ = _service()
     child = _raw("PRI-225", "child-id", title="Дочерняя задача")
     provider.children[child.board_id] = child
+    provider.parent.subtask_ids = [child.board_id]
     identity = NativeSubtaskIdentity(child.board_id, child.key, child.title)
 
     def sanitize(value):
