@@ -193,10 +193,10 @@ def create_server(service: MCPReviewService) -> FastMCP:
     @mcp.tool()
     def get_task(key: str, project: str | None = None) -> dict | None:
         """Read one task's own normalized content from the reviewer store (filled by
-        sync_board): {key, aliases, title, description, status, url, criteria, attachments}.
+        sync_board): {key, aliases, title, description, status, url, criteria, attachments, links}.
         project scopes the lookup to one board project (code prefix); empty = all.
         Returns null if the task is not in the store (caller falls back to the board).
-        For linked tasks / PRs / touched code, use get_task_context instead."""
+        For traversed linked tasks / PRs / touched code, use get_task_context instead."""
         return service.get_task(key, project=project)
 
     @mcp.tool()

@@ -9,12 +9,14 @@ class _FakeStore:
         self.upserted = []
         self.meta_updates = []
         self.meta_batch = None
+        self.link_updates = []
 
     def existing_hash(self, key):
         return self._hashes.get(key)
 
     def upsert_task(self, row):
         self.upserted.append(row)
+        self._hashes[row.key] = row.content_hash
 
     def update_meta(self, key, title, status, url, aliases, project=""):
         self.meta_updates.append((key, title, status, url, aliases, project))
@@ -22,12 +24,17 @@ class _FakeStore:
     def update_meta_batch(self, metas):
         self.meta_batch = list(metas)
 
+    def update_links(self, key, links):
+        self.link_updates.append((key, links))
+        return key in self._hashes
+
 
 class _FakeGraph:
     def __init__(self, raise_on=()):
         self.tasks = []
         self.task_projects: list[str] = []
         self.links = []
+        self.replaced_links = []
         self.pr_links = []
         self.pr_batch_links: list[tuple[str, object]] = []
         self._raise_on = set(raise_on)
@@ -41,6 +48,11 @@ class _FakeGraph:
     def upsert_links(self, key, links):
         self.links.append((key, links))
         return len(links)
+
+    def replace_links(self, key, links):
+        self.replaced_links.append((key, links))
+        return len({(link["key"], link.get("type") or "relates")
+                    for link in links if link.get("key")})
 
     def link_pr(self, task_key, pr, touched):
         self.pr_links.append((task_key, pr, touched))
@@ -219,6 +231,22 @@ def test_index_batch_stamps_project_on_meta_only():
     assert g.task_projects[0] == "PRI"            # project достиг граф-write-path
 
 
+def test_index_batch_meta_only_replaces_links_without_embedding():
+    text = build_task_text("Add logout", "Clear session", ["redirects"])
+    links = [{"key": "ID-3", "title": "new child", "type": "subtask"}]
+    store = _FakeStore(hashes={"ID-1": task_content_hash(text)})
+    graph, emb = _FakeGraph(), _FakeEmbedder()
+
+    result = TaskService(store, graph, emb).index_batch([_brief(links=links)])[0]
+
+    assert result["embedded"] is False
+    assert emb.doc_calls == []
+    assert store.link_updates == [("ID-1", links)]
+    assert graph.replaced_links == [("ID-1", links)]
+    assert result["links_stored"] is True
+    assert result["links_upserted"] == 1
+
+
 def test_index_batch_passes_attachments_to_row():
     """Поле attachments из брифа прокидывается в TaskRow при батчевом upsert."""
     store, graph, emb = _FakeStore(), _FakeGraph(), _FakeEmbedder()
@@ -244,6 +272,17 @@ def test_refresh_meta_batch_never_embeds_or_upserts():
     TaskService(store, graph, emb).refresh_meta_batch([{"key": "ID-1", "project": "PRI"}])
     assert emb.doc_calls == []                     # НИКОГДА не эмбедит
     assert store.upserted == []                    # и не upsert-ит (не воскрешает задачу)
+
+
+def test_refresh_meta_batch_ignores_links_even_if_present():
+    store, graph = _FakeStore(), _FakeGraph()
+    TaskService(store, graph, _FakeEmbedder()).refresh_meta_batch([
+        {"key": "ID-1", "title": "T", "links": [{"key": "ID-2"}]},
+    ])
+
+    assert store.link_updates == []
+    assert graph.replaced_links == []
+    assert "links" not in store.meta_batch[0]
 
 
 def test_refresh_meta_batch_empty():

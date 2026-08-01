@@ -17,6 +17,10 @@ from pgvector.psycopg import register_vector
 from psycopg_pool import ConnectionPool
 
 _BM25_STRIP = re.compile(r"[^\w\s]")
+_LINKS_MIGRATION_SQL = (
+    "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS links "
+    "jsonb NOT NULL DEFAULT '[]'"
+)
 
 
 def _bm25_query(text: str) -> str:
@@ -60,6 +64,7 @@ class TaskRow:
     embedding: list[float]
     project: str = ""
     attachments: list[dict] = field(default_factory=list)
+    links: list[dict] | None = None
 
 
 @dataclass
@@ -79,6 +84,8 @@ class TaskStore:
         self._max_size = max_size
         self._pool: ConnectionPool | None = None
         self._init_lock = threading.Lock()
+        self._links_schema_lock = threading.Lock()
+        self._links_schema_ready = False
 
     def _ensure_pool(self) -> ConnectionPool:
         """Создать и открыть пул при первом обращении (thread-safe)."""
@@ -96,10 +103,28 @@ class TaskStore:
         """Вернуть контекстный менеджер соединения из пула."""
         return self._ensure_pool().connection()
 
+    def _ensure_links_schema(self) -> None:
+        """Лениво применить additive-миграцию links без рекурсии через _connect."""
+        if self._links_schema_ready:
+            return
+        with self._links_schema_lock:
+            if self._links_schema_ready:
+                return
+            with self._ensure_pool().connection() as conn:
+                conn.execute(_LINKS_MIGRATION_SQL)
+                conn.commit()
+            self._links_schema_ready = True
+
+    def _connect_links(self):
+        """Соединение для запросов, читающих или записывающих tasks.links."""
+        self._ensure_links_schema()
+        return self._ensure_pool().connection()
+
     def close(self) -> None:
         if self._pool is not None:
             self._pool.close()
             self._pool = None
+        self._links_schema_ready = False
 
     def existing_hash(self, key: str) -> str | None:
         """content_hash уже проиндексированной задачи (None если её нет)."""
@@ -117,14 +142,14 @@ class TaskStore:
         брифа) — в TaskRow ставится []. None, если задачи нет.
         """
         sql = ("SELECT key, aliases, title, description, status, url, "
-               "content_hash, text, project, attachments FROM tasks "
+               "content_hash, text, project, attachments, links FROM tasks "
                "WHERE (key = %s OR %s = ANY(aliases))")
         params: list = [key, key]
         if project:
             sql += " AND project = %s"
             params.append(project)
         sql += " LIMIT 1"
-        with self._connect() as conn:
+        with self._connect_links() as conn:
             row = conn.execute(sql, params).fetchone()
         if row is None:
             return None
@@ -132,20 +157,22 @@ class TaskStore:
             key=row[0], aliases=list(row[1] or []), title=row[2],
             description=row[3], status=row[4], url=row[5],
             content_hash=row[6], text=row[7], embedding=[], project=row[8],
-            attachments=list(row[9] or []))
+            attachments=list(row[9] or []), links=list(row[10] or []))
 
     def upsert_task(self, row: TaskRow) -> None:
         sql = """
         INSERT INTO tasks (key, aliases, title, description, status, url,
-                           content_hash, text, embedding, project, attachments)
+                           content_hash, text, embedding, project, attachments, links)
         VALUES (%(key)s,%(aliases)s,%(title)s,%(description)s,%(status)s,%(url)s,
-                %(content_hash)s,%(text)s,%(embedding)s,%(project)s,%(attachments)s::jsonb)
+                %(content_hash)s,%(text)s,%(embedding)s,%(project)s,
+                %(attachments)s::jsonb,%(links)s::jsonb)
         ON CONFLICT (key) DO UPDATE SET
             aliases=EXCLUDED.aliases, title=EXCLUDED.title,
             description=EXCLUDED.description, status=EXCLUDED.status,
             url=EXCLUDED.url, content_hash=EXCLUDED.content_hash,
             text=EXCLUDED.text, embedding=EXCLUDED.embedding, project=EXCLUDED.project,
-            attachments=EXCLUDED.attachments
+            attachments=EXCLUDED.attachments,
+            links=CASE WHEN %(links_supplied)s THEN EXCLUDED.links ELSE tasks.links END
         """
         params = {
             "key": row.key, "aliases": row.aliases, "title": row.title,
@@ -153,10 +180,24 @@ class TaskStore:
             "content_hash": row.content_hash, "text": row.text,
             "embedding": row.embedding, "project": row.project,
             "attachments": json.dumps(row.attachments, ensure_ascii=False),
+            "links": json.dumps(row.links if row.links is not None else [],
+                                ensure_ascii=False),
+            "links_supplied": row.links is not None,
         }
-        with self._connect() as conn:
+        with self._connect_links() as conn:
             conn.execute(sql, params)
             conn.commit()
+
+    def update_links(self, key: str, links: list[dict]) -> bool:
+        """Заменить сохранённый snapshot links; False, если задачи нет в сторе."""
+        with self._connect_links() as conn:
+            result = conn.execute(
+                "UPDATE tasks SET links=%s::jsonb WHERE key=%s RETURNING 1",
+                (json.dumps(links, ensure_ascii=False), key),
+            )
+            updated = result.fetchone() is not None
+            conn.commit()
+        return updated
 
     def update_meta(self, key: str, title: str, status: str | None,
                     url: str | None, aliases: list[str], project: str = "") -> None:

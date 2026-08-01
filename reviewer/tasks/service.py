@@ -30,7 +30,8 @@ class TaskService:
         key = task.get("key") if isinstance(task, dict) else None
         if not key:
             return {"key": None, "embedded": False, "links_upserted": 0,
-                    "prs_linked": 0, "warnings": ["task has no key"]}
+                    "links_stored": None, "prs_linked": 0,
+                    "warnings": ["task has no key"]}
         aliases = [a for a in (task.get("aliases") or []) if a and a != key]
         title = task.get("title") or ""
         description = task.get("description") or ""
@@ -39,14 +40,16 @@ class TaskService:
         status = task.get("status")
         url = task.get("url")
         project = task.get("project") or ""
-        links = [lk for lk in (task.get("links") or [])
-                 if isinstance(lk, dict) and lk.get("key")]
+        links_supplied = "links" in task
+        links = ([lk for lk in (task.get("links") or []) if isinstance(lk, dict)]
+                 if links_supplied else None)
         text = build_task_text(title, description, criteria, attachments,
                                embed_chars=self._attachment_embed_chars)
         chash = task_content_hash(text)
         warnings: list[str] = []
 
         embedded = False
+        links_stored: bool | None = None
         try:
             prev = self._store.existing_hash(key)
             if prev == chash:
@@ -56,11 +59,22 @@ class TaskService:
                 self._store.upsert_task(TaskRow(
                     key=key, aliases=aliases, title=title, description=description,
                     status=status, url=url, content_hash=chash, text=text,
-                    embedding=vec, project=project, attachments=attachments))
+                    embedding=vec, project=project, attachments=attachments,
+                    links=links))
                 embedded = True
+                if links_supplied:
+                    links_stored = True
         except Exception as e:
             log.warning("index_task: сбой store для %s", key, exc_info=True)
             warnings.append(f"store: {type(e).__name__}: {e}")
+
+        if links_supplied and links_stored is not True:
+            try:
+                links_stored = self._store.update_links(key, links)
+            except Exception as e:
+                log.warning("index_task: сбой store links для %s", key, exc_info=True)
+                warnings.append(f"store links: {type(e).__name__}: {e}")
+                links_stored = False
 
         links_upserted = 0
         if self._graph is None:
@@ -68,8 +82,8 @@ class TaskService:
         else:
             try:
                 self._graph.upsert_task(key, aliases, title, status, url, project)
-                if links:
-                    links_upserted = self._graph.upsert_links(key, links)
+                if links_supplied:
+                    links_upserted = self._graph.replace_links(key, links)
             except Exception as e:
                 log.warning("index_task: сбой графа для %s", key, exc_info=True)
                 warnings.append(f"graph: {type(e).__name__}: {e}")
@@ -84,7 +98,8 @@ class TaskService:
             prs_linked = len(refs)
 
         return {"key": key, "embedded": embedded,
-                "links_upserted": links_upserted, "prs_linked": prs_linked,
+                "links_upserted": links_upserted, "links_stored": links_stored,
+                "prs_linked": prs_linked,
                 "warnings": warnings}
 
     def index_batch(self, tasks: list[dict]) -> list[dict]:
@@ -100,7 +115,8 @@ class TaskService:
             key = task.get("key") if isinstance(task, dict) else None
             if not key:
                 results[i] = {"key": None, "embedded": False, "links_upserted": 0,
-                              "prs_linked": 0, "warnings": ["task has no key"]}
+                              "links_stored": None, "prs_linked": 0,
+                              "warnings": ["task has no key"]}
                 parsed.append(None)
                 continue
             aliases = [a for a in (task.get("aliases") or []) if a and a != key]
@@ -110,14 +126,16 @@ class TaskService:
             attachments = task.get("attachments") or []
             status = task.get("status")
             url = task.get("url")
-            links = [lk for lk in (task.get("links") or [])
-                     if isinstance(lk, dict) and lk.get("key")]
+            links_supplied = "links" in task
+            links = ([lk for lk in (task.get("links") or []) if isinstance(lk, dict)]
+                     if links_supplied else None)
             text = build_task_text(title, description, criteria, attachments,
                                    embed_chars=self._attachment_embed_chars)
             chash = task_content_hash(text)
             parsed.append({"key": key, "aliases": aliases, "title": title,
                            "description": description, "status": status, "url": url,
-                           "links": links, "text": text, "chash": chash,
+                           "links": links, "links_supplied": links_supplied,
+                           "text": text, "chash": chash,
                            "project": task.get("project") or "",
                            "attachments": attachments})
 
@@ -133,7 +151,8 @@ class TaskService:
             except Exception as e:
                 log.warning("index_batch: existing_hash сбой для %s", p["key"], exc_info=True)
                 results[i] = {"key": p["key"], "embedded": False, "links_upserted": 0,
-                              "prs_linked": 0, "warnings": [f"store: {type(e).__name__}: {e}"]}
+                              "links_stored": None, "prs_linked": 0,
+                              "warnings": [f"store: {type(e).__name__}: {e}"]}
                 continue
             (meta_only if prev == p["chash"] else to_embed).append(i)
 
@@ -161,13 +180,16 @@ class TaskService:
                         key=p["key"], aliases=p["aliases"], title=p["title"],
                         description=p["description"], status=p["status"], url=p["url"],
                         content_hash=p["chash"], text=p["text"], embedding=embeddings[i],
-                        project=p["project"], attachments=p["attachments"]))
+                        project=p["project"], attachments=p["attachments"],
+                        links=p["links"]))
                     embedded = True
                 except Exception as e:
                     log.warning("index_batch: сбой store для %s", p["key"], exc_info=True)
                     warnings.append(f"store: {type(e).__name__}: {e}")
             results[i] = {"key": p["key"], "embedded": embedded,
-                          "links_upserted": 0, "warnings": warnings}
+                          "links_upserted": 0,
+                          "links_stored": True if embedded and p["links_supplied"] else None,
+                          "warnings": warnings}
 
         # Шаг 5: update_meta для неизменившихся задач
         for i in meta_only:
@@ -180,7 +202,20 @@ class TaskService:
                 log.warning("index_batch: сбой update_meta для %s", p["key"], exc_info=True)
                 warnings.append(f"store: {type(e).__name__}: {e}")
             results[i] = {"key": p["key"], "embedded": False,
-                          "links_upserted": 0, "warnings": warnings}
+                          "links_upserted": 0, "links_stored": None,
+                          "warnings": warnings}
+
+        # Snapshot links обновляется независимо от ветки embed/meta-only.
+        for i, p in enumerate(parsed):
+            if (p is None or results[i] is None or not p["links_supplied"]
+                    or results[i]["links_stored"] is True):
+                continue
+            try:
+                results[i]["links_stored"] = self._store.update_links(p["key"], p["links"])
+            except Exception as e:
+                log.warning("index_batch: сбой store links для %s", p["key"], exc_info=True)
+                results[i]["warnings"].append(f"store links: {type(e).__name__}: {e}")
+                results[i]["links_stored"] = False
 
         # Шаг 6: граф для всех валидных задач (+ сбор PR-пар для батч-линковки)
         pr_pairs: list[tuple[str, PRRef]] = []
@@ -196,8 +231,8 @@ class TaskService:
                 try:
                     self._graph.upsert_task(p["key"], p["aliases"], p["title"],
                                             p["status"], p["url"], p["project"])
-                    if p["links"]:
-                        links_upserted = self._graph.upsert_links(p["key"], p["links"])
+                    if p["links_supplied"]:
+                        links_upserted = self._graph.replace_links(p["key"], p["links"])
                 except Exception as e:
                     log.warning("index_batch: сбой графа для %s", p["key"], exc_info=True)
                     results[i]["warnings"].append(f"graph: {type(e).__name__}: {e}")
@@ -226,7 +261,8 @@ class TaskService:
         :Task создаётся при отсутствии — заживляет прежний fail-soft пропуск графа),
         fail-soft. НИКОГДА не эмбедит и не upsert-ит полную строку в стор и не
         линкует PR. metas — как из normalize_meta."""
-        metas = [m for m in metas if isinstance(m, dict) and m.get("key")]
+        metas = [{k: v for k, v in m.items() if k != "links"}
+                 for m in metas if isinstance(m, dict) and m.get("key")]
         if not metas:
             return {"meta_refreshed": 0, "warnings": []}
         warnings: list[str] = []
@@ -307,8 +343,8 @@ class TaskService:
     def get_task(self, key: str, project: str | None = None) -> dict | None:
         """Нормализованный TaskBrief задачи из стора (store-first одиночное чтение).
 
-        Источник — Postgres ``tasks`` (заполнен sync_board). Граф не трогаем: links/PRs
-        остаются за get_task_context. criteria=[] — требования несёт description
+        Источник — Postgres ``tasks`` (заполнен sync_board), включая snapshot links.
+        Граф не трогаем: PRs и код остаются за get_task_context. criteria=[] — требования несёт description
         (как в board-MCP-пути). Miss/сбой стора → None, чтобы вызывающий фолбэкнул.
         """
         try:
@@ -327,6 +363,7 @@ class TaskService:
             "status": row.status,
             "url": row.url,
             "attachments": list(row.attachments or []),
+            "links": list(row.links or []),
         }
 
     def link_review(self, task_key: str, pr: PRRef, touched_node_ids: list[str]) -> None:

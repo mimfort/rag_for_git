@@ -1,6 +1,6 @@
 from reviewer.tasks.graph import PRRef
 from reviewer.tasks.service import TaskService
-from reviewer.tasks.store import task_content_hash, build_task_text
+from reviewer.tasks.store import build_task_text, task_content_hash
 
 
 class _FakeStore:
@@ -8,6 +8,7 @@ class _FakeStore:
         self._hashes = dict(hashes or {})
         self.upserted = []
         self.meta_updates = []
+        self.link_updates = []
         self.deleted = []
         self._search_result = search_result or []
         self._rows = list(rows or [])      # list[TaskRow] для get_task
@@ -18,9 +19,14 @@ class _FakeStore:
 
     def upsert_task(self, row):
         self.upserted.append(row)
+        self._hashes[row.key] = row.content_hash
 
     def update_meta(self, key, title, status, url, aliases, project=""):
         self.meta_updates.append((key, title, status, url, aliases, project))
+
+    def update_links(self, key, links):
+        self.link_updates.append((key, links))
+        return key in self._hashes
 
     def search(self, q, vec, top_k=5, project=None):
         self.search_project = project
@@ -51,6 +57,7 @@ class _FakeGraph:
     def __init__(self, context=None, raise_on=(), pr_keys=(), keys=(), count=0):
         self.tasks = []
         self.links = []
+        self.replaced_links = []
         self.pr_links = []
         self.deleted_tasks = []
         self._context = context or {}
@@ -71,6 +78,11 @@ class _FakeGraph:
     def upsert_links(self, key, links):
         self.links.append((key, links))
         return len(links)
+
+    def replace_links(self, key, links):
+        self.replaced_links.append((key, links))
+        return len({(link["key"], link.get("type") or "relates")
+                    for link in links if link.get("key")})
 
     def link_pr(self, task_key, pr, touched):
         self.pr_links.append((task_key, pr, touched))
@@ -146,6 +158,50 @@ def test_index_task_skips_embed_when_hash_unchanged():
     assert out["embedded"] is False
     assert store.upserted == []           # no re-embed/upsert
     assert store.meta_updates and store.meta_updates[0][0] == "ID-1"  # meta refreshed
+
+
+def test_index_task_unchanged_hash_still_replaces_links_without_embedding():
+    text = build_task_text("Add logout", "Clear session", ["redirects"])
+    links = [{"key": "ID-3", "title": "new child", "type": "subtask"}]
+    store = _FakeStore(hashes={"ID-1": task_content_hash(text)})
+    graph, emb = _FakeGraph(), _FakeEmbedder()
+
+    out = TaskService(store, graph, emb).index_task(_brief(links=links))
+
+    assert out["embedded"] is False
+    assert emb.doc_calls == []
+    assert store.link_updates == [("ID-1", links)]
+    assert graph.replaced_links == [("ID-1", links)]
+    assert out["links_stored"] is True
+    assert out["links_upserted"] == 1
+
+
+def test_index_task_explicit_empty_links_clears_store_and_graph():
+    text = build_task_text("Add logout", "Clear session", ["redirects"])
+    store = _FakeStore(hashes={"ID-1": task_content_hash(text)})
+    graph = _FakeGraph()
+
+    out = TaskService(store, graph, _FakeEmbedder()).index_task(_brief(links=[]))
+
+    assert store.link_updates == [("ID-1", [])]
+    assert graph.replaced_links == [("ID-1", [])]
+    assert out["links_stored"] is True
+    assert out["links_upserted"] == 0
+
+
+def test_index_task_missing_links_preserves_store_and_graph():
+    text = build_task_text("Add logout", "Clear session", ["redirects"])
+    task = _brief()
+    task.pop("links")
+    store = _FakeStore(hashes={"ID-1": task_content_hash(text)})
+    graph = _FakeGraph()
+
+    out = TaskService(store, graph, _FakeEmbedder()).index_task(task)
+
+    assert store.link_updates == []
+    assert graph.replaced_links == []
+    assert out["links_stored"] is None
+    assert out["links_upserted"] == 0
 
 
 def test_index_task_graph_none_still_embeds_and_warns():
@@ -412,12 +468,14 @@ def test_get_task_hit_returns_normalized_brief():
     from reviewer.tasks.store import TaskRow
     row = TaskRow(key="ID-1", aliases=["PRI-1"], title="Add logout",
                   description="Clear session", status="Open", url="u",
-                  content_hash="h", text="t", embedding=[])
+                  content_hash="h", text="t", embedding=[],
+                  links=[{"key": "ID-2", "type": "subtask"}])
     svc = TaskService(_FakeStore(rows=[row]), _FakeGraph(), _FakeEmbedder())
     out = svc.get_task("ID-1")
     assert out == {"key": "ID-1", "aliases": ["PRI-1"], "title": "Add logout",
                    "description": "Clear session", "criteria": [],
-                   "status": "Open", "url": "u", "attachments": []}
+                   "status": "Open", "url": "u", "attachments": [],
+                   "links": [{"key": "ID-2", "type": "subtask"}]}
 
 
 def test_get_task_resolves_by_alias():
