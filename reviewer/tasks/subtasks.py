@@ -259,7 +259,6 @@ def _validated_provider_parent(
     *,
     expected_parent_task_id: str | None = None,
     expected_source_board_id: str | None = None,
-    expected_source_column_id: str | None = None,
 ) -> tuple[RawTask, str, str]:
     if not isinstance(value, RawTask):
         raise _ProviderParentError("provider parent is not a RawTask")
@@ -282,11 +281,6 @@ def _validated_provider_parent(
         raise _ProviderParentError("provider parent has incomplete source metadata")
     if expected_source_board_id is not None and source_board_id != expected_source_board_id:
         raise _ProviderParentError("provider returned a different source board_id")
-    if (
-        expected_source_column_id is not None
-        and source_column_id != expected_source_column_id
-    ):
-        raise _ProviderParentError("provider returned a different source column_id")
     return value, cast(str, source_board_id), cast(str, source_column_id)
 
 
@@ -804,7 +798,6 @@ class SubtaskService:
                     value,
                     expected_parent_task_id=current.parent_task_id,
                     expected_source_board_id=current.source_board_id,
-                    expected_source_column_id=current.source_column_id,
                 )
                 return parent_snapshot
 

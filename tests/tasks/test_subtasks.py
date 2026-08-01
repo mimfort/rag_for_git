@@ -1337,8 +1337,19 @@ def test_board_complete_parent_drift_skips_callback_and_remains_reindex_pending(
         _parent(
             subtask_ids=["child-uuid"],
             provider_data={
+                "source_board_id": "wrong-board",
+                "source_column_id": "column-uuid",
+            },
+        ),
+        _parent(
+            subtask_ids=["child-uuid"],
+            provider_data={"source_board_id": "board-uuid"},
+        ),
+        _parent(
+            subtask_ids=["child-uuid"],
+            provider_data={
                 "source_board_id": "board-uuid",
-                "source_column_id": "wrong-column",
+                "source_column_id": 7,
             },
         ),
     ],
@@ -1366,6 +1377,35 @@ def test_board_complete_malformed_parent_skips_callback_and_complete(current_par
     assert write_calls == []
     assert provider.replace_calls == []
     assert store.operations["attempt-1"].status == "board_complete"
+
+
+def test_board_complete_parent_column_move_allows_callback_only_completion():
+    request = _validate()
+    operation = _board_complete_operation(request)
+    store = MemoryStore(operation)
+    moved_parent = _parent(
+        subtask_ids=["child-uuid"],
+        provider_data={
+            "source_board_id": "board-uuid",
+            "source_column_id": "moved-column",
+        },
+    )
+    provider = FakeProvider(None, fetch_effects=[moved_parent])
+    write_calls = []
+
+    result = _run(
+        SubtaskService(store),
+        request,
+        provider,
+        operation=operation,
+        write_calls=write_calls,
+    )
+
+    assert result.status == "ok"
+    assert write_calls[0][0] == moved_parent
+    assert provider.reconcile_calls == []
+    assert provider.create_calls == []
+    assert provider.replace_calls == []
 
 
 def test_board_complete_parent_concurrent_extras_allow_callback_only_completion():
@@ -2383,10 +2423,11 @@ def test_malformed_initial_parent_is_sanitized_before_ledger_or_child_write(pare
                 "source_column_id": "column-uuid",
             }
         ),
+        _parent(provider_data={"source_board_id": "board-uuid"}),
         _parent(
             provider_data={
                 "source_board_id": "board-uuid",
-                "source_column_id": "wrong-column",
+                "source_column_id": 7,
             }
         ),
     ],
@@ -2420,6 +2461,43 @@ def test_malformed_resumed_parent_fails_safely_before_target_or_board_mutation(p
     assert provider.create_calls == []
     assert provider.replace_calls == []
     assert write_calls == []
+
+
+def test_resumed_pending_child_uses_captured_column_after_parent_column_move():
+    request = _validate()
+    operation = _pending_operation(request)
+    store = MemoryStore(operation)
+    moved_parent = _parent(
+        provider_data={
+            "source_board_id": "board-uuid",
+            "source_column_id": "moved-column",
+        }
+    )
+    moved_parent_with_child = _parent(
+        subtask_ids=["child-uuid"],
+        provider_data={
+            "source_board_id": "board-uuid",
+            "source_column_id": "moved-column",
+        },
+    )
+    provider = FakeProvider(
+        None,
+        create_effects=[NativeSubtaskIdentity("child-uuid", "PRI-225", "Child")],
+        fetch_effects=[moved_parent, moved_parent_with_child],
+    )
+
+    result = _run(
+        SubtaskService(store),
+        request,
+        provider,
+        operation=operation,
+    )
+
+    assert provider.create_calls[0]["source_column_id"] == "column-uuid"
+    assert store.operations["attempt-1"].source_column_id == "column-uuid"
+    assert provider.replace_calls == [("parent-uuid", ["child-uuid"])]
+    assert result.status == "ok"
+    assert result.created == result.attached
 
 
 def test_run_reloads_concurrent_conflict_without_provider_write_or_callback():
