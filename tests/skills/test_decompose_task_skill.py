@@ -159,6 +159,37 @@ def test_decompose_task_verifies_ambiguous_attempt_before_offering_retry():
     assert verify.index("sync_board(board=<project") < verify.index("offer the exact retry")
 
 
+def test_decompose_task_verifies_every_attempted_batch_before_outcome_or_recovery():
+    text = _text()
+    verify = _flat(text[text.index("## Verify") : text.index("## Quick Reference")])
+    assert "after any batch write was actually attempted" in verify
+    assert "regardless of status" in verify
+    for status in ("ok", "partial", "error", "timeout"):
+        assert status in verify
+    assert "exactly one scoped" in verify
+    for call in ("sync_board(board=<project", "get_task(parent_key", "get_task_context("):
+        assert call in verify
+    assert "get_task(child" in verify
+    assert "no child keys" in verify
+    assert "before declaring outcome or offering recovery" in verify
+    assert "capability" in verify and "preflight" in verify
+    assert "before a write" in verify and "do not trigger" in verify
+    assert verify.index("sync_board(board=<project") < verify.index(
+        "before declaring outcome or offering recovery"
+    )
+    assert "exact retry" in verify and "explicit user choice" in verify
+    assert text.count("create_subtasks(") == 1
+
+    quick = _flat(text[text.index("## Quick Reference") : text.index("## Example")])
+    assert "any actually attempted batch" in quick
+    assert "every status" in quick
+    rationalization = "Only partial/timeout outcomes need verification."
+    mistakes = text[text.index("## Common Mistakes") : text.index("## Red Flags")]
+    red_flags = text[text.index("## Red Flags") :]
+    assert rationalization in mistakes
+    assert rationalization in red_flags
+
+
 def test_decompose_task_rotates_key_for_prewrite_edits_but_never_for_recovery():
     text = _text()
     preview = _flat(text[text.index("## Preview") : text.index("## Write")])

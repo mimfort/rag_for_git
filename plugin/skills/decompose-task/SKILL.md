@@ -73,15 +73,17 @@ create_subtasks(parent_key=<parent_key>, subtasks=<previewed children>,
 Never fall back to individual task creation, including when the batch is unsupported or partially
 complete.
 
-For success, partial results, errors, or timeouts, display `created`, `attached`, `unattached`,
-`pending`, and `warnings` without guessing. A safe recovery may repeat the same full batch request
-using the exact same payload: byte-for-byte or logically exact frozen content/order and the same
-`idempotency_key`. It is not an individual request and not a remaining-items request.
+For any result or timeout, retain status plus `created`, `attached`, `unattached`, `pending`, and
+`warnings` without guessing; do not declare outcome or offer recovery yet. Follow **Verify** unless
+the response explicitly says capability/preflight stopped before a write. A safe recovery may
+repeat the same full batch request using the exact same payload: byte-for-byte or logically exact
+frozen content/order and the same `idempotency_key`. It is not an individual request and not a
+remaining-items request.
 
-No automatic retry. After a partial result or timeout, report state, perform the ambiguity
-verification below, then ask the user to choose exact retry or stop. The original preview
-confirmation does not authorize hidden retries; the user must explicitly request the exact retry.
-Do not require a new preview or reconstruct one for an unchanged retry.
+No automatic retry. After required verification, report state, then ask the user to choose exact
+retry or stop when recovery applies. The original preview confirmation does not authorize hidden
+retries; the user must explicitly request the exact retry. Do not require a new preview or
+reconstruct one for an unchanged retry.
 
 Never edit wording, reorder children, or retry only a guessed remainder. After any attempted or
 uncertain write, edits and a new key are forbidden for recovery. An `in_flight` child is unknown,
@@ -89,18 +91,20 @@ not absent: never guess its outcome. Never mint a fresh/replacement key for it.
 
 ## Verify
 
-After any confirmed child, or after any attempted write that reports a partial result or timeout,
-run one scoped `sync_board(board=<project or null>, board_type=<type>,
-provider_options=<options>)`. This includes ambiguity with only `in_flight` state and no confirmed
-child keys. Then verify:
+After any batch write was actually attempted, regardless of status (`ok`, `partial`, `error`, or
+timeout), run exactly one scoped `sync_board(board=<project or null>, board_type=<type>,
+provider_options=<options>)`. This includes after any confirmed child and attempts with only
+`in_flight` state and no confirmed child keys. Capability or preflight stops explicitly before a
+write do not trigger this post-write verification. Then verify:
 
 1. `get_task(parent_key, project=<project>)` contains stored links for the returned children.
 2. `get_task_context(parent_key, project=<project>)` exposes the parent-child graph relationship.
 3. Point-read every returned child with `get_task(child_key, project=<project>)`.
 
 With no child keys, still complete the available parent and context verification. Report missing
-links, unreadable child keys, sync failures, and warnings; do not declare complete verification
-from the write response alone. After these checks, offer the exact retry or stop choice. Exact
+links, unreadable child keys, sync failures, and warnings. Complete these checks before declaring
+outcome or offering recovery; never declare complete verification from the write response alone.
+Only then offer the exact retry or stop, and execute it only after an explicit user choice. Exact
 same-key retry is the only marker reconciliation mechanism; never guess children from board search.
 
 ## Quick Reference
@@ -113,7 +117,7 @@ same-key retry is the only marker reconciliation mechanism; never guess children
 | Confirm | One explicit answer for the whole visible preview; no earlier writes |
 | Write | One initial native batch; exact previewed request |
 | Retry | User chooses; same full payload/key; no new preview for unchanged recovery |
-| Verify | Ambiguity also triggers one sync plus available parent/context/child reads |
+| Verify | Any actually attempted batch, every status: one sync and available reads before outcome/recovery |
 
 ## Example
 
@@ -150,6 +154,7 @@ same-key retry is the only marker reconciliation mechanism; never guess children
 | “No confirmed child keys means there is nothing to verify.” | Sync and verify available parent/context state before retry. |
 | “A small preview edit can reuse the same key.” | Before first write, invalidate the preview and rotate the key; after an attempt, never edit. |
 | “A tool error is the same as an empty context result.” | Empty success may continue; an error stops drafting. |
+| “Only partial/timeout outcomes need verification.” | Every attempted write is verified, including `ok`/`error`; preflight no-write stops are not. |
 
 ## Red Flags
 
@@ -163,5 +168,7 @@ same-key retry is the only marker reconciliation mechanism; never guess children
 - “No confirmed child keys means there is nothing to verify.”
 - “A small preview edit can reuse the same key.”
 - “A tool error is the same as an empty context result.”
+- Declaring an attempted-write outcome before its scoped sync and available reads.
+- “Only partial/timeout outcomes need verification.”
 
 Any red flag means stop the write path and return to the violated phase.
