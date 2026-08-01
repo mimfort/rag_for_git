@@ -23,6 +23,10 @@ SUBTASK_MARKER_RE = re.compile(r"reviewer-subtask:[0-9a-f]{64}(?![0-9A-Fa-f])")
 
 SubtaskPhase = Literal["pending", "in_flight", "created", "attached"]
 OperationStatus = Literal["running", "partial", "board_complete", "complete"]
+IDENTITY_MANUAL_WARNING = (
+    "provider returned a malformed or colliding child identity; "
+    "manual verification required"
+)
 
 
 def merge_subtask_ids(existing: list[str], created: list[str]) -> list[str]:
@@ -254,6 +258,48 @@ class _ProviderParentError(ValueError):
     pass
 
 
+class ConfirmedSubtaskIdentityError(ValueError):
+    pass
+
+
+def validate_confirmed_subtask_identities(
+    parent_task_id: str,
+    identities: tuple[tuple[int, object], ...],
+) -> None:
+    seen_board_ids: dict[str, int] = {}
+    seen_canonical: dict[str, int] = {}
+    for index, identity in identities:
+        if (
+            not isinstance(identity, NativeSubtaskIdentity)
+            or not _usable_identity_text(identity.board_id)
+            or not _usable_identity_text(identity.key)
+            or not _usable_identity_text(identity.title)
+            or type(identity.aliases) is not tuple
+            or not all(_usable_identity_text(alias) for alias in identity.aliases)
+            or (identity.url is not None and not _usable_identity_text(identity.url))
+            or type(identity.warnings) is not tuple
+            or not all(isinstance(warning, str) for warning in identity.warnings)
+        ):
+            raise ConfirmedSubtaskIdentityError("confirmed child identity is malformed")
+        if identity.board_id == parent_task_id:
+            raise ConfirmedSubtaskIdentityError(
+                "confirmed child identity collides with parent"
+            )
+        previous_index = seen_board_ids.get(identity.board_id)
+        if previous_index is not None and previous_index != index:
+            raise ConfirmedSubtaskIdentityError(
+                "confirmed child transport identity overlaps another draft"
+            )
+        seen_board_ids[identity.board_id] = index
+        for canonical in {identity.key, *identity.aliases}:
+            previous_index = seen_canonical.get(canonical)
+            if previous_index is not None and previous_index != index:
+                raise ConfirmedSubtaskIdentityError(
+                    "confirmed child canonical identity overlaps another draft"
+                )
+            seen_canonical[canonical] = index
+
+
 def _validated_provider_parent(
     value: object,
     *,
@@ -422,6 +468,14 @@ def _validate_persisted_operation(operation: SubtaskOperation) -> _ValidatedOper
         phases.append(phase)
         items.append(item)
 
+    try:
+        validate_confirmed_subtask_identities(
+            operation.parent_task_id,
+            _confirmed_identity_entries(operation),
+        )
+    except ConfirmedSubtaskIdentityError as error:
+        raise LedgerUnavailableError("Ledger confirmed identity collision") from error
+
     if operation.status not in ("running", "partial", "board_complete", "complete"):
         raise LedgerUnavailableError("Ledger содержит неизвестный operation status")
     if operation.status == "running" and any(phase != "pending" for phase in phases):
@@ -505,7 +559,13 @@ def _operation_with_target(
 def _confirmed_identities(
     operation: SubtaskOperation,
 ) -> tuple[NativeSubtaskIdentity, ...]:
-    identities: list[NativeSubtaskIdentity] = []
+    return tuple(identity for _, identity in _confirmed_identity_entries(operation))
+
+
+def _confirmed_identity_entries(
+    operation: SubtaskOperation,
+) -> tuple[tuple[int, NativeSubtaskIdentity], ...]:
+    identities: list[tuple[int, NativeSubtaskIdentity]] = []
     raw_items = operation.state.get("items")
     if not isinstance(raw_items, list):
         raise LedgerUnavailableError("Ledger содержит некорректные items")
@@ -516,16 +576,46 @@ def _confirmed_identities(
         if child.board_id is None or child.key is None:
             raise LedgerUnavailableError("Созданная подзадача не содержит identity")
         identities.append(
-            NativeSubtaskIdentity(
-                board_id=child.board_id,
-                key=child.key,
-                title=child.title,
-                aliases=child.aliases,
-                url=child.url,
-                warnings=warnings,
+            (
+                child.index,
+                NativeSubtaskIdentity(
+                    board_id=child.board_id,
+                    key=child.key,
+                    title=child.title,
+                    aliases=child.aliases,
+                    url=child.url,
+                    warnings=warnings,
+                ),
             )
         )
     return tuple(identities)
+
+
+def _validated_identity_changes(
+    operation: SubtaskOperation,
+    item_index: int,
+    identity: object,
+    sanitize: Callable[[object], str],
+) -> dict[str, object]:
+    identities = tuple(
+        entry for entry in _confirmed_identity_entries(operation) if entry[0] != item_index
+    ) + ((item_index, identity),)
+    validate_confirmed_subtask_identities(operation.parent_task_id, identities)
+    return _identity_changes(cast(NativeSubtaskIdentity, identity), sanitize)
+
+
+def _identity_rejection(
+    operation: SubtaskOperation,
+    item_index: int,
+    sanitize: Callable[[object], str],
+) -> SubtaskOperation:
+    return _operation_with_item(
+        operation,
+        item_index,
+        phase="in_flight",
+        manual_required=True,
+        warnings=[_safe_warning(sanitize, IDENTITY_MANUAL_WARNING)],
+    )
 
 
 def _fresh_operation(
@@ -574,22 +664,9 @@ def _fresh_operation(
 
 
 def _identity_changes(
-    identity: object,
+    identity: NativeSubtaskIdentity,
     sanitize: Callable[[object], str],
 ) -> dict[str, object]:
-    if not isinstance(identity, NativeSubtaskIdentity):
-        raise LedgerUnavailableError("Provider вернул некорректную identity")
-    if (
-        not _usable_identity_text(identity.board_id)
-        or not _usable_identity_text(identity.key)
-        or not _usable_identity_text(identity.title)
-        or not isinstance(identity.aliases, tuple)
-        or not all(_usable_identity_text(alias) for alias in identity.aliases)
-        or (identity.url is not None and not _usable_identity_text(identity.url))
-        or not isinstance(identity.warnings, tuple)
-        or not all(isinstance(warning, str) for warning in identity.warnings)
-    ):
-        raise LedgerUnavailableError("Provider вернул неполную identity")
     return {
         "phase": "created",
         "key": identity.key,
@@ -834,11 +911,21 @@ class SubtaskService:
                     for index, marker in in_flight:
                         identities = grouped[marker]
                         if len(identities) == 1:
-                            candidate = _operation_with_item(
-                                current,
-                                index,
-                                **_identity_changes(identities[0], sanitize),
-                            )
+                            try:
+                                identity_changes = _validated_identity_changes(
+                                    current,
+                                    index,
+                                    identities[0],
+                                    sanitize,
+                                )
+                            except ConfirmedSubtaskIdentityError:
+                                candidate = _identity_rejection(current, index, sanitize)
+                            else:
+                                candidate = _operation_with_item(
+                                    current,
+                                    index,
+                                    **identity_changes,
+                                )
                         else:
                             warning = (
                                 "multiple board cards contain the same idempotency marker"
@@ -889,7 +976,20 @@ class SubtaskService:
                             expected_revision=current.revision,
                         )
                         continue
-                    identity_changes = _identity_changes(identity, sanitize)
+                    try:
+                        identity_changes = _validated_identity_changes(
+                            current,
+                            index,
+                            identity,
+                            sanitize,
+                        )
+                    except ConfirmedSubtaskIdentityError:
+                        rejected = _identity_rejection(current, index, sanitize)
+                        current = self._store.checkpoint(
+                            rejected,
+                            expected_revision=current.revision,
+                        )
+                        continue
                     created = _operation_with_item(
                         current,
                         index,

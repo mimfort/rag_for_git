@@ -55,7 +55,12 @@ from reviewer.tasks.boards.errors import (
 from reviewer.tasks.boards.registry import BoardProviderRegistry, default_board_registry
 from reviewer.tasks.boards.runtime import resolved_provider
 from reviewer.tasks.graph import PRRef
-from reviewer.tasks.subtasks import WriteThroughResult, validate_subtask_request
+from reviewer.tasks.subtasks import (
+    ConfirmedSubtaskIdentityError,
+    WriteThroughResult,
+    validate_confirmed_subtask_identities,
+    validate_subtask_request,
+)
 from reviewer.tasks.sync import SyncProvider, SyncService
 from reviewer.tasks.taskdoc import TaskDoc, render_markdown
 from reviewer.tools.code_tools import ToolContext, make_tools
@@ -555,21 +560,14 @@ class MCPReviewService:
                 warning("write-through parent point-read returned a different or malformed task")
                 return WriteThroughResult(False, tuple(warnings))
 
-            for identity in identities:
-                if (
-                    not isinstance(identity, NativeSubtaskIdentity)
-                    or not isinstance(identity.board_id, str)
-                    or not identity.board_id.strip()
-                    or not isinstance(identity.key, str)
-                    or not identity.key.strip()
-                    or type(identity.aliases) is not tuple
-                    or not all(
-                        isinstance(alias, str) and alias.strip()
-                        for alias in identity.aliases
-                    )
-                ):
-                    warning("write-through child has a malformed persisted identity")
-                    return WriteThroughResult(False, tuple(warnings))
+            try:
+                validate_confirmed_subtask_identities(
+                    current_parent.board_id,
+                    tuple(enumerate(identities)),
+                )
+            except ConfirmedSubtaskIdentityError as error:
+                warning(error)
+                return WriteThroughResult(False, tuple(warnings))
 
             confirmed_ids = {identity.board_id for identity in identities}
             if not confirmed_ids.issubset(current_parent.subtask_ids):
@@ -577,23 +575,14 @@ class MCPReviewService:
                 return WriteThroughResult(False, tuple(warnings))
 
             raw_tasks = [current_parent]
-            seen_board_ids = {current_parent.board_id}
-            fetched_children: dict[str, RawTask] = {}
             for identity in identities:
-                if identity.board_id == current_parent.board_id:
-                    warning("write-through child identity collides with parent")
-                    return WriteThroughResult(False, tuple(warnings))
-                raw = fetched_children.get(identity.board_id)
+                raw = provider.fetch_one(identity.board_id)
                 if raw is None:
-                    fetched = provider.fetch_one(identity.board_id)
-                    if fetched is None:
-                        warning(f"write-through task not found: {identity.key}")
-                        return WriteThroughResult(False, tuple(warnings))
-                    if not isinstance(fetched, RawTask) or fetched.board_id != identity.board_id:
-                        warning("write-through child point-read returned a different task")
-                        return WriteThroughResult(False, tuple(warnings))
-                    raw = fetched
-                    fetched_children[identity.board_id] = raw
+                    warning(f"write-through task not found: {identity.key}")
+                    return WriteThroughResult(False, tuple(warnings))
+                if not isinstance(raw, RawTask) or raw.board_id != identity.board_id:
+                    warning("write-through child point-read returned a different task")
+                    return WriteThroughResult(False, tuple(warnings))
                 canonical_keys = {
                     value
                     for value in (raw.key, raw.project_code)
@@ -602,9 +591,7 @@ class MCPReviewService:
                 if identity.key != identity.board_id and identity.key not in canonical_keys:
                     warning("write-through child canonical identity does not match point-read")
                     return WriteThroughResult(False, tuple(warnings))
-                if identity.board_id not in seen_board_ids:
-                    seen_board_ids.add(identity.board_id)
-                    raw_tasks.append(raw)
+                raw_tasks.append(raw)
 
             briefs: list[dict] = []
             seen_keys: set[str] = set()

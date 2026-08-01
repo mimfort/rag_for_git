@@ -23,7 +23,6 @@ from reviewer.tasks.subtasks import (
     SubtaskBatchResult,
     SubtaskPreflight,
     SubtaskService,
-    WriteThroughResult,
 )
 
 SUBTASK = {
@@ -535,7 +534,7 @@ def test_duplicate_transport_still_validates_every_persisted_canonical_identity(
     assert tasks.calls == []
 
 
-def test_write_through_deduplicates_repeated_child_identity_but_rejects_parent_collision():
+def test_write_through_rejects_repeated_child_identity_and_parent_collision():
     service, provider, tasks, _, _ = _service()
     child = _raw("PRI-225", "child-id", title="Дочерняя задача")
     provider.children[child.board_id] = child
@@ -545,7 +544,7 @@ def test_write_through_deduplicates_repeated_child_identity_but_rejects_parent_c
     def sanitize(value):
         return str(value)
 
-    deduplicated = service._write_through_subtasks(
+    duplicate = service._write_through_subtasks(
         provider,
         provider.parent,
         (identity, identity),
@@ -558,10 +557,33 @@ def test_write_through_deduplicates_repeated_child_identity_but_rejects_parent_c
         sanitize,
     )
 
-    assert deduplicated == WriteThroughResult(True)
-    assert [brief["key"] for brief in tasks.calls[0]] == ["PRI-224", "PRI-225"]
+    assert duplicate.success is False
     assert collision.success is False
-    assert len(tasks.calls) == 1
+    assert tasks.calls == []
+
+
+def test_write_through_rejects_overlapping_canonical_child_identities():
+    service, provider, tasks, _, _ = _service()
+    provider.parent.subtask_ids = ["child-1", "child-2"]
+
+    result = service._write_through_subtasks(
+        provider,
+        provider.parent,
+        (
+            NativeSubtaskIdentity(
+                "child-1",
+                "PRI-225",
+                "First",
+                aliases=("SHARED-1",),
+            ),
+            NativeSubtaskIdentity("child-2", "SHARED-1", "Second"),
+        ),
+        str,
+    )
+
+    assert result.success is False
+    assert tasks.calls == []
+    assert provider.fetch_calls == ["parent-id"]
 
 
 @pytest.mark.parametrize("links", [_UNSET, None, {}], ids=["missing", "none", "not-list"])

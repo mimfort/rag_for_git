@@ -1858,25 +1858,169 @@ def test_provider_error_sanitizer_failure_is_called_once_and_persists_no_secret(
     assert len(provider.create_calls) == 1
 
 
-def test_invalid_returned_identity_propagates_without_persisting_provider_data():
+def test_invalid_returned_identity_becomes_manual_and_never_reposts():
     request = _validate()
     provider = FakeProvider(_parent(), create_effects=[object()])
     store = MemoryStore()
     service = SubtaskService(store)
 
-    with pytest.raises(LedgerUnavailableError, match="identity"):
-        _run(service, request, provider)
+    first = _run(
+        service,
+        request,
+        provider,
+        sanitize=lambda _value: "safe identity rejection",
+    )
 
     persisted = store.operations["attempt-1"]
-    assert persisted.revision == 1
+    assert persisted.revision == 2
     assert persisted.state["items"][0]["phase"] == "in_flight"
-    assert persisted.state["items"][0]["warnings"] == []
+    assert persisted.state["items"][0]["manual_required"] is True
+    assert persisted.state["items"][0]["warnings"] == ["safe identity rejection"]
+    assert first.pending[0].manual_required is True
     assert len(provider.create_calls) == 1
 
     resumed = service.preflight(request).operation
-    result = _run(service, request, provider, operation=resumed)
-    assert result.pending[0].manual_required is True
+    second = _run(service, request, provider, operation=resumed)
+    assert second.pending[0].manual_required is True
     assert len(provider.create_calls) == 1
+
+
+def test_parent_identity_after_post_stays_manual_then_unique_reconciliation_recovers():
+    request = _validate()
+    provider = FakeProvider(
+        _parent(),
+        create_effects=[NativeSubtaskIdentity("parent-uuid", "PRI-225", "Child")],
+    )
+    store = MemoryStore()
+    service = SubtaskService(store)
+    write_calls = []
+
+    first = _run(
+        service,
+        request,
+        provider,
+        write_calls=write_calls,
+        sanitize=lambda _value: "safe identity collision",
+    )
+    persisted_after_first = deepcopy(store.operations["attempt-1"])
+    replace_calls_after_first = list(provider.replace_calls)
+    second = _run(
+        service,
+        request,
+        provider,
+        operation=service.preflight(request).operation,
+        write_calls=write_calls,
+        sanitize=lambda _value: "safe identity collision",
+    )
+    marker = store.operations["attempt-1"].state["items"][0]["marker"]
+    provider.reconciled = [
+        ReconciledNativeSubtask(
+            marker,
+            NativeSubtaskIdentity("child-uuid", "PRI-225", "Child"),
+        )
+    ]
+    recovered = _run(
+        service,
+        request,
+        provider,
+        operation=service.preflight(request).operation,
+        write_calls=write_calls,
+    )
+
+    persisted_after_recovery = store.operations["attempt-1"]
+    assert len(provider.create_calls) == 1
+    assert replace_calls_after_first == []
+    assert provider.replace_calls == [("parent-uuid", ["child-uuid"])]
+    assert persisted_after_first.status == "partial"
+    assert persisted_after_first.state["items"][0]["phase"] == "in_flight"
+    assert persisted_after_first.state["items"][0]["board_id"] is None
+    assert first.pending[0].manual_required is True
+    assert second.pending[0].manual_required is True
+    assert first.created == second.created == ()
+    assert write_calls == []
+    assert persisted_after_recovery.state["items"][0]["phase"] == "created"
+    assert persisted_after_recovery.state["items"][0]["manual_required"] is False
+    assert recovered.created[0].board_id == "child-uuid"
+
+
+@pytest.mark.parametrize(
+    "identities",
+    [
+        (
+            NativeSubtaskIdentity("shared-child", "PRI-225", "First"),
+            NativeSubtaskIdentity("shared-child", "PRI-226", "Second"),
+        ),
+        (
+            NativeSubtaskIdentity(
+                "child-1",
+                "PRI-225",
+                "First",
+                aliases=("SHARED-1",),
+            ),
+            NativeSubtaskIdentity("child-2", "SHARED-1", "Second"),
+        ),
+    ],
+    ids=["duplicate-board-id", "canonical-overlap"],
+)
+def test_second_post_identity_collision_leaves_only_second_draft_manual(identities):
+    request = _validate(subtasks=[CHILD, {**CHILD, "title": "Вторая задача"}])
+    provider = FakeProvider(_parent(), create_effects=list(identities))
+    store = MemoryStore()
+
+    result = _run(
+        SubtaskService(store),
+        request,
+        provider,
+        sanitize=lambda _value: "safe identity collision",
+    )
+
+    items = store.operations["attempt-1"].state["items"]
+    assert len(provider.create_calls) == 2
+    assert items[0]["phase"] == "created"
+    assert items[0]["manual_required"] is False
+    assert items[1]["phase"] == "in_flight"
+    assert items[1]["manual_required"] is True
+    assert items[1]["board_id"] is None
+    assert tuple(child.index for child in result.created) == (0,)
+    assert tuple(child.index for child in result.pending) == (1,)
+
+
+def test_reconciliation_same_card_for_two_markers_accepts_only_first_draft():
+    request = _validate(subtasks=[CHILD, {**CHILD, "title": "Вторая задача"}])
+    operation = _pending_operation(request)
+    for item in operation.state["items"]:
+        item["phase"] = "in_flight"
+    operation = replace(operation, status="partial")
+    first_marker, second_marker = (
+        item["marker"] for item in operation.state["items"]
+    )
+    shared_identity = NativeSubtaskIdentity("shared-child", "PRI-225", "Shared")
+    provider = FakeProvider(
+        _parent(),
+        reconciled=[
+            ReconciledNativeSubtask(first_marker, shared_identity),
+            ReconciledNativeSubtask(second_marker, shared_identity),
+        ],
+    )
+    store = MemoryStore(operation)
+
+    result = _run(
+        SubtaskService(store),
+        request,
+        provider,
+        operation=operation,
+        sanitize=lambda _value: "safe identity collision",
+    )
+
+    items = store.operations["attempt-1"].state["items"]
+    assert provider.create_calls == []
+    assert items[0]["phase"] == "created"
+    assert items[0]["board_id"] == "shared-child"
+    assert items[1]["phase"] == "in_flight"
+    assert items[1]["board_id"] is None
+    assert items[1]["manual_required"] is True
+    assert tuple(child.index for child in result.created) == (0,)
+    assert tuple(child.index for child in result.pending) == (1,)
 
 
 def test_multi_child_failure_is_sanitized_and_later_child_still_completes():
@@ -2067,6 +2211,92 @@ def test_terminal_state_contradictions_fail_before_provider_or_callback(case):
     assert provider.create_calls == []
     assert provider.replace_calls == []
     assert write_calls == []
+
+
+@pytest.mark.parametrize("status", ["running", "partial", "board_complete", "complete"])
+def test_persisted_duplicate_child_transport_fails_before_io_for_every_status(status):
+    request = _validate(subtasks=[CHILD, {**CHILD, "title": "Вторая задача"}])
+    operation = _pending_operation(request)
+    phase = "attached" if status in {"board_complete", "complete"} else "created"
+    for index, item in enumerate(operation.state["items"]):
+        item.update(
+            {
+                "phase": phase,
+                "key": f"PRI-{225 + index}",
+                "aliases": [],
+                "board_id": "shared-child",
+                "url": None,
+            }
+        )
+    if status in {"board_complete", "complete"}:
+        operation.state["target_subtask_ids"] = ["shared-child"]
+        operation.state["reindexed"] = status == "complete"
+    operation = replace(operation, status=status)
+    store = MemoryStore(operation)
+    provider = FakeProvider(_parent())
+    write_calls = []
+
+    with pytest.raises(LedgerUnavailableError, match="identity"):
+        _run(
+            SubtaskService(store),
+            request,
+            provider,
+            operation=operation,
+            write_calls=write_calls,
+        )
+
+    assert provider.fetch_calls == []
+    assert provider.reconcile_calls == []
+    assert provider.create_calls == []
+    assert provider.replace_calls == []
+    assert write_calls == []
+
+
+@pytest.mark.parametrize("relation", ["parent", "canonical-overlap"])
+def test_persisted_confirmed_identity_relations_fail_before_io(relation):
+    request = _validate(
+        subtasks=(
+            [CHILD]
+            if relation == "parent"
+            else [CHILD, {**CHILD, "title": "Вторая задача"}]
+        )
+    )
+    operation = _pending_operation(request)
+    if relation == "parent":
+        operation.state["items"][0].update(
+            {
+                "phase": "created",
+                "key": "PRI-225",
+                "board_id": "parent-uuid",
+            }
+        )
+    else:
+        operation.state["items"][0].update(
+            {
+                "phase": "created",
+                "key": "PRI-225",
+                "aliases": ["SHARED-1"],
+                "board_id": "child-1",
+            }
+        )
+        operation.state["items"][1].update(
+            {
+                "phase": "created",
+                "key": "SHARED-1",
+                "board_id": "child-2",
+            }
+        )
+    operation = replace(operation, status="partial")
+    store = MemoryStore(operation)
+    provider = FakeProvider(_parent())
+
+    with pytest.raises(LedgerUnavailableError, match="identity"):
+        _run(SubtaskService(store), request, provider, operation=operation)
+
+    assert provider.fetch_calls == []
+    assert provider.reconcile_calls == []
+    assert provider.create_calls == []
+    assert provider.replace_calls == []
 
 
 @pytest.mark.parametrize(
