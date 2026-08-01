@@ -40,6 +40,9 @@ from reviewer.tasks.subtasks import SUBTASK_MARKER_RE
 log = logging.getLogger(__name__)
 
 _PAGE = 1000
+_CANONICAL_UNAVAILABLE_WARNING = (
+    "канонический код созданной подзадачи недоступен — вернули внутренний id"
+)
 
 # Структурного списка файлов YouGile в API не отдаёт. Файл попадает в задачу двумя путями:
 #  1) прикреплённый к задаче — HTML-ссылкой <a href="…/user-data/…"> в description
@@ -123,6 +126,12 @@ def _filename_from_url(url: str) -> str:
     """Имя файла из basename URL (для диспатча парсинга по расширению)."""
     name = unquote(urlsplit(url).path.rsplit("/", 1)[-1])
     return name or "file"
+
+
+def _yougile_code(value: object) -> str:
+    """Вернуть только строковый код YouGile вида PREFIX-N."""
+    code = value.strip() if isinstance(value, str) else ""
+    return code if project_prefix(code) else ""
 
 
 def normalize_yougile(
@@ -447,19 +456,35 @@ class YougileBoard:
         fallback_title: str = "",
         warnings: tuple[str, ...] = (),
     ) -> NativeSubtaskIdentity:
-        board_id = str(task.get("id") or fallback_id)
-        key = str(task.get("idTaskCommon") or board_id)
-        project_alias = str(task.get("idTaskProject") or "")
+        returned_id = task.get("id")
+        board_id = returned_id.strip() if isinstance(returned_id, str) else fallback_id
+        board_id = board_id or fallback_id
+        common_key = _yougile_code(task.get("idTaskCommon"))
+        key = common_key or board_id
+        project_alias = _yougile_code(task.get("idTaskProject"))
         aliases = (project_alias,) if project_alias and project_alias != key else ()
-        url_code = project_alias or key
-        url = self._url_template.replace("{code}", url_code) if self._url_template else None
+        url_code = project_alias or common_key
+        url = (
+            self._url_template.replace("{code}", url_code)
+            if self._url_template and url_code
+            else None
+        )
+        identity_warnings = list(warnings)
+        if not common_key and _CANONICAL_UNAVAILABLE_WARNING not in identity_warnings:
+            identity_warnings.append(_CANONICAL_UNAVAILABLE_WARNING)
+        returned_title = task.get("title")
+        identity_title = (
+            returned_title.strip()
+            if isinstance(returned_title, str) and returned_title.strip()
+            else fallback_title
+        )
         return NativeSubtaskIdentity(
             board_id=board_id,
             key=key,
-            title=str(task.get("title") or fallback_title),
+            title=identity_title,
             aliases=aliases,
             url=url,
-            warnings=warnings,
+            warnings=tuple(identity_warnings),
         )
 
     def create_native_subtask(
@@ -480,7 +505,8 @@ class YougileBoard:
                 "description": description,
             },
         )
-        uuid = str((created or {}).get("id") or "")
+        created_id = (created or {}).get("id")
+        uuid = created_id.strip() if isinstance(created_id, str) else ""
         if not uuid:
             raise BoardProviderError(
                 "unsupported",
@@ -491,12 +517,7 @@ class YougileBoard:
             task = self._read(f"/tasks/{quote(uuid, safe='')}") or {}
         except Exception:
             log.warning("yougile: созданная подзадача %s не дочитана", uuid, exc_info=True)
-            return NativeSubtaskIdentity(
-                board_id=uuid,
-                key=uuid,
-                title=title,
-                warnings=("созданная подзадача не дочитана — вернули внутренний id",),
-            )
+            return self._native_subtask_identity({}, fallback_id=uuid, fallback_title=title)
         return self._native_subtask_identity(task, fallback_id=uuid, fallback_title=title)
 
     def replace_native_subtasks(self, parent_task_id: str, subtask_ids: list[str]) -> None:
@@ -518,7 +539,7 @@ class YougileBoard:
         for column in columns:
             for task in self._get_all("/tasks", {"columnId": column["id"]}):
                 matched = markers.intersection(
-                    SUBTASK_MARKER_RE.findall(task.get("description") or "")
+                    SUBTASK_MARKER_RE.findall(html_to_md(task.get("description") or ""))
                 )
                 if not matched:
                     continue

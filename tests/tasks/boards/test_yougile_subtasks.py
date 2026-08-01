@@ -33,6 +33,28 @@ def _child(
     }
 
 
+def _create_board(enrichment: dict) -> YougileBoard:
+    def handle(request: httpx.Request) -> httpx.Response:
+        if request.method == "POST" and request.url.path.endswith("/tasks"):
+            return httpx.Response(200, json={"id": "uuid-created"})
+        if request.method == "GET" and request.url.path.endswith("/tasks/uuid-created"):
+            return httpx.Response(200, json=enrichment)
+        return httpx.Response(404, json={})
+
+    provider = YougileBoard(
+        api_key="secret",
+        api_base="https://yougile.test/api-v2",
+        key_pattern=r"PRI-\d+",
+        url_template="https://yougile.test/#task/{code}",
+    )
+    provider._client.close()  # type: ignore[attr-defined]
+    provider._client = httpx.Client(  # type: ignore[attr-defined]
+        base_url="https://yougile.test/api-v2",
+        transport=httpx.MockTransport(handle),
+    )
+    return provider
+
+
 def test_listing_preserves_source_board_and_column_metadata():
     provider, _ = build()
 
@@ -97,6 +119,54 @@ def test_create_native_subtask_point_read_failure_returns_uuid_warning():
     assert state.created == 1
 
 
+@pytest.mark.parametrize(
+    ("enrichment", "expected_aliases", "expected_url"),
+    [
+        ({"id": "uuid-created", "title": "Дочерняя"}, (), None),
+        (
+            {
+                "id": "uuid-created",
+                "idTaskCommon": None,
+                "idTaskProject": "PRI-77",
+                "title": "Дочерняя",
+            },
+            ("PRI-77",),
+            "https://yougile.test/#task/PRI-77",
+        ),
+        (
+            {
+                "id": {"unsupported": "uuid"},
+                "idTaskCommon": {"unsupported": "ID-77"},
+                "idTaskProject": ["PRI-77"],
+                "title": ["Дочерняя"],
+            },
+            (),
+            None,
+        ),
+    ],
+)
+def test_create_native_subtask_missing_common_key_uses_uuid_with_warning(
+    enrichment,
+    expected_aliases,
+    expected_url,
+):
+    provider = _create_board(enrichment)
+
+    identity = provider.create_native_subtask(
+        "Текст",
+        title="Дочерняя",
+        source_column_id="open-id",
+        marker=MARKER,
+    )
+
+    assert identity.board_id == "uuid-created"
+    assert identity.key == "uuid-created"
+    assert identity.title == "Дочерняя"
+    assert identity.aliases == expected_aliases
+    assert identity.url == expected_url
+    assert any("каноничес" in warning for warning in identity.warnings)
+
+
 def test_create_native_subtask_requires_created_id():
     def handle(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={})
@@ -155,6 +225,54 @@ def test_reconcile_scans_every_board_column_and_page_and_returns_duplicates():
     assert any(call[2].get("columnId") == "done-id" for call in task_calls)
 
 
+def test_reconcile_matches_markers_only_in_visible_description_text():
+    attribute_only = _child(
+        "child-attribute", "ID-2101", "PRI-2101", MARKER, title="Attribute child"
+    )
+    attribute_only["description"] = f'<p data-marker="{MARKER}">Обычный текст</p>'
+    comment_only = _child(
+        "child-comment", "ID-2102", "PRI-2102", MARKER, title="Comment child"
+    )
+    comment_only["description"] = f"<!-- {MARKER} --><p>Обычный текст</p>"
+    visible = _child(
+        "child-visible", "ID-2103", "PRI-2103", MARKER, title="Visible child"
+    )
+    provider, _ = build(state=State(tasks_by_column={
+        "done-id": [attribute_only, comment_only, visible],
+    }))
+
+    found = provider.reconcile_native_subtasks("board-1", frozenset({MARKER}))
+
+    assert [item.identity.board_id for item in found] == ["child-visible"]
+
+
+def test_reconcile_scopes_task_scanning_to_source_board_columns():
+    local = _child("child-local", "ID-2201", "PRI-2201", MARKER, title="Local child")
+    local["columnId"] = "local-id"
+    foreign = _child(
+        "child-foreign", "ID-2202", "PRI-2202", MARKER, title="Foreign child"
+    )
+    foreign["columnId"] = "foreign-id"
+    state = State(
+        columns_by_board={
+            "board-1": [{"id": "local-id", "title": "Local", "boardId": "board-1"}],
+            "board-2": [{"id": "foreign-id", "title": "Foreign", "boardId": "board-2"}],
+        },
+        tasks_by_column={"local-id": [local], "foreign-id": [foreign]},
+    )
+    provider, state = build(state=state)
+
+    found = provider.reconcile_native_subtasks("board-1", frozenset({MARKER}))
+
+    assert [item.identity.board_id for item in found] == ["child-local"]
+    task_columns = {
+        call[2].get("columnId")
+        for call in state.calls
+        if call[0] == "GET" and call[1].endswith("/tasks")
+    }
+    assert task_columns == {"local-id"}
+
+
 def test_reconcile_with_no_markers_does_not_scan_tasks():
     provider, state = build()
 
@@ -163,12 +281,17 @@ def test_reconcile_with_no_markers_does_not_scan_tasks():
 
 
 def test_replace_native_subtasks_sends_exact_caller_union():
-    state = State(parent_subtasks={"parent-1": ["existing", "stale"]})
+    state = State(parent_subtasks={"uuid-1": ["sub-1", "stale"]})
     provider, state = build(state=state)
 
-    provider.replace_native_subtasks("parent-1", ["existing", "new"])
+    provider.replace_native_subtasks("uuid-1", ["sub-1", "new"])
 
-    assert state.parent_subtasks["parent-1"] == ["existing", "new"]
+    assert state.parent_subtasks["uuid-1"] == ["sub-1", "new"]
+    fetched = provider.fetch_one("ID-1")
+    assert fetched is not None
+    assert fetched.subtask_ids == ["sub-1", "new"]
+    listed = next(iter(provider.iter_raw("PRI", 1)))
+    assert listed.subtask_ids == ["sub-1", "new"]
 
 
 def test_committed_create_timeout_is_not_retried_and_reconcile_finds_child():
