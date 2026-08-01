@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import hashlib
+from uuid import uuid4
 
 import pytest
 
@@ -358,3 +359,68 @@ def test_purge_removes_link_only_stub_from_graph(store, graph):
     assert "STUB-1" not in graph.list_keys()
     assert result["deleted_graph"] == 1
     assert "ID-P4" in store.list_keys()           # активная задача не тронута
+
+
+def test_replace_links_is_authoritative_only_for_parent_outgoing_edges():
+    settings = Settings()
+    graph_store = GraphStore(
+        settings.neo4j_uri,
+        settings.neo4j_user,
+        settings.neo4j_password,
+    )
+    graph_store.init_schema()
+    task_graph = TaskGraph(graph_store.driver)
+    suffix = uuid4().hex
+    parent_key = f"parent-{suffix}"
+    old_child_key = f"old-child-{suffix}"
+    incoming_key = f"incoming-{suffix}"
+    child_key = f"child-{suffix}"
+    related_key = f"related-{suffix}"
+    keys = [parent_key, old_child_key, incoming_key, child_key, related_key]
+
+    def outgoing_snapshot() -> set[tuple[str, str]]:
+        records, _, _ = graph_store.driver.execute_query(
+            "MATCH (:Task {key: $key})-[link:TASK_LINK]->(target:Task) "
+            "RETURN target.key AS key, link.type AS type",
+            key=parent_key,
+        )
+        return {(record["key"], record["type"]) for record in records}
+
+    def incoming_snapshot() -> set[tuple[str, str]]:
+        records, _, _ = graph_store.driver.execute_query(
+            "MATCH (source:Task)-[link:TASK_LINK]->(:Task {key: $key}) "
+            "RETURN source.key AS key, link.type AS type",
+            key=parent_key,
+        )
+        return {(record["key"], record["type"]) for record in records}
+
+    try:
+        for key in keys:
+            task_graph.upsert_task(key, [], key, "Open", None)
+        task_graph.upsert_links(
+            parent_key,
+            [{"key": old_child_key, "title": "old", "type": "old-type"}],
+        )
+        task_graph.upsert_links(
+            incoming_key,
+            [{"key": parent_key, "title": "parent", "type": "blocks"}],
+        )
+
+        replaced = task_graph.replace_links(parent_key, [
+            {"key": child_key, "title": "child", "type": "subtask"},
+            {"key": related_key, "title": "related", "type": "related"},
+        ])
+
+        assert replaced == 2
+        assert outgoing_snapshot() == {
+            (child_key, "subtask"),
+            (related_key, "related"),
+        }
+        assert incoming_snapshot() == {(incoming_key, "blocks")}
+
+        assert task_graph.replace_links(parent_key, []) == 0
+        assert outgoing_snapshot() == set()
+        assert incoming_snapshot() == {(incoming_key, "blocks")}
+    finally:
+        task_graph.delete_tasks(keys)
+        graph_store.close()
