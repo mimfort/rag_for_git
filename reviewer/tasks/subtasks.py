@@ -144,8 +144,10 @@ def marker_for(
     draft: SubtaskDraft,
 ) -> str:
     """Стабильный маркер одной дочерней задачи для поиска на доске."""
+    input_components = (board_type, parent_task_id, idempotency_key)
+    if any("\0" in component for component in input_components):
+        raise ValueError("компоненты marker не должны содержать NUL")
+
     child_hash = hashlib.sha256(_canonical_json(draft.payload()).encode("utf-8")).hexdigest()
-    marker_payload = _canonical_json(
-        [board_type, parent_task_id, idempotency_key, index, child_hash]
-    )
+    marker_payload = "\0".join((*input_components, str(index), child_hash))
     return "reviewer-subtask:" + hashlib.sha256(marker_payload.encode("utf-8")).hexdigest()

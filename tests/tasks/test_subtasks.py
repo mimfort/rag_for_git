@@ -222,13 +222,14 @@ def test_marker_is_stable_lowercase_and_index_specific():
         allow_nan=False,
     )
     child_hash = hashlib.sha256(child_json.encode()).hexdigest()
-    marker_payload = json.dumps(
-        ["yougile", "task-42", "attempt-1", 0, child_hash],
-        sort_keys=True,
-        separators=(",", ":"),
-        ensure_ascii=False,
-        allow_nan=False,
+    marker_components = (
+        "yougile",
+        "task-42",
+        "attempt-1",
+        "0",
+        child_hash,
     )
+    marker_payload = "\0".join(marker_components)
     expected = "reviewer-subtask:" + hashlib.sha256(marker_payload.encode()).hexdigest()
 
     first = marker_for("yougile", "task-42", "attempt-1", 0, draft)
@@ -244,10 +245,20 @@ def test_marker_is_stable_lowercase_and_index_specific():
     assert another_index != first
 
 
-def test_marker_does_not_collide_when_nul_moves_between_inputs():
+@pytest.mark.parametrize(
+    ("board_type", "parent_task_id", "idempotency_key"),
+    [
+        ("board\0type", "parent", "key"),
+        ("board", "parent\0id", "key"),
+        ("board", "parent", "key\0part"),
+    ],
+)
+def test_marker_rejects_nul_in_input_components(
+    board_type,
+    parent_task_id,
+    idempotency_key,
+):
     draft = _validate().subtasks[0]
 
-    embedded_in_board = marker_for("board\0parent", "task", "key", 0, draft)
-    embedded_in_key = marker_for("board", "parent", "task\0key", 0, draft)
-
-    assert embedded_in_board != embedded_in_key
+    with pytest.raises(ValueError):
+        marker_for(board_type, parent_task_id, idempotency_key, 0, draft)
