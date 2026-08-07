@@ -7,6 +7,8 @@ from datetime import UTC, datetime
 import httpx
 import pytest
 
+from reviewer.config.task_board import TaskSyncFilter
+from reviewer.tasks.boards.base import TaskListing
 from reviewer.tasks.boards.errors import BoardProviderError
 from reviewer.tasks.boards.trello import TrelloBoard
 
@@ -51,15 +53,23 @@ def _board(handler, **kwargs) -> TrelloBoard:
 
 
 def _paged_handler(cards: list[dict], calls: list[httpx.Request]):
-    """Фейк листинга: карточки в порядке убывания id, фильтр ``before`` по id."""
+    """Фейк листинга: ``/cards`` открыт только для активных, ``/cards/all`` — для всех."""
 
     def handler(request: httpx.Request) -> httpx.Response:
         calls.append(request)
         if request.url.path.endswith("/lists"):
             return httpx.Response(200, json=LISTS)
+        all_path = f"/1/boards/{BOARD}/cards/all"
+        open_path = f"/1/boards/{BOARD}/cards"
+        if request.url.path == all_path:
+            available = cards
+        elif request.url.path == open_path:
+            available = [card for card in cards if card.get("closed") is not True]
+        else:
+            return httpx.Response(404, json={})
         limit = int(request.url.params.get("limit", "1000"))
         before = request.url.params.get("before")
-        rows = sorted(cards, key=lambda item: item["id"], reverse=True)
+        rows = sorted(available, key=lambda item: item["id"], reverse=True)
         if before:
             rows = [item for item in rows if item["id"] < before]
         return httpx.Response(200, json=rows[:limit])
@@ -69,14 +79,21 @@ def _paged_handler(cards: list[dict], calls: list[httpx.Request]):
 
 def test_cards_are_paged_by_before_cursor_with_exact_params() -> None:
     calls: list[httpx.Request] = []
-    rows = list(_board(_paged_handler([_card(n) for n in range(1, 6)], calls)).iter_raw("TRL", None))
+    listing = _board(_paged_handler([_card(n) for n in range(1, 6)], calls)).iter_raw(
+        "TRL",
+        None,
+        sync_filter=TaskSyncFilter(max_age_days=30, include_archived=False),
+        now_ms=123,
+    )
+    rows = list(listing)
 
+    assert isinstance(listing, TaskListing)
     assert [row.key for row in rows] == ["TRL-1", "TRL-2", "TRL-3", "TRL-4", "TRL-5"]
     assert [(call.method, call.url.path) for call in calls] == [
         ("GET", f"/1/boards/{BOARD}/lists"),
-        ("GET", f"/1/boards/{BOARD}/cards"),
-        ("GET", f"/1/boards/{BOARD}/cards"),
-        ("GET", f"/1/boards/{BOARD}/cards"),
+        ("GET", f"/1/boards/{BOARD}/cards/all"),
+        ("GET", f"/1/boards/{BOARD}/cards/all"),
+        ("GET", f"/1/boards/{BOARD}/cards/all"),
     ]
     assert dict(calls[0].url.params) == {"key": API_KEY, "token": TOKEN, "fields": "id,name"}
     assert dict(calls[1].url.params) == {
@@ -87,14 +104,34 @@ def test_cards_are_paged_by_before_cursor_with_exact_params() -> None:
     }
     assert calls[2].url.params.get("before") == f"{4:024x}"
     assert calls[3].url.params.get("before") == f"{2:024x}"
+    assert listing.stats.filtered_by_age == 0
+    assert listing.stats.filtered_archived == 0
+    assert listing.stats.warnings == []
+
+
+def test_unlimited_listing_uses_all_endpoint_and_includes_archived_cards() -> None:
+    calls: list[httpx.Request] = []
+    active = _card(1)
+    archived = _card(2)
+    archived["closed"] = True
+
+    rows = list(_board(_paged_handler([active, archived], calls)).iter_raw("TRL", None))
+
+    assert [row.key for row in rows] == ["TRL-1", "TRL-2"]
+    assert [row.archived for row in rows] == [False, True]
+    listing_paths = [call.url.path for call in calls if "/cards" in call.url.path]
+    assert listing_paths == [f"/1/boards/{BOARD}/cards/all"] * 2
 
 
 def test_rows_are_sorted_by_last_activity_and_limit_caps_output() -> None:
     calls: list[httpx.Request] = []
     cards = [_card(n) for n in range(1, 6)]
+    cards[0]["closed"] = True
     board = _board(_paged_handler(cards, calls))
 
-    assert [row.key for row in board.iter_raw("TRL", 2)] == ["TRL-1", "TRL-2"]
+    limited = list(board.iter_raw("TRL", 2))
+    assert [row.key for row in limited] == ["TRL-1", "TRL-2"]
+    assert limited[0].archived is True
     assert [row.timestamp for row in board.iter_raw("TRL", None)] == sorted(
         (row.timestamp for row in board.iter_raw("TRL", None)), reverse=True
     )
@@ -111,8 +148,36 @@ def test_raw_task_maps_native_identifiers_status_and_epoch_ms() -> None:
     assert row.title == "Задача 3"
     assert row.description == "## Проблема\n\nОписание TRL-3"
     assert row.timestamp == int(datetime(2026, 7, 23, 9, 57, tzinfo=UTC).timestamp() * 1000)
+    assert row.archived is False
+    assert row.terminal is None
     assert row.provider_data["short_link"] == "sh000003"
     assert row.subtask_ids == [] and row.attachments == []
+
+
+def test_nullable_timestamp_sorting_and_native_closed_tri_state() -> None:
+    calls: list[httpx.Request] = []
+    archived = _card(1)
+    archived["closed"] = True
+    archived["dateLastActivity"] = "invalid"
+    active = _card(2)
+    active["closed"] = False
+    active.pop("dateLastActivity")
+    unknown = _card(3)
+    unknown.pop("closed")
+
+    rows = list(
+        _board(_paged_handler([archived, active, unknown], calls)).iter_raw("TRL", None)
+    )
+    by_key = {row.key: row for row in rows}
+
+    assert [row.key for row in rows] == ["TRL-3", "TRL-1", "TRL-2"]
+    assert by_key["TRL-1"].timestamp is None
+    assert by_key["TRL-2"].timestamp is None
+    assert by_key["TRL-1"].archived is True
+    assert by_key["TRL-2"].archived is False
+    assert by_key["TRL-3"].archived is None
+    assert all(row.terminal is None for row in rows)
+    assert by_key["TRL-3"].provider_data["closed"] is None
 
 
 def test_fetch_one_resolves_short_key_through_board_nested_endpoint() -> None:

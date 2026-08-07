@@ -397,11 +397,24 @@ task_board:
   done_target: Done
   options:
     <provider-option>: <discovered-value>
+  sync_filter:
+    max_age_days: 180
+    include_archived: false
 ```
 
 Repo block имеет приоритет; явный пустой `task_board:` отключает доску. Если блока нет, сервер
 может использовать **non-secret deploy-wide fallback**.
 Вызовы используют configured registry credentials, не возвращая их клиенту.
+
+`sync_filter` — generic sibling provider-`options`. По умолчанию `max_age_days` отсутствует (age
+limit нет), а `include_archived: true`. Возраст считается по task last-modified с inclusive cutoff:
+задача точно на границе остаётся eligible. Unknown age не фильтруется по возрасту. Только при
+`include_archived: false` unknown archive сам по себе не исключает строку, а archive warning
+появляется только тогда. Age filtering выполняется первым и всё ещё может исключить строку; в этом
+случае archive uncertainty не считается и warning не появляется. Archive не равен terminal/done.
+Репозитории с одинаковым `task_board.project` используют один task corpus. Retention сам ничего не
+удаляет: purge включается явно. Изменение фильтра backfill-ит вновь eligible задачи на следующем
+успешном полном sync.
 
 Server-side workflow — **store-first**:
 
@@ -547,8 +560,12 @@ threshold, graph backend и retrieval ceilings меняют cost/recall; сна�
 - **Вызов:** `/rag-reviewer:sync-tasks`.
 - **Нужно:** запустите `reviewer init`, настройте provider по `docs/board-providers.md`, затем
   проверьте его через `reviewer check`.
-- **Чтение/запись:** вызывает идемпотентный server-side `sync_board`; читает board и не пишет в неё.
-- **Результат:** компактные counts/warnings; отсутствие config остаётся board-less/fail-open.
+- **Чтение/запись:** вызывает идемпотентный server-side `sync_board` в repo mode с canonical repo и
+  tracked branch. Effective policy резолвит сервер; клиент её не реконструирует. Tool читает board
+  и не пишет в неё. Policy error не повторяется как unfiltered explicit call.
+- **Результат:** `eligible`, `filtered_by_age`, `filtered_archived`, `age_unknown`, `archive_unknown`,
+  `filter_applied`, `filter_fingerprint`, `filter_source`, `by_board`, `purge` и `warnings`;
+  отсутствие config остаётся board-less/fail-open.
 
 ### `summarize-subsystems` — GraphRAG summaries подсистем
 

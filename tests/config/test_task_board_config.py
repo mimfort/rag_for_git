@@ -1,5 +1,8 @@
+from dataclasses import FrozenInstanceError
+
 import pytest
 
+from reviewer.config import task_board
 from reviewer.config.task_board import normalize_task_board_config
 
 
@@ -42,6 +45,96 @@ def test_normalizes_generic_task_board_form_without_mutating_input():
 def test_empty_task_board_is_disabled():
     assert normalize_task_board_config({}) is None
     assert normalize_task_board_config(None) is None
+
+
+@pytest.mark.parametrize(
+    ("raw_filter", "expected_filter", "expected_sparse"),
+    [
+        ({}, {"max_age_days": None, "include_archived": True}, {}),
+        (
+            {"max_age_days": 30},
+            {"max_age_days": 30, "include_archived": True},
+            {"max_age_days": 30},
+        ),
+        (
+            {"include_archived": False},
+            {"max_age_days": None, "include_archived": False},
+            {"include_archived": False},
+        ),
+        (
+            {"max_age_days": 90, "include_archived": True},
+            {"max_age_days": 90, "include_archived": True},
+            {"max_age_days": 90},
+        ),
+    ],
+    ids=("empty", "age-only", "archive-only", "full"),
+)
+def test_normalizes_and_round_trips_task_sync_filter(
+    raw_filter: dict[str, object],
+    expected_filter: dict[str, object],
+    expected_sparse: dict[str, object],
+) -> None:
+    config = normalize_task_board_config({
+        "type": "yougile",
+        "options": {"key_prefix": "PRI"},
+        "sync_filter": raw_filter,
+    })
+
+    assert config is not None
+    assert isinstance(config.sync_filter, task_board.TaskSyncFilter)
+    assert config.sync_filter.canonical_dict() == expected_filter
+    assert config.sync_filter.as_dict() == expected_sparse
+    assert config.options == {"key_prefix": "PRI"}
+    assert config.as_dict() == {
+        "type": "yougile",
+        "options": {"key_prefix": "PRI"},
+        "sync_filter": expected_sparse,
+    }
+    assert normalize_task_board_config(config.as_dict()) == config
+
+
+def test_absent_task_sync_filter_stays_absent() -> None:
+    config = normalize_task_board_config({"type": "yougile"})
+
+    assert config is not None
+    assert config.sync_filter is None
+    assert "sync_filter" not in config.as_dict()
+
+
+@pytest.mark.parametrize("value", [0, -1, True, 1.5, "30", []])
+def test_rejects_invalid_task_sync_filter_max_age_days(value: object) -> None:
+    with pytest.raises(ValueError, match="max_age_days"):
+        normalize_task_board_config({
+            "type": "yougile",
+            "sync_filter": {"max_age_days": value},
+        })
+
+
+@pytest.mark.parametrize("value", [None, 0, 1, "false", [], {}])
+def test_rejects_invalid_task_sync_filter_include_archived(value: object) -> None:
+    with pytest.raises(ValueError, match="include_archived"):
+        normalize_task_board_config({
+            "type": "yougile",
+            "sync_filter": {"include_archived": value},
+        })
+
+
+@pytest.mark.parametrize("value", [None, 1, "recent", []])
+def test_rejects_non_mapping_task_sync_filter(value: object) -> None:
+    with pytest.raises(ValueError, match="task_board.sync_filter must be a mapping"):
+        normalize_task_board_config({"type": "yougile", "sync_filter": value})
+
+
+def test_rejects_unknown_task_sync_filter_fields() -> None:
+    with pytest.raises(ValueError, match="task_board.sync_filter"):
+        task_board.normalize_task_sync_filter({"unexpected": True})
+
+
+def test_task_sync_filter_is_frozen() -> None:
+    sync_filter = task_board.TaskSyncFilter()
+
+    with pytest.raises(FrozenInstanceError):
+        sync_filter.include_archived = False
 
 
 def test_rejects_malformed_options():
@@ -114,6 +207,18 @@ def test_rejects_secret_key_nested_in_arbitrary_json_lists():
         normalize_task_board_config({
             "type": "yougile",
             "options": {"nested": [[{"YOUTRACK_TOKEN": secret}]]},
+        })
+
+    assert secret not in str(error.value)
+
+
+def test_rejects_registered_secret_nested_in_task_sync_filter_without_echoing_value():
+    secret = "do-not-echo-sync-filter-secret"
+
+    with pytest.raises(ValueError, match="must not contain credentials") as error:
+        normalize_task_board_config({
+            "type": "yougile",
+            "sync_filter": {"nested": [{"YOUTRACK_TOKEN": secret}]},
         })
 
     assert secret not in str(error.value)

@@ -108,6 +108,23 @@ task_board:
     ]
 
 
+def test_task_board_sync_filter_is_normalized_separately_from_options():
+    p = ReviewPolicy.from_yaml("""
+task_board:
+  type: youtrack
+  options: {status_field: Stage}
+  sync_filter:
+    max_age_days: 30
+    include_archived: false
+""")
+
+    assert p.task_board == {
+        "type": "youtrack",
+        "options": {"status_field": "Stage"},
+        "sync_filter": {"max_age_days": 30, "include_archived": False},
+    }
+
+
 def test_load_keeps_new_task_board_values_and_records_warnings_once():
     p = ReviewPolicy.load(Settings(_env_file=None), """
 task_board:

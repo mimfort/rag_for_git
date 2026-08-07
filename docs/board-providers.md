@@ -6,21 +6,21 @@ the current matrix, not a closed list of future choices.
 
 ## Capability matrix
 
-One row per registered provider; every row must fill all ten capability columns.
+One row per registered provider; every row must fill all capability columns.
 
-| Provider | Sync/pagination | Markdown normalization | Links/subtasks | Attachments | Single read | Discovery | Create/target | Finish/PR link | Write-through | Native-subtask writes |
-|---|:-:|---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
-| YouGile | ✓ | HTML↔MD | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | Supported |
-| YouTrack | ✓ | Native MD | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | Unsupported |
-| Jira Cloud | ✓ | ADF↔MD | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | Unsupported |
-| GitHub Issues | ✓ | Native MD | ✓ | metadata only | ✓ | ✓ | ✓ | ✓ | ✓ | Unsupported |
-| Trello | ✓ | Native MD | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | Unsupported |
-| Linear | ✓ | Native MD | ✓ | metadata only | ✓ | ✓ | ✓ | ✓ | ✓ | Unsupported |
-| ClickUp | ✓ | Native MD (query flag) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | Unsupported |
-| Asana | ✓ | HTML↔MD | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | Unsupported |
-| Yandex Tracker | ✓ | YFM→MD | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | Unsupported |
-| Kaiten | ✓ | Native MD | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | Unsupported |
-| Weeek | ✓ | HTML↔MD | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | Unsupported |
+| Provider | Sync/pagination | Markdown normalization | Links/subtasks | Attachments | Single read | Discovery | Create/target | Finish/PR link | Write-through | Archive metadata | Retention pushdown exact-count | Native-subtask writes |
+|---|:-:|---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
+| YouGile | ✓ | HTML↔MD | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | Unknown | Unsupported | Supported |
+| YouTrack | ✓ | Native MD | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | Unknown | Unsupported | Unsupported |
+| Jira Cloud | ✓ | ADF↔MD | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | Unknown | Unsupported | Unsupported |
+| GitHub Issues | ✓ | Native MD | ✓ | metadata only | ✓ | ✓ | ✓ | ✓ | ✓ | Unknown | Unsupported | Unsupported |
+| Trello | ✓ | Native MD | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | Exact (`closed`) | Unsupported | Unsupported |
+| Linear | ✓ | Native MD | ✓ | metadata only | ✓ | ✓ | ✓ | ✓ | ✓ | Unknown | Unsupported | Unsupported |
+| ClickUp | ✓ | Native MD (query flag) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | Unknown | Unsupported | Unsupported |
+| Asana | ✓ | HTML↔MD | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | Unknown | Unsupported | Unsupported |
+| Yandex Tracker | ✓ | YFM→MD | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | Unknown | Unsupported | Unsupported |
+| Kaiten | ✓ | Native MD | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | Exact (`condition`) | Unsupported | Unsupported |
+| Weeek | ✓ | HTML↔MD | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | Unknown | Unsupported | Unsupported |
 
 All adapters implement validation, full pagination, normalized reads, target discovery, create,
 idempotent finish, and write-through reindexing. The registry exposes only configured types whose
@@ -30,6 +30,13 @@ Attachment indexing is fail-soft everywhere: when a file cannot be fetched with 
 credential — an off-host or short-lived signed URL, a size or format limit — the adapter reports
 the attachment's metadata plus a warning instead of failing the task. `metadata only` marks a
 board whose API never exposes attachment bytes at all.
+
+`Archive metadata` is exact only where the listing API exposes a native archive signal. Only while
+`include_archived: false`, unknown archive metadata does not itself exclude the row and a
+deduplicated archive warning is emitted only then. Age filtering runs first and may still exclude
+the row; in that case archive uncertainty is not counted or warned. `Retention pushdown exact-count`
+requires provider-side filtering with exact, mutually exclusive reason counts; it is unsupported
+for every provider in this iteration, so the shared sync domain applies the filter locally.
 
 ## Native subtask writes
 
@@ -124,21 +131,34 @@ task_board:
   done_target: Done
   options:
     <provider-option>: <discovered-value>
+  sync_filter:
+    max_age_days: 180
+    include_archived: false
 ```
+
+`sync_filter` is a generic sibling of `options`, never a provider option. Omitting
+`max_age_days` means no age limit; omitting `include_archived` defaults it to `true`.
 
 Use the non-secret `provider_options` object with MCP tools. The public signatures are:
 
 ```text
-sync_board(board=None, limit=None, purge_orphaned=False, keep_with_prs=True,
-           board_type=None, provider_options=None, force_renormalize=False)
+sync_board(repo=None, branch=None, board=None, limit=None, purge_orphaned=False,
+           keep_with_prs=True, board_type=None, provider_options=None,
+           force_renormalize=False, sync_filter=None)
 get_board_targets(board_type=None, project=None, provider_options=None)
 create_task(title, problem="", steps=None, criteria=None, context=None, board_type=None,
             project=None, target=None, provider_options=None)
 create_subtasks(parent_key, subtasks, idempotency_key, board_type=None,
                 project=None, provider_options=None)
 finish_task(key, pr_url, note=None, mark_done=True, board_type=None, target=None,
-            provider_options=None)
+             provider_options=None)
 ```
+
+Repo mode sets `repo` and optionally `branch`; the server resolves the canonical tracked branch and
+effective layered board policy. Repo-mode callers pass only operation flags and must not also pass
+`board`, `board_type`, `provider_options`, or `sync_filter`. A configuration or policy error stops
+the run rather than falling back to an unfiltered explicit call. Explicit mode omits `repo` and may
+pass the generic `sync_filter` separately from provider options.
 
 Credentials are server-side environment variables, never values in `.review.yml`,
 `provider_options`, a client MCP configuration, commits, previews, errors, or logs. Run

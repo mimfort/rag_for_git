@@ -8,6 +8,8 @@ from pathlib import Path
 import httpx
 import pytest
 
+from reviewer.config.task_board import TaskSyncFilter
+from reviewer.tasks.boards.base import TaskListing
 from reviewer.tasks.boards.errors import BoardProviderError
 from reviewer.tasks.boards.jira import JiraCloudBoard
 
@@ -102,8 +104,15 @@ def test_basic_auth_and_enhanced_search_pagination() -> None:
         )
         return httpx.Response(200, json=pages[len(requests) - 1])
 
-    rows = list(_board(handler).iter_raw("PRI", None))
+    listing = _board(handler).iter_raw(
+        "PRI",
+        None,
+        sync_filter=TaskSyncFilter(max_age_days=30, include_archived=False),
+        now_ms=123,
+    )
+    rows = list(listing)
 
+    assert isinstance(listing, TaskListing)
     assert [row.key for row in rows] == ["PRI-1", "PRI-2"]
     first, second = (json.loads(request.content) for request in requests)
     assert requests[0].method == "POST"
@@ -116,6 +125,21 @@ def test_basic_auth_and_enhanced_search_pagination() -> None:
     assert second["nextPageToken"] == "page-2"
     assert rows[0].timestamp == 1784797200000
     assert rows[1].timestamp == 1784797200000
+    assert all(row.archived is None and row.terminal is None for row in rows)
+    assert listing.stats.filtered_by_age == 0
+    assert listing.stats.filtered_archived == 0
+    assert listing.stats.warnings == []
+
+
+@pytest.mark.parametrize("updated", [None, "not a timestamp"])
+def test_missing_or_invalid_updated_timestamp_stays_nullable(updated: object) -> None:
+    raw = JiraCloudBoard._raw_from_issue(
+        {"id": "1", "key": "PRI-1", "fields": {"updated": updated}}
+    )
+
+    assert raw.timestamp is None
+    assert raw.archived is None
+    assert raw.terminal is None
 
 
 def test_limit_stops_without_loading_the_next_page() -> None:

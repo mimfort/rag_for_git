@@ -1,4 +1,6 @@
 """fetch_one(key) — единичный RawTask по idReadable для write-through после finish."""
+from reviewer.config.task_board import TaskSyncFilter
+from reviewer.tasks.boards.base import TaskListing
 from reviewer.tasks.boards.youtrack import YouTrackBoard
 
 
@@ -46,6 +48,8 @@ def test_fetch_one_builds_rawtask():
     assert raw.title == "Саммари"
     assert raw.status == "Fixed"
     assert raw.timestamp == 999
+    assert raw.archived is None
+    assert raw.terminal is None
 
 
 def test_fetch_one_honours_custom_status_field():
@@ -60,3 +64,31 @@ def test_fetch_one_honours_custom_status_field():
 def test_fetch_one_none_on_error():
     b = _board({"/issues/TES-404": _Resp(500, {})})
     assert b.fetch_one("TES-404") is None
+
+
+def test_iter_raw_returns_listing_with_zero_stats_and_no_lifecycle_guessing():
+    issues = [
+        {
+            "idReadable": "TES-1",
+            "updated": 999,
+            "customFields": [{"name": "State", "value": {"name": "Fixed"}}],
+        },
+        {"idReadable": "TES-2"},
+        {"idReadable": "TES-3", "updated": "invalid"},
+    ]
+    board = _board({"/issues": _Resp(200, issues)})
+
+    listing = board.iter_raw(
+        "TES",
+        None,
+        sync_filter=TaskSyncFilter(max_age_days=30, include_archived=False),
+        now_ms=123,
+    )
+
+    assert isinstance(listing, TaskListing)
+    rows = list(listing)
+    assert [row.timestamp for row in rows] == [999, None, None]
+    assert all(row.archived is None and row.terminal is None for row in rows)
+    assert listing.stats.filtered_by_age == 0
+    assert listing.stats.filtered_archived == 0
+    assert listing.stats.warnings == []

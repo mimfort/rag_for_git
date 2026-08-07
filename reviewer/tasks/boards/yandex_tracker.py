@@ -34,7 +34,7 @@ from urllib.parse import quote, urlsplit
 import httpx
 
 from reviewer.tasks.boards.attachments import _registrable_domain, fetch_attachment, host_allowed
-from reviewer.tasks.boards.base import RawTask, project_prefix
+from reviewer.tasks.boards.base import RawTask, TaskListing, TaskListingStats, project_prefix
 from reviewer.tasks.boards.errors import BoardProviderError
 from reviewer.tasks.boards.pagination import paginate_page
 from reviewer.tasks.boards.registry import (
@@ -197,10 +197,10 @@ def _org_header(org_id: str, cloud_org_id: str, *, secrets: tuple[str, ...]) -> 
     return {"X-Org-ID": org} if org else {"X-Cloud-Org-ID": cloud}
 
 
-def _timestamp(value: object) -> int:
-    """``updatedAt`` Трекера → epoch ms в UTC; неразбираемое значение → 0."""
+def _timestamp(value: object) -> int | None:
+    """``updatedAt`` Трекера → epoch ms; неразбираемое значение остаётся неизвестным."""
     if not isinstance(value, str) or not value.strip():
-        return 0
+        return None
     text = value.strip()
     if text.endswith(("Z", "z")):
         text = f"{text[:-1]}+00:00"
@@ -210,7 +210,7 @@ def _timestamp(value: object) -> int:
     try:
         parsed = datetime.fromisoformat(text)
     except ValueError:
-        return 0
+        return None
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=UTC)
     return int(parsed.timestamp() * 1000)
@@ -262,6 +262,8 @@ def _issue_to_raw(issue: Mapping[str, Any]) -> RawTask:
         links=[],
         attachments=_attachments_of(issue),
         board_id=str(issue.get("id") or key),
+        archived=None,
+        terminal=None,
         provider_data={"queue": queue, "status": status},
     )
 
@@ -350,7 +352,22 @@ class YandexTrackerBoard(RestBoardBase):
 
     # --- чтение ---
 
-    def iter_raw(self, board: str | None, limit: int | None) -> Iterable[RawTask]:
+    def iter_raw(
+        self,
+        board: str | None,
+        limit: int | None,
+        *,
+        sync_filter=None,
+        now_ms=None,
+    ) -> TaskListing:
+        if limit == 0:
+            return TaskListing(rows=iter(()))
+        return TaskListing(
+            rows=self._iter_raw_rows(board, limit),
+            stats=TaskListingStats(),
+        )
+
+    def _iter_raw_rows(self, board: str | None, limit: int | None) -> Iterable[RawTask]:
         """Все задачи очереди страницами ``page``/``perPage``, отсортированные по updatedAt."""
         queue = self._queue_for(board)
         if not queue:
@@ -370,6 +387,8 @@ class YandexTrackerBoard(RestBoardBase):
             ) or []
 
         count = 0
+        if limit is not None and count >= limit:
+            return
         for issue in paginate_page(fetch, page_size=_PAGE):
             if not isinstance(issue, Mapping):
                 continue

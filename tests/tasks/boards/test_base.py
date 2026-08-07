@@ -3,7 +3,7 @@ from reviewer.config.provider_credentials import ProviderCredentialSource
 from reviewer.tasks.boards import (
     RawTask, make_board_provider, make_board_providers,
 )
-from reviewer.tasks.boards.base import project_prefix
+from reviewer.tasks.boards.base import TaskBoardProvider, TaskListing, project_prefix
 from reviewer.tasks.boards.registry import BoardProviderRegistry
 from tests.tasks.boards.provider_fakes import FakeBoard, fake_provider_spec
 
@@ -18,9 +18,47 @@ def test_project_prefix_extracts_alpha_prefix():
 
 def test_rawtask_fields_and_links_default():
     rt = RawTask(key="ID-1", project_code="PRI-1", title="t", description="d",
-                 status="Backlog", subtask_ids=["u1"], timestamp=123)
+                  status="Backlog", subtask_ids=["u1"], timestamp=123)
     assert rt.key == "ID-1" and rt.timestamp == 123
     assert rt.links == []                       # links — необязательное, дефолт пуст
+
+
+def test_rawtask_allows_missing_timestamp():
+    rt = RawTask(key="ID-1", project_code="PRI-1", title="t", description="d",
+                 status="Backlog", subtask_ids=[], timestamp=None)
+
+    assert rt.timestamp is None
+
+
+def test_rawtask_lifecycle_fields_are_tristate_without_completed_alias():
+    for value in (None, False, True):
+        rt = RawTask(key="ID-1", project_code="PRI-1", title="t", description="d",
+                     status="Backlog", subtask_ids=[], timestamp=1,
+                     archived=value, terminal=value)
+        assert rt.archived is value
+        assert rt.terminal is value
+        assert not hasattr(rt, "completed")
+
+
+def test_task_listing_is_iterable_and_has_zero_default_stats():
+    rt = RawTask(key="ID-1", project_code="PRI-1", title="t", description="d",
+                 status="Backlog", subtask_ids=[], timestamp=1)
+
+    listing = TaskListing(rows=(rt,))
+
+    assert list(listing) == [rt]
+    assert listing.stats.filtered_by_age == 0
+    assert listing.stats.filtered_archived == 0
+    assert listing.stats.warnings == []
+
+
+def test_provider_iter_raw_accepts_keyword_only_sync_hints():
+    import inspect
+
+    parameters = inspect.signature(TaskBoardProvider.iter_raw).parameters
+
+    assert parameters["sync_filter"].kind is inspect.Parameter.KEYWORD_ONLY
+    assert parameters["now_ms"].kind is inspect.Parameter.KEYWORD_ONLY
 
 
 def test_rawtask_links_explicit():

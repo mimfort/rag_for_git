@@ -1,9 +1,7 @@
 """Полные fake provider/spec для тестов generic registry lifecycle."""
 from __future__ import annotations
 
-from collections.abc import Iterable
-
-from reviewer.tasks.boards.base import RawTask
+from reviewer.tasks.boards.base import TaskListing
 from reviewer.tasks.boards.registry import (
     BoardProviderSpec,
     CredentialFieldSpec,
@@ -28,8 +26,8 @@ class FakeBoard:
             "warnings": [],
         }
 
-    def iter_raw(self, board, limit) -> Iterable[RawTask]:
-        return iter(())
+    def iter_raw(self, board, limit, *, sync_filter=None, now_ms=None) -> TaskListing:
+        return TaskListing(rows=())
 
     def normalize(self, raw):
         return {}

@@ -145,6 +145,39 @@ def test_key_scheme_timestamp_and_subtask_grouping_inside_the_page() -> None:
         {"key": f"PRI-{int('3ab', 36)}", "title": "Ребёнок"}
     ]
     assert rows[1].provider_data["parent"] == "2kv"
+    assert rows[0].archived is None
+    assert rows[0].terminal is False
+
+
+def test_status_type_maps_terminal_without_guessing_when_absent() -> None:
+    closed = _task("2kv", status_type="closed")
+    open_task = _task("3ab", status_type="custom")
+    unknown = _task("4cd")
+    unknown["status"].pop("type")
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={"tasks": [closed, open_task, unknown], "last_page": True},
+        )
+
+    rows = list(_board(handler).iter_raw("PRI", None))
+
+    assert [row.terminal for row in rows] == [True, False, None]
+    assert [row.archived for row in rows] == [None, None, None]
+
+
+@pytest.mark.parametrize("updated", [None, "не дата", True])
+def test_invalid_or_missing_update_timestamp_is_unknown(updated: object) -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={"tasks": [_task("2kv", updated=updated)], "last_page": True},
+        )
+
+    row = next(iter(_board(handler).iter_raw("PRI", None)))
+
+    assert row.timestamp is None
 
 
 def test_missing_key_prefix_falls_back_to_the_native_task_id() -> None:
