@@ -855,3 +855,41 @@ def test_build_config_report_rejects_non_json_public_value() -> None:
         )
 
     assert "do-not-echo" not in str(exc.value)
+
+
+def test_committed_repository_key_is_ignored_with_warning(tmp_path):
+    committed = "repository:\n  index_branches: [evil]\nmax_comments: 5\n"
+    data, meta = resolve_policy_data(
+        "o/r", "main", lambda _ref: committed, config_root=tmp_path
+    )
+    assert "repository" not in data
+    assert data["max_comments"] == 5
+    assert any("repository" in warning for warning in meta.warnings)
+    assert not any("evil" in warning for warning in meta.warnings)
+
+
+def test_home_repository_block_is_not_a_policy_key(tmp_path):
+    home = tmp_path / "repos" / "o" / "r.yml"
+    home.parent.mkdir(parents=True)
+    home.write_text(
+        "repository:\n  index_branches: [dev]\nmax_comments: 7\n", encoding="utf-8"
+    )
+    data, meta = resolve_policy_data(
+        "o/r", "main", lambda _ref: None, config_root=tmp_path
+    )
+    assert "repository" not in data
+    assert data["max_comments"] == 7
+
+
+def test_migration_ignores_repository_block_when_comparing(tmp_path):
+    committed = "max_comments: 5\n"
+    home = tmp_path / "repos" / "o" / "r.yml"
+    home.parent.mkdir(parents=True)
+    home.write_text(
+        "max_comments: 5\nrepository:\n  index_branches: [dev]\n", encoding="utf-8"
+    )
+    result = migrate_repo_config(
+        "o/r", "main", lambda _ref: committed, config_root=tmp_path
+    )
+    assert result.conflicting_keys == ()
+    assert result.noop is True

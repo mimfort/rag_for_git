@@ -263,6 +263,10 @@ def resolve_policy_data(
     strict_home: bool = False,
 ) -> tuple[dict[str, object], ResolutionMeta]:
     """Resolve global home, committed, and repository home policy layers."""
+    # Локальный импорт: branches.py импортирует layers.py, модульный импорт
+    # создал бы цикл.
+    from reviewer.config.branches import BRANCHES_KEY
+
     repo = normalize_repo(repo)
     root = config_root or reviewer_config_root()
     merged: dict[str, object] = {}
@@ -288,7 +292,7 @@ def resolve_policy_data(
                     f"{source}: credential key {'.'.join(credential)} запрещён"
                 )
             _validate_known_policy_data(data, source)
-            merge(data, source)
+            merge({k: v for k, v in data.items() if k != BRANCHES_KEY}, source)
         except FileNotFoundError:
             return
         except HomeCredentialError as exc:
@@ -313,6 +317,12 @@ def resolve_policy_data(
 
     merge_home(root / "review.yml", "home:review.yml")
     committed = _read_mapping(fetch_repo_yaml(ref), ".review.yml")
+    if BRANCHES_KEY in committed:
+        committed = {k: v for k, v in committed.items() if k != BRANCHES_KEY}
+        warnings.append(
+            ".review.yml: ключ repository игнорируется "
+            "(ветки задаются домашним слоем, см. reviewer config show)"
+        )
     merge(committed, ".review.yml")
     repo_source = f"home:repos/{repo}.yml"
     merge_home(home_repo_path(repo, root), repo_source)
@@ -735,16 +745,21 @@ def _existing_migration_result(
     before_data: dict[str, object],
     settings,
 ) -> MigrationResult:
+    # Локальный импорт: branches.py импортирует layers.py, модульный импорт
+    # создал бы цикл.
+    from reviewer.config.branches import BRANCHES_KEY
+
     if _credential_path(existing):
         raise HomeConfigError(f"home:repos/{repo}.yml: credential key запрещён")
     source = f"home:repos/{repo}.yml"
     _validate_known_policy_data(existing, source)
-    if not _semantic_equal(existing, candidate):
+    existing_policy = {k: v for k, v in existing.items() if k != BRANCHES_KEY}
+    if not _semantic_equal(existing_policy, candidate):
         conflicts = tuple(sorted(
             key
-            for key in set(existing) | set(candidate)
+            for key in set(existing_policy) | set(candidate)
             if not _semantic_equal(
-                existing.get(key, _MISSING),
+                existing_policy.get(key, _MISSING),
                 candidate.get(key, _MISSING),
             )
         ))
