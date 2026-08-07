@@ -1,4 +1,8 @@
 """fetch_one(key) — единичный RawTask по ключу для write-through после finish."""
+import httpx
+import pytest
+
+from reviewer.tasks.boards.errors import BoardProviderError
 from reviewer.tasks.boards.yougile import YougileBoard
 
 
@@ -22,7 +26,10 @@ class _Client:
 
     def get(self, path, params=None):
         self.calls.append(("GET", path))
-        return self._get[path]
+        result = self._get[path]
+        if isinstance(result, BaseException):
+            raise result
+        return result
 
     def close(self):
         pass
@@ -40,7 +47,7 @@ def test_fetch_one_builds_rawtask_like_iter_raw():
             "id": "u1", "idTaskCommon": "ID-10", "idTaskProject": "PRI-10",
             "title": "Заголовок", "description": "тело", "columnId": "c1",
             "subtasks": ["s1", "s2"], "timestamp": 123, "completed": True}),
-        "/columns/c1": _Resp(200, {"title": "Готово"}),
+        "/columns/c1": _Resp(200, {"title": "Готово", "boardId": "board-1"}),
     })
     raw = b.fetch_one("PRI-10")
     assert raw is not None
@@ -54,12 +61,59 @@ def test_fetch_one_builds_rawtask_like_iter_raw():
     assert raw.board_id == "u1"
     assert raw.terminal is True
     assert raw.archived is None
+    assert raw.provider_data == {
+        "source_board_id": "board-1",
+        "source_column_id": "c1",
+    }
 
 
-def test_fetch_one_none_on_http_error():
-    # 404/сеть → None (write-through пропускается, не валит finish).
+def test_fetch_one_none_only_on_not_found():
     b = _board({"/tasks/PRI-404": _Resp(404, {})})
     assert b.fetch_one("PRI-404") is None
+
+
+@pytest.mark.parametrize(
+    ("status", "category", "retryable"),
+    [
+        (401, "authentication", False),
+        (403, "permission", False),
+        (429, "rate_limit", True),
+        (503, "transient", True),
+    ],
+)
+def test_fetch_one_propagates_typed_http_error(status, category, retryable):
+    b = _board({"/tasks/PRI-10": _Resp(status, {})})
+
+    with pytest.raises(BoardProviderError) as raised:
+        b.fetch_one("PRI-10")
+
+    assert raised.value.category == category
+    assert raised.value.retryable is retryable
+
+
+def test_fetch_one_propagates_network_error_as_retryable_transient():
+    request = httpx.Request("GET", "https://yougile.test/tasks/PRI-10")
+    b = _board({"/tasks/PRI-10": httpx.ReadTimeout("timeout", request=request)})
+
+    with pytest.raises(BoardProviderError) as raised:
+        b.fetch_one("PRI-10")
+
+    assert raised.value.category == "transient"
+    assert raised.value.retryable is True
+
+
+def test_fetch_one_propagates_invalid_json_error():
+    class InvalidJsonResponse(_Resp):
+        def json(self):
+            raise ValueError("invalid json")
+
+    b = _board({"/tasks/PRI-10": InvalidJsonResponse(200)})
+
+    with pytest.raises(BoardProviderError) as raised:
+        b.fetch_one("PRI-10")
+
+    assert raised.value.category == "unsupported"
+    assert raised.value.retryable is False
 
 
 def test_fetch_one_survives_column_resolve_failure():

@@ -17,6 +17,7 @@ class ResolvedProvider:
     board_type: str
     provider: TaskBoardProvider
     secrets: frozenset[str]
+    capabilities: frozenset[str]
 
 
 @contextmanager
@@ -87,7 +88,7 @@ def resolved_provider(
         ) from None
 
     try:
-        yield ResolvedProvider(board_type, provider, secrets)
+        yield ResolvedProvider(board_type, provider, secrets, spec.capabilities)
     except BoardProviderError as error:
         raise BoardProviderError(
             error.category,

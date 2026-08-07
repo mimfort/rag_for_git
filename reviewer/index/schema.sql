@@ -70,6 +70,8 @@ CREATE TABLE IF NOT EXISTS tasks (
 ALTER TABLE tasks ADD COLUMN IF NOT EXISTS project text NOT NULL DEFAULT '';
 -- PRI-196: вложения задачи (распарсенный текст + метаданные) как jsonb.
 ALTER TABLE tasks ADD COLUMN IF NOT EXISTS attachments jsonb NOT NULL DEFAULT '[]';
+-- PRI-224: authoritative snapshot явных связей задачи.
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS links jsonb NOT NULL DEFAULT '[]';
 CREATE INDEX IF NOT EXISTS tasks_bm25 ON tasks
 USING bm25 (id, text, key) WITH (key_field='id');
 CREATE INDEX IF NOT EXISTS tasks_hnsw ON tasks

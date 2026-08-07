@@ -40,6 +40,7 @@ class SyncProvider:
 
     provider: TaskBoardProvider
     secrets: frozenset[str] = frozenset()
+    owned: bool = False
 
 
 class SyncService:
@@ -51,6 +52,22 @@ class SyncService:
         self._tasks = task_service
         self._meta = meta_store
         self._now_ms = now_ms or (lambda: time.time_ns() // 1_000_000)
+        self._closed_provider_ids: set[int] = set()
+
+    def close(self) -> None:
+        """Идемпотентно закрыть только owned providers, не владея shared stores."""
+        first_error: Exception | None = None
+        for item in self._providers:
+            provider_id = id(item.provider)
+            if not item.owned or provider_id in self._closed_provider_ids:
+                continue
+            self._closed_provider_ids.add(provider_id)
+            try:
+                item.provider.close()
+            except Exception as error:  # noqa: BLE001 - закрываем остальных providers
+                first_error = first_error or error
+        if first_error is not None:
+            raise first_error
 
     def _cursor_ref(self, board_type: str, board: str | None) -> str:
         return f"tasks:{board_type}:{board or '*'}"

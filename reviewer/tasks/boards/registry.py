@@ -63,6 +63,7 @@ class BoardProviderSpec:
     default_api_base: str = ""
     create_target_label: str = "Create target"
     done_target_label: str = "Done target"
+    capabilities: frozenset[str] = frozenset()
 
 
 _REQUIRED_PROVIDER_MEMBERS = (
@@ -76,6 +77,13 @@ _REQUIRED_PROVIDER_MEMBERS = (
     "finish",
     "close",
 )
+_PROVIDER_CAPABILITY_METHODS: Mapping[str, tuple[str, ...]] = MappingProxyType({
+    "native_subtasks": (
+        "reconcile_native_subtasks",
+        "create_native_subtask",
+        "replace_native_subtasks",
+    ),
+})
 _MISSING = object()
 
 
@@ -169,6 +177,7 @@ class BoardProviderRegistry:
         provider = spec.factory(context)
         try:
             self._validate_runtime_provider(provider, board_type)
+            self._validate_runtime_capabilities(provider, board_type, spec.capabilities)
         except Exception:
             close = getattr(provider, "close", None)
             if callable(close):
@@ -184,6 +193,10 @@ class BoardProviderRegistry:
             raise TypeError("provider factory must be callable")
         if not spec.setup.label or not spec.setup.help_url or not spec.setup.help_text:
             raise ValueError("provider setup metadata must be complete")
+        if type(spec.capabilities) is not frozenset:
+            raise TypeError("provider capabilities must be a frozenset")
+        if spec.capabilities.difference(_PROVIDER_CAPABILITY_METHODS):
+            raise ValueError("unknown provider capability")
         seen_envs: set[str] = set()
         for field in spec.credential_fields:
             if not field.env or not field.label:
@@ -215,6 +228,21 @@ class BoardProviderRegistry:
                 f"provider board_type {provider.board_type!r} does not match registered board_type "
                 f"{board_type!r}"
             )
+
+    @staticmethod
+    def _validate_runtime_capabilities(
+        provider: object,
+        board_type: str,
+        capabilities: frozenset[str],
+    ) -> None:
+        for capability in capabilities:
+            for name in _PROVIDER_CAPABILITY_METHODS[capability]:
+                member = inspect.getattr_static(provider, name, _MISSING)
+                if member is _MISSING or not callable(member):
+                    raise TypeError(
+                        f"provider {board_type!r} capability {capability!r} "
+                        f"is missing required method: {name}"
+                    )
 
 
 @lru_cache(maxsize=1)

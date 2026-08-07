@@ -1,4 +1,5 @@
 import pytest
+
 from reviewer.config.settings import Settings
 from reviewer.graph.store import GraphStore
 from reviewer.tasks.graph import PRRef, TaskGraph
@@ -50,6 +51,40 @@ def test_upsert_links_empty_does_not_query():
     d = _FakeDriver()
     assert TaskGraph(d).upsert_links("ID-1", []) == 0
     assert d.calls == []
+
+
+def test_replace_links_empty_still_deletes_outgoing_in_one_query():
+    d = _FakeDriver()
+
+    assert TaskGraph(d).replace_links("ID-1", []) == 0
+
+    assert len(d.calls) == 1
+    query, params = d.calls[0]
+    assert "(t)-[old:TASK_LINK]->()" in query
+    assert "DELETE old" in query
+    assert params == {"key": "ID-1", "rows": []}
+
+
+def test_replace_links_filters_defaults_and_deduplicates_snapshot():
+    d = _FakeDriver()
+    links = [
+        {"key": "ID-2", "title": "child", "type": "subtask"},
+        {"key": "ID-2", "title": "duplicate", "type": "subtask"},
+        {"key": "ID-2"},
+        {"title": "keyless"},
+    ]
+
+    assert TaskGraph(d).replace_links("ID-1", links) == 2
+
+    assert len(d.calls) == 1
+    query, params = d.calls[0]
+    assert params["rows"] == [
+        {"key": "ID-2", "title": "child", "type": "subtask"},
+        {"key": "ID-2", "title": "", "type": "relates"},
+    ]
+    assert "MATCH (t:Task {key: $key})" in query
+    assert "(t)-[old:TASK_LINK]->()" in query
+    assert "MERGE (t)-[:TASK_LINK {type: lk.type}]->(n)" in query
 
 
 def test_link_pr_params():

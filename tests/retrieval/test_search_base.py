@@ -1,3 +1,5 @@
+import pytest
+
 from reviewer.policy.context_limits import CodebaseLimits
 from reviewer.retrieval.retriever import ContextPack, Retriever
 
@@ -48,16 +50,17 @@ class _FakeEmbedder:
 
 
 class _FakeGraph:
-    def __init__(self, related_ids=(), raise_=False):
-        self._ids = set(related_ids)
+    def __init__(self, related=(), raise_=False):
+        self._related = list(related)
         self.expand_calls = []
         self._raise = raise_
 
-    def expand(self, repo, node_ids, hops=2, *, branch=""):
-        self.expand_calls.append({"repo": repo, "seeds": list(node_ids), "hops": hops})
+    def expand_detailed(self, repo, node_ids, hops=2, *, branch=""):
+        self.expand_calls.append({"repo": repo, "seeds": list(node_ids), "hops": hops,
+                                  "branch": branch})
         if self._raise:
             raise RuntimeError("neo4j down")
-        return set(self._ids)
+        return list(self._related)
 
 
 class _FakeReranker:
@@ -68,10 +71,13 @@ class _FakeReranker:
         self._raise = raise_
 
     def rerank_scored(self, query, items):
-        self.calls.append({"n": len(items)})
+        items = list(items)
+        self.calls.append({
+            "n": len(items),
+            "node_ids": [item.node_id for item in items],
+        })
         if self._raise:
             raise RuntimeError("voyage down")
-        items = list(items)
         scores = self._scores or [1.0 - i * 0.01 for i in range(len(items))]
         paired = list(zip(items, scores[:len(items)]))
         return sorted(paired, key=lambda p: p[1], reverse=True)
@@ -82,12 +88,42 @@ def _cb(**kw):
                                     abs_floor=0.3, candidate_pool=30, ann_distance_max=0.65), **kw})
 
 
+def _meta(node_id, dist=1, rels=None):
+    return {"id": node_id, "dist": dist, "rels": rels or ["CALLS"]}
+
+
+@pytest.mark.parametrize(
+    ("hybrid_ids", "graph_ids", "ceiling", "expected"),
+    [
+        (["h1", "h2", "h3"], ["g1", "g2"], 3, ["h1", "h2", "g1"]),
+        (["h1"], ["g1", "g2"], 3, ["h1", "g1", "g2"]),
+        (["h1", "h2"], ["g1"], 1, ["h1"]),
+        ([], ["g1", "g2"], 1, ["g1"]),
+        (["h1", "h2"], [], 2, ["h1", "h2"]),
+        (["h1"], ["g1"], 0, []),
+    ],
+)
+def test_select_degraded_context(hybrid_ids, graph_ids, ceiling, expected):
+    try:
+        from reviewer.retrieval.retriever import _select_degraded_context
+    except ImportError:
+        pytest.fail("_select_degraded_context ещё не реализован")
+    hybrid = [_Hit(f"{node_id}.py#f") for node_id in hybrid_ids]
+    graph = [_Hit(f"{node_id}.py#f") for node_id in graph_ids]
+
+    selected = _select_degraded_context(hybrid, graph, ceiling)
+
+    assert [item.path.removesuffix(".py") for item in selected] == expected
+
+
 def test_search_base_is_base_only_and_seeds_graph_from_hits():
     hits = [_Hit("a.py#f1"), _Hit("b.py#f2"), _Hit("c.py#f3"), _Hit("d.py#f4")]
     for h in hits:
         h.bm25_hit = True
     related = [_Hit("e.py#neighbor")]
-    store, graph, reranker, emb = (_FakeStore(hits, related), _FakeGraph({"e.py#neighbor"}),
+    store, graph, reranker, emb = (_FakeStore(hits, related),
+                                    _FakeGraph([{"id": "e.py#neighbor", "rels": ["CALLS"],
+                                                 "dist": 1}]),
                                     _FakeReranker(), _FakeEmbedder())
     r = Retriever(store, graph, emb, reranker, max_context_chars=8000)
     pack = r.search_base("a/x", "logout", limits=_cb())
@@ -196,11 +232,187 @@ def test_search_base_reranker_failure_falls_back_to_rrf():
     assert pack.tail_meta is None        # заметка не пишется при фолбэке
 
 
+def test_search_base_marks_unconfigured_reranker():
+    hits = [_Hit(f"h{i}.py#f") for i in range(1, 4)]
+    for hit in hits:
+        hit.bm25_hit = True
+    retriever = Retriever(
+        _FakeStore(hits),
+        _FakeGraph(),
+        _FakeEmbedder(),
+        reranker=None,
+    )
+
+    pack = retriever.search_base("a/x", "x", limits=_cb(floor=1, ceiling=2))
+
+    assert pack.degraded_reason == "reranker_unconfigured"
+
+
+def test_search_base_marks_failed_reranker():
+    hits = [_Hit(f"h{i}.py#f") for i in range(1, 4)]
+    for hit in hits:
+        hit.bm25_hit = True
+    retriever = Retriever(
+        _FakeStore(hits),
+        _FakeGraph(),
+        _FakeEmbedder(),
+        _FakeReranker(raise_=True),
+    )
+
+    pack = retriever.search_base("a/x", "x", limits=_cb(floor=1, ceiling=2))
+
+    assert pack.degraded_reason == "reranker_failed"
+
+
+def test_search_base_small_pool_is_not_marked_degraded():
+    hits = [_Hit("h1.py#f"), _Hit("h2.py#f")]
+    for hit in hits:
+        hit.bm25_hit = True
+    reranker = _FakeReranker()
+    retriever = Retriever(_FakeStore(hits), _FakeGraph(), _FakeEmbedder(), reranker)
+
+    pack = retriever.search_base("a/x", "x", limits=_cb(floor=4, ceiling=1))
+
+    assert pack.degraded_reason is None
+    assert reranker.calls == []
+
+
+def test_search_base_successful_rerank_is_not_marked_degraded():
+    hits = [_Hit(f"h{i}.py#f") for i in range(1, 4)]
+    for hit in hits:
+        hit.bm25_hit = True
+    retriever = Retriever(
+        _FakeStore(hits),
+        _FakeGraph(),
+        _FakeEmbedder(),
+        _FakeReranker(scores=[0.9, 0.8, 0.7]),
+    )
+
+    pack = retriever.search_base("a/x", "x", limits=_cb(floor=1, ceiling=3))
+
+    assert pack.degraded_reason is None
+
+
+def test_search_base_successful_reranker_receives_cleaned_source_order():
+    hits = [
+        _Hit("h1.py#f"),
+        _Hit("a.py#Foo", start_line=1, end_line=50),
+    ]
+    for hit in hits:
+        hit.bm25_hit = True
+    graph = _FakeGraph([
+        _meta("g1.py#f"),
+        _meta("tests/test_graph.py#t", dist=2),
+        _meta("a.py#Foo.method", dist=3),
+        _meta("g2.py#f", dist=4),
+    ])
+    store = _FakeStore(
+        hits,
+        related=[
+            _Hit("g2.py#f"),
+            _Hit("a.py#Foo.method", start_line=10, end_line=20),
+            _Hit("g1.py#f"),
+            _Hit("tests/test_graph.py#t"),
+        ],
+    )
+    reranker = _FakeReranker()
+    retriever = Retriever(store, graph, _FakeEmbedder(), reranker)
+
+    retriever.search_base("a/x", "x", limits=_cb(floor=1, ceiling=4))
+
+    assert reranker.calls[0]["node_ids"] == [
+        "h1.py#f",
+        "a.py#Foo",
+        "g1.py#f",
+        "g2.py#f",
+    ]
+
+
 def test_search_base_seeds_graph_with_configured_hops():
     hits = [_Hit("a.py#f1")]
     hits[0].bm25_hit = True
-    graph = _FakeGraph({"e.py#n"})
+    graph = _FakeGraph([{"id": "e.py#n", "rels": ["CALLS"], "dist": 1}])
     store = _FakeStore(hits, related=[_Hit("e.py#n")])
     r = Retriever(store, graph, _FakeEmbedder(), _FakeReranker())
     r.search_base("a/x", "x", limits=_cb(), hops=2)
     assert graph.expand_calls[0]["hops"] == 2
+
+
+def test_search_base_restores_graph_order_after_fetch_nodes():
+    hits = [_Hit("h1.py#f")]
+    hits[0].bm25_hit = True
+    graph = _FakeGraph([_meta("g1.py#f", dist=1), _meta("g2.py#f", dist=2)])
+    store = _FakeStore(
+        hits,
+        related=[_Hit("g2.py#f"), _Hit("g1.py#f")],
+    )
+    retriever = Retriever(store, graph, _FakeEmbedder(), reranker=None)
+
+    pack = retriever.search_base("a/x", "x", limits=_cb(floor=1, ceiling=3))
+
+    assert [item.node_id for item in pack.items] == [
+        "h1.py#f", "g1.py#f", "g2.py#f",
+    ]
+
+
+def test_search_base_no_reranker_reserves_best_graph_item():
+    hits = [_Hit(f"h{i}.py#f") for i in range(1, 4)]
+    for hit in hits:
+        hit.bm25_hit = True
+    graph = _FakeGraph([_meta("g1.py#f"), _meta("g2.py#f", dist=2)])
+    store = _FakeStore(hits, related=[_Hit("g2.py#f"), _Hit("g1.py#f")])
+    retriever = Retriever(store, graph, _FakeEmbedder(), reranker=None)
+
+    pack = retriever.search_base("a/x", "x", limits=_cb(floor=1, ceiling=3))
+
+    assert [item.node_id for item in pack.items] == [
+        "h1.py#f", "h2.py#f", "g1.py#f",
+    ]
+
+
+def test_search_base_reranker_failure_uses_same_graph_reservation():
+    hits = [_Hit(f"h{i}.py#f") for i in range(1, 4)]
+    for hit in hits:
+        hit.bm25_hit = True
+    graph = _FakeGraph([_meta("g1.py#f")])
+    store = _FakeStore(hits, related=[_Hit("g1.py#f")])
+    reranker = _FakeReranker(raise_=True)
+    retriever = Retriever(store, graph, _FakeEmbedder(), reranker)
+
+    pack = retriever.search_base("a/x", "x", limits=_cb(floor=1, ceiling=3))
+
+    assert [item.node_id for item in pack.items] == [
+        "h1.py#f", "h2.py#f", "g1.py#f",
+    ]
+
+
+def test_search_base_filtered_graph_item_does_not_reserve_slot():
+    hits = [_Hit("h1.py#f"), _Hit("h2.py#f")]
+    for hit in hits:
+        hit.bm25_hit = True
+    graph = _FakeGraph([_meta("tests/test_graph.py#t")])
+    store = _FakeStore(hits, related=[_Hit("tests/test_graph.py#t")])
+    retriever = Retriever(store, graph, _FakeEmbedder(), reranker=None)
+
+    pack = retriever.search_base("a/x", "x", limits=_cb(floor=1, ceiling=2))
+
+    assert [item.node_id for item in pack.items] == ["h1.py#f", "h2.py#f"]
+
+
+def test_search_base_deduped_graph_item_does_not_reserve_slot():
+    hits = [
+        _Hit("a.py#Foo", start_line=1, end_line=50),
+        _Hit("b.py#f"),
+    ]
+    for hit in hits:
+        hit.bm25_hit = True
+    graph = _FakeGraph([_meta("a.py#Foo.method")])
+    store = _FakeStore(
+        hits,
+        related=[_Hit("a.py#Foo.method", start_line=10, end_line=20)],
+    )
+    retriever = Retriever(store, graph, _FakeEmbedder(), reranker=None)
+
+    pack = retriever.search_base("a/x", "x", limits=_cb(floor=1, ceiling=2))
+
+    assert [item.node_id for item in pack.items] == ["a.py#Foo", "b.py#f"]

@@ -9,14 +9,14 @@ import sys
 
 from mcp.server.fastmcp import FastMCP
 
-from reviewer.mcp.schemas import FindingIn, SummaryFragmentIn, VerdictIn
+from reviewer.mcp.schemas import FindingIn, SubtasksIn, SummaryFragmentIn, VerdictIn
 from reviewer.mcp.service import MCPReviewService
 
 log = logging.getLogger(__name__)
 
 
 def create_server(service: MCPReviewService) -> FastMCP:
-    """Создать и вернуть сконфигурированный FastMCP-сервер с 37 тулами.
+    """Создать и вернуть сконфигурированный FastMCP-сервер с 38 тулами.
 
     Все тулы — обычные def (sync), а не async: сервис не потокобезопасен
     и рассчитан на последовательное исполнение sync-тулов FastMCP в event loop.
@@ -183,6 +183,25 @@ def create_server(service: MCPReviewService) -> FastMCP:
         )
 
     @mcp.tool()
+    def create_subtasks(
+        parent_key: str,
+        subtasks: SubtasksIn,
+        idempotency_key: str,
+        board_type: str | None = None,
+        project: str | None = None,
+        provider_options: dict[str, object] | None = None,
+    ) -> dict:
+        """Create and attach a confirmed native-subtask batch with durable idempotency."""
+        return service.create_subtasks(
+            parent_key,
+            [item.model_dump() for item in subtasks],
+            idempotency_key,
+            board_type,
+            project,
+            provider_options,
+        )
+
+    @mcp.tool()
     def search_tasks(query: str, top_k: int | None = None, project: str | None = None) -> str:
         """Find semantically similar tasks in the indexed task corpus.
         project scopes results to one board project (code prefix, e.g. PRI); empty = all.
@@ -199,10 +218,10 @@ def create_server(service: MCPReviewService) -> FastMCP:
     @mcp.tool()
     def get_task(key: str, project: str | None = None) -> dict | None:
         """Read one task's own normalized content from the reviewer store (filled by
-        sync_board): {key, aliases, title, description, status, url, criteria, attachments}.
+        sync_board): {key, aliases, title, description, status, url, criteria, attachments, links}.
         project scopes the lookup to one board project (code prefix); empty = all.
         Returns null if the task is not in the store (caller falls back to the board).
-        For linked tasks / PRs / touched code, use get_task_context instead."""
+        For traversed linked tasks / PRs / touched code, use get_task_context instead."""
         return service.get_task(key, project=project)
 
     @mcp.tool()
@@ -228,9 +247,10 @@ def create_server(service: MCPReviewService) -> FastMCP:
                           provider_options: dict[str, object] | None = None) -> dict:
         """Discover normalized board metadata (read-only).
         board_type is a registered provider type and provider_options is a non-secret
-        JSON object. Returns {board_type, project, targets, options, warnings}, where
-        targets are {id, label, purposes} and options are {key, label, required_for,
-        choices}. Credentials are never returned; failures are safe for fallback."""
+        JSON object. Returns {board_type, project, capabilities, targets, options, warnings},
+        where capabilities are registry-declared optional provider features, targets are
+        {id, label, purposes}, and options are {key, label, required_for, choices}.
+        Credentials are never returned; failures are safe for fallback."""
         return service.get_board_targets(board_type, project, provider_options)
 
     @mcp.tool()
@@ -429,6 +449,23 @@ def create_server(service: MCPReviewService) -> FastMCP:
     return mcp
 
 
+def _close_components(components, primary_error: BaseException | None = None) -> None:
+    close = getattr(components, "close", None)
+    if not callable(close):
+        return
+    try:
+        close()
+    except BaseException as cleanup_error:
+        if primary_error is None:
+            raise
+        safe_note = (
+            "Не удалось закрыть компоненты reviewer-mcp: "
+            f"{type(cleanup_error).__name__}"
+        )
+        primary_error.add_note(safe_note)
+        log.warning(safe_note)
+
+
 def main() -> None:
     # logging.basicConfig по умолчанию пишет в stderr — не в stdout,
     # иначе JSON-RPC-фреймы MCP-протокола в stdio-режиме будут повреждены.
@@ -436,11 +473,16 @@ def main() -> None:
     from reviewer.app import build_components
     from reviewer.config.settings import Settings
 
+    components = None
     try:
         settings = Settings()
         components = build_components(settings)
         server = create_server(MCPReviewService(settings, components))
-    except Exception as e:
+    except BaseException as e:
+        if components is not None:
+            _close_components(components, e)
+        if not isinstance(e, Exception):
+            raise
         # Одна ясная строка в stderr без сырого traceback (детали — в debug-логе).
         log.debug("Сбой инициализации reviewer-mcp", exc_info=True)
         print(
@@ -449,7 +491,13 @@ def main() -> None:
             file=sys.stderr,
         )
         sys.exit(1)
-    server.run()  # stdio
+    try:
+        server.run()  # stdio
+    except BaseException as error:
+        _close_components(components, error)
+        raise
+    else:
+        _close_components(components)
 
 
 if __name__ == "__main__":

@@ -9,6 +9,7 @@ import pytest
     (
         ("reviewer.index.store", "schema.sql"),
         ("reviewer.mcp.session_store", "session_store.sql"),
+        ("reviewer.tasks.subtask_store", "subtask_store.sql"),
         ("reviewer.web.history", "schema.sql"),
     ),
 )

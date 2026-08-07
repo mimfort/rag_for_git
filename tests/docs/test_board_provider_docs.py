@@ -1,15 +1,17 @@
 """Контракт пользовательской документации расширяемых провайдеров досок."""
 
+import asyncio
 import re
 from pathlib import Path
+from unittest.mock import MagicMock
 
 from dotenv import dotenv_values
 
 from reviewer.config.provider_credentials import ProviderCredentialSource
 from reviewer.config.settings import Settings
 from reviewer.config.task_board import normalize_task_board_config
+from reviewer.entrypoints.mcp_server import create_server
 from reviewer.tasks.boards.registry import default_board_registry
-
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -36,11 +38,12 @@ MATRIX_CAPABILITIES = (
     "Write-through",
     "Archive metadata",
     "Retention pushdown exact-count",
+    "Native-subtask writes",
 )
 
 
 def _matrix_rows(text: str) -> dict[str, list[str]]:
-    """Строки таблицы «Capability matrix»: имя провайдера → capability-значения."""
+    """Строки таблицы «Capability matrix»: имя провайдера → значения колонок."""
     section = text.split("## Capability matrix", maxsplit=1)[1].split("\n## ", maxsplit=1)[0]
     rows: dict[str, list[str]] = {}
     for line in section.splitlines():
@@ -101,6 +104,181 @@ def test_provider_reference_explains_unknown_archive_fail_open_warning():
         "age filtering runs first and may still exclude the row",
     ):
         assert marker in normalized
+
+
+def test_native_subtask_matrix_matches_registry_capabilities_exactly():
+    rows = _matrix_rows(_read("docs/board-providers.md"))
+    rows.pop("Provider", None)
+    registry = default_board_registry()
+    native_subtasks = MATRIX_CAPABILITIES.index("Native-subtask writes")
+
+    supported_types = {
+        board_type
+        for board_type in registry.registered_types()
+        if "native_subtasks" in registry.get(board_type).capabilities
+    }
+    assert supported_types == {"yougile"}
+    for board_type in registry.registered_types():
+        spec = registry.get(board_type)
+        expected = "Supported" if board_type in supported_types else "Unsupported"
+        assert rows[spec.setup.label][native_subtasks] == expected
+
+
+def test_decompose_task_is_in_every_public_skill_inventory():
+    for rel in ("README.md", "README.ru.md"):
+        section = _skill_section(_read(rel), "decompose-task")
+        assert re.search(r"^[-*] \*\*Invoke:|^[-*] \*\*Вызов:", section, re.MULTILINE)
+        assert "/rag-reviewer:decompose-task" in section
+
+    agents_skills = _read("AGENTS.md").split("## Skills", maxsplit=1)[1]
+    agent_inventory = set(re.findall(r"^- `([^`]+)`$", agents_skills, re.MULTILINE))
+    assert "rag-reviewer:decompose-task" in agent_inventory
+
+    plugin_inventory = (
+        _read("plugin/README.md")
+        .split("## Что внутри", maxsplit=1)[1]
+        .split("\n## ", maxsplit=1)[0]
+    )
+    plugin_commands = set(re.findall(r"`(/rag-reviewer:[^`]+)`", plugin_inventory))
+    assert "/rag-reviewer:decompose-task" in plugin_commands
+
+
+def test_public_docs_tool_count_matches_registered_server():
+    runtime_count = len(asyncio.run(create_server(MagicMock()).list_tools()))
+    assert runtime_count == 38
+
+    count_pattern = re.compile(
+        r"MCP(?:-сервер| server)[^\n]*?\b(\d+)\s+(?:tools|тул)\b",
+        re.IGNORECASE,
+    )
+    for rel in ("README.md", "README.ru.md", "AGENTS.md", "plugin/README.md"):
+        documented_counts = [int(value) for value in count_pattern.findall(_read(rel))]
+        assert documented_counts == [runtime_count], (rel, documented_counts, runtime_count)
+
+
+def test_provider_reference_defines_generic_native_subtask_contract():
+    text = _read("docs/board-providers.md")
+    section = text.split("## Native subtask writes", maxsplit=1)[1].split("\n## ", maxsplit=1)[0]
+
+    assert re.search(
+        r"create_subtasks\(parent_key, subtasks, idempotency_key,.*board_type.*"
+        r"project.*provider_options.*\)",
+        section,
+        re.DOTALL,
+    )
+    assert re.search(
+        r"registry(?:-owned| owned).*`native_subtasks`.*(?:get_board_targets|discovery)",
+        section,
+        re.IGNORECASE | re.DOTALL,
+    )
+    assert re.search(
+        r"provider result.*(?:cannot|must not).*self-spoof",
+        section,
+        re.IGNORECASE | re.DOTALL,
+    )
+    assert re.search(
+        r"no fallback.*individual (?:task )?writes",
+        section,
+        re.IGNORECASE | re.DOTALL,
+    )
+    assert "native parent `subtasks`" in section
+    assert "canonical `subtask` links" in section
+    assert "strict parent-and-children write-through" in section
+
+
+def test_provider_reference_documents_subtask_marker_lifecycle():
+    section = (
+        _read("docs/board-providers.md")
+        .split("## Native subtask writes", maxsplit=1)[1]
+        .split("\n## ", maxsplit=1)[0]
+    )
+    marker = r"`reviewer-subtask:<64 lowercase hex>`"
+
+    assert re.search(
+        marker + r".*(?:visible|raw board card).*reconciliation",
+        section,
+        re.IGNORECASE | re.DOTALL,
+    )
+    assert re.search(
+        marker + r".*(?:strips?|stripped|hides?|hidden).*normalized user-facing text",
+        section,
+        re.IGNORECASE | re.DOTALL,
+    )
+
+
+def test_provider_reference_structures_result_buckets_and_retry_safety():
+    section = (
+        _read("docs/board-providers.md")
+        .split("## Native subtask writes", maxsplit=1)[1]
+        .split("\n## ", maxsplit=1)[0]
+    )
+    result_table = section.split("### Result buckets", maxsplit=1)[1].split("\n### ", maxsplit=1)[0]
+    documented_buckets = {
+        match.group(1)
+        for match in re.finditer(r"^\| `([^`]+)` \| [^|]+ \|$", result_table, re.MULTILINE)
+    }
+
+    assert documented_buckets == {
+        "created",
+        "attached",
+        "unattached",
+        "pending",
+        "warnings",
+    }
+    assert re.search(
+        r"same idempotency key.*same (?:full )?payload.*safe",
+        section,
+        re.IGNORECASE | re.DOTALL,
+    )
+    assert re.search(
+        r"same idempotency key.*different payload.*conflict",
+        section,
+        re.IGNORECASE | re.DOTALL,
+    )
+
+
+def test_provider_reference_structures_durable_recovery_by_persisted_state():
+    section = (
+        _read("docs/board-providers.md")
+        .split("## Native subtask writes", maxsplit=1)[1]
+        .split("\n## ", maxsplit=1)[0]
+    )
+    recovery = section.split("### Durable recovery", maxsplit=1)[1].split("\n### ", maxsplit=1)[0]
+    rows: dict[str, str] = {}
+    for line in recovery.splitlines():
+        if not line.startswith("| `"):
+            continue
+        cells = [cell.strip() for cell in line.strip("|").split("|")]
+        rows[cells[0].strip("`")] = " ".join(cells[1:])
+
+    assert set(rows) == {"in_flight", "board_complete"}
+    in_flight = rows["in_flight"]
+    assert re.search(
+        r"same-key retry.*reconcile.*persisted.*markers.*before any create",
+        in_flight,
+        re.IGNORECASE,
+    )
+    assert re.search(
+        r"(?:no|zero) exact marker match.*multiple matches.*never.*POST",
+        in_flight,
+        re.IGNORECASE,
+    )
+    assert "`pending`" in in_flight
+    assert "`manual_required=true`" in in_flight
+    assert re.search(
+        r"operator.*manual board verification.*repeated retry.*progress",
+        in_flight,
+        re.IGNORECASE,
+    )
+
+    board_complete = rows["board_complete"]
+    assert re.search(
+        r"only.*strict parent-and-children write-through/reindex",
+        board_complete,
+        re.IGNORECASE,
+    )
+    assert re.search(r"no child `POST`", board_complete, re.IGNORECASE)
+    assert re.search(r"no parent attachment `PUT`", board_complete, re.IGNORECASE)
 
 
 def test_provider_reference_documents_every_registered_credential_env():

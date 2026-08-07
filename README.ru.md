@@ -179,9 +179,12 @@ callers влияет правка. Это отдельный сценарий, �
 caching и памяти. `maintainability-review` ищет сложность, дублирование, проблемы
 читаемости, границ и соглашений репозитория. Оба остаются в явно выбранном измерении.
 
-### Создание и завершение задач доски
+### Создание, декомпозиция и завершение задач доски
 
 `create-task` собирает каноническое тело и пишет только после подтверждения.
+`decompose-task` превращает одного сохранённого родителя в полностью показанный preview batch
+нативных дочерних задач, запрашивает одно подтверждение, сохраняет previewed idempotency key при
+retry, затем синхронизирует и проверяет каждую связь и child read.
 `finish-task` добавляет PR, переводит задачу в обнаруженный done target, добавляет ссылку
 на задачу в PR body и повторно синхронизирует корпус—тоже только после подтверждения.
 
@@ -421,6 +424,8 @@ Server-side workflow — **store-first**:
    context tools.
 3. Client models не перечисляют provider напрямую и не передают credentials.
 
+MCP server сейчас предоставляет **38 tools**, включая batch-операцию нативных подзадач.
+
 Legacy aliases остаются как **legacy metadata for older clients** на одно compatibility window:
 `TASK_BOARD_API_KEY → YOUGILE_API_KEY` и
 `TASK_BOARD_API_BASE → YOUGILE_API_BASE`. Новые deployments используют registry-declared
@@ -505,6 +510,32 @@ threshold, graph backend и retrieval ceilings меняют cost/recall; сна�
 - **Нужно:** registered board config, обнаруженные create target/options и credentials.
 - **Чтение/запись:** читает код; вызывает `create_task` только после явного подтверждения.
 - **Результат:** каноническое тело, key/URL и обновлённый task corpus.
+
+### `decompose-task` — создать нативные дочерние задачи
+
+- **Когда:** разложить существующую board task на grounded и независимо выполнимые native children.
+- **Вызов:** `/rag-reviewer:decompose-task PRI-224`.
+- **Нужно:** сохранённый parent, настроенная доска, authoritative capability `native_subtasks`, task
+  context, похожие задачи и релевантный код из `search_codebase`.
+- **Board config:** один раз проверяет repository key `task_board`. Значение null/empty/disabled
+  явно отключает board work и не вызывает deploy-wide `get_board_config`. Только отсутствующий
+  repository key разрешает один вызов `get_board_config`; mapping фиксирует generic `type`,
+  `project` и `options` на весь flow.
+- **Preview/confirmation:** показывает provider, parent, idempotency key и полное каноническое тело
+  каждого child, затем запрашивает одно явное confirmation всего preview; до него записей нет.
+- **Запись/проверка:** отправляет ровно один подтверждённый initial batch. Каждая фактически начатая
+  batch-запись проверяется независимо от статуса (`ok`, `partial`, `error` или timeout) до
+  объявления результата или предложения recovery.
+- **Проверка:** выполняет ровно один project-scoped sync, перечитывает parent через `get_task` и
+  graph/context через `get_task_context` даже если child keys не возвращены, затем точечно читает
+  каждый возвращённый child key через `get_task`.
+- **Recovery:** recovery после partial, timeout или error никогда не запускается автоматически.
+  Skill сохраняет и показывает `status`, `category` и `retryable`. После проверки только transport
+  timeout/unknown outcome или `retryable=true` допускает новый явный выбор: точный retry или stop;
+  `retryable=false`, а `unsupported`, `conflict` и `parent_not_found` останавливают flow без retry.
+  Точный retry повторяет те же полные payload, order и idempotency key; не создаёт новый key, не
+  редактирует wording и не отправляет только remainder.
+- **Результат:** created/attached/unattached/pending children и warnings без догадок.
 
 ### `finish-task` — закрыть задачу после PR
 

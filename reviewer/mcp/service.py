@@ -23,6 +23,7 @@ from reviewer.config.provider_credentials import ProviderCredentialSource
 from reviewer.config.settings import Settings
 from reviewer.config.task_board import migrate_legacy_board_args, normalize_task_sync_filter
 from reviewer.index.refs import base_ref
+from reviewer.mcp.schemas import FindingIn, SummaryFragmentIn, VerdictIn
 from reviewer.mcp.session_serde import from_payload, to_payload
 from reviewer.mcp.session_store import SessionStore
 from reviewer.retrieval.retriever import ContextPack
@@ -40,7 +41,12 @@ from reviewer.services.summary_fragments import (
     has_complete_fragment_generation,
     with_server_generation_provenance,
 )
-from reviewer.tasks.boards.base import JsonValue, TaskBoardProvider
+from reviewer.tasks.boards.base import (
+    JsonValue,
+    NativeSubtaskIdentity,
+    RawTask,
+    TaskBoardProvider,
+)
 from reviewer.tasks.boards.errors import (
     BoardProviderError,
     sanitize_provider_payload,
@@ -49,11 +55,18 @@ from reviewer.tasks.boards.errors import (
 from reviewer.tasks.boards.registry import BoardProviderRegistry, default_board_registry
 from reviewer.tasks.boards.runtime import resolved_provider
 from reviewer.tasks.graph import PRRef
+from reviewer.tasks.subtasks import (
+    ConfirmedSubtaskIdentityError,
+    SubtaskBatchResult,
+    SubtaskRequest,
+    WriteThroughResult,
+    validate_confirmed_subtask_identities,
+    validate_subtask_request,
+)
 from reviewer.tasks.sync import SyncProvider, SyncService
 from reviewer.tasks.taskdoc import TaskDoc, render_markdown
 from reviewer.tools.code_tools import ToolContext, make_tools
 from reviewer.tools.graph_format import format_neighbors
-from reviewer.mcp.schemas import FindingIn, SummaryFragmentIn, VerdictIn
 from reviewer.vcs.base import ChangedFile, Finding, VCSProvider
 from reviewer.vcs.diff import commentable_lines
 
@@ -75,6 +88,9 @@ _MAX_SESSION_STEPS = 1000
 # _TOUCH_INTERVAL_S. Тулы зовутся LLM-темпом; при TTL в часах минутная
 # гранулярность ничего не теряет и убирает бессмысленно частые UPDATE.
 _TOUCH_INTERVAL_S = 60
+_SUBTASK_RECOVERY_WARNING = (
+    "subtask operation failed; durable recovery used a safe fallback"
+)
 
 
 @dataclass
@@ -473,6 +489,80 @@ class MCPReviewService:
         return sanitized if isinstance(sanitized, dict) else {}
 
     @staticmethod
+    def _unknown_subtask_outcome(
+        request: SubtaskRequest,
+        board_type: str,
+        warning: str = _SUBTASK_RECOVERY_WARNING,
+    ) -> dict:
+        return {
+            "status": "partial",
+            "board_type": board_type,
+            "parent_key": request.parent_key,
+            "idempotency_key": request.idempotency_key,
+            "resumed": False,
+            "created": [],
+            "attached": [],
+            "unattached": [],
+            "pending": [],
+            "warnings": [warning],
+            "reindexed": False,
+            "category": "unknown_outcome",
+            "retryable": True,
+        }
+
+    def _recover_subtask_failure(
+        self,
+        request: SubtaskRequest,
+        board_type: str,
+        secrets: frozenset[str],
+        error: Exception,
+    ) -> dict:
+        warning = _SUBTASK_RECOVERY_WARNING
+        try:
+            rendered = sanitize_provider_text(error, secrets)
+            if isinstance(rendered, str) and rendered:
+                warning = rendered
+        except Exception:  # noqa: BLE001 - rendering must be total
+            warning = _SUBTASK_RECOVERY_WARNING
+
+        try:
+            result = self.components.subtask_service.recover_result(request)
+        except Exception:  # noqa: BLE001 - durable reload must be fail-safe
+            result = None
+            warning = _SUBTASK_RECOVERY_WARNING
+        if type(result) is not SubtaskBatchResult:
+            return self._unknown_subtask_outcome(request, board_type, warning)
+
+        try:
+            payload = result.payload()
+            persisted_warnings = payload.get("warnings", ())
+            if not isinstance(persisted_warnings, (list, tuple)) or not all(
+                isinstance(item, str) for item in persisted_warnings
+            ):
+                persisted_warnings = ()
+            payload["warnings"] = [*persisted_warnings, warning]
+            safe_payload = self._safe_board_payload(payload, secrets)
+            if not safe_payload:
+                raise ValueError("recovery payload sanitizer returned no payload")
+            return safe_payload
+        except Exception:  # noqa: BLE001 - final rendering fallback is literal-only
+            return {
+                "status": result.status,
+                "board_type": result.board_type,
+                "parent_key": result.parent_key,
+                "idempotency_key": result.idempotency_key,
+                "resumed": result.resumed,
+                "created": [],
+                "attached": [],
+                "unattached": [],
+                "pending": [],
+                "warnings": [_SUBTASK_RECOVERY_WARNING],
+                "reindexed": result.reindexed,
+                "category": result.category,
+                "retryable": result.retryable,
+            }
+
+    @staticmethod
     def _board_error(operation: str, error: Exception,
                      secrets: frozenset[str] = frozenset()) -> dict:
         reason = sanitize_provider_text(error, secrets)
@@ -506,6 +596,224 @@ class MCPReviewService:
         except Exception:
             log.warning("board write-through реиндекс не удался")
             return None
+
+    def _write_through_subtasks(
+        self,
+        provider: TaskBoardProvider,
+        parent: RawTask,
+        identities: tuple[NativeSubtaskIdentity, ...],
+        sanitize: Callable[[object], str],
+    ) -> WriteThroughResult:
+        """Строго переиндексировать parent и подтверждённых children одним батчем."""
+        warnings: list[str] = []
+
+        def warning(value: object) -> None:
+            safe = sanitize(value)
+            warnings.append(safe if isinstance(safe, str) else "write-through failed")
+
+        try:
+            if (
+                not isinstance(parent, RawTask)
+                or not isinstance(parent.board_id, str)
+                or not parent.board_id.strip()
+                or not isinstance(parent.key, str)
+                or not parent.key.strip()
+            ):
+                warning("write-through parent snapshot has no usable identity")
+                return WriteThroughResult(False, tuple(warnings))
+
+            current_parent = provider.fetch_one(parent.board_id)
+            if current_parent is None:
+                warning(f"write-through parent not found: {parent.key}")
+                return WriteThroughResult(False, tuple(warnings))
+            if (
+                not isinstance(current_parent, RawTask)
+                or current_parent.board_id != parent.board_id
+                or current_parent.key != parent.key
+                or type(current_parent.subtask_ids) is not list
+                or not all(
+                    isinstance(subtask_id, str) and subtask_id.strip()
+                    for subtask_id in current_parent.subtask_ids
+                )
+            ):
+                warning("write-through parent point-read returned a different or malformed task")
+                return WriteThroughResult(False, tuple(warnings))
+
+            try:
+                validate_confirmed_subtask_identities(
+                    current_parent.board_id,
+                    tuple(enumerate(identities)),
+                )
+            except ConfirmedSubtaskIdentityError as error:
+                warning(error)
+                return WriteThroughResult(False, tuple(warnings))
+
+            confirmed_ids = {identity.board_id for identity in identities}
+            if not confirmed_ids.issubset(current_parent.subtask_ids):
+                warning("write-through parent no longer contains all confirmed subtasks")
+                return WriteThroughResult(False, tuple(warnings))
+
+            raw_tasks = [current_parent]
+            for identity in identities:
+                raw = provider.fetch_one(identity.board_id)
+                if raw is None:
+                    warning(f"write-through task not found: {identity.key}")
+                    return WriteThroughResult(False, tuple(warnings))
+                if not isinstance(raw, RawTask) or raw.board_id != identity.board_id:
+                    warning("write-through child point-read returned a different task")
+                    return WriteThroughResult(False, tuple(warnings))
+                canonical_keys = {
+                    value
+                    for value in (raw.key, raw.project_code)
+                    if isinstance(value, str) and value.strip()
+                }
+                if identity.key != identity.board_id and identity.key not in canonical_keys:
+                    warning("write-through child canonical identity does not match point-read")
+                    return WriteThroughResult(False, tuple(warnings))
+                raw_tasks.append(raw)
+
+            briefs: list[dict] = []
+            seen_keys: set[str] = set()
+            for raw in raw_tasks:
+                brief = provider.normalize(raw)
+                if (
+                    not isinstance(brief, dict)
+                    or not isinstance(brief.get("key"), str)
+                    or not brief["key"].strip()
+                    or type(brief.get("links")) is not list
+                    or not all(
+                        isinstance(link, dict)
+                        and isinstance(link.get("type"), str)
+                        and link["type"].strip()
+                        and isinstance(link.get("key"), str)
+                        and link["key"].strip()
+                        for link in brief["links"]
+                    )
+                ):
+                    warning("write-through normalize returned an incomplete TaskBrief")
+                    return WriteThroughResult(False, tuple(warnings))
+                key = brief["key"]
+                if key in seen_keys:
+                    warning(f"write-through duplicate normalized task key: {key}")
+                    return WriteThroughResult(False, tuple(warnings))
+                seen_keys.add(key)
+                briefs.append(brief)
+
+            child_keys = {brief["key"] for brief in briefs[1:]}
+            parent_subtask_keys = {
+                link["key"]
+                for link in briefs[0]["links"]
+                if link["type"] == "subtask"
+            }
+            if not child_keys.issubset(parent_subtask_keys):
+                warning("write-through parent links do not cover normalized subtasks")
+                return WriteThroughResult(False, tuple(warnings))
+
+            results = self.components.task_service.index_batch(briefs)
+            if not isinstance(results, list) or len(results) != len(briefs):
+                warning("write-through index result count does not match TaskBrief count")
+                return WriteThroughResult(False, tuple(warnings))
+
+            for brief, result in zip(briefs, results):
+                if not isinstance(result, dict) or result.get("key") != brief["key"]:
+                    warning("write-through index result does not match TaskBrief")
+                    continue
+                result_warnings = result.get("warnings")
+                if type(result_warnings) is not list or not all(
+                    isinstance(item, str) for item in result_warnings
+                ):
+                    warning("write-through index returned invalid warnings")
+                else:
+                    for item in result_warnings:
+                        warning(item)
+                if result.get("links_stored") is not True:
+                    warning(f"write-through links were not stored for {brief['key']}")
+        except Exception as error:  # noqa: BLE001 - provider/store boundary
+            warning(error)
+            return WriteThroughResult(False, tuple(warnings))
+        return WriteThroughResult(not warnings, tuple(warnings))
+
+    def _resolved_subtask_request(
+        self,
+        parent_key: str,
+        subtasks: list[dict],
+        idempotency_key: str,
+        board_type: str | None,
+        project: str | None,
+        provider_options: Mapping[str, JsonValue] | None,
+    ):
+        """Резолв generic board config без создания provider и нормализация hash input."""
+        registry, credentials = self._board_runtime()
+        durable_request = None
+        if board_type is None or project is None or provider_options is None:
+            durable_request = self.components.subtask_service.lookup_request(idempotency_key)
+        defaults = (
+            self.settings.task_board_default() or {}
+            if durable_request is None
+            else {}
+        )
+
+        requested_type = (
+            board_type
+            if board_type is not None
+            else durable_request.board_type
+            if durable_request is not None
+            else None
+        )
+        if requested_type is None:
+            default_type = defaults.get("type") if isinstance(defaults, dict) else None
+            if isinstance(default_type, str):
+                requested_type = default_type
+        if requested_type is not None:
+            if not isinstance(requested_type, str) or not requested_type.strip():
+                raise BoardProviderError("configuration", "board_type must be a non-empty string.")
+            resolved_type: str | None = requested_type.strip()
+        else:
+            configured = registry.configured_types(credentials)
+            resolved_type = configured[0] if len(configured) == 1 else None
+        if resolved_type is None:
+            raise BoardProviderError(
+                "configuration",
+                "board_type is required unless exactly one provider is configured.",
+            )
+        try:
+            registry.get(resolved_type)
+        except KeyError:
+            raise BoardProviderError(
+                "configuration", "Board provider type is not registered."
+            ) from None
+        default_project = defaults.get("project") if isinstance(defaults, dict) else None
+        resolved_project = (
+            project
+            if project is not None
+            else durable_request.project
+            if durable_request is not None
+            else default_project
+        )
+        default_options = defaults.get("options", {}) if isinstance(defaults, dict) else {}
+        if not isinstance(default_options, Mapping):
+            raise BoardProviderError("configuration", "Board provider options are invalid.")
+        if provider_options is not None and not isinstance(provider_options, Mapping):
+            raise BoardProviderError("configuration", "Board provider options are invalid.")
+        if provider_options is not None:
+            options = (
+                dict(provider_options)
+                if durable_request is not None
+                else {**default_options, **dict(provider_options)}
+            )
+        elif durable_request is not None:
+            options = durable_request.provider_options
+        else:
+            options = dict(default_options)
+        request = validate_subtask_request(
+            parent_key,
+            subtasks,
+            idempotency_key,
+            resolved_type,
+            resolved_project,
+            options,
+        )
+        return request, registry, credentials
 
     def _backlink_pr(self, pr_url: str, key: str, task_url: str) -> tuple[bool, list[str]]:
         """Дописать ссылку на задачу в начало тела PR. Возвращает (added, warnings).
@@ -907,6 +1215,90 @@ class MCPReviewService:
         except BoardProviderError as error:
             return self._board_error("create_task", error)
 
+    def create_subtasks(
+        self,
+        parent_key: str,
+        subtasks: list[dict],
+        idempotency_key: str,
+        board_type: str | None = None,
+        project: str | None = None,
+        provider_options: Mapping[str, JsonValue] | None = None,
+    ) -> dict:
+        """Создать и привязать batch нативных подзадач с durable idempotency."""
+        secrets = frozenset()
+        try:
+            secrets = self._board_secrets()
+            request, registry, credentials = self._resolved_subtask_request(
+                parent_key,
+                subtasks,
+                idempotency_key,
+                board_type,
+                project,
+                provider_options,
+            )
+            secrets = credentials.secret_values(registry.get(request.board_type))
+            preflight = self.components.subtask_service.preflight(request)
+            if preflight.result is not None:
+                return self._safe_board_payload(preflight.result.payload(), secrets)
+
+            with resolved_provider(
+                self.settings,
+                request.board_type,
+                request.provider_options,
+                registry=registry,
+                credential_source=credentials,
+            ) as resolved:
+                if "native_subtasks" not in resolved.capabilities:
+                    return self._safe_board_payload(
+                        {
+                            "status": "error",
+                            "board_type": resolved.board_type,
+                            "parent_key": request.parent_key,
+                            "idempotency_key": request.idempotency_key,
+                            "category": "unsupported",
+                            "retryable": False,
+                            "reason": "Board provider does not support native subtasks.",
+                        },
+                        resolved.secrets,
+                    )
+                def sanitize(value: object) -> str:
+                    return sanitize_provider_text(value, resolved.secrets)
+
+                try:
+                    result = self.components.subtask_service.run(
+                        request,
+                        operation=preflight.operation,
+                        provider=resolved.provider,
+                        board_type=resolved.board_type,
+                        write_through=lambda parent, identities: self._write_through_subtasks(
+                            resolved.provider,
+                            parent,
+                            identities,
+                            sanitize,
+                        ),
+                        sanitize=sanitize,
+                    )
+                except BoardProviderError:
+                    raise
+                except Exception as error:  # noqa: BLE001 - durable recovery boundary
+                    return self._recover_subtask_failure(
+                        request,
+                        request.board_type or resolved.board_type,
+                        resolved.secrets,
+                        error,
+                    )
+                return self._safe_board_payload(result.payload(), resolved.secrets)
+        except BoardProviderError as error:
+            return self._safe_board_payload(
+                self._board_error("create_subtasks", error, secrets),
+                secrets,
+            )
+        except Exception as error:  # noqa: BLE001 - ledger/config boundary
+            return self._safe_board_payload(
+                self._board_error("create_subtasks", error, secrets),
+                secrets,
+            )
+
     def get_board_targets(
         self,
         board_type: str | None = None,
@@ -926,9 +1318,10 @@ class MCPReviewService:
                 result = resolved.provider.list_targets(project)
                 return self._safe_board_payload(
                     {
+                        **result,
                         "board_type": resolved.board_type,
                         "project": project,
-                        **result,
+                        "capabilities": sorted(resolved.capabilities),
                     },
                     resolved.secrets,
                 )
@@ -1880,6 +2273,7 @@ class MCPReviewService:
     def get_candidate_findings(self, repo: str, pr: int) -> str:
         """Вернуть накопленных кандидатов с id для verify (JSON-строка)."""
         import json
+
         from reviewer.services.repo_id import normalize_repo
         repo = normalize_repo(repo)
         s = self._session(repo, pr)

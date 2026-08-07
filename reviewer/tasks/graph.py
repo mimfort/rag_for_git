@@ -59,7 +59,34 @@ class TaskGraph:
             key=key, rows=rows)
         return len(rows)
 
-    def link_prs_batch(self, pairs: list[tuple[str, "PRRef"]]) -> int:
+    def replace_links(self, key: str, links: list[dict]) -> int:
+        """Заменить snapshot исходящих TASK_LINK одним атомарным запросом."""
+        rows = []
+        seen = set()
+        for link in links:
+            link_key = link.get("key")
+            if not link_key:
+                continue
+            link_type = link.get("type") or "relates"
+            signature = (link_key, link_type)
+            if signature in seen:
+                continue
+            seen.add(signature)
+            rows.append({"key": link_key, "title": link.get("title") or "",
+                         "type": link_type})
+        self._driver.execute_query(
+            "MATCH (t:Task {key: $key}) "
+            "OPTIONAL MATCH (t)-[old:TASK_LINK]->() "
+            "DELETE old "
+            "WITH DISTINCT t "
+            "UNWIND $rows AS lk "
+            "MERGE (n:Task {key: lk.key}) "
+            "  ON CREATE SET n.title=lk.title, n.codes=[lk.key] "
+            "MERGE (t)-[:TASK_LINK {type: lk.type}]->(n)",
+            key=key, rows=rows)
+        return len(rows)
+
+    def link_prs_batch(self, pairs: list[tuple[str, PRRef]]) -> int:
         """Батчевый UNWIND-MERGE для N пар (task_key, PRRef) без TOUCHES.
 
         Используется из index_batch вместо N×M вызовов link_pr — один execute_query.

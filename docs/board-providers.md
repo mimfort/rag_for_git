@@ -8,19 +8,19 @@ the current matrix, not a closed list of future choices.
 
 One row per registered provider; every row must fill all capability columns.
 
-| Provider | Sync/pagination | Markdown normalization | Links/subtasks | Attachments | Single read | Discovery | Create/target | Finish/PR link | Write-through | Archive metadata | Retention pushdown exact-count |
-|---|:-:|---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
-| YouGile | ✓ | HTML↔MD | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | Unknown | Unsupported |
-| YouTrack | ✓ | Native MD | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | Unknown | Unsupported |
-| Jira Cloud | ✓ | ADF↔MD | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | Unknown | Unsupported |
-| GitHub Issues | ✓ | Native MD | ✓ | metadata only | ✓ | ✓ | ✓ | ✓ | ✓ | Unknown | Unsupported |
-| Trello | ✓ | Native MD | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | Exact (`closed`) | Unsupported |
-| Linear | ✓ | Native MD | ✓ | metadata only | ✓ | ✓ | ✓ | ✓ | ✓ | Unknown | Unsupported |
-| ClickUp | ✓ | Native MD (query flag) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | Unknown | Unsupported |
-| Asana | ✓ | HTML↔MD | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | Unknown | Unsupported |
-| Yandex Tracker | ✓ | YFM→MD | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | Unknown | Unsupported |
-| Kaiten | ✓ | Native MD | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | Exact (`condition`) | Unsupported |
-| Weeek | ✓ | HTML↔MD | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | Unknown | Unsupported |
+| Provider | Sync/pagination | Markdown normalization | Links/subtasks | Attachments | Single read | Discovery | Create/target | Finish/PR link | Write-through | Archive metadata | Retention pushdown exact-count | Native-subtask writes |
+|---|:-:|---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
+| YouGile | ✓ | HTML↔MD | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | Unknown | Unsupported | Supported |
+| YouTrack | ✓ | Native MD | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | Unknown | Unsupported | Unsupported |
+| Jira Cloud | ✓ | ADF↔MD | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | Unknown | Unsupported | Unsupported |
+| GitHub Issues | ✓ | Native MD | ✓ | metadata only | ✓ | ✓ | ✓ | ✓ | ✓ | Unknown | Unsupported | Unsupported |
+| Trello | ✓ | Native MD | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | Exact (`closed`) | Unsupported | Unsupported |
+| Linear | ✓ | Native MD | ✓ | metadata only | ✓ | ✓ | ✓ | ✓ | ✓ | Unknown | Unsupported | Unsupported |
+| ClickUp | ✓ | Native MD (query flag) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | Unknown | Unsupported | Unsupported |
+| Asana | ✓ | HTML↔MD | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | Unknown | Unsupported | Unsupported |
+| Yandex Tracker | ✓ | YFM→MD | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | Unknown | Unsupported | Unsupported |
+| Kaiten | ✓ | Native MD | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | Exact (`condition`) | Unsupported | Unsupported |
+| Weeek | ✓ | HTML↔MD | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | Unknown | Unsupported | Unsupported |
 
 All adapters implement validation, full pagination, normalized reads, target discovery, create,
 idempotent finish, and write-through reindexing. The registry exposes only configured types whose
@@ -37,6 +37,70 @@ deduplicated archive warning is emitted only then. Age filtering runs first and 
 the row; in that case archive uncertainty is not counted or warned. `Retention pushdown exact-count`
 requires provider-side filtering with exact, mutually exclusive reason counts; it is unsupported
 for every provider in this iteration, so the shared sync domain applies the filter locally.
+
+## Native subtask writes
+
+The generic MCP operation is:
+
+```text
+create_subtasks(parent_key, subtasks, idempotency_key, board_type=None,
+                project=None, provider_options=None)
+```
+
+Clients discover support through `get_board_targets`: its registry-owned capability
+`native_subtasks` is the authoritative discovery result. Capability metadata comes from the
+immutable registry spec, not provider-returned validation or discovery data; a provider result
+cannot add or self-spoof it. YouGile alone is registered with this capability today. Every other
+row is explicitly unsupported even if that board API has some concept of child work.
+
+An unsupported provider returns `category=unsupported` before a board write. There is no fallback
+to individual task writes through repeated `create_task` calls: doing that would lose native
+attachment semantics and batch retry safety. The currently supported adapter creates real child
+cards and attaches their board IDs through the native parent `subtasks` field. Sync then exposes
+the provider identities as canonical `subtask` links; clients must not infer child keys or URLs.
+
+Each child card carries the visible technical marker
+`reviewer-subtask:<64 lowercase hex>`. It remains on the raw board card so an unknown-outcome retry
+can scan and reconcile already-created children. Normalization strips and hides the exact
+`reviewer-subtask:<64 lowercase hex>` marker from normalized user-facing text before task-store,
+search, graph, or model context is built. The marker is deterministic for the confirmed operation
+and child, but is not a user-visible task identity or a substitute for a canonical link.
+
+Completion requires strict parent-and-children write-through: the updated parent and every
+returned child are normalized and stored, and their canonical links are written to the task graph.
+A board-complete batch whose write-through has not completed remains partial and retryable; it is
+never reported as fully indexed. Warnings are sanitized and preserve reconciliation or manual
+recovery facts without exposing credentials.
+
+### Result buckets
+
+The operation reports overlapping lifecycle views rather than one ambiguous task list:
+
+| Bucket | Meaning |
+|---|---|
+| `created` | Children known to exist on the board; this includes attached and unattached children. |
+| `attached` | Created children present in the native parent relationship. |
+| `unattached` | Created children not yet present in the native parent relationship. |
+| `pending` | Children not yet known to be created, including unresolved in-flight work. |
+| `warnings` | Sanitized reconciliation, provider, write-through, or manual-recovery details. |
+
+### Durable recovery
+
+Durable retries prefer safety over liveness. Persisted state determines the only allowed retry
+work; an ambiguous board outcome is never converted into another speculative write.
+
+| Persisted state | Retry behavior | Safety boundary |
+|---|---|---|
+| `in_flight` | A same-key retry reconciles all persisted `in_flight` markers before any create attempt. | With no exact marker match or multiple matches, reviewer never issues a child `POST` again. That child remains in `pending` output with `manual_required=true`; operator/manual board verification is required, and repeated retry must not be expected to make progress. |
+| `board_complete` | A retry performs only strict parent-and-children write-through/reindex. | It performs no child `POST` and no parent attachment `PUT`; the completed board relationships are only verified and reindexed. |
+
+### Retry safety
+
+A retry with the same idempotency key and the same full payload is safe: the durable operation
+ledger and reconciliation markers resume known progress instead of intentionally duplicating a
+child. The same idempotency key with a different payload is a non-retryable `conflict`. Exact retry
+therefore preserves parent, child order and wording, provider configuration, and the complete
+payload; it never retries only a guessed remainder.
 
 ## Shared transport
 
@@ -83,7 +147,9 @@ sync_board(repo=None, branch=None, board=None, limit=None, purge_orphaned=False,
            force_renormalize=False, sync_filter=None)
 get_board_targets(board_type=None, project=None, provider_options=None)
 create_task(title, problem="", steps=None, criteria=None, context=None, board_type=None,
-             project=None, target=None, provider_options=None)
+            project=None, target=None, provider_options=None)
+create_subtasks(parent_key, subtasks, idempotency_key, board_type=None,
+                project=None, provider_options=None)
 finish_task(key, pr_url, note=None, mark_done=True, board_type=None, target=None,
              provider_options=None)
 ```
