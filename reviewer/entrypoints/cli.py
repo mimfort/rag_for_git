@@ -757,11 +757,17 @@ def index(repo: str, ref: str | None, branch_opt: str | None, repo_tag: str | No
 
 
 @cli.command("migrate-branches")
-def migrate_branches() -> None:
+@click.option("--repo", "repo_tag", default=None,
+              help="owner/name; по умолчанию из git remote origin")
+def migrate_branches(repo_tag: str | None) -> None:
     """Один раз после апгрейда: перенести legacy base-индекс на первичную ветку."""
     s = Settings()
+    repo_id = _resolve_repo(repo_tag, ".", s)
+    try:
+        primary = resolve_repo_branches(repo_id, settings=s).primary
+    except (HomeConfigError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
     c = build_components(s)
-    primary = s.primary_branch()
     try:
         c.store.init_schema()
         n = c.store.migrate_legacy_base(primary)
