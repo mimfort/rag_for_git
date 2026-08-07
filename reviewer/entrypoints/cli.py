@@ -194,6 +194,11 @@ def config_show(repo: str, branch: str | None, as_json: bool) -> None:
         click.echo(json.dumps(payload, ensure_ascii=False, sort_keys=True, indent=2))
     else:
         _render_config_report(payload)
+    if "policy_error" in payload:
+        # Branch-секция и диагностика уже напечатаны — не через ClickException
+        # (он подавил бы вывод), но код возврата должен сигналить о проблеме
+        # внешним скриптам (`config show; echo $?`).
+        raise SystemExit(1)
 
 
 @config_group.command("migrate")

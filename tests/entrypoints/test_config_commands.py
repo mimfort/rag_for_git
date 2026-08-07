@@ -110,8 +110,10 @@ def test_config_show_rejects_invalid_known_home_value_without_echoing_literal(
     )
 
     # Ошибка policy-слоя больше не роняет команду целиком (Task 6): секция
-    # веток печатается, а policy-часть уходит в policy_error.
-    assert result.exit_code == 0, result.output
+    # веток печатается, а policy-часть уходит в policy_error — но код возврата
+    # остаётся ненулевым, чтобы `config show; echo $?` не терял сигнал об ошибке.
+    assert result.exit_code != 0
+    assert "branches:" in result.output
     assert "home:review.yml" in result.output
     assert secret not in result.output
     assert secret not in repr(result.exception)
@@ -184,8 +186,10 @@ def test_config_show_sanitizes_committed_yaml_and_closes_every_resource(
 
     # Ошибка policy-слоя больше не роняет команду целиком (Task 6): секция
     # веток печатается, а policy-часть уходит в policy_error; ресурсы
-    # закрываются как прежде — независимо от исхода policy-части.
-    assert result.exit_code == 0, result.output
+    # закрываются как прежде — независимо от исхода policy-части. Код
+    # возврата при этом остаётся ненулевым (сигнал внешним скриптам).
+    assert result.exit_code != 0
+    assert "branches:" in result.output
     assert ".review.yml" in result.output
     assert secret not in result.output
     assert secret not in repr(result.exception)
@@ -203,7 +207,8 @@ def test_config_show_sanitizes_invalid_policy_value(monkeypatch, tmp_path) -> No
         cli_mod.cli, ["config", "show", "--repo", "o/r", "--branch", "main"]
     )
 
-    assert result.exit_code == 0, result.output
+    assert result.exit_code != 0
+    assert "branches:" in result.output
     assert "effective policy" in result.output
     assert secret not in result.output
     assert secret not in repr(result.exception)
@@ -222,7 +227,8 @@ def test_config_show_rejects_invalid_public_type_without_echoing_value(
 
     result = CliRunner().invoke(cli_mod.cli, arguments)
 
-    assert result.exit_code == 0, result.output
+    assert result.exit_code != 0
+    assert "branches" in result.output
     assert "effective policy" in result.output
     assert secret not in result.output
     assert secret not in repr(result.exception)
