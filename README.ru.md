@@ -109,9 +109,10 @@ reviewer env на каждой машине вместо loopback defaults из 
    reviewer init
    ```
 
-2. **Выберите repo и branch scope.** Задайте `DEFAULT_REPO` и упорядоченный allowlist
-   `REVIEW_BRANCHES` в server env. Per-repo policy, игнорируемые пути, context limits и несекретные
-   board metadata храните в `.review.yml`.
+2. **Выберите repo и branch scope.** Задайте `DEFAULT_REPO` как fallback repo, а ветки — либо
+   упорядоченным allowlist `REVIEW_BRANCHES` (CSV) в server env, либо (предпочтительно) домашним
+   per-repo слоем — см. [Репозитории и ветки](#репозитории-и-ветки). Per-repo policy, игнорируемые
+   пути, context limits и несекретные board metadata храните в `.review.yml`.
 
 3. **Постройте и проверьте каждую отслеживаемую ветку.**
 
@@ -303,7 +304,8 @@ New Chat или новую CLI-сессию. В IDE также выполнит�
 - Voyage: `VOYAGE_API_KEY`;
 - хранилища: `PG_DSN`, `NEO4J_URI`, `NEO4J_USER`, `NEO4J_PASSWORD`;
 - VCS: provider token и опциональный API base;
-- repo scope: `DEFAULT_REPO`, `REVIEW_BRANCHES`;
+- repo scope: `DEFAULT_REPO`, `REVIEW_BRANCHES` (fallback branch allowlist; домашний per-repo
+  слой имеет приоритет — см. [Репозитории и ветки](#репозитории-и-ветки));
 - board credentials: provider-specific env из registry.
 
 Credentials остаются на сервере. **Credentials are not returned** board metadata/discovery tools
@@ -311,8 +313,12 @@ Credentials остаются на сервере. **Credentials are not returned
 
 ### Репозитории и ветки
 
-`DEFAULT_REPO` задаёт fallback `owner/name`. `REVIEW_BRANCHES` — упорядоченный CSV allowlist;
-первая запись является primary. У каждой ветки отдельные чанки `base:<branch>` и graph nodes.
+`DEFAULT_REPO` задаёт fallback `owner/name`. Отслеживаемые ветки репозитория резолвятся слоями —
+первый источник, где они заданы, выигрывает целиком (без поветочного слияния): домашний per-repo
+файл `$XDG_CONFIG_HOME/rag-reviewer/repos/<owner>/<name>.yml` → домашний глобальный `review.yml` →
+env-allowlist `REVIEW_BRANCHES` (CSV) → `["main"]`. В любом источнике первая запись — primary,
+если `primary_branch` не задан явно. У каждой ветки отдельные чанки `base:<branch>` и graph nodes.
+Команда `reviewer config show --repo owner/name` показывает effective-ветки и слой-источник.
 
 ```bash
 reviewer index /path/to/repo --ref main --repo owner/name
@@ -320,7 +326,9 @@ reviewer status /path/to/repo --branch main --json
 reviewer search "token verification" --branch main
 ```
 
-После обновления legacy unscoped base index один раз запустите `reviewer migrate-branches`.
+Команда `reviewer config migrate --repo owner/name` копирует env-allowlist `REVIEW_BRANCHES` в
+домашний per-repo слой (no-op, если домашний слой уже задаёт ветки); после обновления legacy
+unscoped base index один раз запустите `reviewer migrate-branches`.
 
 ### Per-repo `.review.yml`
 
@@ -617,7 +625,7 @@ Base indexes отслеживают committed refs, а не working-tree edits. 
 |---|---|---|
 | `reviewer check` не видит Postgres/Neo4j | Stores не запущены или DSN отличается | Запустите `docker compose -f ~/.config/rag-reviewer/docker-compose.yml up -d`, затем повторите `reviewer check` |
 | Voyage отвечает 429 | Исчерпан free-tier RPM/TPM | Дождитесь quota window; повторите incremental index, не удаляя существующий |
-| PR пропущен | Target branch вне `REVIEW_BRANCHES` или draft policy его исключает | Прочитайте reason `prepare_review`; меняйте policy только для намеренной target branch |
+| PR пропущен | Target branch не отслеживается для этого репозитория (см. `reviewer config show`), или draft policy его исключает | Прочитайте reason `prepare_review`; для намеренной target branch добавьте её в домашний per-repo слой (или fallback `REVIEW_BRANCHES`), а не только в policy |
 | Task lookup пуст | Board отключён/не настроен или corpus не прогрет | Проверьте [board setup](docs/board-providers.md), затем запустите `/rag-reviewer:sync-tasks` |
 | Q&A не видит новый локальный код | Base index содержит только committed ref | Прочитайте локальный файл или commit/index нужную ветку |
 | AI-клиент не видит новые skills | Session открыта до установки | Начните New Chat/new CLI session; в IDE выполните Reload Window |

@@ -32,10 +32,18 @@ log = logging.getLogger(__name__)
 
 
 class BranchNotTrackedError(Exception):
-    """Целевая ветка PR не в REVIEW_BRANCHES — ревью пропускается."""
+    """Целевая ветка PR не отслеживается для этого репозитория — ревью пропускается.
+
+    Отслеживаемые ветки резолвятся слоями: домашний per-repo файл → домашний
+    глобальный `review.yml` → env `REVIEW_BRANCHES` → `["main"]`
+    (`reviewer/config/branches.py::resolve_repo_branches`).
+    """
 
     def __init__(self, branch: str) -> None:
-        super().__init__(f"ветка '{branch}' не отслеживается (REVIEW_BRANCHES)")
+        super().__init__(
+            f"ветка '{branch}' не отслеживается для этого репозитория "
+            "(см. `reviewer config show`)"
+        )
         self.branch = branch
 
 
@@ -198,8 +206,12 @@ class ReviewService:
 
             # Маршрутизация: PR в неотслеживаемую ветку пропускаем ДО дорогих
             # шагов (overlay/эмбеддинги ещё не строились — очистка идемпотентна).
+            # HomeConfigError здесь намеренно не глушится: битый домашний конфиг
+            # обязан быть громким, иначе PR молча останется без ревью.
+            from reviewer.config.branches import resolve_repo_branches
+
             branch = prq.base_ref
-            if branch not in self.settings.review_branches_list():
+            if branch not in resolve_repo_branches(repo, settings=self.settings).index:
                 raise BranchNotTrackedError(branch)
 
             from reviewer.config.layers import resolve_policy_data

@@ -232,7 +232,8 @@ class MCPReviewService:
             log.info("Ревью %s#%s пропущено: ветка '%s' не отслеживается",
                      repo, pr, e.branch)
             return {"status": "skipped",
-                    "reason": f"branch '{e.branch}' not tracked (REVIEW_BRANCHES)"}
+                    "reason": f"branch '{e.branch}' is not tracked for this "
+                              "repository (see `reviewer config show`)"}
         except Exception:
             # Любой другой сбой prepare (в т.ч. недостроенный overlay, который
             # ReviewService.prepare уже подчищает сам себе в своём except) —
@@ -1333,7 +1334,8 @@ class MCPReviewService:
 
         Возвращает (normalized_repo, resolved_branch) при успехе либо строку-заметку
         об ошибке (её тул отдаёт пользователю как есть). Ветка валидируется по
-        REVIEW_BRANCHES; пустая ветка → первичная.
+        отслеживаемым веткам репозитория (см. `reviewer config show`); пустая
+        ветка → первичная ветка репозитория.
         """
         from reviewer.services.repo_id import normalize_repo
         raw = repo or self.settings.default_repo
@@ -1343,10 +1345,15 @@ class MCPReviewService:
             repo = normalize_repo(raw)
         except ValueError:
             return f"(некорректный repo: {raw!r})"
-        if branch and branch not in self.settings.review_branches_list():
-            return (f"(ветка {branch!r} не в REVIEW_BRANCHES "
-                    f"({self.settings.review_branches_list()}))")
-        return (repo, branch or self.settings.primary_branch())
+
+        from reviewer.config.branches import resolve_repo_branches
+        from reviewer.services.branch import resolve_branch
+
+        try:
+            branches = resolve_repo_branches(repo, settings=self.settings)
+            return (repo, resolve_branch(branch, None, branches))
+        except ValueError as exc:
+            return f"({exc})"
 
     def _resolve_policy(self, repo: str, branch: str) -> tuple["ReviewPolicy", "ResolutionMeta"]:
         """Резолвит effective policy из env, home-слоёв и committed `.review.yml`."""
@@ -1415,8 +1422,8 @@ class MCPReviewService:
                         include_tests: bool = False) -> str:
         """Гибрид-поиск по base-индексу репозитория (без PR-сессии) — для /solve-task.
 
-        branch — отслеживаемая ветка (allowlist REVIEW_BRANCHES); по умолчанию
-        первичная. Поиск идёт по индексу указанной ветки (base:<branch>).
+        branch — отслеживаемая ветка репозитория (см. `reviewer config show`);
+        по умолчанию первичная. Поиск идёт по индексу указанной ветки (base:<branch>).
         Выдача: без вложенных дублей и (по умолчанию) без тест-чанков, с
         построчными номерами для цитирования path:line без повторного Read.
         include_tests=True возвращает тест-чанки. Охват адаптивен (cliff-отсечка

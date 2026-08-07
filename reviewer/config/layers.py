@@ -263,6 +263,10 @@ def resolve_policy_data(
     strict_home: bool = False,
 ) -> tuple[dict[str, object], ResolutionMeta]:
     """Resolve global home, committed, and repository home policy layers."""
+    # Локальный импорт: branches.py импортирует layers.py, модульный импорт
+    # создал бы цикл.
+    from reviewer.config.branches import BRANCHES_KEY
+
     repo = normalize_repo(repo)
     root = config_root or reviewer_config_root()
     merged: dict[str, object] = {}
@@ -288,7 +292,7 @@ def resolve_policy_data(
                     f"{source}: credential key {'.'.join(credential)} запрещён"
                 )
             _validate_known_policy_data(data, source)
-            merge(data, source)
+            merge({k: v for k, v in data.items() if k != BRANCHES_KEY}, source)
         except FileNotFoundError:
             return
         except HomeCredentialError as exc:
@@ -313,6 +317,12 @@ def resolve_policy_data(
 
     merge_home(root / "review.yml", "home:review.yml")
     committed = _read_mapping(fetch_repo_yaml(ref), ".review.yml")
+    if BRANCHES_KEY in committed:
+        committed = {k: v for k, v in committed.items() if k != BRANCHES_KEY}
+        warnings.append(
+            ".review.yml: ключ repository игнорируется "
+            "(ветки задаются домашним слоем, см. reviewer config show)"
+        )
     merge(committed, ".review.yml")
     repo_source = f"home:repos/{repo}.yml"
     merge_home(home_repo_path(repo, root), repo_source)
@@ -735,17 +745,23 @@ def _existing_migration_result(
     before_data: dict[str, object],
     settings,
 ) -> MigrationResult:
+    # Локальный импорт: branches.py импортирует layers.py, модульный импорт
+    # создал бы цикл.
+    from reviewer.config.branches import BRANCHES_KEY
+
     if _credential_path(existing):
         raise HomeConfigError(f"home:repos/{repo}.yml: credential key запрещён")
     source = f"home:repos/{repo}.yml"
     _validate_known_policy_data(existing, source)
-    if not _semantic_equal(existing, candidate):
+    existing_policy = {k: v for k, v in existing.items() if k != BRANCHES_KEY}
+    candidate_policy = {k: v for k, v in candidate.items() if k != BRANCHES_KEY}
+    if not _semantic_equal(existing_policy, candidate_policy):
         conflicts = tuple(sorted(
             key
-            for key in set(existing) | set(candidate)
+            for key in set(existing_policy) | set(candidate_policy)
             if not _semantic_equal(
-                existing.get(key, _MISSING),
-                candidate.get(key, _MISSING),
+                existing_policy.get(key, _MISSING),
+                candidate_policy.get(key, _MISSING),
             )
         ))
         return MigrationResult(
@@ -878,6 +894,10 @@ def migrate_repo_config(
     settings=None,
 ) -> MigrationResult:
     """Copy a safe committed policy to its repository-scoped home layer."""
+    # Локальный импорт: branches.py импортирует layers.py, модульный импорт
+    # создал бы цикл.
+    from reviewer.config.branches import BRANCHES_KEY
+
     repo = normalize_repo(repo)
     root = config_root or reviewer_config_root()
     source_text = fetch_repo_yaml(ref)
@@ -890,6 +910,16 @@ def migrate_repo_config(
             f".review.yml: credential key {'.'.join(credential)} нельзя мигрировать"
         )
     _validate_known_policy_data(candidate, ".review.yml")
+    # Ключ repository — не policy-ключ (ветки задаются домашним слоем): вырезаем
+    # его и из data, используемых для сравнения effective policy, и из текста,
+    # который будет опубликован в новый home-файл.
+    candidate_policy = {k: v for k, v in candidate.items() if k != BRANCHES_KEY}
+    published_text = source_text or ""
+    if BRANCHES_KEY in candidate:
+        published_text = yaml.safe_dump(
+            candidate_policy, allow_unicode=True, sort_keys=False
+        )
+
     def fetch_snapshot(_selected_ref: str) -> str | None:
         return source_text
 
@@ -909,7 +939,7 @@ def migrate_repo_config(
             return _existing_migration_result(
                 destination,
                 existing,
-                candidate,
+                candidate_policy,
                 repo,
                 ref,
                 fetch_snapshot,
@@ -918,14 +948,14 @@ def migrate_repo_config(
                 settings,
             )
         published_data, published_meta = _simulated_repo_layer(
-            before_data, before_meta, candidate, source
+            before_data, before_meta, candidate_policy, source
         )
         published_effective = _effective_policy_snapshot(published_data, settings)
         if not _semantic_equal(before_effective, published_effective):
             raise HomeConfigError("effective policy изменился после миграции")
         if not _publish_new_config(
             destination,
-            source_text or "",
+            published_text,
             source,
             parent_fd=parent.descriptor,
         ):
@@ -939,7 +969,7 @@ def migrate_repo_config(
             return _existing_migration_result(
                 destination,
                 existing,
-                candidate,
+                candidate_policy,
                 repo,
                 ref,
                 fetch_snapshot,

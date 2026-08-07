@@ -17,6 +17,7 @@ import yaml
 
 from reviewer.config.settings import Settings
 from reviewer.app import build_components
+from reviewer.config.branches import migrate_repo_branches, resolve_repo_branches
 from reviewer.config.layers import (
     HomeConfigError,
     build_config_report,
@@ -33,6 +34,7 @@ from reviewer.policy.policy import ReviewPolicy
 from reviewer.index.store import ChunkStore
 from reviewer.index.summary_store import SummaryStore
 from reviewer.mcp.session_store import SessionStore
+from reviewer.services.branch import resolve_branch
 from reviewer.services.gc import purge_orphaned_overlays
 from reviewer.services.review_service import ReviewService
 from reviewer.services.status import build_status_report, render_status, render_status_json
@@ -93,6 +95,16 @@ def _config_error_message(exc: Exception) -> str:
 
 
 def _render_config_report(report: Mapping[str, object]) -> None:
+    branches = report.get("branches")
+    if branches:
+        assert isinstance(branches, Mapping)
+        click.echo("branches:")
+        click.echo(f"  primary: {branches['primary']}  ({branches['source']})")
+        click.echo(f"  index:   {', '.join(branches['index'])}  ({branches['source']})")
+    policy_error = report.get("policy_error")
+    if policy_error is not None:
+        click.echo(f"policy_error: {policy_error}")
+        return
     effective = report["effective"]
     sources = report["sources"]
     shadowed = report["shadowed"]
@@ -113,14 +125,25 @@ def _render_config_report(report: Mapping[str, object]) -> None:
 @contextmanager
 def _config_context(repo_opt: str, branch_opt: str | None):
     settings = Settings()
-    components = build_components(settings)
+    # connect=False: diagnostic-командам граф не нужен, а созданный GraphStore
+    # эагерли требует живой Neo4j — не должен ронять команду при недоступной сети.
+    components = build_components(settings, connect=False)
     vcs = None
     try:
         repo = _resolve_config_repo(repo_opt)
-        branch = branch_opt or settings.primary_branch()
+        # Ветки резолвятся из домашнего слоя ДО обращения к VCS: раньше ветка
+        # бралась из settings.primary_branch() именно затем, чтобы создать VCS
+        # и прочитать committed .review.yml — цикл «нужна ветка, чтобы узнать
+        # ветку». Домашний резолв не ходит в сеть, поэтому цикла больше нет.
+        branches = resolve_repo_branches(repo, settings=settings)
+        branch = branch_opt or branches.primary
         owner, name = repo.split("/", 1)
-        vcs = ReviewService(settings, components)._create_vcs_provider(owner, name)
-        yield settings, components, vcs, repo, branch
+        vcs_error: Exception | None = None
+        try:
+            vcs = ReviewService(settings, components)._create_vcs_provider(owner, name)
+        except Exception as exc:  # noqa: BLE001 — диагностика не должна падать целиком
+            vcs_error = exc
+        yield settings, components, vcs, repo, branch, branches, vcs_error
     finally:
         if vcs is not None:
             _safe_config_close(vcs, "vcs")
@@ -138,50 +161,111 @@ def _resolve_config_repo(repo: str) -> str:
 @click.option("--branch", default=None, help="ветка policy; по умолчанию первичная")
 @click.option("--json", "as_json", is_flag=True, default=False)
 def config_show(repo: str, branch: str | None, as_json: bool) -> None:
-    """Показать effective policy и происхождение её верхних ключей."""
+    """Показать effective policy и происхождение её верхних ключей.
+
+    Секция веток печатается всегда, даже если VCS недоступен (нет сети, нет
+    токена) — резолв веток чисто локальный и не зависит от policy-части.
+    """
     try:
-        with _config_context(repo, branch) as (settings, _components, vcs, repo_id, ref):
-            data, meta = resolve_policy_data(
-                repo_id,
-                ref,
-                lambda selected_ref: vcs.get_file_at_ref(".review.yml", selected_ref),
-                strict_home=True,
-            )
-            report = build_config_report(repo_id, ref, settings, data, meta)
+        with _config_context(repo, branch) as ctx:
+            settings, _components, vcs, repo_id, ref, branches, vcs_error = ctx
+            payload: dict[str, object] = {
+                "branches": {
+                    "primary": branches.primary,
+                    "index": list(branches.index),
+                    "source": branches.source,
+                }
+            }
+            try:
+                if vcs_error is not None:
+                    raise vcs_error
+                data, meta = resolve_policy_data(
+                    repo_id,
+                    ref,
+                    lambda selected_ref: vcs.get_file_at_ref(".review.yml", selected_ref),
+                    strict_home=True,
+                )
+                payload.update(build_config_report(repo_id, ref, settings, data, meta))
+            except (HomeConfigError, yaml.YAMLError) as exc:
+                # Тот же санитайзер, что и у остальных config-команд: не эхоить
+                # сырой YAML/normalization payload исключения.
+                payload["policy_error"] = _config_error_message(exc)
+            except Exception as exc:  # noqa: BLE001 — диагностика не должна падать целиком
+                # Прочие сбои (VCS, сеть) — без текста исключения: он может
+                # содержать URL/токены из VCS-клиента.
+                payload["policy_error"] = type(exc).__name__
     except (HomeConfigError, yaml.YAMLError) as exc:
         raise click.ClickException(_config_error_message(exc)) from exc
     if as_json:
-        click.echo(json.dumps(report, ensure_ascii=False, sort_keys=True, indent=2))
+        click.echo(json.dumps(payload, ensure_ascii=False, sort_keys=True, indent=2))
     else:
-        _render_config_report(report)
+        _render_config_report(payload)
+    if "policy_error" in payload:
+        # Branch-секция и диагностика уже напечатаны — не через ClickException
+        # (он подавил бы вывод), но код возврата должен сигналить о проблеме
+        # внешним скриптам (`config show; echo $?`).
+        raise SystemExit(1)
 
 
 @config_group.command("migrate")
 @click.option("--repo", required=True, help="owner/name репозитория")
 @click.option("--branch", default=None, help="ветка policy; по умолчанию первичная")
 def config_migrate(repo: str, branch: str | None) -> None:
-    """Безопасно скопировать committed policy в домашний слой репозитория."""
+    """Безопасно скопировать committed policy и ветки в домашний слой репозитория.
+
+    Порядок обязателен: policy-миграция идёт первой, потому что
+    `migrate_repo_config` публикует новый домашний файл только при его
+    отсутствии — если branch-миграция создаст файл раньше, policy-перенос
+    уйдёт в ветку «уже перенесено» и отчитается иначе. Поэтому исключение
+    policy-части не поднимается
+    сразу: оно сохраняется, branch-миграция выполняется и печатается
+    безусловно (перенос веток от committed `.review.yml` не зависит), и
+    только потом сохранённое исключение поднимается — так пользователь
+    видит перенос веток и получает ненулевой код возврата.
+    """
+    pending_error: click.ClickException | None = None
     try:
-        with _config_context(repo, branch) as (settings, _components, vcs, repo_id, ref):
-            result = migrate_repo_config(
-                repo_id,
-                ref,
-                lambda selected_ref: vcs.get_file_at_ref(".review.yml", selected_ref),
-                settings=settings,
-            )
-            if result.conflicting_keys:
-                keys = ", ".join(result.conflicting_keys)
-                raise click.ClickException(f"Конфликтующие ключи: {keys}")
-            report = build_config_report(
-                repo_id, ref, settings, result.data, result.meta
-            )
+        with _config_context(repo, branch) as ctx:
+            settings, _components, vcs, repo_id, ref, _branches, vcs_error = ctx
+            try:
+                if vcs_error is not None:
+                    raise click.ClickException(
+                        f"Не удалось подключиться к VCS: {vcs_error}"
+                    ) from vcs_error
+                result = migrate_repo_config(
+                    repo_id,
+                    ref,
+                    lambda selected_ref: vcs.get_file_at_ref(".review.yml", selected_ref),
+                    settings=settings,
+                )
+                if result.conflicting_keys:
+                    keys = ", ".join(result.conflicting_keys)
+                    raise click.ClickException(f"Конфликтующие ключи: {keys}")
+                report = build_config_report(
+                    repo_id, ref, settings, result.data, result.meta
+                )
+            except (HomeConfigError, yaml.YAMLError) as exc:
+                pending_error = click.ClickException(_config_error_message(exc))
+                click.echo(f"Policy не перенесена: {pending_error.message}")
+            except click.ClickException as exc:
+                pending_error = exc
+                click.echo(f"Policy не перенесена: {exc.message}")
+            else:
+                if result.noop:
+                    click.echo(f"Конфиг уже перенесён: {result.path}")
+                else:
+                    click.echo(f"Конфиг перенесён: {result.path}")
+                _render_config_report(report)
+
+            branch_result = migrate_repo_branches(repo_id, settings=settings)
+            if branch_result.noop:
+                click.echo(f"Ветки уже заданы в {branch_result.path}")
+            else:
+                click.echo(f"Ветки перенесены в {branch_result.path} (.env не изменён)")
     except (HomeConfigError, yaml.YAMLError) as exc:
         raise click.ClickException(_config_error_message(exc)) from exc
-    if result.noop:
-        click.echo(f"Конфиг уже перенесён: {result.path}")
-    else:
-        click.echo(f"Конфиг перенесён: {result.path}")
-    _render_config_report(report)
+    if pending_error is not None:
+        raise pending_error
 
 
 def _run_codex_target(
@@ -616,18 +700,33 @@ def check(board_project_values: tuple[str, ...]) -> None:
 @cli.command()
 @click.argument("repo")
 @click.option("--ref", default=None,
-              help="git-ref для чтения файлов; по умолчанию первичная ветка "
-                   "(ключ хранения, если --branch не задан)")
+              help="git-ref для чтения файлов; по умолчанию первичная ветка. "
+                   "Если --branch не задан, дополнительно валидируется как "
+                   "отслеживаемая ветка (совпадает с ключом хранения)")
 @click.option("--branch", "branch_opt", default=None,
-              help="имя ветки для хранения индекса; по умолчанию = --ref")
+              help="имя ветки для хранения индекса; по умолчанию = --ref. "
+                   "Если задан явно, --ref — произвольный ref (например, тег) "
+                   "без проверки по отслеживаемым веткам")
 @click.option("--repo", "repo_tag", default=None,
               help="owner/name тег индекса; по умолчанию из git remote origin")
 def index(repo: str, ref: str | None, branch_opt: str | None, repo_tag: str | None) -> None:
     """Построить/обновить base-индекс целевой ветки из локального репо."""
     s = Settings()
-    c = build_components(s)
     repo_id = _resolve_repo(repo_tag, repo, s)
-    ref = ref or s.primary_branch()
+    try:
+        branches = resolve_repo_branches(repo_id, settings=s)
+        if branch_opt is None:
+            # --branch не задан: --ref — это и ключ хранения, поэтому обязан
+            # быть отслеживаемой веткой репозитория.
+            ref = resolve_branch(ref, None, branches)
+        elif ref is None:
+            # --branch задан явно: --ref — произвольный git-ref для чтения
+            # файлов (например, тег), пользователь сам управляет расщеплением
+            # ref↔branch, поэтому validation по отслеживаемым веткам пропускаем.
+            ref = branches.primary
+    except (HomeConfigError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    c = build_components(s)
     branch = branch_opt or ref
     bref = base_ref(branch)
     try:
@@ -677,11 +776,17 @@ def index(repo: str, ref: str | None, branch_opt: str | None, repo_tag: str | No
 
 
 @cli.command("migrate-branches")
-def migrate_branches() -> None:
+@click.option("--repo", "repo_tag", default=None,
+              help="owner/name; по умолчанию из git remote origin")
+def migrate_branches(repo_tag: str | None) -> None:
     """Один раз после апгрейда: перенести legacy base-индекс на первичную ветку."""
     s = Settings()
+    repo_id = _resolve_repo(repo_tag, ".", s)
+    try:
+        primary = resolve_repo_branches(repo_id, settings=s).primary
+    except (HomeConfigError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
     c = build_components(s)
-    primary = s.primary_branch()
     try:
         c.store.init_schema()
         n = c.store.migrate_legacy_base(primary)
@@ -700,7 +805,8 @@ def migrate_branches() -> None:
 @click.argument("query")
 @click.option("--repo", "repo_tag", default=None, help="owner/name; по умолчанию DEFAULT_REPO")
 @click.option("--branch", "branch_opt", default=None,
-              help="ветка base-индекса; по умолчанию первичная (REVIEW_BRANCHES)")
+              help="ветка base-индекса; по умолчанию первичная ветка репозитория "
+                   "(см. reviewer config show)")
 def search(query: str, repo_tag: str | None, branch_opt: str | None) -> None:
     """Гибридный поиск по base-индексу ветки (диагностика)."""
     from reviewer.services.repo_id import normalize_repo
@@ -708,10 +814,11 @@ def search(query: str, repo_tag: str | None, branch_opt: str | None) -> None:
     repo_id = normalize_repo(repo_tag or s.default_repo) if (repo_tag or s.default_repo) else None
     if repo_id is None:
         raise click.ClickException("Укажите --repo owner/name (или DEFAULT_REPO в .env)")
-    if branch_opt and branch_opt not in s.review_branches_list():
-        raise click.ClickException(
-            f"Ветка {branch_opt!r} не в REVIEW_BRANCHES ({s.review_branches_list()})")
-    branch = branch_opt or s.primary_branch()
+    try:
+        branches = resolve_repo_branches(repo_id, settings=s)
+        branch = resolve_branch(branch_opt, None, branches)
+    except (HomeConfigError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
     c = build_components(s)
     try:
         qvec = c.embedder.embed_query(query)
@@ -732,7 +839,8 @@ def search(query: str, repo_tag: str | None, branch_opt: str | None) -> None:
 @click.option("--repo", "repo_tag", default=None,
               help="owner/name тег индекса; по умолчанию из git remote origin")
 @click.option("--branch", "branch_opt", default=None,
-              help="одна ветка; по умолчанию все из REVIEW_BRANCHES")
+              help="одна ветка; по умолчанию все отслеживаемые ветки репозитория "
+                   "(см. reviewer config show)")
 @click.option("--json", "as_json", is_flag=True, default=False,
               help="машиночитаемый JSON вместо текста")
 def status(path: str, repo_tag: str | None, branch_opt: str | None,
@@ -740,7 +848,11 @@ def status(path: str, repo_tag: str | None, branch_opt: str | None,
     """Показать здоровье/свежесть base-индекса по веткам (не тратит Voyage)."""
     s = Settings()
     repo = _resolve_repo(repo_tag, path, s)
-    branches = [branch_opt] if branch_opt else s.review_branches_list()
+    try:
+        repo_branches = resolve_repo_branches(repo, settings=s)
+    except HomeConfigError as exc:
+        raise click.ClickException(str(exc)) from exc
+    branches = [branch_opt] if branch_opt else list(repo_branches.index)
     store = ChunkStore(s.pg_dsn, min_size=s.pg_pool_min_size, max_size=s.pg_pool_max_size)
     graph = GraphStore(s.neo4j_uri, s.neo4j_user, s.neo4j_password)
     summary_store = SummaryStore(s.pg_dsn, min_size=s.pg_pool_min_size,

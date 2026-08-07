@@ -22,7 +22,9 @@ def _install_fake_vcs(monkeypatch, committed, *, branch: str = "main"):
     monkeypatch.setattr(
         cli_mod, "Settings", lambda: Settings(_env_file=None, review_branches=branch)
     )
-    monkeypatch.setattr(cli_mod, "build_components", lambda settings: components)
+    monkeypatch.setattr(
+        cli_mod, "build_components", lambda settings, **kwargs: components
+    )
     monkeypatch.setattr(
         cli_mod.ReviewService,
         "_create_vcs_provider",
@@ -107,7 +109,11 @@ def test_config_show_rejects_invalid_known_home_value_without_echoing_literal(
         cli_mod.cli, ["config", "show", "--repo", "o/r", "--branch", "main"]
     )
 
+    # Ошибка policy-слоя больше не роняет команду целиком (Task 6): секция
+    # веток печатается, а policy-часть уходит в policy_error — но код возврата
+    # остаётся ненулевым, чтобы `config show; echo $?` не терял сигнал об ошибке.
     assert result.exit_code != 0
+    assert "branches:" in result.output
     assert "home:review.yml" in result.output
     assert secret not in result.output
     assert secret not in repr(result.exception)
@@ -126,10 +132,13 @@ def test_config_migrate_creates_home_file_and_reports_shadowing(
     )
 
     assert result.exit_code == 0, result.output
-    assert (tmp_path / "rag-reviewer/repos/o/r.yml").read_text(
-        encoding="utf-8"
-    ) == source
+    written = (tmp_path / "rag-reviewer/repos/o/r.yml").read_text(encoding="utf-8")
+    # Policy-блок сохранён как есть; branch-миграция дописывает repository ниже.
+    assert written.startswith(source)
+    assert "repository:" in written
+    assert "index_branches:\n  - main\n" in written
     assert "shadowed" in result.output
+    assert "Ветки перенесены" in result.output
 
 
 def test_config_migrate_refuses_conflicting_home_file(monkeypatch, tmp_path) -> None:
@@ -146,7 +155,16 @@ def test_config_migrate_refuses_conflicting_home_file(monkeypatch, tmp_path) -> 
 
     assert result.exit_code != 0
     assert "max_comments" in result.output
-    assert destination.read_text(encoding="utf-8") == "max_comments: 3\n"
+    # Policy-часть падает на конфликте, но branch-миграция всё равно выполняется
+    # и дописывается в тот же файл до того, как код возврата станет ненулевым.
+    written = destination.read_text(encoding="utf-8")
+    assert written.startswith("max_comments: 3\n")
+    assert "index_branches:\n  - main\n" in written
+    assert "Ветки перенесены" in result.output
+    # Minor 3: явная строка о том, что именно НЕ перенесено (policy), не только
+    # что перенесено (ветки) — иначе вывод читается как авария без объяснения.
+    assert "Policy не перенесена" in result.output
+    assert result.output.index("Policy не перенесена") < result.output.index("Ветки перенесены")
 
 
 def test_config_show_uses_default_branch_and_normalized_nested_repo(
@@ -178,7 +196,12 @@ def test_config_show_sanitizes_committed_yaml_and_closes_every_resource(
         cli_mod.cli, ["config", "show", "--repo", "o/r", "--branch", "main"]
     )
 
+    # Ошибка policy-слоя больше не роняет команду целиком (Task 6): секция
+    # веток печатается, а policy-часть уходит в policy_error; ресурсы
+    # закрываются как прежде — независимо от исхода policy-части. Код
+    # возврата при этом остаётся ненулевым (сигнал внешним скриптам).
     assert result.exit_code != 0
+    assert "branches:" in result.output
     assert ".review.yml" in result.output
     assert secret not in result.output
     assert secret not in repr(result.exception)
@@ -197,6 +220,7 @@ def test_config_show_sanitizes_invalid_policy_value(monkeypatch, tmp_path) -> No
     )
 
     assert result.exit_code != 0
+    assert "branches:" in result.output
     assert "effective policy" in result.output
     assert secret not in result.output
     assert secret not in repr(result.exception)
@@ -216,6 +240,7 @@ def test_config_show_rejects_invalid_public_type_without_echoing_value(
     result = CliRunner().invoke(cli_mod.cli, arguments)
 
     assert result.exit_code != 0
+    assert "branches" in result.output
     assert "effective policy" in result.output
     assert secret not in result.output
     assert secret not in repr(result.exception)

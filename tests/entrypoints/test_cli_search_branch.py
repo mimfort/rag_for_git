@@ -26,7 +26,8 @@ def test_search_rejects_unknown_branch(m_build, monkeypatch):
     runner = CliRunner()
     res = runner.invoke(cli, ["search", "q", "--branch", "feature/xyz"])
     assert res.exit_code != 0
-    assert "REVIEW_BRANCHES" in res.output
+    assert "feature/xyz" in res.output
+    assert "REVIEW_BRANCHES" not in res.output
     # Проверка ветки стоит ДО build_components — компоненты не строятся.
     m_build.assert_not_called()
     c.store.hybrid_search.assert_not_called()
