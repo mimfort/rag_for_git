@@ -186,6 +186,35 @@ def test_prepare_review_payload_fields(
     assert "suggestions_mode" in out
 
 
+@patch("reviewer.services.review_service.chunk_python", side_effect=_fake_chunk)
+@patch("reviewer.services.review_service.build_overlay")
+def test_prepare_review_includes_commentable_risk_path_payload(
+    _mock_overlay: MagicMock,
+    _mock_chunk: MagicMock,
+) -> None:
+    """Migration diff is exposed with its reason and commentable lines."""
+    svc = _make_mcp_service()
+    vcs = svc._vcs_factory("o", "r")
+    vcs.get_changed_files.return_value = [
+        _changed("migrations/001.sql", patch="@@ -1 +1 @@\n-old\n+new"),
+    ]
+    vcs.get_file_at_ref.side_effect = lambda path, ref: {
+        ".review.yml": "",
+        "migrations/001.sql": "SELECT 1;\n",
+    }.get(path, "")
+
+    out = svc.prepare_review("o/r", 7)
+
+    risk = out["risk_paths"][0]
+    assert risk["path"] == "migrations/001.sql"
+    assert risk["status"] == "modified"
+    assert risk["reasons"] == ["migration"]
+    assert risk["patch"].startswith("@@")
+    assert isinstance(risk["commentable_right"], list)
+    assert isinstance(risk["commentable_left"], list)
+    assert out["risk_skipped_paths"] == []
+
+
 # ---------------------------------------------------------------------------
 # Тест: поиск без prepare бросает понятную ошибку
 # ---------------------------------------------------------------------------

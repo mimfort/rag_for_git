@@ -2668,6 +2668,18 @@ class MCPReviewService:
             if u.structural_summary:
                 unit["structural_summary"] = u.structural_summary
             units.append(unit)
+        risk_paths = []
+        for item in p.risk_paths:
+            patch = p.patches.get(item.path)
+            lines = commentable_lines(patch)
+            risk_paths.append({
+                "path": item.path,
+                "status": item.status,
+                "reasons": list(item.reasons),
+                "patch": patch,
+                "commentable_right": sorted(lines["RIGHT"]),
+                "commentable_left": sorted(lines["LEFT"]),
+            })
         return {
             "repo": p.repo,
             "pr": {
@@ -2693,6 +2705,8 @@ class MCPReviewService:
             "task_board_warnings": list(p.policy.task_board_warnings),
             "task_keys": p.task_keys,
             "skipped_paths": p.skipped_paths,
+            "risk_paths": risk_paths,
+            "risk_skipped_paths": list(p.risk_skipped_paths),
             "skip_drafts": self.settings.review_skip_drafts,
             "suggestions_mode": self._suggestions_mode(),
         }
