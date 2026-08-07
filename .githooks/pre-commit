@@ -1,0 +1,36 @@
+#!/bin/sh
+# Не даёт закоммитить Python с ошибками ruff.
+#
+# Включается один раз на клон:  git config core.hooksPath .githooks
+# Обойти разово:                git commit --no-verify
+#
+# Проверяются только staged .py — чужие правки в рабочем дереве коммит не блокируют.
+# Ruff читает файл с диска, поэтому у частично проиндексированного файла он видит
+# рабочую версию, а не то, что реально уйдёт в коммит. Для линта это приемлемо:
+# хуже ложное срабатывание, чем пропущенная ошибка.
+set -eu
+
+root=$(git rev-parse --show-toplevel)
+
+if [ -x "$root/.venv/bin/ruff" ]; then
+    ruff="$root/.venv/bin/ruff"
+elif command -v ruff >/dev/null 2>&1; then
+    ruff=ruff
+else
+    # Нет dev-окружения — это проблема машины, а не кода: предупреждаем, но не
+    # блокируем коммит (иначе клон без `pip install -e ".[dev]"` окажется заперт).
+    echo "pre-commit: ruff не найден, проверка пропущена" >&2
+    echo "            поставь его так: python -m venv .venv && .venv/bin/pip install -e \".[dev]\"" >&2
+    exit 0
+fi
+
+staged=$(git diff --cached --name-only --diff-filter=ACMR -- '*.py')
+[ -n "$staged" ] || exit 0
+
+# shellcheck disable=SC2086 # пути без пробелов — ruff получает их отдельными аргументами
+if ! printf '%s\n' "$staged" | xargs "$ruff" check --force-exclude --; then
+    echo "" >&2
+    echo "pre-commit: ruff нашёл ошибки — коммит остановлен." >&2
+    echo "            почини их или закоммить в обход: git commit --no-verify" >&2
+    exit 1
+fi

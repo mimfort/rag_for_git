@@ -36,6 +36,7 @@ docker compose --profile test rm -sfv paradedb-test neo4j-test
 
 # Линт
 .venv/bin/ruff check .        # line-length 100, target py311
+git config core.hooksPath .githooks   # один раз на клон: pre-commit гоняет ruff по staged .py
 
 # CLI (после pip install -e .)
 reviewer check --board-project jira=PRI           # проверить окружение и project-scoped board permissions

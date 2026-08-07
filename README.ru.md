@@ -670,7 +670,12 @@ reviewer serve
 ```bash
 python -m venv .venv
 .venv/bin/pip install -e ".[dev]"
+git config core.hooksPath .githooks
 ```
+
+Последняя команда включает версионируемый хук `pre-commit`: он гоняет `ruff check` по staged
+`.py` и не даёт закоммитить, пока они не чистые. Git не умеет включать хуки сам, поэтому каждый
+клон подключает их один раз. Разовый обход — `git commit --no-verify`.
 
 Unit tests запрещают external/localhost sockets и по умолчанию исключают integration:
 
