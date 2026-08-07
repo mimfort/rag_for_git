@@ -132,10 +132,13 @@ def test_config_migrate_creates_home_file_and_reports_shadowing(
     )
 
     assert result.exit_code == 0, result.output
-    assert (tmp_path / "rag-reviewer/repos/o/r.yml").read_text(
-        encoding="utf-8"
-    ) == source
+    written = (tmp_path / "rag-reviewer/repos/o/r.yml").read_text(encoding="utf-8")
+    # Policy-блок сохранён как есть; branch-миграция дописывает repository ниже.
+    assert written.startswith(source)
+    assert "repository:" in written
+    assert "index_branches: [main]" in written
     assert "shadowed" in result.output
+    assert "Ветки перенесены" in result.output
 
 
 def test_config_migrate_refuses_conflicting_home_file(monkeypatch, tmp_path) -> None:
@@ -152,7 +155,12 @@ def test_config_migrate_refuses_conflicting_home_file(monkeypatch, tmp_path) -> 
 
     assert result.exit_code != 0
     assert "max_comments" in result.output
-    assert destination.read_text(encoding="utf-8") == "max_comments: 3\n"
+    # Policy-часть падает на конфликте, но branch-миграция всё равно выполняется
+    # и дописывается в тот же файл до того, как код возврата станет ненулевым.
+    written = destination.read_text(encoding="utf-8")
+    assert written.startswith("max_comments: 3\n")
+    assert "index_branches: [main]" in written
+    assert "Ветки перенесены" in result.output
 
 
 def test_config_show_uses_default_branch_and_normalized_nested_repo(

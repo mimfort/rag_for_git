@@ -122,6 +122,61 @@ def _load_layer(path: Path, source: str) -> tuple[str, tuple[str, ...]] | None:
     return _parse_block(block, source)
 
 
+@dataclass(frozen=True)
+class BranchMigrationResult:
+    """Итог переноса REVIEW_BRANCHES в домашний per-repo слой."""
+
+    path: Path
+    created: bool
+    noop: bool
+
+
+def _render_block(index: tuple[str, ...]) -> str:
+    """Сформировать YAML-блок repository (ветки — простые имена без кавычек)."""
+    names = ", ".join(index)
+    return (
+        "\n# Отслеживаемые ветки репозитория (перенесено из REVIEW_BRANCHES).\n"
+        "# Первая ветка списка — первичная, если primary_branch не задан явно.\n"
+        "repository:\n"
+        f"  index_branches: [{names}]\n"
+    )
+
+
+def migrate_repo_branches(
+    repo: str,
+    *,
+    settings: Settings,
+    config_root: Path | None = None,
+) -> BranchMigrationResult:
+    """Перенести env REVIEW_BRANCHES в repository.index_branches домашнего слоя.
+
+    `.env` не изменяется: env остаётся рабочим фолбэком. Существующий блок
+    `repository` не перезаписывается — это noop.
+    """
+    repo = normalize_repo(repo)
+    root = config_root or reviewer_config_root()
+    destination = home_repo_path(repo, root)
+    source = f"home:repos/{repo}.yml"
+    index = tuple(settings.review_branches_list())
+    block = _render_block(index)
+    try:
+        existing_text = destination.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            with open(destination, "x", encoding="utf-8") as handle:
+                handle.write(block.lstrip("\n"))
+        except FileExistsError:
+            # Гонка: параллельный процесс успел создать файл между stat и open.
+            return BranchMigrationResult(destination, False, True)
+        return BranchMigrationResult(destination, True, False)
+    if BRANCHES_KEY in _read_mapping(existing_text, source):
+        return BranchMigrationResult(destination, False, True)
+    suffix = "" if existing_text.endswith("\n") else "\n"
+    destination.write_text(existing_text + suffix + block, encoding="utf-8")
+    return BranchMigrationResult(destination, False, False)
+
+
 def resolve_repo_branches(
     repo: str,
     *,

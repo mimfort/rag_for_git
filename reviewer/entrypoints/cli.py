@@ -17,7 +17,7 @@ import yaml
 
 from reviewer.config.settings import Settings
 from reviewer.app import build_components
-from reviewer.config.branches import resolve_repo_branches
+from reviewer.config.branches import migrate_repo_branches, resolve_repo_branches
 from reviewer.config.layers import (
     HomeConfigError,
     build_config_report,
@@ -205,33 +205,59 @@ def config_show(repo: str, branch: str | None, as_json: bool) -> None:
 @click.option("--repo", required=True, help="owner/name репозитория")
 @click.option("--branch", default=None, help="ветка policy; по умолчанию первичная")
 def config_migrate(repo: str, branch: str | None) -> None:
-    """Безопасно скопировать committed policy в домашний слой репозитория."""
+    """Безопасно скопировать committed policy и ветки в домашний слой репозитория.
+
+    Порядок обязателен: policy-миграция идёт первой, потому что
+    `migrate_repo_config` публикует новый домашний файл только при его
+    отсутствии — если branch-миграция создаст файл раньше, policy-перенос
+    уйдёт в ветку «уже перенесено» и отчитается иначе. Поэтому исключение
+    policy-части не поднимается
+    сразу: оно сохраняется, branch-миграция выполняется и печатается
+    безусловно (перенос веток от committed `.review.yml` не зависит), и
+    только потом сохранённое исключение поднимается — так пользователь
+    видит перенос веток и получает ненулевой код возврата.
+    """
+    pending_error: click.ClickException | None = None
     try:
         with _config_context(repo, branch) as ctx:
             settings, _components, vcs, repo_id, ref, _branches, vcs_error = ctx
-            if vcs_error is not None:
-                raise click.ClickException(
-                    f"Не удалось подключиться к VCS: {vcs_error}"
-                ) from vcs_error
-            result = migrate_repo_config(
-                repo_id,
-                ref,
-                lambda selected_ref: vcs.get_file_at_ref(".review.yml", selected_ref),
-                settings=settings,
-            )
-            if result.conflicting_keys:
-                keys = ", ".join(result.conflicting_keys)
-                raise click.ClickException(f"Конфликтующие ключи: {keys}")
-            report = build_config_report(
-                repo_id, ref, settings, result.data, result.meta
-            )
+            try:
+                if vcs_error is not None:
+                    raise click.ClickException(
+                        f"Не удалось подключиться к VCS: {vcs_error}"
+                    ) from vcs_error
+                result = migrate_repo_config(
+                    repo_id,
+                    ref,
+                    lambda selected_ref: vcs.get_file_at_ref(".review.yml", selected_ref),
+                    settings=settings,
+                )
+                if result.conflicting_keys:
+                    keys = ", ".join(result.conflicting_keys)
+                    raise click.ClickException(f"Конфликтующие ключи: {keys}")
+                report = build_config_report(
+                    repo_id, ref, settings, result.data, result.meta
+                )
+            except (HomeConfigError, yaml.YAMLError) as exc:
+                pending_error = click.ClickException(_config_error_message(exc))
+            except click.ClickException as exc:
+                pending_error = exc
+            else:
+                if result.noop:
+                    click.echo(f"Конфиг уже перенесён: {result.path}")
+                else:
+                    click.echo(f"Конфиг перенесён: {result.path}")
+                _render_config_report(report)
+
+            branch_result = migrate_repo_branches(repo_id, settings=settings)
+            if branch_result.noop:
+                click.echo(f"Ветки уже заданы в {branch_result.path}")
+            else:
+                click.echo(f"Ветки перенесены в {branch_result.path} (.env не изменён)")
     except (HomeConfigError, yaml.YAMLError) as exc:
         raise click.ClickException(_config_error_message(exc)) from exc
-    if result.noop:
-        click.echo(f"Конфиг уже перенесён: {result.path}")
-    else:
-        click.echo(f"Конфиг перенесён: {result.path}")
-    _render_config_report(report)
+    if pending_error is not None:
+        raise pending_error
 
 
 def _run_codex_target(
