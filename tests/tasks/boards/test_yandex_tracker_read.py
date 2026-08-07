@@ -91,6 +91,8 @@ def test_iter_raw_maps_key_project_code_board_id_and_status() -> None:
     assert row.status == "Открыт"
     assert row.subtask_ids == []
     assert row.links == []
+    assert row.archived is None
+    assert row.terminal is None
     assert row.provider_data["queue"]["key"] == "TREK"
 
 
@@ -101,12 +103,15 @@ def test_iter_raw_maps_key_project_code_board_id_and_status() -> None:
         ("2026-07-23T09:11:12.347Z", 1784797872347),
         ("2026-07-23T12:11:12.347+0300", 1784797872347),
         ("2026-07-23T09:11:12", 1784797872000),  # naive трактуется как UTC
-        ("", 0),
-        ("не дата", 0),
-        (None, 0),
+        ("", None),
+        ("не дата", None),
+        (None, None),
     ],
 )
-def test_updated_at_is_parsed_into_utc_epoch_ms(updated_at: object, expected: int) -> None:
+def test_updated_at_is_parsed_into_utc_epoch_ms(
+    updated_at: object,
+    expected: int | None,
+) -> None:
     def handler(_: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json=[_issue(1, updatedAt=updated_at)])
 

@@ -393,11 +393,24 @@ task_board:
   done_target: Done
   options:
     <provider-option>: <discovered-value>
+  sync_filter:
+    max_age_days: 180
+    include_archived: false
 ```
 
 The repo block wins; an explicit empty `task_board:` disables board work. If the block is absent,
 the server may use a **non-secret deploy-wide fallback**. Calls use configured registry credentials
 without returning them.
+
+`sync_filter` is a generic sibling of provider `options`. By default `max_age_days` is absent (no
+age limit) and `include_archived: true`. Age uses task last-modified time with an inclusive cutoff,
+so a task exactly at the boundary remains eligible. An unknown age is not filtered by age. Only
+while `include_archived: false`, unknown archive does not itself exclude the row and an archive
+warning is emitted only then. Age filtering runs first and may still exclude the row; in that case
+archive uncertainty is not counted or warned. Archive is separate from terminal/done state.
+Repositories with the same `task_board.project` share one task corpus. Retention never deletes
+implicitly: purge is explicit. A filter change backfills newly eligible tasks on the next successful
+full sync.
 
 The server-side flow is **store-first**:
 
@@ -543,9 +556,12 @@ namespaced skills with `$rag-reviewer:...`.
 - **Invoke:** `/rag-reviewer:sync-tasks`.
 - **Needs:** use `reviewer init`, configure the selected provider as documented in
   `docs/board-providers.md`, then validate it with `reviewer check`.
-- **Reads/writes:** calls idempotent server-side `sync_board`; it reads the board and does not write
-  back.
-- **Result:** compact counts and per-board warnings; missing config remains board-less/fail-open.
+- **Reads/writes:** calls idempotent server-side `sync_board` in repo mode with canonical repo and
+  tracked branch. The server resolves effective policy; the client does not reconstruct it. It reads
+  the board and does not write back. Policy errors never retry as an unfiltered explicit call.
+- **Result:** `eligible`, `filtered_by_age`, `filtered_archived`, `age_unknown`, `archive_unknown`,
+  `filter_applied`, `filter_fingerprint`, `filter_source`, `by_board`, `purge`, and `warnings`;
+  missing config remains board-less/fail-open.
 
 ### `summarize-subsystems` — GraphRAG subsystem summaries
 

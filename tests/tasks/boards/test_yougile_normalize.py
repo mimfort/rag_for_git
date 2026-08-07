@@ -1,4 +1,5 @@
-from reviewer.tasks.boards.base import RawTask
+from reviewer.config.task_board import TaskSyncFilter
+from reviewer.tasks.boards.base import RawTask, TaskListing
 from reviewer.tasks.boards.yougile import YougileBoard, normalize_yougile
 
 KP = r"[A-Z]+-\d+"
@@ -249,14 +250,72 @@ def test_yougile_normalize_skips_offhost_description_href():
     assert "https://evil.example.com/user-data/x/leak.md" not in board._client.requested
 
 
-def test_normalize_completed_maps_to_done_status():
-    b = normalize_yougile(_raw(status="In progress", completed=True), KP, URL)
+def test_normalize_terminal_maps_to_done_status():
+    b = normalize_yougile(_raw(status="In progress", terminal=True), KP, URL)
     assert b["status"] == "done"
 
 
-def test_normalize_not_completed_keeps_column_status():
-    b = normalize_yougile(_raw(status="In progress", completed=False), KP, URL)
+def test_normalize_nonterminal_keeps_column_status():
+    b = normalize_yougile(_raw(status="In progress", terminal=False), KP, URL)
     assert b["status"] == "In progress"
+
+
+class _ListingBoard(YougileBoard):
+    def __init__(self, tasks):
+        self._tasks = tasks
+
+    def _get_all(self, path, params=None):
+        if path == "/projects":
+            return [{"id": "p1"}]
+        if path == "/boards":
+            assert params == {"projectId": "p1"}
+            return [{"id": "b1"}]
+        if path == "/columns":
+            assert params == {"boardId": "b1"}
+            return [{"id": "c1", "title": "Backlog"}]
+        if path == "/tasks":
+            assert params == {"columnId": "c1"}
+            return self._tasks
+        raise AssertionError(path)
+
+
+def test_iter_raw_returns_listing_and_preserves_nullable_native_values():
+    tasks = [
+        {"id": "u1", "idTaskCommon": "ID-1", "idTaskProject": "PRI-1",
+         "columnId": "c1", "completed": True},
+        {"id": "u2", "idTaskCommon": "ID-2", "idTaskProject": "PRI-2",
+         "columnId": "c1", "timestamp": True, "completed": False},
+        {"id": "u3", "idTaskCommon": "ID-3", "idTaskProject": "PRI-3",
+         "columnId": "c1", "timestamp": "invalid", "completed": "true"},
+    ]
+    listing = _ListingBoard(tasks).iter_raw(
+        "PRI",
+        None,
+        sync_filter=TaskSyncFilter(max_age_days=30, include_archived=False),
+        now_ms=123,
+    )
+
+    assert isinstance(listing, TaskListing)
+    rows = list(listing)
+    assert [row.timestamp for row in rows] == [None, None, None]
+    assert [row.terminal for row in rows] == [True, False, None]
+    assert all(row.archived is None for row in rows)
+    assert listing.stats.filtered_by_age == 0
+    assert listing.stats.filtered_archived == 0
+    assert listing.stats.warnings == []
+
+
+def test_iter_raw_keeps_project_scope_and_limit():
+    tasks = [
+        {"id": "u1", "idTaskProject": "PRI-1", "columnId": "c1"},
+        {"id": "u2", "idTaskProject": "OTHER-1", "columnId": "c1"},
+        {"id": "u3", "idTaskProject": "PRI-2", "columnId": "c1"},
+        {"id": "u4", "idTaskProject": "PRI-3", "columnId": "c1"},
+    ]
+
+    rows = list(_ListingBoard(tasks).iter_raw("PRI", 2))
+
+    assert [row.board_id for row in rows] == ["u1", "u3"]
 
 
 class _BoomClient:

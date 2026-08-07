@@ -12,9 +12,9 @@ is required for the baseline.
 ## Scope
 
 Manage `summary_cluster_depth`, `summary_cluster_depth_overrides`, `summary_topk_threshold`,
-`paths.ignore`, `context_limits`, and the optional `task_board` block. An empty `task_board:`
-disables the board for this repository. Never read, request, display, or write credential values in
-either policy target.
+`paths.ignore`, `context_limits`, and the optional `task_board` block, including its generic
+`sync_filter`. An empty `task_board:` disables the board for this repository. Never read, request,
+display, or write credential values in either policy target.
 
 Untracked `.venv`, `node_modules`, `__pycache__`, `dist`, and `build` are gitignored and never
 enter the index. Do not use a filesystem walk to find them.
@@ -53,6 +53,8 @@ enter the index. Do not use a filesystem walk to find them.
 - Changed `summary_cluster_depth_overrides` → suggest `rag-reviewer:summarize-subsystems`.
 - Changed `summary_topk_threshold` → no rebuild needed.
 - Changed `context_limits` → no rebuild needed.
+- Changed `task_board.sync_filter` → suggest `rag-reviewer:sync-tasks` for a full unlimited run
+  (`limit=null`); do **NOT run** it automatically.
 
 ## Generic board metadata
 
@@ -66,10 +68,56 @@ task_board:
   create_target: <selected target id or null>
   done_target: <selected target id or null>
   options: {}
+  sync_filter:
+    max_age_days: <integer >= 1, or omit for no age limit>
+    include_archived: <boolean, default true>
 ```
 
 `project` scopes board sync and task retrieval. Explain that an empty `task_board.project` can mix
 all projects, then ask for the intended project prefix.
+
+`sync_filter` is a generic sibling of provider `options`. The `sync_filter` block is optional.
+Never put `sync_filter` under `options`. Ask two separate questions:
+
+- `max_age_days`: choose an integer greater than or equal to 1, or no age limit.
+- `include_archived`: choose whether archived tasks are included; the default is `true`.
+
+Age uses task last-modified time and an inclusive cutoff: a task modified exactly at the cutoff is
+eligible. Archive is distinct from terminal/done; `include_archived: false` excludes only tasks
+known to be archived. Age filtering runs first. Only while `include_archived: false`, unknown
+archive metadata does not itself exclude the row; an archive warning is emitted only then and only
+when age filtering did not already exclude the row.
+
+### Editing `sync_filter` safely
+
+When changing only `sync_filter`, use this deterministic materialization procedure:
+
+1. Read policy layers in precedence order: non-secret ENV/deploy `task_board` defaults,
+   `home:review.yml`, committed `.review.yml`, then `home:repos/<owner>/<name>.yml`; stop at the
+   selected target. Never inspect or copy credential env values. For a committed target, do not
+   read the higher repo-home layer. For the recommended home per-repo target, include all layers.
+2. If the selected layer has a non-empty `task_board` mapping, use that mapping alone as the edit
+   base. Preserve every sibling and field-attached comment already present, but do not copy or
+   overlay omitted fields from lower layers: the selected mapping already shadows the complete
+   lower block.
+3. If the selected layer has no `task_board` key, resolve only the lower layers with normal
+   whole-block replacement, then materialize the complete lower effective non-secret `task_board`
+   into the selected-layer draft. Copy `type`, `project`, `key_pattern`, `url_template`,
+   `create_target`, `done_target`, `options`, every other non-secret sibling, and field-attached
+   comments. If no lower board exists, ask for a fully configured board; never write a new partial
+   `task_board` containing only the filter.
+4. If the selected layer explicitly contains null or an empty mapping, preserve that disable and do
+   not add `sync_filter`. Only proceed when the user explicitly chooses to replace it with a fully
+   configured board assembled from confirmed values; never resurrect lower fields silently.
+5. For cases 2 or 3, patch only `sync_filter` in the chosen or materialized block. The selected layer
+   remains a self-contained whole-block replacement.
+
+Because policy layers replace the whole `task_board` block, preserve every sibling field and
+comment when changing `sync_filter`. Repositories using the same project share one task corpus, so
+different retention views require different project scopes. Keep home per-repo as the recommended
+target for repository-specific policy. A filter change is evaluated on the next successful full
+sync and backfills newly eligible tasks; purge remains explicit and is never enabled by a filter
+change.
 
 When a board type is selected, call the read-only discovery tool:
 

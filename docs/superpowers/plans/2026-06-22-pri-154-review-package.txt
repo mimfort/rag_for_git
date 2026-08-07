@@ -1,0 +1,381 @@
+=== COMMITS (69d1ac4..HEAD) ===
+198c6bc feat(mcp): проброс skeleton в read_file через service + FastMCP-обёртку (PRI-154)
+718dc9f feat(tools): read_file(skeleton=True) — AST-скелет файла для экономии токенов (PRI-154)
+7116db5 feat(index): python_skeleton — AST-скелет файла (заголовки def/class + docstring) для PRI-154
+5546a81 docs(plan): план реализации PRI-154 — skeleton-режим read_file
+331862b docs(spec): дизайн PRI-154 — skeleton-режим read_file (AST-скелет → тело по запросу)
+
+=== STAT ===
+ reviewer/entrypoints/mcp_server.py | 11 +++++----
+ reviewer/index/chunker.py          | 46 ++++++++++++++++++++++++++++++++++++++
+ reviewer/mcp/service.py            | 11 +++++----
+ reviewer/tools/code_tools.py       | 20 +++++++++++++----
+ tests/index/test_chunker.py        | 44 +++++++++++++++++++++++++++++++++++-
+ tests/mcp/test_service.py          |  1 +
+ tests/tools/test_code_tools.py     | 24 ++++++++++++++++++++
+ 7 files changed, 144 insertions(+), 13 deletions(-)
+
+=== DIFF -U10 ===
+diff --git a/reviewer/entrypoints/mcp_server.py b/reviewer/entrypoints/mcp_server.py
+index 1a9f7a4..4a079f8 100644
+--- a/reviewer/entrypoints/mcp_server.py
++++ b/reviewer/entrypoints/mcp_server.py
+@@ -35,24 +35,27 @@ def create_server(service: MCPReviewService) -> FastMCP:
+         return service.search_code(repo, pr, query)
+ 
+     @mcp.tool()
+     def get_related_symbols(repo: str, pr: int, node_id: str) -> str:
+         """Code-graph neighbors of a symbol node_id 'path#fqn'.
+         Each item: node_id + (file:line) + one-line definition snippet + edge type
+         (CALLS/IMPLEMENTS/TESTED_BY) and hop distance."""
+         return service.get_related_symbols(repo, pr, node_id)
+ 
+     @mcp.tool()
+-    def read_file(repo: str, pr: int, path: str, start: int = 1, end: int = 400) -> str:
+-        """Read exact source lines of a file at the PR head revision.
+-        start/end are 1-based inclusive line numbers."""
+-        return service.read_file(repo, pr, path, start, end)
++    def read_file(repo: str, pr: int, path: str, start: int = 1, end: int = 400,
++                  skeleton: bool = False) -> str:
++        """Read source lines of a file at the PR head revision.
++        start/end are 1-based inclusive line numbers (full mode).
++        skeleton=True returns an AST skeleton (def/class signatures + first docstring line)
++        instead of bodies — compact orientation; fetch a full body afterwards with a range."""
++        return service.read_file(repo, pr, path, start, end, skeleton)
+ 
+     @mcp.tool()
+     def get_definition(repo: str, pr: int, symbol: str) -> str:
+         """Find a symbol definition (graph -> index -> semantic fallback)."""
+         return service.get_definition(repo, pr, symbol)
+ 
+     @mcp.tool()
+     def find_callers(repo: str, pr: int, node_id: str) -> str:
+         """Direct callers of a symbol node_id.
+         Each item: node_id + (file:line) + one-line snippet of the caller's
+diff --git a/reviewer/index/chunker.py b/reviewer/index/chunker.py
+index 633955f..d4cf1f8 100644
+--- a/reviewer/index/chunker.py
++++ b/reviewer/index/chunker.py
+@@ -34,10 +34,56 @@ def chunk_python(path: str, source: bytes) -> list[Chunk]:
+                     text=source[outer.start_byte:outer.end_byte].decode("utf-8", "replace"),
+                 ))
+                 body = defn.child_by_field_name("body")
+                 if body is not None:
+                     visit(body, fqn, class_scope=is_class)
+             else:
+                 visit(child, scope, class_scope)
+ 
+     visit(tree.root_node, "", class_scope=False)
+     return chunks
++
++
++def python_skeleton(source: bytes) -> list[int]:
++    """AST-скелет файла: 1-based номера строк заголовков def/class (с декораторами,
++    многострочные сигнатуры — до ':'), первой строки docstring каждого определения и
++    модульного docstring. Рендер (N|код) и кап — на стороне вызывающего (read_file).
++    Отсортированный уникальный список; [] если определений нет. Не падает на битом коде."""
++    tree = _PARSER.parse(source)
++    lines: set[int] = set()
++
++    def first_docstring_line(body) -> None:
++        if body is None:
++            return
++        for stmt in body.children:
++            if not stmt.is_named or stmt.type == "comment":
++                continue
++            if (stmt.type == "expression_statement" and stmt.children
++                    and stmt.children[0].type == "string"):
++                lines.add(stmt.children[0].start_point[0] + 1)
++            return  # первый значимый statement рассмотрен — дальше docstring быть не может
++
++    first_docstring_line(tree.root_node)  # модульный docstring
++
++    def visit(node) -> None:
++        for child in node.children:
++            defn, outer = child, child
++            if child.type == "decorated_definition":
++                defn = child.child_by_field_name("definition")
++                outer = child
++            if defn is not None and defn.type in _DEF_TYPES:
++                colon_line = defn.start_point[0]
++                for c in defn.children:
++                    if c.type == ":":
++                        colon_line = c.start_point[0]
++                        break
++                for ln in range(outer.start_point[0], colon_line + 1):
++                    lines.add(ln + 1)
++                body = defn.child_by_field_name("body")
++                first_docstring_line(body)
++                if body is not None:
++                    visit(body)
++            else:
++                visit(child)
++
++    visit(tree.root_node)
++    return sorted(lines)
+diff --git a/reviewer/mcp/service.py b/reviewer/mcp/service.py
+index 9f01c3f..c1efa6d 100644
+--- a/reviewer/mcp/service.py
++++ b/reviewer/mcp/service.py
+@@ -273,26 +273,29 @@ class MCPReviewService:
+         return tools[name].invoke(args)
+ 
+     def search_code(self, repo: str, pr: int, query: str) -> str:
+         """Семантико-лексический поиск кода по индексу PR."""
+         return self._invoke_tool(repo, pr, "search_code", {"query": query})
+ 
+     def get_related_symbols(self, repo: str, pr: int, node_id: str) -> str:
+         """Связанные символы (вызовы/реализации/тесты) для node_id вида 'path#fqn'."""
+         return self._invoke_tool(repo, pr, "get_related_symbols", {"node_id": node_id})
+ 
+-    def read_file(self, repo: str, pr: int, path: str, start: int = 1, end: int = 400) -> str:
+-        """Точный исходник файла на head-ревизии PR, строки [start..end].
++    def read_file(self, repo: str, pr: int, path: str, start: int = 1, end: int = 400,
++                  skeleton: bool = False) -> str:
++        """Исходник файла на head-ревизии PR, строки [start..end].
+ 
+-        Дефолты start/end синхронизированы с code_tools.read_file.
++        При skeleton=True — AST-скелет (сигнатуры def/class + 1-я строка docstring),
++        start/end игнорируются. Дефолты start/end синхронизированы с code_tools.read_file.
+         """
+-        return self._invoke_tool(repo, pr, "read_file", {"path": path, "start": start, "end": end})
++        return self._invoke_tool(repo, pr, "read_file",
++                                 {"path": path, "start": start, "end": end, "skeleton": skeleton})
+ 
+     def get_definition(self, repo: str, pr: int, symbol: str) -> str:
+         """Где определён символ + его исходный код."""
+         return self._invoke_tool(repo, pr, "get_definition", {"symbol": symbol})
+ 
+     def find_callers(self, repo: str, pr: int, node_id: str) -> str:
+         """Кто вызывает символ node_id ('path#fqn') — направленный CALLS (impact-анализ)."""
+         return self._invoke_tool(repo, pr, "find_callers", {"node_id": node_id})
+ 
+     def get_changed_file_diff(self, repo: str, pr: int, path: str) -> str:
+diff --git a/reviewer/tools/code_tools.py b/reviewer/tools/code_tools.py
+index 153aa97..e604ff1 100644
+--- a/reviewer/tools/code_tools.py
++++ b/reviewer/tools/code_tools.py
+@@ -1,19 +1,20 @@
+ from __future__ import annotations
+ import functools
+ import inspect
+ import json
+ from collections.abc import Callable
+ from dataclasses import dataclass, field
+ from typing import Any
+ from langchain_core.tools import StructuredTool
+ 
++from reviewer.index.chunker import python_skeleton
+ from reviewer.index.refs import base_ref
+ from reviewer.tools.graph_format import format_neighbors
+ 
+ _DUP_STUB = "(повтор: результат уже показан выше)"
+ 
+ @dataclass
+ class ToolContext:
+     retriever: Any
+     graph: Any
+     overlay_ref: str
+@@ -69,42 +70,53 @@ def make_tools(ctx: ToolContext) -> list[StructuredTool]:
+         """Связанные символы (вызовы/реализации/тесты) для node_id 'path#fqn'.
+         На элемент: file:line + строка определения + тип ребра (CALLS/IMPLEMENTS/TESTED_BY) и дистанция."""
+         if ctx.graph is None or not hasattr(ctx.graph, "expand_detailed"):
+             return "(граф недоступен)"
+         neighbors = ctx.graph.expand_detailed(ctx.repo, [node_id], hops=2, branch=ctx.branch)
+         return format_neighbors(
+             neighbors, store=ctx.store, repo=ctx.repo, branch=ctx.branch,
+             overlay_ref=ctx.overlay_ref, changed_paths=ctx.changed_paths,
+             empty_msg="(нет связей)")
+ 
+-    def read_file(path: str, start: int = 1, end: int = 400) -> str:
+-        """Точный исходник файла на head-ревизии PR, строки [start..end] с номерами (N|код).
+-        Окно ограничено 400 строками."""
++    def read_file(path: str, start: int = 1, end: int = 400, skeleton: bool = False) -> str:
++        """Исходник файла на head-ревизии PR. По умолчанию строки [start..end] с номерами (N|код),
++        окно ≤400 строк. При skeleton=True — AST-скелет файла (сигнатуры def/class + 1-я строка
++        docstring) вместо тел, для первичной ориентации; start/end игнорируются, полное тело —
++        последующим read_file(path, start, end). Меньше токенов на навигацию."""
+         if ctx.read_file_fn is None:
+             return "(чтение файлов недоступно)"
+         src = ctx.read_file_fn(path)
+         if src is None:
+             return f"(файл не найден: {path})"
+         lines = src.splitlines()
+         if not lines:
+             return "(файл пуст)"
++        skel_note = ""
++        if skeleton:
++            nums = [n for n in python_skeleton(src.encode("utf-8")) if 1 <= n <= len(lines)]
++            if nums:
++                capped = len(nums) > 400
++                nums = nums[:400]
++                out = "\n".join(f"{n}|{lines[n - 1]}" for n in nums)
++                return out + "\n(…усечено)" if capped else out
++            skel_note = "(нет определений для скелета — полный фрагмент)\n"
+         s = max(1, start)
+         if s > len(lines):
+             return f"(нет строки {s}; в файле {len(lines)} строк)"
+         e = min(len(lines), end)
+         capped = (e - s + 1 > 400)
+         if capped:
+             e = s + 399
+         body = "\n".join(f"{i}|{lines[i - 1]}" for i in range(s, e + 1))
+         if capped:
+             body += "\n(…усечено)"
+-        return body
++        return skel_note + body
+ 
+     def get_definition(symbol: str) -> str:
+         """Где определён символ + его исходный код. Резолв имени через граф, код — через индекс.
+         Фолбэк на семантический поиск, если граф не нашёл совпадений или стор недоступен."""
+         ids: list[str] = []
+         if ctx.graph is not None and hasattr(ctx.graph, "find_symbol"):
+             ids = ctx.graph.find_symbol(ctx.repo, symbol, branch=ctx.branch)
+         if ids and ctx.store is not None:
+             nodes = ctx.store.fetch_nodes(ctx.repo, ids[:3], ctx.overlay_ref,
+                                           ctx.changed_paths, base_ref=base_ref(ctx.branch))
+diff --git a/tests/index/test_chunker.py b/tests/index/test_chunker.py
+index a587f53..9f8c7a1 100644
+--- a/tests/index/test_chunker.py
++++ b/tests/index/test_chunker.py
+@@ -1,11 +1,11 @@
+-from reviewer.index.chunker import chunk_python
++from reviewer.index.chunker import chunk_python, python_skeleton
+ 
+ SRC = b'''\
+ import os
+ 
+ @dec
+ def top():
+     def inner():
+         pass
+     return inner
+ 
+@@ -26,10 +26,52 @@ def test_extracts_functions_classes_methods_with_ranges():
+ 
+ def test_content_hash_stable_and_distinct():
+     a1 = {c.symbol_fqn: c for c in chunk_python("m.py", SRC)}
+     a2 = {c.symbol_fqn: c for c in chunk_python("m.py", SRC)}
+     assert a1["A.method"].content_hash == a2["A.method"].content_hash   # стабилен
+     assert a1["A.method"].content_hash != a1["top"].content_hash        # различен для разных тел
+ 
+ def test_handles_syntax_errors_without_crashing():
+     chunks = chunk_python("bad.py", b"def f(:\n    pass\n")
+     assert isinstance(chunks, list)
++
++
++SKEL_SRC = b'''\
++"""Module doc.
++more."""
++import os
++
++@dec
++def top(a,
++        b):
++    """Top doc."""
++    return a + b
++
++class A:
++    """Class A."""
++    def method(self):
++        x = 1
++        return x
++'''
++
++def test_skeleton_includes_signatures_and_docstrings_not_bodies():
++    nums = python_skeleton(SKEL_SRC)
++    lines = SKEL_SRC.decode().splitlines()
++    picked = [lines[n - 1] for n in nums]
++    assert any('"""Module doc.' in v for v in picked)      # модульный docstring (1-я строка)
++    assert any("@dec" in v for v in picked)                # декоратор
++    assert any("def top(a," in v for v in picked)          # многострочная сигнатура — строка 1
++    assert any("b):" in v for v in picked)                 # и строка 2 (до ':')
++    assert any('"""Top doc."""' in v for v in picked)      # docstring функции
++    assert any("class A:" in v for v in picked)
++    assert any('"""Class A."""' in v for v in picked)
++    assert any("def method(self):" in v for v in picked)
++    assert all("return a + b" not in v for v in picked)    # тела НЕ включены
++    assert all("x = 1" not in v for v in picked)
++    assert all("return x" not in v for v in picked)
++    assert "more." not in "\n".join(picked)                # только 1-я строка модульного docstring
++
++def test_skeleton_empty_for_source_without_definitions():
++    assert python_skeleton(b"import os\nX = 1\nprint(X)\n") == []
++
++def test_skeleton_does_not_crash_on_syntax_error():
++    assert isinstance(python_skeleton(b"def f(:\n  pass\n"), list)
+diff --git a/tests/mcp/test_service.py b/tests/mcp/test_service.py
+index 4752f0b..dd3ea24 100644
+--- a/tests/mcp/test_service.py
++++ b/tests/mcp/test_service.py
+@@ -245,20 +245,21 @@ def test_prepare_review_repeated_closes_old_internal_vcs(
+ def test_search_tools_delegate_to_make_tools(
+     _mock_overlay: MagicMock,
+     _mock_chunk: MagicMock,
+ ) -> None:
+     """Все шесть инструментов поиска возвращают str после prepare_review."""
+     svc = _make_mcp_service()
+     svc.prepare_review("o/r", 7)
+     assert isinstance(svc.search_code("o/r", 7, "token check"), str)
+     assert isinstance(svc.get_related_symbols("o/r", 7, "a.py#f"), str)
+     assert isinstance(svc.read_file("o/r", 7, "a.py", 1, 10), str)
++    assert isinstance(svc.read_file("o/r", 7, "a.py", 1, 10, skeleton=True), str)
+     assert isinstance(svc.get_definition("o/r", 7, "f"), str)
+     assert isinstance(svc.find_callers("o/r", 7, "a.py#f"), str)
+     assert isinstance(svc.get_changed_file_diff("o/r", 7, "a.py"), str)
+ 
+ 
+ @patch("reviewer.services.review_service.chunk_python", side_effect=_fake_chunk)
+ @patch("reviewer.services.review_service.build_overlay")
+ def test_prepare_review_payload_contains_enabled_only(
+     _mock_overlay: MagicMock,
+     _mock_chunk: MagicMock,
+diff --git a/tests/tools/test_code_tools.py b/tests/tools/test_code_tools.py
+index 65c6965..3512fc1 100644
+--- a/tests/tools/test_code_tools.py
++++ b/tests/tools/test_code_tools.py
+@@ -210,20 +210,44 @@ def test_cache_normalizes_read_file_defaults():
+         return "l1\nl2\nl3"
+     ctx = ToolContext(retriever=FakeRetriever(), graph=FakeGraph(), overlay_ref="pr:1",
+                       changed_paths=["a.py"], changed_node_ids=[],
+                       read_file_fn=rf, cache={}, repo="a/x")
+     tools = {t.name: t for t in make_tools(ctx)}
+     tools["read_file"].invoke({"path": "a.py"})
+     tools["read_file"].invoke({"path": "a.py", "start": 1, "end": 400})
+     assert calls["n"] == 1
+ 
+ 
++def test_read_file_skeleton_returns_signatures_not_bodies():
++    src = ('class A:\n'
++           '    """Doc A."""\n'
++           '    def m(self):\n'
++           '        secret = 42\n'
++           '        return secret\n')
++    tools = {t.name: t for t in make_tools(_rich_ctx(read_file_fn=lambda p: src))}
++    out = tools["read_file"].invoke({"path": "a.py", "skeleton": True})
++    assert "class A:" in out and '"""Doc A."""' in out and "def m(self):" in out
++    assert "secret = 42" not in out and "return secret" not in out
++
++def test_read_file_skeleton_fallback_when_no_definitions():
++    src = "import os\nX = 1\n"
++    tools = {t.name: t for t in make_tools(_rich_ctx(read_file_fn=lambda p: src))}
++    out = tools["read_file"].invoke({"path": "a.py", "skeleton": True})
++    assert "нет определений для скелета" in out
++    assert "1|import os" in out and "2|X = 1" in out
++
++def test_read_file_full_mode_unchanged_with_skeleton_false():
++    tools = {t.name: t for t in make_tools(_rich_ctx())}   # a.py = "l1\nl2\nl3"
++    out = tools["read_file"].invoke({"path": "a.py", "start": 1, "end": 2})
++    assert "1|l1" in out and "2|l2" in out and "3|l3" not in out
++
++
+ def test_tools_thread_repo_to_graph_and_retriever():
+     calls = {}
+     class G:
+         def expand_detailed(self, repo, ids, hops=2, *, branch=""):
+             calls["expand_repo"] = repo
+             return []
+         def callers_detailed(self, repo, ids, *, branch=""):
+             calls["callers_repo"] = repo
+             return []
+         def find_symbol(self, repo, name, *, branch=""):

@@ -37,7 +37,7 @@ from reviewer.tasks.boards.attachments import (
     fetch_attachment,
     host_allowed,
 )
-from reviewer.tasks.boards.base import RawTask, project_prefix
+from reviewer.tasks.boards.base import RawTask, TaskListing, TaskListingStats, project_prefix
 from reviewer.tasks.boards.errors import BoardProviderError
 from reviewer.tasks.boards.pagination import paginate_offset
 from reviewer.tasks.boards.registry import (
@@ -185,16 +185,16 @@ def _web_base(api_base: str) -> str:
     return f"https://{(parsed.hostname or '').lower()}{port}{path[:index] if index >= 0 else path}"
 
 
-def _epoch_ms(value: object) -> int:
-    """ISO 8601 → epoch ms в UTC; нераспознанное значение → 0 (без падения)."""
+def _epoch_ms(value: object) -> int | None:
+    """ISO 8601 → epoch ms; нераспознанное значение остаётся неизвестным."""
     if not isinstance(value, str) or not value.strip():
-        return 0
+        return None
     text = value.strip()
     text = f"{text[:-1]}+00:00" if text.endswith(("Z", "z")) else text
     try:
         parsed = datetime.fromisoformat(text)
     except ValueError:
-        return 0
+        return None
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=UTC)
     return int(parsed.timestamp() * 1000)
@@ -488,6 +488,14 @@ class KaitenBoard(RestBoardBase):
         column = self._column_by_id(board, column_id)
         state = _int_or_none(card.get("state"))
         column_type = column.get("type") if column else None
+        lifecycle_type = column_type if column_type is not None else state
+        terminal = (
+            lifecycle_type == _COLUMN_DONE
+            if lifecycle_type in _STATE_NAMES
+            else None
+        )
+        condition = _int_or_none(card.get("condition"))
+        archived = condition == 2 if condition in {1, 2} else None
         children = _children(card)
         return RawTask(
             key=key,
@@ -504,7 +512,8 @@ class KaitenBoard(RestBoardBase):
             ],
             attachments=_files(card),
             board_id=str(card_id),
-            completed=(column_type == _COLUMN_DONE) if column_type else state == _COLUMN_DONE,
+            archived=archived,
+            terminal=terminal,
             provider_data={
                 "card_id": card_id,
                 "board_id": board,
@@ -513,14 +522,29 @@ class KaitenBoard(RestBoardBase):
                 "lane_id": _int_or_none(card.get("lane_id")),
                 "space_id": _int_or_none(card.get("space_id")),
                 "state": state,
-                "condition": _int_or_none(card.get("condition")),
+                "condition": condition,
                 "children": children,
                 "checklists": _checklists(card),
                 "detailed": "checklists" in card or "files" in card,
             },
         )
 
-    def iter_raw(self, board: str | None, limit: int | None) -> Iterable[RawTask]:
+    def iter_raw(
+        self,
+        board: str | None,
+        limit: int | None,
+        *,
+        sync_filter=None,
+        now_ms=None,
+    ) -> TaskListing:
+        if limit == 0:
+            return TaskListing(rows=iter(()))
+        return TaskListing(
+            rows=self._iter_raw_rows(board, limit),
+            stats=TaskListingStats(),
+        )
+
+    def _iter_raw_rows(self, board: str | None, limit: int | None) -> Iterable[RawTask]:
         """Ленивый обход всех страниц ``GET /cards`` (limit/offset), свежие — первыми."""
         board_id = self._require_board(board)
         self._columns(board_id)  # прогреть кэш колонок один раз до маппинга строк
@@ -539,6 +563,8 @@ class KaitenBoard(RestBoardBase):
             return self._read("GET", "/cards", params=params) or []
 
         count = 0
+        if limit is not None and count >= limit:
+            return
         for card in paginate_offset(fetch, page_size=_PAGE):
             if not isinstance(card, Mapping):
                 continue

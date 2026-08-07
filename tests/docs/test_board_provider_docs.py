@@ -36,6 +36,8 @@ MATRIX_CAPABILITIES = (
     "Create/target",
     "Finish/PR link",
     "Write-through",
+    "Archive metadata",
+    "Retention pushdown exact-count",
     "Native-subtask writes",
 )
 
@@ -70,6 +72,38 @@ def test_capability_matrix_has_one_complete_row_per_registered_provider():
         assert all(cells), label
         # Нормализация описания обязана быть названа явно, а не отмечена галочкой.
         assert cells[normalization] != "✓", label
+
+
+def test_capability_matrix_records_exact_archive_metadata_and_no_pushdown():
+    rows = _matrix_rows(_read("docs/board-providers.md"))
+    rows.pop("Provider", None)
+    archive = MATRIX_CAPABILITIES.index("Archive metadata")
+    pushdown = MATRIX_CAPABILITIES.index("Retention pushdown exact-count")
+    exact_by_type = {
+        "trello": "Exact (`closed`)",
+        "kaiten": "Exact (`condition`)",
+    }
+    registry = default_board_registry()
+
+    for board_type in registry.registered_types():
+        label = registry.get(board_type).setup.label
+        cells = rows[label]
+        assert cells[archive] == exact_by_type.get(board_type, "Unknown"), board_type
+        assert cells[pushdown] == "Unsupported", label
+
+
+def test_provider_reference_explains_unknown_archive_fail_open_warning():
+    text = _read("docs/board-providers.md")
+    matrix = text.split("## Capability matrix", maxsplit=1)[1].split("\n## ", maxsplit=1)[0]
+
+    normalized = " ".join(matrix.split()).casefold()
+    for marker in (
+        "only while `include_archived: false`",
+        "does not itself exclude the row",
+        "warning is emitted only then",
+        "age filtering runs first and may still exclude the row",
+    ):
+        assert marker in normalized
 
 
 def test_native_subtask_matrix_matches_registry_capabilities_exactly():
@@ -300,11 +334,25 @@ def test_generic_config_and_legacy_mapping_are_explicit_and_time_bounded():
 
     assert "type: <registered-provider>" in text
     assert "create_target:" in text and "done_target:" in text and "options:" in text
+    assert "sync_filter:" in text
+    assert "max_age_days:" in text
+    assert "include_archived:" in text
     assert "done_column" in text and "done_state" in text and "status_field" in text
     assert "done_target" in text and "options.status_field" in text
     assert "one compatibility release" in text
     assert "no earlier than the next breaking release" in text
     assert "future breaking-cleanup task" in text
+
+
+def test_provider_reference_documents_repo_mode_sync_board_signature():
+    text = _read("docs/board-providers.md")
+    signatures = text.split("The public signatures are:", maxsplit=1)[1].split("```", maxsplit=2)[1]
+
+    assert re.search(r"sync_board\(repo=None, branch=None, board=None", signatures)
+    assert "sync_filter=None" in signatures
+    assert "Repo mode" in text
+    assert "effective" in text
+    assert "explicit" in text
 
 
 def test_extension_checklist_requires_complete_registration_and_contract_fixture():

@@ -39,6 +39,14 @@ def test_issue_to_raw_state_missing():
     assert raw.status is None
 
 
+def test_issue_to_raw_keeps_missing_and_invalid_timestamp_nullable():
+    missing = _issue()
+    missing.pop("updated")
+
+    assert _issue_to_raw(missing).timestamp is None
+    assert _issue_to_raw(_issue(updated="invalid")).timestamp is None
+
+
 def test_issue_to_raw_links_subtask_vs_related():
     issue = _issue(links=[
         {"direction": "OUTWARD", "linkType": {"name": "Subtask"},

@@ -27,7 +27,7 @@ from reviewer.tasks.boards.attachments import (
     fetch_attachment,
     host_allowed,
 )
-from reviewer.tasks.boards.base import RawTask, project_prefix
+from reviewer.tasks.boards.base import RawTask, TaskListing, TaskListingStats, project_prefix
 from reviewer.tasks.boards.errors import BoardProviderError
 from reviewer.tasks.boards.pagination import paginate_page
 from reviewer.tasks.boards.registry import (
@@ -155,14 +155,14 @@ def _normalize_api_base(value: str, *, secrets: tuple[str, ...]) -> str:
     return raw.rstrip("/")
 
 
-def _epoch_ms(value: object) -> int:
-    """ClickUp отдаёт date_updated строкой epoch ms; ISO-строка тоже парсится как UTC."""
+def _epoch_ms(value: object) -> int | None:
+    """ClickUp date_updated → epoch ms; неразбираемое значение остаётся неизвестным."""
     if isinstance(value, bool):
-        return 0
+        return None
     if isinstance(value, int | float):
         return int(value)
     if not isinstance(value, str):
-        return 0
+        return None
     text = value.strip()
     if text.isdigit():
         return int(text)
@@ -170,7 +170,7 @@ def _epoch_ms(value: object) -> int:
     try:
         parsed = datetime.fromisoformat(normalized)
     except ValueError:
-        return 0
+        return None
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=UTC)
     return int(parsed.timestamp() * 1000)
@@ -376,6 +376,12 @@ class ClickUpBoard(RestBoardBase):
         description = self._description_of(task, warnings)
         status = _mapping(task.get("status"))
         key = self._key_of(task)
+        status_type = status.get("type")
+        terminal = (
+            status_type.strip().casefold() == "closed"
+            if isinstance(status_type, str) and status_type.strip()
+            else None
+        )
         return RawTask(
             key=key,
             project_code=key,
@@ -387,7 +393,8 @@ class ClickUpBoard(RestBoardBase):
             links=[],
             attachments=_attachments_of(task),
             board_id=str(task.get("id") or ""),
-            completed=str(status.get("type") or "").strip().casefold() == "closed",
+            archived=None,
+            terminal=terminal,
             provider_data={
                 "warnings": warnings,
                 "subtasks": [
@@ -420,7 +427,22 @@ class ClickUpBoard(RestBoardBase):
 
     # --- чтение -----------------------------------------------------------------
 
-    def iter_raw(self, board: str | None, limit: int | None) -> Iterable[RawTask]:
+    def iter_raw(
+        self,
+        board: str | None,
+        limit: int | None,
+        *,
+        sync_filter=None,
+        now_ms=None,
+    ) -> TaskListing:
+        if limit == 0:
+            return TaskListing(rows=iter(()))
+        return TaskListing(
+            rows=self._iter_raw_rows(board, limit),
+            stats=TaskListingStats(),
+        )
+
+    def _iter_raw_rows(self, board: str | None, limit: int | None) -> Iterable[RawTask]:
         list_id = self._resolve_list_id(board)
         if not list_id:
             raise BoardProviderError(
@@ -451,6 +473,8 @@ class ClickUpBoard(RestBoardBase):
             return payload
 
         count = 0
+        if limit is not None and count >= limit:
+            return
         for raw in paginate_page(fetch, page_size=_PAGE, items=self._page_rows, start=0):
             yield raw
             count += 1

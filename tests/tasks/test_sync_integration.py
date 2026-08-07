@@ -11,9 +11,12 @@ import pytest
 
 from reviewer.app import build_components
 from reviewer.config.settings import Settings
-from reviewer.tasks.boards.base import RawTask
+from reviewer.config.task_board import TaskSyncFilter
+from reviewer.tasks.boards.base import RawTask, TaskListing
 from reviewer.tasks.graph import PRRef
 from reviewer.tasks.sync import SyncService
+from reviewer.tasks.sync_cursor import parse_task_sync_cursor
+from reviewer.tasks.sync_filter import DAY_MS
 
 pytestmark = pytest.mark.integration
 
@@ -33,14 +36,18 @@ class FakeProvider:
     def __init__(self, raws):
         self._raws = raws
 
-    def iter_raw(self, board, limit):
-        for r in self._raws:
-            yield r
+    def iter_raw(self, board, limit, *, sync_filter=None, now_ms=None):
+        return TaskListing(rows=self._raws)
 
     def normalize(self, raw):
         return {"key": raw.key, "aliases": [raw.project_code], "title": raw.title,
                 "description": raw.description, "criteria": [], "status": raw.status,
                 "url": None, "links": []}
+
+    def normalize_meta(self, raw):
+        return {"key": raw.key, "aliases": [raw.project_code], "title": raw.title,
+                "status": raw.status, "url": None,
+                "project": raw.project_code.split("-")[0]}
 
 
 def _raw(key, ts, desc=""):
@@ -146,6 +153,7 @@ def test_sync_idempotent_and_pr_edge(components):
     first = svc.run(board="ztest")
     assert first["changed"] == 2 and first["embedded"] == 2
     assert first["cursor_advanced"] is True
+    assert components.store.get_index_meta("", _REF) == "1000"
 
     second = svc.run(board="ztest")
     assert second["changed"] == 0 and second["unchanged"] == 2
@@ -157,6 +165,38 @@ def test_sync_idempotent_and_pr_edge(components):
     _cleanup(components, _KEYS)
     assert components.store.get_index_meta("", _REF) is None
     assert _orphan_pr_count(components) == 0
+
+
+def test_filtered_cursor_round_trip_backfills_newly_eligible_task(components):
+    now = 2_000_000_000_000
+    watermark = now - 10 * DAY_MS
+    old = _raw("ZID-901", now - 60 * DAY_MS)
+    recent = _raw("ZID-902", watermark)
+    restrictive = TaskSyncFilter(max_age_days=30)
+    permissive = TaskSyncFilter(max_age_days=180)
+    svc = SyncService(
+        [FakeProvider([old, recent])],
+        components.task_service,
+        components.store,
+        now_ms=lambda: now,
+    )
+
+    initial = svc.run(board="ztest", sync_filter=restrictive)
+
+    assert initial["filtered_by_age"] == 1
+    initial_cursor = parse_task_sync_cursor(
+        components.store.get_index_meta("", _REF)
+    )
+    assert initial_cursor.cursor.watermark == watermark
+    assert initial_cursor.cursor.old_filter == restrictive
+
+    loosened = svc.run(board="ztest", sync_filter=permissive)
+
+    assert loosened["changed"] == 1
+    assert loosened["cursor_advanced"] is False
+    stored = parse_task_sync_cursor(components.store.get_index_meta("", _REF))
+    assert stored.cursor.watermark == watermark
+    assert stored.cursor.old_filter == permissive
 
 
 def test_cleanup_preserves_pr_linked_to_other_task(components):

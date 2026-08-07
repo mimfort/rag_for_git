@@ -6,6 +6,7 @@ import pytest
 from reviewer.config.provider_credentials import ProviderCredentialSource
 from reviewer.config.settings import Settings
 from reviewer.mcp.service import MCPReviewService
+from reviewer.tasks.boards.base import TaskListing
 from reviewer.tasks.boards.registry import (
     BoardProviderRegistry,
     BoardProviderSpec,
@@ -33,8 +34,8 @@ class _Provider:
     def validate_connection(self, project=None):
         return {}
 
-    def iter_raw(self, board, limit):
-        return []
+    def iter_raw(self, board, limit, *, sync_filter=None, now_ms=None):
+        return TaskListing(rows=())
 
     def create(self, doc_md, *, title, target, project):
         self.created = {"doc_md": doc_md, "title": title, "target": target,

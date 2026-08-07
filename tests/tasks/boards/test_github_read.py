@@ -7,6 +7,8 @@ from typing import Any
 import httpx
 import pytest
 
+from reviewer.config.task_board import TaskSyncFilter
+from reviewer.tasks.boards.base import TaskListing
 from reviewer.tasks.boards.errors import BoardProviderError
 from reviewer.tasks.boards.github import GitHubIssuesBoard
 
@@ -53,8 +55,15 @@ def test_pagination_walks_pages_with_exact_params_and_headers() -> None:
         issues = [_issue(number) for number in range(1, 101)] if page == 1 else [_issue(101)]
         return httpx.Response(200, json=issues)
 
-    rows = list(_board(handler).iter_raw("acme/widgets", None))
+    listing = _board(handler).iter_raw(
+        "acme/widgets",
+        None,
+        sync_filter=TaskSyncFilter(max_age_days=30, include_archived=False),
+        now_ms=123,
+    )
+    rows = list(listing)
 
+    assert isinstance(listing, TaskListing)
     assert len(rows) == 101
     assert len(seen) == 2
     assert [request.url.path for request in seen] == ["/repos/acme/widgets/issues"] * 2
@@ -69,6 +78,9 @@ def test_pagination_walks_pages_with_exact_params_and_headers() -> None:
     assert seen[0].headers["Authorization"] == f"Bearer {TOKEN}"
     assert seen[0].headers["Accept"] == "application/vnd.github+json"
     assert seen[0].headers["X-GitHub-Api-Version"] == "2022-11-28"
+    assert listing.stats.filtered_by_age == 0
+    assert listing.stats.filtered_archived == 0
+    assert listing.stats.warnings == []
 
 
 def test_pull_requests_are_never_returned_as_tasks() -> None:
@@ -95,11 +107,37 @@ def test_raw_task_maps_key_number_and_epoch_ms_timestamp() -> None:
     assert row.description == "Описание задачи 7"
     assert row.status == "closed"
     assert row.timestamp == 1784798100000
+    assert row.archived is None
+    assert row.terminal is True
     assert row.provider_data["number"] == 7
     assert row.provider_data["node_id"] == "I_kw7"
     assert row.provider_data["html_url"] == "https://github.com/acme/widgets/issues/7"
     assert row.provider_data["state_reason"] == "completed"
     assert row.provider_data["repo"] == "acme/widgets"
+
+
+def test_lifecycle_state_is_tri_state_and_archived_is_unknown() -> None:
+    absent = _issue(3)
+    absent.pop("state")
+    payload = [_issue(1, state="closed"), _issue(2, state="open"), absent]
+
+    rows = list(_board(lambda _r: httpx.Response(200, json=payload)).iter_raw(None, None))
+
+    assert [row.terminal for row in rows] == [True, False, None]
+    assert all(row.archived is None for row in rows)
+
+
+@pytest.mark.parametrize("updated_at", [None, "not a timestamp"])
+def test_missing_or_invalid_updated_timestamp_stays_nullable(updated_at: object) -> None:
+    row = next(
+        iter(
+            _board(
+                lambda _r: httpx.Response(200, json=[_issue(1, updated_at=updated_at)])
+            ).iter_raw(None, None)
+        )
+    )
+
+    assert row.timestamp is None
 
 
 def test_key_prefix_falls_back_to_repository_name() -> None:

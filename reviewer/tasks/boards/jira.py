@@ -9,7 +9,7 @@ import re
 import time
 from collections.abc import Callable, Iterable, Mapping
 from datetime import datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from urllib.parse import quote, urlsplit
 
 import httpx
@@ -24,7 +24,7 @@ from reviewer.tasks.boards.attachments import (
     attachment_supported,
     fetch_attachment,
 )
-from reviewer.tasks.boards.base import RawTask, project_prefix
+from reviewer.tasks.boards.base import RawTask, TaskListing, TaskListingStats, project_prefix
 from reviewer.tasks.boards.errors import BoardProviderError
 from reviewer.tasks.boards.http import BoardHttpClient
 from reviewer.tasks.boards.registry import (
@@ -34,6 +34,9 @@ from reviewer.tasks.boards.registry import (
     ProviderOptionSpec,
     ProviderSetupSpec,
 )
+
+if TYPE_CHECKING:
+    from reviewer.config.task_board import TaskSyncFilter
 
 _PAGE = 100
 _ATLASSIAN_TENANT_HOST = re.compile(
@@ -115,11 +118,14 @@ def _normalize_site_url(value: str, *, secrets: tuple[str, ...]) -> str:
     return f"https://{hostname}"
 
 
-def _timestamp(value: object) -> int:
+def _timestamp(value: object) -> int | None:
     if not isinstance(value, str) or not value:
-        return 0
+        return None
     normalized = value[:-1] + "+00:00" if value.endswith("Z") else value
-    return int(datetime.fromisoformat(normalized).timestamp() * 1000)
+    try:
+        return int(datetime.fromisoformat(normalized).timestamp() * 1000)
+    except (ValueError, OverflowError, OSError):
+        return None
 
 
 def _https_origin(value: object) -> tuple[str, int] | None:
@@ -598,6 +604,8 @@ class JiraCloudBoard:
             links=_issue_links(issue),
             attachments=_attachments(issue),
             board_id=str(issue.get("id") or key),
+            archived=None,
+            terminal=None,
             provider_data={
                 "warnings": list(converted.warnings),
                 "subtasks": subtasks,
@@ -610,8 +618,10 @@ class JiraCloudBoard:
             },
         )
 
-    def iter_raw(self, board: str | None, limit: int | None) -> Iterable[RawTask]:
+    def _iter_raw_rows(self, board: str | None, limit: int | None) -> Iterable[RawTask]:
         count = 0
+        if limit is not None and count >= limit:
+            return
         token: str | None = None
         while True:
             payload: dict[str, Any] = {
@@ -635,6 +645,21 @@ class JiraCloudBoard:
             token = page.get("nextPageToken")
             if not token or page.get("isLast") is True:
                 return
+
+    def iter_raw(
+        self,
+        board: str | None,
+        limit: int | None,
+        *,
+        sync_filter: TaskSyncFilter | None = None,
+        now_ms: int | None = None,
+    ) -> TaskListing:
+        if limit == 0:
+            return TaskListing(rows=iter(()))
+        return TaskListing(
+            rows=self._iter_raw_rows(board, limit),
+            stats=TaskListingStats(),
+        )
 
     def fetch_one(self, key: str) -> RawTask | None:
         try:

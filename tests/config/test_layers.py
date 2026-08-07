@@ -52,6 +52,61 @@ def test_layers_replace_top_level_values_and_report_sources(tmp_path: Path) -> N
     assert meta.shadowed["max_comments"] == ("home:review.yml",)
 
 
+def test_per_repo_home_task_sync_filters_resolve_independently(tmp_path: Path) -> None:
+    _write(
+        tmp_path / "repos/o/first.yml",
+        "task_board:\n  project: FIRST\n  sync_filter: {max_age_days: 7}\n",
+    )
+    _write(
+        tmp_path / "repos/o/second.yml",
+        "task_board:\n  project: SECOND\n  sync_filter: {include_archived: false}\n",
+    )
+
+    first, first_meta = resolve_policy_data(
+        "o/first", "main", lambda ref: None, config_root=tmp_path
+    )
+    second, second_meta = resolve_policy_data(
+        "o/second", "main", lambda ref: None, config_root=tmp_path
+    )
+
+    assert first["task_board"] == {
+        "project": "FIRST",
+        "sync_filter": {"max_age_days": 7},
+    }
+    assert second["task_board"] == {
+        "project": "SECOND",
+        "sync_filter": {"include_archived": False},
+    }
+    assert first_meta.sources["task_board"] == "home:repos/o/first.yml"
+    assert second_meta.sources["task_board"] == "home:repos/o/second.yml"
+
+
+def test_invalid_home_task_sync_filter_is_quarantined_or_rejected(
+    tmp_path: Path,
+) -> None:
+    _write(
+        tmp_path / "repos/o/r.yml",
+        "task_board:\n  project: PRI\n  sync_filter: {max_age_days: 0}\n",
+    )
+
+    data, meta = resolve_policy_data(
+        "o/r", "main", lambda ref: "max_comments: 9\n", config_root=tmp_path
+    )
+
+    assert data == {"max_comments": 9}
+    assert meta.warnings == (
+        "home:repos/o/r.yml: policy содержит недопустимые значения",
+    )
+    with pytest.raises(HomeConfigError):
+        resolve_policy_data(
+            "o/r",
+            "main",
+            lambda ref: "max_comments: 9\n",
+            config_root=tmp_path,
+            strict_home=True,
+        )
+
+
 def test_subgroup_repo_uses_nested_home_path(tmp_path: Path) -> None:
     assert home_repo_path("group/sub/repo", tmp_path) == (
         tmp_path / "repos/group/sub/repo.yml"

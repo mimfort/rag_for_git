@@ -1,7 +1,7 @@
 from reviewer.config.provider_credentials import ProviderCredentialSource
 from reviewer.config.settings import Settings
 from reviewer.mcp.service import MCPReviewService
-from reviewer.tasks.boards.base import NativeSubtaskIdentity
+from reviewer.tasks.boards.base import NativeSubtaskIdentity, TaskListing
 from reviewer.tasks.boards.errors import BoardProviderError
 from reviewer.tasks.boards.registry import (
     BoardProviderRegistry,
@@ -23,8 +23,8 @@ class _Provider:
     def validate_connection(self, project=None):
         return {}
 
-    def iter_raw(self, board, limit):
-        return []
+    def iter_raw(self, board, limit, *, sync_filter=None, now_ms=None):
+        return TaskListing(rows=())
 
     def normalize(self, raw):
         return {}

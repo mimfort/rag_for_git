@@ -15,6 +15,8 @@ import logging
 
 import pytest
 
+from reviewer.config.task_board import TaskSyncFilter
+from reviewer.tasks.boards.base import TaskListing
 from reviewer.tasks.boards.errors import BoardProviderError
 from tests.tasks.boards.fakes.base import FakeState, ProviderAdapter
 
@@ -69,16 +71,35 @@ class ProviderContract:
         assert result["status"] == "ok"
         assert adapter.secret not in repr(result)
 
-    def test_iter_raw_reads_all_pages_and_maps_stable_timestamp(
+    def test_iter_raw_reads_all_pages_and_maps_canonical_metadata(
         self,
         adapter: ProviderAdapter,
     ) -> None:
         provider, state = adapter.provider_factory()
-        rows = list(provider.iter_raw(adapter.project, None))
+        listing = provider.iter_raw(
+            adapter.project,
+            None,
+            sync_filter=TaskSyncFilter(max_age_days=30, include_archived=False),
+            now_ms=1_800_000_000_000,
+        )
+        assert isinstance(listing, TaskListing)
+        rows = list(listing.rows)
         assert len(rows) > adapter.min_rows
-        assert rows[0].timestamp > 0
+        assert all(row.timestamp is None or isinstance(row.timestamp, int) for row in rows)
+        assert all(row.archived is None or isinstance(row.archived, bool) for row in rows)
+        assert all(row.terminal is None or isinstance(row.terminal, bool) for row in rows)
+        assert listing.stats.filtered_by_age == 0
+        assert listing.stats.filtered_archived == 0
         page_calls = [call for call in state.calls if call[1].endswith(adapter.page_paths)]
         assert len(page_calls) >= 2
+
+    def test_iter_raw_limit_zero_yields_no_rows(self, adapter: ProviderAdapter) -> None:
+        provider, state = adapter.provider_factory()
+
+        listing = provider.iter_raw(adapter.project, 0)
+
+        assert list(listing.rows) == []
+        assert state.calls == []
 
     def test_normalize_meta_has_zero_http_budget(self, adapter: ProviderAdapter) -> None:
         provider, state = adapter.provider_factory()
