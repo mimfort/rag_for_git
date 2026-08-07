@@ -682,7 +682,12 @@ Create an isolated environment and install development dependencies:
 ```bash
 python -m venv .venv
 .venv/bin/pip install -e ".[dev]"
+git config core.hooksPath .githooks
 ```
+
+The last command enables the tracked `pre-commit` hook: it runs `ruff check` on staged `.py`
+files and blocks the commit when they are not clean. Git cannot enable hooks automatically, so
+every clone opts in once. Bypass a single commit with `git commit --no-verify`.
 
 Unit tests prohibit external and localhost sockets and exclude integration tests by default:
 
