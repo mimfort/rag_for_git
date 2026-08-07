@@ -24,7 +24,9 @@ _NORMALIZED_VERSION = "0.0.0+codex.normalized"
 _FORBIDDEN_PAYLOAD_PARTS = {".git", ".env", ".venv", "build", "dist"}
 # Байткод — производное от .py, которые уже в digest: запуск хуков плагина не должен
 # ломать install (payload_digest падал на plugin/hooks/__pycache__/*.pyc).
-_IGNORED_PAYLOAD_PARTS = {"__pycache__"}
+# Метаданные файлового менеджера (.DS_Store, Thumbs.db) появляются сами от простого
+# просмотра каталога и в payload не входят — иначе --check краснеет на пустом месте.
+_IGNORED_PAYLOAD_PARTS = {"__pycache__", ".DS_Store", "Thumbs.db"}
 _IGNORED_PAYLOAD_SUFFIXES = {".pyc", ".pyo"}
 _WINDOWS_REPARSE_POINT = 0x400
 
