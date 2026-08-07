@@ -5,6 +5,7 @@ import tomllib
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import FrozenInstanceError, fields, replace
 from datetime import UTC, datetime
+from functools import partial
 from pathlib import Path
 from threading import Barrier, Event, Lock
 
@@ -850,20 +851,20 @@ def test_database_and_lock_errors_propagate(failure: str) -> None:
 
     if failure == "schema":
         factory.database.schema_error = expected
-        call = lambda: store.load("missing")
+        call = partial(store.load, "missing")
     elif failure == "load":
         factory.database.load_error = expected
-        call = lambda: store.load("missing")
+        call = partial(store.load, "missing")
     elif failure == "acquire":
         factory.database.acquire_error = expected
-        call = lambda: _enter_parent_lock(store)
+        call = partial(_enter_parent_lock, store)
     elif failure == "unlock":
         factory.database.unlock_error = expected
-        call = lambda: _enter_parent_lock(store)
+        call = partial(_enter_parent_lock, store)
     else:
         store.load("missing")
         factory.pools[0].connection_error = expected
-        call = lambda: store.load("missing")
+        call = partial(store.load, "missing")
 
     with pytest.raises(RuntimeError) as exc_info:
         call()
