@@ -9,6 +9,7 @@ import reviewer.entrypoints.cli as cli_mod
 
 
 def test_index_filters_ignored_files(monkeypatch):
+    monkeypatch.setenv("REVIEW_BRANCHES", "main,dev")
     captured = {}
 
     def fake_update_base(store, embedder, repo, branch, files, **kwargs):
@@ -43,6 +44,7 @@ def test_index_uses_home_policy_without_committed_file(
     isolated_xdg_config_home,
 ):
     """index применяет paths.ignore из home-слоя без committed policy."""
+    monkeypatch.setenv("REVIEW_BRANCHES", "main,dev")
     home = isolated_xdg_config_home / "rag-reviewer/repos/o/r.yml"
     home.parent.mkdir(parents=True)
     home.write_text("paths:\n  ignore:\n    - vendor\n", encoding="utf-8")
@@ -71,8 +73,8 @@ def test_index_uses_home_policy_without_committed_file(
     monkeypatch.setattr(cli_mod, "file_at_ref", fake_file_at_ref)
     monkeypatch.setattr(cli_mod, "update_base", fake_update_base)
 
-    result = CliRunner().invoke(cli_mod.cli, ["index", "/tmp/repo", "--ref", "release/2026"])
+    result = CliRunner().invoke(cli_mod.cli, ["index", "/tmp/repo", "--ref", "main"])
     assert result.exit_code == 0, result.output
     assert captured["files"] == ["reviewer/a.py"]
     assert captured["ignore"] == ["vendor"]
-    assert committed_refs == [("/tmp/repo", ".review.yml", "release/2026")]
+    assert committed_refs == [("/tmp/repo", ".review.yml", "main")]

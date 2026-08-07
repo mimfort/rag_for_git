@@ -17,6 +17,7 @@ import yaml
 
 from reviewer.config.settings import Settings
 from reviewer.app import build_components
+from reviewer.config.branches import resolve_repo_branches
 from reviewer.config.layers import (
     HomeConfigError,
     build_config_report,
@@ -33,6 +34,7 @@ from reviewer.policy.policy import ReviewPolicy
 from reviewer.index.store import ChunkStore
 from reviewer.index.summary_store import SummaryStore
 from reviewer.mcp.session_store import SessionStore
+from reviewer.services.branch import resolve_branch
 from reviewer.services.gc import purge_orphaned_overlays
 from reviewer.services.review_service import ReviewService
 from reviewer.services.status import build_status_report, render_status, render_status_json
@@ -625,9 +627,13 @@ def check(board_project_values: tuple[str, ...]) -> None:
 def index(repo: str, ref: str | None, branch_opt: str | None, repo_tag: str | None) -> None:
     """Построить/обновить base-индекс целевой ветки из локального репо."""
     s = Settings()
-    c = build_components(s)
     repo_id = _resolve_repo(repo_tag, repo, s)
-    ref = ref or s.primary_branch()
+    try:
+        branches = resolve_repo_branches(repo_id, settings=s)
+        ref = resolve_branch(ref, None, branches)
+    except (HomeConfigError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    c = build_components(s)
     branch = branch_opt or ref
     bref = base_ref(branch)
     try:
@@ -700,7 +706,8 @@ def migrate_branches() -> None:
 @click.argument("query")
 @click.option("--repo", "repo_tag", default=None, help="owner/name; по умолчанию DEFAULT_REPO")
 @click.option("--branch", "branch_opt", default=None,
-              help="ветка base-индекса; по умолчанию первичная (REVIEW_BRANCHES)")
+              help="ветка base-индекса; по умолчанию первичная ветка репозитория "
+                   "(см. reviewer config show)")
 def search(query: str, repo_tag: str | None, branch_opt: str | None) -> None:
     """Гибридный поиск по base-индексу ветки (диагностика)."""
     from reviewer.services.repo_id import normalize_repo
@@ -708,10 +715,11 @@ def search(query: str, repo_tag: str | None, branch_opt: str | None) -> None:
     repo_id = normalize_repo(repo_tag or s.default_repo) if (repo_tag or s.default_repo) else None
     if repo_id is None:
         raise click.ClickException("Укажите --repo owner/name (или DEFAULT_REPO в .env)")
-    if branch_opt and branch_opt not in s.review_branches_list():
-        raise click.ClickException(
-            f"Ветка {branch_opt!r} не в REVIEW_BRANCHES ({s.review_branches_list()})")
-    branch = branch_opt or s.primary_branch()
+    try:
+        branches = resolve_repo_branches(repo_id, settings=s)
+        branch = resolve_branch(branch_opt, None, branches)
+    except (HomeConfigError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
     c = build_components(s)
     try:
         qvec = c.embedder.embed_query(query)
@@ -732,7 +740,8 @@ def search(query: str, repo_tag: str | None, branch_opt: str | None) -> None:
 @click.option("--repo", "repo_tag", default=None,
               help="owner/name тег индекса; по умолчанию из git remote origin")
 @click.option("--branch", "branch_opt", default=None,
-              help="одна ветка; по умолчанию все из REVIEW_BRANCHES")
+              help="одна ветка; по умолчанию все отслеживаемые ветки репозитория "
+                   "(см. reviewer config show)")
 @click.option("--json", "as_json", is_flag=True, default=False,
               help="машиночитаемый JSON вместо текста")
 def status(path: str, repo_tag: str | None, branch_opt: str | None,
@@ -740,7 +749,11 @@ def status(path: str, repo_tag: str | None, branch_opt: str | None,
     """Показать здоровье/свежесть base-индекса по веткам (не тратит Voyage)."""
     s = Settings()
     repo = _resolve_repo(repo_tag, path, s)
-    branches = [branch_opt] if branch_opt else s.review_branches_list()
+    try:
+        repo_branches = resolve_repo_branches(repo, settings=s)
+    except HomeConfigError as exc:
+        raise click.ClickException(str(exc)) from exc
+    branches = [branch_opt] if branch_opt else list(repo_branches.index)
     store = ChunkStore(s.pg_dsn, min_size=s.pg_pool_min_size, max_size=s.pg_pool_max_size)
     graph = GraphStore(s.neo4j_uri, s.neo4j_user, s.neo4j_password)
     summary_store = SummaryStore(s.pg_dsn, min_size=s.pg_pool_min_size,

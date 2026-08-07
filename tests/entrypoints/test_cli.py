@@ -135,6 +135,8 @@ def fake_settings() -> MagicMock:
     s.graph_backend = "auto"
     s.default_repo = "owner/default"
     s.task_board_default.return_value = None
+    s.review_branches = "main"
+    s.review_branches_list.return_value = ["main"]
     return s
 
 

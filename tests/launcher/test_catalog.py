@@ -52,7 +52,9 @@ def test_catalog_uses_public_click_labels_and_help_for_options():
         "owner/name тег индекса; по умолчанию из git remote origin"
     )
     assert by_name["branch_opt"].label == "--branch"
-    assert by_name["branch_opt"].description == ("одна ветка; по умолчанию все из REVIEW_BRANCHES")
+    assert by_name["branch_opt"].description == (
+        "одна ветка; по умолчанию все отслеживаемые ветки репозитория (см. reviewer config show)"
+    )
 
 
 def test_catalog_preserves_explicit_click_metavar_for_repeatable_option():
