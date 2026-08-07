@@ -22,7 +22,9 @@ def _install_fake_vcs(monkeypatch, committed, *, branch: str = "main"):
     monkeypatch.setattr(
         cli_mod, "Settings", lambda: Settings(_env_file=None, review_branches=branch)
     )
-    monkeypatch.setattr(cli_mod, "build_components", lambda settings: components)
+    monkeypatch.setattr(
+        cli_mod, "build_components", lambda settings, **kwargs: components
+    )
     monkeypatch.setattr(
         cli_mod.ReviewService,
         "_create_vcs_provider",
@@ -107,7 +109,9 @@ def test_config_show_rejects_invalid_known_home_value_without_echoing_literal(
         cli_mod.cli, ["config", "show", "--repo", "o/r", "--branch", "main"]
     )
 
-    assert result.exit_code != 0
+    # Ошибка policy-слоя больше не роняет команду целиком (Task 6): секция
+    # веток печатается, а policy-часть уходит в policy_error.
+    assert result.exit_code == 0, result.output
     assert "home:review.yml" in result.output
     assert secret not in result.output
     assert secret not in repr(result.exception)
@@ -178,7 +182,10 @@ def test_config_show_sanitizes_committed_yaml_and_closes_every_resource(
         cli_mod.cli, ["config", "show", "--repo", "o/r", "--branch", "main"]
     )
 
-    assert result.exit_code != 0
+    # Ошибка policy-слоя больше не роняет команду целиком (Task 6): секция
+    # веток печатается, а policy-часть уходит в policy_error; ресурсы
+    # закрываются как прежде — независимо от исхода policy-части.
+    assert result.exit_code == 0, result.output
     assert ".review.yml" in result.output
     assert secret not in result.output
     assert secret not in repr(result.exception)
@@ -196,7 +203,7 @@ def test_config_show_sanitizes_invalid_policy_value(monkeypatch, tmp_path) -> No
         cli_mod.cli, ["config", "show", "--repo", "o/r", "--branch", "main"]
     )
 
-    assert result.exit_code != 0
+    assert result.exit_code == 0, result.output
     assert "effective policy" in result.output
     assert secret not in result.output
     assert secret not in repr(result.exception)
@@ -215,7 +222,7 @@ def test_config_show_rejects_invalid_public_type_without_echoing_value(
 
     result = CliRunner().invoke(cli_mod.cli, arguments)
 
-    assert result.exit_code != 0
+    assert result.exit_code == 0, result.output
     assert "effective policy" in result.output
     assert secret not in result.output
     assert secret not in repr(result.exception)

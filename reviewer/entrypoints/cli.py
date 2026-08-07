@@ -95,6 +95,16 @@ def _config_error_message(exc: Exception) -> str:
 
 
 def _render_config_report(report: Mapping[str, object]) -> None:
+    branches = report.get("branches")
+    if branches:
+        assert isinstance(branches, Mapping)
+        click.echo("branches:")
+        click.echo(f"  primary: {branches['primary']}  ({branches['source']})")
+        click.echo(f"  index:   {', '.join(branches['index'])}  ({branches['source']})")
+    policy_error = report.get("policy_error")
+    if policy_error is not None:
+        click.echo(f"policy_error: {policy_error}")
+        return
     effective = report["effective"]
     sources = report["sources"]
     shadowed = report["shadowed"]
@@ -115,14 +125,25 @@ def _render_config_report(report: Mapping[str, object]) -> None:
 @contextmanager
 def _config_context(repo_opt: str, branch_opt: str | None):
     settings = Settings()
-    components = build_components(settings)
+    # connect=False: diagnostic-командам граф не нужен, а созданный GraphStore
+    # эагерли требует живой Neo4j — не должен ронять команду при недоступной сети.
+    components = build_components(settings, connect=False)
     vcs = None
     try:
         repo = _resolve_config_repo(repo_opt)
-        branch = branch_opt or settings.primary_branch()
+        # Ветки резолвятся из домашнего слоя ДО обращения к VCS: раньше ветка
+        # бралась из settings.primary_branch() именно затем, чтобы создать VCS
+        # и прочитать committed .review.yml — цикл «нужна ветка, чтобы узнать
+        # ветку». Домашний резолв не ходит в сеть, поэтому цикла больше нет.
+        branches = resolve_repo_branches(repo, settings=settings)
+        branch = branch_opt or branches.primary
         owner, name = repo.split("/", 1)
-        vcs = ReviewService(settings, components)._create_vcs_provider(owner, name)
-        yield settings, components, vcs, repo, branch
+        vcs_error: Exception | None = None
+        try:
+            vcs = ReviewService(settings, components)._create_vcs_provider(owner, name)
+        except Exception as exc:  # noqa: BLE001 — диагностика не должна падать целиком
+            vcs_error = exc
+        yield settings, components, vcs, repo, branch, branches, vcs_error
     finally:
         if vcs is not None:
             _safe_config_close(vcs, "vcs")
@@ -140,22 +161,39 @@ def _resolve_config_repo(repo: str) -> str:
 @click.option("--branch", default=None, help="ветка policy; по умолчанию первичная")
 @click.option("--json", "as_json", is_flag=True, default=False)
 def config_show(repo: str, branch: str | None, as_json: bool) -> None:
-    """Показать effective policy и происхождение её верхних ключей."""
+    """Показать effective policy и происхождение её верхних ключей.
+
+    Секция веток печатается всегда, даже если VCS недоступен (нет сети, нет
+    токена) — резолв веток чисто локальный и не зависит от policy-части.
+    """
     try:
-        with _config_context(repo, branch) as (settings, _components, vcs, repo_id, ref):
-            data, meta = resolve_policy_data(
-                repo_id,
-                ref,
-                lambda selected_ref: vcs.get_file_at_ref(".review.yml", selected_ref),
-                strict_home=True,
-            )
-            report = build_config_report(repo_id, ref, settings, data, meta)
+        with _config_context(repo, branch) as ctx:
+            settings, _components, vcs, repo_id, ref, branches, vcs_error = ctx
+            payload: dict[str, object] = {
+                "branches": {
+                    "primary": branches.primary,
+                    "index": list(branches.index),
+                    "source": branches.source,
+                }
+            }
+            try:
+                if vcs_error is not None:
+                    raise vcs_error
+                data, meta = resolve_policy_data(
+                    repo_id,
+                    ref,
+                    lambda selected_ref: vcs.get_file_at_ref(".review.yml", selected_ref),
+                    strict_home=True,
+                )
+                payload.update(build_config_report(repo_id, ref, settings, data, meta))
+            except Exception as exc:  # noqa: BLE001 — диагностика не должна падать целиком
+                payload["policy_error"] = f"{type(exc).__name__}: {exc}"
     except (HomeConfigError, yaml.YAMLError) as exc:
         raise click.ClickException(_config_error_message(exc)) from exc
     if as_json:
-        click.echo(json.dumps(report, ensure_ascii=False, sort_keys=True, indent=2))
+        click.echo(json.dumps(payload, ensure_ascii=False, sort_keys=True, indent=2))
     else:
-        _render_config_report(report)
+        _render_config_report(payload)
 
 
 @config_group.command("migrate")
@@ -164,7 +202,12 @@ def config_show(repo: str, branch: str | None, as_json: bool) -> None:
 def config_migrate(repo: str, branch: str | None) -> None:
     """Безопасно скопировать committed policy в домашний слой репозитория."""
     try:
-        with _config_context(repo, branch) as (settings, _components, vcs, repo_id, ref):
+        with _config_context(repo, branch) as ctx:
+            settings, _components, vcs, repo_id, ref, _branches, vcs_error = ctx
+            if vcs_error is not None:
+                raise click.ClickException(
+                    f"Не удалось подключиться к VCS: {vcs_error}"
+                ) from vcs_error
             result = migrate_repo_config(
                 repo_id,
                 ref,
