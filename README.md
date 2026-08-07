@@ -109,9 +109,10 @@ reviewer env on every workstation instead of using the loopback Compose defaults
    reviewer init
    ```
 
-2. **Choose repository and branch scope.** Set `DEFAULT_REPO` and the ordered
-   `REVIEW_BRANCHES` allowlist in server env. Put repository-specific policy, ignored paths,
-   context limits, and non-secret board metadata in `.review.yml`.
+2. **Choose repository and branch scope.** Set `DEFAULT_REPO` as the fallback repo, and either
+   the ordered `REVIEW_BRANCHES` CSV allowlist in server env or (preferred) a per-repo home
+   layer — see [Repositories and branches](#repositories-and-branches). Put repository-specific
+   policy, ignored paths, context limits, and non-secret board metadata in `.review.yml`.
 
 3. **Build and verify every tracked branch.**
 
@@ -300,7 +301,8 @@ Important groups:
 - Voyage: `VOYAGE_API_KEY`;
 - stores: `PG_DSN`, `NEO4J_URI`, `NEO4J_USER`, `NEO4J_PASSWORD`;
 - VCS: provider token plus optional API base;
-- repository scope: `DEFAULT_REPO`, `REVIEW_BRANCHES`;
+- repository scope: `DEFAULT_REPO`, `REVIEW_BRANCHES` (branch allowlist fallback; a per-repo home
+  layer takes precedence — see [Repositories and branches](#repositories-and-branches));
 - board credentials: provider-specific env declared in the registry.
 
 Credentials stay server-side. **Credentials are not returned** by board metadata or discovery
@@ -308,8 +310,13 @@ tools and must not be placed in `.review.yml`.
 
 ### Repositories and branches
 
-`DEFAULT_REPO` identifies the fallback `owner/name`. `REVIEW_BRANCHES` is an ordered CSV allowlist;
-the first entry is primary. Each branch has isolated `base:<branch>` chunks and graph nodes.
+`DEFAULT_REPO` identifies the fallback `owner/name`. Tracked branches for a repository are
+resolved in layered order — the first source that defines them wins entirely (no per-branch
+merge): a per-repo home file `$XDG_CONFIG_HOME/rag-reviewer/repos/<owner>/<name>.yml` →
+the home-global `review.yml` → the env `REVIEW_BRANCHES` CSV allowlist → `["main"]`. In every
+source the first entry is primary unless `primary_branch` is set explicitly. Each branch has
+isolated `base:<branch>` chunks and graph nodes. Run `reviewer config show --repo owner/name`
+to see the effective branches and which layer produced them.
 
 ```bash
 reviewer index /path/to/repo --ref main --repo owner/name
@@ -317,7 +324,9 @@ reviewer status /path/to/repo --branch main --json
 reviewer search "token verification" --branch main
 ```
 
-Use `reviewer migrate-branches` once when upgrading a legacy unscoped base index.
+Use `reviewer config migrate --repo owner/name` to copy the env `REVIEW_BRANCHES` allowlist into
+the per-repo home layer (no-op if a home layer already sets branches), or `reviewer migrate-branches`
+once when upgrading a legacy unscoped base index.
 
 ### Per-repo `.review.yml`
 
@@ -629,7 +638,7 @@ uncommitted files directly from disk.
 |---|---|---|
 | `reviewer check` reports Postgres/Neo4j unavailable | Default stores are not running or DSNs differ | Run `docker compose -f ~/.config/rag-reviewer/docker-compose.yml up -d`, then repeat `reviewer check` |
 | Voyage returns 429 | Free-tier RPM/TPM quota is exhausted | Wait for the quota window; rerun incremental indexing rather than deleting the index |
-| PR is skipped | Its target branch is outside `REVIEW_BRANCHES`, or draft policy skips it | Inspect `prepare_review` reason and update policy only if the target is intentional |
+| PR is skipped | Its target branch is not tracked for this repository (see `reviewer config show`), or draft policy skips it | Inspect `prepare_review` reason; if the target is intentional, add the branch via the per-repo home layer (or `REVIEW_BRANCHES` fallback), not just policy |
 | Task lookup is empty | Board is disabled/unconfigured or the corpus is cold | Validate [board setup](docs/board-providers.md), then run `/rag-reviewer:sync-tasks` |
 | Q&A misses new local code | Base index contains only a committed ref | Read the local file or commit/index the intended branch |
 | AI client cannot see new skills | Client session predates installation | Start a New Chat/new CLI session; use Reload Window in an IDE |
