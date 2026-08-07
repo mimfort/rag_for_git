@@ -893,3 +893,28 @@ def test_migration_ignores_repository_block_when_comparing(tmp_path):
     )
     assert result.conflicting_keys == ()
     assert result.noop is True
+
+
+def test_migration_ignores_repository_block_in_committed_when_comparing(tmp_path):
+    """Блок repository на committed-стороне не должен давать ложный конфликт."""
+    committed = "max_comments: 5\nrepository:\n  index_branches: [evil]\n"
+    home = tmp_path / "repos" / "o" / "r.yml"
+    home.parent.mkdir(parents=True)
+    home.write_text("max_comments: 5\n", encoding="utf-8")
+    result = migrate_repo_config(
+        "o/r", "main", lambda _ref: committed, config_root=tmp_path
+    )
+    assert result.conflicting_keys == ()
+    assert result.noop is True
+
+
+def test_migration_strips_repository_block_when_publishing_new_config(tmp_path):
+    """Свежая публикация home-файла не должна содержать блок repository."""
+    committed = "max_comments: 5\nrepository:\n  index_branches: [evil]\n"
+    result = migrate_repo_config(
+        "o/r", "main", lambda _ref: committed, config_root=tmp_path
+    )
+    assert result.created is True
+    published_text = result.path.read_text(encoding="utf-8")
+    assert "repository" not in published_text
+    assert "evil" not in published_text

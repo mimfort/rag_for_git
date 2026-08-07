@@ -754,13 +754,14 @@ def _existing_migration_result(
     source = f"home:repos/{repo}.yml"
     _validate_known_policy_data(existing, source)
     existing_policy = {k: v for k, v in existing.items() if k != BRANCHES_KEY}
-    if not _semantic_equal(existing_policy, candidate):
+    candidate_policy = {k: v for k, v in candidate.items() if k != BRANCHES_KEY}
+    if not _semantic_equal(existing_policy, candidate_policy):
         conflicts = tuple(sorted(
             key
-            for key in set(existing_policy) | set(candidate)
+            for key in set(existing_policy) | set(candidate_policy)
             if not _semantic_equal(
                 existing_policy.get(key, _MISSING),
-                candidate.get(key, _MISSING),
+                candidate_policy.get(key, _MISSING),
             )
         ))
         return MigrationResult(
@@ -893,6 +894,10 @@ def migrate_repo_config(
     settings=None,
 ) -> MigrationResult:
     """Copy a safe committed policy to its repository-scoped home layer."""
+    # Локальный импорт: branches.py импортирует layers.py, модульный импорт
+    # создал бы цикл.
+    from reviewer.config.branches import BRANCHES_KEY
+
     repo = normalize_repo(repo)
     root = config_root or reviewer_config_root()
     source_text = fetch_repo_yaml(ref)
@@ -905,6 +910,16 @@ def migrate_repo_config(
             f".review.yml: credential key {'.'.join(credential)} нельзя мигрировать"
         )
     _validate_known_policy_data(candidate, ".review.yml")
+    # Ключ repository — не policy-ключ (ветки задаются домашним слоем): вырезаем
+    # его и из data, используемых для сравнения effective policy, и из текста,
+    # который будет опубликован в новый home-файл.
+    candidate_policy = {k: v for k, v in candidate.items() if k != BRANCHES_KEY}
+    published_text = source_text or ""
+    if BRANCHES_KEY in candidate:
+        published_text = yaml.safe_dump(
+            candidate_policy, allow_unicode=True, sort_keys=False
+        )
+
     def fetch_snapshot(_selected_ref: str) -> str | None:
         return source_text
 
@@ -924,7 +939,7 @@ def migrate_repo_config(
             return _existing_migration_result(
                 destination,
                 existing,
-                candidate,
+                candidate_policy,
                 repo,
                 ref,
                 fetch_snapshot,
@@ -933,14 +948,14 @@ def migrate_repo_config(
                 settings,
             )
         published_data, published_meta = _simulated_repo_layer(
-            before_data, before_meta, candidate, source
+            before_data, before_meta, candidate_policy, source
         )
         published_effective = _effective_policy_snapshot(published_data, settings)
         if not _semantic_equal(before_effective, published_effective):
             raise HomeConfigError("effective policy изменился после миграции")
         if not _publish_new_config(
             destination,
-            source_text or "",
+            published_text,
             source,
             parent_fd=parent.descriptor,
         ):
@@ -954,7 +969,7 @@ def migrate_repo_config(
             return _existing_migration_result(
                 destination,
                 existing,
-                candidate,
+                candidate_policy,
                 repo,
                 ref,
                 fetch_snapshot,
