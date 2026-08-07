@@ -186,8 +186,14 @@ def config_show(repo: str, branch: str | None, as_json: bool) -> None:
                     strict_home=True,
                 )
                 payload.update(build_config_report(repo_id, ref, settings, data, meta))
+            except (HomeConfigError, yaml.YAMLError) as exc:
+                # Тот же санитайзер, что и у остальных config-команд: не эхоить
+                # сырой YAML/normalization payload исключения.
+                payload["policy_error"] = _config_error_message(exc)
             except Exception as exc:  # noqa: BLE001 — диагностика не должна падать целиком
-                payload["policy_error"] = f"{type(exc).__name__}: {exc}"
+                # Прочие сбои (VCS, сеть) — без текста исключения: он может
+                # содержать URL/токены из VCS-клиента.
+                payload["policy_error"] = type(exc).__name__
     except (HomeConfigError, yaml.YAMLError) as exc:
         raise click.ClickException(_config_error_message(exc)) from exc
     if as_json:
@@ -240,8 +246,10 @@ def config_migrate(repo: str, branch: str | None) -> None:
                 )
             except (HomeConfigError, yaml.YAMLError) as exc:
                 pending_error = click.ClickException(_config_error_message(exc))
+                click.echo(f"Policy не перенесена: {pending_error.message}")
             except click.ClickException as exc:
                 pending_error = exc
+                click.echo(f"Policy не перенесена: {exc.message}")
             else:
                 if result.noop:
                     click.echo(f"Конфиг уже перенесён: {result.path}")
@@ -692,10 +700,13 @@ def check(board_project_values: tuple[str, ...]) -> None:
 @cli.command()
 @click.argument("repo")
 @click.option("--ref", default=None,
-              help="git-ref для чтения файлов; по умолчанию первичная ветка "
-                   "(ключ хранения, если --branch не задан)")
+              help="git-ref для чтения файлов; по умолчанию первичная ветка. "
+                   "Если --branch не задан, дополнительно валидируется как "
+                   "отслеживаемая ветка (совпадает с ключом хранения)")
 @click.option("--branch", "branch_opt", default=None,
-              help="имя ветки для хранения индекса; по умолчанию = --ref")
+              help="имя ветки для хранения индекса; по умолчанию = --ref. "
+                   "Если задан явно, --ref — произвольный ref (например, тег) "
+                   "без проверки по отслеживаемым веткам")
 @click.option("--repo", "repo_tag", default=None,
               help="owner/name тег индекса; по умолчанию из git remote origin")
 def index(repo: str, ref: str | None, branch_opt: str | None, repo_tag: str | None) -> None:
@@ -704,7 +715,15 @@ def index(repo: str, ref: str | None, branch_opt: str | None, repo_tag: str | No
     repo_id = _resolve_repo(repo_tag, repo, s)
     try:
         branches = resolve_repo_branches(repo_id, settings=s)
-        ref = resolve_branch(ref, None, branches)
+        if branch_opt is None:
+            # --branch не задан: --ref — это и ключ хранения, поэтому обязан
+            # быть отслеживаемой веткой репозитория.
+            ref = resolve_branch(ref, None, branches)
+        elif ref is None:
+            # --branch задан явно: --ref — произвольный git-ref для чтения
+            # файлов (например, тег), пользователь сам управляет расщеплением
+            # ref↔branch, поэтому validation по отслеживаемым веткам пропускаем.
+            ref = branches.primary
     except (HomeConfigError, ValueError) as exc:
         raise click.ClickException(str(exc)) from exc
     c = build_components(s)

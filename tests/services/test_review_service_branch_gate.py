@@ -80,7 +80,8 @@ def test_pr_into_home_tracked_branch_is_prepared(tmp_path, monkeypatch, service,
     path.parent.mkdir(parents=True)
     path.write_text("repository:\n  index_branches: [dev]\n", encoding="utf-8")
     fake_vcs.pull_request.base_ref = "dev"
-    service.prepare("o", "r", 1, vcs_provider=fake_vcs)
+    result = service.prepare("o", "r", 1, vcs_provider=fake_vcs)
+    assert result.prq.base_ref == "dev"
 
 
 def test_pr_gate_falls_back_to_env_without_home_layer(tmp_path, monkeypatch, service, fake_vcs):

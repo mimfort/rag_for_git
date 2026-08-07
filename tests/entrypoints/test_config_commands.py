@@ -136,7 +136,7 @@ def test_config_migrate_creates_home_file_and_reports_shadowing(
     # Policy-блок сохранён как есть; branch-миграция дописывает repository ниже.
     assert written.startswith(source)
     assert "repository:" in written
-    assert "index_branches: [main]" in written
+    assert "index_branches:\n  - main\n" in written
     assert "shadowed" in result.output
     assert "Ветки перенесены" in result.output
 
@@ -159,8 +159,12 @@ def test_config_migrate_refuses_conflicting_home_file(monkeypatch, tmp_path) -> 
     # и дописывается в тот же файл до того, как код возврата станет ненулевым.
     written = destination.read_text(encoding="utf-8")
     assert written.startswith("max_comments: 3\n")
-    assert "index_branches: [main]" in written
+    assert "index_branches:\n  - main\n" in written
     assert "Ветки перенесены" in result.output
+    # Minor 3: явная строка о том, что именно НЕ перенесено (policy), не только
+    # что перенесено (ветки) — иначе вывод читается как авария без объяснения.
+    assert "Policy не перенесена" in result.output
+    assert result.output.index("Policy не перенесена") < result.output.index("Ветки перенесены")
 
 
 def test_config_show_uses_default_branch_and_normalized_nested_repo(

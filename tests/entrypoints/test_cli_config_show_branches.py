@@ -34,6 +34,25 @@ def test_branches_shown_even_when_policy_part_fails(tmp_path, monkeypatch):
     assert result.exit_code != 0
 
 
+def test_policy_error_does_not_echo_raw_exception_text(tmp_path, monkeypatch):
+    """Important 4: `policy_error` для произвольного исключения печатает только
+    тип, а не str(exc) — иначе секреты из VCS-клиента утекли бы в вывод CLI."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.setenv("REVIEW_BRANCHES", "main")
+    secret = "do-not-echo-token-xyz"
+
+    def boom(*args, **kwargs):
+        raise RuntimeError(secret)
+
+    monkeypatch.setattr(
+        "reviewer.services.review_service.ReviewService._create_vcs_provider", boom
+    )
+    result = CliRunner().invoke(cli, ["config", "show", "--repo", "o/r", "--json"])
+    payload = json.loads(result.output)
+    assert payload["policy_error"] == "RuntimeError"
+    assert secret not in result.output
+
+
 def test_config_show_exits_zero_when_everything_resolves(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     monkeypatch.setenv("REVIEW_BRANCHES", "main")

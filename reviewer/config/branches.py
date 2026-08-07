@@ -13,6 +13,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+import yaml
+
 from reviewer.config.layers import (
     HomeConfigError,
     HomeCredentialError,
@@ -72,7 +74,7 @@ def _parse_block(block: object, source: str) -> tuple[str, tuple[str, ...]]:
         if not isinstance(item, str) or not item.strip():
             raise HomePolicyError(
                 f"{source}: repository.index_branches содержит не-строку или пустую "
-                "строка"
+                "строку"
             )
         name = item.strip()
         if name in index:
@@ -132,13 +134,21 @@ class BranchMigrationResult:
 
 
 def _render_block(index: tuple[str, ...]) -> str:
-    """Сформировать YAML-блок repository (ветки — простые имена без кавычек)."""
-    names = ", ".join(index)
+    """Сформировать YAML-блок repository через safe_dump.
+
+    Имена веток попадают в YAML как есть — легальное git-имя вроде
+    ``feature{x}`` ломает flow-список без кавычек, а ``2.0``/``on``/``no``
+    парсится как не-строка. ``safe_dump`` сам кавычит там, где нужно.
+    """
+    body = yaml.safe_dump(
+        {BRANCHES_KEY: {"index_branches": list(index)}},
+        allow_unicode=True,
+        sort_keys=False,
+    )
     return (
         "\n# Отслеживаемые ветки репозитория (перенесено из REVIEW_BRANCHES).\n"
         "# Первая ветка списка — первичная, если primary_branch не задан явно.\n"
-        "repository:\n"
-        f"  index_branches: [{names}]\n"
+        f"{body}"
     )
 
 
@@ -151,13 +161,20 @@ def migrate_repo_branches(
     """Перенести env REVIEW_BRANCHES в repository.index_branches домашнего слоя.
 
     `.env` не изменяется: env остаётся рабочим фолбэком. Существующий блок
-    `repository` не перезаписывается — это noop.
+    `repository` не перезаписывается — это noop. Ветки берутся не напрямую из
+    env, а через ``resolve_repo_branches``: если эффективные ветки уже заданы
+    ЛЮБЫМ домашним слоем (per-repo ИЛИ глобальный ``home:review.yml``), это
+    тоже noop — иначе перенос молча подменил бы эффективные ветки значением
+    из env, которое в порядке резолва стоит ниже домашних слоёв.
     """
     repo = normalize_repo(repo)
     root = config_root or reviewer_config_root()
     destination = home_repo_path(repo, root)
     source = f"home:repos/{repo}.yml"
-    index = tuple(settings.review_branches_list())
+    effective = resolve_repo_branches(repo, settings=settings, config_root=root)
+    if effective.source.startswith("home:"):
+        return BranchMigrationResult(destination, False, True)
+    index = effective.index
     block = _render_block(index)
     try:
         existing_text = destination.read_text(encoding="utf-8")
