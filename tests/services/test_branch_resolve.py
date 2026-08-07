@@ -1,39 +1,36 @@
 from types import SimpleNamespace
 
 import pytest
-from reviewer.config.settings import Settings
+
+from reviewer.config.branches import RepoBranches
 from reviewer.services import branch as branch_mod
 from reviewer.services.branch import current_git_branch, resolve_branch
 
 
-def _settings(csv):
-    return Settings(_env_file=None, review_branches=csv)
+def _branches(*names):
+    return RepoBranches(primary=names[0], index=tuple(names), source="test")
 
 
-def test_requested_in_allowlist_used():
-    s = _settings("main,master")
-    assert resolve_branch("master", "main", s) == "master"
+def test_requested_branch_is_used_when_tracked():
+    assert resolve_branch("master", "main", _branches("main", "master")) == "master"
 
 
-def test_requested_outside_allowlist_raises():
-    s = _settings("main,master")
-    with pytest.raises(ValueError, match="develop"):
-        resolve_branch("develop", "main", s)
+def test_requested_branch_outside_index_raises():
+    with pytest.raises(ValueError) as exc:
+        resolve_branch("develop", "main", _branches("main"))
+    assert "develop" in str(exc.value)
 
 
 def test_current_git_branch_used_when_tracked():
-    s = _settings("main,master")
-    assert resolve_branch(None, "master", s) == "master"
+    assert resolve_branch(None, "master", _branches("main", "master")) == "master"
 
 
-def test_falls_back_to_primary_when_current_untracked():
-    s = _settings("main,master")
-    assert resolve_branch(None, "feature/x", s) == "main"
+def test_untracked_current_branch_falls_back_to_primary():
+    assert resolve_branch(None, "feature/x", _branches("main")) == "main"
 
 
-def test_falls_back_to_primary_when_no_current():
-    s = _settings("main,master")
-    assert resolve_branch(None, None, s) == "main"
+def test_no_signal_falls_back_to_primary():
+    assert resolve_branch(None, None, _branches("dev", "main")) == "dev"
 
 
 def test_current_git_branch_returns_stripped_name(monkeypatch):
