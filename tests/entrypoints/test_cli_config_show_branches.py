@@ -8,6 +8,7 @@ from reviewer.entrypoints.cli import cli
 def test_branches_shown_even_when_policy_part_fails(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     monkeypatch.setenv("REVIEW_BRANCHES", "main")
+    monkeypatch.setenv("VOYAGE_API_KEY", "v")
     path = tmp_path / "rag-reviewer" / "repos" / "o" / "r.yml"
     path.parent.mkdir(parents=True)
     path.write_text(
@@ -39,6 +40,7 @@ def test_policy_error_does_not_echo_raw_exception_text(tmp_path, monkeypatch):
     тип, а не str(exc) — иначе секреты из VCS-клиента утекли бы в вывод CLI."""
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     monkeypatch.setenv("REVIEW_BRANCHES", "main")
+    monkeypatch.setenv("VOYAGE_API_KEY", "v")
     secret = "do-not-echo-token-xyz"
 
     def boom(*args, **kwargs):
@@ -56,6 +58,7 @@ def test_policy_error_does_not_echo_raw_exception_text(tmp_path, monkeypatch):
 def test_config_show_exits_zero_when_everything_resolves(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     monkeypatch.setenv("REVIEW_BRANCHES", "main")
+    monkeypatch.setenv("VOYAGE_API_KEY", "v")
     path = tmp_path / "rag-reviewer" / "repos" / "o" / "r.yml"
     path.parent.mkdir(parents=True)
     path.write_text("repository:\n  index_branches: [dev]\n", encoding="utf-8")
@@ -84,6 +87,7 @@ def test_config_show_exits_zero_when_everything_resolves(tmp_path, monkeypatch):
 def test_branch_used_for_policy_ref_comes_from_home_layer(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     monkeypatch.setenv("REVIEW_BRANCHES", "main")
+    monkeypatch.setenv("VOYAGE_API_KEY", "v")
     path = tmp_path / "rag-reviewer" / "repos" / "o" / "r.yml"
     path.parent.mkdir(parents=True)
     path.write_text("repository:\n  index_branches: [dev]\n", encoding="utf-8")
