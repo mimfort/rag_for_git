@@ -1333,7 +1333,8 @@ class MCPReviewService:
 
         Возвращает (normalized_repo, resolved_branch) при успехе либо строку-заметку
         об ошибке (её тул отдаёт пользователю как есть). Ветка валидируется по
-        REVIEW_BRANCHES; пустая ветка → первичная.
+        отслеживаемым веткам репозитория (домашние слои → env REVIEW_BRANCHES);
+        пустая ветка → первичная ветка репозитория.
         """
         from reviewer.services.repo_id import normalize_repo
         raw = repo or self.settings.default_repo
@@ -1343,10 +1344,15 @@ class MCPReviewService:
             repo = normalize_repo(raw)
         except ValueError:
             return f"(некорректный repo: {raw!r})"
-        if branch and branch not in self.settings.review_branches_list():
-            return (f"(ветка {branch!r} не в REVIEW_BRANCHES "
-                    f"({self.settings.review_branches_list()}))")
-        return (repo, branch or self.settings.primary_branch())
+
+        from reviewer.config.branches import resolve_repo_branches
+        from reviewer.services.branch import resolve_branch
+
+        try:
+            branches = resolve_repo_branches(repo, settings=self.settings)
+            return (repo, resolve_branch(branch, None, branches))
+        except ValueError as exc:
+            return f"({exc})"
 
     def _resolve_policy(self, repo: str, branch: str) -> tuple["ReviewPolicy", "ResolutionMeta"]:
         """Резолвит effective policy из env, home-слоёв и committed `.review.yml`."""

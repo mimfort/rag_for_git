@@ -198,8 +198,12 @@ class ReviewService:
 
             # Маршрутизация: PR в неотслеживаемую ветку пропускаем ДО дорогих
             # шагов (overlay/эмбеддинги ещё не строились — очистка идемпотентна).
+            # HomeConfigError здесь намеренно не глушится: битый домашний конфиг
+            # обязан быть громким, иначе PR молча останется без ревью.
+            from reviewer.config.branches import resolve_repo_branches
+
             branch = prq.base_ref
-            if branch not in self.settings.review_branches_list():
+            if branch not in resolve_repo_branches(repo, settings=self.settings).index:
                 raise BranchNotTrackedError(branch)
 
             from reviewer.config.layers import resolve_policy_data

@@ -686,10 +686,11 @@ def test_search_codebase_falls_back_to_default_repo() -> None:
 
 
 def test_search_codebase_rejects_untracked_branch() -> None:
-    """Ветка не из REVIEW_BRANCHES → понятная заметка, retriever не зовётся."""
+    """Ветка не отслеживается репозиторием → понятная заметка, retriever не зовётся."""
     svc = _make_mcp_service()
     out = svc.search_codebase("a/b", "x", branch="release/v9")
-    assert "REVIEW_BRANCHES" in out
+    assert "release/v9" in out
+    assert "не отслеживается" in out
     svc.components.retriever.search_base.assert_not_called()
 
 
@@ -737,7 +738,8 @@ def test_related_symbols_invalid_branch() -> None:
     """Невалидная ветка → заметка из _resolve_repo_branch, граф не зовётся."""
     svc = _make_mcp_service()
     out = svc.related_symbols("a/b", "a.py#foo", branch="nope")
-    assert "REVIEW_BRANCHES" in out
+    assert "nope" in out
+    assert "не отслеживается" in out
 
 
 def test_callers_delegates_to_graph() -> None:
