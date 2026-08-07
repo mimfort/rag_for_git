@@ -68,7 +68,8 @@ tar xz -C ~/.kimi-code/skills --strip-components=3 -f /tmp/rag-reviewer.tgz 'rag
 rm /tmp/rag-reviewer.tgz
 ```
 
-Skills installed: `reviewer_review-pr`, `reviewer_solve-task`, `reviewer_sync-codebase`, `reviewer_sync-tasks`, `reviewer_performance-review`, `reviewer_maintainability-review`.
+Skills installed: `review-pr`, `solve-task`, `sync-codebase`, `sync-tasks`,
+`performance-review`, `maintainability-review`.
 
 ## Обновление
 

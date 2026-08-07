@@ -5,6 +5,10 @@
 """
 from __future__ import annotations
 
+import os
+from pathlib import Path
+import subprocess
+import sys
 from unittest.mock import MagicMock, call, patch
 
 import pytest
@@ -190,6 +194,32 @@ def test_prepare_limits_risk_paths_and_reports_overflow(
 
     assert len(prepared.risk_paths) == 10
     assert prepared.risk_skipped_paths == [".env.9"]
+
+
+def test_prepare_module_isolated_from_conflicting_xdg_config(tmp_path):
+    """Prepare-тесты не должны наследовать repository-home policy разработчика."""
+    home = tmp_path / "developer-config/rag-reviewer/repos/o/r.yml"
+    home.parent.mkdir(parents=True)
+    home.write_text("task_board: {type: yougile}\n", encoding="utf-8")
+    env = {**os.environ, "XDG_CONFIG_HOME": str(tmp_path / "developer-config")}
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "-q",
+            "-p",
+            "no:cacheprovider",
+            "tests/services/test_review_service.py::test_prepare_task_keys_none_without_task_board",
+        ],
+        cwd=Path(__file__).parents[2],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 # ---------------------------------------------------------------------------

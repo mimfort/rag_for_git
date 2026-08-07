@@ -1,11 +1,32 @@
 from __future__ import annotations
 from dataclasses import dataclass
 import logging
+from typing import Literal
 
 from reviewer.index.refs import base_ref
 from reviewer.retrieval.cliff import format_tail_note, select_by_cliff
 
 log = logging.getLogger(__name__)
+
+
+DegradedReason = Literal["reranker_unconfigured", "reranker_failed"]
+
+_DEGRADED_NOTES: dict[DegradedReason, str] = {
+    "reranker_unconfigured": (
+        "— reranker не настроен: применён детерминированный резервный отбор "
+        "hybrid+graph; "
+        "качество ранжирования снижено."
+    ),
+    "reranker_failed": (
+        "— reranker недоступен: применён детерминированный резервный отбор "
+        "hybrid+graph; "
+        "качество ранжирования снижено."
+    ),
+}
+
+
+def _format_degraded_note(reason: DegradedReason | None) -> str | None:
+    return _DEGRADED_NOTES.get(reason) if reason is not None else None
 
 
 def _is_test_path(path: str) -> bool:
@@ -46,12 +67,29 @@ def _dedupe_overlapping(items: list) -> list:
     return kept
 
 
+def _select_degraded_context(hybrid_items: list, graph_items: list, ceiling: int) -> list:
+    """Ограниченный запасной выбор: гибридный контекст приоритетен, граф добавляет разнообразие."""
+    if ceiling <= 0:
+        return []
+    if not hybrid_items:
+        return graph_items[:ceiling]
+    if ceiling == 1:
+        return hybrid_items[:1]
+    if len(hybrid_items) < ceiling:
+        free = ceiling - len(hybrid_items)
+        return [*hybrid_items, *graph_items[:free]]
+    if graph_items:
+        return [*hybrid_items[:ceiling - 1], graph_items[0]]
+    return hybrid_items[:ceiling]
+
+
 @dataclass
 class ContextPack:
     items: list
     max_chars: int = 0
     max_tokens: int = 0
     tail_meta: object = None        # TailMeta | None (PRI-202); ленивая заметка о хвосте
+    degraded_reason: DegradedReason | None = None
 
     def as_context(self, line_numbers: bool = False) -> str:
         parts = []
@@ -76,6 +114,9 @@ class ContextPack:
         note = format_tail_note(self.tail_meta) if self.tail_meta is not None else None
         if note:
             text = f"{text}\n\n{note}" if text else note
+        degraded_note = _format_degraded_note(self.degraded_reason)
+        if degraded_note:
+            text = f"{text}\n\n{degraded_note}" if text else degraded_note
         return text
 
 
@@ -112,8 +153,8 @@ class Retriever:
                     branch="", include_tests=False) -> ContextPack:
         """Гибрид-поиск по base-индексу ветки без PR-сессии — для /solve-task (PRI-202).
 
-        ANN-префильтр (BM25-aware) → always rerank_scored → cliff-отсечка. Граф и
-        реранкер fail-soft (откат на RRF-порядок + срез по ceiling, без заметки).
+        ANN-префильтр (BM25-aware) → rerank_scored → cliff-отсечка. Граф и
+        реранкер fail-soft: hybrid приоритетен, graph сохраняет разнообразие.
         """
         from reviewer.policy.context_limits import CodebaseLimits
         lim = limits or CodebaseLimits()
@@ -128,31 +169,57 @@ class Retriever:
         hits = [h for h in hits if getattr(h, "bm25_hit", False)
                 or (getattr(h, "ann_distance", None) is not None
                     and h.ann_distance <= lim.ann_distance_max)]
-        merged: dict[str, object] = {}
-        for h in hits:
-            merged.setdefault(h.node_id, h)
+        hybrid_ids = {hit.node_id for hit in hits}
+        graph_only_ids: list[str] = []
+        merged: dict[str, object] = {hit.node_id: hit for hit in hits}
         if self.graph is not None and hits:
             try:
-                seeds = [h.node_id for h in hits[:ceiling]]
-                related_ids = self.graph.expand(repo, seeds, hops=hops, branch=branch)
-                related = self.store.fetch_nodes(repo, list(related_ids), "__none__", [],
-                                                 base_ref=bref)
-                for it in related:
-                    merged.setdefault(it.node_id, it)   # graph-items префильтр не трогает
+                seeds = [hit.node_id for hit in hits[:ceiling]]
+                expanded = self.graph.expand_detailed(repo, seeds, hops=hops, branch=branch)
+                graph_ids = [row["id"] for row in expanded]
+                fetched = self.store.fetch_nodes(repo, graph_ids, "__none__", [], base_ref=bref)
+                fetched_by_id = {item.node_id: item for item in fetched}
+                related = [fetched_by_id[node_id] for node_id in graph_ids
+                           if node_id in fetched_by_id]
+                for item in related:
+                    if item.node_id not in hybrid_ids:
+                        graph_only_ids.append(item.node_id)
+                    merged.setdefault(item.node_id, item)
             except Exception:
                 log.warning("search_base: graph-expansion недоступен", exc_info=True)
         items = list(merged.values())
         if not include_tests:
-            items = [it for it in items if not _is_test_path(it.path)]
+            items = [item for item in items if not _is_test_path(item.path)]
         items = _dedupe_overlapping(items)
-        # Fail-soft: нет реранкера/пусто/мелкий пул → RRF-порядок, срез по ceiling, без заметки
-        if self.reranker is None or len(items) <= lim.floor:
-            return ContextPack(items=items[:ceiling], max_chars=self.max_context_chars)
+        graph_only_id_set = set(graph_only_ids)
+        hybrid_items = [item for item in items if item.node_id in hybrid_ids]
+        graph_items = [item for item in items if item.node_id in graph_only_id_set]
+        items = [*hybrid_items, *graph_items]
+        if len(items) <= lim.floor:
+            selected = (
+                _select_degraded_context(hybrid_items, graph_items, ceiling)
+                if len(items) > ceiling
+                else items
+            )
+            return ContextPack(items=selected, max_chars=self.max_context_chars)
+        if self.reranker is None:
+            return ContextPack(
+                items=_select_degraded_context(hybrid_items, graph_items, ceiling),
+                max_chars=self.max_context_chars,
+                degraded_reason="reranker_unconfigured",
+            )
         try:
             scored = self.reranker.rerank_scored(query, items)
         except Exception:
-            log.warning("search_base: rerank недоступен — RRF-порядок", exc_info=True)
-            return ContextPack(items=items[:ceiling], max_chars=self.max_context_chars)
+            log.warning(
+                "search_base: реранкер недоступен — применён детерминированный резервный отбор",
+                exc_info=True,
+            )
+            return ContextPack(
+                items=_select_degraded_context(hybrid_items, graph_items, ceiling),
+                max_chars=self.max_context_chars,
+                degraded_reason="reranker_failed",
+            )
         kept, tail_meta = select_by_cliff(
             scored, floor_n=lim.floor, ceiling_n=ceiling,
             ratio=lim.ratio, abs_floor=lim.abs_floor)

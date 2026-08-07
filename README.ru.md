@@ -28,15 +28,23 @@ inline-комментарии, привязанные к изменённым с
 системы контроля версий (VCS), если reviewer должен читать или публиковать ревью. Хранилища
 работают локально; запросы эмбеддингов и реранкинга отправляются в Voyage.
 
-1. Установите launcher, скачайте Compose-файл репозитория, поднимите хранилища и настройте
-   reviewer:
+1. Установите launcher, скачайте Compose-файл репозитория в каталог конфигурации reviewer,
+   поднимите хранилища и настройте reviewer:
 
    ```bash
-   uv tool install --from rag-reviewer reviewer
-   curl -O https://raw.githubusercontent.com/mimfort/rag_for_git/main/docker-compose.yml
-   docker compose up -d
+   uv tool install rag-reviewer
+   mkdir -p ~/.config/rag-reviewer
+   curl -o ~/.config/rag-reviewer/docker-compose.yml \
+     https://raw.githubusercontent.com/mimfort/rag_for_git/main/docker-compose.yml
+   docker compose -f ~/.config/rag-reviewer/docker-compose.yml up -d
    reviewer init
    ```
+
+   Compose-файл лежит рядом с env-файлом в `$XDG_CONFIG_HOME/rag-reviewer/` (по умолчанию
+   `~/.config/rag-reviewer/`), поэтому один набор хранилищ обслуживает все репозитории, а имя
+   Compose-проекта не зависит от каталога, из которого вы запускаете команду. Голый `curl -O`
+   пишет в текущий каталог; внутри клона этого репозитория он перезапишет версионируемый
+   `docker-compose.yml`.
 
 2. Посмотрите поддерживаемые AI-клиенты и подключите нужный:
 
@@ -57,7 +65,7 @@ inline-комментарии, привязанные к изменённым с
    Индексация создаёт схему `chunks`, которую запрашивает `reviewer check`, поэтому в свежей
    установке сначала нужен index. Сейчас check требует `GITHUB_TOKEN` даже для GitLab-only
    конфигурации; до снятия этого ограничения проверяйте `GITLAB_TOKEN` через dry-run
-   `reviewer_review-pr` для GitLab MR. Status payload должен показать indexed SHA и `drift == 0`.
+   `/rag-reviewer:review-pr` для GitLab MR. Status payload должен показать indexed SHA и `drift == 0`.
    Полная индексация отправляет чанки кода в Voyage и может быть медленной на free tier. Без base
    index ревью видит только дифф и временный индекс изменённых файлов (overlay), поэтому получает
    более узкий контекст репозитория.
@@ -66,10 +74,10 @@ inline-комментарии, привязанные к изменённым с
 
    ```text
    # Claude Code
-   /rag-reviewer:reviewer_review-pr owner/repo#123 --dry-run
+   /rag-reviewer:review-pr owner/repo#123 --dry-run
 
    # Codex
-   $rag-reviewer:reviewer_review-pr owner/repo#123
+   $rag-reviewer:review-pr owner/repo#123
    ```
 
    Синтаксис вызова зависит от клиента. Dry run возвращает обоснованные findings без публикации;
@@ -94,8 +102,10 @@ reviewer env на каждой машине вместо loopback defaults из 
 1. **На shared host поднимите хранилища и настройте секреты service account.**
 
    ```bash
-   curl -O https://raw.githubusercontent.com/mimfort/rag_for_git/main/docker-compose.yml
-   docker compose up -d
+   mkdir -p ~/.config/rag-reviewer
+   curl -o ~/.config/rag-reviewer/docker-compose.yml \
+     https://raw.githubusercontent.com/mimfort/rag_for_git/main/docker-compose.yml
+   docker compose -f ~/.config/rag-reviewer/docker-compose.yml up -d
    reviewer init
    ```
 
@@ -142,37 +152,40 @@ VCS и доской.
 
 ### Ревью pull request
 
-Используйте `reviewer_review-pr` для поиска багов. Skill готовит PR-сессию, подтягивает код и
+Используйте `review-pr` для поиска багов. Skill готовит PR-сессию, подтягивает код и
 графовый контекст, анализирует изменённые файлы, проверяет findings и публикует только обоснованный
 результат. Для проверки deployment начните с `--dry-run`. Inline-комментарии возможны только на
 commentable строках диффа; off-diff findings уходят в сводку.
 
 ### Решение задачи
 
-`reviewer_solve-task` превращает задачу доски или текстовый запрос в сохраняемый brief до начала
+`solve-task` превращает задачу доски или текстовый запрос в сохраняемый brief до начала
 разработки. Skill проверяет свежесть индекса, прогревает task context, собирает related work и код,
 затем передаёт brief в brainstorming. Саму задачу этот skill не реализует.
 
 ### Обоснованный вопрос по кодовой базе
 
-`reviewer_ask` подходит для онбординга и Q&A. Ответы ссылаются на реальные `path:line` из base
+`ask` подходит для онбординга и Q&A. Ответы ссылаются на реальные `path:line` из base
 index и code graph. Skill читает и объясняет, но не ревьюит PR и не изменяет код.
 
 ### Гид по PR для ревьюера
 
-`reviewer_pr-walkthrough` строит порядок чтения: с чего начать, что меняет каждый файл и на каких
+`pr-walkthrough` строит порядок чтения: с чего начать, что меняет каждый файл и на каких
 callers влияет правка. Это отдельный сценарий, а не bug review.
 
 ### Сфокусированное ревью
 
-`reviewer_performance-review` ищет повторный I/O, N+1, плохую асимптотику, проблемы batching,
-caching и памяти. `reviewer_maintainability-review` ищет сложность, дублирование, проблемы
+`performance-review` ищет повторный I/O, N+1, плохую асимптотику, проблемы batching,
+caching и памяти. `maintainability-review` ищет сложность, дублирование, проблемы
 читаемости, границ и соглашений репозитория. Оба остаются в явно выбранном измерении.
 
-### Создание и завершение задач доски
+### Создание, декомпозиция и завершение задач доски
 
-`reviewer_create-task` собирает каноническое тело и пишет только после подтверждения.
-`reviewer_finish-task` добавляет PR, переводит задачу в обнаруженный done target, добавляет ссылку
+`create-task` собирает каноническое тело и пишет только после подтверждения.
+`decompose-task` превращает одного сохранённого родителя в полностью показанный preview batch
+нативных дочерних задач, запрашивает одно подтверждение, сохраняет previewed idempotency key при
+retry, затем синхронизирует и проверяет каждую связь и child read.
+`finish-task` добавляет PR, переводит задачу в обнаруженный done target, добавляет ссылку
 на задачу в PR body и повторно синхронизирует корпус—тоже только после подтверждения.
 
 ### Грунтовка reviewer в фазах план/ревью (опционально)
@@ -227,9 +240,14 @@ PR → prepare_review → base + overlay retrieval → skill analysis
 Постоянный CLI:
 
 ```bash
-uv tool install --from rag-reviewer reviewer
+uv tool install rag-reviewer
 reviewer update
 ```
+
+`uv tool install` принимает имя пакета и ставит обе его команды — `reviewer` и `reviewer-mcp`.
+Опция `--from` здесь лишь уточняет источник того же пакета (`--from rag-reviewer==0.4.2`,
+`--from git+…`); форма `--from PACKAGE COMMAND` относится к `uvx`, и `uv tool install` её
+отвергает.
 
 Временный/latest запуск:
 
@@ -268,6 +286,12 @@ claude plugin marketplace list --json
 ```
 
 После установки начните новую chat/CLI session; в IDE также выполните Reload Window.
+
+### Миграция с ломающим изменением имён скиллов
+
+В этом релизе из имени каждого скилла удалён избыточный сегмент `reviewer_`. Старые вызовы
+скиллов не поддерживаются: обновите plugin/cache, используйте короткие имена ниже, затем откройте
+New Chat или новую CLI-сессию. В IDE также выполните Reload Window.
 
 ### Сервисы и credentials
 
@@ -318,7 +342,45 @@ context_limits:
     hops: 1
 ```
 
-`reviewer_configure-review` меняет context fields, сохраняя посторонние ключи.
+### Слоистая политика репозитория
+
+Политика разрешается строго в таком порядке; более поздний источник выигрывает для одинакового
+верхнеуровневого ключа:
+
+```text
+ENV
+  < $XDG_CONFIG_HOME/rag-reviewer/review.yml
+  < committed .review.yml at the selected target ref
+  < $XDG_CONFIG_HOME/rag-reviewer/repos/<owner>/<name>.yml
+```
+
+Если `XDG_CONFIG_HOME` не задан, home-root — `~/.config/rag-reviewer`. Слияние выполняется только
+на верхнем уровне: более поздний mapping, list или `null` целиком заменяет прежнее значение;
+вложенные mappings не объединяются глубоко. Такая замена называется **shadowing**. Посмотреть
+effective policy, источник каждого ключа и перекрытые источники можно так:
+
+```bash
+reviewer config show --repo group/service --branch main --json
+```
+
+Committed-слой берётся на выбранном ref, поэтому разрешение review/config никогда не читает
+незакоммиченный `.review.yml` из worktree. Чтобы скопировать безопасную committed policy в
+repo-specific home-слой, не меняя committed-файл, выполните:
+
+```bash
+reviewer config migrate --repo group/service --branch main
+```
+
+Миграция неразрушающая: эквивалентный destination даёт no-op, а отличающийся destination
+сообщается как конфликт и остаётся без изменений. Home-файлы с credential-подобными ключами
+отклоняются как policy layers, а их значения никогда не выводятся; credentials храните только в
+server environment. Home-конфигурация принадлежит OS account, запускающему reviewer. На shared
+service account она может незаметно влиять на workloads этого account, поэтому team-visible policy
+держите в committed `.review.yml` и ограничивайте права на home-конфигурацию service account.
+
+`configure-review` меняет context fields, сохраняя посторонние ключи. По умолчанию он
+предлагает per-repo home target, но по явному выбору обновляет committed `.review.yml` для
+team-visible policy.
 
 ### Доски задач
 
@@ -349,6 +411,8 @@ Server-side workflow — **store-first**:
    context tools.
 3. Client models не перечисляют provider напрямую и не передают credentials.
 
+MCP server сейчас предоставляет **38 tools**, включая batch-операцию нативных подзадач.
+
 Legacy aliases остаются как **legacy metadata for older clients** на одно compatibility window:
 `TASK_BOARD_API_KEY → YOUGILE_API_KEY` и
 `TASK_BOARD_API_BASE → YOUGILE_API_BASE`. Новые deployments используют registry-declared
@@ -378,102 +442,129 @@ threshold, graph backend и retrieval ceilings меняют cost/recall; сна�
 Примеры ниже используют Claude-синтаксис `/rag-reviewer:...`. В Codex те же namespaced skills
 доступны как `$rag-reviewer:...`.
 
-### `reviewer_review-pr` — полное ревью PR
+### `review-pr` — полное ревью PR
 
 - **Когда:** найти correctness, security, performance и maintainability проблемы в PR.
-- **Вызов:** `/rag-reviewer:reviewer_review-pr owner/repo#123 --dry-run`.
+- **Вызов:** `/rag-reviewer:review-pr owner/repo#123 --dry-run`.
 - **Нужно:** reviewer MCP, VCS access, хранилища и желательно свежий base index/graph.
 - **Чтение/запись:** читает PR, код и task context; публикует через `publish_review`, кроме dry-run.
 - **Результат:** grounded inline comments и summary; deterministic publish выполняет dedup.
 
-### `reviewer_solve-task` — от задачи к brief разработки
+### `solve-task` — от задачи к brief разработки
 
 - **Когда:** начать реализацию по ключу `PRI-220` или текстовому запросу.
-- **Вызов:** `/rag-reviewer:reviewer_solve-task PRI-220`.
+- **Вызов:** `/rag-reviewer:solve-task PRI-220`.
 - **Нужно:** reviewer MCP; board context опционален, pipeline продолжает board-less.
 - **Чтение/запись:** читает task/code context и пишет один brief в `docs/superpowers/briefs/`.
 - **Результат:** компактный brief для brainstorming; реализация идёт в следующих skills.
 
-### `reviewer_ask` — обоснованный Q&A по коду
+### `ask` — обоснованный Q&A по коду
 
 - **Когда:** узнать, где лежит код или как устроена подсистема.
-- **Вызов:** `/rag-reviewer:reviewer_ask как работает свежесть индекса?`.
+- **Вызов:** `/rag-reviewer:ask как работает свежесть индекса?`.
 - **Нужно:** построенные base index и graph.
 - **Чтение/запись:** читает repo context и локальные файлы; не меняет и не ревьюит код.
 - **Результат:** русское объяснение с реальными `path:line`.
 
-### `reviewer_pr-walkthrough` — порядок чтения PR
+### `pr-walkthrough` — порядок чтения PR
 
 - **Когда:** провести ревьюера-человека по PR без bug review.
-- **Вызов:** `/rag-reviewer:reviewer_pr-walkthrough owner/repo#123`.
+- **Вызов:** `/rag-reviewer:pr-walkthrough owner/repo#123`.
 - **Нужно:** reviewer MCP, PR access, base index и graph.
 - **Чтение/запись:** читает impact/diffs/callers; постит только по явному запросу.
 - **Результат:** centrality-first порядок, per-file summary и grounded impact.
 
-### `reviewer_performance-review` — только performance
+### `performance-review` — только performance
 
 - **Когда:** проверить repeated work, N+1 I/O, asymptotics, batching, caching и memory.
-- **Вызов:** `/rag-reviewer:reviewer_performance-review`.
+- **Вызов:** `/rag-reviewer:performance-review`.
 - **Нужно:** diff/PR или явно выбранный scope; reviewer context fail-open.
 - **Чтение/запись:** читает изменения и ближайший контекст; сам не публикует.
 - **Результат:** только конкретные performance findings с явными assumptions.
 
-### `reviewer_maintainability-review` — только maintainability
+### `maintainability-review` — только maintainability
 
 - **Когда:** проверить complexity, readability, duplication, boundaries и repo conventions.
-- **Вызов:** `/rag-reviewer:reviewer_maintainability-review`.
+- **Вызов:** `/rag-reviewer:maintainability-review`.
 - **Нужно:** diff/PR или выбранный scope плюс локальные инструкции репозитория.
 - **Чтение/запись:** читает изменения и соседние patterns; не меняет behavior.
 - **Результат:** сфокусированные simplification findings без посторонних советов.
 
-### `reviewer_create-task` — создать каноническую задачу
+### `create-task` — создать каноническую задачу
 
 - **Когда:** завести grounded task на настроенной доске.
-- **Вызов:** `/rag-reviewer:reviewer_create-task опиши требуемое изменение`.
+- **Вызов:** `/rag-reviewer:create-task опиши требуемое изменение`.
 - **Нужно:** registered board config, обнаруженные create target/options и credentials.
 - **Чтение/запись:** читает код; вызывает `create_task` только после явного подтверждения.
 - **Результат:** каноническое тело, key/URL и обновлённый task corpus.
 
-### `reviewer_finish-task` — закрыть задачу после PR
+### `decompose-task` — создать нативные дочерние задачи
+
+- **Когда:** разложить существующую board task на grounded и независимо выполнимые native children.
+- **Вызов:** `/rag-reviewer:decompose-task PRI-224`.
+- **Нужно:** сохранённый parent, настроенная доска, authoritative capability `native_subtasks`, task
+  context, похожие задачи и релевантный код из `search_codebase`.
+- **Board config:** один раз проверяет repository key `task_board`. Значение null/empty/disabled
+  явно отключает board work и не вызывает deploy-wide `get_board_config`. Только отсутствующий
+  repository key разрешает один вызов `get_board_config`; mapping фиксирует generic `type`,
+  `project` и `options` на весь flow.
+- **Preview/confirmation:** показывает provider, parent, idempotency key и полное каноническое тело
+  каждого child, затем запрашивает одно явное confirmation всего preview; до него записей нет.
+- **Запись/проверка:** отправляет ровно один подтверждённый initial batch. Каждая фактически начатая
+  batch-запись проверяется независимо от статуса (`ok`, `partial`, `error` или timeout) до
+  объявления результата или предложения recovery.
+- **Проверка:** выполняет ровно один project-scoped sync, перечитывает parent через `get_task` и
+  graph/context через `get_task_context` даже если child keys не возвращены, затем точечно читает
+  каждый возвращённый child key через `get_task`.
+- **Recovery:** recovery после partial, timeout или error никогда не запускается автоматически.
+  Skill сохраняет и показывает `status`, `category` и `retryable`. После проверки только transport
+  timeout/unknown outcome или `retryable=true` допускает новый явный выбор: точный retry или stop;
+  `retryable=false`, а `unsupported`, `conflict` и `parent_not_found` останавливают flow без retry.
+  Точный retry повторяет те же полные payload, order и idempotency key; не создаёт новый key, не
+  редактирует wording и не отправляет только remainder.
+- **Результат:** created/attached/unattached/pending children и warnings без догадок.
+
+### `finish-task` — закрыть задачу после PR
 
 - **Когда:** PR готов и board task нужно связать и завершить.
-- **Вызов:** `/rag-reviewer:reviewer_finish-task PRI-220 https://github.com/owner/repo/pull/123`.
+- **Вызов:** `/rag-reviewer:finish-task PRI-220 https://github.com/owner/repo/pull/123`.
 - **Нужно:** task key, PR URL, registered board config и обнаруженный done target/options.
 - **Чтение/запись:** после подтверждения идемпотентно добавляет PR, обновляет задачу, добавляет
   task backlink в PR body и запускает sync.
 - **Результат:** done state и отчёт `already_closed`/`task_link_added` без duplicate links.
 
-### `reviewer_sync-codebase` — построить или обновить base index
+### `sync-codebase` — построить или обновить base index
 
 - **Когда:** создать индекс, обновить stale code или перестроить graph.
-- **Вызов:** `/rag-reviewer:reviewer_sync-codebase --path /srv/repo --ref main`.
+- **Вызов:** `/rag-reviewer:sync-codebase --path /srv/repo --ref main`.
 - **Нужно:** git clone, `uvx`, reviewer services, Voyage и опциональный SCIP.
 - **Чтение/запись:** читает выбранный git ref и пишет branch-scoped vectors/graph nodes.
 - **Результат:** incremental index report; ошибки называют отсутствующий prerequisite.
 
-### `reviewer_sync-tasks` — прогреть vectors и graph задач
+### `sync-tasks` — прогреть vectors и graph задач
 
 - **Когда:** синхронизировать доску перед task search или solve-task.
-- **Вызов:** `/rag-reviewer:reviewer_sync-tasks`.
+- **Вызов:** `/rag-reviewer:sync-tasks`.
 - **Нужно:** запустите `reviewer init`, настройте provider по `docs/board-providers.md`, затем
   проверьте его через `reviewer check`.
 - **Чтение/запись:** вызывает идемпотентный server-side `sync_board`; читает board и не пишет в неё.
 - **Результат:** компактные counts/warnings; отсутствие config остаётся board-less/fail-open.
 
-### `reviewer_summarize-subsystems` — GraphRAG summaries подсистем
+### `summarize-subsystems` — GraphRAG summaries подсистем
 
 - **Когда:** построить architectural prior для Q&A и PR walkthrough.
-- **Вызов:** `/rag-reviewer:reviewer_summarize-subsystems`.
+- **Вызов:** `/rag-reviewer:summarize-subsystems`.
 - **Нужно:** свежий base index, code graph, reviewer MCP и подтверждённый cluster depth.
 - **Чтение/запись:** читает symbols кластеров и пишет grounded summaries в summary store.
 - **Результат:** fresh/pruned summaries с отчётом deferred и orphans.
 
-### `reviewer_configure-review` — обновить `.review.yml`
+### `configure-review` — обновить `.review.yml`
 
 - **Когда:** настроить ignored paths, retrieval limits, summary clustering или board metadata.
-- **Вызов:** `/rag-reviewer:reviewer_configure-review`.
+- **Вызов:** `/rag-reviewer:configure-review`.
 - **Нужно:** git repo; MCP и databases не нужны для baseline analysis.
-- **Чтение/запись:** читает tracked Python structure/history и меняет только одобренные YAML fields.
+- **Чтение/запись:** читает tracked Python structure/history и меняет одобренные YAML fields либо в
+  `home:repos/<owner>/<name>.yml`, либо в committed `.review.yml`.
 - **Результат:** сохранённые посторонние keys/comments и точная rebuild guidance.
 
 ## Эксплуатация, диагностика и ограничения
@@ -507,10 +598,10 @@ Base indexes отслеживают committed refs, а не working-tree edits. 
 
 | Симптом | Вероятная причина | Следующее действие |
 |---|---|---|
-| `reviewer check` не видит Postgres/Neo4j | Stores не запущены или DSN отличается | Запустите `docker compose up -d`, затем повторите `reviewer check` |
+| `reviewer check` не видит Postgres/Neo4j | Stores не запущены или DSN отличается | Запустите `docker compose -f ~/.config/rag-reviewer/docker-compose.yml up -d`, затем повторите `reviewer check` |
 | Voyage отвечает 429 | Исчерпан free-tier RPM/TPM | Дождитесь quota window; повторите incremental index, не удаляя существующий |
 | PR пропущен | Target branch вне `REVIEW_BRANCHES` или draft policy его исключает | Прочитайте reason `prepare_review`; меняйте policy только для намеренной target branch |
-| Task lookup пуст | Board отключён/не настроен или corpus не прогрет | Проверьте [board setup](docs/board-providers.md), затем запустите `reviewer_sync-tasks` |
+| Task lookup пуст | Board отключён/не настроен или corpus не прогрет | Проверьте [board setup](docs/board-providers.md), затем запустите `/rag-reviewer:sync-tasks` |
 | Q&A не видит новый локальный код | Base index содержит только committed ref | Прочитайте локальный файл или commit/index нужную ветку |
 | AI-клиент не видит новые skills | Session открыта до установки | Начните New Chat/new CLI session; в IDE выполните Reload Window |
 
@@ -551,7 +642,7 @@ reviewer serve
 - OAuth loopback не поддерживается в headless/SSH integrations; используйте документированные
   PAT/API-key credentials.
 - Сейчас `reviewer check` проверяет `GITHUB_TOKEN` и GitHub API даже в GitLab-only deployment;
-  проверяйте `GITLAB_TOKEN` через dry-run `reviewer_review-pr` для GitLab MR.
+  проверяйте `GITLAB_TOKEN` через dry-run `/rag-reviewer:review-pr` для GitLab MR.
 - Board опционален. Без provider config task-aware skills продолжают board-less, а code retrieval
   не блокируется.
 

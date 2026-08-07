@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from dataclasses import dataclass
 from typing import Callable
 
@@ -60,6 +61,45 @@ def depth_for(path: str, default: int, overrides: dict[str, int]) -> int:
     return best_depth
 
 
+def normalize_depth_overrides(overrides: dict[str, int]) -> dict[str, int]:
+    """Нормализовать aliases префиксов и отклонить противоречивые depth."""
+    normalized: dict[str, int] = {}
+    for raw_prefix, raw_depth in overrides.items():
+        prefix = str(raw_prefix).strip("/")
+        depth = int(raw_depth)
+        previous = normalized.get(prefix)
+        if previous is not None and previous != depth:
+            raise ValueError(
+                f"Конфликтующие summary depth overrides для {prefix!r}: "
+                f"{previous} и {depth}"
+            )
+        normalized[prefix] = depth
+    return dict(sorted(normalized.items()))
+
+
+def canonicalize_layout(
+    default_depth: int,
+    overrides: dict[str, int],
+) -> tuple[dict[str, int], str]:
+    """Вернуть единые normalized overrides и token для clustering/state."""
+    normalized = normalize_depth_overrides(overrides)
+    payload = json.dumps(
+        {
+            "default_depth": int(default_depth),
+            "overrides": list(normalized.items()),
+        },
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    token = hashlib.sha256(payload.encode("utf-8")).hexdigest()
+    return normalized, token
+
+
+def compute_layout_token(default_depth: int, overrides: dict[str, int]) -> str:
+    """Вернуть canonical identity effective layout policy."""
+    return canonicalize_layout(default_depth, overrides)[1]
+
+
 def compute_source_hash(items: list[tuple[str, str]]) -> str:
     """sha256 от sorted("node_id:skeleton_hash") — детерминированный ключ свежести.
 
@@ -68,6 +108,18 @@ def compute_source_hash(items: list[tuple[str, str]]) -> str:
     делает ключ независимым от порядка членов."""
     joined = "\n".join(sorted(f"{nid}:{h}" for nid, h in items))
     return hashlib.sha256(joined.encode("utf-8")).hexdigest()
+
+
+def compute_file_fingerprints(members: list[Member]) -> dict[str, str]:
+    """Вернуть детерминированные структурные fingerprint для каждого файла.
+
+    Отпечаток зависит только от ``node_id`` и ``skeleton_hash`` его символов;
+    изменение тела символа не требует пересборки пофайловой сводки.
+    """
+    grouped: dict[str, list[tuple[str, str]]] = {}
+    for member in members:
+        grouped.setdefault(member.path, []).append((member.node_id, member.skeleton_hash))
+    return {path: compute_source_hash(items) for path, items in sorted(grouped.items())}
 
 
 def build_clusters(
@@ -84,7 +136,7 @@ def build_clusters(
     ``depth_overrides`` задаёт per-prefix глубину: longest-prefix-match по
     сегментам директории; при отсутствии совпадения используется ``depth``.
     """
-    overrides = depth_overrides or {}
+    overrides = normalize_depth_overrides(depth_overrides or {})
     groups: dict[str, list[Member]] = {}
     for m in members:
         groups.setdefault(cluster_key(m.path, depth_for(m.path, depth, overrides)), []).append(m)

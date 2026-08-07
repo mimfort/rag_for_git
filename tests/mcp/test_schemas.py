@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import pytest
+from pydantic import TypeAdapter, ValidationError
 
-from reviewer.mcp.schemas import FindingIn, FixIn, VerdictIn
+from reviewer.mcp.schemas import FindingIn, FixIn, SubtaskIn, SubtasksIn, VerdictIn
+from reviewer.tasks.subtasks import MAX_SUBTASKS
 
 BASE = {"file": "a.py", "severity": "high", "message": "m", "line": 1, "code_quote": "x = 1"}
 
@@ -94,3 +96,59 @@ def test_verdict_in_reason_coercion_to_none():
     assert VerdictIn.model_validate({"id": "f1", "is_real": False, "reason": ""}).reason is None
     assert VerdictIn.model_validate({"id": "f1", "is_real": False, "reason": "   "}).reason is None
     assert VerdictIn.model_validate({"id": "f1", "is_real": False, "reason": 42}).reason is None
+
+
+SUBTASK = {
+    "title": " Дочерняя задача ",
+    "problem": " Решить часть проблемы ",
+    "steps": [" Первый шаг ", " ", "Второй шаг"],
+    "criteria": [" Готово ", ""],
+    "context": " Контекст ",
+}
+
+
+def test_subtask_in_strips_required_fields_lists_and_context():
+    item = SubtaskIn.model_validate(SUBTASK)
+
+    assert item.model_dump() == {
+        "title": "Дочерняя задача",
+        "problem": "Решить часть проблемы",
+        "steps": ["Первый шаг", "Второй шаг"],
+        "criteria": ["Готово"],
+        "context": "Контекст",
+    }
+    assert SubtaskIn.model_validate({**SUBTASK, "context": "   "}).context is None
+
+
+@pytest.mark.parametrize("field", ["title", "problem"])
+def test_subtask_in_rejects_blank_required_text(field):
+    with pytest.raises(ValidationError):
+        SubtaskIn.model_validate({**SUBTASK, field: "   "})
+
+
+@pytest.mark.parametrize("field", ["steps", "criteria"])
+def test_subtask_in_drops_blank_list_members_but_requires_one(field):
+    with pytest.raises(ValidationError):
+        SubtaskIn.model_validate({**SUBTASK, field: ["", "  "]})
+
+
+def test_subtask_in_forbids_extra_fields():
+    with pytest.raises(ValidationError):
+        SubtaskIn.model_validate({**SUBTASK, "unexpected": True})
+
+
+def test_subtask_in_rejects_non_string_context_as_validation_error():
+    with pytest.raises(ValidationError):
+        SubtaskIn.model_validate({**SUBTASK, "context": 42})
+
+
+def test_subtasks_in_enforces_one_to_twenty_items_and_publishes_max_items():
+    adapter = TypeAdapter(SubtasksIn)
+    valid = {**SUBTASK, "title": "Child"}
+
+    assert len(adapter.validate_python([valid] * MAX_SUBTASKS)) == MAX_SUBTASKS
+    with pytest.raises(ValidationError):
+        adapter.validate_python([])
+    with pytest.raises(ValidationError):
+        adapter.validate_python([valid] * (MAX_SUBTASKS + 1))
+    assert adapter.json_schema()["maxItems"] == MAX_SUBTASKS

@@ -1,5 +1,11 @@
 from reviewer.graph.summaries import (
-    Member, cluster_key, compute_source_hash, build_clusters,
+    Member,
+    build_clusters,
+    cluster_key,
+    compute_file_fingerprints,
+    compute_layout_token,
+    compute_source_hash,
+    normalize_depth_overrides,
 )
 
 
@@ -24,6 +30,102 @@ def test_compute_source_hash_is_order_independent_and_changes_with_content():
     b = compute_source_hash([("y#g", "h2"), ("x#f", "h1")])
     assert a == b                       # детерминирован, не зависит от порядка
     assert a != compute_source_hash([("x#f", "h1"), ("y#g", "CHANGED")])
+
+
+def test_layout_token_is_canonical_and_covers_default_and_sorted_overrides():
+    token = compute_layout_token(
+        2,
+        {"reviewer/mcp": 1, "reviewer/index": 3},
+    )
+
+    assert token == compute_layout_token(
+        2,
+        {"reviewer/index": 3, "reviewer/mcp": 1},
+    )
+    assert token != compute_layout_token(
+        3,
+        {"reviewer/index": 3, "reviewer/mcp": 1},
+    )
+    assert token != compute_layout_token(
+        2,
+        {"reviewer/index": 3},
+    )
+
+
+def test_normalized_overrides_drive_same_token_and_depth_in_reversed_order():
+    first = {
+        "/reviewer/index/": 3,
+        "reviewer/mcp": 1,
+    }
+    reversed_aliases = {
+        "/reviewer/mcp/": 1,
+        "reviewer/index": 3,
+    }
+
+    assert normalize_depth_overrides(first) == {
+        "reviewer/index": 3,
+        "reviewer/mcp": 1,
+    }
+    assert normalize_depth_overrides(reversed_aliases) == normalize_depth_overrides(first)
+    assert compute_layout_token(2, reversed_aliases) == compute_layout_token(2, first)
+
+    normalized = normalize_depth_overrides(reversed_aliases)
+    [cluster] = build_clusters(
+        [_m("reviewer/index/sub/a.py#A", "reviewer/index/sub/a.py")],
+        None,
+        depth=2,
+        depth_overrides=normalized,
+    )
+    assert cluster.key == "reviewer/index/sub"
+
+
+def test_normalized_overrides_reject_conflicting_alias_depths():
+    import pytest
+
+    with pytest.raises(ValueError, match="Конфликтующие"):
+        normalize_depth_overrides({
+            "/reviewer/index/": 3,
+            "reviewer/index": 4,
+        })
+
+
+def test_build_clusters_rejects_raw_conflicting_aliases_in_any_order():
+    import pytest
+
+    member = _m("x/y/z.py#Z", "x/y/z.py")
+    for overrides in (
+        {"/x/": 1, "x": 2},
+        {"x": 2, "/x/": 1},
+    ):
+        with pytest.raises(ValueError, match="Конфликтующие"):
+            build_clusters(
+                [member],
+                None,
+                depth=2,
+                depth_overrides=overrides,
+            )
+
+
+def test_compute_file_fingerprints_uses_skeleton_per_path():
+    members = [
+        Member("pkg/a.py#B", "pkg/a.py", "body-1", "sk-b", 8),
+        Member("pkg/a.py#A", "pkg/a.py", "body-2", "sk-a", 1),
+        Member("pkg/b.py#C", "pkg/b.py", "body-3", "sk-c", 1),
+    ]
+    got = compute_file_fingerprints(members)
+    assert got["pkg/a.py"] == compute_source_hash([
+        ("pkg/a.py#A", "sk-a"), ("pkg/a.py#B", "sk-b")
+    ])
+    assert set(got) == {"pkg/a.py", "pkg/b.py"}
+
+
+def test_compute_file_fingerprints_ignores_body_changes_but_not_skeleton_changes():
+    base = [Member("pkg/a.py#A", "pkg/a.py", "body-1", "sk-a", 1)]
+    body_changed = [Member("pkg/a.py#A", "pkg/a.py", "body-2", "sk-a", 1)]
+    skeleton_changed = [Member("pkg/a.py#A", "pkg/a.py", "body-1", "sk-b", 1)]
+
+    assert compute_file_fingerprints(body_changed) == compute_file_fingerprints(base)
+    assert compute_file_fingerprints(skeleton_changed) != compute_file_fingerprints(base)
 
 
 def test_build_clusters_groups_by_module_and_filters_min_size():

@@ -1,6 +1,8 @@
 import inspect
 import logging
 
+import pytest
+
 from reviewer.tasks.boards.base import RawTask
 from reviewer.tasks.sync import SyncProvider, SyncService
 
@@ -325,3 +327,69 @@ def test_force_renormalize_reindexes_tasks_below_watermark():
     svc2.run()                                         # обычный прогон — как раньше
     assert not tasks2.indexed
     assert tasks2.meta
+
+
+class _CloseProvider:
+    board_type = "fake"
+
+    def __init__(self, name, events, error=None):
+        self.name = name
+        self.events = events
+        self.error = error
+        self.close_calls = 0
+
+    def close(self):
+        self.close_calls += 1
+        self.events.append(self.name)
+        if self.error is not None:
+            raise self.error
+
+
+def test_sync_service_close_is_idempotent_and_closes_only_owned_providers_once():
+    events = []
+    first = _CloseProvider("first", events)
+    borrowed = _CloseProvider("borrowed", events)
+    last = _CloseProvider("last", events)
+    service = SyncService(
+        [
+            SyncProvider(first, owned=True),
+            SyncProvider(first, owned=True),
+            SyncProvider(borrowed),
+            SyncProvider(last, owned=True),
+        ],
+        FakeTaskService(),
+        FakeMeta(),
+    )
+
+    service.close()
+    service.close()
+
+    assert events == ["first", "last"]
+    assert first.close_calls == 1
+    assert borrowed.close_calls == 0
+    assert last.close_calls == 1
+
+
+def test_sync_service_close_attempts_all_owned_providers_and_raises_first_error():
+    events = []
+    first_error = RuntimeError("first close failed")
+    first = _CloseProvider("first", events, first_error)
+    second = _CloseProvider("second", events, RuntimeError("second close failed"))
+    last = _CloseProvider("last", events)
+    service = SyncService(
+        [
+            SyncProvider(first, owned=True),
+            SyncProvider(second, owned=True),
+            SyncProvider(last, owned=True),
+        ],
+        FakeTaskService(),
+        FakeMeta(),
+    )
+
+    with pytest.raises(RuntimeError, match="first close failed") as captured:
+        service.close()
+    service.close()
+
+    assert captured.value is first_error
+    assert events == ["first", "second", "last"]
+    assert [first.close_calls, second.close_calls, last.close_calls] == [1, 1, 1]

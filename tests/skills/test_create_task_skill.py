@@ -6,10 +6,6 @@ SKILL = ROOT / "plugin" / "skills" / "create-task" / "SKILL.md"
 SOLVE = ROOT / "plugin" / "skills" / "solve-task" / "SKILL.md"
 
 
-def test_create_task_name_follows_reviewer_prefix():
-    assert "name: reviewer_create-task" in SKILL.read_text(encoding="utf-8")
-
-
 def test_create_task_calls_write_tool_and_resyncs():
     t = SKILL.read_text(encoding="utf-8")
     assert "create_task(" in t

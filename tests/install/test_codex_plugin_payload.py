@@ -282,6 +282,6 @@ def test_real_payload_registers_every_skill_directory_dynamically():
     english = (ROOT / "README.md").read_text(encoding="utf-8")
     russian = (ROOT / "README.ru.md").read_text(encoding="utf-8")
     for name in expected:
-        marker = f"reviewer_{name}"
+        marker = f"/rag-reviewer:{name}"
         assert marker in english
         assert marker in russian

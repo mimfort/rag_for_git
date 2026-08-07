@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass
+import json
 import logging
 import platform as _platform
 import re
@@ -11,9 +13,16 @@ from typing import TYPE_CHECKING
 import click
 import httpx
 import psycopg
+import yaml
 
 from reviewer.config.settings import Settings
 from reviewer.app import build_components
+from reviewer.config.layers import (
+    HomeConfigError,
+    build_config_report,
+    migrate_repo_config,
+    resolve_policy_data,
+)
 from reviewer.gitutil import file_at_ref, list_python_files, rev_parse, remote_url
 from reviewer.graph.backend import build_code_graph
 from reviewer.graph.store import GraphStore
@@ -25,6 +34,7 @@ from reviewer.index.store import ChunkStore
 from reviewer.index.summary_store import SummaryStore
 from reviewer.mcp.session_store import SessionStore
 from reviewer.services.gc import purge_orphaned_overlays
+from reviewer.services.review_service import ReviewService
 from reviewer.services.status import build_status_report, render_status, render_status_json
 from reviewer.versioning import InstallMode, check_latest, detect_installation, upgrade_uv_tool
 
@@ -52,6 +62,126 @@ def _resolve_repo(repo_opt: str | None, path: str, settings) -> str:
 
 @click.group()
 def cli() -> None: ...
+
+
+@cli.group("config")
+def config_group() -> None:
+    """Inspect and migrate layered repository policy."""
+
+
+def _close_config_components(components) -> None:
+    """Закрыть созданные для diagnostic CLI хранилища независимо друг от друга."""
+    for name in ("store", "graph", "task_store", "summary_store"):
+        component = getattr(components, name, None)
+        if component is not None:
+            _safe_config_close(component, name)
+
+
+def _safe_config_close(resource, name: str) -> None:
+    """Не дать cleanup-ошибке скрыть исход результата diagnostic команды."""
+    try:
+        resource.close()
+    except Exception:  # noqa: BLE001 — best-effort cleanup не меняет результат команды
+        log.warning("Не удалось закрыть resource config CLI: %s", name)
+
+
+def _config_error_message(exc: Exception) -> str:
+    """Вернуть публичный diagnostic без YAML/normalization payload."""
+    if isinstance(exc, HomeConfigError):
+        return str(exc)
+    return "конфиг не прочитан: YAML"
+
+
+def _render_config_report(report: Mapping[str, object]) -> None:
+    effective = report["effective"]
+    sources = report["sources"]
+    shadowed = report["shadowed"]
+    assert isinstance(effective, Mapping)
+    assert isinstance(sources, Mapping)
+    assert isinstance(shadowed, Mapping)
+    for key in sorted(effective):
+        click.echo(
+            f"{key}: {json.dumps(effective[key], ensure_ascii=False, sort_keys=True)}"
+        )
+        click.echo(f"  source: {sources[key]}")
+        if key in shadowed:
+            click.echo(f"  shadowed: {', '.join(shadowed[key])}")
+    for warning in report["warnings"]:
+        click.echo(f"warning: {warning}")
+
+
+@contextmanager
+def _config_context(repo_opt: str, branch_opt: str | None):
+    settings = Settings()
+    components = build_components(settings)
+    vcs = None
+    try:
+        repo = _resolve_config_repo(repo_opt)
+        branch = branch_opt or settings.primary_branch()
+        owner, name = repo.split("/", 1)
+        vcs = ReviewService(settings, components)._create_vcs_provider(owner, name)
+        yield settings, components, vcs, repo, branch
+    finally:
+        if vcs is not None:
+            _safe_config_close(vcs, "vcs")
+        _close_config_components(components)
+
+
+def _resolve_config_repo(repo: str) -> str:
+    from reviewer.services.repo_id import normalize_repo
+
+    return normalize_repo(repo)
+
+
+@config_group.command("show")
+@click.option("--repo", required=True, help="owner/name репозитория")
+@click.option("--branch", default=None, help="ветка policy; по умолчанию первичная")
+@click.option("--json", "as_json", is_flag=True, default=False)
+def config_show(repo: str, branch: str | None, as_json: bool) -> None:
+    """Показать effective policy и происхождение её верхних ключей."""
+    try:
+        with _config_context(repo, branch) as (settings, _components, vcs, repo_id, ref):
+            data, meta = resolve_policy_data(
+                repo_id,
+                ref,
+                lambda selected_ref: vcs.get_file_at_ref(".review.yml", selected_ref),
+                strict_home=True,
+            )
+            report = build_config_report(repo_id, ref, settings, data, meta)
+    except (HomeConfigError, yaml.YAMLError) as exc:
+        raise click.ClickException(_config_error_message(exc)) from exc
+    if as_json:
+        click.echo(json.dumps(report, ensure_ascii=False, sort_keys=True, indent=2))
+    else:
+        _render_config_report(report)
+
+
+@config_group.command("migrate")
+@click.option("--repo", required=True, help="owner/name репозитория")
+@click.option("--branch", default=None, help="ветка policy; по умолчанию первичная")
+def config_migrate(repo: str, branch: str | None) -> None:
+    """Безопасно скопировать committed policy в домашний слой репозитория."""
+    try:
+        with _config_context(repo, branch) as (settings, _components, vcs, repo_id, ref):
+            result = migrate_repo_config(
+                repo_id,
+                ref,
+                lambda selected_ref: vcs.get_file_at_ref(".review.yml", selected_ref),
+                settings=settings,
+            )
+            if result.conflicting_keys:
+                keys = ", ".join(result.conflicting_keys)
+                raise click.ClickException(f"Конфликтующие ключи: {keys}")
+            report = build_config_report(
+                repo_id, ref, settings, result.data, result.meta
+            )
+    except (HomeConfigError, yaml.YAMLError) as exc:
+        raise click.ClickException(_config_error_message(exc)) from exc
+    if result.noop:
+        click.echo(f"Конфиг уже перенесён: {result.path}")
+    else:
+        click.echo(f"Конфиг перенесён: {result.path}")
+    _render_config_report(report)
 
 
 def _run_codex_target(
@@ -503,8 +633,15 @@ def index(repo: str, ref: str | None, branch_opt: str | None, repo_tag: str | No
     try:
         c.store.init_schema()
         files = list_python_files(repo, ref)
-        review_yml = file_at_ref(repo, ".review.yml", ref)
-        ignore = ReviewPolicy.from_yaml(review_yml).ignore if review_yml else []
+        policy_data, policy_meta = resolve_policy_data(
+            repo_id,
+            ref,
+            lambda selected_ref: file_at_ref(repo, ".review.yml", selected_ref),
+        )
+        policy = ReviewPolicy.load_data(s, policy_data)
+        ignore = policy.ignore
+        for warning in policy_meta.warnings:
+            log.warning("Домашний слой policy пропущен: %s", warning)
         if ignore:
             files = [f for f in files if not is_ignored(f, ignore)]
         update_base(c.store, c.embedder, repo_id, branch, files,

@@ -9,14 +9,14 @@ import sys
 
 from mcp.server.fastmcp import FastMCP
 
-from reviewer.mcp.schemas import FindingIn, VerdictIn
+from reviewer.mcp.schemas import FindingIn, SubtasksIn, SummaryFragmentIn, VerdictIn
 from reviewer.mcp.service import MCPReviewService
 
 log = logging.getLogger(__name__)
 
 
 def create_server(service: MCPReviewService) -> FastMCP:
-    """Создать и вернуть сконфигурированный FastMCP-сервер с 36 тулами.
+    """Создать и вернуть сконфигурированный FastMCP-сервер с 38 тулами.
 
     Все тулы — обычные def (sync), а не async: сервис не потокобезопасен
     и рассчитан на последовательное исполнение sync-тулов FastMCP в event loop.
@@ -177,6 +177,25 @@ def create_server(service: MCPReviewService) -> FastMCP:
         )
 
     @mcp.tool()
+    def create_subtasks(
+        parent_key: str,
+        subtasks: SubtasksIn,
+        idempotency_key: str,
+        board_type: str | None = None,
+        project: str | None = None,
+        provider_options: dict[str, object] | None = None,
+    ) -> dict:
+        """Create and attach a confirmed native-subtask batch with durable idempotency."""
+        return service.create_subtasks(
+            parent_key,
+            [item.model_dump() for item in subtasks],
+            idempotency_key,
+            board_type,
+            project,
+            provider_options,
+        )
+
+    @mcp.tool()
     def search_tasks(query: str, top_k: int | None = None, project: str | None = None) -> str:
         """Find semantically similar tasks in the indexed task corpus.
         project scopes results to one board project (code prefix, e.g. PRI); empty = all.
@@ -193,10 +212,10 @@ def create_server(service: MCPReviewService) -> FastMCP:
     @mcp.tool()
     def get_task(key: str, project: str | None = None) -> dict | None:
         """Read one task's own normalized content from the reviewer store (filled by
-        sync_board): {key, aliases, title, description, status, url, criteria, attachments}.
+        sync_board): {key, aliases, title, description, status, url, criteria, attachments, links}.
         project scopes the lookup to one board project (code prefix); empty = all.
         Returns null if the task is not in the store (caller falls back to the board).
-        For linked tasks / PRs / touched code, use get_task_context instead."""
+        For traversed linked tasks / PRs / touched code, use get_task_context instead."""
         return service.get_task(key, project=project)
 
     @mcp.tool()
@@ -222,9 +241,10 @@ def create_server(service: MCPReviewService) -> FastMCP:
                           provider_options: dict[str, object] | None = None) -> dict:
         """Discover normalized board metadata (read-only).
         board_type is a registered provider type and provider_options is a non-secret
-        JSON object. Returns {board_type, project, targets, options, warnings}, where
-        targets are {id, label, purposes} and options are {key, label, required_for,
-        choices}. Credentials are never returned; failures are safe for fallback."""
+        JSON object. Returns {board_type, project, capabilities, targets, options, warnings},
+        where capabilities are registry-declared optional provider features, targets are
+        {id, label, purposes}, and options are {key, label, required_for, choices}.
+        Credentials are never returned; failures are safe for fallback."""
         return service.get_board_targets(board_type, project, provider_options)
 
     @mcp.tool()
@@ -284,11 +304,13 @@ def create_server(service: MCPReviewService) -> FastMCP:
                                 min_size: int | None = None,
                                 cap: int | None = None) -> dict:
         """Кластеризовать base-граф кода по путям модулей для скилла
-        /reviewer_summarize-subsystems. Возвращает {branch, deferred, clusters:[...]},
-        где каждый кластер содержит cluster_key, num_members, files, top_symbols
-        (по центральности), source_hash и stale (true, если сводка отсутствует
-        или её source_hash устарел). Без PR-сессии; branch по умолчанию —
-        первичная отслеживаемая ветка.
+        rag-reviewer:summarize-subsystems. Возвращает
+        {branch, depth, layout_token, deferred, deferred_files, clusters:[...]},
+        где layout_token — обязательная canonical identity default depth +
+        normalized overrides для последующего verified prune. Каждый кластер
+        содержит cluster_key, num_members, files, top_symbols
+        (по центральности), source_hash, stale и file-level delta. Без PR-сессии;
+        branch по умолчанию — первичная отслеживаемая ветка.
 
         cap (по умолчанию — env SUMMARY_REBUILD_CAP; None/0 = без ограничений)
         отбрасывает наименее приоритетные stale-кластеры за один проход: сначала
@@ -298,14 +320,22 @@ def create_server(service: MCPReviewService) -> FastMCP:
         return service.list_subsystem_clusters(repo, branch, depth, min_size, cap)
 
     @mcp.tool()
+    def get_subsystem_summary_work(repo: str, branch: str, cluster_key: str,
+                                   source_hash: str) -> dict:
+        """Вернуть file-level delta и тексты переиспользуемых fragments для
+        актуального кластера. Read-only; stale source_hash возвращает ready=false."""
+        return service.get_subsystem_summary_work(
+            repo, branch, cluster_key, source_hash
+        )
+
+    @mcp.tool()
     def index_subsystem_summary(repo: str, branch: str, cluster_key: str,
-                                title: str, summary: str, source_hash: str) -> dict:
-        """Persist one subsystem summary (idempotent upsert keyed by
-        repo+branch+cluster_key). Called by /reviewer_summarize-subsystems after the
-        LLM writes title+summary for a cluster. source_hash ties the summary to the
-        cluster's current content for staleness."""
+                                title: str, summary: str, source_hash: str,
+                                fragments: list[SummaryFragmentIn] | None = None) -> dict:
+        """Сохранить сводку подсистемы и опциональные file fragments.
+        source_hash и fingerprints проходят строгую optimistic-проверку."""
         return service.index_subsystem_summary(
-            repo, branch, cluster_key, title, summary, source_hash)
+            repo, branch, cluster_key, title, summary, source_hash, fragments)
 
     @mcp.tool()
     def get_subsystem_summaries(repo: str, branch: str | None = None,
@@ -325,19 +355,30 @@ def create_server(service: MCPReviewService) -> FastMCP:
         return service.get_subsystem_summaries(repo, branch, cluster_key, query, top_k)
 
     @mcp.tool()
-    def prune_subsystem_summaries(repo: str, branch: str | None = None) -> dict:
-        """Prune subsystem summaries orphaned by a depth change or removed modules.
-        Re-derives current cluster_keys from the base index at the resolved depth and
-        deletes summaries outside that set. Call ONLY after a full (uncapped) pass of
-        /reviewer_summarize-subsystems — deferred clusters are not orphans. Empty base
-        → no-op. Returns {pruned, kept}. No PR session; branch defaults to primary."""
-        return service.prune_subsystem_summaries(repo, branch)
+    def prune_subsystem_summaries(
+        repo: str,
+        branch: str | None = None,
+        layout_token: str | None = None,
+        expected_source_hashes: dict[str, str] | None = None,
+    ) -> dict:
+        """Verify and finalize one exact uncapped list snapshot.
+        Pass layout_token and every {cluster_key: source_hash} from that list response.
+        The server re-derives layout/hashes and, under a branch lock, verifies summaries
+        plus exact file-fragment coverage before deleting orphans and advancing state.
+        Missing/changed/incomplete snapshots return completed=false/race=true without
+        deletion. Empty base is also a no-op. No PR session; branch defaults to primary."""
+        return service.prune_subsystem_summaries(
+            repo,
+            branch,
+            layout_token,
+            expected_source_hashes,
+        )
 
     @mcp.tool()
     def backfill_summary_embeddings(repo: str, branch: str | None = None) -> dict:
         """Self-heal: embed any subsystem summaries with a NULL embedding from their
         stored title+summary (no LLM). Idempotent — a later run embeds nothing.
-        Called by /reviewer_summarize-subsystems after the LLM pass so older summaries
+        Called by rag-reviewer:summarize-subsystems after the LLM pass so older summaries
         become searchable by proximity. Returns {embedded}. No PR session; branch
         defaults to primary."""
         return service.backfill_summary_embeddings(repo, branch)
@@ -395,11 +436,28 @@ def create_server(service: MCPReviewService) -> FastMCP:
     def post_pr_walkthrough(repo: str, pr: int, markdown: str) -> dict:
         """Post a human-facing PR reading guide (walkthrough) as a PR review comment,
         separate from bug findings (carries a <!-- ai-walkthrough --> marker, empty
-        inline comments). Outward-facing: the /reviewer_pr-walkthrough skill calls this
+        inline comments). Outward-facing: the rag-reviewer:pr-walkthrough skill calls this
         only on explicit user request. Requires an active prepare_review session."""
         return service.post_pr_walkthrough(repo, pr, markdown)
 
     return mcp
+
+
+def _close_components(components, primary_error: BaseException | None = None) -> None:
+    close = getattr(components, "close", None)
+    if not callable(close):
+        return
+    try:
+        close()
+    except BaseException as cleanup_error:
+        if primary_error is None:
+            raise
+        safe_note = (
+            "Не удалось закрыть компоненты reviewer-mcp: "
+            f"{type(cleanup_error).__name__}"
+        )
+        primary_error.add_note(safe_note)
+        log.warning(safe_note)
 
 
 def main() -> None:
@@ -409,11 +467,16 @@ def main() -> None:
     from reviewer.app import build_components
     from reviewer.config.settings import Settings
 
+    components = None
     try:
         settings = Settings()
         components = build_components(settings)
         server = create_server(MCPReviewService(settings, components))
-    except Exception as e:
+    except BaseException as e:
+        if components is not None:
+            _close_components(components, e)
+        if not isinstance(e, Exception):
+            raise
         # Одна ясная строка в stderr без сырого traceback (детали — в debug-логе).
         log.debug("Сбой инициализации reviewer-mcp", exc_info=True)
         print(
@@ -422,7 +485,13 @@ def main() -> None:
             file=sys.stderr,
         )
         sys.exit(1)
-    server.run()  # stdio
+    try:
+        server.run()  # stdio
+    except BaseException as error:
+        _close_components(components, error)
+        raise
+    else:
+        _close_components(components)
 
 
 if __name__ == "__main__":

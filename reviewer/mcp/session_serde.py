@@ -39,6 +39,7 @@ def to_payload(prepared: PreparedReview) -> dict:
         "task_keys": prepared.task_keys,
         "risk_paths": [asdict(item) for item in prepared.risk_paths],
         "risk_skipped_paths": prepared.risk_skipped_paths,
+        "config_sources": prepared.config_sources,
     }
 
 
@@ -91,4 +92,5 @@ def from_payload(d: dict, vcs: VCSProvider) -> PreparedReview:
             for item in d.get("risk_paths", [])
         ],
         risk_skipped_paths=d.get("risk_skipped_paths", []),
+        config_sources=d.get("config_sources", {}),
     )

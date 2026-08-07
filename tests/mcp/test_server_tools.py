@@ -27,7 +27,13 @@ def test_board_tools_advertise_generic_targets_and_options_only():
     server = create_server(_service())
     tools = {tool.name: tool for tool in asyncio.run(server.list_tools())}
 
-    for name in ("sync_board", "create_task", "finish_task", "get_board_targets"):
+    for name in (
+        "sync_board",
+        "create_task",
+        "create_subtasks",
+        "finish_task",
+        "get_board_targets",
+    ):
         schema = tools[name].inputSchema
         assert "provider_options" in schema["properties"]
         for legacy in ("status_field", "done_state", "done_column"):
@@ -40,9 +46,12 @@ def test_board_tools_advertise_generic_targets_and_options_only():
         assert "done_column" not in description
     assert "target" in tools["create_task"].inputSchema["properties"]
     assert "target" in tools["finish_task"].inputSchema["properties"]
+    subtasks_schema = tools["create_subtasks"].inputSchema["properties"]["subtasks"]
+    assert subtasks_schema["minItems"] == 1
+    assert subtasks_schema["maxItems"] == 20
     discovery = tools["get_board_targets"].description or ""
     assert "registered provider type" in discovery
-    assert "{board_type, project, targets, options, warnings}" in discovery
+    assert "{board_type, project, capabilities, targets, options, warnings}" in discovery
     assert "required_for" in discovery
     assert "choices" in discovery
 
