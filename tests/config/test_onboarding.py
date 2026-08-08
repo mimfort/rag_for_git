@@ -404,6 +404,30 @@ def test_apply_appends_without_losing_comments_and_quotes_ambiguous_names(
 @pytest.mark.parametrize(
     "original",
     [
+        b"# keep me\r\nmax_comments: 7\r\n",
+        b"# keep me\r\nmax_comments: 7\n",
+    ],
+)
+def test_apply_append_preserves_existing_line_endings(monkeypatch, tmp_path, original):
+    path = tmp_path / "repos/o/r.yml"
+    path.parent.mkdir(parents=True)
+    path.write_bytes(original)
+    plan = plan_repository_config(
+        _detection(tmp_path),
+        settings=_settings(monkeypatch),
+        config_root=tmp_path,
+    )
+
+    apply_repository_config(plan)
+
+    content = path.read_bytes()
+    assert content.startswith(original)
+    assert yaml.safe_load(content)["repository"]["primary_branch"] == "dev"
+
+
+@pytest.mark.parametrize(
+    "original",
+    [
         "{}\n",
         "{   }\n",
         "{max_comments: 5} # keep flow comment\n",

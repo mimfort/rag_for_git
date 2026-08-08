@@ -367,7 +367,7 @@ def _read_locked_destination(
             or len(identities) != 1
         ):
             raise HomeConfigError(f"{source}: race при чтении destination")
-        with os.fdopen(os.dup(descriptor), encoding="utf-8") as handle:
+        with os.fdopen(os.dup(descriptor), encoding="utf-8", newline="") as handle:
             text = handle.read()
         after = (
             os.stat(path.name, dir_fd=parent_fd, follow_symlinks=False)
@@ -521,7 +521,7 @@ def _replace_destination(
                 existing.mode,
                 dir_fd=parent_fd,
             )
-            with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            with os.fdopen(descriptor, "w", encoding="utf-8", newline="") as handle:
                 descriptor = -1
                 handle.write(content)
                 handle.flush()
@@ -541,6 +541,7 @@ def _replace_destination(
         with tempfile.NamedTemporaryFile(
             "w",
             encoding="utf-8",
+            newline="",
             dir=path.parent,
             delete=False,
         ) as handle:
