@@ -11,6 +11,15 @@ from reviewer.tasks.boards.registry import (
 )
 
 
+REMOVED_STANDARD_KEYS = {
+    "DEFAULT_REPO",
+    "REVIEW_BRANCHES",
+    "WEB_ADMIN_USER",
+    "WEB_ADMIN_PASSWORD",
+    "TASK_BOARD_MCP",
+}
+
+
 def _keys_from_text(text: str) -> set[str]:
     """Имена KEY из текста .env-вида: пропускаем комментарии и пустые строки."""
     keys = set()
@@ -58,9 +67,6 @@ def test_render_env_contains_wizard_keys():
         "NEO4J_URI": "neo4j://localhost:7687",
         "NEO4J_USER": "neo4j",
         "NEO4J_PASSWORD": "reviewerpass",
-        "DEFAULT_REPO": "",
-        "REVIEW_BRANCHES": "main,master",
-        "TASK_BOARD_MCP": "",
         "TASK_BOARD_KEY_PATTERN": "",
         "TASK_BOARD_URL_TEMPLATE": "",
     }
@@ -77,9 +83,6 @@ def test_render_env_extra_keys_preserved():
         "NEO4J_URI": "neo4j://localhost:7687",
         "NEO4J_USER": "neo4j",
         "NEO4J_PASSWORD": "reviewerpass",
-        "DEFAULT_REPO": "",
-        "REVIEW_BRANCHES": "main,master",
-        "TASK_BOARD_MCP": "",
         "TASK_BOARD_KEY_PATTERN": "",
         "TASK_BOARD_URL_TEMPLATE": "",
     }
@@ -106,17 +109,40 @@ def test_prompt_groups_yes_uses_current_values():
 def test_prompt_groups_yes_uses_field_default_when_no_current():
     result = inst.prompt_groups(inst.WIZARD_GROUPS, current={}, yes=True)
     assert result["PG_DSN"] == "postgresql://reviewer:reviewer@localhost:5433/reviewer"
-    assert result["REVIEW_BRANCHES"] == "main,master"
     assert result["VOYAGE_API_KEY"] == ""
+    assert result.keys().isdisjoint(REMOVED_STANDARD_KEYS)
 
 
 def test_prompt_groups_yes_skips_optional_groups():
     # При yes=True опциональные группы сохраняют current или default — не вызывают confirm
-    current = {"TASK_BOARD_MCP": "yougile"}
+    current = {"TASK_BOARD_KEY_PATTERN": "PRI-\\d+"}
     result = inst.prompt_groups(inst.WIZARD_GROUPS, current=current, yes=True)
-    assert result["TASK_BOARD_MCP"] == "yougile"
-    # Остальные поля доски — пустые (default)
-    assert result["TASK_BOARD_KEY_PATTERN"] == ""
+    assert result["TASK_BOARD_KEY_PATTERN"] == "PRI-\\d+"
+    assert result["TASK_BOARD_URL_TEMPLATE"] == ""
+
+
+def test_fresh_wizard_omits_repo_web_and_legacy_board_mcp():
+    keys = {field.key for group in inst.WIZARD_GROUPS for field in group.fields}
+
+    assert keys.isdisjoint(REMOVED_STANDARD_KEYS)
+
+
+def test_runtime_template_keeps_compatibility_keys():
+    assert REMOVED_STANDARD_KEYS <= _keys_from_text(inst.ENV_TEMPLATE)
+
+
+def test_render_env_preserves_removed_existing_keys_as_extra():
+    values = {
+        field.key: field.default
+        for group in inst.WIZARD_GROUPS
+        for field in group.fields
+    }
+    extra = {key: f"existing-{key.lower()}" for key in REMOVED_STANDARD_KEYS}
+
+    rendered = inst.render_env(values, extra)
+
+    for key, value in extra.items():
+        assert f"{key}={value}" in rendered
 
 
 def test_render_env_includes_board_api_key_and_hint():
@@ -328,9 +354,7 @@ def test_init_interactive_common_board_fields_do_not_require_rest_provider(
             if group.title == "Доска задач":
                 seen_board_group.extend(field.key for field in group.fields)
             for field in group.fields:
-                values[field.key] = (
-                    "board-mcp" if field.key == "TASK_BOARD_MCP" else field.default
-                )
+                values[field.key] = field.default
         return values
 
     monkeypatch.setattr("reviewer.install.prompt_groups", prompt_groups)
@@ -342,11 +366,10 @@ def test_init_interactive_common_board_fields_do_not_require_rest_provider(
 
     assert result.exit_code == 0, result.output
     assert seen_board_group == [
-        "TASK_BOARD_MCP",
         "TASK_BOARD_KEY_PATTERN",
         "TASK_BOARD_URL_TEMPLATE",
     ]
-    assert "TASK_BOARD_MCP=board-mcp" in dest.read_text(encoding="utf-8")
+    assert "TASK_BOARD_MCP=" not in dest.read_text(encoding="utf-8")
 
 
 def test_init_yes_preserves_existing_secret(tmp_path, monkeypatch):
@@ -360,18 +383,15 @@ def test_init_yes_preserves_existing_secret(tmp_path, monkeypatch):
     assert "VOYAGE_API_KEY=sk-existing" in content
 
 
-def test_render_env_includes_gitlab_and_web_admin():
+def test_render_env_includes_gitlab_fields():
     values = {f.key: f.default for g in inst.WIZARD_GROUPS for f in g.fields}
     values["GITLAB_TOKEN"] = "glpat-secret"
-    values["WEB_ADMIN_PASSWORD"] = "admin-secret"
     result = inst.render_env(values, extra={})
     # отличительный текст многострочного заголовка GitLab VCS (нет в дефолтном):
     assert "автоопределяется из git remote" in result
     assert "GITLAB_TOKEN=glpat-secret" in result
     assert "GITLAB_URL=https://gitlab.com" in result
     assert "VCS_PROVIDER=github" in result
-    assert "WEB_ADMIN_USER=" in result
-    assert "WEB_ADMIN_PASSWORD=admin-secret" in result
     assert "YOUGILE_API_BASE=" in result
 
 

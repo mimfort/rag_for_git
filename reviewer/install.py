@@ -28,7 +28,6 @@ PACKAGE = "rag-reviewer"
 SERVER_NAME = "reviewer"
 COMMON_BOARD_ENV_KEYS = frozenset(
     {
-        "TASK_BOARD_MCP",
         "TASK_BOARD_KEY_PATTERN",
         "TASK_BOARD_URL_TEMPLATE",
     }
@@ -137,10 +136,6 @@ def board_env_group(registry) -> EnvGroup:
     """
     fields = [
         EnvField(
-            key="TASK_BOARD_MCP",
-            prompt_text="TASK_BOARD_MCP (имя MCP-сервера доски)",
-        ),
-        EnvField(
             key="TASK_BOARD_KEY_PATTERN",
             prompt_text=r"TASK_BOARD_KEY_PATTERN (напр. [A-Z]+-\d+)",
         ),
@@ -165,7 +160,7 @@ def board_env_group(registry) -> EnvGroup:
 
 
 def common_board_env_fields(group: EnvGroup) -> list[EnvField]:
-    """Только три non-secret поля общей связки; prefix matching запрещён."""
+    """Только два non-secret поля общей связки; prefix matching запрещён."""
     return [field for field in group.fields if field.key in COMMON_BOARD_ENV_KEYS]
 
 
@@ -217,22 +212,6 @@ WIZARD_GROUPS: list[EnvGroup] = [
         ],
     ),
     EnvGroup(
-        title="Мульти-репо / ветки",
-        optional=True,
-        fields=[
-            EnvField(
-                key="DEFAULT_REPO",
-                prompt_text="DEFAULT_REPO (owner/name или пусто)",
-                default="",
-            ),
-            EnvField(
-                key="REVIEW_BRANCHES",
-                prompt_text="REVIEW_BRANCHES (CSV, первая — первичная)",
-                default="main,master",
-            ),
-        ],
-    ),
-    EnvGroup(
         title="GitLab VCS",
         optional=True,
         fields=[
@@ -255,23 +234,6 @@ WIZARD_GROUPS: list[EnvGroup] = [
         ],
     ),
     board_env_group(_default_board_registry()),
-    EnvGroup(
-        title="Веб-админка",
-        optional=True,
-        fields=[
-            EnvField(
-                key="WEB_ADMIN_USER",
-                prompt_text="WEB_ADMIN_USER (basic-auth логин)",
-                default="",
-            ),
-            EnvField(
-                key="WEB_ADMIN_PASSWORD",
-                prompt_text="WEB_ADMIN_PASSWORD (basic-auth пароль)",
-                default="",
-                secret=True,
-            ),
-        ],
-    ),
 ]
 
 ENV_TEMPLATE = _env_template_with_board_fields(
@@ -298,7 +260,6 @@ def read_env(path: Path) -> dict[str, str]:
 _GROUP_HEADERS: dict[str, str] = {
     "Обязательные": "# --- Voyage / GitHub ---",
     "Хранилища (Postgres / Neo4j)": "# --- Postgres (ParadeDB :5433) / Neo4j (:7687) ---",
-    "Мульти-репо / ветки": "# --- Мульти-репо / ветки (опционально) ---",
     "GitLab VCS": (
         "# --- GitLab VCS (опционально; multi-platform: ревью GitLab MR) ---\n"
         "# VCS_PROVIDER — фолбэк, когда репо не индексирован. Тип VCS\n"
@@ -312,7 +273,6 @@ _GROUP_HEADERS: dict[str, str] = {
         "# YouGile key можно получить автоматически через reviewer init; password не пишется.\n"
         "# TASK_BOARD_API_KEY/BASE — только read-only compatibility aliases для YouGile."
     ),
-    "Веб-админка": "# --- Веб-админка наблюдаемости (опционально; пусто = без аутентификации) ---",
 }
 
 
