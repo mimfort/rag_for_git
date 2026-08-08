@@ -18,6 +18,7 @@ from reviewer.tasks.boards.registry import (
     ProviderSetupSpec,
     default_board_registry,
 )
+from tests.provider_access import FAKE_PROVIDER_ACCESS
 
 EXPECTED_BOARD_TYPES = (
     "yougile",
@@ -103,7 +104,9 @@ def fake_spec(
         board_type=board_type,
         factory=factory or (lambda _: _CompleteProvider()),
         credential_fields=(CredentialFieldSpec(secret_env, "Token", secret=True),),
-        setup=ProviderSetupSpec("Fake", "https://example.test/help", "Create a token."),
+        setup=ProviderSetupSpec(
+            "Fake", "https://example.test/help", "Create a token.", FAKE_PROVIDER_ACCESS
+        ),
         option_fields=options,
         capabilities=capabilities,
     )
@@ -368,6 +371,17 @@ def test_default_registry_registers_every_complete_provider_in_order():
     registry = default_board_registry()
 
     assert registry.registered_types() == EXPECTED_BOARD_TYPES
+
+
+def test_every_board_provider_documents_access_contract():
+    registry = default_board_registry()
+
+    for board_type in registry.registered_types():
+        access = registry.get(board_type).setup.access
+        assert access.minimum_permissions, board_type
+        assert access.read_operations, board_type
+        assert access.write_operations, board_type
+        assert access.validation, board_type
 
 
 def test_default_registry_builds_and_validates_every_registered_provider():

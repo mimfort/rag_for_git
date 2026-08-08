@@ -60,6 +60,7 @@ class FakeIO:
         self.opened.append(url)
 
     def echo(self, text: str) -> None:
+        self.events.append("echo")
         self.messages.append(text)
 
     def save(self, values: dict[str, str]) -> None:
@@ -166,6 +167,32 @@ def test_setup_uses_fail_closed_validation_report_sanitizer() -> None:
     ):
         assert forbidden not in rendered
     assert provider.closed is True
+
+
+def test_setup_prints_access_contract_before_first_secret_prompt() -> None:
+    provider = FakeProvider({"status": "ok", "warnings": []})
+    spec = replace(jira_provider_spec(), factory=lambda _context: provider)
+    io = FakeIO(
+        answers={
+            "Jira Cloud site URL": "https://acme.atlassian.net",
+            "Atlassian account email": "bot@example.test",
+            "Atlassian API token": "jira-secret",
+        },
+        confirms=[False],
+    )
+
+    configure_board_provider(spec, io)
+
+    rendered = "\n".join(io.messages)
+    assert "Минимальные права:" in rendered
+    assert "Чтение:" in rendered
+    assert "Запись:" in rendered
+    assert "Проверка:" in rendered
+    assert io.events.index("echo") < next(
+        index
+        for index, event in enumerate(io.events)
+        if event == "prompt:Atlassian API token"
+    )
 
 
 def test_jira_setup_opens_official_page_only_after_confirmation_and_validates() -> None:

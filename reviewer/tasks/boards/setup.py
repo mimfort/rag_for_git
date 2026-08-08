@@ -10,6 +10,7 @@ from urllib.parse import urlsplit
 
 import httpx
 
+from reviewer.config.provider_access import render_provider_access
 from reviewer.tasks.boards.errors import (
     BoardProviderError,
     sanitize_provider_text,
@@ -264,7 +265,15 @@ def configure_board_provider(spec: BoardProviderSpec, io: SetupIO) -> dict[str, 
     if io.dry_run or io.non_interactive:
         return {}
 
-    _echo(io, f"{spec.setup.help_text}\n{spec.setup.help_url}")
+    _echo(
+        io,
+        render_provider_access(
+            label=spec.setup.label,
+            help_text=spec.setup.help_text,
+            help_url=spec.setup.help_url,
+            access=spec.setup.access,
+        ),
+    )
     if spec.setup.help_url_builder is None and io.confirm(
         f"Открыть официальную инструкцию {spec.setup.help_url}?",
         default=False,

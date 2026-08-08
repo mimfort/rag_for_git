@@ -30,6 +30,7 @@ from reviewer.tasks.boards.base import (
 from reviewer.tasks.boards.errors import BoardProviderError
 from reviewer.tasks.boards.http import BoardHttpClient
 from reviewer.tasks.boards.markup import html_to_md, md_to_html
+from reviewer.config.provider_access import ProviderAccessSpec
 from reviewer.tasks.boards.registry import (
     BoardProviderSpec,
     CredentialFieldSpec,
@@ -112,7 +113,21 @@ def provider_spec() -> BoardProviderSpec:
             help_url="https://ru.yougile.com/api-v2",
             help_text=(
                 "Получите API key автоматически или используйте официальный ручной flow. "
-                "При allowOnlyOpenId нужен готовый key от API-capable аккаунта."
+                "Admin role не обязателен: нужен API-capable аккаунт с доступом к компании. "
+                "При allowOnlyOpenId используйте готовый key такого аккаунта."
+            ),
+            access=ProviderAccessSpec(
+                minimum_permissions=(
+                    "доступ API-capable аккаунта к компании и чтению/записи задач; "
+                    "admin role не обязателен"
+                ),
+                read_operations=(
+                    "компании, доски, колонки, задачи, чаты и вложения",
+                ),
+                write_operations=(
+                    "создание, обновление и завершение задач и нативных подзадач",
+                ),
+                validation="identity, видимость проекта и lifecycle capabilities",
             ),
             acquisition=acquire_yougile_key,
         ),

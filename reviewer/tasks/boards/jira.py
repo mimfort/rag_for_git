@@ -27,6 +27,7 @@ from reviewer.tasks.boards.attachments import (
 from reviewer.tasks.boards.base import RawTask, TaskListing, TaskListingStats, project_prefix
 from reviewer.tasks.boards.errors import BoardProviderError
 from reviewer.tasks.boards.http import BoardHttpClient
+from reviewer.config.provider_access import ProviderAccessSpec
 from reviewer.tasks.boards.registry import (
     BoardProviderSpec,
     CredentialFieldSpec,
@@ -76,12 +77,20 @@ def provider_spec() -> BoardProviderSpec:
             ),
         ),
         setup=ProviderSetupSpec(
-            "Jira Cloud",
-            "https://id.atlassian.com/manage-profile/security/api-tokens",
-            (
+            label="Jira Cloud",
+            help_url="https://id.atlassian.com/manage-profile/security/api-tokens",
+            help_text=(
                 "Создайте API token без scopes для прямого Jira Cloud site URL, "
                 "задайте понятные name/expiration и сразу сохраните token: повторно "
                 "его посмотреть нельзя. Пароль Atlassian не подходит."
+            ),
+            access=ProviderAccessSpec(
+                minimum_permissions=(
+                    "Browse Projects, Create Issues, Edit Issues и Transition Issues"
+                ),
+                read_operations=("проекты, задачи, поля, переходы и вложения",),
+                write_operations=("создание, правка и перевод задач, добавление PR-ссылок",),
+                validation="identity, проект и доступные Jira permissions",
             ),
         ),
         create_target_label="Статус создания",

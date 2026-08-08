@@ -6,6 +6,7 @@ from reviewer.tasks.boards.registry import (
     CredentialFieldSpec,
     ProviderSetupSpec,
 )
+from tests.provider_access import FAKE_PROVIDER_ACCESS
 
 
 REMOVED_STANDARD_KEYS = {
@@ -78,6 +79,7 @@ def test_board_group_uses_registry_metadata_without_legacy_aliases():
                     "Future",
                     "https://future.example/setup",
                     "Create a token.",
+                    FAKE_PROVIDER_ACCESS,
                 ),
             )
         ]

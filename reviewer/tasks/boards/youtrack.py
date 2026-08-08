@@ -19,6 +19,7 @@ from reviewer.tasks.boards.attachments import fetch_attachment, host_allowed, _r
 from reviewer.tasks.boards.base import RawTask, TaskListing, TaskListingStats, project_prefix
 from reviewer.tasks.boards.errors import BoardProviderError
 from reviewer.tasks.boards.http import BoardHttpClient
+from reviewer.config.provider_access import ProviderAccessSpec
 from reviewer.tasks.boards.registry import (
     BoardProviderSpec,
     CredentialFieldSpec,
@@ -120,6 +121,14 @@ def provider_spec() -> BoardProviderSpec:
                 "Account Security URL — только удобная ссылка для bundled Hub. "
                 "При external Hub откройте Profile в YouTrack и следуйте ссылке "
                 "Account Security в профиль Hub."
+            ),
+            access=ProviderAccessSpec(
+                minimum_permissions=(
+                    "permanent token с YouTrack service scope и read/write к задачам проекта"
+                ),
+                read_operations=("задачи, поля, связи и вложения",),
+                write_operations=("создание задач, смена статуса и добавление PR-ссылок",),
+                validation="текущий пользователь и видимость проекта",
             ),
             help_url_builder=_permanent_token_url,
         ),

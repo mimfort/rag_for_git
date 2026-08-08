@@ -10,6 +10,7 @@ from reviewer.tasks.boards.registry import (
     ProviderBuildContext,
     ProviderSetupSpec,
 )
+from tests.provider_access import FAKE_PROVIDER_ACCESS
 
 
 class _Provider:
@@ -78,7 +79,9 @@ class _Svc(MCPReviewService):
                 board_type=board_type,
                 factory=factory,
                 credential_fields=(CredentialFieldSpec(env, "Token", secret=True),),
-                setup=ProviderSetupSpec(board_type, "https://fake/help", "Configure."),
+                setup=ProviderSetupSpec(
+                    board_type, "https://fake/help", "Configure.", FAKE_PROVIDER_ACCESS
+                ),
                 capabilities=capabilities,
             ))
             values[env] = "secret"

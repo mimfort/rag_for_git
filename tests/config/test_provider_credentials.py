@@ -7,6 +7,7 @@ from reviewer.tasks.boards.registry import (
     CredentialFieldSpec,
     ProviderSetupSpec,
 )
+from tests.provider_access import FAKE_PROVIDER_ACCESS
 
 
 def _provider(context):
@@ -25,7 +26,9 @@ YOUGILE_SPEC = BoardProviderSpec(
             default="https://yougile.example/api", aliases=("TASK_BOARD_API_BASE",),
         ),
     ),
-    setup=ProviderSetupSpec("YouGile", "https://example.test", "Use a token."),
+    setup=ProviderSetupSpec(
+        "YouGile", "https://example.test", "Use a token.", FAKE_PROVIDER_ACCESS
+    ),
 )
 
 

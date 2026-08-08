@@ -9,6 +9,7 @@ from reviewer.tasks.boards.registry import (
     BoardProviderSpec,
     ProviderSetupSpec,
 )
+from tests.provider_access import FAKE_PROVIDER_ACCESS
 
 
 REMOVED_STANDARD_KEYS = {
@@ -267,6 +268,7 @@ def test_init_noninteractive_modes_never_touch_provider_setup_stages(
                     label="Sentinel",
                     help_url="https://sentinel.example/setup",
                     help_text="Sentinel setup.",
+                    access=FAKE_PROVIDER_ACCESS,
                     acquisition=acquire,
                 ),
             )

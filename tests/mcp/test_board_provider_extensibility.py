@@ -13,6 +13,7 @@ from reviewer.tasks.boards.registry import (
     ProviderOptionSpec,
     ProviderSetupSpec,
 )
+from tests.provider_access import FAKE_PROVIDER_ACCESS
 from reviewer.tasks.sync import SyncService
 
 
@@ -146,7 +147,9 @@ def _service(*, secret_warning=False, fail_targets=False):
             ProviderOptionSpec("lane", "Lane"),
             ProviderOptionSpec("status_field", "Status field"),
         ),
-        setup=ProviderSetupSpec("Fake", "https://fake/help", "Configure."),
+        setup=ProviderSetupSpec(
+            "Fake", "https://fake/help", "Configure.", FAKE_PROVIDER_ACCESS
+        ),
     )
     registry = BoardProviderRegistry([spec])
     credentials = ProviderCredentialSource(values={"FAKE_TOKEN": "runtime-secret"})
