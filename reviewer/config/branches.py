@@ -22,6 +22,7 @@ import yaml
 from yaml.tokens import (
     BlockMappingStartToken,
     DocumentEndToken,
+    FlowEntryToken,
     FlowMappingEndToken,
     FlowMappingStartToken,
     FlowSequenceEndToken,
@@ -292,10 +293,10 @@ def _read_locked_destination(
                     ) from None
 
 
-def _flow_mapping_end(tokens: list[object]) -> int | None:
+def _flow_mapping_end(tokens: list[object]) -> tuple[int, bool] | None:
     flow_depth = 0
     root_flow = False
-    for token in tokens:
+    for position, token in enumerate(tokens):
         if isinstance(token, (FlowMappingStartToken, FlowSequenceStartToken)):
             if flow_depth == 0:
                 if not isinstance(token, FlowMappingStartToken):
@@ -305,7 +306,10 @@ def _flow_mapping_end(tokens: list[object]) -> int | None:
         elif isinstance(token, (FlowMappingEndToken, FlowSequenceEndToken)):
             flow_depth -= 1
             if root_flow and flow_depth == 0:
-                return token.start_mark.index
+                return (
+                    token.start_mark.index,
+                    isinstance(tokens[position - 1], FlowEntryToken),
+                )
         elif flow_depth == 0 and isinstance(token, BlockMappingStartToken):
             return None
     return None
@@ -321,8 +325,9 @@ def _append_repository_candidate(
         raise HomeConfigError(f"{source}: repository block отсутствует")
     repository = block_data[BRANCHES_KEY]
     tokens = list(yaml.scan(existing.text))
-    flow_end = _flow_mapping_end(tokens)
-    if flow_end is not None:
+    flow_mapping = _flow_mapping_end(tokens)
+    if flow_mapping is not None:
+        flow_end, has_trailing_comma = flow_mapping
         flow = yaml.safe_dump(
             {BRANCHES_KEY: repository},
             allow_unicode=True,
@@ -331,7 +336,7 @@ def _append_repository_candidate(
             width=10**9,
         ).strip()
         prefix = existing.text[:flow_end]
-        separator = " " if prefix.rstrip().endswith(",") else ", " if existing.data else ""
+        separator = " " if has_trailing_comma else ", " if existing.data else ""
         candidate = prefix + separator + flow[1:-1] + existing.text[flow_end:]
     else:
         document_end = next(

@@ -416,6 +416,25 @@ def test_apply_extends_flow_mapping_with_trailing_comma(monkeypatch, tmp_path, o
         assert "# keep trailing-comma comment" in text
 
 
+def test_apply_extends_flow_mapping_with_comment_after_trailing_comma(monkeypatch, tmp_path):
+    path = tmp_path / "repos/o/r.yml"
+    path.parent.mkdir(parents=True)
+    path.write_text("{max_comments: 5, # keep\n}\n", encoding="utf-8")
+    plan = plan_repository_config(
+        _detection(tmp_path),
+        settings=_settings(monkeypatch),
+        config_root=tmp_path,
+    )
+
+    apply_repository_config(plan)
+    text = path.read_text(encoding="utf-8")
+    data = yaml.safe_load(text)
+
+    assert data["max_comments"] == 5
+    assert data["repository"]["primary_branch"] == "dev"
+    assert "# keep" in text
+
+
 def test_apply_inserts_before_document_terminator(monkeypatch, tmp_path):
     path = tmp_path / "repos/o/r.yml"
     path.parent.mkdir(parents=True)
