@@ -1,56 +1,56 @@
-# Brief — PRI-223 Часть B: передел мастера reviewer init
+# Brief — PRI-223 Части C и D: credentials и configure-review
 https://ru.yougile.com/team/686c049c8af8/#PRI-223
 
 ## Task
 - Данные получены из reviewer store после sync; нормализованный ключ `ID-277`, алиас `PRI-223`.
-- Реализовать только часть B: разделить `reviewer init` на глобальный runtime/credentials шаг и repo-onboarding с autodetect remote/primary branch.
-- Убрать из стандартного мастера вопросы multirepo, `DEFAULT_REPO`, `REVIEW_BRANCHES`, `WEB_ADMIN_*` и legacy `TASK_BOARD_MCP`, сохранив runtime-поддержку старых env.
-- Перед записью показать файлы, несекретные значения и provenance; после записи показать effective config.
-- Критерии: fresh init без лишних вопросов; owner/name и primary branch видны до записи; второй repo изолирован; `--yes`/`--dry-run` без prompt/network; повторный init сохраняет advanced-настройки.
+- Реализовать только C: после выбора VCS/board provider спрашивать только его credentials и показывать получение токена, минимальные права, read/write-операции и проверку.
+- Не дублировать готовый YouGile `companies → API key` flow; довести его UX про manual fallback, `allowOnlyOpenId` и отсутствие обязательных admin-прав.
+- Реализовать D: `configure-review` определяет repo, спрашивает primary/index branches и безопасно обновляет home per-repo YAML, сохраняя остальные ключи и комментарии.
+- Зафиксировать модель владения настройками и сценарии single-repo/multi-repo/CI в синхронных README; добавить focused tests C/D.
 
 ## Related work
-- PRI-223 / PR #159 — часть A уже ввела effective per-repo branch config; часть B должна потреблять её публичные API, не реализовывать ветки заново.
-- PRI-221 / PR #150 — переиспользовать `home_repo_path`, строгую проверку home YAML и provenance вместо отдельного формата repo-конфига.
-- PRI-122 / PR #21 — исходный мастер onboarding задаёт baseline поведения, которое теперь разделяется на global и repo шаги.
-- PRI-169 — предыдущая правка полей `reviewer init`; её тестовые паттерны подходят для удаления полей без потери существующих advanced env.
-- (dropped 4: launcher, GitLab provider, Codex install и status используют иные механизмы и не задают реализацию части B.)
+- PRI-215 / PR #127 — переиспользовать generic registry, credential schema, setup metadata и существующий YouGile acquisition flow; не добавлять provider-specific ветвления в CLI.
+- PRI-221 / PR #150 — переиспользовать home per-repo path, credential rejection, provenance и двуязычный шаблон документации layered config.
+- PRI-205 / PR #92 — следовать server-side discovery/pick-list паттерну `configure-review`, сохраняя fail-open fallback и отсутствие credentials в YAML.
+- PRI-133 — сохранить VCS-контракт: GitHub/GitLab credentials принадлежат env, а provider определяется repo/remote или явным выбором.
+- PRI-169 — текущие init/provider tests являются регрессионным baseline при сужении VCS credential prompts.
+- (dropped 3: task sync scoping, retention filter и сама PRI-223 не добавляют отдельного механизма для C/D.)
 
 ## Subsystems
-- `reviewer/entrypoints` — команда `init`, orchestration prompt/preview/write/check и финальный effective-config output.
-- `reviewer` — `install.py` описывает env-поля, группы, prompting и безопасный render.
-- `reviewer/config` — home per-repo path, branch resolution и provenance, уже созданные частями PRI-221/A.
-- `tests/install` — контракт интерактивного, `--yes` и `--dry-run` режимов.
-- `tests/config` — изоляция per-repo YAML и проверка источников effective config.
+- `reviewer` — `install.py` задаёт стандартные env-группы, credential prompts и redacted preview.
+- `reviewer/entrypoints` — `reviewer init` выбирает provider, собирает global/repo plans и оркестрирует проверку.
+- `reviewer/tasks` — registry-driven board credential/setup metadata и YouGile acquisition/validation.
+- `reviewer/config` — effective branches, provenance и безопасная публикация home per-repo YAML.
+- `reviewer/vcs` — GitHub/GitLab операции, по которым формулируются минимальные scopes.
+- `tests/config` — изоляция repo, validation и сохранение home YAML.
+- `tests/entrypoints` — интерактивный/noninteractive контракт init и redaction.
+- `tests/docs` — паритет README и целостность документированных команд/skills.
 
 ## Relevant code
-- `reviewer/entrypoints/cli.py:828` — `init` сейчас смешивает env prompt, board setup, preview, запись и post-check; здесь разделить global и repo stages.
-- `reviewer/entrypoints/cli.py:844` — текущий поток читает один `.env`, а `--dry-run` рендерит только его; preview должен охватить оба назначения без записи и сети.
-- `reviewer/entrypoints/cli.py:924` — unknown/advanced env сохраняются через `extra`; этот инвариант нужен повторному init.
-- `reviewer/install.py:319` — `prompt_groups(..., yes)` уже гарантирует current-or-default без prompt в CI; repo stage должен иметь такой же явный noninteractive контракт.
-- `reviewer/install.py:105` — `EnvField`/`EnvGroup` моделируют только `.env`; repo YAML не следует встраивать в эти типы как псевдо-env.
-- `reviewer/gitutil.py:42` — `remote_url` уже fail-soft читает `origin`; использовать его для autodetect, не дублировать subprocess parsing.
-- `reviewer/services/repo_id.py:24` — `derive_repo_from_remote` уже нормализует remote в repo id; отсутствие/неподдерживаемый remote должно давать управляемый fallback.
-- `reviewer/services/branch.py:28` — `current_git_branch` даёт локальную ветку fail-soft; primary branch выбирать через effective API части A с autodetect fallback, не через committed `.review.yml` bootstrap.
-- `reviewer/config/layers.py:69` — `home_repo_path(repo)` задаёт канонический per-repo destination.
-- `reviewer/config/layers.py:257` — `resolve_policy_data` и `ResolutionMeta` задают существующий паттерн sources/shadowing для effective preview.
-- `reviewer/entrypoints/cli.py:136` — `config show` уже выводит effective config/provenance; переиспользовать после onboarding вместо второго отчётного формата.
-- (dropped 10: runtime consumers веток, MCP, board provider internals и launcher не меняются в части B.)
+- `reviewer/entrypoints/cli.py:1126` — расширить текущий `init`, сохранив scope/preview/no-network контракты части B.
+- `reviewer/entrypoints/cli.py:1173` — board credentials уже prompt-ятся только после выбора provider; использовать этот registry-driven паттерн для VCS, не регрессить board flow.
+- `reviewer/tasks/boards/registry.py:104` — `BoardProviderRegistry` централизует credential fields и проверяет полноту setup metadata; это эталон provider-scoped модели.
+- `reviewer/tasks/boards/yougile.py:90` — YouGile spec уже связывает credential fields, help text и acquisition hook; изменения должны быть уточнением метаданных/UX.
+- `reviewer/tasks/boards/setup.py:154` — готовый `companies → /auth/keys` flow с manual fallback и очисткой password; не переписывать.
+- `reviewer/config/settings.py:82` — GitHub/GitLab credentials и runtime fallbacks остаются env-only и обратно совместимыми.
+- `reviewer/config/onboarding.py:101` — текущий repo plan намеренно делает noop для существующего `repository`; `configure-review` нужен отдельный безопасный update существующего блока.
+- `reviewer/config/branches.py:159` — `render_repository_block` задаёт canonical YAML представление веток; переиспользовать validation/format без полной перезаписи файла.
+- `reviewer/config/branches.py:664` — `resolve_repo_branches` возвращает effective primary/index/source для показа выбранного слоя до записи.
+- (dropped 20: runtime board consumers, task ETL, MCP review path и общие Settings-поля не меняют C/D.)
 
 ## Test exemplars
-- `tests/install/test_install_wizard.py:152` — `--dry-run` не создаёт каталог/файл, не prompt-ит и скрывает секреты.
-- `tests/install/test_install_wizard.py:173` — preview редактирует legacy и неизвестные secret-like extras без утечки значений.
-- `tests/install/test_install_wizard.py:200` — `--dry-run` и `--yes` не запускают provider acquisition, validation, browser или network setup.
-- `tests/install/test_install_wizard.py:164` — `--yes` сохраняет unknown advanced env keys.
-- `tests/config/test_layers.py:135` — существующий home-файл остаётся неизменным при конфликте; repo-onboarding нужен неразрушающий update с отдельными тестами двух repo.
-- (dropped 5: provider-specific setup и integration migration tests относятся к частям C/A.)
+- `tests/install/test_install_wizard.py:303` — существующий тест доказывает выбор одного board provider и запись только его credentials; расширить аналогичным VCS-контрактом.
+- (dropped 14: broad test retrieval вернул production/нерелевантные chunks; два focused graph/test запроса завершились timeout.)
 
 ## Constraints / open questions
-- [existing_artifacts] `docs/superpowers/specs/2026-08-07-PRI-223-per-repo-branch-config-design.md` и `docs/superpowers/plans/2026-08-07-PRI-223-per-repo-branch-config.md` описывают часть A, не дизайн части B.
-- Граница части B жёсткая: provider-scoped credentials/minimal permissions остаются частью C; configure-review и двуязычная документация остаются частью D.
-- `criteria=[]` в store, но описание содержит полный раздел «Критерии приёмки»; для B применяются критерии 1, 2, 3, 10 и 11.
-- Branch bootstrap не должен читать committed `.review.yml` до выбора branch; источник только git/CLI/home per-repo/global/env fallback части A.
-- `--yes` и `--dry-run` не должны выполнять интерактивные или сетевые операции; preview никогда не показывает секреты.
-- PR #159 проверен через GitHub и присутствует в обновлённом `dev` (`4978334`); часть B создаётся поверх него.
-- Сводки подсистем уже были прогреты; в этом запуске они не обновлялись по прямому указанию пользователя.
+- Жёсткий scope: только C и D; A уже смержена PR #159, B уже присутствует на текущем `dev` и имеет отдельные spec/plan.
+- C частично существует: board provider credentials и YouGile acquisition уже scoped; реализация должна закрыть остаток, а не создавать второй setup framework.
+- `criteria=[]` в store, но описание содержит критерии; для C/D применяются 5, 8, 9, 14, 15 и общие security/noninteractive ограничения 7/10.
+- `[existing_artifacts]` brief C/D перезаписывает прежний brief B; specs/plans частей A и B остаются отдельными историческими артефактами.
+- `[existing_artifacts]` `docs/superpowers/specs/2026-08-07-PRI-223-per-repo-branch-config-design.md`, `docs/superpowers/specs/2026-08-08-PRI-223-reviewer-init-onboarding-design.md`.
+- `[existing_artifacts]` `docs/superpowers/plans/2026-08-07-PRI-223-per-repo-branch-config.md`, `docs/superpowers/plans/2026-08-08-PRI-223-reviewer-init-onboarding.md`.
+- Markdown skill/README не индексируются как Python snippets; перед дизайном их нужно прочитать локально, сохранив паритет plugin source и установленных projections.
+- Graph/test expansion reviewer завершился timeout; это не блокирует, но blast radius уточнить локальным search перед реализацией.
+- Сводки подсистем уже были построены; в этом запуске они не обновлялись по прямому указанию пользователя.
 
 Собран на: mid tier (session model gpt-5.6-sol), режим: inline
