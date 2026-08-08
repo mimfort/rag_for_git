@@ -14,6 +14,19 @@ services:
       NEO4J_AUTH: neo4j/reviewerpass
     ports: ["127.0.0.1:7474:7474", "127.0.0.1:7687:7687"]
     volumes: ["neo4j_data:/data"]
+  web:
+    # Web admin собирается и запускается только через явный `--profile web`.
+    profiles: ["web"]
+    build:
+      context: .
+      dockerfile: web/Dockerfile
+    environment:
+      PG_DSN: postgresql://reviewer:reviewer@paradedb:5432/reviewer
+      REVIEWER_WEB_HOST: 0.0.0.0
+      REVIEWER_WEB_PORT: ${REVIEWER_WEB_PORT:-8000}
+    ports:
+      - "127.0.0.1:${REVIEWER_WEB_PUBLISH_PORT:-8000}:${REVIEWER_WEB_PORT:-8000}"
+    depends_on: ["paradedb"]
   # ============================================================================
   # ВАЖНО: test-profile использует общий Compose project с dev-сервисами.
   # Безопасное удаление: docker compose --profile test rm -sfv paradedb-test neo4j-test
