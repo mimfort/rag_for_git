@@ -330,8 +330,9 @@ def _append_repository_candidate(
             sort_keys=False,
             width=10**9,
         ).strip()
-        separator = ", " if existing.data else ""
-        candidate = existing.text[:flow_end] + separator + flow[1:-1] + existing.text[flow_end:]
+        prefix = existing.text[:flow_end]
+        separator = " " if prefix.rstrip().endswith(",") else ", " if existing.data else ""
+        candidate = prefix + separator + flow[1:-1] + existing.text[flow_end:]
     else:
         document_end = next(
             (

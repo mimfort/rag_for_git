@@ -365,6 +365,7 @@ def test_apply_appends_without_losing_comments_and_quotes_ambiguous_names(
     "original",
     [
         "{}\n",
+        "{   }\n",
         "{max_comments: 5} # keep flow comment\n",
     ],
 )
@@ -386,6 +387,33 @@ def test_apply_extends_flow_mapping_as_one_valid_document(monkeypatch, tmp_path,
     if "max_comments" in original:
         assert data["max_comments"] == 5
         assert "# keep flow comment" in text
+
+
+@pytest.mark.parametrize(
+    "original",
+    [
+        "{max_comments: 5,}\n",
+        "{ max_comments: 5,   } # keep trailing-comma comment\n",
+    ],
+)
+def test_apply_extends_flow_mapping_with_trailing_comma(monkeypatch, tmp_path, original):
+    path = tmp_path / "repos/o/r.yml"
+    path.parent.mkdir(parents=True)
+    path.write_text(original, encoding="utf-8")
+    plan = plan_repository_config(
+        _detection(tmp_path),
+        settings=_settings(monkeypatch),
+        config_root=tmp_path,
+    )
+
+    apply_repository_config(plan)
+    text = path.read_text(encoding="utf-8")
+    data = yaml.safe_load(text)
+
+    assert data["max_comments"] == 5
+    assert data["repository"]["primary_branch"] == "dev"
+    if "#" in original:
+        assert "# keep trailing-comma comment" in text
 
 
 def test_apply_inserts_before_document_terminator(monkeypatch, tmp_path):
