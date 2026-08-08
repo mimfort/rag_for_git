@@ -68,7 +68,9 @@ Click и контейнер различаются только способом
 ## Docker image
 
 `web/Dockerfile` сохраняет текущую multi-stage сборку и минимальный набор web-зависимостей.
-Из него удаляются `EXPOSE 8000` и inline Uvicorn. Новый exec-form startup:
+В runtime-набор добавляется отсутствующий `psycopg-pool>=3.2`, который напрямую импортирует
+`reviewer.web.history`; полный dependency stack пакета не устанавливается. Из Dockerfile
+удаляются `EXPOSE 8000` и inline Uvicorn. Новый exec-form startup:
 
 ```dockerfile
 CMD ["python", "-m", "reviewer.web.serve"]

@@ -20,6 +20,8 @@ https://ru.yougile.com/team/686c049c8af8/#PRI-222
 - tests — инфраструктурная политика проверяет Compose как YAML без внешней сети и подходит для opt-in/profile/runtime-port инвариантов.
 
 ## Relevant code
+- `web/Dockerfile:26` — удалить `EXPOSE 8000` и inline `uvicorn.run(... port=8000)`; заменить на exec-form общего module startup.
+- `docker-compose.yml:1` — добавить opt-in сервис `web`, не меняя поведение обязательных инфраструктурных сервисов без profile.
 - `reviewer/entrypoints/cli.py:533` — `serve` уже принимает `--host` и `--port`, default порта 8000 остаётся здесь как совместимый runtime-дефолт.
 - `reviewer/web/app.py:33` — `create_app` создаёт HTTP-приложение независимо от listen-port; Docker-логика сюда не нужна.
 - (dropped 23: остальные Python-хиты не требуется менять или копировать; ключевые Docker/Compose-файлы не индексируются как Python-код)
@@ -30,10 +32,10 @@ https://ru.yougile.com/team/686c049c8af8/#PRI-222
 - (dropped 23: остальные тестовые хиты покрывают FastAPI/CLI internals или несвязанные Docker-инварианты и не информируют проверку runtime-портов)
 
 ## Constraints / open questions
-- `web/Dockerfile` и `docker-compose.yml` не попали в Python-only base retrieval; точные runtime-поля нужно подтвердить чтением рабочего дерева перед дизайном.
+- `web/Dockerfile` и `docker-compose.yml` не попали в Python-only base retrieval; их runtime-поля подтверждены прямым чтением рабочего дерева.
 - Smoke-тест должен реально доказывать повторное использование одного image на двух внутренних портах, но не должен попадать в обычный unit-прогон с запретом localhost/network.
 - Compose web-сервис обязан иметь явный `profiles` opt-in и не менять поведение базового `docker compose up`.
 - Criteria в store пусты как отдельное поле, но полный раздел «Критерии приёмки» присутствует в description и перенесён в Task.
 - Существующих артефактов PRI-222 не найдено; индекс `dev` свежий (`drift=0`), сводки были тёплыми и не обновлялись согласно ограничению «только на Luna».
 
-Собран на: session model (premium), режим: inline
+Собран на: mid tier default (session model; override unavailable), режим: inline
