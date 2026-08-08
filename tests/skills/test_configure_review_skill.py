@@ -293,6 +293,54 @@ def test_skill_keeps_filter_generic_and_credentials_out_of_policy():
     assert re.search(r"Never read, request,\s+display, or write credential values", text)
 
 
+def test_skill_runs_non_disclosing_preflight_before_reading_yaml():
+    text = SKILL.read_text(encoding="utf-8")
+    preflight = text.index("## Safe YAML preflight")
+    first_read = text.index("read the selected file", preflight)
+
+    assert preflight < first_read
+    for marker in (
+        "before any tool call that can return file contents",
+        "safe/blocked",
+        "never matching lines, values, or exception text",
+        "Do not use Read or Grep",
+        "Only after a safe result",
+    ):
+        assert marker in text
+
+
+def test_skill_rejects_ambiguous_yaml_before_mutation():
+    text = SKILL.read_text(encoding="utf-8")
+    preflight = text.split("## Safe YAML preflight", 1)[1].split("## Pipeline", 1)[0]
+
+    for marker in (
+        "duplicate mapping keys",
+        "duplicate `repository`",
+        "duplicate branch fields",
+        "anchors",
+        "aliases",
+        "merge keys",
+    ):
+        assert marker in preflight
+    assert "before reading or mutating" in preflight
+
+
+def test_skill_preflight_rejects_symlinked_parents_and_defines_safe_create():
+    text = SKILL.read_text(encoding="utf-8")
+    preflight = text.split("## Safe YAML preflight", 1)[1].split("## Pipeline", 1)[0]
+
+    for marker in (
+        "every existing parent path component",
+        "home config root",
+        "Missing destinations",
+        "including a missing home config root",
+        "nearest existing parent",
+        "remains inside",
+        "re-check immediately before writing",
+    ):
+        assert marker in preflight
+
+
 def test_skill_manages_primary_and_index_branches():
     section = _branch_section()
     assert "repository.primary_branch" in section

@@ -55,6 +55,28 @@ def _matrix_rows(text: str) -> dict[str, list[str]]:
     return rows
 
 
+def test_board_docs_explain_structured_setup_contract():
+    text = _read("docs/board-providers.md")
+    section = text.split("## Configuration", 1)[1].split("## YouGile", 1)[0]
+    for marker in (
+        "minimum permissions",
+        "read operations",
+        "write operations",
+        "validation",
+        "selected provider",
+        "reviewer init",
+    ):
+        assert marker in section
+
+
+def test_yougile_docs_do_not_require_admin_role():
+    text = _read("docs/board-providers.md")
+    section = text.split("## YouGile", 1)[1].split("## YouTrack", 1)[0]
+    assert "admin role is not required" in section
+    assert "API-capable account" in section
+    assert "allowOnlyOpenId" in section
+
+
 def test_capability_matrix_has_one_complete_row_per_registered_provider():
     """Матрица — строка на провайдера; каждая capability-колонка заполнена."""
     rows = _matrix_rows(_read("docs/board-providers.md"))

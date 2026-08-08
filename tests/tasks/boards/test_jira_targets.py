@@ -16,6 +16,7 @@ def test_discovery_deduplicates_status_ids_and_lists_issue_type_choices() -> Non
                         for name in (
                             "BROWSE_PROJECTS",
                             "CREATE_ISSUES",
+                            "EDIT_ISSUES",
                             "TRANSITION_ISSUES",
                         )
                     }
@@ -54,6 +55,7 @@ def test_discovery_warns_when_account_is_read_only() -> None:
                     "permissions": {
                         "BROWSE_PROJECTS": {"havePermission": True},
                         "CREATE_ISSUES": {"havePermission": False},
+                        "EDIT_ISSUES": {"havePermission": False},
                         "TRANSITION_ISSUES": {"havePermission": False},
                     }
                 },
@@ -64,6 +66,7 @@ def test_discovery_warns_when_account_is_read_only() -> None:
 
     assert result["warnings"] == [
         "missing Jira permission: CREATE_ISSUES",
+        "missing Jira permission: EDIT_ISSUES",
         "missing Jira permission: TRANSITION_ISSUES",
     ]
     assert result["targets"]
@@ -79,6 +82,7 @@ def test_discovery_warns_when_transition_permission_is_missing() -> None:
                     "permissions": {
                         "BROWSE_PROJECTS": {"havePermission": True},
                         "CREATE_ISSUES": {"havePermission": True},
+                        "EDIT_ISSUES": {"havePermission": True},
                         "TRANSITION_ISSUES": {"havePermission": False},
                     }
                 },
@@ -103,6 +107,7 @@ def test_discovery_does_not_request_statuses_without_browse_permission() -> None
                 "permissions": {
                     "BROWSE_PROJECTS": {"havePermission": False},
                     "CREATE_ISSUES": {"havePermission": False},
+                    "EDIT_ISSUES": {"havePermission": False},
                     "TRANSITION_ISSUES": {"havePermission": False},
                 }
             },
@@ -116,5 +121,6 @@ def test_discovery_does_not_request_statuses_without_browse_permission() -> None
     assert result["warnings"] == [
         "missing Jira permission: BROWSE_PROJECTS",
         "missing Jira permission: CREATE_ISSUES",
+        "missing Jira permission: EDIT_ISSUES",
         "missing Jira permission: TRANSITION_ISSUES",
     ]

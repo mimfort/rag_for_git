@@ -274,7 +274,7 @@ Import `ProviderAccessSpec` in each provider module and use these values:
 
 | Provider | minimum_permissions | read_operations | write_operations | validation |
 |---|---|---|---|---|
-| YouGile | `API-capable account with company/task read and write; admin role is not required` | `read companies, boards, columns, tasks, chats and attachments` | `create/update/complete tasks and native subtasks` | `validate_connection checks identity, project visibility and lifecycle capabilities` |
+| YouGile | `API-capable account with company/task read and write; admin role is not required` | `read companies, boards, columns, tasks, chats and attachments` | `create/update/complete tasks and native subtasks` | `validate_connection checks identity and project visibility; health checks do not probe writes` |
 | YouTrack | `permanent token with YouTrack service scope and project issue read/write` | `read issues, fields, links and attachments` | `create issues, update status and append PR links` | `validate_connection checks current user and project visibility` |
 | Jira | `Jira Cloud user with Browse Projects, Create Issues, Edit Issues and Transition Issues` | `read projects, issues, fields, transitions and attachments` | `create/edit/transition issues and append PR links` | `validate_connection checks identity, project and reported permissions` |
 | GitHub Issues | `fine-grained PAT with Issues: Read and write for the selected repository` | `read repository issues, labels, milestones and comments` | `create/update/close issues and append PR links` | `validate_connection checks identity, repository access and write capability` |

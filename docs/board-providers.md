@@ -166,7 +166,13 @@ Credentials are server-side environment variables, never values in `.review.yml`
 safe identity, project, permission, and configuration metadata. Pass a non-secret project for
 project-scoped validation, for example `reviewer check --board-project jira=PRI`; repeat
 `--board-project TYPE=PROJECT` for a multi-provider deployment. Without a Jira project, identity
-is still checked, but create/transition permissions are reported as unknown.
+is still checked, but create/edit/transition permissions are reported as unknown.
+
+`reviewer init` asks for credentials only after a selected provider is known. Registry setup
+metadata is complete and structured: every registered provider declares minimum permissions,
+read operations, write operations, validation semantics, and an official setup URL. The installer
+shows that contract before the first secret prompt. `reviewer check` repeats provider validation
+without returning credentials.
 
 ## YouGile
 
@@ -180,6 +186,10 @@ OpenID Connect in self-hosted YouGile is for user sign-in, not an authorization 
 `allowOnlyOpenId` is enabled, provide an API key created by a separate
 API-capable account with the minimum required permissions; the acquisition flow must not try to
 exchange an OIDC session for a REST credential.
+
+An admin role is not required by reviewer itself. The API-capable account must be able to access the
+selected company and perform the listed task operations. With `allowOnlyOpenId`, use a ready key from
+such an account because the password acquisition endpoint is disabled.
 
 ## YouTrack
 

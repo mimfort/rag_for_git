@@ -272,7 +272,9 @@ class JiraCloudBoard:
             "/rest/api/3/mypermissions",
             params={
                 "projectKey": project,
-                "permissions": "BROWSE_PROJECTS,CREATE_ISSUES,TRANSITION_ISSUES",
+                "permissions": (
+                    "BROWSE_PROJECTS,CREATE_ISSUES,EDIT_ISSUES,TRANSITION_ISSUES"
+                ),
             },
         ) or {}
         permissions = payload.get("permissions") or {}
@@ -285,12 +287,13 @@ class JiraCloudBoard:
         }
         warnings = [
             f"missing Jira permission: {permission}"
-            for permission, capability in (
-                ("BROWSE_PROJECTS", "read"),
-                ("CREATE_ISSUES", "create"),
-                ("TRANSITION_ISSUES", "transition"),
+            for permission in (
+                "BROWSE_PROJECTS",
+                "CREATE_ISSUES",
+                "EDIT_ISSUES",
+                "TRANSITION_ISSUES",
             )
-            if not capabilities[capability]
+            if not bool((permissions.get(permission) or {}).get("havePermission"))
         ]
         return capabilities, warnings
 
@@ -317,7 +320,7 @@ class JiraCloudBoard:
             capabilities, warnings = self._project_permissions(project)
         else:
             warnings.append(
-                "Jira project was not checked; create and transition permissions are unknown."
+                "Jira project was not checked; create, edit, and transition permissions are unknown."
             )
         return {
             "status": "ok",

@@ -47,6 +47,7 @@ from reviewer.services.branch import resolve_branch
 from reviewer.services.gc import purge_orphaned_overlays
 from reviewer.services.review_service import ReviewService
 from reviewer.services.status import build_status_report, render_status, render_status_json
+from reviewer.tasks.boards.errors import sanitize_provider_text
 from reviewer.versioning import InstallMode, check_latest, detect_installation, upgrade_uv_tool
 
 if TYPE_CHECKING:
@@ -590,6 +591,9 @@ def _check_board_providers(
 
 def _check_vcs_providers(settings: Settings) -> bool:
     """Проверить authentication каждого настроенного VCS без вывода credentials."""
+    secrets = tuple(
+        token for token in (settings.github_token, settings.gitlab_token) if token
+    )
     configured: list[tuple[str, str, dict[str, str], str]] = []
     if settings.github_token:
         configured.append(
@@ -628,8 +632,31 @@ def _check_vcs_providers(settings: Settings) -> bool:
                 failed = True
                 continue
             payload = response.json()
-            identity = payload.get(identity_key, "?") if isinstance(payload, Mapping) else "?"
-            click.echo(f"✓ {label} API: аутентификация OK (identity: {identity})")
+            identity = payload.get(identity_key) if isinstance(payload, Mapping) else None
+            if not isinstance(identity, str) or not identity.strip():
+                click.echo(f"✗ {label} API: identity отсутствует или некорректен")
+                failed = True
+                continue
+            safe_identity = sanitize_provider_text(identity, secrets)
+            if label == "GitHub":
+                identity_valid = (
+                    len(safe_identity) <= 100
+                    and re.fullmatch(
+                        r"[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*(?:\[bot\])?",
+                        safe_identity,
+                    )
+                    is not None
+                )
+            else:
+                identity_valid = (
+                    len(safe_identity) <= 255
+                    and re.fullmatch(r"[A-Za-z0-9_.-]+", safe_identity) is not None
+                )
+            if safe_identity != identity or not identity_valid:
+                click.echo(f"✗ {label} API: identity отсутствует или некорректен")
+                failed = True
+                continue
+            click.echo(f"✓ {label} API: аутентификация OK (identity: {safe_identity})")
         except Exception as exc:  # noqa: BLE001 — health check сообщает только безопасный тип
             click.echo(f"✗ {label} API: {type(exc).__name__}")
             failed = True

@@ -127,7 +127,7 @@ def provider_spec() -> BoardProviderSpec:
                 write_operations=(
                     "создание, обновление и завершение задач и нативных подзадач",
                 ),
-                validation="identity, видимость проекта и lifecycle capabilities",
+                validation="identity и видимость проекта",
             ),
             acquisition=acquire_yougile_key,
         ),
@@ -370,7 +370,7 @@ class YougileBoard:
                 "name": company.get("name") or company.get("title"),
             },
             "project": project_info,
-            "capabilities": ["sync", "create", "finish", "attachments"],
+            "capabilities": {"read": True},
             "warnings": [],
         }
 

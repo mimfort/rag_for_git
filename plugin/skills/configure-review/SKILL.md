@@ -23,6 +23,25 @@ own `repository`, because branch selection must be available before a committed 
 Untracked `.venv`, `node_modules`, `__pycache__`, `dist`, and `build` are gitignored and never
 enter the index. Do not use a filesystem walk to find them.
 
+## Safe YAML preflight
+
+Inspect each selected policy or home YAML file with a local boolean-only process.
+Run this preflight before any tool call that can return file contents.
+Return only safe/blocked, never matching lines, values, or exception text. Do not use Read or Grep
+to perform this preflight. The process must reject non-regular or symlinked files, malformed or
+non-mapping YAML, and credential-like keys at any depth. Also reject duplicate mapping keys,
+including duplicate `repository` keys and duplicate branch fields. Reject anchors, aliases, and merge keys.
+Reject these cases before reading or mutating the file in model context.
+Only after a safe result may a content-returning tool read the file for a line-oriented edit.
+
+For a home target, derive the canonical home config root lexically even when it does not exist.
+Check every existing parent path component through the destination without following symlinks;
+reject symlinks and non-directories. Missing destinations, including a missing home config root,
+are allowed only when the nearest existing parent is a real directory and the normalized
+destination remains inside the canonical home config root. After creating any missing directories,
+run the path preflight again. Also re-check immediately before writing so a changed path never
+inherits an earlier safe result.
+
 ## Pipeline
 
 1. Resolve the canonical lowercase repository id and the target branch. Present these targets in
@@ -36,8 +55,9 @@ enter the index. Do not use a filesystem walk to find them.
    For a nested id such as `group/service`, use `home:repos/group/service.yml`. A home policy is
    owned by the OS account running reviewer: on a shared service account it can affect that
    account's workloads, so use committed policy for team-owned settings.
-2. After the target is selected, verify the repository with `git rev-parse --git-dir` and read the
-   selected file, preserving unrelated keys and comments. Do not inspect or copy credentials.
+2. After the target is selected, verify the repository with `git rev-parse --git-dir`, run the Safe
+   YAML preflight, and only then read the selected file, preserving unrelated keys and comments.
+   Do not inspect or copy credentials.
 3. Scan only tracked Python files:
    ```bash
    git -C <path> ls-tree -r --name-only <branch> | grep '\.py$'
@@ -75,10 +95,10 @@ branches.
    Never write `repository` to committed `.review.yml`, even when committed policy is selected for
    other keys. If policy and branches
    change together, treat them as two targets in one preview.
-5. Read the destination without following symlinks. Stop on malformed, non-regular, symlinked, or
-   credential-like YAML. Build a line-oriented patch: if `repository` is absent, append the
-   canonical block; if it exists, replace only `primary_branch` and `index_branches`. Preserve all
-   top-level keys, unknown repository subkeys, comments, line endings, and surrounding YAML style.
+5. Run the Safe YAML preflight on the destination before reading it. Stop on every blocked result.
+   Build a line-oriented patch: if `repository` is absent, append the canonical block; if it exists,
+   replace only `primary_branch` and `index_branches`. Preserve all top-level keys and unknown repository subkeys.
+   Preserve comments, line endings, and surrounding YAML style.
    Never serialize the complete file with `yaml.safe_dump`.
 6. Show the destination, source, old and new branch values, and the exact patch. Request one
    final confirmation before any branch or policy write. A rejection leaves every target unchanged.
