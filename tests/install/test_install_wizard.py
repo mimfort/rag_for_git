@@ -164,7 +164,7 @@ def test_init_yes_creates_env_file(tmp_path, monkeypatch):
     dest = tmp_path / ".env"
     monkeypatch.setattr("reviewer.install.default_env_path", lambda: dest)
     runner = CliRunner()
-    result = runner.invoke(cli, ["init", "--yes"])
+    result = runner.invoke(cli, ["init", "--scope", "global", "--yes"])
     assert result.exit_code == 0, result.output
     assert dest.exists()
     content = dest.read_text(encoding="utf-8")
@@ -173,6 +173,7 @@ def test_init_yes_creates_env_file(tmp_path, monkeypatch):
     assert "YOUGILE_API_KEY=" in content
     assert "YOUTRACK_TOKEN=" in content
     assert "JIRA_API_TOKEN=" in content
+    assert all(f"{key}=" not in content for key in REMOVED_STANDARD_KEYS)
 
 
 def test_init_dry_run_is_safe_preview_only(tmp_path, monkeypatch):
@@ -187,7 +188,7 @@ def test_init_dry_run_is_safe_preview_only(tmp_path, monkeypatch):
         "click.prompt",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("prompt called")),
     )
-    result = CliRunner().invoke(cli, ["init", "--dry-run"])
+    result = CliRunner().invoke(cli, ["init", "--scope", "global", "--dry-run"])
 
     assert result.exit_code == 0, result.output
     assert "JIRA_API_TOKEN=" in result.output
@@ -209,7 +210,7 @@ def test_init_dry_run_redacts_legacy_and_unknown_extra_secrets(tmp_path, monkeyp
     )
     monkeypatch.setattr("reviewer.install.default_env_path", lambda: dest)
 
-    result = CliRunner().invoke(cli, ["init", "--dry-run"])
+    result = CliRunner().invoke(cli, ["init", "--scope", "global", "--dry-run"])
 
     assert result.exit_code == 0, result.output
     assert "TASK_BOARD_API_KEY=" in result.output
@@ -293,7 +294,7 @@ def test_init_noninteractive_modes_never_touch_provider_setup_stages(
         lambda *_args, **_kwargs: calls.append("http-construction") or SentinelClient(),
     )
 
-    result = CliRunner().invoke(cli, ["init", mode])
+    result = CliRunner().invoke(cli, ["init", "--scope", "global", mode])
 
     assert result.exit_code == 0, result.output
     assert calls == []
@@ -326,11 +327,11 @@ def test_init_interactive_configures_selected_registry_provider(tmp_path, monkey
             "JIRA_API_TOKEN": "jira-secret",
         },
     )
-    answers = iter([True, False])
+    answers = iter([True, True, False])
     monkeypatch.setattr("click.confirm", lambda *_args, **_kwargs: next(answers))
     monkeypatch.setattr("reviewer.entrypoints.cli._shutil.which", lambda _name: None)
 
-    result = CliRunner().invoke(cli, ["init"])
+    result = CliRunner().invoke(cli, ["init", "--scope", "global"])
 
     assert result.exit_code == 0, result.output
     assert configured == ["jira"]
@@ -358,11 +359,11 @@ def test_init_interactive_common_board_fields_do_not_require_rest_provider(
         return values
 
     monkeypatch.setattr("reviewer.install.prompt_groups", prompt_groups)
-    answers = iter([False, False])
+    answers = iter([False, True, False])
     monkeypatch.setattr("click.confirm", lambda *_args, **_kwargs: next(answers))
     monkeypatch.setattr("reviewer.entrypoints.cli._shutil.which", lambda _name: None)
 
-    result = CliRunner().invoke(cli, ["init"])
+    result = CliRunner().invoke(cli, ["init", "--scope", "global"])
 
     assert result.exit_code == 0, result.output
     assert seen_board_group == [
@@ -377,7 +378,7 @@ def test_init_yes_preserves_existing_secret(tmp_path, monkeypatch):
     dest.write_text("VOYAGE_API_KEY=sk-existing\n", encoding="utf-8")
     monkeypatch.setattr("reviewer.install.default_env_path", lambda: dest)
     runner = CliRunner()
-    result = runner.invoke(cli, ["init", "--yes"])
+    result = runner.invoke(cli, ["init", "--scope", "global", "--yes"])
     assert result.exit_code == 0, result.output
     content = dest.read_text(encoding="utf-8")
     assert "VOYAGE_API_KEY=sk-existing" in content
@@ -397,13 +398,23 @@ def test_render_env_includes_gitlab_fields():
 
 def test_init_yes_preserves_extra_keys(tmp_path, monkeypatch):
     dest = tmp_path / ".env"
-    dest.write_text("VOYAGE_API_KEY=sk-x\nREVIEW_MAX_COMMENTS=42\n", encoding="utf-8")
+    dest.write_text(
+        "VOYAGE_API_KEY=sk-x\n"
+        "REVIEW_MAX_COMMENTS=42\n"
+        "DEFAULT_REPO=owner/legacy\n"
+        "WEB_ADMIN_USER=legacy-admin\n"
+        "TASK_BOARD_MCP=legacy-board\n",
+        encoding="utf-8",
+    )
     monkeypatch.setattr("reviewer.install.default_env_path", lambda: dest)
     runner = CliRunner()
-    result = runner.invoke(cli, ["init", "--yes"])
+    result = runner.invoke(cli, ["init", "--scope", "global", "--yes"])
     assert result.exit_code == 0, result.output
     content = dest.read_text(encoding="utf-8")
     assert "REVIEW_MAX_COMMENTS=42" in content
+    assert "DEFAULT_REPO=owner/legacy" in content
+    assert "WEB_ADMIN_USER=legacy-admin" in content
+    assert "TASK_BOARD_MCP=legacy-board" in content
 
 
 def test_env_template_mirrors_env_example():
