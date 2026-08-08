@@ -1,5 +1,11 @@
 """Тесты registry-driven wizard-групп installer."""
-from reviewer.install import WIZARD_GROUPS, board_env_group, common_board_env_fields
+from reviewer.install import (
+    VCS_SETUPS,
+    WIZARD_GROUPS,
+    board_env_group,
+    common_board_env_fields,
+    vcs_env_group,
+)
 from reviewer.tasks.boards.registry import (
     BoardProviderRegistry,
     BoardProviderSpec,
@@ -44,6 +50,27 @@ def test_wizard_has_gitlab_vcs_fields():
     assert "GITLAB_TOKEN" in keys
     assert "GITLAB_URL" in keys
     assert "VCS_PROVIDER" in keys
+
+
+def test_vcs_catalog_declares_github_and_gitlab_access():
+    assert tuple(VCS_SETUPS) == ("github", "gitlab")
+    assert [field.key for field in VCS_SETUPS["github"].credential_fields] == [
+        "GITHUB_TOKEN"
+    ]
+    assert [field.key for field in VCS_SETUPS["gitlab"].credential_fields] == [
+        "GITLAB_URL",
+        "GITLAB_TOKEN",
+    ]
+    github_permissions = VCS_SETUPS["github"].access.minimum_permissions
+    assert "Pull requests: Read and write" in github_permissions
+    assert "Contents: Read" in github_permissions
+    assert VCS_SETUPS["gitlab"].access.minimum_permissions == "PAT/project token with api scope"
+
+
+def test_vcs_group_is_canonical_union_with_provider_fallback():
+    keys = [field.key for field in vcs_env_group().fields]
+    assert keys == ["VCS_PROVIDER", "GITHUB_TOKEN", "GITLAB_URL", "GITLAB_TOKEN"]
+    assert len(keys) == len(set(keys))
 
 
 def test_wizard_has_yougile_api_base():
