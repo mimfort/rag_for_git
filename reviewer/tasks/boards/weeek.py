@@ -52,6 +52,7 @@ from reviewer.tasks.boards.base import RawTask, TaskListing, TaskListingStats, p
 from reviewer.tasks.boards.errors import BoardProviderError
 from reviewer.tasks.boards.markup import html_to_md, md_to_html
 from reviewer.tasks.boards.pagination import paginate_cursor
+from reviewer.config.provider_access import ProviderAccessSpec
 from reviewer.tasks.boards.registry import (
     BoardProviderSpec,
     CredentialFieldSpec,
@@ -135,6 +136,12 @@ def provider_spec() -> BoardProviderSpec:
                 "Откройте настройки воркспейса Weeek → раздел API и создайте access "
                 "token: все запросы выполняются от имени его создателя, поэтому нужен "
                 "аккаунт с доступом к проекту задач."
+            ),
+            access=ProviderAccessSpec(
+                minimum_permissions="token владельца с read/write к project и board",
+                read_operations=("workspaces, projects, boards, columns, tasks и attachments",),
+                write_operations=("создание, правка и завершение tasks, добавление PR-ссылок",),
+                validation="user identity и видимость project",
             ),
         ),
         default_api_base=_API_BASE,

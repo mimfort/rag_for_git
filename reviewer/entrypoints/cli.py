@@ -32,6 +32,7 @@ from reviewer.config.onboarding import (
     parse_branch_csv,
     plan_repository_config,
 )
+from reviewer.config.provider_access import render_provider_access
 from reviewer.gitutil import file_at_ref, list_python_files, repo_root, rev_parse, remote_url
 from reviewer.graph.backend import build_code_graph
 from reviewer.graph.store import GraphStore
@@ -46,6 +47,7 @@ from reviewer.services.branch import resolve_branch
 from reviewer.services.gc import purge_orphaned_overlays
 from reviewer.services.review_service import ReviewService
 from reviewer.services.status import build_status_report, render_status, render_status_json
+from reviewer.tasks.boards.errors import sanitize_provider_text
 from reviewer.versioning import InstallMode, check_latest, detect_installation, upgrade_uv_tool
 
 if TYPE_CHECKING:
@@ -587,6 +589,80 @@ def _check_board_providers(
     return failed
 
 
+def _check_vcs_providers(settings: Settings) -> bool:
+    """Проверить authentication каждого настроенного VCS без вывода credentials."""
+    secrets = tuple(
+        token for token in (settings.github_token, settings.gitlab_token) if token
+    )
+    configured: list[tuple[str, str, dict[str, str], str]] = []
+    if settings.github_token:
+        configured.append(
+            (
+                "GitHub",
+                "https://api.github.com/user",
+                {"Authorization": f"Bearer {settings.github_token}"},
+                "login",
+            )
+        )
+    if settings.gitlab_token:
+        configured.append(
+            (
+                "GitLab",
+                f"{settings.gitlab_url.rstrip('/')}/api/v4/user",
+                {"PRIVATE-TOKEN": settings.gitlab_token},
+                "username",
+            )
+        )
+    if not configured:
+        click.echo(
+            "✗ VCS: не настроен ни один VCS token; "
+            "запустите reviewer init --scope global"
+        )
+        return True
+
+    failed = False
+    for label, url, headers, identity_key in configured:
+        try:
+            response = httpx.get(url, headers=headers, timeout=10)
+            if response.status_code != 200:
+                click.echo(
+                    f"✗ {label} API: HTTP {response.status_code} — "
+                    "проверьте token/base URL"
+                )
+                failed = True
+                continue
+            payload = response.json()
+            identity = payload.get(identity_key) if isinstance(payload, Mapping) else None
+            if not isinstance(identity, str) or not identity.strip():
+                click.echo(f"✗ {label} API: identity отсутствует или некорректен")
+                failed = True
+                continue
+            safe_identity = sanitize_provider_text(identity, secrets)
+            if label == "GitHub":
+                identity_valid = (
+                    len(safe_identity) <= 100
+                    and re.fullmatch(
+                        r"[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*(?:\[bot\])?",
+                        safe_identity,
+                    )
+                    is not None
+                )
+            else:
+                identity_valid = (
+                    len(safe_identity) <= 255
+                    and re.fullmatch(r"[A-Za-z0-9_.-]+", safe_identity) is not None
+                )
+            if safe_identity != identity or not identity_valid:
+                click.echo(f"✗ {label} API: identity отсутствует или некорректен")
+                failed = True
+                continue
+            click.echo(f"✓ {label} API: аутентификация OK (identity: {safe_identity})")
+        except Exception as exc:  # noqa: BLE001 — health check сообщает только безопасный тип
+            click.echo(f"✗ {label} API: {type(exc).__name__}")
+            failed = True
+    return failed
+
+
 def _parse_board_projects(values: tuple[str, ...]) -> dict[str, str]:
     projects: dict[str, str] = {}
     for value in values:
@@ -615,16 +691,13 @@ def _parse_board_projects(values: tuple[str, ...]) -> dict[str, str]:
     help="Проект для provider validation; опцию можно повторять.",
 )
 def check(board_project_values: tuple[str, ...]) -> None:
-    """Проверить готовность окружения (ключи, Postgres, Neo4j, GitHub)."""
+    """Проверить готовность окружения и настроенных внешних providers."""
     s = Settings()
     board_projects = _parse_board_projects(board_project_values)
     failed = False
 
     # 1. Ключи
-    for label, val in (
-        ("VOYAGE_API_KEY", s.voyage_api_key),
-        ("GITHUB_TOKEN", s.github_token),
-    ):
+    for label, val in (("VOYAGE_API_KEY", s.voyage_api_key),):
         if val:
             click.echo(f"✓ {label} задан")
         else:
@@ -673,25 +746,8 @@ def check(board_project_values: tuple[str, ...]) -> None:
     else:
         click.echo("  scip-python: не найден — граф через tree-sitter (fallback)")
 
-    # 5. GitHub (только если токен задан)
-    if s.github_token:
-        try:
-            resp = httpx.get(
-                "https://api.github.com/user",
-                headers={"Authorization": f"Bearer {s.github_token}"},
-                timeout=10,
-            )
-            if resp.status_code == 200:
-                login = resp.json().get("login", "?")
-                click.echo(f"✓ GitHub API: аутентификация OK (логин: {login})")
-            else:
-                click.echo(f"✗ GitHub API: HTTP {resp.status_code} — проверьте токен")
-                failed = True
-        except Exception as e:
-            click.echo(f"✗ GitHub API: {e}")
-            failed = True
-    else:
-        click.echo("  GitHub API: токен не задан, проверка пропущена")
+    # 5. Настроенные VCS providers
+    failed = _check_vcs_providers(s) or failed
 
     # 6. Настроенные board providers
     failed = _check_board_providers(s, board_projects=board_projects) or failed
@@ -1123,6 +1179,42 @@ def _render_init_preview(
         click.echo(repo_plan.preview)
 
 
+def _select_vcs_provider(inst, current: Mapping[str, str]) -> str:
+    """Выбрать VCS с offline default из origin, затем env fallback."""
+    from reviewer.services.repo_id import derive_vcs_from_remote
+
+    root = repo_root(".")
+    detected = derive_vcs_from_remote(remote_url(root or ".") or "")
+    default = detected[0] if detected is not None else current.get("VCS_PROVIDER", "github")
+    choices = tuple(inst.VCS_SETUPS)
+    if default not in choices:
+        default = "github"
+    return click.prompt(
+        "Выберите VCS provider",
+        type=click.Choice(choices),
+        default=default,
+    )
+
+
+def _prompt_vcs_provider(inst, spec, current: Mapping[str, str]) -> dict[str, str]:
+    """Показать access contract и запросить поля только выбранного VCS."""
+    click.echo(
+        render_provider_access(
+            label=spec.label,
+            help_text=spec.help_text,
+            help_url=spec.help_url,
+            access=spec.access,
+        )
+    )
+    if click.confirm(
+        f"Открыть официальную инструкцию {spec.help_url}?",
+        default=False,
+    ):
+        click.launch(spec.help_url)
+    group = inst.EnvGroup(title=spec.label, fields=list(spec.credential_fields))
+    return inst.prompt_groups([group], current=dict(current), yes=False)
+
+
 @cli.command()
 @click.option("--path", "path_opt", default=None,
               help="куда писать .env (по умолчанию ~/.config/rag-reviewer/.env)")
@@ -1173,6 +1265,7 @@ def init(
             if interactive:
                 click.echo(f"Настройка rag-reviewer: {dest}")
                 click.echo("─" * 52)
+                vcs_group = next(group for group in groups if group.title == "VCS")
                 board_group = next(group for group in groups if group.title == "Доска задач")
                 common_fields = inst.common_board_env_fields(board_group)
                 values = inst.prompt_groups(
@@ -1187,14 +1280,24 @@ def init(
                             else group
                         )
                         for group in groups
+                        if group is not vcs_group
                     ],
                     current=current,
                     yes=False,
                 )
-                for field in board_group.fields:
-                    if field in common_fields:
-                        continue
-                    values[field.key] = current.get(field.key, "") or field.default
+                for group in (vcs_group, board_group):
+                    for field in group.fields:
+                        values.setdefault(
+                            field.key,
+                            current.get(field.key, "") or field.default,
+                        )
+
+                if click.confirm("\nПодключить VCS provider?", default=True):
+                    vcs_type = _select_vcs_provider(inst, current)
+                    values["VCS_PROVIDER"] = vcs_type
+                    values.update(
+                        _prompt_vcs_provider(inst, inst.VCS_SETUPS[vcs_type], current)
+                    )
 
                 if click.confirm("\nПодключить provider доски задач?", default=False):
                     registry = default_board_registry()

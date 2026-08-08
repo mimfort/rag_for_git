@@ -40,6 +40,7 @@ from reviewer.tasks.boards.attachments import (
 from reviewer.tasks.boards.base import RawTask, TaskListing, TaskListingStats, project_prefix
 from reviewer.tasks.boards.errors import BoardProviderError
 from reviewer.tasks.boards.pagination import paginate_offset
+from reviewer.config.provider_access import ProviderAccessSpec
 from reviewer.tasks.boards.registry import (
     BoardProviderSpec,
     CredentialFieldSpec,
@@ -139,6 +140,12 @@ def provider_spec() -> BoardProviderSpec:
                 "Укажите адрес компании вида https://<company>.kaiten.ru и создайте "
                 "API-ключ в профиле пользователя (раздел API key → CREATE API KEY). "
                 "Ключ постоянный: его можно отозвать и выпустить заново."
+            ),
+            access=ProviderAccessSpec(
+                minimum_permissions="API key пользователя с read/write к space и board",
+                read_operations=("spaces, boards, columns, cards, links и attachments",),
+                write_operations=("создание, правка и перенос cards, добавление PR-ссылок",),
+                validation="user identity и видимость board",
             ),
             help_url_builder=_api_key_url,
         ),

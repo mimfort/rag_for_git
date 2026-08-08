@@ -28,6 +28,7 @@ import httpx
 from reviewer.tasks.boards.base import RawTask, TaskListing, TaskListingStats, project_prefix
 from reviewer.tasks.boards.errors import BoardProviderError
 from reviewer.tasks.boards.pagination import paginate_page
+from reviewer.config.provider_access import ProviderAccessSpec
 from reviewer.tasks.boards.registry import (
     BoardProviderSpec,
     CredentialFieldSpec,
@@ -126,6 +127,14 @@ def provider_spec() -> BoardProviderSpec:
                 "Создайте fine-grained personal access token с доступом к нужному "
                 "репозиторию и правом Issues: Read and write (classic token — scope repo). "
                 "Токен показывается один раз, сохраните его сразу."
+            ),
+            access=ProviderAccessSpec(
+                minimum_permissions=(
+                    "fine-grained PAT с Issues: Read and write для выбранного репозитория"
+                ),
+                read_operations=("issues, labels, milestones и comments",),
+                write_operations=("создание, правка и закрытие issues, добавление PR-ссылок",),
+                validation="identity, доступ к репозиторию и write capability",
             ),
             help_url_builder=_token_url,
         ),

@@ -14,6 +14,7 @@ from reviewer.tasks.boards.registry import (
     CredentialFieldSpec,
     ProviderSetupSpec,
 )
+from tests.provider_access import FAKE_PROVIDER_ACCESS
 
 
 class CheckProvider:
@@ -84,6 +85,7 @@ def _registry(provider: CheckProvider) -> BoardProviderRegistry:
                     "Fake",
                     "https://fake.example/setup",
                     "Create a token.",
+                    FAKE_PROVIDER_ACCESS,
                 ),
             )
         ]

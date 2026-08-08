@@ -331,6 +331,7 @@ def test_check_all_ok(
     s = MagicMock()
     s.voyage_api_key = "key"
     s.github_token = "key"
+    s.gitlab_token = ""
     s.pg_dsn = "pg://test"
     s.pg_pool_min_size = 1
     s.pg_pool_max_size = 4

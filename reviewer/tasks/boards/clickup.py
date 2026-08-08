@@ -30,6 +30,7 @@ from reviewer.tasks.boards.attachments import (
 from reviewer.tasks.boards.base import RawTask, TaskListing, TaskListingStats, project_prefix
 from reviewer.tasks.boards.errors import BoardProviderError
 from reviewer.tasks.boards.pagination import paginate_page
+from reviewer.config.provider_access import ProviderAccessSpec
 from reviewer.tasks.boards.registry import (
     BoardProviderSpec,
     CredentialFieldSpec,
@@ -105,6 +106,12 @@ def provider_spec() -> BoardProviderSpec:
                 "Откройте в ClickUp аватар → Settings → Apps и в разделе API Token "
                 "нажмите Generate, затем Copy: personal token начинается с pk_ и не "
                 "истекает. Он передаётся в заголовке Authorization без префикса Bearer."
+            ),
+            access=ProviderAccessSpec(
+                minimum_permissions="personal token участника с доступом к workspace/list",
+                read_operations=("teams, lists, statuses, tasks, relations и attachments",),
+                write_operations=("создание, правка и завершение tasks, добавление PR-ссылок",),
+                validation="user identity и видимость list",
             ),
         ),
         default_api_base=API_BASE,

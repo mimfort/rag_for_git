@@ -35,6 +35,7 @@ from reviewer.tasks.boards.attachments import (
 from reviewer.tasks.boards.base import RawTask, TaskListing, TaskListingStats, project_prefix
 from reviewer.tasks.boards.errors import BoardProviderError
 from reviewer.tasks.boards.pagination import paginate_cursor
+from reviewer.config.provider_access import ProviderAccessSpec
 from reviewer.tasks.boards.registry import (
     BoardProviderSpec,
     CredentialFieldSpec,
@@ -104,6 +105,12 @@ def provider_spec() -> BoardProviderSpec:
                 "«API Key» сгенерируйте key, затем по ссылке «Token» рядом с ним "
                 "выдайте токен своей учётной записи. Пара key+token даёт полный "
                 "доступ к аккаунту Trello — храните оба значения как секрет."
+            ),
+            access=ProviderAccessSpec(
+                minimum_permissions="API key и account token с доступом к выбранной доске",
+                read_operations=("boards, lists, cards, checklists и attachments",),
+                write_operations=("создание, перенос, правка и архивация cards",),
+                validation="identity участника и видимость доски",
             ),
         ),
         option_fields=(

@@ -1,6 +1,6 @@
 ---
 name: configure-review
-description: Use when configuring or changing a repository's layered review policy, ignored tracked paths, retrieval limits, summary depth, or non-secret task-board metadata.
+description: Use when configuring or changing a repository's tracked branches, layered review policy, ignored tracked paths, retrieval limits, summary depth, or non-secret task-board metadata.
 ---
 
 # Configure Review
@@ -16,8 +16,31 @@ Manage `summary_cluster_depth`, `summary_cluster_depth_overrides`, `summary_topk
 `sync_filter`. An empty `task_board:` disables the board for this repository. Never read, request,
 display, or write credential values in either policy target.
 
+Tracked branches are separate from review policy. Manage `repository.primary_branch` and
+`repository.index_branches` only in the home per-repo target. The committed `.review.yml` cannot
+own `repository`, because branch selection must be available before a committed ref can be read.
+
 Untracked `.venv`, `node_modules`, `__pycache__`, `dist`, and `build` are gitignored and never
 enter the index. Do not use a filesystem walk to find them.
+
+## Safe YAML preflight
+
+Inspect each selected policy or home YAML file with a local boolean-only process.
+Run this preflight before any tool call that can return file contents.
+Return only safe/blocked, never matching lines, values, or exception text. Do not use Read or Grep
+to perform this preflight. The process must reject non-regular or symlinked files, malformed or
+non-mapping YAML, and credential-like keys at any depth. Also reject duplicate mapping keys,
+including duplicate `repository` keys and duplicate branch fields. Reject anchors, aliases, and merge keys.
+Reject these cases before reading or mutating the file in model context.
+Only after a safe result may a content-returning tool read the file for a line-oriented edit.
+
+For a home target, derive the canonical home config root lexically even when it does not exist.
+Check every existing parent path component through the destination without following symlinks;
+reject symlinks and non-directories. Missing destinations, including a missing home config root,
+are allowed only when the nearest existing parent is a real directory and the normalized
+destination remains inside the canonical home config root. After creating any missing directories,
+run the path preflight again. Also re-check immediately before writing so a changed path never
+inherits an earlier safe result.
 
 ## Pipeline
 
@@ -32,8 +55,9 @@ enter the index. Do not use a filesystem walk to find them.
    For a nested id such as `group/service`, use `home:repos/group/service.yml`. A home policy is
    owned by the OS account running reviewer: on a shared service account it can affect that
    account's workloads, so use committed policy for team-owned settings.
-2. After the target is selected, verify the repository with `git rev-parse --git-dir` and read the
-   selected file, preserving unrelated keys and comments. Do not inspect or copy credentials.
+2. After the target is selected, verify the repository with `git rev-parse --git-dir`, run the Safe
+   YAML preflight, and only then read the selected file, preserving unrelated keys and comments.
+   Do not inspect or copy credentials.
 3. Scan only tracked Python files:
    ```bash
    git -C <path> ls-tree -r --name-only <branch> | grep '\.py$'
@@ -42,9 +66,49 @@ enter the index. Do not use a filesystem walk to find them.
 4. Measure churn with `git log --since="6 months ago" --name-only --pretty=format: -- '*.py'`.
    If history is too short or unavailable, say so and recommend from structure alone.
 5. Propose depth and ignore changes. Ask the user about every candidate for `paths.ignore` and
-   **never write it silently**. Assemble a draft that preserves the selected file's unrelated
-   keys/comments, then request final confirmation before writing it. Follow the exact rebuild map
-   below; suggest but **do NOT run** a follow-up skill.
+    **never write it silently**. Assemble a draft that preserves the selected file's unrelated
+    keys/comments, then request final confirmation before writing it. Follow the exact rebuild map
+   below; suggest but **do NOT run** a follow-up skill. When branch and policy changes share a run,
+   assemble both drafts first, show both paths and diffs, and request one final confirmation before
+   either write.
+
+## Repository branches
+
+Handle branches before policy analysis whenever the user asks to inspect or change tracked
+branches.
+
+1. Resolve the local repository without network calls:
+   - `git rev-parse --show-toplevel` gives the git root;
+   - `git remote get-url origin` gives the canonical SSH/HTTPS remote candidate;
+   - normalize it to lowercase `<owner/name>` with the same SSH/HTTPS forms accepted by reviewer;
+   - if origin is absent or unrecognized, ask for `<owner/name>` explicitly.
+   Network git commands are forbidden.
+2. Run `reviewer config show --repo <owner/name> --json` and show the effective primary branch,
+   ordered index branches, and source. A policy/VCS diagnostic error does not erase the returned
+   branch section; a malformed home config is a blocking error and must not fall back silently.
+3. Ask for `repository.primary_branch`, then ask for the complete ordered unique
+   `repository.index_branches`. The primary must be present in the index list. Reject empty names,
+   duplicates, and a primary outside the list.
+4. The destination is always
+   `$XDG_CONFIG_HOME/rag-reviewer/repos/<owner>/<name>.yml` (or the equivalent
+   `~/.config/rag-reviewer/...` path when XDG is unset).
+   Never write `repository` to committed `.review.yml`, even when committed policy is selected for
+   other keys. If policy and branches
+   change together, treat them as two targets in one preview.
+5. Run the Safe YAML preflight on the destination before reading it. Stop on every blocked result.
+   Build a line-oriented patch: if `repository` is absent, append the canonical block; if it exists,
+   replace only `primary_branch` and `index_branches`. Preserve all top-level keys and unknown repository subkeys.
+   Preserve comments, line endings, and surrounding YAML style.
+   Never serialize the complete file with `yaml.safe_dump`.
+6. Show the destination, source, old and new branch values, and the exact patch. Request one
+   final confirmation before any branch or policy write. A rejection leaves every target unchanged.
+7. After writing, run `reviewer config show --repo <owner/name> --json` again and require the
+   exact primary/index/source expected from the home per-repo layer. Report a mismatch as an error.
+
+If newly added index branches are not indexed, suggest `rag-reviewer:sync-codebase` once per new
+branch, but do not run it. A primary change to an already indexed branch needs no rebuild. Removing
+a branch stops reviewer from selecting it but does not delete its old base index automatically.
+Branch changes never trigger subsystem-summary work.
 
 ## Rebuild guidance
 
@@ -172,5 +236,6 @@ Preserve every other configuration key and ask for confirmation before writing t
 
 ## Completion
 
-Report the changed keys, the selected generic targets/options, and any recommended follow-up. This
-skill makes configuration-only recommendations and has no index side effects.
+Report old/new branches, the selected branch source, changed policy keys, selected generic
+targets/options, and any recommended follow-up. This skill makes configuration-only recommendations
+and has no index side effects.

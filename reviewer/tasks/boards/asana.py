@@ -24,6 +24,7 @@ from reviewer.tasks.boards.base import RawTask, TaskListing, TaskListingStats, p
 from reviewer.tasks.boards.errors import BoardProviderError
 from reviewer.tasks.boards.markup import html_to_md, md_to_html
 from reviewer.tasks.boards.pagination import paginate_cursor
+from reviewer.config.provider_access import ProviderAccessSpec
 from reviewer.tasks.boards.registry import (
     BoardProviderSpec,
     CredentialFieldSpec,
@@ -108,6 +109,12 @@ def provider_spec() -> BoardProviderSpec:
                 "Создайте personal access token в Asana: My Settings → Apps → "
                 "Manage developer apps (app.asana.com/0/my-apps) → Create new token. "
                 "Токен показывается один раз — сохраните его сразу."
+            ),
+            access=ProviderAccessSpec(
+                minimum_permissions="personal access token с read/write к выбранному project",
+                read_operations=("workspaces, projects, sections, tasks, dependencies и files",),
+                write_operations=("создание, правка и завершение tasks, добавление PR-ссылок",),
+                validation="user identity и видимость project",
             ),
         ),
         option_fields=(

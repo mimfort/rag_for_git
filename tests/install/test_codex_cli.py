@@ -97,8 +97,9 @@ def test_interactive_init_uses_the_canonical_codex_flow(monkeypatch, tmp_path):
             field.key: field.default for group in groups for field in group.fields
         },
     )
-    # board setup = no, write = yes, reviewer check = no, Codex install = yes
-    answers = iter([False, True, False, True])
+    # VCS setup = no, board setup = no, write = yes, reviewer check = no,
+    # Codex install = yes
+    answers = iter([False, False, True, False, True])
     monkeypatch.setattr("click.confirm", lambda prompt, default=True: next(answers))
     monkeypatch.setattr("reviewer.entrypoints.cli._shutil.which", lambda name: "/opt/codex")
     monkeypatch.setattr(

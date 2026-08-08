@@ -54,6 +54,8 @@ def _forbid_noninteractive_side_effects(monkeypatch) -> None:
         "reviewer.tasks.boards.setup.configure_board_provider",
         fail("provider setup"),
     )
+    monkeypatch.setattr(cli_module, "_select_vcs_provider", fail("VCS selection"))
+    monkeypatch.setattr(cli_module, "_prompt_vcs_provider", fail("VCS setup"))
     monkeypatch.setattr(cli_module, "_run_codex_target", fail("Codex install"))
     monkeypatch.setattr("subprocess.run", fail("reviewer check"))
     monkeypatch.setattr(cli_module, "_config_context", fail("full config show"))
@@ -354,7 +356,7 @@ def test_init_final_rejection_or_abort_happens_before_first_write(
         "reviewer.entrypoints.cli.apply_repository_config",
         lambda _plan: pytest.fail("repo write called"),
     )
-    confirmations = iter([False, "final"])
+    confirmations = iter([False, False, "final"])
 
     def confirm(*_args, **_kwargs):
         answer = next(confirmations)

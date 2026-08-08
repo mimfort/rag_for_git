@@ -8,17 +8,21 @@ from tests.tasks.boards.jira_helpers import board
 
 
 def test_validation_reports_identity_project_and_independent_capabilities() -> None:
+    permission_queries: list[str] = []
+
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path.endswith("/myself"):
             return httpx.Response(200, json={"accountId": "abc", "displayName": "Reviewer Bot"})
         if "/project/" in request.url.path:
             return httpx.Response(200, json={"id": "10000", "key": "PRI"})
+        permission_queries.append(request.url.params["permissions"])
         return httpx.Response(
             200,
             json={
                 "permissions": {
                     "BROWSE_PROJECTS": {"havePermission": True},
                     "CREATE_ISSUES": {"havePermission": False},
+                    "EDIT_ISSUES": {"havePermission": False},
                     "TRANSITION_ISSUES": {"havePermission": False},
                 }
             },
@@ -31,9 +35,13 @@ def test_validation_reports_identity_project_and_independent_capabilities() -> N
         "capabilities": {"read": True, "create": False, "transition": False},
         "warnings": [
             "missing Jira permission: CREATE_ISSUES",
+            "missing Jira permission: EDIT_ISSUES",
             "missing Jira permission: TRANSITION_ISSUES",
         ],
     }
+    assert permission_queries == [
+        "BROWSE_PROJECTS,CREATE_ISSUES,EDIT_ISSUES,TRANSITION_ISSUES"
+    ]
 
 
 def test_validation_without_project_only_checks_identity() -> None:
@@ -48,7 +56,7 @@ def test_validation_without_project_only_checks_identity() -> None:
     assert result["project"] is None
     assert result["capabilities"] == {"read": True}
     assert result["warnings"] == [
-        "Jira project was not checked; create and transition permissions are unknown."
+        "Jira project was not checked; create, edit, and transition permissions are unknown."
     ]
     assert calls == ["/rest/api/3/myself"]
 

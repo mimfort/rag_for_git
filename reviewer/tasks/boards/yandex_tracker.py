@@ -37,6 +37,7 @@ from reviewer.tasks.boards.attachments import _registrable_domain, fetch_attachm
 from reviewer.tasks.boards.base import RawTask, TaskListing, TaskListingStats, project_prefix
 from reviewer.tasks.boards.errors import BoardProviderError
 from reviewer.tasks.boards.pagination import paginate_page
+from reviewer.config.provider_access import ProviderAccessSpec
 from reviewer.tasks.boards.registry import (
     BoardProviderSpec,
     CredentialFieldSpec,
@@ -135,6 +136,14 @@ def provider_spec() -> BoardProviderSpec:
                 "ID организации — Администрирование → Организации; для Яндекс 360 задайте "
                 "YANDEX_TRACKER_ORG_ID, для Yandex Cloud — YANDEX_TRACKER_CLOUD_ORG_ID "
                 "(там же можно вместо OAuth использовать IAM-токен со схемой Bearer)."
+            ),
+            access=ProviderAccessSpec(
+                minimum_permissions=(
+                    "OAuth scopes tracker:read + tracker:write либо эквивалентная IAM role"
+                ),
+                read_operations=("queues, issues, fields, links и attachments",),
+                write_operations=("создание, правка и transition issues, PR-ссылки",),
+                validation="identity, organization и видимость queue",
             ),
         ),
         default_api_base=_API_BASE,

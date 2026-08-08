@@ -9,6 +9,13 @@ SKILL = (Path(__file__).resolve().parents[2]
          / "plugin" / "skills" / "configure-review" / "SKILL.md")
 
 
+def _branch_section() -> str:
+    text = SKILL.read_text(encoding="utf-8")
+    match = re.search(r"## Repository branches.*?(?=\n## )", text, re.DOTALL)
+    assert match
+    return match.group()
+
+
 def test_skill_instructs_russian_output():
     text = SKILL.read_text(encoding="utf-8")
     assert "Always answer the user in Russian" in text
@@ -284,3 +291,104 @@ def test_skill_keeps_filter_generic_and_credentials_out_of_policy():
 
     assert "Never put `sync_filter` under `options`" in text
     assert re.search(r"Never read, request,\s+display, or write credential values", text)
+
+
+def test_skill_runs_non_disclosing_preflight_before_reading_yaml():
+    text = SKILL.read_text(encoding="utf-8")
+    preflight = text.index("## Safe YAML preflight")
+    first_read = text.index("read the selected file", preflight)
+
+    assert preflight < first_read
+    for marker in (
+        "before any tool call that can return file contents",
+        "safe/blocked",
+        "never matching lines, values, or exception text",
+        "Do not use Read or Grep",
+        "Only after a safe result",
+    ):
+        assert marker in text
+
+
+def test_skill_rejects_ambiguous_yaml_before_mutation():
+    text = SKILL.read_text(encoding="utf-8")
+    preflight = text.split("## Safe YAML preflight", 1)[1].split("## Pipeline", 1)[0]
+
+    for marker in (
+        "duplicate mapping keys",
+        "duplicate `repository`",
+        "duplicate branch fields",
+        "anchors",
+        "aliases",
+        "merge keys",
+    ):
+        assert marker in preflight
+    assert "before reading or mutating" in preflight
+
+
+def test_skill_preflight_rejects_symlinked_parents_and_defines_safe_create():
+    text = SKILL.read_text(encoding="utf-8")
+    preflight = text.split("## Safe YAML preflight", 1)[1].split("## Pipeline", 1)[0]
+
+    for marker in (
+        "every existing parent path component",
+        "home config root",
+        "Missing destinations",
+        "including a missing home config root",
+        "nearest existing parent",
+        "remains inside",
+        "re-check immediately before writing",
+    ):
+        assert marker in preflight
+
+
+def test_skill_manages_primary_and_index_branches():
+    section = _branch_section()
+    assert "repository.primary_branch" in section
+    assert "repository.index_branches" in section
+    assert "ordered unique" in section
+    assert "must be present in" in section
+
+
+def test_skill_resolves_repo_offline_and_shows_effective_source():
+    section = _branch_section()
+    assert "git rev-parse --show-toplevel" in section
+    assert "git remote get-url origin" in section
+    assert section.count("reviewer config show --repo <owner/name> --json") >= 2
+    for forbidden in ("git fetch", "git ls-remote", "git remote show"):
+        assert forbidden not in section
+    assert "source" in section
+
+
+def test_skill_writes_branches_only_to_home_per_repo():
+    section = _branch_section()
+    assert "$XDG_CONFIG_HOME/rag-reviewer/repos/<owner>/<name>.yml" in section
+    assert "Never write `repository` to committed `.review.yml`" in section
+    assert "even when committed policy is selected" in section
+
+
+def test_skill_preserves_branch_yaml_without_whole_file_dump():
+    section = _branch_section()
+    for marker in (
+        "line-oriented patch",
+        "top-level keys",
+        "unknown repository subkeys",
+        "comments",
+        "line endings",
+        "surrounding YAML style",
+    ):
+        assert marker in section
+    assert "Never serialize the complete file with `yaml.safe_dump`" in section
+
+
+def test_skill_previews_confirms_and_verifies_branch_change():
+    section = _branch_section()
+    assert "old and new" in section
+    assert "final confirmation" in section
+    assert "exact primary/index/source" in section
+
+
+def test_skill_never_runs_branch_followups():
+    section = _branch_section()
+    assert "rag-reviewer:sync-codebase" in section
+    assert "do not run" in section.lower()
+    assert "rag-reviewer:summarize-subsystems" not in section

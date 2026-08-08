@@ -9,6 +9,7 @@ from reviewer.tasks.boards.registry import (
     BoardProviderSpec,
     ProviderSetupSpec,
 )
+from tests.provider_access import FAKE_PROVIDER_ACCESS
 
 
 REMOVED_STANDARD_KEYS = {
@@ -267,6 +268,7 @@ def test_init_noninteractive_modes_never_touch_provider_setup_stages(
                     label="Sentinel",
                     help_url="https://sentinel.example/setup",
                     help_text="Sentinel setup.",
+                    access=FAKE_PROVIDER_ACCESS,
                     acquisition=acquire,
                 ),
             )
@@ -327,7 +329,7 @@ def test_init_interactive_configures_selected_registry_provider(tmp_path, monkey
             "JIRA_API_TOKEN": "jira-secret",
         },
     )
-    answers = iter([True, True, False])
+    answers = iter([False, True, True, False])
     monkeypatch.setattr("click.confirm", lambda *_args, **_kwargs: next(answers))
     monkeypatch.setattr("reviewer.entrypoints.cli._shutil.which", lambda _name: None)
 
@@ -339,6 +341,102 @@ def test_init_interactive_configures_selected_registry_provider(tmp_path, monkey
     assert "JIRA_BASE_URL=https://acme.atlassian.net" in content
     assert "JIRA_EMAIL=bot@example.test" in content
     assert "JIRA_API_TOKEN=jira-secret" in content
+
+
+@pytest.mark.parametrize(
+    ("selected", "prompted", "not_prompted"),
+    [
+        ("github", {"GITHUB_TOKEN"}, {"GITLAB_URL", "GITLAB_TOKEN"}),
+        ("gitlab", {"GITLAB_URL", "GITLAB_TOKEN"}, {"GITHUB_TOKEN"}),
+    ],
+)
+def test_init_prompts_only_selected_vcs_provider(
+    selected,
+    prompted,
+    not_prompted,
+    tmp_path,
+    monkeypatch,
+):
+    dest = tmp_path / ".env"
+    seen = []
+    monkeypatch.setattr("reviewer.install.default_env_path", lambda: dest)
+    monkeypatch.setattr(
+        "reviewer.install.prompt_groups",
+        lambda groups, current, yes: {
+            field.key: current.get(field.key, "") or field.default
+            for group in groups
+            for field in group.fields
+        },
+    )
+    monkeypatch.setattr(
+        "reviewer.entrypoints.cli._select_vcs_provider",
+        lambda *_args, **_kwargs: selected,
+        raising=False,
+    )
+
+    def prompt_vcs(_inst, spec, current):
+        seen.extend(field.key for field in spec.credential_fields)
+        return {
+            field.key: current.get(field.key, "") or field.default
+            for field in spec.credential_fields
+        }
+
+    monkeypatch.setattr(
+        "reviewer.entrypoints.cli._prompt_vcs_provider",
+        prompt_vcs,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "click.confirm",
+        lambda text, **_kwargs: (
+            "VCS provider" in text or "Записать показанные изменения" in text
+        ),
+    )
+    monkeypatch.setattr("reviewer.entrypoints.cli._shutil.which", lambda _name: None)
+
+    result = CliRunner().invoke(cli, ["init", "--scope", "global"])
+
+    assert result.exit_code == 0, result.output
+    assert set(seen) == prompted
+    assert set(seen).isdisjoint(not_prompted)
+
+
+def test_unselected_existing_vcs_credentials_survive(tmp_path, monkeypatch):
+    dest = tmp_path / ".env"
+    dest.write_text("GITLAB_TOKEN=keep-me\n", encoding="utf-8")
+    monkeypatch.setattr("reviewer.install.default_env_path", lambda: dest)
+    monkeypatch.setattr(
+        "reviewer.install.prompt_groups",
+        lambda groups, current, yes: {
+            field.key: current.get(field.key, "") or field.default
+            for group in groups
+            for field in group.fields
+        },
+    )
+    monkeypatch.setattr(
+        "reviewer.entrypoints.cli._select_vcs_provider",
+        lambda *_args, **_kwargs: "github",
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "reviewer.entrypoints.cli._prompt_vcs_provider",
+        lambda *_args, **_kwargs: {"GITHUB_TOKEN": "new-github"},
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "click.confirm",
+        lambda text, **_kwargs: (
+            "VCS provider" in text or "Записать показанные изменения" in text
+        ),
+    )
+    monkeypatch.setattr("reviewer.entrypoints.cli._shutil.which", lambda _name: None)
+
+    result = CliRunner().invoke(cli, ["init", "--scope", "global"])
+
+    assert result.exit_code == 0, result.output
+    content = dest.read_text(encoding="utf-8")
+    assert "GITHUB_TOKEN=new-github" in content
+    assert "GITLAB_TOKEN=keep-me" in content
 
 
 def test_init_interactive_common_board_fields_do_not_require_rest_provider(
@@ -359,7 +457,7 @@ def test_init_interactive_common_board_fields_do_not_require_rest_provider(
         return values
 
     monkeypatch.setattr("reviewer.install.prompt_groups", prompt_groups)
-    answers = iter([False, True, False])
+    answers = iter([False, False, True, False])
     monkeypatch.setattr("click.confirm", lambda *_args, **_kwargs: next(answers))
     monkeypatch.setattr("reviewer.entrypoints.cli._shutil.which", lambda _name: None)
 

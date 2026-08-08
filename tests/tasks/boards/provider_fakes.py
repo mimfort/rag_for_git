@@ -8,6 +8,7 @@ from reviewer.tasks.boards.registry import (
     ProviderBuildContext,
     ProviderSetupSpec,
 )
+from tests.provider_access import FAKE_PROVIDER_ACCESS
 
 
 class FakeBoard:
@@ -62,5 +63,6 @@ def fake_provider_spec(*, factory=None, board_type: str = "fake") -> BoardProvid
             label="Fake",
             help_url="https://example.test/fake",
             help_text="Configure the fake provider.",
+            access=FAKE_PROVIDER_ACCESS,
         ),
     )

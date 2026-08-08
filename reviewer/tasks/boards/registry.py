@@ -9,6 +9,7 @@ from functools import lru_cache
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Literal
 
+from reviewer.config.provider_access import ProviderAccessSpec
 from reviewer.tasks.boards.base import JsonValue, TaskBoardProvider
 
 if TYPE_CHECKING:
@@ -38,6 +39,7 @@ class ProviderSetupSpec:
     label: str
     help_url: str
     help_text: str
+    access: ProviderAccessSpec
     acquisition: Callable[[SetupIO], dict[str, str]] | None = None
     help_url_builder: Callable[[Mapping[str, str]], str] | None = None
 
@@ -193,6 +195,8 @@ class BoardProviderRegistry:
             raise TypeError("provider factory must be callable")
         if not spec.setup.label or not spec.setup.help_url or not spec.setup.help_text:
             raise ValueError("provider setup metadata must be complete")
+        if not isinstance(spec.setup.access, ProviderAccessSpec):
+            raise ValueError("provider access metadata must be complete")
         if type(spec.capabilities) is not frozenset:
             raise TypeError("provider capabilities must be a frozenset")
         if spec.capabilities.difference(_PROVIDER_CAPABILITY_METHODS):

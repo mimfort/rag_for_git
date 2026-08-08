@@ -230,15 +230,54 @@ def test_security_discloses_both_external_code_data_paths():
         assert "AI model provider" in section
 
 
-def test_gitlab_only_check_limitation_is_explicit():
+def test_readmes_document_configuration_ownership_and_scenarios():
+    cases = (
+        (
+            "README.md",
+            "### Configuration ownership",
+            ("Single repository", "Second repository", "CI / server"),
+        ),
+        (
+            "README.ru.md",
+            "### Владение конфигурацией",
+            ("Один репозиторий", "Второй репозиторий", "CI / server"),
+        ),
+    )
+    for filename, heading, scenarios in cases:
+        section = _section(_read(filename), heading)
+        for marker in (
+            "global `.env`",
+            "home global YAML",
+            "home per-repo YAML",
+            "committed `.review.yml`",
+            "git remote / CLI",
+            "Postgres / Neo4j",
+            "reviewer init --scope repo",
+            "reviewer config show --repo",
+        ):
+            assert marker in section, (filename, marker)
+        for scenario in scenarios:
+            assert scenario in section, (filename, scenario)
+
+
+def test_readmes_document_vcs_token_matrix_and_check_semantics():
     for filename in ("README.md", "README.ru.md"):
         text = _read(filename)
-        assert "`reviewer check`" in text
-        assert "`GITHUB_TOKEN`" in text
-        assert "`GITLAB_TOKEN`" in text
-        assert "GitLab-only" in text
-        assert "dry-run `/rag-reviewer:review-pr`" in text
-        assert "validate `GITLAB_TOKEN` by indexing" not in text
+        section = _section(text, "### VCS credentials")
+        for marker in (
+            "`GITHUB_TOKEN`",
+            "Pull requests: Read and write",
+            "Contents: Read",
+            "`GITLAB_TOKEN`",
+            "`api` scope",
+            "`/user`",
+            "`/api/v4/user`",
+            "identity",
+            "repository permissions",
+        ):
+            assert marker in section, (filename, marker)
+        assert "GitLab-only" not in text
+        assert "dry-run `/rag-reviewer:review-pr`" not in text
 
 
 def test_team_route_validates_the_selected_board_project():

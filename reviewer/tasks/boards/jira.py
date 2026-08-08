@@ -27,6 +27,7 @@ from reviewer.tasks.boards.attachments import (
 from reviewer.tasks.boards.base import RawTask, TaskListing, TaskListingStats, project_prefix
 from reviewer.tasks.boards.errors import BoardProviderError
 from reviewer.tasks.boards.http import BoardHttpClient
+from reviewer.config.provider_access import ProviderAccessSpec
 from reviewer.tasks.boards.registry import (
     BoardProviderSpec,
     CredentialFieldSpec,
@@ -76,12 +77,20 @@ def provider_spec() -> BoardProviderSpec:
             ),
         ),
         setup=ProviderSetupSpec(
-            "Jira Cloud",
-            "https://id.atlassian.com/manage-profile/security/api-tokens",
-            (
+            label="Jira Cloud",
+            help_url="https://id.atlassian.com/manage-profile/security/api-tokens",
+            help_text=(
                 "Создайте API token без scopes для прямого Jira Cloud site URL, "
                 "задайте понятные name/expiration и сразу сохраните token: повторно "
                 "его посмотреть нельзя. Пароль Atlassian не подходит."
+            ),
+            access=ProviderAccessSpec(
+                minimum_permissions=(
+                    "Browse Projects, Create Issues, Edit Issues и Transition Issues"
+                ),
+                read_operations=("проекты, задачи, поля, переходы и вложения",),
+                write_operations=("создание, правка и перевод задач, добавление PR-ссылок",),
+                validation="identity, проект и доступные Jira permissions",
             ),
         ),
         create_target_label="Статус создания",
@@ -263,7 +272,9 @@ class JiraCloudBoard:
             "/rest/api/3/mypermissions",
             params={
                 "projectKey": project,
-                "permissions": "BROWSE_PROJECTS,CREATE_ISSUES,TRANSITION_ISSUES",
+                "permissions": (
+                    "BROWSE_PROJECTS,CREATE_ISSUES,EDIT_ISSUES,TRANSITION_ISSUES"
+                ),
             },
         ) or {}
         permissions = payload.get("permissions") or {}
@@ -276,12 +287,13 @@ class JiraCloudBoard:
         }
         warnings = [
             f"missing Jira permission: {permission}"
-            for permission, capability in (
-                ("BROWSE_PROJECTS", "read"),
-                ("CREATE_ISSUES", "create"),
-                ("TRANSITION_ISSUES", "transition"),
+            for permission in (
+                "BROWSE_PROJECTS",
+                "CREATE_ISSUES",
+                "EDIT_ISSUES",
+                "TRANSITION_ISSUES",
             )
-            if not capabilities[capability]
+            if not bool((permissions.get(permission) or {}).get("havePermission"))
         ]
         return capabilities, warnings
 
@@ -308,7 +320,7 @@ class JiraCloudBoard:
             capabilities, warnings = self._project_permissions(project)
         else:
             warnings.append(
-                "Jira project was not checked; create and transition permissions are unknown."
+                "Jira project was not checked; create, edit, and transition permissions are unknown."
             )
         return {
             "status": "ok",

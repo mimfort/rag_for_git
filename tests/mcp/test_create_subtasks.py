@@ -22,6 +22,7 @@ from reviewer.tasks.boards.registry import (
     ProviderOptionSpec,
     ProviderSetupSpec,
 )
+from tests.provider_access import FAKE_PROVIDER_ACCESS
 from reviewer.tasks.subtask_store import OperationConflictError
 from reviewer.tasks.subtasks import (
     SubtaskBatchResult,
@@ -265,7 +266,9 @@ def _service(
             board_type="fake",
             factory=factory.factory,
             credential_fields=(CredentialFieldSpec("FAKE_TOKEN", "Token", secret=True),),
-            setup=ProviderSetupSpec("Fake", "https://fake/help", "Configure."),
+            setup=ProviderSetupSpec(
+                "Fake", "https://fake/help", "Configure.", FAKE_PROVIDER_ACCESS
+            ),
             option_fields=(ProviderOptionSpec("lane", "Lane"),),
             capabilities=capabilities,
         )

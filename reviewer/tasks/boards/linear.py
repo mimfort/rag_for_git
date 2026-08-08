@@ -18,6 +18,7 @@ import httpx
 from reviewer.tasks.boards.base import RawTask, TaskListing, TaskListingStats, project_prefix
 from reviewer.tasks.boards.errors import BoardProviderError
 from reviewer.tasks.boards.graphql import GraphQLClient
+from reviewer.config.provider_access import ProviderAccessSpec
 from reviewer.tasks.boards.registry import (
     BoardProviderSpec,
     CredentialFieldSpec,
@@ -200,13 +201,19 @@ def provider_spec() -> BoardProviderSpec:
             ),
         ),
         setup=ProviderSetupSpec(
-            "Linear",
-            "https://linear.app/settings/account/security",
-            (
+            label="Linear",
+            help_url="https://linear.app/settings/account/security",
+            help_text=(
                 "Settings → Account → Security & access → Personal API keys: создайте "
                 "ключ с правами Read и Write (плюс Create issues, если нужен create-task) "
                 "и, если ограничиваете доступ, разрешите нужные команды. Ключ виден "
                 "только при создании; OAuth не поддерживается."
+            ),
+            access=ProviderAccessSpec(
+                minimum_permissions="personal API key с Read and Write для выбранной team",
+                read_operations=("teams, workflow states, issues, relations и metadata вложений",),
+                write_operations=("создание и правка issues, смена state и PR-ссылки",),
+                validation="viewer identity и видимость team",
             ),
         ),
         default_api_base=DEFAULT_API_BASE,

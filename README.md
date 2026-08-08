@@ -63,9 +63,9 @@ stores run locally; embedding and reranking requests go to Voyage.
    ```
 
    Indexing initializes the `chunks` schema that `reviewer check` queries, so a fresh installation
-   must index before checking. The check currently requires `GITHUB_TOKEN`, even for a GitLab-only
-   setup; validate `GITLAB_TOKEN` with a dry-run `/rag-reviewer:review-pr` against a GitLab MR until
-   that limitation is removed. The status payload should show an indexed SHA and `drift == 0`.
+   must index before checking. The check validates every configured VCS provider; its successful
+   identity check does not prove repository-specific permissions. The status payload should show an
+   indexed SHA and `drift == 0`.
    Full indexing sends code chunks to Voyage and can be slow on its free tier. Without a base
    index, PR review has only the diff and its temporary changed-file index (overlay), and therefore
    thinner repository context.
@@ -307,6 +307,44 @@ Important groups:
 
 Credentials stay server-side. **Credentials are not returned** by board metadata or discovery
 tools and must not be placed in `.review.yml`.
+
+### Configuration ownership
+
+| Location | Owner | Stores | Must not store |
+|---|---|---|---|
+| global `.env` | deployment/operator | secrets, credentials, DSNs, runtime infrastructure and compatibility fallbacks | repository policy |
+| home global YAML | OS account running reviewer | shared non-secret defaults | credentials |
+| home per-repo YAML | OS account running reviewer | `repository.primary_branch`, `repository.index_branches`, operator-owned repo policy | credentials |
+| committed `.review.yml` | repository team | team-visible review policy and non-secret task-board metadata | credentials or `repository` |
+| git remote / CLI | repository/operator | canonical `owner/name` identity and explicit command overrides | persisted secrets |
+| Postgres / Neo4j | reviewer runtime | derived indexes, task/review state and code graph | source-of-truth configuration |
+
+#### Single repository
+
+Run `reviewer init` from the clone, inspect the global `.env` and home per-repo previews, then run
+`reviewer check` and `reviewer config show --repo owner/name`.
+
+#### Second repository
+
+Run `reviewer init --scope repo` from the second clone. It creates or previews only that repository's
+home per-repo YAML and does not rewrite global `.env` or the first repository's config.
+
+#### CI / server
+
+Inject secrets into global `.env` or the process from a secret manager. Use noninteractive init only
+for deterministic preview/write, mount home YAML for the service account, and keep team-owned policy
+in committed `.review.yml`. Pass `--repo owner/name` when no usable git remote is present.
+
+### VCS credentials
+
+| Provider | Environment | Minimum access | Reviewer reads | Reviewer writes | `reviewer check` |
+|---|---|---|---|---|---|
+| GitHub | `GITHUB_TOKEN` | fine-grained PAT: Pull requests: Read and write; Contents: Read | PR metadata, files, comments, contents, compare | review comments/summary and PR body backlink | authenticates `/user` identity |
+| GitLab | `GITLAB_URL`, `GITLAB_TOKEN` | PAT/project token with `api` scope | MR metadata, changes, notes, repository files, compare | discussions/notes and MR description backlink | authenticates `/api/v4/user` identity |
+
+The health check proves URL/token authentication, not every granular repository permission. The
+selected repository permissions are exercised by an actual review. `reviewer init` shows the same
+contract before prompting only for the selected provider's credentials.
 
 ### Repositories and branches
 
@@ -596,13 +634,15 @@ summary и same-generation fragment coverage до удаления сирот и
 backfill пишет вектор только по exact CAS `source_hash + title + summary`, поэтому конкурентная
 перезапись текста не получает устаревший вектор и не увеличивает `embedded`.
 
-### `configure-review` — update `.review.yml`
+### `configure-review` — update layered policy and branches
 
-- **When:** tune ignored paths, retrieval limits, summary clustering, or board metadata.
+- **When:** tune tracked branches, ignored paths, retrieval limits, summary clustering, or board
+  metadata.
 - **Invoke:** `/rag-reviewer:configure-review`.
 - **Needs:** a git repository; MCP and databases are not required for baseline analysis.
 - **Reads/writes:** reads tracked Python structure/history and changes approved YAML fields in either
-  `home:repos/<owner>/<name>.yml` or committed `.review.yml`.
+  `home:repos/<owner>/<name>.yml` or committed `.review.yml`; branch values always go to the home
+  per-repo YAML.
 - **Result:** preserved foreign keys/comments plus exact rebuild guidance.
 
 ## Operations, troubleshooting, and limitations
@@ -679,8 +719,6 @@ errors are reported without preventing the process from starting where fail-soft
 - The base index is branch-scoped and blind to uncommitted working-tree changes.
 - OAuth loopback flows are not supported in headless/SSH integrations; use documented PAT/API-key
   credentials.
-- `reviewer check` currently validates `GITHUB_TOKEN` and the GitHub API even in a GitLab-only
-  deployment; validate `GITLAB_TOKEN` with a dry-run `/rag-reviewer:review-pr` against a GitLab MR.
 - Board work is optional. Missing provider configuration keeps task-aware skills board-less rather
   than blocking code retrieval.
 
