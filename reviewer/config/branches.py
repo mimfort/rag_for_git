@@ -11,7 +11,7 @@ import stat
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 import yaml
 
@@ -30,6 +30,7 @@ if TYPE_CHECKING:
     from reviewer.config.settings import Settings
 
 BRANCHES_KEY = "repository"
+RepositoryBlockAction = Literal["create", "append", "noop"]
 
 
 @dataclass(frozen=True)
@@ -133,7 +134,12 @@ class BranchMigrationResult:
     noop: bool
 
 
-def _render_block(index: tuple[str, ...]) -> str:
+def render_repository_block(
+    primary: str,
+    index: tuple[str, ...],
+    *,
+    migrated: bool = False,
+) -> str:
     """Сформировать YAML-блок repository через safe_dump.
 
     Имена веток попадают в YAML как есть — легальное git-имя вроде
@@ -141,15 +147,48 @@ def _render_block(index: tuple[str, ...]) -> str:
     парсится как не-строка. ``safe_dump`` сам кавычит там, где нужно.
     """
     body = yaml.safe_dump(
-        {BRANCHES_KEY: {"index_branches": list(index)}},
+        {
+            BRANCHES_KEY: {
+                "primary_branch": primary,
+                "index_branches": list(index),
+            }
+        },
         allow_unicode=True,
         sort_keys=False,
     )
-    return (
-        "\n# Отслеживаемые ветки репозитория (перенесено из REVIEW_BRANCHES).\n"
-        "# Первая ветка списка — первичная, если primary_branch не задан явно.\n"
-        f"{body}"
-    )
+    if not migrated:
+        return body
+    return "# Отслеживаемые ветки репозитория (перенесено из REVIEW_BRANCHES).\n" + body
+
+
+def publish_repository_block(
+    path: Path,
+    source: str,
+    block: str,
+) -> RepositoryBlockAction:
+    """Создать или дописать repository-блок, не меняя существующий блок."""
+    try:
+        existing_text = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            with open(path, "x", encoding="utf-8") as handle:
+                handle.write(block)
+        except FileExistsError:
+            # Параллельный процесс уже создал файл: не рискуем менять его вслепую.
+            return "noop"
+        return "create"
+
+    if BRANCHES_KEY in _read_mapping(existing_text, source):
+        return "noop"
+
+    if not existing_text:
+        updated = block
+    else:
+        separator = "\n" if existing_text.endswith("\n") else "\n\n"
+        updated = existing_text + separator + block
+    path.write_text(updated, encoding="utf-8")
+    return "append"
 
 
 def migrate_repo_branches(
@@ -175,23 +214,13 @@ def migrate_repo_branches(
     if effective.source.startswith("home:"):
         return BranchMigrationResult(destination, False, True)
     index = effective.index
-    block = _render_block(index)
-    try:
-        existing_text = destination.read_text(encoding="utf-8")
-    except FileNotFoundError:
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            with open(destination, "x", encoding="utf-8") as handle:
-                handle.write(block.lstrip("\n"))
-        except FileExistsError:
-            # Гонка: параллельный процесс успел создать файл между stat и open.
-            return BranchMigrationResult(destination, False, True)
-        return BranchMigrationResult(destination, True, False)
-    if BRANCHES_KEY in _read_mapping(existing_text, source):
-        return BranchMigrationResult(destination, False, True)
-    suffix = "" if existing_text.endswith("\n") else "\n"
-    destination.write_text(existing_text + suffix + block, encoding="utf-8")
-    return BranchMigrationResult(destination, False, False)
+    block = render_repository_block(index[0], index, migrated=True)
+    action = publish_repository_block(destination, source, block)
+    return BranchMigrationResult(
+        path=destination,
+        created=action == "create",
+        noop=action == "noop",
+    )
 
 
 def resolve_repo_branches(
