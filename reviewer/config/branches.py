@@ -37,6 +37,7 @@ from reviewer.config.layers import (
     _prepare_destination_parent,
     _publish_new_config,
     _read_mapping,
+    _supports_secure_directory_walk,
     home_repo_path,
     reviewer_config_root,
 )
@@ -123,19 +124,18 @@ def _parse_block(block: object, source: str) -> tuple[str, tuple[str, ...]]:
     return primary, tuple(index)
 
 
-def _load_layer(path: Path, source: str) -> tuple[str, tuple[str, ...]] | None:
+def _load_layer(
+    path: Path,
+    source: str,
+    *,
+    root: Path,
+    parent_segments: tuple[str, ...],
+) -> tuple[str, tuple[str, ...]] | None:
     """Прочитать блок `repository` одного домашнего файла, либо None."""
-    try:
-        if not stat.S_ISREG(path.stat().st_mode):
-            return None
-        text = path.read_text(encoding="utf-8")
-    except FileNotFoundError:
+    existing = _read_home_file(path, source, root, parent_segments)
+    if existing is None:
         return None
-    except (OSError, UnicodeError) as exc:
-        raise HomeConfigError(
-            f"{source}: конфиг не прочитан: {type(exc).__name__}"
-        ) from None
-    data = _read_mapping(text, source)
+    data = existing.data
     if BRANCHES_KEY not in data:
         return None
     block = data[BRANCHES_KEY]
@@ -189,6 +189,114 @@ class _LockedDestination:
     data: dict[str, object]
     identity: tuple[int, int]
     mode: int
+
+
+@dataclass(frozen=True)
+class _ExistingParent:
+    exists: bool
+    descriptor: int | None
+
+
+@contextmanager
+def _open_existing_parent(
+    root: Path,
+    segments: tuple[str, ...],
+    source: str,
+):
+    """Открыть существующий parent без создания и symlink-переходов ниже root."""
+    if not _supports_secure_directory_walk():
+        try:
+            root_metadata = root.stat()
+        except FileNotFoundError:
+            yield _ExistingParent(False, None)
+            return
+        except OSError as exc:
+            raise HomeConfigError(
+                f"{source}: parent не проверен: {type(exc).__name__}"
+            ) from None
+        if not stat.S_ISDIR(root_metadata.st_mode):
+            raise HomeConfigError(f"{source}: config root не является directory")
+        current = root
+        for segment in segments:
+            current /= segment
+            try:
+                metadata = os.lstat(current)
+            except FileNotFoundError:
+                yield _ExistingParent(False, None)
+                return
+            except OSError as exc:
+                raise HomeConfigError(
+                    f"{source}: parent не проверен: {type(exc).__name__}"
+                ) from None
+            if stat.S_ISLNK(metadata.st_mode):
+                raise HomeConfigError(f"{source}: symlink в destination запрещён")
+            if not stat.S_ISDIR(metadata.st_mode):
+                raise HomeConfigError(f"{source}: parent destination не является directory")
+        yield _ExistingParent(True, None)
+        return
+
+    descriptor = -1
+    try:
+        try:
+            descriptor = os.open(
+                root,
+                os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_CLOEXEC", 0),
+            )
+        except FileNotFoundError:
+            yield _ExistingParent(False, None)
+            return
+        except OSError as exc:
+            raise HomeConfigError(
+                f"{source}: parent не проверен: {type(exc).__name__}"
+            ) from None
+        for segment in segments:
+            try:
+                child = os.open(
+                    segment,
+                    os.O_RDONLY
+                    | os.O_DIRECTORY
+                    | os.O_NOFOLLOW
+                    | getattr(os, "O_CLOEXEC", 0),
+                    dir_fd=descriptor,
+                )
+            except FileNotFoundError:
+                yield _ExistingParent(False, None)
+                return
+            except OSError:
+                raise HomeConfigError(
+                    f"{source}: symlink или non-directory parent запрещён"
+                ) from None
+            try:
+                metadata = os.fstat(child)
+                if not stat.S_ISDIR(metadata.st_mode):
+                    raise HomeConfigError(
+                        f"{source}: parent destination не является directory"
+                    )
+            except Exception:
+                try:
+                    os.close(child)
+                except OSError:
+                    pass
+                raise
+            try:
+                os.close(descriptor)
+            except OSError:
+                try:
+                    os.close(child)
+                except OSError:
+                    pass
+                raise HomeConfigError(f"{source}: parent descriptor не закрыт") from None
+            descriptor = child
+        yield _ExistingParent(True, descriptor)
+    finally:
+        if descriptor != -1:
+            try:
+                os.close(descriptor)
+            except OSError as exc:
+                if sys.exc_info()[0] is None:
+                    raise HomeConfigError(
+                        f"{source}: parent descriptor не закрыт: {type(exc).__name__}"
+                    ) from None
 
 
 def _destination_context(path: Path, source: str) -> tuple[Path, str]:
@@ -291,6 +399,35 @@ def _read_locked_destination(
                     raise HomeConfigError(
                         f"{source}: конфиг не закрыт: {type(exc).__name__}"
                     ) from None
+
+
+def _read_home_file(
+    path: Path,
+    source: str,
+    root: Path,
+    parent_segments: tuple[str, ...],
+) -> _LockedDestination | None:
+    with _open_existing_parent(root, parent_segments, source) as parent:
+        if not parent.exists:
+            return None
+        with _read_locked_destination(
+            path,
+            source,
+            parent_fd=parent.descriptor,
+        ) as existing:
+            return existing
+
+
+def read_repository_config_file(path: Path, source: str) -> str | None:
+    """Без записи и symlink-переходов прочитать домашний repo config."""
+    root, repo = _destination_context(path, source)
+    existing = _read_home_file(
+        path,
+        source,
+        root,
+        ("repos", *repo.split("/")[:-1]),
+    )
+    return None if existing is None else existing.text
 
 
 def _flow_mapping_end(tokens: list[object]) -> tuple[int, bool] | None:
@@ -540,11 +677,20 @@ def resolve_repo_branches(
     repo = normalize_repo(repo)
     root = config_root or reviewer_config_root()
     layers = (
-        (home_repo_path(repo, root), f"home:repos/{repo}.yml"),
-        (root / "review.yml", "home:review.yml"),
+        (
+            home_repo_path(repo, root),
+            f"home:repos/{repo}.yml",
+            ("repos", *repo.split("/")[:-1]),
+        ),
+        (root / "review.yml", "home:review.yml", ()),
     )
-    for path, source in layers:
-        parsed = _load_layer(path, source)
+    for path, source, parent_segments in layers:
+        parsed = _load_layer(
+            path,
+            source,
+            root=root,
+            parent_segments=parent_segments,
+        )
         if parsed is not None:
             primary, index = parsed
             return RepoBranches(primary=primary, index=index, source=source)

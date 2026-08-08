@@ -185,6 +185,45 @@ def test_detect_repository_uses_effective_home_primary_source(monkeypatch, tmp_p
     assert result.primary_source == "home:review.yml"
 
 
+def test_detect_repository_rejects_symlinked_repo_layer_without_false_provenance(
+    monkeypatch,
+    tmp_path,
+):
+    config_root = tmp_path / "rag-reviewer"
+    path = config_root / "repos/o/r.yml"
+    path.parent.mkdir(parents=True)
+    external = tmp_path / "external.yml"
+    marker = "external-detected-branch"
+    external.write_text(
+        f"repository:\n  index_branches: [{marker}]\n",
+        encoding="utf-8",
+    )
+    path.symlink_to(external)
+    original_read_text = Path.read_text
+
+    def reject_symlink_read(candidate, *args, **kwargs):
+        if candidate == path:
+            raise AssertionError("detect_repository followed branch config symlink")
+        return original_read_text(candidate, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", reject_symlink_read)
+    monkeypatch.setattr("reviewer.config.onboarding.repo_root", lambda _path: str(tmp_path))
+    monkeypatch.setattr(
+        "reviewer.config.onboarding.remote_url",
+        lambda _path: "https://github.com/o/r.git",
+    )
+
+    with pytest.raises(HomeConfigError, match="symlink") as captured:
+        detect_repository(
+            ".",
+            None,
+            settings=_settings(monkeypatch, "main", config_home=tmp_path),
+        )
+
+    assert marker not in repr(captured.value)
+    assert external.read_text(encoding="utf-8").endswith(f"[{marker}]\n")
+
+
 def test_parse_branch_csv_strips_items():
     assert parse_branch_csv(" dev, main ", "dev") == ("dev", "main")
 
