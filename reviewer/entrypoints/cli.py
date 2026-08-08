@@ -5,6 +5,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 import json
 import logging
+from pathlib import Path
 import platform as _platform
 import re
 import shutil as _shutil
@@ -24,7 +25,14 @@ from reviewer.config.layers import (
     migrate_repo_config,
     resolve_policy_data,
 )
-from reviewer.gitutil import file_at_ref, list_python_files, rev_parse, remote_url
+from reviewer.config.onboarding import (
+    RepositoryConfigPlan,
+    apply_repository_config,
+    detect_repository,
+    parse_branch_csv,
+    plan_repository_config,
+)
+from reviewer.gitutil import file_at_ref, list_python_files, repo_root, rev_parse, remote_url
 from reviewer.graph.backend import build_code_graph
 from reviewer.graph.store import GraphStore
 from reviewer.index.freshness import update_base
@@ -94,6 +102,17 @@ def _config_error_message(exc: Exception) -> str:
     return "конфиг не прочитан: YAML"
 
 
+def _branches_report(branches) -> dict[str, object]:
+    """Общий payload effective branches для config show и repo onboarding."""
+    return {
+        "branches": {
+            "primary": branches.primary,
+            "index": list(branches.index),
+            "source": branches.source,
+        }
+    }
+
+
 def _render_config_report(report: Mapping[str, object]) -> None:
     branches = report.get("branches")
     if branches:
@@ -104,6 +123,8 @@ def _render_config_report(report: Mapping[str, object]) -> None:
     policy_error = report.get("policy_error")
     if policy_error is not None:
         click.echo(f"policy_error: {policy_error}")
+        return
+    if "effective" not in report:
         return
     effective = report["effective"]
     sources = report["sources"]
@@ -169,13 +190,7 @@ def config_show(repo: str, branch: str | None, as_json: bool) -> None:
     try:
         with _config_context(repo, branch) as ctx:
             settings, _components, vcs, repo_id, ref, branches, vcs_error = ctx
-            payload: dict[str, object] = {
-                "branches": {
-                    "primary": branches.primary,
-                    "index": list(branches.index),
-                    "source": branches.source,
-                }
-            }
+            payload = _branches_report(branches)
             try:
                 if vcs_error is not None:
                     raise vcs_error
@@ -1080,6 +1095,34 @@ def install(client: str | None, all_clients: bool, list_clients: bool,
         click.echo("Готово. Перезапустите клиент. Ключи: reviewer init && reviewer check.")
 
 
+@dataclass(frozen=True)
+class _GlobalInitPlan:
+    path: Path
+    content: str
+    preview: str
+    source: str
+    action: str
+
+
+def _render_init_preview(
+    global_plan: _GlobalInitPlan | None,
+    repo_plan: RepositoryConfigPlan | None,
+) -> None:
+    """Показать все target-планы до первой записи, не раскрывая env secrets."""
+    click.echo("# reviewer init preview")
+    if global_plan is not None:
+        click.echo(f"\nfile: {global_plan.path}")
+        click.echo(f"action: {global_plan.action}")
+        click.echo(f"source: {global_plan.source}")
+        click.echo(global_plan.preview)
+    if repo_plan is not None:
+        click.echo(f"\nfile: {repo_plan.path}")
+        click.echo(f"action: {repo_plan.action}")
+        click.echo(f"repo: {repo_plan.repo} ({repo_plan.repo_source})")
+        click.echo(f"primary: {repo_plan.primary} ({repo_plan.primary_source})")
+        click.echo(repo_plan.preview)
+
+
 @cli.command()
 @click.option("--path", "path_opt", default=None,
               help="куда писать .env (по умолчанию ~/.config/rag-reviewer/.env)")
@@ -1087,108 +1130,253 @@ def install(client: str | None, all_clients: bool, list_clients: bool,
               help="принять все дефолты без интерактива (CI-режим)")
 @click.option("--dry-run", "dry_run", is_flag=True,
               help="показать безопасный preview без prompt, сети и записи файла")
-def init(path_opt: str | None, yes: bool, dry_run: bool) -> None:
-    """Интерактивный мастер настройки .env для rag-reviewer."""
+@click.option(
+    "--scope",
+    type=click.Choice(("all", "global", "repo")),
+    default="all",
+    show_default=True,
+    help="этапы настройки: global .env, repo branch config или оба",
+)
+@click.option("--repo", "repo_opt", default=None, help="owner/name для repo stage")
+def init(
+    path_opt: str | None,
+    yes: bool,
+    dry_run: bool,
+    scope: str,
+    repo_opt: str | None,
+) -> None:
+    """Настроить global .env и per-repo ветки с preview до записи."""
     import subprocess
-    from pathlib import Path
     from reviewer import install as inst
     from reviewer.tasks.boards import setup as board_setup
     from reviewer.tasks.boards.errors import BoardProviderError
     from reviewer.tasks.boards.registry import default_board_registry
 
-    dest = Path(path_opt).expanduser() if path_opt else inst.default_env_path()
-    current = inst.read_env(dest)
-    wizard_keys = {f.key for g in inst.WIZARD_GROUPS for f in g.fields}
-
-    if dry_run:
-        values = inst.prompt_groups(inst.WIZARD_GROUPS, current=current, yes=True)
-        extra = {k: v for k, v in current.items() if k not in wizard_keys}
-        click.echo(f"# reviewer init preview: {dest}")
-        click.echo(inst.render_env_preview(values, extra))
-        return
-
-    dest.parent.mkdir(parents=True, exist_ok=True)
-
-    if not yes:
-        click.echo(f"Настройка rag-reviewer: {dest}")
-        click.echo("─" * 52)
-
+    run_global = scope in {"all", "global"}
+    run_repo = scope in {"all", "repo"}
+    interactive = not yes and not dry_run
+    if run_repo and repo_opt is not None:
+        try:
+            repo_opt = _resolve_config_repo(repo_opt)
+        except ValueError as exc:
+            raise click.ClickException(str(exc)) from exc
+    global_plan: _GlobalInitPlan | None = None
+    repo_plan: RepositoryConfigPlan | None = None
+    settings: Settings | None = None
     try:
-        groups = inst.WIZARD_GROUPS
-        if yes:
-            values = inst.prompt_groups(groups, current=current, yes=True)
-        else:
-            board_group = next(group for group in groups if group.title == "Доска задач")
-            common_fields = inst.common_board_env_fields(board_group)
-            values = inst.prompt_groups(
-                [
-                    (
-                        inst.EnvGroup(
-                            title=board_group.title,
-                            fields=common_fields,
-                            optional=True,
-                        )
-                        if group is board_group
-                        else group
-                    )
-                    for group in groups
-                ],
-                current=current,
-                yes=False,
-            )
-            for field in board_group.fields:
-                if field in common_fields:
-                    continue
-                values[field.key] = current.get(field.key, "") or field.default
+        if run_global:
+            dest = Path(path_opt).expanduser() if path_opt else inst.default_env_path()
+            current = inst.read_env(dest)
+            wizard_keys = {field.key for group in inst.WIZARD_GROUPS for field in group.fields}
+            groups = inst.WIZARD_GROUPS
 
-            if click.confirm("\nПодключить provider доски задач?", default=False):
-                registry = default_board_registry()
-                io = board_setup.ClickSetupIO()
-                board_type = io.choose(
-                    "Выберите provider доски",
+            if interactive:
+                click.echo(f"Настройка rag-reviewer: {dest}")
+                click.echo("─" * 52)
+                board_group = next(group for group in groups if group.title == "Доска задач")
+                common_fields = inst.common_board_env_fields(board_group)
+                values = inst.prompt_groups(
                     [
-                        board_setup.SetupChoice(
-                            value=registered_type,
-                            label=registry.get(registered_type).setup.label,
+                        (
+                            inst.EnvGroup(
+                                title=board_group.title,
+                                fields=common_fields,
+                                optional=True,
+                            )
+                            if group is board_group
+                            else group
                         )
-                        for registered_type in registry.registered_types()
+                        for group in groups
                     ],
+                    current=current,
+                    yes=False,
                 )
-                while True:
-                    try:
-                        values.update(
-                            board_setup.configure_board_provider(registry.get(board_type), io)
-                        )
-                        break
-                    except BoardProviderError as error:
-                        click.echo(f"✗ {board_type}: {error.message}")
-                        if error.hint:
-                            click.echo(f"  {error.hint}")
-                        if not click.confirm(
-                            "Исправить credentials и повторить?",
-                            default=True,
-                        ):
-                            click.echo(
-                                "Provider пропущен; непроверенные credentials не сохранены."
+                for field in board_group.fields:
+                    if field in common_fields:
+                        continue
+                    values[field.key] = current.get(field.key, "") or field.default
+
+                if click.confirm("\nПодключить provider доски задач?", default=False):
+                    registry = default_board_registry()
+                    io = board_setup.ClickSetupIO()
+                    board_type = io.choose(
+                        "Выберите provider доски",
+                        [
+                            board_setup.SetupChoice(
+                                value=registered_type,
+                                label=registry.get(registered_type).setup.label,
+                            )
+                            for registered_type in registry.registered_types()
+                        ],
+                    )
+                    while True:
+                        try:
+                            values.update(
+                                board_setup.configure_board_provider(registry.get(board_type), io)
                             )
                             break
+                        except BoardProviderError as error:
+                            click.echo(f"✗ {board_type}: {error.message}")
+                            if error.hint:
+                                click.echo(f"  {error.hint}")
+                            if not click.confirm(
+                                "Исправить credentials и повторить?",
+                                default=True,
+                            ):
+                                click.echo(
+                                    "Provider пропущен; непроверенные credentials не сохранены."
+                                )
+                                break
+            else:
+                values = inst.prompt_groups(groups, current=current, yes=True)
+
+            extra = {key: value for key, value in current.items() if key not in wizard_keys}
+            content = inst.render_env(values, extra)
+            if dest.is_file() and dest.read_text(encoding="utf-8") == content:
+                action = "noop"
+            else:
+                action = "update" if dest.is_file() else "create"
+            global_plan = _GlobalInitPlan(
+                path=dest,
+                content=content,
+                preview=inst.render_env_preview(values, extra),
+                source=f"existing:{dest}" if dest.is_file() else "wizard defaults/input",
+                action=action,
+            )
+
+        if run_repo:
+            settings = Settings(_env_file=None) if scope == "repo" else Settings()
+            detection = detect_repository(
+                ".",
+                repo_opt,
+                settings=settings,
+            )
+            if (
+                detection is None
+                and interactive
+                and repo_opt is None
+                and repo_root(".") is not None
+            ):
+                entered_repo = click.prompt(
+                    "Repository (owner/name)",
+                    default="",
+                    show_default=False,
+                ).strip()
+                if entered_repo:
+                    detection = detect_repository(
+                        ".",
+                        entered_repo,
+                        settings=settings,
+                    )
+
+            if detection is None:
+                message = (
+                    "repo не определён: запустите из git repository с распознаваемым origin "
+                    "или передайте --repo owner/name"
+                )
+                if scope == "repo":
+                    raise click.ClickException(message)
+                click.echo(f"repo stage пропущен: {message}")
+            else:
+                initial_plan = plan_repository_config(
+                    detection,
+                    settings=settings,
+                )
+                if initial_plan.action == "noop" or not interactive:
+                    repo_plan = initial_plan
+                else:
+                    click.echo(
+                        f"\nОбнаружен repo {detection.repo} ({detection.repo_source})"
+                    )
+                    click.echo(
+                        f"Primary candidate: {detection.primary} "
+                        f"({detection.primary_source})"
+                    )
+                    primary = click.prompt(
+                        "Primary branch",
+                        default=initial_plan.primary,
+                    ).strip()
+                    default_index = (
+                        initial_plan.index
+                        if primary == initial_plan.primary
+                        else (primary,)
+                    )
+                    while True:
+                        raw_index = click.prompt(
+                            "Index branches (CSV)",
+                            default=",".join(default_index),
+                        )
+                        try:
+                            index = parse_branch_csv(raw_index, primary)
+                        except ValueError as exc:
+                            click.echo(f"Некорректные ветки: {exc}")
+                            continue
+                        break
+                    repo_plan = plan_repository_config(
+                        detection,
+                        settings=settings,
+                        primary=(primary if primary != initial_plan.primary else None),
+                        index=index,
+                    )
+
+        _render_init_preview(global_plan, repo_plan)
+        if dry_run:
+            return
+        if interactive and not click.confirm(
+            "\nЗаписать показанные изменения?",
+            default=True,
+        ):
+            click.echo("Отменено — файлы не изменены.")
+            return
     except click.Abort:
-        click.echo("\nОтменено — файл не изменён.")
+        click.echo("\nОтменено — файлы не изменены.")
         return
+    except (HomeConfigError, yaml.YAMLError) as exc:
+        raise click.ClickException(_config_error_message(exc)) from exc
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
 
-    extra = {k: v for k, v in current.items() if k not in wizard_keys}
-    content = inst.render_env(values, extra)
-    dest.write_text(content, encoding="utf-8")
-    click.echo(f"\n✓ Записан {dest}")
+    if global_plan is not None:
+        try:
+            if global_plan.action != "noop":
+                global_plan.path.parent.mkdir(parents=True, exist_ok=True)
+                global_plan.path.write_text(global_plan.content, encoding="utf-8")
+        except Exception as exc:  # noqa: BLE001 — error не должен раскрыть env content
+            raise click.ClickException(
+                f"Не удалось записать {global_plan.path}: {type(exc).__name__}"
+            ) from None
+        if global_plan.action == "noop":
+            click.echo(f"\n✓ Global config: noop → {global_plan.path}")
+        else:
+            click.echo(f"\n✓ Записан {global_plan.path} ({global_plan.action})")
 
-    if not yes and click.confirm("\nЗапустить reviewer check сейчас?", default=True):
+    if repo_plan is not None:
+        try:
+            apply_repository_config(repo_plan)
+        except Exception as exc:  # noqa: BLE001 — не эхоить потенциальный payload исключения
+            raise click.ClickException(
+                f"Не удалось записать {repo_plan.path}: {type(exc).__name__}"
+            ) from None
+        click.echo(f"✓ Repo config: {repo_plan.action} → {repo_plan.path}")
+        assert settings is not None
+        try:
+            effective = resolve_repo_branches(repo_plan.repo, settings=settings)
+        except (HomeConfigError, yaml.YAMLError) as exc:
+            raise click.ClickException(_config_error_message(exc)) from exc
+        _render_config_report(_branches_report(effective))
+        click.echo(f"Полный отчёт: reviewer config show --repo {repo_plan.repo}")
+
+    if run_global and interactive and click.confirm(
+        "\nЗапустить reviewer check сейчас?",
+        default=True,
+    ):
         subprocess.run(["reviewer", "check"], check=False)
-    elif not yes:
+    elif run_global and interactive:
         click.echo("Запустите: reviewer check")
-    else:
+    elif run_global:
         click.echo("Готово. Запустите: reviewer check")
 
-    if not yes and _shutil.which("codex") and click.confirm(
+    if run_global and interactive and _shutil.which("codex") and click.confirm(
         "\nУстановить или обновить rag-reviewer для Codex?", default=True
     ):
         result = _run_codex_target(include_mcp=True, dry_run=False)

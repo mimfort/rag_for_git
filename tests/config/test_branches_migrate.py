@@ -1,6 +1,12 @@
 import yaml
 
-from reviewer.config.branches import migrate_repo_branches, resolve_repo_branches
+import reviewer.config.layers as layers
+from reviewer.config.branches import (
+    migrate_repo_branches,
+    publish_repository_block,
+    render_repository_block,
+    resolve_repo_branches,
+)
 from reviewer.config.settings import Settings
 
 
@@ -14,7 +20,10 @@ def test_migration_creates_file_with_env_branches(tmp_path, monkeypatch):
     result = migrate_repo_branches("o/r", settings=settings, config_root=tmp_path)
     assert result.created is True
     data = yaml.safe_load(result.path.read_text(encoding="utf-8"))
-    assert data["repository"]["index_branches"] == ["dev", "main"]
+    assert data["repository"] == {
+        "primary_branch": "dev",
+        "index_branches": ["dev", "main"],
+    }
 
 
 def test_effective_branches_unchanged_by_migration(tmp_path, monkeypatch):
@@ -27,10 +36,12 @@ def test_effective_branches_unchanged_by_migration(tmp_path, monkeypatch):
 
 def test_second_call_is_noop(tmp_path, monkeypatch):
     settings = _settings(monkeypatch)
-    migrate_repo_branches("o/r", settings=settings, config_root=tmp_path)
+    first = migrate_repo_branches("o/r", settings=settings, config_root=tmp_path)
+    original = first.path.read_bytes()
     second = migrate_repo_branches("o/r", settings=settings, config_root=tmp_path)
     assert second.noop is True
     assert second.created is False
+    assert second.path.read_bytes() == original
 
 
 def test_existing_repository_block_is_not_overwritten(tmp_path, monkeypatch):
@@ -82,6 +93,7 @@ def test_migration_quotes_yaml_ambiguous_branch_names(tmp_path, monkeypatch):
     text = result.path.read_text(encoding="utf-8")
     data = yaml.safe_load(text)
     assert data["repository"]["index_branches"] == ["2.0", "on", "no", "feature{x}"]
+    assert data["repository"]["primary_branch"] == "2.0"
     resolved = resolve_repo_branches("o/r", settings=settings, config_root=tmp_path)
     assert resolved.index == ("2.0", "on", "no", "feature{x}")
     assert resolved.primary == "2.0"
@@ -92,3 +104,21 @@ def test_env_file_is_not_touched(tmp_path, monkeypatch):
     env.write_text("REVIEW_BRANCHES=dev,main\n", encoding="utf-8")
     migrate_repo_branches("o/r", settings=_settings(monkeypatch), config_root=tmp_path)
     assert env.read_text(encoding="utf-8") == "REVIEW_BRANCHES=dev,main\n"
+
+
+def test_shared_publisher_create_race_reloads_and_appends(tmp_path, monkeypatch):
+    path = tmp_path / "repos/o/r.yml"
+    block = render_repository_block("main", ("main",))
+
+    def racing_link(*args, **kwargs):
+        path.write_text("# created by another process\nmax_comments: 5\n", encoding="utf-8")
+        raise FileExistsError
+
+    monkeypatch.setattr(layers.os, "link", racing_link)
+
+    action = publish_repository_block(path, "home:repos/o/r.yml", block)
+    text = path.read_text(encoding="utf-8")
+
+    assert action == "append"
+    assert "# created by another process" in text
+    assert yaml.safe_load(text)["repository"]["primary_branch"] == "main"

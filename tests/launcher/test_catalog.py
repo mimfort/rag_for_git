@@ -42,6 +42,24 @@ def test_status_schema_comes_from_click():
     assert by_name["as_json"].is_flag is True
 
 
+def test_init_schema_exposes_scope_choices_and_repo_option():
+    init = next(item for item in build_catalog(cli) if item.path == ("init",))
+    by_name = {parameter.name: parameter for parameter in init.params}
+
+    assert by_name["scope"].choices == ("all", "global", "repo")
+    assert by_name["scope"].default == "all"
+    assert by_name["repo_opt"].option_strings == ("--repo",)
+
+
+def test_init_metadata_mentions_both_targets_preview_and_repo_scenario():
+    init = next(item for item in build_catalog(cli) if item.path == ("init",))
+
+    assert "global .env" in init.details
+    assert "per-repo branch config" in init.details
+    assert "preview" in init.details
+    assert "Добавление репозитория" in init.scenarios
+
+
 def test_catalog_uses_public_click_labels_and_help_for_options():
     """Форма получает публичные имена и справку, а не Python destination."""
     status = next(item for item in build_catalog(cli) if item.path == ("status",))

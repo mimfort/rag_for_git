@@ -54,10 +54,13 @@ COMMAND_PRESENTATION = {
     ),
     ("init",): CommandPresentation(
         summary="Настроить reviewer",
-        details="Создаёт или обновляет user-scope .env через существующий setup wizard.",
+        details=(
+            "Планирует и настраивает global .env и per-repo branch config "
+            "с preview до записи."
+        ),
         effects=(Effect.WRITE,),
-        scenarios=("Первичная настройка", "Смена credentials"),
-        keywords=("config", "env", "wizard"),
+        scenarios=("Первичная настройка", "Добавление репозитория", "Смена credentials"),
+        keywords=("config", "env", "repository", "wizard"),
     ),
     ("install",): CommandPresentation(
         summary="Подключить reviewer к AI-клиенту",

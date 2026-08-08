@@ -85,7 +85,7 @@ def test_init_yes_never_invokes_codex(monkeypatch, tmp_path):
         "reviewer.install_codex.run_codex_install",
         lambda options, **kwargs: (_ for _ in ()).throw(AssertionError("Codex invoked")),
     )
-    result = CliRunner().invoke(cli, ["init", "--yes"])
+    result = CliRunner().invoke(cli, ["init", "--scope", "global", "--yes"])
     assert result.exit_code == 0, result.output
 
 
@@ -97,15 +97,18 @@ def test_interactive_init_uses_the_canonical_codex_flow(monkeypatch, tmp_path):
             field.key: field.default for group in groups for field in group.fields
         },
     )
-    # board setup = no, reviewer check = no, Codex install = yes
-    answers = iter([False, False, True])
+    # board setup = no, write = yes, reviewer check = no, Codex install = yes
+    answers = iter([False, True, False, True])
     monkeypatch.setattr("click.confirm", lambda prompt, default=True: next(answers))
     monkeypatch.setattr("reviewer.entrypoints.cli._shutil.which", lambda name: "/opt/codex")
     monkeypatch.setattr(
         "reviewer.install_codex.run_codex_install",
         lambda options, **kwargs: captured.append(options) or fake_result(tmp_path, options),
     )
-    result = CliRunner().invoke(cli, ["init", "--path", str(tmp_path / ".env")])
+    result = CliRunner().invoke(
+        cli,
+        ["init", "--scope", "global", "--path", str(tmp_path / ".env")],
+    )
     assert result.exit_code == 0, result.output
     assert captured and captured[0].include_mcp is True
 
