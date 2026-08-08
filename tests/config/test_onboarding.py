@@ -1,4 +1,5 @@
 from dataclasses import FrozenInstanceError
+import os
 from pathlib import Path
 
 import pytest
@@ -457,41 +458,76 @@ def test_apply_inserts_before_document_terminator(monkeypatch, tmp_path):
     assert "# keep tail" in text
 
 
-def test_apply_rejects_symlink_destination_without_modifying_target(monkeypatch, tmp_path):
+def test_plan_rejects_symlink_destination_without_modifying_target(monkeypatch, tmp_path):
     path = tmp_path / "repos/o/r.yml"
     path.parent.mkdir(parents=True)
     target = tmp_path / "outside.yml"
     original = "max_comments: 5\n"
     target.write_text(original, encoding="utf-8")
     path.symlink_to(target)
-    plan = plan_repository_config(
-        _detection(tmp_path),
-        settings=_settings(monkeypatch),
-        config_root=tmp_path,
-    )
 
     with pytest.raises(HomeConfigError, match="symlink"):
-        apply_repository_config(plan)
+        plan_repository_config(
+            _detection(tmp_path),
+            settings=_settings(monkeypatch),
+            config_root=tmp_path,
+        )
 
     assert target.read_text(encoding="utf-8") == original
 
 
-def test_apply_rejects_symlink_parent_without_external_write(monkeypatch, tmp_path):
+def test_plan_rejects_directory_destination(monkeypatch, tmp_path):
+    path = tmp_path / "repos/o/r.yml"
+    path.mkdir(parents=True)
+
+    with pytest.raises(HomeConfigError, match="regular"):
+        plan_repository_config(
+            _detection(tmp_path),
+            settings=_settings(monkeypatch),
+            config_root=tmp_path,
+        )
+
+
+@pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="FIFO недоступен на платформе")
+def test_plan_rejects_fifo_without_reading(monkeypatch, tmp_path):
+    path = tmp_path / "repos/o/r.yml"
+    path.parent.mkdir(parents=True)
+    os.mkfifo(path)
+    original_read_text = Path.read_text
+
+    def reject_fifo_read(candidate, *args, **kwargs):
+        if candidate == path:
+            raise AssertionError("planner attempted to read FIFO")
+        return original_read_text(candidate, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", reject_fifo_read)
+
+    with pytest.raises(HomeConfigError, match="regular"):
+        plan_repository_config(
+            _detection(tmp_path),
+            settings=_settings(monkeypatch),
+            config_root=tmp_path,
+        )
+
+
+def test_plan_rejects_symlink_parent_without_external_read(monkeypatch, tmp_path):
     outside = tmp_path / "outside"
     outside.mkdir()
+    external = outside / "r.yml"
+    original = "max_comments: 5\n"
+    external.write_text(original, encoding="utf-8")
     repos = tmp_path / "repos"
     repos.mkdir()
     (repos / "o").symlink_to(outside, target_is_directory=True)
-    plan = plan_repository_config(
-        _detection(tmp_path),
-        settings=_settings(monkeypatch),
-        config_root=tmp_path,
-    )
 
     with pytest.raises(HomeConfigError, match="symlink"):
-        apply_repository_config(plan)
+        plan_repository_config(
+            _detection(tmp_path),
+            settings=_settings(monkeypatch),
+            config_root=tmp_path,
+        )
 
-    assert not (outside / "r.yml").exists()
+    assert external.read_text(encoding="utf-8") == original
 
 
 def test_plan_rejects_malformed_existing_yaml(monkeypatch, tmp_path):

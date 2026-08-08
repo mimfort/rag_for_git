@@ -1,16 +1,24 @@
 """Локальное обнаружение репозитория и чистый план домашнего repo-конфига."""
 from __future__ import annotations
 
+import os
+import stat
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
 from reviewer.config.branches import (
+    _read_locked_destination,
     publish_repository_block,
     render_repository_block,
     resolve_repo_branches,
 )
-from reviewer.config.layers import _read_mapping, home_repo_path, reviewer_config_root
+from reviewer.config.layers import (
+    HomeConfigError,
+    _read_mapping,
+    home_repo_path,
+    reviewer_config_root,
+)
 from reviewer.config.settings import Settings
 from reviewer.gitutil import remote_default_branch, remote_url, repo_root
 from reviewer.services.repo_id import derive_repo_from_remote, normalize_repo
@@ -66,6 +74,33 @@ def parse_branch_csv(raw: str, primary: str) -> tuple[str, ...]:
     return _validate_branches(index, primary)
 
 
+def _read_plan_destination(
+    path: Path,
+    root: Path,
+    repo: str,
+    source: str,
+) -> str | None:
+    """Без записи прочитать regular destination, не следуя symlink ниже root."""
+    current = root
+    for segment in ("repos", *repo.split("/")[:-1]):
+        current /= segment
+        try:
+            metadata = os.lstat(current)
+        except FileNotFoundError:
+            return None
+        except OSError as exc:
+            raise HomeConfigError(
+                f"{source}: destination не проверен: {type(exc).__name__}"
+            ) from None
+        if stat.S_ISLNK(metadata.st_mode):
+            raise HomeConfigError(f"{source}: symlink в destination запрещён")
+        if not stat.S_ISDIR(metadata.st_mode):
+            raise HomeConfigError(f"{source}: parent destination не является directory")
+
+    with _read_locked_destination(path, source, parent_fd=None) as existing:
+        return None if existing is None else existing.text
+
+
 def detect_repository(
     path: str,
     repo_override: str | None,
@@ -110,6 +145,7 @@ def plan_repository_config(
     root = config_root if config_root is not None else reviewer_config_root()
     path = home_repo_path(repo, root)
     source = f"home:repos/{repo}.yml"
+    existing_text = _read_plan_destination(path, root, repo, source)
     effective = resolve_repo_branches(repo, settings=settings, config_root=root)
 
     if effective.source == source:
@@ -124,9 +160,7 @@ def plan_repository_config(
             effective.index if selected_primary in effective.index else (selected_primary,)
         )
         _validate_branches(selected_index, selected_primary)
-        try:
-            existing_text = path.read_text(encoding="utf-8")
-        except FileNotFoundError:
+        if existing_text is None:
             action = "create"
         else:
             action = "noop" if "repository" in _read_mapping(
