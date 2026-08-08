@@ -684,6 +684,30 @@ cd web/frontend && npm install && npm run build && cd ../..
 reviewer serve
 ```
 
+В контейнерном сценарии внутренний listen-port отделён от опубликованного loopback-порта. Образ
+собирается один раз, оба порта выбираются при запуске (`database` замените на доступный из
+контейнера Postgres host):
+
+```bash
+docker build -f web/Dockerfile -t rag-reviewer-web .
+docker run --rm \
+  --env PG_DSN=postgresql://reviewer:reviewer@database:5432/reviewer \
+  --env REVIEWER_WEB_PORT=8080 \
+  --publish 127.0.0.1:18000:8080 \
+  rag-reviewer-web
+```
+
+Compose-сервис включается явно, поэтому обычный `docker compose up` по-прежнему запускает только
+инфраструктуру:
+
+```bash
+docker compose --profile web up -d web
+REVIEWER_WEB_PORT=8080 REVIEWER_WEB_PUBLISH_PORT=18000 \
+  docker compose --profile web up -d web
+```
+
+Без переопределений внутренний и опубликованный порты равны `8000`.
+
 Перед доступом не только с localhost задайте `WEB_ADMIN_USER` и `WEB_ADMIN_PASSWORD`. Ошибки store
 и API сообщаются явно; там, где это безопасно, процесс сохраняет fail-soft startup.
 

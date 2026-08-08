@@ -230,6 +230,23 @@ def test_security_discloses_both_external_code_data_paths():
         assert "AI model provider" in section
 
 
+def test_readmes_document_web_container_runtime_ports() -> None:
+    for filename, heading in (
+        ("README.md", "### Web admin"),
+        ("README.ru.md", "### Web admin"),
+    ):
+        section = _section(_read(filename), heading)
+        for marker in (
+            "docker build -f web/Dockerfile -t rag-reviewer-web .",
+            "docker run --rm",
+            "REVIEWER_WEB_PORT=8080",
+            "127.0.0.1:18000:8080",
+            "docker compose --profile web up -d web",
+            "REVIEWER_WEB_PUBLISH_PORT=18000",
+        ):
+            assert marker in section, (filename, marker)
+
+
 def test_readmes_document_configuration_ownership_and_scenarios():
     cases = (
         (

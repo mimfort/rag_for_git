@@ -696,6 +696,29 @@ cd web/frontend && npm install && npm run build && cd ../..
 reviewer serve
 ```
 
+The container keeps its internal listen port separate from the published loopback port. Build it
+once and choose both at runtime (replace `database` with a Postgres host reachable from the
+container):
+
+```bash
+docker build -f web/Dockerfile -t rag-reviewer-web .
+docker run --rm \
+  --env PG_DSN=postgresql://reviewer:reviewer@database:5432/reviewer \
+  --env REVIEWER_WEB_PORT=8080 \
+  --publish 127.0.0.1:18000:8080 \
+  rag-reviewer-web
+```
+
+The Compose service is opt-in, so ordinary `docker compose up` still starts infrastructure only:
+
+```bash
+docker compose --profile web up -d web
+REVIEWER_WEB_PORT=8080 REVIEWER_WEB_PUBLISH_PORT=18000 \
+  docker compose --profile web up -d web
+```
+
+Without overrides, both the internal and published ports default to `8000`.
+
 Set `WEB_ADMIN_USER` and `WEB_ADMIN_PASSWORD` before exposing it beyond localhost. Store and API
 errors are reported without preventing the process from starting where fail-soft behavior is safe.
 
