@@ -4,6 +4,8 @@ from pathlib import Path
 import pytest
 import yaml
 
+import reviewer.config.layers as layers
+from reviewer.config.layers import HomeConfigError
 from reviewer.config.onboarding import (
     RepositoryConfigPlan,
     RepositoryDetection,
@@ -210,6 +212,7 @@ def test_plan_preserves_compatible_effective_index(monkeypatch, tmp_path):
     assert plan.path == tmp_path / "repos/o/r.yml"
     assert plan.primary == "dev"
     assert plan.index == ("dev", "main")
+    assert plan.primary_source == "git:origin/HEAD"
     assert plan.action == "create"
     assert not plan.path.exists()
 
@@ -261,11 +264,25 @@ def test_plan_uses_authoritative_repo_file_without_rewriting(monkeypatch, tmp_pa
     assert plan.action == "noop"
     assert plan.primary == "trunk"
     assert plan.index == ("trunk", "release")
+    assert plan.primary_source == "home:repos/o/r.yml"
     assert yaml.safe_load(plan.preview)["repository"] == {
         "primary_branch": "trunk",
         "index_branches": ["trunk", "release"],
     }
     assert path.read_text(encoding="utf-8") == original
+
+
+def test_plan_marks_explicit_primary_as_cli(monkeypatch, tmp_path):
+    plan = plan_repository_config(
+        _detection(tmp_path),
+        settings=_settings(monkeypatch),
+        primary="release",
+        index=("release", "main"),
+        config_root=tmp_path,
+    )
+
+    assert plan.primary == "release"
+    assert plan.primary_source == "cli"
 
 
 def test_apply_creates_and_repeat_is_byte_for_byte_noop(monkeypatch, tmp_path):
@@ -296,6 +313,26 @@ def test_apply_creates_and_repeat_is_byte_for_byte_noop(monkeypatch, tmp_path):
     }
 
 
+def test_apply_accepts_create_race_that_requires_append(monkeypatch, tmp_path):
+    plan = plan_repository_config(
+        _detection(tmp_path),
+        settings=_settings(monkeypatch),
+        config_root=tmp_path,
+    )
+
+    def racing_link(*args, **kwargs):
+        plan.path.write_text("max_comments: 5\n", encoding="utf-8")
+        raise FileExistsError
+
+    monkeypatch.setattr(layers.os, "link", racing_link)
+
+    apply_repository_config(plan)
+
+    data = yaml.safe_load(plan.path.read_text(encoding="utf-8"))
+    assert data["max_comments"] == 5
+    assert data["repository"]["primary_branch"] == "dev"
+
+
 def test_apply_appends_without_losing_comments_and_quotes_ambiguous_names(
     monkeypatch,
     tmp_path,
@@ -322,6 +359,92 @@ def test_apply_appends_without_losing_comments_and_quotes_ambiguous_names(
         "primary_branch": "2.0",
         "index_branches": ["2.0", "on", "no", "feature{x}"],
     }
+
+
+@pytest.mark.parametrize(
+    "original",
+    [
+        "{}\n",
+        "{max_comments: 5} # keep flow comment\n",
+    ],
+)
+def test_apply_extends_flow_mapping_as_one_valid_document(monkeypatch, tmp_path, original):
+    path = tmp_path / "repos/o/r.yml"
+    path.parent.mkdir(parents=True)
+    path.write_text(original, encoding="utf-8")
+    plan = plan_repository_config(
+        _detection(tmp_path),
+        settings=_settings(monkeypatch),
+        config_root=tmp_path,
+    )
+
+    apply_repository_config(plan)
+    text = path.read_text(encoding="utf-8")
+    data = yaml.safe_load(text)
+
+    assert data["repository"]["primary_branch"] == "dev"
+    if "max_comments" in original:
+        assert data["max_comments"] == 5
+        assert "# keep flow comment" in text
+
+
+def test_apply_inserts_before_document_terminator(monkeypatch, tmp_path):
+    path = tmp_path / "repos/o/r.yml"
+    path.parent.mkdir(parents=True)
+    original = "# keep head\nmax_comments: 5\n...\n# keep tail\n"
+    path.write_text(original, encoding="utf-8")
+    plan = plan_repository_config(
+        _detection(tmp_path),
+        settings=_settings(monkeypatch),
+        config_root=tmp_path,
+    )
+
+    apply_repository_config(plan)
+    text = path.read_text(encoding="utf-8")
+    data = yaml.safe_load(text)
+
+    assert data["max_comments"] == 5
+    assert data["repository"]["primary_branch"] == "dev"
+    assert text.index("repository:") < text.index("...")
+    assert "# keep head" in text
+    assert "# keep tail" in text
+
+
+def test_apply_rejects_symlink_destination_without_modifying_target(monkeypatch, tmp_path):
+    path = tmp_path / "repos/o/r.yml"
+    path.parent.mkdir(parents=True)
+    target = tmp_path / "outside.yml"
+    original = "max_comments: 5\n"
+    target.write_text(original, encoding="utf-8")
+    path.symlink_to(target)
+    plan = plan_repository_config(
+        _detection(tmp_path),
+        settings=_settings(monkeypatch),
+        config_root=tmp_path,
+    )
+
+    with pytest.raises(HomeConfigError, match="symlink"):
+        apply_repository_config(plan)
+
+    assert target.read_text(encoding="utf-8") == original
+
+
+def test_apply_rejects_symlink_parent_without_external_write(monkeypatch, tmp_path):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    repos = tmp_path / "repos"
+    repos.mkdir()
+    (repos / "o").symlink_to(outside, target_is_directory=True)
+    plan = plan_repository_config(
+        _detection(tmp_path),
+        settings=_settings(monkeypatch),
+        config_root=tmp_path,
+    )
+
+    with pytest.raises(HomeConfigError, match="symlink"):
+        apply_repository_config(plan)
+
+    assert not (outside / "r.yml").exists()
 
 
 def test_plan_rejects_malformed_existing_yaml(monkeypatch, tmp_path):

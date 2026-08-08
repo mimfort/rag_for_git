@@ -7,19 +7,34 @@
 """
 from __future__ import annotations
 
+import os
+import secrets
 import stat
+import sys
+import tempfile
 from collections.abc import Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
 import yaml
+from yaml.tokens import (
+    BlockMappingStartToken,
+    DocumentEndToken,
+    FlowMappingEndToken,
+    FlowMappingStartToken,
+    FlowSequenceEndToken,
+    FlowSequenceStartToken,
+)
 
 from reviewer.config.layers import (
     HomeConfigError,
     HomeCredentialError,
     HomePolicyError,
     _credential_path,
+    _prepare_destination_parent,
+    _publish_new_config,
     _read_mapping,
     home_repo_path,
     reviewer_config_root,
@@ -31,6 +46,12 @@ if TYPE_CHECKING:
 
 BRANCHES_KEY = "repository"
 RepositoryBlockAction = Literal["create", "append", "noop"]
+_PUBLISH_ATTEMPTS = 3
+
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - Windows fallback relies on identity checks.
+    fcntl = None
 
 
 @dataclass(frozen=True)
@@ -161,34 +182,307 @@ def render_repository_block(
     return "# Отслеживаемые ветки репозитория (перенесено из REVIEW_BRANCHES).\n" + body
 
 
+@dataclass(frozen=True)
+class _LockedDestination:
+    text: str
+    data: dict[str, object]
+    identity: tuple[int, int]
+    mode: int
+
+
+def _destination_context(path: Path, source: str) -> tuple[Path, str]:
+    prefix = "home:repos/"
+    suffix = ".yml"
+    if not source.startswith(prefix) or not source.endswith(suffix):
+        raise HomeConfigError("repository destination: source имеет недопустимый формат")
+    try:
+        repo = normalize_repo(source[len(prefix) : -len(suffix)])
+        root = path.parents[len(repo.split("/"))]
+    except (IndexError, ValueError):
+        raise HomeConfigError("repository destination: путь имеет недопустимый формат") from None
+    if home_repo_path(repo, root) != path:
+        raise HomeConfigError("repository destination: путь не соответствует source")
+    return root, repo
+
+
+@contextmanager
+def _read_locked_destination(
+    path: Path,
+    source: str,
+    *,
+    parent_fd: int | None,
+):
+    """Прочитать и удерживать regular destination без следования symlink."""
+    try:
+        before = (
+            os.stat(path.name, dir_fd=parent_fd, follow_symlinks=False)
+            if parent_fd is not None
+            else os.lstat(path)
+        )
+    except FileNotFoundError:
+        yield None
+        return
+    except OSError as exc:
+        raise HomeConfigError(
+            f"{source}: конфиг не прочитан: {type(exc).__name__}"
+        ) from None
+    if stat.S_ISLNK(before.st_mode):
+        raise HomeConfigError(f"{source}: symlink запрещён")
+    if not stat.S_ISREG(before.st_mode):
+        raise HomeConfigError(f"{source}: destination должен быть regular file")
+
+    descriptor = -1
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = (
+            os.open(path.name, flags, dir_fd=parent_fd)
+            if parent_fd is not None
+            else os.open(path, flags)
+        )
+        if fcntl is not None:
+            fcntl.flock(descriptor, fcntl.LOCK_EX)
+        opened = os.fstat(descriptor)
+        fresh = (
+            os.stat(path.name, dir_fd=parent_fd, follow_symlinks=False)
+            if parent_fd is not None
+            else os.lstat(path)
+        )
+        identities = {
+            (before.st_dev, before.st_ino),
+            (opened.st_dev, opened.st_ino),
+            (fresh.st_dev, fresh.st_ino),
+        }
+        if (
+            not stat.S_ISREG(opened.st_mode)
+            or stat.S_ISLNK(fresh.st_mode)
+            or len(identities) != 1
+        ):
+            raise HomeConfigError(f"{source}: race при чтении destination")
+        with os.fdopen(os.dup(descriptor), encoding="utf-8") as handle:
+            text = handle.read()
+        after = (
+            os.stat(path.name, dir_fd=parent_fd, follow_symlinks=False)
+            if parent_fd is not None
+            else os.lstat(path)
+        )
+        if (after.st_dev, after.st_ino) != (opened.st_dev, opened.st_ino):
+            raise HomeConfigError(f"{source}: race при чтении destination")
+        yield _LockedDestination(
+            text=text,
+            data=_read_mapping(text, source),
+            identity=(opened.st_dev, opened.st_ino),
+            mode=stat.S_IMODE(opened.st_mode),
+        )
+    except HomeConfigError:
+        raise
+    except (OSError, UnicodeError) as exc:
+        raise HomeConfigError(
+            f"{source}: конфиг не прочитан: {type(exc).__name__}"
+        ) from None
+    finally:
+        if descriptor != -1:
+            try:
+                if fcntl is not None:
+                    fcntl.flock(descriptor, fcntl.LOCK_UN)
+                os.close(descriptor)
+            except OSError as exc:
+                if sys.exc_info()[0] is None:
+                    raise HomeConfigError(
+                        f"{source}: конфиг не закрыт: {type(exc).__name__}"
+                    ) from None
+
+
+def _flow_mapping_end(tokens: list[object]) -> int | None:
+    flow_depth = 0
+    root_flow = False
+    for token in tokens:
+        if isinstance(token, (FlowMappingStartToken, FlowSequenceStartToken)):
+            if flow_depth == 0:
+                if not isinstance(token, FlowMappingStartToken):
+                    return None
+                root_flow = True
+            flow_depth += 1
+        elif isinstance(token, (FlowMappingEndToken, FlowSequenceEndToken)):
+            flow_depth -= 1
+            if root_flow and flow_depth == 0:
+                return token.start_mark.index
+        elif flow_depth == 0 and isinstance(token, BlockMappingStartToken):
+            return None
+    return None
+
+
+def _append_repository_candidate(
+    existing: _LockedDestination,
+    block: str,
+    source: str,
+) -> str:
+    block_data = _read_mapping(block, source)
+    if BRANCHES_KEY not in block_data:
+        raise HomeConfigError(f"{source}: repository block отсутствует")
+    repository = block_data[BRANCHES_KEY]
+    tokens = list(yaml.scan(existing.text))
+    flow_end = _flow_mapping_end(tokens)
+    if flow_end is not None:
+        flow = yaml.safe_dump(
+            {BRANCHES_KEY: repository},
+            allow_unicode=True,
+            default_flow_style=True,
+            sort_keys=False,
+            width=10**9,
+        ).strip()
+        separator = ", " if existing.data else ""
+        candidate = existing.text[:flow_end] + separator + flow[1:-1] + existing.text[flow_end:]
+    else:
+        document_end = next(
+            (
+                token.start_mark.index
+                for token in tokens
+                if isinstance(token, DocumentEndToken)
+            ),
+            None,
+        )
+        insertion = len(existing.text) if document_end is None else document_end
+        prefix = existing.text[:insertion]
+        suffix = existing.text[insertion:]
+        if not prefix:
+            separator = ""
+        elif prefix.endswith("\n"):
+            separator = "\n" if document_end is None else ""
+        else:
+            separator = "\n\n" if document_end is None else "\n"
+        candidate = prefix + separator + block + suffix
+
+    parsed = _read_mapping(candidate, source)
+    if BRANCHES_KEY not in parsed:
+        raise HomeConfigError(f"{source}: repository block не опубликован")
+    return candidate
+
+
+def _replace_destination(
+    path: Path,
+    content: str,
+    source: str,
+    existing: _LockedDestination,
+    *,
+    parent_fd: int | None,
+) -> None:
+    temp_name: str | None = None
+    temp_path: Path | None = None
+    descriptor = -1
+    try:
+        if parent_fd is not None:
+            temp_name = f".reviewer-repository-{secrets.token_hex(12)}"
+            descriptor = os.open(
+                temp_name,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+                existing.mode,
+                dir_fd=parent_fd,
+            )
+            with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+                descriptor = -1
+                handle.write(content)
+                handle.flush()
+                os.fsync(handle.fileno())
+            fresh = os.stat(path.name, dir_fd=parent_fd, follow_symlinks=False)
+            if (fresh.st_dev, fresh.st_ino) != existing.identity:
+                raise HomeConfigError(f"{source}: race при публикации destination")
+            os.replace(
+                temp_name,
+                path.name,
+                src_dir_fd=parent_fd,
+                dst_dir_fd=parent_fd,
+            )
+            temp_name = None
+            return
+
+        with tempfile.NamedTemporaryFile(
+            "w",
+            encoding="utf-8",
+            dir=path.parent,
+            delete=False,
+        ) as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+            temp_path = Path(handle.name)
+        temp_path.chmod(existing.mode)
+        fresh = os.lstat(path)
+        if (fresh.st_dev, fresh.st_ino) != existing.identity:
+            raise HomeConfigError(f"{source}: race при публикации destination")
+        os.replace(temp_path, path)
+        temp_path = None
+    except HomeConfigError:
+        raise
+    except OSError as exc:
+        raise HomeConfigError(
+            f"{source}: публикация не выполнена: {type(exc).__name__}"
+        ) from None
+    finally:
+        if descriptor != -1:
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+        if temp_name is not None and parent_fd is not None:
+            try:
+                os.unlink(temp_name, dir_fd=parent_fd)
+            except FileNotFoundError:
+                pass
+            except OSError as exc:
+                if sys.exc_info()[0] is None:
+                    raise HomeConfigError(
+                        f"{source}: очистка temporary file: {type(exc).__name__}"
+                    ) from None
+        if temp_path is not None:
+            try:
+                temp_path.unlink()
+            except FileNotFoundError:
+                pass
+            except OSError as exc:
+                if sys.exc_info()[0] is None:
+                    raise HomeConfigError(
+                        f"{source}: очистка temporary file: {type(exc).__name__}"
+                    ) from None
+
+
 def publish_repository_block(
     path: Path,
     source: str,
     block: str,
 ) -> RepositoryBlockAction:
     """Создать или дописать repository-блок, не меняя существующий блок."""
-    try:
-        existing_text = path.read_text(encoding="utf-8")
-    except FileNotFoundError:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            with open(path, "x", encoding="utf-8") as handle:
-                handle.write(block)
-        except FileExistsError:
-            # Параллельный процесс уже создал файл: не рискуем менять его вслепую.
-            return "noop"
-        return "create"
-
-    if BRANCHES_KEY in _read_mapping(existing_text, source):
-        return "noop"
-
-    if not existing_text:
-        updated = block
-    else:
-        separator = "\n" if existing_text.endswith("\n") else "\n\n"
-        updated = existing_text + separator + block
-    path.write_text(updated, encoding="utf-8")
-    return "append"
+    root, repo = _destination_context(path, source)
+    block_data = _read_mapping(block, source)
+    if BRANCHES_KEY not in block_data:
+        raise HomeConfigError(f"{source}: repository block отсутствует")
+    with _prepare_destination_parent(root, repo, source) as parent:
+        for _attempt in range(_PUBLISH_ATTEMPTS):
+            with _read_locked_destination(
+                path,
+                source,
+                parent_fd=parent.descriptor,
+            ) as existing:
+                if existing is None:
+                    if _publish_new_config(
+                        path,
+                        block,
+                        source,
+                        parent_fd=parent.descriptor,
+                    ):
+                        return "create"
+                    continue
+                if BRANCHES_KEY in existing.data:
+                    return "noop"
+                candidate = _append_repository_candidate(existing, block, source)
+                _replace_destination(
+                    path,
+                    candidate,
+                    source,
+                    existing,
+                    parent_fd=parent.descriptor,
+                )
+                return "append"
+    raise HomeConfigError(f"{source}: race при публикации destination")
 
 
 def migrate_repo_branches(

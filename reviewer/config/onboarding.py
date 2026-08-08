@@ -115,9 +115,11 @@ def plan_repository_config(
     if effective.source == source:
         selected_primary = effective.primary
         selected_index = effective.index
+        selected_primary_source = effective.source
         action: PlanAction = "noop"
     else:
         selected_primary = primary if primary is not None else detection.primary
+        selected_primary_source = "cli" if primary is not None else detection.primary_source
         selected_index = index if index is not None else (
             effective.index if selected_primary in effective.index else (selected_primary,)
         )
@@ -139,7 +141,7 @@ def plan_repository_config(
         primary=selected_primary,
         index=selected_index,
         repo_source=detection.repo_source,
-        primary_source=detection.primary_source,
+        primary_source=selected_primary_source,
         action=action,
         preview=preview,
     )
@@ -149,10 +151,8 @@ def apply_repository_config(plan: RepositoryConfigPlan) -> None:
     """Применить рассчитанный план; конкурентная запись может дать безопасный noop."""
     if plan.action == "noop":
         return
-    action = publish_repository_block(
+    publish_repository_block(
         plan.path,
         f"home:repos/{plan.repo}.yml",
         plan.preview,
     )
-    if action not in {plan.action, "noop"}:
-        raise RuntimeError(f"ожидалось действие {plan.action}, выполнено {action}")

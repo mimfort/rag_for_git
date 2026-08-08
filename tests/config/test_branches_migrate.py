@@ -1,7 +1,6 @@
-import builtins
-
 import yaml
 
+import reviewer.config.layers as layers
 from reviewer.config.branches import (
     migrate_repo_branches,
     publish_repository_block,
@@ -107,20 +106,19 @@ def test_env_file_is_not_touched(tmp_path, monkeypatch):
     assert env.read_text(encoding="utf-8") == "REVIEW_BRANCHES=dev,main\n"
 
 
-def test_shared_publisher_create_race_degrades_to_noop(tmp_path, monkeypatch):
+def test_shared_publisher_create_race_reloads_and_appends(tmp_path, monkeypatch):
     path = tmp_path / "repos/o/r.yml"
     block = render_repository_block("main", ("main",))
-    real_open = builtins.open
 
-    def racing_open(file, mode="r", *args, **kwargs):
-        if file == path and mode == "x":
-            path.write_text("# created by another process\n", encoding="utf-8")
-            raise FileExistsError
-        return real_open(file, mode, *args, **kwargs)
+    def racing_link(*args, **kwargs):
+        path.write_text("# created by another process\nmax_comments: 5\n", encoding="utf-8")
+        raise FileExistsError
 
-    monkeypatch.setattr(builtins, "open", racing_open)
+    monkeypatch.setattr(layers.os, "link", racing_link)
 
     action = publish_repository_block(path, "home:repos/o/r.yml", block)
+    text = path.read_text(encoding="utf-8")
 
-    assert action == "noop"
-    assert path.read_text(encoding="utf-8") == "# created by another process\n"
+    assert action == "append"
+    assert "# created by another process" in text
+    assert yaml.safe_load(text)["repository"]["primary_branch"] == "main"
