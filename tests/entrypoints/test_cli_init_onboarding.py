@@ -62,7 +62,7 @@ def _forbid_noninteractive_side_effects(monkeypatch) -> None:
 def test_init_scope_global_never_detects_or_reads_repo(monkeypatch, tmp_path):
     env, config_root = _isolate(monkeypatch, tmp_path)
     monkeypatch.setattr(
-        "reviewer.config.onboarding.detect_repository",
+        "reviewer.entrypoints.cli.detect_repository",
         lambda *_args, **_kwargs: pytest.fail("repo detection called"),
     )
     monkeypatch.setattr(
@@ -87,7 +87,7 @@ def test_init_scope_repo_does_not_read_or_rewrite_global_env(monkeypatch, tmp_pa
         lambda _path: pytest.fail("global env read"),
     )
     monkeypatch.setattr(
-        "reviewer.config.onboarding.detect_repository",
+        "reviewer.entrypoints.cli.detect_repository",
         lambda *_args, **_kwargs: _detection(tmp_path),
     )
     real_settings = cli_module.Settings
@@ -122,7 +122,7 @@ def test_init_scope_repo_keeps_second_repository_isolated(monkeypatch, tmp_path)
             repo_source="cli",
         )
 
-    monkeypatch.setattr("reviewer.config.onboarding.detect_repository", detect)
+    monkeypatch.setattr("reviewer.entrypoints.cli.detect_repository", detect)
     runner = CliRunner()
 
     first = runner.invoke(
@@ -146,7 +146,7 @@ def test_init_scope_repo_keeps_second_repository_isolated(monkeypatch, tmp_path)
 def test_init_default_all_previews_global_and_repo_targets(monkeypatch, tmp_path):
     env, config_root = _isolate(monkeypatch, tmp_path)
     monkeypatch.setattr(
-        "reviewer.config.onboarding.detect_repository",
+        "reviewer.entrypoints.cli.detect_repository",
         lambda path, *_args, **_kwargs: _detection(tmp_path)
         if path == "."
         else pytest.fail("--path leaked into repo stage"),
@@ -171,11 +171,11 @@ def test_init_dry_run_previews_both_targets_without_prompt_write_or_network(
 ):
     env, config_root = _isolate(monkeypatch, tmp_path)
     monkeypatch.setattr(
-        "reviewer.config.onboarding.detect_repository",
+        "reviewer.entrypoints.cli.detect_repository",
         lambda *_args, **_kwargs: _detection(tmp_path),
     )
     monkeypatch.setattr(
-        "reviewer.config.onboarding.apply_repository_config",
+        "reviewer.entrypoints.cli.apply_repository_config",
         lambda _plan: pytest.fail("repo write called"),
     )
     _forbid_noninteractive_side_effects(monkeypatch)
@@ -197,7 +197,7 @@ def test_init_yes_writes_after_preview_without_prompt_provider_check_or_network(
 ):
     env, config_root = _isolate(monkeypatch, tmp_path)
     monkeypatch.setattr(
-        "reviewer.config.onboarding.detect_repository",
+        "reviewer.entrypoints.cli.detect_repository",
         lambda *_args, **_kwargs: _detection(tmp_path),
     )
     _forbid_noninteractive_side_effects(monkeypatch)
@@ -247,7 +247,7 @@ def test_init_interactive_retries_owner_name_for_unrecognized_remote(monkeypatch
         return _detection(tmp_path, repo_override, repo_source="cli")
 
     answers = iter(["o/r", "dev", "dev"])
-    monkeypatch.setattr("reviewer.config.onboarding.detect_repository", detect)
+    monkeypatch.setattr("reviewer.entrypoints.cli.detect_repository", detect)
     monkeypatch.setattr(click, "prompt", lambda *_args, **_kwargs: next(answers))
     monkeypatch.setattr(click, "confirm", lambda *_args, **_kwargs: True)
 
@@ -264,7 +264,7 @@ def test_init_interactive_can_correct_detected_branches(monkeypatch, tmp_path):
     answers = iter(["release", "release,main"])
     confirms: list[str] = []
     monkeypatch.setattr(
-        "reviewer.config.onboarding.detect_repository",
+        "reviewer.entrypoints.cli.detect_repository",
         lambda *_args, **_kwargs: _detection(tmp_path),
     )
     monkeypatch.setattr(click, "prompt", lambda *_args, **_kwargs: next(answers))
@@ -290,7 +290,7 @@ def test_init_interactive_retries_invalid_branch_csv(monkeypatch, tmp_path):
     _env, config_root = _isolate(monkeypatch, tmp_path)
     answers = iter(["dev", "dev,dev", "main", "dev,main"])
     monkeypatch.setattr(
-        "reviewer.config.onboarding.detect_repository",
+        "reviewer.entrypoints.cli.detect_repository",
         lambda *_args, **_kwargs: _detection(tmp_path),
     )
     monkeypatch.setattr(click, "prompt", lambda *_args, **_kwargs: next(answers))
@@ -311,7 +311,7 @@ def test_init_existing_repo_block_is_noop_and_skips_branch_prompts(monkeypatch, 
     original = "repository:\n  primary_branch: trunk\n  index_branches: [trunk, main]\n"
     path.write_text(original, encoding="utf-8")
     monkeypatch.setattr(
-        "reviewer.config.onboarding.detect_repository",
+        "reviewer.entrypoints.cli.detect_repository",
         lambda *_args, **_kwargs: _detection(tmp_path),
     )
     monkeypatch.setattr(click, "prompt", lambda *_args, **_kwargs: pytest.fail("branch prompt"))
@@ -338,7 +338,7 @@ def test_init_final_rejection_or_abort_happens_before_first_write(
 ):
     env, config_root = _isolate(monkeypatch, tmp_path)
     monkeypatch.setattr(
-        "reviewer.config.onboarding.detect_repository",
+        "reviewer.entrypoints.cli.detect_repository",
         lambda *_args, **_kwargs: _detection(tmp_path),
     )
     monkeypatch.setattr(
@@ -351,7 +351,7 @@ def test_init_final_rejection_or_abort_happens_before_first_write(
     )
     monkeypatch.setattr(click, "prompt", lambda _text, default, **_kwargs: default)
     monkeypatch.setattr(
-        "reviewer.config.onboarding.apply_repository_config",
+        "reviewer.entrypoints.cli.apply_repository_config",
         lambda _plan: pytest.fail("repo write called"),
     )
     confirmations = iter([False, "final"])
@@ -386,7 +386,7 @@ def test_init_missing_detection_all_skips_but_repo_fails_with_guidance(
 ):
     env, config_root = _isolate(monkeypatch, tmp_path)
     monkeypatch.setattr(
-        "reviewer.config.onboarding.detect_repository",
+        "reviewer.entrypoints.cli.detect_repository",
         lambda *_args, **_kwargs: None,
     )
 
@@ -416,7 +416,7 @@ def test_init_invalid_repo_fails_before_prompt_preview_or_write(monkeypatch, tmp
 def test_init_repo_prints_effective_branch_source_and_exact_follow_up(monkeypatch, tmp_path):
     _env, _config_root = _isolate(monkeypatch, tmp_path)
     monkeypatch.setattr(
-        "reviewer.config.onboarding.detect_repository",
+        "reviewer.entrypoints.cli.detect_repository",
         lambda *_args, **_kwargs: _detection(tmp_path),
     )
     monkeypatch.setattr(
@@ -436,11 +436,11 @@ def test_init_repo_prints_effective_branch_source_and_exact_follow_up(monkeypatc
 def test_init_repo_write_failure_is_explicit_and_nonzero(monkeypatch, tmp_path):
     _env, _config_root = _isolate(monkeypatch, tmp_path)
     monkeypatch.setattr(
-        "reviewer.config.onboarding.detect_repository",
+        "reviewer.entrypoints.cli.detect_repository",
         lambda *_args, **_kwargs: _detection(tmp_path),
     )
     monkeypatch.setattr(
-        "reviewer.config.onboarding.apply_repository_config",
+        "reviewer.entrypoints.cli.apply_repository_config",
         lambda _plan: (_ for _ in ()).throw(OSError("secret detail")),
     )
 

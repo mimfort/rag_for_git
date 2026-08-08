@@ -18,13 +18,19 @@ import yaml
 
 from reviewer.config.settings import Settings
 from reviewer.app import build_components
-from reviewer.config import onboarding as repo_onboarding
 from reviewer.config.branches import migrate_repo_branches, resolve_repo_branches
 from reviewer.config.layers import (
     HomeConfigError,
     build_config_report,
     migrate_repo_config,
     resolve_policy_data,
+)
+from reviewer.config.onboarding import (
+    RepositoryConfigPlan,
+    apply_repository_config,
+    detect_repository,
+    parse_branch_csv,
+    plan_repository_config,
 )
 from reviewer.gitutil import file_at_ref, list_python_files, repo_root, rev_parse, remote_url
 from reviewer.graph.backend import build_code_graph
@@ -1100,7 +1106,7 @@ class _GlobalInitPlan:
 
 def _render_init_preview(
     global_plan: _GlobalInitPlan | None,
-    repo_plan: repo_onboarding.RepositoryConfigPlan | None,
+    repo_plan: RepositoryConfigPlan | None,
 ) -> None:
     """Показать все target-планы до первой записи, не раскрывая env secrets."""
     click.echo("# reviewer init preview")
@@ -1155,7 +1161,7 @@ def init(
         except ValueError as exc:
             raise click.ClickException(str(exc)) from exc
     global_plan: _GlobalInitPlan | None = None
-    repo_plan: repo_onboarding.RepositoryConfigPlan | None = None
+    repo_plan: RepositoryConfigPlan | None = None
     settings: Settings | None = None
     try:
         if run_global:
@@ -1240,7 +1246,7 @@ def init(
 
         if run_repo:
             settings = Settings(_env_file=None) if scope == "repo" else Settings()
-            detection = repo_onboarding.detect_repository(
+            detection = detect_repository(
                 ".",
                 repo_opt,
                 settings=settings,
@@ -1257,7 +1263,7 @@ def init(
                     show_default=False,
                 ).strip()
                 if entered_repo:
-                    detection = repo_onboarding.detect_repository(
+                    detection = detect_repository(
                         ".",
                         entered_repo,
                         settings=settings,
@@ -1272,7 +1278,7 @@ def init(
                     raise click.ClickException(message)
                 click.echo(f"repo stage пропущен: {message}")
             else:
-                initial_plan = repo_onboarding.plan_repository_config(
+                initial_plan = plan_repository_config(
                     detection,
                     settings=settings,
                 )
@@ -1301,12 +1307,12 @@ def init(
                             default=",".join(default_index),
                         )
                         try:
-                            index = repo_onboarding.parse_branch_csv(raw_index, primary)
+                            index = parse_branch_csv(raw_index, primary)
                         except ValueError as exc:
                             click.echo(f"Некорректные ветки: {exc}")
                             continue
                         break
-                    repo_plan = repo_onboarding.plan_repository_config(
+                    repo_plan = plan_repository_config(
                         detection,
                         settings=settings,
                         primary=(primary if primary != initial_plan.primary else None),
@@ -1346,7 +1352,7 @@ def init(
 
     if repo_plan is not None:
         try:
-            repo_onboarding.apply_repository_config(repo_plan)
+            apply_repository_config(repo_plan)
         except Exception as exc:  # noqa: BLE001 — не эхоить потенциальный payload исключения
             raise click.ClickException(
                 f"Не удалось записать {repo_plan.path}: {type(exc).__name__}"
