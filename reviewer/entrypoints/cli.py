@@ -49,6 +49,7 @@ from reviewer.services.review_service import ReviewService
 from reviewer.services.status import build_status_report, render_status, render_status_json
 from reviewer.tasks.boards.errors import sanitize_provider_text
 from reviewer.versioning import InstallMode, check_latest, detect_installation, upgrade_uv_tool
+from reviewer.web.serve import DEFAULT_HOST, DEFAULT_PORT
 
 if TYPE_CHECKING:
     from reviewer.install_claude import ClaudeInstallResult
@@ -992,17 +993,13 @@ def gc() -> None:
 
 
 @cli.command()
-@click.option("--host", default="127.0.0.1", show_default=True, help="Хост для uvicorn")
-@click.option("--port", default=8000, show_default=True, type=int, help="Порт для uvicorn")
+@click.option("--host", default=DEFAULT_HOST, show_default=True, help="Хост для uvicorn")
+@click.option("--port", default=DEFAULT_PORT, show_default=True, type=int, help="Порт для uvicorn")
 def serve(host: str, port: int) -> None:
     """Запустить веб-админку наблюдаемости (FastAPI + uvicorn)."""
-    import uvicorn
-    from reviewer.web.app import create_app
+    from reviewer.web.serve import run_server
 
-    s = Settings()
-    app = create_app(s)
-    click.echo(f"Запуск веб-сервера на http://{host}:{port} ...")
-    uvicorn.run(app, host=host, port=port)
+    run_server(host, port)
 
 
 @cli.command()

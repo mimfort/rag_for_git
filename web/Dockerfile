@@ -17,12 +17,12 @@ FROM python:3.12-slim AS backend
 WORKDIR /app
 # Только рантайм-зависимости веб-слоя (не весь reviewer)
 RUN pip install --no-cache-dir \
-    "fastapi>=0.115" "uvicorn[standard]>=0.30" "psycopg[binary]>=3.2" "pydantic-settings>=2.3"
+    "fastapi>=0.115" "uvicorn[standard]>=0.30" "psycopg[binary]>=3.2" \
+    "psycopg-pool>=3.2" "pydantic-settings>=2.3"
 # Исходники reviewer (импортируются только reviewer.config + reviewer.web; остальное лежит без импорта)
 COPY reviewer/ ./reviewer/
 # Собранный фронт из stage 1 — путь совпадает с _FRONTEND_DIST в reviewer/web/app.py
 COPY --from=frontend /app/web/frontend/dist ./web/frontend/dist
 ENV PYTHONPATH=/app
-EXPOSE 8000
-# create_app(Settings()) читает PG_DSN из окружения (задаётся в docker-compose)
-CMD ["python", "-c", "import uvicorn; from reviewer.config.settings import Settings; from reviewer.web.app import create_app; uvicorn.run(create_app(Settings()), host='0.0.0.0', port=8000)"]
+# create_app(Settings()) читает PG_DSN, host и port приходят только из runtime.
+CMD ["python", "-m", "reviewer.web.serve"]
