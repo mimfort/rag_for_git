@@ -48,6 +48,12 @@ from reviewer.services.gc import purge_orphaned_overlays
 from reviewer.services.review_service import ReviewService
 from reviewer.services.status import build_status_report, render_status, render_status_json
 from reviewer.tasks.boards.errors import sanitize_provider_text
+from reviewer.update_lifecycle import (
+    download_compose,
+    find_uv_tool_python,
+    run_fresh_artifact_refresh,
+    sync_compose_file,
+)
 from reviewer.versioning import InstallMode, check_latest, detect_installation, upgrade_uv_tool
 from reviewer.web.serve import DEFAULT_HOST, DEFAULT_PORT
 
@@ -1034,6 +1040,8 @@ def install(client: str | None, all_clients: bool, list_clients: bool,
         targets = [c for c in inst.detect_installed() if c.key != "claude-code"]
         if _shutil.which("claude"):
             targets.insert(0, inst.CLIENTS["claude-code"])
+        if _shutil.which("codex") and not any(target.key == "codex" for target in targets):
+            targets.append(inst.CLIENTS["codex"])
         if not targets:
             raise click.ClickException(
                 "Не обнаружено установленных клиентов. Укажите явно: reviewer install <client> "
@@ -1483,31 +1491,125 @@ def init(
         _print_codex_result(result)
 
 
+def _has_detected_clients() -> bool:
+    from reviewer import install as inst
+
+    return bool(inst.detect_installed()) or any(
+        _shutil.which(executable) is not None for executable in ("claude", "codex")
+    )
+
+
+def _install_detected_clients(ctx: click.Context) -> None:
+    ctx.invoke(
+        install,
+        client=None,
+        all_clients=True,
+        list_clients=False,
+        path_opt=None,
+        pin=None,
+        no_latest=False,
+        no_skills=False,
+        dry_run=False,
+    )
+
+
+def _refresh_update_artifacts(ctx: click.Context) -> None:
+    errors: list[str] = []
+    try:
+        compose = sync_compose_file(download_compose())
+        statuses = {
+            "created": "создан",
+            "adopted": "принят под управление",
+            "current": "актуален",
+            "updated": "обновлён",
+        }
+        if compose.action == "preserved":
+            click.echo(
+                "⚠ Compose не перезаписан: обнаружены пользовательские изменения в "
+                f"{compose.path}"
+            )
+        else:
+            click.echo(f"✓ Compose {statuses[compose.action]}: {compose.path}")
+    except Exception as exc:  # noqa: BLE001 - independent phases must continue
+        errors.append(f"Compose: {type(exc).__name__}")
+    if _has_detected_clients():
+        try:
+            _install_detected_clients(ctx)
+        except click.ClickException as exc:
+            errors.append(
+                f"Integrations: {type(exc).__name__} "
+                "(подробности: reviewer install --all)"
+            )
+        except Exception as exc:  # noqa: BLE001 - do not expose profile paths or config content
+            errors.append(f"Integrations: {type(exc).__name__}")
+    else:
+        click.echo("AI-клиенты не обнаружены; integration refresh пропущен.")
+    if errors:
+        raise click.ClickException("Обновление завершено частично: " + "; ".join(errors))
+    click.echo(
+        "Обновление завершено. Откройте New Chat/new CLI session; "
+        "в IDE — Reload Window."
+    )
+
+
 @cli.command()
-def update() -> None:
-    """Проверить наличие новой версии rag-reviewer на PyPI."""
+@click.option(
+    "--upgrade-tool",
+    is_flag=True,
+    help="обновить существующую persistent uv tool installation из latest uvx",
+)
+@click.option("--refresh-artifacts", is_flag=True, hidden=True)
+@click.pass_context
+def update(ctx: click.Context, upgrade_tool: bool, refresh_artifacts: bool) -> None:
+    """Обновить package, AI-client integrations, скилы и Compose-файл."""
+    if refresh_artifacts:
+        _refresh_update_artifacts(ctx)
+        return
     installation = detect_installation()
     if installation.mode is InstallMode.EDITABLE:
         click.echo(f"Режим: dev (editable) | Версия: {installation.current}")
         click.echo("Для обновления: git pull && pip install -e .")
+        _refresh_update_artifacts(ctx)
         return
 
     mode = "uv tool (постоянная)" if installation.mode is InstallMode.UV_TOOL else "uvx (временная)"
     click.echo(f"Режим: {mode} | Версия: {installation.current}")
+    if upgrade_tool and installation.mode is InstallMode.UVX:
+        result = upgrade_uv_tool(installation)
+        if result.returncode != 0:
+            raise click.ClickException(f"Ошибка uv tool upgrade: {result.stderr}")
+        click.echo("✓ Persistent uv tool installation обновлена.")
+        tool_python = find_uv_tool_python(installation.uv_executable)
+        if tool_python is None:
+            raise click.ClickException(
+                "Persistent tool обновлён, но его Python executable не найден"
+            )
+        fresh = run_fresh_artifact_refresh(python_executable=tool_python)
+        if fresh.stdout:
+            click.echo(fresh.stdout, nl=not fresh.stdout.endswith("\n"))
+        if fresh.returncode != 0:
+            detail = fresh.stderr.strip() or "неизвестная ошибка"
+            raise click.ClickException(
+                f"Persistent tool обновлён, artifact refresh завершился ошибкой: {detail}"
+            )
+        return
 
     version_check = check_latest(installation)
     if version_check.latest is None:
         click.echo("Не удалось получить информацию с PyPI. Проверьте сеть.")
+        _refresh_update_artifacts(ctx)
         return
 
     if not version_check.current_valid:
         click.echo("Не удалось определить корректную текущую версию. Обновление не запущено.")
+        _refresh_update_artifacts(ctx)
         return
 
     if not version_check.update_available and installation.current != "?":
         click.echo(f"Версия актуальна: {installation.current}.")
         if installation.mode is not InstallMode.UV_TOOL:
             click.echo("MCP-сервер обновляется автоматически — в конфиге клиента прописан @latest.")
+        _refresh_update_artifacts(ctx)
         return
 
     click.echo(f"Доступна новая версия: {installation.current} → {version_check.latest}")
@@ -1518,9 +1620,17 @@ def update() -> None:
             return
         result = upgrade_uv_tool(installation)
         if result.returncode == 0:
-            click.echo("Обновлено. Перезапустите MCP-сервер.")
+            click.echo("✓ Python package обновлён.")
+            fresh = run_fresh_artifact_refresh()
+            if fresh.stdout:
+                click.echo(fresh.stdout, nl=not fresh.stdout.endswith("\n"))
+            if fresh.returncode != 0:
+                detail = fresh.stderr.strip() or "неизвестная ошибка"
+                raise click.ClickException(
+                    f"Пакет обновлён, artifact refresh завершился ошибкой: {detail}"
+                )
         else:
-            click.echo(f"Ошибка uv tool upgrade: {result.stderr}")
+            raise click.ClickException(f"Ошибка uv tool upgrade: {result.stderr}")
     else:
         # uvx: MCP-сервер обновится сам при следующем запуске (конфиг содержит @latest).
         # Для CLI-команд достаточно использовать @latest явно.
@@ -1528,6 +1638,7 @@ def update() -> None:
             "MCP-сервер подхватит обновление автоматически при следующем запуске (@latest в конфиге).\n"
             "Для CLI: uvx --from rag-reviewer@latest reviewer <команда>"
         )
+        _refresh_update_artifacts(ctx)
 
 
 @cli.command("install-skills")

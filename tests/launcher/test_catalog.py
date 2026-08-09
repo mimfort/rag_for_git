@@ -149,9 +149,10 @@ def test_current_commands_have_rich_metadata_without_orphans():
     assert set(COMMAND_PRESENTATION) == paths
 
 
-def test_update_metadata_discloses_conditional_persistent_write():
+def test_update_metadata_discloses_complete_mutating_lifecycle():
     update = next(item for item in build_catalog(cli) if item.path == ("update",))
 
     assert update.effects == (Effect.READ, Effect.NETWORK, Effect.WRITE)
-    assert "постоянную uv tool-установку" in update.details
-    assert "только после отдельного подтверждения" in update.details
+    assert "AI-client integrations" in update.details
+    assert "Compose" in update.details
+    assert "не перезаписывает пользовательские изменения" in update.details

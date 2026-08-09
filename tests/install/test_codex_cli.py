@@ -2,6 +2,7 @@ from pathlib import Path
 
 from click.testing import CliRunner
 
+import reviewer.entrypoints.cli as cli_module
 from reviewer import install as generic_install
 from reviewer.entrypoints.cli import cli
 from reviewer.install_codex import (
@@ -129,3 +130,31 @@ def test_install_all_reports_codex_failure_after_other_targets(monkeypatch, tmp_
     assert result.exit_code != 0
     assert "plugin failed" in result.output
     assert (home / ".cursor/mcp.json").is_file()
+
+
+def test_install_all_detects_codex_from_executable_without_config_dir(monkeypatch, tmp_path):
+    captured = []
+    monkeypatch.setattr(generic_install, "_home", lambda: tmp_path / "home")
+    monkeypatch.setattr(generic_install, "detect_installed", lambda: [])
+
+    def which(name):
+        if name == "codex":
+            return "/opt/codex"
+        if name == "uvx":
+            return "/opt/uvx"
+        return None
+
+    monkeypatch.setattr(cli_module._shutil, "which", which)
+    monkeypatch.setattr(
+        cli_module,
+        "_run_codex_target",
+        lambda **kwargs: captured.append(kwargs) or object(),
+    )
+    monkeypatch.setattr(cli_module, "_print_codex_result", lambda result: None)
+
+    result = CliRunner().invoke(cli, ["install", "--all"])
+
+    assert result.exit_code == 0, result.output
+    assert captured == [
+        {"include_mcp": True, "dry_run": False, "version": "latest", "path_opt": None}
+    ]

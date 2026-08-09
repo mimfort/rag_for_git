@@ -227,12 +227,12 @@ class _TrackingOutput(PlainTextOutput):
         if (
             "reviewer update" in rendered
             and "Эффект после подтверждения: запись" in rendered
-            and "будет изменена постоянная uv tool-установка rag-reviewer" in rendered
+            and "Будут обновлены package, integrations, скилы и управляемый Compose" in rendered
         ):
             self.update_confirmation_rendered.set()
         if (
             "Не удалось получить информацию с PyPI. Проверьте сеть." in rendered
-            and "Повторить проверку: Esc — назад, затем Enter" in rendered
+            and "Команда после подтверждения: reviewer update" in rendered
         ):
             self.update_failure_rendered.set()
         if (
@@ -813,6 +813,21 @@ def test_update_details_explicitly_keep_startup_and_check_read_only():
     assert calls == []
 
 
+def test_update_special_action_ignores_f2_without_detached_focus_crash():
+    with create_pipe_input() as pipe:
+        stop = threading.Timer(0.2, lambda: pipe.send_bytes(b"\x03"))
+        stop.start()
+        pipe.send_bytes(b"\r\x1bOQ")
+        result = run_launcher(
+            commands=(_spec("update"),),
+            input=pipe,
+            output=DummyOutput(),
+        )
+        stop.join()
+
+    assert result == LauncherResult(None, 130)
+
+
 def test_update_check_runs_once_and_does_not_return_upgrade_without_confirm():
     checked = threading.Event()
     info = InstallationInfo(InstallMode.UV_TOOL, "0.4.0", "/usr/bin/uv")
@@ -839,7 +854,7 @@ def test_update_check_runs_once_and_does_not_return_upgrade_without_confirm():
     assert calls == [(info, 5)]
 
 
-def test_uv_tool_update_result_renders_command_write_effect_and_persistent_warning():
+def test_uv_tool_update_result_renders_unified_write_effect():
     checked = threading.Event()
     info = InstallationInfo(InstallMode.UV_TOOL, "0.4.0", "/usr/bin/uv")
     output = _TrackingOutput()
@@ -1145,7 +1160,51 @@ def test_update_confirm_returns_existing_click_argv_for_uv_tool():
     assert result == LauncherResult(("update",), 0)
 
 
-def test_uvx_update_result_only_shows_instructions_without_upgrade_argv():
+@pytest.mark.parametrize(
+    "check",
+    [
+        VersionCheck(
+            InstallationInfo(InstallMode.UV_TOOL, "0.4.4", "/usr/bin/uv"),
+            "0.4.4",
+            False,
+        ),
+        VersionCheck(
+            InstallationInfo(InstallMode.UVX, "0.4.4", "/usr/bin/uv"),
+            "0.4.4",
+            False,
+        ),
+        VersionCheck(
+            InstallationInfo(InstallMode.EDITABLE, "0.4.4", "/usr/bin/uv"),
+            "0.4.4",
+            False,
+        ),
+        VersionCheck(
+            InstallationInfo(InstallMode.UV_TOOL, "local", "/usr/bin/uv"),
+            "0.4.4",
+            False,
+            current_valid=False,
+        ),
+        VersionCheck(
+            InstallationInfo(InstallMode.UV_TOOL, "0.4.4", "/usr/bin/uv"),
+            None,
+            False,
+        ),
+    ],
+)
+def test_completed_check_allows_unified_update_for_every_install_mode(check):
+    controller = LauncherController((_spec("update"),))
+    controller.screen = Screen.UPDATE_RESULT
+    ui = _LauncherUI(
+        controller,
+        installation_detector=lambda: check.installation,
+        version_checker=lambda installation, timeout: check,
+    )
+    ui.version_check = check
+
+    assert ui._can_run_update() is True
+
+
+def test_uvx_update_result_can_confirm_unified_update():
     checked = threading.Event()
     info = InstallationInfo(InstallMode.UVX, "0.4.0", "/usr/bin/uv")
 
@@ -1156,7 +1215,7 @@ def test_uvx_update_result_only_shows_instructions_without_upgrade_argv():
     output = _TrackingOutput()
 
     with create_pipe_input() as pipe:
-        sender = _send_after(pipe, output.update_result_rendered, b"\r\x03")
+        sender = _send_after(pipe, checked, b"\r")
         pipe.send_bytes(b"\r\r")
         result = run_launcher(
             commands=(_spec("update"),),
@@ -1169,22 +1228,23 @@ def test_uvx_update_result_only_shows_instructions_without_upgrade_argv():
 
     rendered = output.stream.getvalue()
     assert checked.is_set()
-    assert "Команда после подтверждения: reviewer update" not in rendered
-    assert "Эффект после подтверждения: запись" not in rendered
+    assert "Команда после подтверждения: reviewer update" in rendered
+    assert "Эффект после подтверждения: запись" in rendered
     assert "будет изменена постоянная uv tool-установка" not in rendered
-    assert result == LauncherResult(None, 130)
+    assert result == LauncherResult(("update",), 0)
 
 
-def test_editable_update_result_has_no_mutation_preview_or_button():
+def test_editable_update_result_offers_artifact_refresh():
     info = InstallationInfo(InstallMode.EDITABLE, "0.4.0", "/usr/bin/uv")
     output = _TrackingOutput()
+    checked = threading.Event()
 
     def checker(installation: InstallationInfo, *, timeout: int) -> VersionCheck:
+        checked.set()
         return VersionCheck(installation, "0.5.0", True)
 
     with create_pipe_input() as pipe:
-        stop = threading.Timer(0.5, lambda: pipe.send_bytes(b"\x03"))
-        stop.start()
+        sender = _send_after(pipe, checked, b"\r")
         pipe.send_bytes(b"\r\r")
         result = run_launcher(
             commands=(_spec("update"),),
@@ -1193,29 +1253,29 @@ def test_editable_update_result_has_no_mutation_preview_or_button():
             installation_detector=lambda: info,
             version_checker=checker,
         )
-        stop.join()
+        sender.join()
 
     rendered = output.stream.getvalue()
-    assert "Для обновления: git pull && pip install -e ." in rendered
-    assert "Команда после подтверждения: reviewer update" not in rendered
-    assert "Эффект после подтверждения: запись" not in rendered
+    assert "Команда после подтверждения: reviewer update" in rendered
+    assert "Эффект после подтверждения: запись" in rendered
     assert "будет изменена постоянная uv tool-установка" not in rendered
-    assert result == LauncherResult(None, 130)
+    assert result == LauncherResult(("update",), 0)
 
 
-def test_invalid_current_version_disables_tui_update_confirmation():
+def test_invalid_current_version_still_allows_artifact_refresh():
     info = InstallationInfo(InstallMode.UV_TOOL, "не-версия", "/usr/bin/uv")
     output = _TrackingOutput()
+    checked = threading.Event()
 
     def checker(installation: InstallationInfo, *, timeout: int) -> VersionCheck:
+        checked.set()
         return launcher_app.check_latest(
             installation,
             opener=lambda request, timeout: _VersionResponse("1.0"),
         )
 
     with create_pipe_input() as pipe:
-        stop = threading.Timer(0.5, lambda: pipe.send_bytes(b"\x03"))
-        stop.start()
+        sender = _send_after(pipe, checked, b"\r")
         pipe.send_bytes(b"\r\r")
         result = run_launcher(
             commands=(_spec("update"),),
@@ -1224,17 +1284,17 @@ def test_invalid_current_version_disables_tui_update_confirmation():
             installation_detector=lambda: info,
             version_checker=checker,
         )
-        stop.join()
+        sender.join()
 
     rendered = output.stream.getvalue()
     assert "Не удалось определить корректную текущую версию." in rendered
     assert "Версия актуальна" not in rendered
-    assert "Команда после подтверждения: reviewer update" not in rendered
-    assert "Enter — подтвердить" not in rendered
-    assert result == LauncherResult(None, 130)
+    assert "Команда после подтверждения: reviewer update" in rendered
+    assert "Enter — подтвердить" in rendered
+    assert result == LauncherResult(("update",), 0)
 
 
-def test_offline_update_result_shows_failure_retry_and_no_currency_or_confirmation():
+def test_offline_update_result_allows_attempting_independent_artifacts():
     info = InstallationInfo(InstallMode.UV_TOOL, "0.4.0", "/usr/bin/uv")
     output = _TrackingOutput()
 
@@ -1262,8 +1322,8 @@ def test_offline_update_result_shows_failure_retry_and_no_currency_or_confirmati
     assert output.update_failure_rendered.is_set(), rendered
     assert "Обновление не требуется" not in rendered
     assert "Версия актуальна" not in rendered
-    assert "Команда после подтверждения: reviewer update" not in rendered
-    assert "Enter — подтвердить" not in rendered
+    assert "Команда после подтверждения: reviewer update" in rendered
+    assert "Enter — подтвердить" in rendered
     assert result == LauncherResult(None, 130)
 
 
