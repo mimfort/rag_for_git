@@ -48,7 +48,11 @@ from reviewer.services.gc import purge_orphaned_overlays
 from reviewer.services.review_service import ReviewService
 from reviewer.services.status import build_status_report, render_status, render_status_json
 from reviewer.tasks.boards.errors import sanitize_provider_text
-from reviewer.update_lifecycle import run_fresh_artifact_refresh
+from reviewer.update_lifecycle import (
+    download_compose,
+    run_fresh_artifact_refresh,
+    sync_compose_file,
+)
 from reviewer.versioning import InstallMode, check_latest, detect_installation, upgrade_uv_tool
 from reviewer.web.serve import DEFAULT_HOST, DEFAULT_PORT
 
@@ -1484,8 +1488,60 @@ def init(
         _print_codex_result(result)
 
 
+def _has_detected_clients() -> bool:
+    from reviewer import install as inst
+
+    return bool(inst.detect_installed()) or _shutil.which("claude") is not None
+
+
+def _install_detected_clients(ctx: click.Context) -> None:
+    ctx.invoke(
+        install,
+        client=None,
+        all_clients=True,
+        list_clients=False,
+        path_opt=None,
+        pin=None,
+        no_latest=False,
+        no_skills=False,
+        dry_run=False,
+    )
+
+
 def _refresh_update_artifacts(ctx: click.Context) -> None:
-    pass
+    errors: list[str] = []
+    try:
+        compose = sync_compose_file(download_compose())
+        statuses = {
+            "created": "создан",
+            "adopted": "принят под управление",
+            "current": "актуален",
+            "updated": "обновлён",
+        }
+        if compose.action == "preserved":
+            click.echo(
+                "⚠ Compose не перезаписан: обнаружены пользовательские изменения в "
+                f"{compose.path}"
+            )
+        else:
+            click.echo(f"✓ Compose {statuses[compose.action]}: {compose.path}")
+    except Exception as exc:  # noqa: BLE001 - independent phases must continue
+        errors.append(f"Compose: {type(exc).__name__}")
+    if _has_detected_clients():
+        try:
+            _install_detected_clients(ctx)
+        except click.ClickException as exc:
+            errors.append(f"Integrations: {exc.format_message()}")
+        except Exception as exc:  # noqa: BLE001 - do not expose profile paths or config content
+            errors.append(f"Integrations: {type(exc).__name__}")
+    else:
+        click.echo("AI-клиенты не обнаружены; integration refresh пропущен.")
+    if errors:
+        raise click.ClickException("Обновление завершено частично: " + "; ".join(errors))
+    click.echo(
+        "Обновление завершено. Откройте New Chat/new CLI session; "
+        "в IDE — Reload Window."
+    )
 
 
 @cli.command()
