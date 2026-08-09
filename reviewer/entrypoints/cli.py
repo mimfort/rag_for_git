@@ -48,6 +48,7 @@ from reviewer.services.gc import purge_orphaned_overlays
 from reviewer.services.review_service import ReviewService
 from reviewer.services.status import build_status_report, render_status, render_status_json
 from reviewer.tasks.boards.errors import sanitize_provider_text
+from reviewer.update_lifecycle import run_fresh_artifact_refresh
 from reviewer.versioning import InstallMode, check_latest, detect_installation, upgrade_uv_tool
 from reviewer.web.serve import DEFAULT_HOST, DEFAULT_PORT
 
@@ -1483,13 +1484,28 @@ def init(
         _print_codex_result(result)
 
 
+def _refresh_update_artifacts(ctx: click.Context) -> None:
+    pass
+
+
 @cli.command()
-def update() -> None:
+@click.option(
+    "--upgrade-tool",
+    is_flag=True,
+    help="обновить существующую persistent uv tool installation из latest uvx",
+)
+@click.option("--refresh-artifacts", is_flag=True, hidden=True)
+@click.pass_context
+def update(ctx: click.Context, upgrade_tool: bool, refresh_artifacts: bool) -> None:
     """Проверить наличие новой версии rag-reviewer на PyPI."""
+    if refresh_artifacts:
+        _refresh_update_artifacts(ctx)
+        return
     installation = detect_installation()
     if installation.mode is InstallMode.EDITABLE:
         click.echo(f"Режим: dev (editable) | Версия: {installation.current}")
         click.echo("Для обновления: git pull && pip install -e .")
+        _refresh_update_artifacts(ctx)
         return
 
     mode = "uv tool (постоянная)" if installation.mode is InstallMode.UV_TOOL else "uvx (временная)"
@@ -1498,16 +1514,24 @@ def update() -> None:
     version_check = check_latest(installation)
     if version_check.latest is None:
         click.echo("Не удалось получить информацию с PyPI. Проверьте сеть.")
+        _refresh_update_artifacts(ctx)
         return
 
     if not version_check.current_valid:
         click.echo("Не удалось определить корректную текущую версию. Обновление не запущено.")
+        _refresh_update_artifacts(ctx)
         return
 
     if not version_check.update_available and installation.current != "?":
         click.echo(f"Версия актуальна: {installation.current}.")
         if installation.mode is not InstallMode.UV_TOOL:
             click.echo("MCP-сервер обновляется автоматически — в конфиге клиента прописан @latest.")
+        if upgrade_tool and installation.mode is InstallMode.UVX:
+            result = upgrade_uv_tool(installation)
+            if result.returncode != 0:
+                raise click.ClickException(f"Ошибка uv tool upgrade: {result.stderr}")
+            click.echo("✓ Persistent uv tool installation обновлена.")
+        _refresh_update_artifacts(ctx)
         return
 
     click.echo(f"Доступна новая версия: {installation.current} → {version_check.latest}")
@@ -1518,9 +1542,17 @@ def update() -> None:
             return
         result = upgrade_uv_tool(installation)
         if result.returncode == 0:
-            click.echo("Обновлено. Перезапустите MCP-сервер.")
+            click.echo("✓ Python package обновлён.")
+            fresh = run_fresh_artifact_refresh()
+            if fresh.stdout:
+                click.echo(fresh.stdout, nl=not fresh.stdout.endswith("\n"))
+            if fresh.returncode != 0:
+                detail = fresh.stderr.strip() or "неизвестная ошибка"
+                raise click.ClickException(
+                    f"Пакет обновлён, artifact refresh завершился ошибкой: {detail}"
+                )
         else:
-            click.echo(f"Ошибка uv tool upgrade: {result.stderr}")
+            raise click.ClickException(f"Ошибка uv tool upgrade: {result.stderr}")
     else:
         # uvx: MCP-сервер обновится сам при следующем запуске (конфиг содержит @latest).
         # Для CLI-команд достаточно использовать @latest явно.
@@ -1528,6 +1560,12 @@ def update() -> None:
             "MCP-сервер подхватит обновление автоматически при следующем запуске (@latest в конфиге).\n"
             "Для CLI: uvx --from rag-reviewer@latest reviewer <команда>"
         )
+        if upgrade_tool:
+            result = upgrade_uv_tool(installation)
+            if result.returncode != 0:
+                raise click.ClickException(f"Ошибка uv tool upgrade: {result.stderr}")
+            click.echo("✓ Persistent uv tool installation обновлена.")
+        _refresh_update_artifacts(ctx)
 
 
 @cli.command("install-skills")
