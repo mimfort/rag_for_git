@@ -105,14 +105,14 @@ COMMAND_PRESENTATION = {
         keywords=("drift", "json", "health"),
     ),
     ("update",): CommandPresentation(
-        summary="Проверить обновления",
+        summary="Обновить reviewer и integrations",
         details=(
-            "Сначала только проверяет PyPI; постоянную uv tool-установку изменяет "
-            "только после отдельного подтверждения."
+            "Обновляет persistent uv tool package, обнаруженные AI-client integrations, "
+            "скилы и управляемый Compose; не перезаписывает пользовательские изменения Compose."
         ),
         effects=(Effect.READ, Effect.NETWORK, Effect.WRITE),
-        scenarios=("Обновление глобальной uv tool-установки",),
-        keywords=("pypi", "version", "upgrade"),
+        scenarios=("Полное обновление rag-reviewer",),
+        keywords=("pypi", "version", "upgrade", "skills", "compose"),
         special_action="check_update",
     ),
 }

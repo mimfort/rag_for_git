@@ -562,3 +562,13 @@ def test_has_detected_clients_includes_native_claude_cli(monkeypatch):
     )
 
     assert cli_mod._has_detected_clients() is True
+
+
+def test_update_help_describes_unified_lifecycle_and_hides_internal_phase():
+    result = CliRunner().invoke(cli_mod.cli, ["update", "--help"])
+
+    assert result.exit_code == 0, result.output
+    assert "AI-client integrations" in result.output
+    assert "Compose" in result.output
+    assert "--upgrade-tool" in result.output
+    assert "--refresh-artifacts" not in result.output

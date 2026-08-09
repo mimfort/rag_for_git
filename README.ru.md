@@ -28,23 +28,20 @@ inline-комментарии, привязанные к изменённым с
 системы контроля версий (VCS), если reviewer должен читать или публиковать ревью. Хранилища
 работают локально; запросы эмбеддингов и реранкинга отправляются в Voyage.
 
-1. Установите launcher, скачайте Compose-файл репозитория в каталог конфигурации reviewer,
-   поднимите хранилища и настройте reviewer:
+1. Установите launcher, синхронизируйте управляемые reviewer artifacts, поднимите хранилища и
+   настройте reviewer:
 
    ```bash
    uv tool install rag-reviewer
-   mkdir -p ~/.config/rag-reviewer
-   curl -o ~/.config/rag-reviewer/docker-compose.yml \
-     https://raw.githubusercontent.com/mimfort/rag_for_git/main/docker-compose.yml
+   reviewer update
    docker compose -f ~/.config/rag-reviewer/docker-compose.yml up -d
    reviewer init
    ```
 
-   Compose-файл лежит рядом с env-файлом в `$XDG_CONFIG_HOME/rag-reviewer/` (по умолчанию
-   `~/.config/rag-reviewer/`), поэтому один набор хранилищ обслуживает все репозитории, а имя
-   Compose-проекта не зависит от каталога, из которого вы запускаете команду. Голый `curl -O`
-   пишет в текущий каталог; внутри клона этого репозитория он перезапишет версионируемый
-   `docker-compose.yml`.
+   `reviewer update` создаёт управляемый Compose-файл рядом с env-файлом в
+   `$XDG_CONFIG_HOME/rag-reviewer/` (по умолчанию `~/.config/rag-reviewer/`). Поэтому один набор
+   хранилищ обслуживает все репозитории, а имя Compose-проекта не зависит от текущего каталога.
+   Команда также обновляет обнаруженные AI-client integrations и скиллы.
 
 2. Посмотрите поддерживаемые AI-клиенты и подключите нужный:
 
@@ -102,9 +99,7 @@ reviewer env на каждой машине вместо loopback defaults из 
 1. **На shared host поднимите хранилища и настройте секреты service account.**
 
    ```bash
-   mkdir -p ~/.config/rag-reviewer
-   curl -o ~/.config/rag-reviewer/docker-compose.yml \
-     https://raw.githubusercontent.com/mimfort/rag_for_git/main/docker-compose.yml
+   reviewer update
    docker compose -f ~/.config/rag-reviewer/docker-compose.yml up -d
    reviewer init
    ```
@@ -250,18 +245,41 @@ reviewer update
 `--from git+…`); форма `--from PACKAGE COMMAND` относится к `uvx`, и `uv tool install` её
 отвергает.
 
+Для одноразового перехода с 0.4.3 запустите новый lifecycle через latest uvx и явно разрешите ему
+обновить существующий persistent tool:
+
+```bash
+uvx --refresh --from rag-reviewer@latest reviewer update --upgrade-tool
+```
+
+Все последующие обновления выполняются короткой командой `reviewer update`. Она запускает единый
+lifecycle:
+
+- проверяет PyPI и обновляет persistent `uv tool` package при наличии новой версии;
+- обновляет MCP integration, native plugin и файловые скиллы каждого обнаруженного AI-клиента;
+- синхронизирует `$XDG_CONFIG_HOME/rag-reviewer/docker-compose.yml` с каноническим репозиторием;
+- записывает hash управляемого Compose-содержимого в `.reviewer-update.json`.
+
+Если Compose-файл отличается от записанного hash, reviewer считает его изменённым пользователем,
+оставляет без изменений и выводит предупреждение. Update не запускает `docker compose pull`, не
+перезапускает services, не удаляет containers или volumes, поэтому существующие БД, индексы,
+задачи и subsystem summaries сохраняются. Новое Compose-описание можно применить позже
+документированной командой `docker compose ... up -d`.
+
 Временный/latest запуск:
 
 ```bash
 uvx --from rag-reviewer@latest reviewer --help
 ```
 
-`reviewer update` сначала проверяет версию и только потом меняет постоянную uv tool installation.
-`reviewer install CLIENT --dry-run` показывает записи integration до изменения файлов.
+Обычный uvx-запуск не меняет отдельный persistent tool; это делает только явный bootstrap-флаг
+`--upgrade-tool`. `reviewer install CLIENT --dry-run` показывает запись конкретной integration до
+изменения файлов.
 
 ### AI-клиенты
 
-Список клиентов показывает `reviewer install --list`; можно установить один или все обнаруженные:
+`reviewer update` автоматически обновляет все обнаруженные клиенты. `reviewer install --list` и
+именная установка нужны при первом подключении клиента, пока его ещё нельзя обнаружить:
 
 ```bash
 reviewer install codex
@@ -286,7 +304,8 @@ claude plugin list --json
 claude plugin marketplace list --json
 ```
 
-После установки начните новую chat/CLI session; в IDE также выполните Reload Window.
+После установки или обновления начните New Chat/new CLI session; в IDE также выполните Reload
+Window.
 
 ### Миграция с ломающим изменением имён скиллов
 

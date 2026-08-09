@@ -36,6 +36,7 @@ PARITY_MARKERS = (
     "docker compose -f ~/.config/rag-reviewer/docker-compose.yml up -d",
     "reviewer init",
     "reviewer install",
+    "reviewer update",
     "reviewer check",
     "reviewer index",
     "reviewer status",
@@ -190,16 +191,18 @@ def test_readmes_share_critical_commands_and_contract_markers():
         assert marker in russian, ("README.ru.md", marker)
 
 
-def test_quick_start_downloads_compose_and_indexes_before_checking():
+def test_quick_start_uses_unified_update_and_indexes_before_checking():
     for filename, heading in (
         ("README.md", "## Try reviewer"),
         ("README.ru.md", "## Попробовать reviewer"),
     ):
         section = _section(_read(filename), heading)
+        assert "curl -o ~/.config/rag-reviewer/docker-compose.yml" not in section
         _assert_in_order(
             section,
             (
-                "curl -o ~/.config/rag-reviewer/docker-compose.yml",
+                "uv tool install rag-reviewer",
+                "reviewer update",
                 "docker compose -f ~/.config/rag-reviewer/docker-compose.yml up -d",
                 "reviewer init",
                 "reviewer index /path/to/repo --ref main",
@@ -207,6 +210,19 @@ def test_quick_start_downloads_compose_and_indexes_before_checking():
                 "reviewer status /path/to/repo --branch main --json",
             ),
         )
+
+
+def test_readmes_document_unified_update_contract():
+    markers = (
+        "uvx --refresh --from rag-reviewer@latest reviewer update --upgrade-tool",
+        ".reviewer-update.json",
+        "New Chat",
+        "Reload Window",
+    )
+    for filename in ("README.md", "README.ru.md"):
+        text = _read(filename)
+        for marker in markers:
+            assert marker in text, (filename, marker)
 
 
 def test_team_route_describes_per_client_stdio_processes():

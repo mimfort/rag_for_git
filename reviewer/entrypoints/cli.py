@@ -1553,7 +1553,7 @@ def _refresh_update_artifacts(ctx: click.Context) -> None:
 @click.option("--refresh-artifacts", is_flag=True, hidden=True)
 @click.pass_context
 def update(ctx: click.Context, upgrade_tool: bool, refresh_artifacts: bool) -> None:
-    """Проверить наличие новой версии rag-reviewer на PyPI."""
+    """Обновить package, AI-client integrations, скилы и Compose-файл."""
     if refresh_artifacts:
         _refresh_update_artifacts(ctx)
         return
