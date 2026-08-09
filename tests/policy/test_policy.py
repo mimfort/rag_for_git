@@ -1,3 +1,5 @@
+import yaml
+
 from reviewer.policy.policy import ReviewPolicy
 from reviewer.config.settings import Settings
 from reviewer.vcs.base import Finding
@@ -54,6 +56,24 @@ def test_load_env_defaults_then_yaml_override():
     assert p3.output_language == "en"   # YAML переопределяет env-дефолт
 
 
+def test_load_data_matches_load_for_nested_policy() -> None:
+    settings = Settings(_env_file=None, review_severity_threshold="medium")
+    data = {
+        "severity_threshold": "high",
+        "paths": {"ignore": ["vendor/**"]},
+        "context_limits": {"graph": {"hops": 2}},
+        "task_board": None,
+    }
+
+    from_data = ReviewPolicy.load_data(settings, data)
+    from_text = ReviewPolicy.load(settings, yaml.safe_dump(data))
+
+    assert from_data == from_text
+    assert from_data.ignore == ["vendor/**"]
+    assert from_data.context_limits.graph.hops == 2
+    assert from_data.task_board is None
+
+
 def test_output_language_default_and_yaml_override():
     p = ReviewPolicy.from_yaml("severity_threshold: medium")
     assert p.output_language == "ru"
@@ -86,6 +106,23 @@ task_board:
         "task_board.done_state migrated to done_target",
         "task_board.status_field migrated to options.status_field",
     ]
+
+
+def test_task_board_sync_filter_is_normalized_separately_from_options():
+    p = ReviewPolicy.from_yaml("""
+task_board:
+  type: youtrack
+  options: {status_field: Stage}
+  sync_filter:
+    max_age_days: 30
+    include_archived: false
+""")
+
+    assert p.task_board == {
+        "type": "youtrack",
+        "options": {"status_field": "Stage"},
+        "sync_filter": {"max_age_days": 30, "include_archived": False},
+    }
 
 
 def test_load_keeps_new_task_board_values_and_records_warnings_once():

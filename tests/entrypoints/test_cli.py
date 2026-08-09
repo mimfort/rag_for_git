@@ -134,6 +134,9 @@ def fake_settings() -> MagicMock:
     s.review_history = False
     s.graph_backend = "auto"
     s.default_repo = "owner/default"
+    s.task_board_default.return_value = None
+    s.review_branches = "main"
+    s.review_branches_list.return_value = ["main"]
     return s
 
 
@@ -160,8 +163,11 @@ def test_index_command_runs_indexing_steps(
     runner,
     fake_components,
     fake_settings,
+    monkeypatch,
+    tmp_path,
 ):
     """Команда index вызывает init_schema, update_base, build_code_graph и cleanup."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     mock_settings_cls.return_value = fake_settings
     mock_build.return_value = fake_components
     mock_list_files.return_value = ["a.py", "b.py"]
@@ -236,8 +242,11 @@ def test_index_derives_repo_from_git_remote(
     runner,
     fake_components,
     fake_settings,
+    monkeypatch,
+    tmp_path,
 ):
     """Если не задан --repo, repo_id берётся из git remote."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     fake_settings.default_repo = None
     mock_settings_cls.return_value = fake_settings
     mock_build.return_value = fake_components
@@ -322,6 +331,7 @@ def test_check_all_ok(
     s = MagicMock()
     s.voyage_api_key = "key"
     s.github_token = "key"
+    s.gitlab_token = ""
     s.pg_dsn = "pg://test"
     s.pg_pool_min_size = 1
     s.pg_pool_max_size = 4

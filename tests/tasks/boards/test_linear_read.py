@@ -6,6 +6,8 @@ import json
 
 import httpx
 
+from reviewer.config.task_board import TaskSyncFilter
+from reviewer.tasks.boards.base import TaskListing
 from reviewer.tasks.boards.linear import LinearBoard
 
 SECRET = "linear-read-secret"
@@ -67,8 +69,15 @@ def test_iter_raw_walks_cursor_pages_and_sends_api_key_without_bearer() -> None:
             return httpx.Response(200, json=_page([_issue(1), _issue(2)], cursor="cursor-1"))
         return httpx.Response(200, json=_page([_issue(3)], cursor=None))
 
-    rows = list(_board(handler).iter_raw("ENG", None))
+    listing = _board(handler).iter_raw(
+        "ENG",
+        None,
+        sync_filter=TaskSyncFilter(max_age_days=30, include_archived=False),
+        now_ms=123,
+    )
+    rows = list(listing)
 
+    assert isinstance(listing, TaskListing)
     assert [row.key for row in rows] == ["ENG-1", "ENG-2", "ENG-3"]
     assert len(bodies) == 2
     assert bodies[0]["variables"] == {
@@ -78,6 +87,9 @@ def test_iter_raw_walks_cursor_pages_and_sends_api_key_without_bearer() -> None:
     }
     assert bodies[1]["variables"]["after"] == "cursor-1"
     assert "orderBy: updatedAt" in bodies[0]["query"]
+    assert listing.stats.filtered_by_age == 0
+    assert listing.stats.filtered_archived == 0
+    assert listing.stats.warnings == []
 
 
 def test_iter_raw_without_board_sends_no_team_filter() -> None:
@@ -121,6 +133,27 @@ def test_raw_task_maps_identifier_uuid_children_and_epoch_ms() -> None:
     assert row.provider_data["subtasks"] == [{"key": "ENG-9", "title": "Подзадача"}]
 
 
+def test_state_type_maps_to_tri_state_terminal_and_archived_is_unknown() -> None:
+    completed = _issue(1)
+    completed["state"] = {"id": "completed", "name": "Done", "type": "completed"}
+    canceled = _issue(2)
+    canceled["state"] = {"id": "canceled", "name": "Canceled", "type": "canceled"}
+    active = _issue(3)
+    absent = _issue(4)
+    absent.pop("state")
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json=_page([completed, canceled, active, absent], cursor=None),
+        )
+
+    rows = list(_board(handler).iter_raw("ENG", None))
+
+    assert [row.terminal for row in rows] == [True, True, False, None]
+    assert all(row.archived is None for row in rows)
+
+
 def test_naive_and_offset_timestamps_are_treated_as_utc() -> None:
     def handler(_: httpx.Request) -> httpx.Response:
         return httpx.Response(
@@ -130,13 +163,14 @@ def test_naive_and_offset_timestamps_are_treated_as_utc() -> None:
                     _issue(1, updated="2026-07-23T09:01:00"),
                     _issue(2, updated="2026-07-23T12:01:00+03:00"),
                     _issue(3, updated="не дата"),
+                    {key: value for key, value in _issue(4).items() if key != "updatedAt"},
                 ],
                 cursor=None,
             ),
         )
 
     rows = list(_board(handler).iter_raw("ENG", None))
-    assert [row.timestamp for row in rows] == [1784797260000, 1784797260000, 0]
+    assert [row.timestamp for row in rows] == [1784797260000, 1784797260000, None, None]
 
 
 def test_limit_stops_before_the_next_page_is_requested() -> None:

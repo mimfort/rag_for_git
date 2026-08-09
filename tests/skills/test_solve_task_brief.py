@@ -12,6 +12,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 SKILL_PATH = ROOT / "plugin" / "skills" / "solve-task" / "SKILL.md"
 
+STEP5_RE = re.compile(
+    r"^5\. \*\*Hand off to development\.\*\*(.*?)^## Failure handling", re.S | re.M
+)
+
 
 def test_solve_task_brief_spec_present():
     text = SKILL_PATH.read_text(encoding="utf-8")
@@ -138,3 +142,21 @@ def test_solve_task_uses_only_generic_board_metadata():
         assert token in text
     for forbidden in ("yougile", "youtrack", "done_column", "done_state", "status_field", "api_key"):
         assert forbidden not in text
+
+
+def test_solve_task_step5_asks_for_brief_link_not_verbatim_constraints():
+    """PRI-177 (урезанный скоуп): Step 5 требует provenance-ссылку на бриф в спеке
+    и явно запрещает копировать Constraints verbatim.
+
+    Ассерты режутся по региону шага 5, а не по всему файлу: `Constraints` и
+    `docs/superpowers/briefs/` встречаются в SKILL.md многократно (шаги 0, 4),
+    поэтому whole-file-ассерт остался бы зелёным даже при удалённом шаге 5.
+    """
+    text = SKILL_PATH.read_text(encoding="utf-8")
+    m = STEP5_RE.search(text)
+    assert m, "Step 5 (hand off) не найден — заголовок шага переименован"
+    step5 = m.group(1)
+    assert "docs/superpowers/briefs/" in step5   # путь брифа = якорь трассы
+    assert "provenance" in step5.lower()         # просим записать происхождение
+    assert "Do NOT ask it to copy" in step5      # явный запрет
+    assert "verbatim" in step5

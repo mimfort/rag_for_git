@@ -102,7 +102,8 @@ def test_raw_task_maps_key_project_board_id_status_and_epoch_ms() -> None:
     assert row.board_id == "101"
     assert row.status == "В работе"
     assert row.timestamp == 1784797500000
-    assert row.completed is False
+    assert row.archived is False
+    assert row.terminal is False
     assert row.subtask_ids == ["KTN-909"]
     assert row.links == [{"type": "subtask", "key": "KTN-909", "title": "Дочерняя"}]
     assert row.provider_data["card_id"] == 101
@@ -118,7 +119,40 @@ def test_status_falls_back_to_card_state_when_columns_unavailable() -> None:
     row = next(iter(board(handler).iter_raw("KTN", None)))
 
     assert row.status == "done"
-    assert row.completed is True
+    assert row.terminal is True
+
+
+def test_lifecycle_preserves_documented_values_and_unknowns() -> None:
+    missing = card(3, column_id=None, state=None, condition=None)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/columns"):
+            return httpx.Response(200, json=columns())
+        return httpx.Response(
+            200,
+            json=[
+                card(1, column_id=3, state=2, condition=2),
+                card(2, column_id=2, state=2, condition=1),
+                missing,
+            ],
+        )
+
+    rows = list(board(handler).iter_raw("KTN", None))
+
+    assert [row.archived for row in rows] == [True, False, None]
+    assert [row.terminal for row in rows] == [True, False, None]
+
+
+@pytest.mark.parametrize("updated", [None, "не дата", True])
+def test_invalid_or_missing_update_timestamp_is_unknown(updated: object) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/columns"):
+            return httpx.Response(200, json=columns())
+        return httpx.Response(200, json=[card(1, updated=updated)])
+
+    row = next(iter(board(handler).iter_raw("KTN", None)))
+
+    assert row.timestamp is None
 
 
 def test_limit_stops_before_the_next_page() -> None:

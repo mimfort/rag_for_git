@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass
+import json
 import logging
+from pathlib import Path
 import platform as _platform
 import re
 import shutil as _shutil
@@ -11,10 +14,26 @@ from typing import TYPE_CHECKING
 import click
 import httpx
 import psycopg
+import yaml
 
 from reviewer.config.settings import Settings
 from reviewer.app import build_components
-from reviewer.gitutil import file_at_ref, list_python_files, rev_parse, remote_url
+from reviewer.config.branches import migrate_repo_branches, resolve_repo_branches
+from reviewer.config.layers import (
+    HomeConfigError,
+    build_config_report,
+    migrate_repo_config,
+    resolve_policy_data,
+)
+from reviewer.config.onboarding import (
+    RepositoryConfigPlan,
+    apply_repository_config,
+    detect_repository,
+    parse_branch_csv,
+    plan_repository_config,
+)
+from reviewer.config.provider_access import render_provider_access
+from reviewer.gitutil import file_at_ref, list_python_files, repo_root, rev_parse, remote_url
 from reviewer.graph.backend import build_code_graph
 from reviewer.graph.store import GraphStore
 from reviewer.index.freshness import update_base
@@ -22,10 +41,15 @@ from reviewer.index.pathfilter import is_ignored
 from reviewer.index.refs import base_ref
 from reviewer.policy.policy import ReviewPolicy
 from reviewer.index.store import ChunkStore
+from reviewer.index.summary_store import SummaryStore
 from reviewer.mcp.session_store import SessionStore
+from reviewer.services.branch import resolve_branch
 from reviewer.services.gc import purge_orphaned_overlays
+from reviewer.services.review_service import ReviewService
 from reviewer.services.status import build_status_report, render_status, render_status_json
+from reviewer.tasks.boards.errors import sanitize_provider_text
 from reviewer.versioning import InstallMode, check_latest, detect_installation, upgrade_uv_tool
+from reviewer.web.serve import DEFAULT_HOST, DEFAULT_PORT
 
 if TYPE_CHECKING:
     from reviewer.install_claude import ClaudeInstallResult
@@ -51,6 +75,215 @@ def _resolve_repo(repo_opt: str | None, path: str, settings) -> str:
 
 @click.group()
 def cli() -> None: ...
+
+
+@cli.group("config")
+def config_group() -> None:
+    """Inspect and migrate layered repository policy."""
+
+
+def _close_config_components(components) -> None:
+    """Закрыть созданные для diagnostic CLI хранилища независимо друг от друга."""
+    for name in ("store", "graph", "task_store", "summary_store"):
+        component = getattr(components, name, None)
+        if component is not None:
+            _safe_config_close(component, name)
+
+
+def _safe_config_close(resource, name: str) -> None:
+    """Не дать cleanup-ошибке скрыть исход результата diagnostic команды."""
+    try:
+        resource.close()
+    except Exception:  # noqa: BLE001 — best-effort cleanup не меняет результат команды
+        log.warning("Не удалось закрыть resource config CLI: %s", name)
+
+
+def _config_error_message(exc: Exception) -> str:
+    """Вернуть публичный diagnostic без YAML/normalization payload."""
+    if isinstance(exc, HomeConfigError):
+        return str(exc)
+    return "конфиг не прочитан: YAML"
+
+
+def _branches_report(branches) -> dict[str, object]:
+    """Общий payload effective branches для config show и repo onboarding."""
+    return {
+        "branches": {
+            "primary": branches.primary,
+            "index": list(branches.index),
+            "source": branches.source,
+        }
+    }
+
+
+def _render_config_report(report: Mapping[str, object]) -> None:
+    branches = report.get("branches")
+    if branches:
+        assert isinstance(branches, Mapping)
+        click.echo("branches:")
+        click.echo(f"  primary: {branches['primary']}  ({branches['source']})")
+        click.echo(f"  index:   {', '.join(branches['index'])}  ({branches['source']})")
+    policy_error = report.get("policy_error")
+    if policy_error is not None:
+        click.echo(f"policy_error: {policy_error}")
+        return
+    if "effective" not in report:
+        return
+    effective = report["effective"]
+    sources = report["sources"]
+    shadowed = report["shadowed"]
+    assert isinstance(effective, Mapping)
+    assert isinstance(sources, Mapping)
+    assert isinstance(shadowed, Mapping)
+    for key in sorted(effective):
+        click.echo(
+            f"{key}: {json.dumps(effective[key], ensure_ascii=False, sort_keys=True)}"
+        )
+        click.echo(f"  source: {sources[key]}")
+        if key in shadowed:
+            click.echo(f"  shadowed: {', '.join(shadowed[key])}")
+    for warning in report["warnings"]:
+        click.echo(f"warning: {warning}")
+
+
+@contextmanager
+def _config_context(repo_opt: str, branch_opt: str | None):
+    settings = Settings()
+    # connect=False: diagnostic-командам граф не нужен, а созданный GraphStore
+    # эагерли требует живой Neo4j — не должен ронять команду при недоступной сети.
+    components = build_components(settings, connect=False)
+    vcs = None
+    try:
+        repo = _resolve_config_repo(repo_opt)
+        # Ветки резолвятся из домашнего слоя ДО обращения к VCS: раньше ветка
+        # бралась из settings.primary_branch() именно затем, чтобы создать VCS
+        # и прочитать committed .review.yml — цикл «нужна ветка, чтобы узнать
+        # ветку». Домашний резолв не ходит в сеть, поэтому цикла больше нет.
+        branches = resolve_repo_branches(repo, settings=settings)
+        branch = branch_opt or branches.primary
+        owner, name = repo.split("/", 1)
+        vcs_error: Exception | None = None
+        try:
+            vcs = ReviewService(settings, components)._create_vcs_provider(owner, name)
+        except Exception as exc:  # noqa: BLE001 — диагностика не должна падать целиком
+            vcs_error = exc
+        yield settings, components, vcs, repo, branch, branches, vcs_error
+    finally:
+        if vcs is not None:
+            _safe_config_close(vcs, "vcs")
+        _close_config_components(components)
+
+
+def _resolve_config_repo(repo: str) -> str:
+    from reviewer.services.repo_id import normalize_repo
+
+    return normalize_repo(repo)
+
+
+@config_group.command("show")
+@click.option("--repo", required=True, help="owner/name репозитория")
+@click.option("--branch", default=None, help="ветка policy; по умолчанию первичная")
+@click.option("--json", "as_json", is_flag=True, default=False)
+def config_show(repo: str, branch: str | None, as_json: bool) -> None:
+    """Показать effective policy и происхождение её верхних ключей.
+
+    Секция веток печатается всегда, даже если VCS недоступен (нет сети, нет
+    токена) — резолв веток чисто локальный и не зависит от policy-части.
+    """
+    try:
+        with _config_context(repo, branch) as ctx:
+            settings, _components, vcs, repo_id, ref, branches, vcs_error = ctx
+            payload = _branches_report(branches)
+            try:
+                if vcs_error is not None:
+                    raise vcs_error
+                data, meta = resolve_policy_data(
+                    repo_id,
+                    ref,
+                    lambda selected_ref: vcs.get_file_at_ref(".review.yml", selected_ref),
+                    strict_home=True,
+                )
+                payload.update(build_config_report(repo_id, ref, settings, data, meta))
+            except (HomeConfigError, yaml.YAMLError) as exc:
+                # Тот же санитайзер, что и у остальных config-команд: не эхоить
+                # сырой YAML/normalization payload исключения.
+                payload["policy_error"] = _config_error_message(exc)
+            except Exception as exc:  # noqa: BLE001 — диагностика не должна падать целиком
+                # Прочие сбои (VCS, сеть) — без текста исключения: он может
+                # содержать URL/токены из VCS-клиента.
+                payload["policy_error"] = type(exc).__name__
+    except (HomeConfigError, yaml.YAMLError) as exc:
+        raise click.ClickException(_config_error_message(exc)) from exc
+    if as_json:
+        click.echo(json.dumps(payload, ensure_ascii=False, sort_keys=True, indent=2))
+    else:
+        _render_config_report(payload)
+    if "policy_error" in payload:
+        # Branch-секция и диагностика уже напечатаны — не через ClickException
+        # (он подавил бы вывод), но код возврата должен сигналить о проблеме
+        # внешним скриптам (`config show; echo $?`).
+        raise SystemExit(1)
+
+
+@config_group.command("migrate")
+@click.option("--repo", required=True, help="owner/name репозитория")
+@click.option("--branch", default=None, help="ветка policy; по умолчанию первичная")
+def config_migrate(repo: str, branch: str | None) -> None:
+    """Безопасно скопировать committed policy и ветки в домашний слой репозитория.
+
+    Порядок обязателен: policy-миграция идёт первой, потому что
+    `migrate_repo_config` публикует новый домашний файл только при его
+    отсутствии — если branch-миграция создаст файл раньше, policy-перенос
+    уйдёт в ветку «уже перенесено» и отчитается иначе. Поэтому исключение
+    policy-части не поднимается
+    сразу: оно сохраняется, branch-миграция выполняется и печатается
+    безусловно (перенос веток от committed `.review.yml` не зависит), и
+    только потом сохранённое исключение поднимается — так пользователь
+    видит перенос веток и получает ненулевой код возврата.
+    """
+    pending_error: click.ClickException | None = None
+    try:
+        with _config_context(repo, branch) as ctx:
+            settings, _components, vcs, repo_id, ref, _branches, vcs_error = ctx
+            try:
+                if vcs_error is not None:
+                    raise click.ClickException(
+                        f"Не удалось подключиться к VCS: {vcs_error}"
+                    ) from vcs_error
+                result = migrate_repo_config(
+                    repo_id,
+                    ref,
+                    lambda selected_ref: vcs.get_file_at_ref(".review.yml", selected_ref),
+                    settings=settings,
+                )
+                if result.conflicting_keys:
+                    keys = ", ".join(result.conflicting_keys)
+                    raise click.ClickException(f"Конфликтующие ключи: {keys}")
+                report = build_config_report(
+                    repo_id, ref, settings, result.data, result.meta
+                )
+            except (HomeConfigError, yaml.YAMLError) as exc:
+                pending_error = click.ClickException(_config_error_message(exc))
+                click.echo(f"Policy не перенесена: {pending_error.message}")
+            except click.ClickException as exc:
+                pending_error = exc
+                click.echo(f"Policy не перенесена: {exc.message}")
+            else:
+                if result.noop:
+                    click.echo(f"Конфиг уже перенесён: {result.path}")
+                else:
+                    click.echo(f"Конфиг перенесён: {result.path}")
+                _render_config_report(report)
+
+            branch_result = migrate_repo_branches(repo_id, settings=settings)
+            if branch_result.noop:
+                click.echo(f"Ветки уже заданы в {branch_result.path}")
+            else:
+                click.echo(f"Ветки перенесены в {branch_result.path} (.env не изменён)")
+    except (HomeConfigError, yaml.YAMLError) as exc:
+        raise click.ClickException(_config_error_message(exc)) from exc
+    if pending_error is not None:
+        raise pending_error
 
 
 def _run_codex_target(
@@ -357,6 +590,80 @@ def _check_board_providers(
     return failed
 
 
+def _check_vcs_providers(settings: Settings) -> bool:
+    """Проверить authentication каждого настроенного VCS без вывода credentials."""
+    secrets = tuple(
+        token for token in (settings.github_token, settings.gitlab_token) if token
+    )
+    configured: list[tuple[str, str, dict[str, str], str]] = []
+    if settings.github_token:
+        configured.append(
+            (
+                "GitHub",
+                "https://api.github.com/user",
+                {"Authorization": f"Bearer {settings.github_token}"},
+                "login",
+            )
+        )
+    if settings.gitlab_token:
+        configured.append(
+            (
+                "GitLab",
+                f"{settings.gitlab_url.rstrip('/')}/api/v4/user",
+                {"PRIVATE-TOKEN": settings.gitlab_token},
+                "username",
+            )
+        )
+    if not configured:
+        click.echo(
+            "✗ VCS: не настроен ни один VCS token; "
+            "запустите reviewer init --scope global"
+        )
+        return True
+
+    failed = False
+    for label, url, headers, identity_key in configured:
+        try:
+            response = httpx.get(url, headers=headers, timeout=10)
+            if response.status_code != 200:
+                click.echo(
+                    f"✗ {label} API: HTTP {response.status_code} — "
+                    "проверьте token/base URL"
+                )
+                failed = True
+                continue
+            payload = response.json()
+            identity = payload.get(identity_key) if isinstance(payload, Mapping) else None
+            if not isinstance(identity, str) or not identity.strip():
+                click.echo(f"✗ {label} API: identity отсутствует или некорректен")
+                failed = True
+                continue
+            safe_identity = sanitize_provider_text(identity, secrets)
+            if label == "GitHub":
+                identity_valid = (
+                    len(safe_identity) <= 100
+                    and re.fullmatch(
+                        r"[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*(?:\[bot\])?",
+                        safe_identity,
+                    )
+                    is not None
+                )
+            else:
+                identity_valid = (
+                    len(safe_identity) <= 255
+                    and re.fullmatch(r"[A-Za-z0-9_.-]+", safe_identity) is not None
+                )
+            if safe_identity != identity or not identity_valid:
+                click.echo(f"✗ {label} API: identity отсутствует или некорректен")
+                failed = True
+                continue
+            click.echo(f"✓ {label} API: аутентификация OK (identity: {safe_identity})")
+        except Exception as exc:  # noqa: BLE001 — health check сообщает только безопасный тип
+            click.echo(f"✗ {label} API: {type(exc).__name__}")
+            failed = True
+    return failed
+
+
 def _parse_board_projects(values: tuple[str, ...]) -> dict[str, str]:
     projects: dict[str, str] = {}
     for value in values:
@@ -385,16 +692,13 @@ def _parse_board_projects(values: tuple[str, ...]) -> dict[str, str]:
     help="Проект для provider validation; опцию можно повторять.",
 )
 def check(board_project_values: tuple[str, ...]) -> None:
-    """Проверить готовность окружения (ключи, Postgres, Neo4j, GitHub)."""
+    """Проверить готовность окружения и настроенных внешних providers."""
     s = Settings()
     board_projects = _parse_board_projects(board_project_values)
     failed = False
 
     # 1. Ключи
-    for label, val in (
-        ("VOYAGE_API_KEY", s.voyage_api_key),
-        ("GITHUB_TOKEN", s.github_token),
-    ):
+    for label, val in (("VOYAGE_API_KEY", s.voyage_api_key),):
         if val:
             click.echo(f"✓ {label} задан")
         else:
@@ -443,25 +747,8 @@ def check(board_project_values: tuple[str, ...]) -> None:
     else:
         click.echo("  scip-python: не найден — граф через tree-sitter (fallback)")
 
-    # 5. GitHub (только если токен задан)
-    if s.github_token:
-        try:
-            resp = httpx.get(
-                "https://api.github.com/user",
-                headers={"Authorization": f"Bearer {s.github_token}"},
-                timeout=10,
-            )
-            if resp.status_code == 200:
-                login = resp.json().get("login", "?")
-                click.echo(f"✓ GitHub API: аутентификация OK (логин: {login})")
-            else:
-                click.echo(f"✗ GitHub API: HTTP {resp.status_code} — проверьте токен")
-                failed = True
-        except Exception as e:
-            click.echo(f"✗ GitHub API: {e}")
-            failed = True
-    else:
-        click.echo("  GitHub API: токен не задан, проверка пропущена")
+    # 5. Настроенные VCS providers
+    failed = _check_vcs_providers(s) or failed
 
     # 6. Настроенные board providers
     failed = _check_board_providers(s, board_projects=board_projects) or failed
@@ -485,25 +772,47 @@ def check(board_project_values: tuple[str, ...]) -> None:
 @cli.command()
 @click.argument("repo")
 @click.option("--ref", default=None,
-              help="git-ref для чтения файлов; по умолчанию первичная ветка "
-                   "(ключ хранения, если --branch не задан)")
+              help="git-ref для чтения файлов; по умолчанию первичная ветка. "
+                   "Если --branch не задан, дополнительно валидируется как "
+                   "отслеживаемая ветка (совпадает с ключом хранения)")
 @click.option("--branch", "branch_opt", default=None,
-              help="имя ветки для хранения индекса; по умолчанию = --ref")
+              help="имя ветки для хранения индекса; по умолчанию = --ref. "
+                   "Если задан явно, --ref — произвольный ref (например, тег) "
+                   "без проверки по отслеживаемым веткам")
 @click.option("--repo", "repo_tag", default=None,
               help="owner/name тег индекса; по умолчанию из git remote origin")
 def index(repo: str, ref: str | None, branch_opt: str | None, repo_tag: str | None) -> None:
     """Построить/обновить base-индекс целевой ветки из локального репо."""
     s = Settings()
-    c = build_components(s)
     repo_id = _resolve_repo(repo_tag, repo, s)
-    ref = ref or s.primary_branch()
+    try:
+        branches = resolve_repo_branches(repo_id, settings=s)
+        if branch_opt is None:
+            # --branch не задан: --ref — это и ключ хранения, поэтому обязан
+            # быть отслеживаемой веткой репозитория.
+            ref = resolve_branch(ref, None, branches)
+        elif ref is None:
+            # --branch задан явно: --ref — произвольный git-ref для чтения
+            # файлов (например, тег), пользователь сам управляет расщеплением
+            # ref↔branch, поэтому validation по отслеживаемым веткам пропускаем.
+            ref = branches.primary
+    except (HomeConfigError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    c = build_components(s)
     branch = branch_opt or ref
     bref = base_ref(branch)
     try:
         c.store.init_schema()
         files = list_python_files(repo, ref)
-        review_yml = file_at_ref(repo, ".review.yml", ref)
-        ignore = ReviewPolicy.from_yaml(review_yml).ignore if review_yml else []
+        policy_data, policy_meta = resolve_policy_data(
+            repo_id,
+            ref,
+            lambda selected_ref: file_at_ref(repo, ".review.yml", selected_ref),
+        )
+        policy = ReviewPolicy.load_data(s, policy_data)
+        ignore = policy.ignore
+        for warning in policy_meta.warnings:
+            log.warning("Домашний слой policy пропущен: %s", warning)
         if ignore:
             files = [f for f in files if not is_ignored(f, ignore)]
         update_base(c.store, c.embedder, repo_id, branch, files,
@@ -539,11 +848,17 @@ def index(repo: str, ref: str | None, branch_opt: str | None, repo_tag: str | No
 
 
 @cli.command("migrate-branches")
-def migrate_branches() -> None:
+@click.option("--repo", "repo_tag", default=None,
+              help="owner/name; по умолчанию из git remote origin")
+def migrate_branches(repo_tag: str | None) -> None:
     """Один раз после апгрейда: перенести legacy base-индекс на первичную ветку."""
     s = Settings()
+    repo_id = _resolve_repo(repo_tag, ".", s)
+    try:
+        primary = resolve_repo_branches(repo_id, settings=s).primary
+    except (HomeConfigError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
     c = build_components(s)
-    primary = s.primary_branch()
     try:
         c.store.init_schema()
         n = c.store.migrate_legacy_base(primary)
@@ -562,7 +877,8 @@ def migrate_branches() -> None:
 @click.argument("query")
 @click.option("--repo", "repo_tag", default=None, help="owner/name; по умолчанию DEFAULT_REPO")
 @click.option("--branch", "branch_opt", default=None,
-              help="ветка base-индекса; по умолчанию первичная (REVIEW_BRANCHES)")
+              help="ветка base-индекса; по умолчанию первичная ветка репозитория "
+                   "(см. reviewer config show)")
 def search(query: str, repo_tag: str | None, branch_opt: str | None) -> None:
     """Гибридный поиск по base-индексу ветки (диагностика)."""
     from reviewer.services.repo_id import normalize_repo
@@ -570,10 +886,11 @@ def search(query: str, repo_tag: str | None, branch_opt: str | None) -> None:
     repo_id = normalize_repo(repo_tag or s.default_repo) if (repo_tag or s.default_repo) else None
     if repo_id is None:
         raise click.ClickException("Укажите --repo owner/name (или DEFAULT_REPO в .env)")
-    if branch_opt and branch_opt not in s.review_branches_list():
-        raise click.ClickException(
-            f"Ветка {branch_opt!r} не в REVIEW_BRANCHES ({s.review_branches_list()})")
-    branch = branch_opt or s.primary_branch()
+    try:
+        branches = resolve_repo_branches(repo_id, settings=s)
+        branch = resolve_branch(branch_opt, None, branches)
+    except (HomeConfigError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
     c = build_components(s)
     try:
         qvec = c.embedder.embed_query(query)
@@ -594,7 +911,8 @@ def search(query: str, repo_tag: str | None, branch_opt: str | None) -> None:
 @click.option("--repo", "repo_tag", default=None,
               help="owner/name тег индекса; по умолчанию из git remote origin")
 @click.option("--branch", "branch_opt", default=None,
-              help="одна ветка; по умолчанию все из REVIEW_BRANCHES")
+              help="одна ветка; по умолчанию все отслеживаемые ветки репозитория "
+                   "(см. reviewer config show)")
 @click.option("--json", "as_json", is_flag=True, default=False,
               help="машиночитаемый JSON вместо текста")
 def status(path: str, repo_tag: str | None, branch_opt: str | None,
@@ -602,16 +920,24 @@ def status(path: str, repo_tag: str | None, branch_opt: str | None,
     """Показать здоровье/свежесть base-индекса по веткам (не тратит Voyage)."""
     s = Settings()
     repo = _resolve_repo(repo_tag, path, s)
-    branches = [branch_opt] if branch_opt else s.review_branches_list()
+    try:
+        repo_branches = resolve_repo_branches(repo, settings=s)
+    except HomeConfigError as exc:
+        raise click.ClickException(str(exc)) from exc
+    branches = [branch_opt] if branch_opt else list(repo_branches.index)
     store = ChunkStore(s.pg_dsn, min_size=s.pg_pool_min_size, max_size=s.pg_pool_max_size)
     graph = GraphStore(s.neo4j_uri, s.neo4j_user, s.neo4j_password)
+    summary_store = SummaryStore(s.pg_dsn, min_size=s.pg_pool_min_size,
+                                 max_size=s.pg_pool_max_size)
     try:
-        report = build_status_report(store, graph, repo, branches, path)
+        report = build_status_report(store, graph, repo, branches, path,
+                                     summary_store=summary_store)
     except psycopg.OperationalError as e:
         raise click.ClickException(f"Postgres недоступен: {e}")
     finally:
         store.close()
         graph.close()
+        summary_store.close()
     if as_json:
         click.echo(render_status_json(report))
         return
@@ -667,17 +993,13 @@ def gc() -> None:
 
 
 @cli.command()
-@click.option("--host", default="127.0.0.1", show_default=True, help="Хост для uvicorn")
-@click.option("--port", default=8000, show_default=True, type=int, help="Порт для uvicorn")
+@click.option("--host", default=DEFAULT_HOST, show_default=True, help="Хост для uvicorn")
+@click.option("--port", default=DEFAULT_PORT, show_default=True, type=int, help="Порт для uvicorn")
 def serve(host: str, port: int) -> None:
     """Запустить веб-админку наблюдаемости (FastAPI + uvicorn)."""
-    import uvicorn
-    from reviewer.web.app import create_app
+    from reviewer.web.serve import run_server
 
-    s = Settings()
-    app = create_app(s)
-    click.echo(f"Запуск веб-сервера на http://{host}:{port} ...")
-    uvicorn.run(app, host=host, port=port)
+    run_server(host, port)
 
 
 @cli.command()
@@ -826,6 +1148,70 @@ def install(client: str | None, all_clients: bool, list_clients: bool,
         click.echo("Готово. Перезапустите клиент. Ключи: reviewer init && reviewer check.")
 
 
+@dataclass(frozen=True)
+class _GlobalInitPlan:
+    path: Path
+    content: str
+    preview: str
+    source: str
+    action: str
+
+
+def _render_init_preview(
+    global_plan: _GlobalInitPlan | None,
+    repo_plan: RepositoryConfigPlan | None,
+) -> None:
+    """Показать все target-планы до первой записи, не раскрывая env secrets."""
+    click.echo("# reviewer init preview")
+    if global_plan is not None:
+        click.echo(f"\nfile: {global_plan.path}")
+        click.echo(f"action: {global_plan.action}")
+        click.echo(f"source: {global_plan.source}")
+        click.echo(global_plan.preview)
+    if repo_plan is not None:
+        click.echo(f"\nfile: {repo_plan.path}")
+        click.echo(f"action: {repo_plan.action}")
+        click.echo(f"repo: {repo_plan.repo} ({repo_plan.repo_source})")
+        click.echo(f"primary: {repo_plan.primary} ({repo_plan.primary_source})")
+        click.echo(repo_plan.preview)
+
+
+def _select_vcs_provider(inst, current: Mapping[str, str]) -> str:
+    """Выбрать VCS с offline default из origin, затем env fallback."""
+    from reviewer.services.repo_id import derive_vcs_from_remote
+
+    root = repo_root(".")
+    detected = derive_vcs_from_remote(remote_url(root or ".") or "")
+    default = detected[0] if detected is not None else current.get("VCS_PROVIDER", "github")
+    choices = tuple(inst.VCS_SETUPS)
+    if default not in choices:
+        default = "github"
+    return click.prompt(
+        "Выберите VCS provider",
+        type=click.Choice(choices),
+        default=default,
+    )
+
+
+def _prompt_vcs_provider(inst, spec, current: Mapping[str, str]) -> dict[str, str]:
+    """Показать access contract и запросить поля только выбранного VCS."""
+    click.echo(
+        render_provider_access(
+            label=spec.label,
+            help_text=spec.help_text,
+            help_url=spec.help_url,
+            access=spec.access,
+        )
+    )
+    if click.confirm(
+        f"Открыть официальную инструкцию {spec.help_url}?",
+        default=False,
+    ):
+        click.launch(spec.help_url)
+    group = inst.EnvGroup(title=spec.label, fields=list(spec.credential_fields))
+    return inst.prompt_groups([group], current=dict(current), yes=False)
+
+
 @cli.command()
 @click.option("--path", "path_opt", default=None,
               help="куда писать .env (по умолчанию ~/.config/rag-reviewer/.env)")
@@ -833,108 +1219,264 @@ def install(client: str | None, all_clients: bool, list_clients: bool,
               help="принять все дефолты без интерактива (CI-режим)")
 @click.option("--dry-run", "dry_run", is_flag=True,
               help="показать безопасный preview без prompt, сети и записи файла")
-def init(path_opt: str | None, yes: bool, dry_run: bool) -> None:
-    """Интерактивный мастер настройки .env для rag-reviewer."""
+@click.option(
+    "--scope",
+    type=click.Choice(("all", "global", "repo")),
+    default="all",
+    show_default=True,
+    help="этапы настройки: global .env, repo branch config или оба",
+)
+@click.option("--repo", "repo_opt", default=None, help="owner/name для repo stage")
+def init(
+    path_opt: str | None,
+    yes: bool,
+    dry_run: bool,
+    scope: str,
+    repo_opt: str | None,
+) -> None:
+    """Настроить global .env и per-repo ветки с preview до записи."""
     import subprocess
-    from pathlib import Path
     from reviewer import install as inst
     from reviewer.tasks.boards import setup as board_setup
     from reviewer.tasks.boards.errors import BoardProviderError
     from reviewer.tasks.boards.registry import default_board_registry
 
-    dest = Path(path_opt).expanduser() if path_opt else inst.default_env_path()
-    current = inst.read_env(dest)
-    wizard_keys = {f.key for g in inst.WIZARD_GROUPS for f in g.fields}
-
-    if dry_run:
-        values = inst.prompt_groups(inst.WIZARD_GROUPS, current=current, yes=True)
-        extra = {k: v for k, v in current.items() if k not in wizard_keys}
-        click.echo(f"# reviewer init preview: {dest}")
-        click.echo(inst.render_env_preview(values, extra))
-        return
-
-    dest.parent.mkdir(parents=True, exist_ok=True)
-
-    if not yes:
-        click.echo(f"Настройка rag-reviewer: {dest}")
-        click.echo("─" * 52)
-
+    run_global = scope in {"all", "global"}
+    run_repo = scope in {"all", "repo"}
+    interactive = not yes and not dry_run
+    if run_repo and repo_opt is not None:
+        try:
+            repo_opt = _resolve_config_repo(repo_opt)
+        except ValueError as exc:
+            raise click.ClickException(str(exc)) from exc
+    global_plan: _GlobalInitPlan | None = None
+    repo_plan: RepositoryConfigPlan | None = None
+    settings: Settings | None = None
     try:
-        groups = inst.WIZARD_GROUPS
-        if yes:
-            values = inst.prompt_groups(groups, current=current, yes=True)
-        else:
-            board_group = next(group for group in groups if group.title == "Доска задач")
-            common_fields = inst.common_board_env_fields(board_group)
-            values = inst.prompt_groups(
-                [
-                    (
-                        inst.EnvGroup(
-                            title=board_group.title,
-                            fields=common_fields,
-                            optional=True,
-                        )
-                        if group is board_group
-                        else group
-                    )
-                    for group in groups
-                ],
-                current=current,
-                yes=False,
-            )
-            for field in board_group.fields:
-                if field in common_fields:
-                    continue
-                values[field.key] = current.get(field.key, "") or field.default
+        if run_global:
+            dest = Path(path_opt).expanduser() if path_opt else inst.default_env_path()
+            current = inst.read_env(dest)
+            wizard_keys = {field.key for group in inst.WIZARD_GROUPS for field in group.fields}
+            groups = inst.WIZARD_GROUPS
 
-            if click.confirm("\nПодключить provider доски задач?", default=False):
-                registry = default_board_registry()
-                io = board_setup.ClickSetupIO()
-                board_type = io.choose(
-                    "Выберите provider доски",
+            if interactive:
+                click.echo(f"Настройка rag-reviewer: {dest}")
+                click.echo("─" * 52)
+                vcs_group = next(group for group in groups if group.title == "VCS")
+                board_group = next(group for group in groups if group.title == "Доска задач")
+                common_fields = inst.common_board_env_fields(board_group)
+                values = inst.prompt_groups(
                     [
-                        board_setup.SetupChoice(
-                            value=registered_type,
-                            label=registry.get(registered_type).setup.label,
+                        (
+                            inst.EnvGroup(
+                                title=board_group.title,
+                                fields=common_fields,
+                                optional=True,
+                            )
+                            if group is board_group
+                            else group
                         )
-                        for registered_type in registry.registered_types()
+                        for group in groups
+                        if group is not vcs_group
                     ],
+                    current=current,
+                    yes=False,
                 )
-                while True:
-                    try:
-                        values.update(
-                            board_setup.configure_board_provider(registry.get(board_type), io)
+                for group in (vcs_group, board_group):
+                    for field in group.fields:
+                        values.setdefault(
+                            field.key,
+                            current.get(field.key, "") or field.default,
                         )
-                        break
-                    except BoardProviderError as error:
-                        click.echo(f"✗ {board_type}: {error.message}")
-                        if error.hint:
-                            click.echo(f"  {error.hint}")
-                        if not click.confirm(
-                            "Исправить credentials и повторить?",
-                            default=True,
-                        ):
-                            click.echo(
-                                "Provider пропущен; непроверенные credentials не сохранены."
+
+                if click.confirm("\nПодключить VCS provider?", default=True):
+                    vcs_type = _select_vcs_provider(inst, current)
+                    values["VCS_PROVIDER"] = vcs_type
+                    values.update(
+                        _prompt_vcs_provider(inst, inst.VCS_SETUPS[vcs_type], current)
+                    )
+
+                if click.confirm("\nПодключить provider доски задач?", default=False):
+                    registry = default_board_registry()
+                    io = board_setup.ClickSetupIO()
+                    board_type = io.choose(
+                        "Выберите provider доски",
+                        [
+                            board_setup.SetupChoice(
+                                value=registered_type,
+                                label=registry.get(registered_type).setup.label,
+                            )
+                            for registered_type in registry.registered_types()
+                        ],
+                    )
+                    while True:
+                        try:
+                            values.update(
+                                board_setup.configure_board_provider(registry.get(board_type), io)
                             )
                             break
+                        except BoardProviderError as error:
+                            click.echo(f"✗ {board_type}: {error.message}")
+                            if error.hint:
+                                click.echo(f"  {error.hint}")
+                            if not click.confirm(
+                                "Исправить credentials и повторить?",
+                                default=True,
+                            ):
+                                click.echo(
+                                    "Provider пропущен; непроверенные credentials не сохранены."
+                                )
+                                break
+            else:
+                values = inst.prompt_groups(groups, current=current, yes=True)
+
+            extra = {key: value for key, value in current.items() if key not in wizard_keys}
+            content = inst.render_env(values, extra)
+            if dest.is_file() and dest.read_text(encoding="utf-8") == content:
+                action = "noop"
+            else:
+                action = "update" if dest.is_file() else "create"
+            global_plan = _GlobalInitPlan(
+                path=dest,
+                content=content,
+                preview=inst.render_env_preview(values, extra),
+                source=f"existing:{dest}" if dest.is_file() else "wizard defaults/input",
+                action=action,
+            )
+
+        if run_repo:
+            settings = Settings(_env_file=None) if scope == "repo" else Settings()
+            detection = detect_repository(
+                ".",
+                repo_opt,
+                settings=settings,
+            )
+            if (
+                detection is None
+                and interactive
+                and repo_opt is None
+                and repo_root(".") is not None
+            ):
+                entered_repo = click.prompt(
+                    "Repository (owner/name)",
+                    default="",
+                    show_default=False,
+                ).strip()
+                if entered_repo:
+                    detection = detect_repository(
+                        ".",
+                        entered_repo,
+                        settings=settings,
+                    )
+
+            if detection is None:
+                message = (
+                    "repo не определён: запустите из git repository с распознаваемым origin "
+                    "или передайте --repo owner/name"
+                )
+                if scope == "repo":
+                    raise click.ClickException(message)
+                click.echo(f"repo stage пропущен: {message}")
+            else:
+                initial_plan = plan_repository_config(
+                    detection,
+                    settings=settings,
+                )
+                if initial_plan.action == "noop" or not interactive:
+                    repo_plan = initial_plan
+                else:
+                    click.echo(
+                        f"\nОбнаружен repo {detection.repo} ({detection.repo_source})"
+                    )
+                    click.echo(
+                        f"Primary candidate: {detection.primary} "
+                        f"({detection.primary_source})"
+                    )
+                    primary = click.prompt(
+                        "Primary branch",
+                        default=initial_plan.primary,
+                    ).strip()
+                    default_index = (
+                        initial_plan.index
+                        if primary == initial_plan.primary
+                        else (primary,)
+                    )
+                    while True:
+                        raw_index = click.prompt(
+                            "Index branches (CSV)",
+                            default=",".join(default_index),
+                        )
+                        try:
+                            index = parse_branch_csv(raw_index, primary)
+                        except ValueError as exc:
+                            click.echo(f"Некорректные ветки: {exc}")
+                            continue
+                        break
+                    repo_plan = plan_repository_config(
+                        detection,
+                        settings=settings,
+                        primary=(primary if primary != initial_plan.primary else None),
+                        index=index,
+                    )
+
+        _render_init_preview(global_plan, repo_plan)
+        if dry_run:
+            return
+        if interactive and not click.confirm(
+            "\nЗаписать показанные изменения?",
+            default=True,
+        ):
+            click.echo("Отменено — файлы не изменены.")
+            return
     except click.Abort:
-        click.echo("\nОтменено — файл не изменён.")
+        click.echo("\nОтменено — файлы не изменены.")
         return
+    except (HomeConfigError, yaml.YAMLError) as exc:
+        raise click.ClickException(_config_error_message(exc)) from exc
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
 
-    extra = {k: v for k, v in current.items() if k not in wizard_keys}
-    content = inst.render_env(values, extra)
-    dest.write_text(content, encoding="utf-8")
-    click.echo(f"\n✓ Записан {dest}")
+    if global_plan is not None:
+        try:
+            if global_plan.action != "noop":
+                global_plan.path.parent.mkdir(parents=True, exist_ok=True)
+                global_plan.path.write_text(global_plan.content, encoding="utf-8")
+        except Exception as exc:  # noqa: BLE001 — error не должен раскрыть env content
+            raise click.ClickException(
+                f"Не удалось записать {global_plan.path}: {type(exc).__name__}"
+            ) from None
+        if global_plan.action == "noop":
+            click.echo(f"\n✓ Global config: noop → {global_plan.path}")
+        else:
+            click.echo(f"\n✓ Записан {global_plan.path} ({global_plan.action})")
 
-    if not yes and click.confirm("\nЗапустить reviewer check сейчас?", default=True):
+    if repo_plan is not None:
+        try:
+            apply_repository_config(repo_plan)
+        except Exception as exc:  # noqa: BLE001 — не эхоить потенциальный payload исключения
+            raise click.ClickException(
+                f"Не удалось записать {repo_plan.path}: {type(exc).__name__}"
+            ) from None
+        click.echo(f"✓ Repo config: {repo_plan.action} → {repo_plan.path}")
+        assert settings is not None
+        try:
+            effective = resolve_repo_branches(repo_plan.repo, settings=settings)
+        except (HomeConfigError, yaml.YAMLError) as exc:
+            raise click.ClickException(_config_error_message(exc)) from exc
+        _render_config_report(_branches_report(effective))
+        click.echo(f"Полный отчёт: reviewer config show --repo {repo_plan.repo}")
+
+    if run_global and interactive and click.confirm(
+        "\nЗапустить reviewer check сейчас?",
+        default=True,
+    ):
         subprocess.run(["reviewer", "check"], check=False)
-    elif not yes:
+    elif run_global and interactive:
         click.echo("Запустите: reviewer check")
-    else:
+    elif run_global:
         click.echo("Готово. Запустите: reviewer check")
 
-    if not yes and _shutil.which("codex") and click.confirm(
+    if run_global and interactive and _shutil.which("codex") and click.confirm(
         "\nУстановить или обновить rag-reviewer для Codex?", default=True
     ):
         result = _run_codex_target(include_mcp=True, dry_run=False)

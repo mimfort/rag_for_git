@@ -1,5 +1,5 @@
 ---
-name: reviewer_review-pr
+name: review-pr
 description: Review a GitHub pull request with the RAG + code-graph pipeline (reviewer MCP server). Use when the user asks to review a PR ("review PR 123", "заревьюй PR", a PR URL). Requires ParadeDB/Neo4j running and a built base index.
 ---
 
@@ -17,7 +17,7 @@ of posting.
 
 **Include resolution (applies to all steps below).** When you read any
 `references/*-prompt.md` file to dispatch a subagent (steps 3, 4, and 5 —
-analyze, requirements, blast-radius, verify), it may contain
+analyze, requirements, risk changes, blast-radius, verify), it may contain
 `<!-- include: _common/<file>.md -->` markers. Before putting the prompt into
 the subagent, replace each marker with the verbatim contents of that file
 (path is relative to `plugin/skills/`). These `_common/*.md` files are the
@@ -33,6 +33,9 @@ blocks.
    - `task_board`: `{type, project, key_pattern, create_target, done_target, options}` or null —
      non-secret generic board metadata from `.review.yml`
    - `task_keys`: `{primary, others}` or null — task keys extracted from the PR by the server
+   - `risk_paths`: bounded non-Python items with
+     `{path, status, reasons, patch, commentable_right, commentable_left}`
+   - `risk_skipped_paths`: classified paths omitted by the deterministic cap
    - `skipped_paths`, `skip_drafts`, `suggestions_mode`
 
    If the payload has `status: "skipped"`, this is NOT an error but an expected skip
@@ -70,7 +73,8 @@ blocks.
    dimension in step 4. All of this is best-effort: if `index_task`/`get_task_context`/`search_tasks`
    return a "(… unavailable)" note or error, continue — never abort the review.
 
-3. **Analyze (fan-out).** For each unit in `units`, dispatch a subagent (Task tool,
+3. **Analyze (fan-out).** The Python per-unit fan-out remains based only on `units`.
+   For each unit in `units`, dispatch a subagent (Task tool,
    run independent subagents in parallel; batch units if there are more than ~10) with:
    - the contents of `references/analyze-prompt.md` (read it once, resolve includes, include verbatim);
    - the unit's `path`, `patch`, `commentable_right` (sorted list of new-file line numbers
@@ -92,6 +96,10 @@ blocks.
      similar tasks) as an optional "Related context" block, the repo/pr identifiers (so it can call
      the reviewer MCP tools), and the target output language. It submits findings via
      `submit_findings` with category `requirements`.
+   - risk changes (ONLY if `risk_paths` is non-empty): dispatch one subagent with
+     `references/risk-changes-prompt.md`, every risk item, the PR title/body, repo/pr
+     identifiers, and output language. It submits only grounded `correctness`/`security`
+     findings via `submit_findings`.
    - blast-radius: dispatch one subagent with `references/blast-radius-prompt.md`, the diffs of
      all units (path + patch), each unit's `commentable_right`/`commentable_left` (the line numbers
      where inline comments are allowed), the PR `title`/`body`, the repo/pr identifiers, and the
@@ -114,7 +122,8 @@ blocks.
    If a task was read, state whether the PR meets the task's requirements; if the task context was
    requested but unavailable (no key, sync error, task not found), say so briefly.
    Mention files that were not analyzed: failed subagents and `skipped_paths`
-   from the prepare payload. Call `publish_review(repo, pr, summary, dry_run, task_key)`
+   from the prepare payload. Name a failed risk subagent in the summary, and report every
+   `risk_skipped_paths` entry as not inspected. Call `publish_review(repo, pr, summary, dry_run, task_key)`
    where `task_key` is the canonical `TaskBrief.key` if a task was read (else omit / null). If the
    CLI provides model/usage/cost metadata, pass them via the optional keyword arguments `model`,
    `usage`, and `total_cost` to `publish_review`. When published, this links the PR to the task in
@@ -126,6 +135,8 @@ blocks.
 
 - A failed analyze subagent must not abort the run: continue with the other units
   and mention the skipped file in the summary.
+- A failed risk changes subagent is fail-open: continue with the review and name it in
+  the summary.
 - A `prepare_review` payload with `status: "skipped"` is not a failure: report its
   `reason` (target branch not tracked in `REVIEW_BRANCHES`) and stop without analyze/publish.
 - If `prepare_review` fails, surface its error text to the user as-is (it contains

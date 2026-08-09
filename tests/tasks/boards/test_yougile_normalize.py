@@ -1,4 +1,5 @@
-from reviewer.tasks.boards.base import RawTask
+from reviewer.config.task_board import TaskSyncFilter
+from reviewer.tasks.boards.base import RawTask, TaskListing
 from reviewer.tasks.boards.yougile import YougileBoard, normalize_yougile
 
 KP = r"[A-Z]+-\d+"
@@ -6,8 +7,10 @@ URL = "https://ru.yougile.com/team/T/#{code}"
 
 
 def _raw(**kw):
-    base = dict(key="ID-10", project_code="PRI-10", title="T", description="",
-                status="Backlog", subtask_ids=[], timestamp=1)
+    base = {
+        "key": "ID-10", "project_code": "PRI-10", "title": "T", "description": "",
+        "status": "Backlog", "subtask_ids": [], "timestamp": 1,
+    }
     base.update(kw)
     return RawTask(**base)
 
@@ -40,6 +43,27 @@ def test_subtask_links_with_titles_and_related_dedup():
     assert sub == [{"type": "subtask", "key": "u1", "title": "ID-55:Подзадача"}]
     rels = {lk["key"] for lk in b["links"] if lk["type"] == "related"}
     assert "ID-55" in rels                     # код ID-55 — отдельный от UUID u1
+
+
+def test_subtask_link_uses_canonical_common_key_and_covers_all_child_aliases():
+    raw = _raw(description="см. ID-55 и PRI-55", subtask_ids=["uuid-55"])
+
+    brief = normalize_yougile(
+        raw,
+        KP,
+        URL,
+        subtask_refs={
+            "uuid-55": {
+                "key": "ID-55",
+                "title": "Подзадача",
+                "aliases": ["PRI-55"],
+            }
+        },
+    )
+
+    assert brief["links"] == [
+        {"type": "subtask", "key": "ID-55", "title": "Подзадача"}
+    ]
 
 
 def test_alias_omitted_when_equals_key():
@@ -134,7 +158,7 @@ def test_yougile_normalize_dedups_repeated_file_url():
         f"/chats/{UUID}/messages": _FakeYResp(json_data={"content": [
             {"text": "/root/#file:https://yougile.com/f/x/a.md"},
             {"text": "повтор /root/#file:https://yougile.com/f/x/a.md"}]}),
-        "https://yougile.com/f/x/a.md": _FakeYResp(content="A".encode()),
+        "https://yougile.com/f/x/a.md": _FakeYResp(content=b"A"),
     }
     board = _board_with(routes)
     brief = board.normalize(_raw(board_id=UUID, subtask_ids=[]))
@@ -159,7 +183,7 @@ def test_yougile_normalize_marker_in_texthtml():
         f"/chats/{UUID}/messages": _FakeYResp(json_data={"content": [
             {"text": "", "properties": {
                 "textHtml": "<p>/root/#file:https://yougile.com/f/d.txt</p>"}}]}),
-        "https://yougile.com/f/d.txt": _FakeYResp(content="D".encode()),
+        "https://yougile.com/f/d.txt": _FakeYResp(content=b"D"),
     }
     board = _board_with(routes)
     brief = board.normalize(_raw(board_id=UUID, subtask_ids=[]))
@@ -199,7 +223,7 @@ def test_yougile_normalize_unescapes_amp_in_href():
     href = '<a href="https://yougile.com/user-data/x/d.txt?a=1&amp;b=2">d.txt</a>'
     routes = {
         f"/chats/{UUID}/messages": _FakeYResp(json_data={"content": []}),
-        "https://yougile.com/user-data/x/d.txt?a=1&b=2": _FakeYResp(content="D".encode()),
+        "https://yougile.com/user-data/x/d.txt?a=1&b=2": _FakeYResp(content=b"D"),
     }
     board = _board_with(routes)
     brief = board.normalize(_raw(board_id=UUID, description=href, subtask_ids=[]))
@@ -226,14 +250,72 @@ def test_yougile_normalize_skips_offhost_description_href():
     assert "https://evil.example.com/user-data/x/leak.md" not in board._client.requested
 
 
-def test_normalize_completed_maps_to_done_status():
-    b = normalize_yougile(_raw(status="In progress", completed=True), KP, URL)
+def test_normalize_terminal_maps_to_done_status():
+    b = normalize_yougile(_raw(status="In progress", terminal=True), KP, URL)
     assert b["status"] == "done"
 
 
-def test_normalize_not_completed_keeps_column_status():
-    b = normalize_yougile(_raw(status="In progress", completed=False), KP, URL)
+def test_normalize_nonterminal_keeps_column_status():
+    b = normalize_yougile(_raw(status="In progress", terminal=False), KP, URL)
     assert b["status"] == "In progress"
+
+
+class _ListingBoard(YougileBoard):
+    def __init__(self, tasks):
+        self._tasks = tasks
+
+    def _get_all(self, path, params=None):
+        if path == "/projects":
+            return [{"id": "p1"}]
+        if path == "/boards":
+            assert params == {"projectId": "p1"}
+            return [{"id": "b1"}]
+        if path == "/columns":
+            assert params == {"boardId": "b1"}
+            return [{"id": "c1", "title": "Backlog"}]
+        if path == "/tasks":
+            assert params == {"columnId": "c1"}
+            return self._tasks
+        raise AssertionError(path)
+
+
+def test_iter_raw_returns_listing_and_preserves_nullable_native_values():
+    tasks = [
+        {"id": "u1", "idTaskCommon": "ID-1", "idTaskProject": "PRI-1",
+         "columnId": "c1", "completed": True},
+        {"id": "u2", "idTaskCommon": "ID-2", "idTaskProject": "PRI-2",
+         "columnId": "c1", "timestamp": True, "completed": False},
+        {"id": "u3", "idTaskCommon": "ID-3", "idTaskProject": "PRI-3",
+         "columnId": "c1", "timestamp": "invalid", "completed": "true"},
+    ]
+    listing = _ListingBoard(tasks).iter_raw(
+        "PRI",
+        None,
+        sync_filter=TaskSyncFilter(max_age_days=30, include_archived=False),
+        now_ms=123,
+    )
+
+    assert isinstance(listing, TaskListing)
+    rows = list(listing)
+    assert [row.timestamp for row in rows] == [None, None, None]
+    assert [row.terminal for row in rows] == [True, False, None]
+    assert all(row.archived is None for row in rows)
+    assert listing.stats.filtered_by_age == 0
+    assert listing.stats.filtered_archived == 0
+    assert listing.stats.warnings == []
+
+
+def test_iter_raw_keeps_project_scope_and_limit():
+    tasks = [
+        {"id": "u1", "idTaskProject": "PRI-1", "columnId": "c1"},
+        {"id": "u2", "idTaskProject": "OTHER-1", "columnId": "c1"},
+        {"id": "u3", "idTaskProject": "PRI-2", "columnId": "c1"},
+        {"id": "u4", "idTaskProject": "PRI-3", "columnId": "c1"},
+    ]
+
+    rows = list(_ListingBoard(tasks).iter_raw("PRI", 2))
+
+    assert [row.board_id for row in rows] == ["u1", "u3"]
 
 
 class _BoomClient:
@@ -277,3 +359,38 @@ def test_normalize_keeps_plain_markdown_intact():
                   subtask_ids=[], timestamp=1)
     out = normalize_yougile(raw, r"PRI-\d+", "https://b/#{code}")
     assert out["description"] == "## Проблема\n\nтекст"
+
+
+def test_normalize_strips_only_exact_subtask_marker():
+    exact = f"reviewer-subtask:{'a' * 64}"
+    lookalike = "reviewer-subtask:not-a-hash"
+    too_long = f"reviewer-subtask:{'b' * 65}"
+    raw = _raw(description=f"<p>Текст</p><p>{exact}</p><p>{lookalike}</p><p>{too_long}</p>")
+
+    out = normalize_yougile(raw, KP, URL)
+
+    assert exact not in out["description"]
+    assert lookalike in out["description"]
+    assert too_long in out["description"]
+
+
+def test_board_normalize_builds_canonical_child_reference_from_get():
+    routes = {
+        "/tasks/uuid-55": _FakeYResp(json_data={
+            "id": "uuid-55",
+            "idTaskCommon": "ID-55",
+            "idTaskProject": "PRI-55",
+            "title": "Подзадача",
+        }),
+    }
+    board = _board_with(routes)
+
+    brief = board.normalize(_raw(
+        board_id="",
+        description="см. ID-55 и PRI-55",
+        subtask_ids=["uuid-55"],
+    ))
+
+    assert brief["links"] == [
+        {"type": "subtask", "key": "ID-55", "title": "Подзадача"}
+    ]

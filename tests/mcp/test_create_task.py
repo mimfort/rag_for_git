@@ -6,6 +6,7 @@ import pytest
 from reviewer.config.provider_credentials import ProviderCredentialSource
 from reviewer.config.settings import Settings
 from reviewer.mcp.service import MCPReviewService
+from reviewer.tasks.boards.base import TaskListing
 from reviewer.tasks.boards.registry import (
     BoardProviderRegistry,
     BoardProviderSpec,
@@ -13,6 +14,7 @@ from reviewer.tasks.boards.registry import (
     ProviderBuildContext,
     ProviderSetupSpec,
 )
+from tests.provider_access import FAKE_PROVIDER_ACCESS
 
 
 class _Settings:
@@ -33,8 +35,8 @@ class _Provider:
     def validate_connection(self, project=None):
         return {}
 
-    def iter_raw(self, board, limit):
-        return []
+    def iter_raw(self, board, limit, *, sync_filter=None, now_ms=None):
+        return TaskListing(rows=())
 
     def create(self, doc_md, *, title, target, project):
         self.created = {"doc_md": doc_md, "title": title, "target": target,
@@ -95,7 +97,9 @@ def service():
                 board_type=board_type,
                 factory=factory,
                 credential_fields=(CredentialFieldSpec(env, "Token", secret=True),),
-                setup=ProviderSetupSpec(board_type, "https://fake/help", "Configure."),
+                setup=ProviderSetupSpec(
+                    board_type, "https://fake/help", "Configure.", FAKE_PROVIDER_ACCESS
+                ),
             ))
             values[env] = "secret"
         svc._board_registry = BoardProviderRegistry(specs)

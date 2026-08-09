@@ -12,6 +12,36 @@ import psycopg.errors
 from pgvector import Vector
 from pgvector.psycopg import register_vector
 from psycopg_pool import ConnectionPool
+from psycopg.types.json import Jsonb
+
+from reviewer.services.summary_fragments import (
+    StoredSummaryFragment,
+    has_complete_fragment_generation,
+)
+
+
+_UPSERT_SUMMARY_SQL = """
+INSERT INTO subsystem_summaries
+    (repo, branch, cluster_key, title, summary, member_node_ids,
+     source_hash, embedding, updated_at)
+VALUES (%s,%s,%s,%s,%s,%s,%s,%s, now())
+ON CONFLICT (repo, branch, cluster_key) DO UPDATE SET
+    title=EXCLUDED.title, summary=EXCLUDED.summary,
+    member_node_ids=EXCLUDED.member_node_ids,
+    source_hash=EXCLUDED.source_hash,
+    embedding = CASE
+        WHEN %s AND subsystem_summaries.source_hash = EXCLUDED.source_hash
+        THEN COALESCE(EXCLUDED.embedding, subsystem_summaries.embedding)
+        ELSE EXCLUDED.embedding
+    END,
+    updated_at=now()
+"""
+
+_LOCK_SUMMARY_BRANCH_SQL = """
+SELECT pg_advisory_xact_lock(
+    hashtextextended(%s, hashtextextended(%s, 0))
+)
+"""
 
 
 class SummaryStore:
@@ -42,27 +72,317 @@ class SummaryStore:
 
     def upsert_summary(self, repo: str, branch: str, cluster_key: str, title: str,
                        summary: str, member_node_ids: list[str], source_hash: str,
-                       embedding: list[float] | None = None) -> None:
-        """Idempotent upsert сводки. embedding=None сохраняет существующий вектор
-        (COALESCE) — дедуп по source_hash на стороне вызывающего: при неизменном
-        хеше эмбеддинг не пересчитывается и передаётся None (PRI-167)."""
-        sql = """
-        INSERT INTO subsystem_summaries
-            (repo, branch, cluster_key, title, summary, member_node_ids,
-             source_hash, embedding, updated_at)
-        VALUES (%s,%s,%s,%s,%s,%s,%s,%s, now())
-        ON CONFLICT (repo, branch, cluster_key) DO UPDATE SET
-            title=EXCLUDED.title, summary=EXCLUDED.summary,
-            member_node_ids=EXCLUDED.member_node_ids,
-            source_hash=EXCLUDED.source_hash,
-            embedding=COALESCE(EXCLUDED.embedding, subsystem_summaries.embedding),
-            updated_at=now()
+                       embedding: list[float] | None = None,
+                       preserve_embedding: bool = True) -> None:
+        """Idempotent upsert сводки.
+
+        По умолчанию embedding=None сохраняет существующий вектор при неизменном
+        source_hash. ``preserve_embedding=False`` атомарно сбрасывает его независимо
+        от hash, чтобы новый текст не был доступен через старый ANN-вектор.
         """
         vec = Vector(embedding) if embedding is not None else None
         with self._connect() as conn:
-            conn.execute(sql, (repo, branch, cluster_key, title, summary,
-                               member_node_ids, source_hash, vec))
+            conn.execute(
+                _UPSERT_SUMMARY_SQL,
+                (repo, branch, cluster_key, title, summary,
+                 member_node_ids, source_hash, vec, preserve_embedding),
+            )
             conn.commit()
+
+    def get_fragments(self, repo: str, branch: str) -> list[dict]:
+        """Вернуть file-summary fragments ветки в детерминированном порядке."""
+        try:
+            with self._connect() as conn:
+                rows = conn.execute(
+                    "SELECT cluster_key, path, fingerprint, summary, provenance, updated_at "
+                    "FROM subsystem_summary_fragments "
+                    "WHERE repo=%s AND branch=%s ORDER BY cluster_key, path",
+                    (repo, branch),
+                ).fetchall()
+        except psycopg.errors.UndefinedTable:
+            return []
+        return [
+            {
+                "cluster_key": cluster_key,
+                "path": path,
+                "fingerprint": fingerprint,
+                "summary": summary,
+                "provenance": provenance,
+                "updated_at": updated_at.isoformat(),
+            }
+            for cluster_key, path, fingerprint, summary, provenance, updated_at in rows
+        ]
+
+    def get_completed_depth(self, repo: str, branch: str) -> int | None:
+        """Вернуть depth последнего полностью завершённого прохода."""
+        try:
+            with self._connect() as conn:
+                row = conn.execute(
+                    "SELECT completed_depth FROM subsystem_summary_state "
+                    "WHERE repo=%s AND branch=%s",
+                    (repo, branch),
+                ).fetchone()
+        except psycopg.errors.UndefinedTable:
+            return None
+        return int(row[0]) if row is not None else None
+
+    def get_completed_layout(self, repo: str, branch: str) -> str | None:
+        """Вернуть token последнего полностью завершённого layout."""
+        try:
+            with self._connect() as conn:
+                row = conn.execute(
+                    "SELECT completed_layout FROM subsystem_summary_state "
+                    "WHERE repo=%s AND branch=%s",
+                    (repo, branch),
+                ).fetchone()
+        except (psycopg.errors.UndefinedTable, psycopg.errors.UndefinedColumn):
+            return None
+        return str(row[0]) if row is not None and row[0] is not None else None
+
+    @staticmethod
+    def _validate_new_fragments(
+        current_fingerprints: dict[str, str],
+        new_fragments: list[dict],
+    ) -> dict[str, dict]:
+        """Проверить уникальность и актуальность сгенерированных fragments."""
+        result: dict[str, dict] = {}
+        for fragment in new_fragments:
+            try:
+                path = fragment["path"]
+                fingerprint = fragment["fingerprint"]
+                summary = fragment["summary"]
+            except (KeyError, TypeError) as exc:
+                raise ValueError("Неполный payload summary fragment") from exc
+            if path in result:
+                raise ValueError(f"Дублирующийся summary fragment: {path}")
+            if current_fingerprints.get(path) != fingerprint:
+                raise ValueError(f"Fingerprint summary fragment устарел: {path}")
+            result[path] = {
+                "path": path,
+                "fingerprint": fingerprint,
+                "summary": summary,
+                "provenance": fragment.get("provenance", {}),
+            }
+        return result
+
+    def commit_summary_bundle(
+        self,
+        repo: str,
+        branch: str,
+        cluster_key: str,
+        title: str,
+        summary: str,
+        member_node_ids: list[str],
+        source_hash: str,
+        *,
+        current_fingerprints: dict[str, str],
+        new_fragments: list[dict],
+    ) -> dict:
+        """Атомарно сохранить fragments и итоговую сводку одного кластера.
+
+        Существующий fragment переиспользуется только при точном совпадении
+        fingerprint. Отсутствующее покрытие или неоднозначный перенос откатывают
+        всю транзакцию вместе со сводкой.
+        """
+        incoming = self._validate_new_fragments(current_fingerprints, new_fragments)
+        metrics = {"created": len(incoming), "reused": 0, "removed": 0, "moved": 0}
+        with self._connect() as conn, conn.transaction():
+            conn.execute(_LOCK_SUMMARY_BRANCH_SQL, (repo, branch))
+            rows = conn.execute(
+                "SELECT cluster_key, path, fingerprint, summary, provenance "
+                "FROM subsystem_summary_fragments "
+                "WHERE repo=%s AND branch=%s ORDER BY cluster_key, path FOR UPDATE",
+                (repo, branch),
+            ).fetchall()
+            by_target = {
+                path: (fingerprint, fragment_summary, provenance)
+                for stored_cluster, path, fingerprint, fragment_summary, provenance in rows
+                if stored_cluster == cluster_key
+            }
+            by_cross: dict[tuple[str, str], list[tuple[str, str, dict]]] = {}
+            for stored_cluster, path, fingerprint, fragment_summary, provenance in rows:
+                if stored_cluster != cluster_key:
+                    by_cross.setdefault((path, fingerprint), []).append(
+                        (stored_cluster, fragment_summary, provenance)
+                    )
+
+            removed = conn.execute(
+                "DELETE FROM subsystem_summary_fragments "
+                "WHERE repo=%s AND branch=%s AND cluster_key=%s "
+                "AND NOT (path = ANY(%s))",
+                (repo, branch, cluster_key, list(current_fingerprints)),
+            )
+            metrics["removed"] = removed.rowcount
+
+            for path, fingerprint in sorted(current_fingerprints.items()):
+                fragment = incoming.get(path)
+                if fragment is not None:
+                    fragment_summary = fragment["summary"]
+                    provenance = fragment["provenance"]
+                else:
+                    target = by_target.get(path)
+                    if target is not None and target[0] == fingerprint:
+                        fragment_summary, provenance = target[1], target[2]
+                        metrics["reused"] += 1
+                    else:
+                        candidates = by_cross.get((path, fingerprint), [])
+                        if len(candidates) != 1:
+                            raise ValueError(
+                                f"Нет однозначного актуального summary fragment: {path}"
+                            )
+                        _source_cluster, fragment_summary, provenance = candidates[0]
+                        metrics["moved"] += 1
+
+                conn.execute(
+                    "DELETE FROM subsystem_summary_fragments "
+                    "WHERE repo=%s AND branch=%s AND path=%s AND cluster_key<>%s",
+                    (repo, branch, path, cluster_key),
+                )
+                conn.execute(
+                    "INSERT INTO subsystem_summary_fragments "
+                    "(repo, branch, cluster_key, path, fingerprint, summary, "
+                    " provenance, updated_at) "
+                    "VALUES (%s,%s,%s,%s,%s,%s,%s,now()) "
+                    "ON CONFLICT (repo, branch, cluster_key, path) DO UPDATE SET "
+                    "fingerprint=EXCLUDED.fingerprint, summary=EXCLUDED.summary, "
+                    "provenance=EXCLUDED.provenance, updated_at=now()",
+                    (
+                        repo,
+                        branch,
+                        cluster_key,
+                        path,
+                        fingerprint,
+                        fragment_summary,
+                        Jsonb(provenance),
+                    ),
+                )
+
+            final_rows = conn.execute(
+                "SELECT path, fingerprint FROM subsystem_summary_fragments "
+                "WHERE repo=%s AND branch=%s AND cluster_key=%s ORDER BY path",
+                (repo, branch, cluster_key),
+            ).fetchall()
+            if dict(final_rows) != current_fingerprints:
+                raise ValueError("Итоговое покрытие summary fragments неполно")
+
+            conn.execute(
+                _UPSERT_SUMMARY_SQL,
+                (
+                    repo,
+                    branch,
+                    cluster_key,
+                    title,
+                    summary,
+                    member_node_ids,
+                    source_hash,
+                    None,
+                    False,
+                ),
+            )
+        return metrics
+
+    def prune_verified_layout(
+        self,
+        repo: str,
+        branch: str,
+        expected_source_hashes: dict[str, str],
+        current_fingerprints: dict[str, dict[str, str]],
+        depth: int,
+        layout_token: str,
+    ) -> dict:
+        """Проверить полный layout и только затем атомарно удалить сироты."""
+        rejected = {
+            "completed": False,
+            "race": True,
+            "deferred": len(expected_source_hashes),
+            "pruned": 0,
+            "fragments_pruned": 0,
+            "depth": depth,
+            "layout_token": layout_token,
+        }
+        with self._connect() as conn, conn.transaction():
+            conn.execute(_LOCK_SUMMARY_BRANCH_SQL, (repo, branch))
+            if set(current_fingerprints) != set(expected_source_hashes):
+                return {
+                    **rejected,
+                    "note": "fingerprint snapshot кластеров неполон",
+                }
+            summary_rows = conn.execute(
+                "SELECT cluster_key, source_hash FROM subsystem_summaries "
+                "WHERE repo=%s AND branch=%s AND cluster_key = ANY(%s) "
+                "ORDER BY cluster_key FOR UPDATE",
+                (repo, branch, list(expected_source_hashes)),
+            ).fetchall()
+            if dict(summary_rows) != expected_source_hashes:
+                return {
+                    **rejected,
+                    "note": "summary snapshot неполон или устарел",
+                }
+
+            fragment_rows = conn.execute(
+                "SELECT cluster_key, path, fingerprint, summary, provenance "
+                "FROM subsystem_summary_fragments "
+                "WHERE repo=%s AND branch=%s AND cluster_key = ANY(%s) "
+                "ORDER BY cluster_key, path FOR UPDATE",
+                (repo, branch, list(expected_source_hashes)),
+            ).fetchall()
+            stored = [
+                StoredSummaryFragment(
+                    cluster_key=cluster_key,
+                    path=path,
+                    fingerprint=fingerprint,
+                    summary=summary,
+                    provenance=provenance,
+                )
+                for cluster_key, path, fingerprint, summary, provenance in fragment_rows
+            ]
+            incomplete = [
+                cluster_key
+                for cluster_key, fingerprints in current_fingerprints.items()
+                if not has_complete_fragment_generation(
+                    cluster_key,
+                    fingerprints,
+                    stored,
+                    depth,
+                    layout_token,
+                )
+            ]
+            if incomplete:
+                return {
+                    **rejected,
+                    "deferred": len(incomplete),
+                    "note": "покрытие summary fragments неполно",
+                }
+
+            keep_keys = list(expected_source_hashes)
+            fragments = conn.execute(
+                "DELETE FROM subsystem_summary_fragments "
+                "WHERE repo=%s AND branch=%s AND NOT (cluster_key = ANY(%s))",
+                (repo, branch, list(keep_keys)),
+            )
+            summaries = conn.execute(
+                "DELETE FROM subsystem_summaries "
+                "WHERE repo=%s AND branch=%s AND NOT (cluster_key = ANY(%s))",
+                (repo, branch, list(keep_keys)),
+            )
+            conn.execute(
+                "INSERT INTO subsystem_summary_state "
+                "(repo, branch, completed_depth, completed_layout, updated_at) "
+                "VALUES (%s,%s,%s,%s,now()) "
+                "ON CONFLICT (repo, branch) DO UPDATE SET "
+                "completed_depth=EXCLUDED.completed_depth, "
+                "completed_layout=EXCLUDED.completed_layout, updated_at=now()",
+                (repo, branch, depth, layout_token),
+            )
+            return {
+                "completed": True,
+                "race": False,
+                "deferred": 0,
+                "pruned": summaries.rowcount,
+                "fragments_pruned": fragments.rowcount,
+                "depth": depth,
+                "layout_token": layout_token,
+            }
 
     def delete_summaries_except(self, repo: str, branch: str, keep_keys: list[str]) -> int:
         """Удалить сводки repo/branch, чей cluster_key НЕ в keep_keys; вернуть число удалённых.
@@ -103,13 +423,14 @@ class SummaryStore:
         try:
             with self._connect() as conn:
                 rows = conn.execute(
-                    "SELECT cluster_key, title, summary, updated_at FROM subsystem_summaries "
+                    "SELECT cluster_key, title, summary, source_hash, updated_at FROM subsystem_summaries "
                     "WHERE repo=%s AND branch=%s ORDER BY cluster_key",
                     (repo, branch)).fetchall()
         except psycopg.errors.UndefinedTable:
             return []
-        return [{"cluster_key": k, "title": t, "summary": s, "updated_at": u.isoformat()}
-                for k, t, s, u in rows]
+        return [{"cluster_key": k, "title": t, "summary": s, "source_hash": h,
+                 "updated_at": u.isoformat()}
+                for k, t, s, h, u in rows]
 
     def get_summary(self, repo: str, branch: str, cluster_key: str) -> dict | None:
         try:
@@ -132,15 +453,16 @@ class SummaryStore:
         try:
             with self._connect() as conn:
                 rows = conn.execute(
-                    "SELECT cluster_key, title, summary, updated_at "
+                    "SELECT cluster_key, title, summary, source_hash, updated_at "
                     "FROM subsystem_summaries "
                     "WHERE repo=%s AND branch=%s AND embedding IS NOT NULL "
                     "ORDER BY embedding <=> %s LIMIT %s",
                     (repo, branch, Vector(query_embedding), top_k)).fetchall()
         except psycopg.errors.UndefinedTable:
             return []
-        return [{"cluster_key": k, "title": t, "summary": s, "updated_at": u.isoformat()}
-                for k, t, s, u in rows]
+        return [{"cluster_key": k, "title": t, "summary": s, "source_hash": h,
+                 "updated_at": u.isoformat()}
+                for k, t, s, h, u in rows]
 
     def count_summaries(self, repo: str, branch: str) -> int:
         """Число сводок repo/branch — для порога масштаба в query-пути (PRI-167)."""
@@ -158,12 +480,21 @@ class SummaryStore:
         try:
             with self._connect() as conn:
                 rows = conn.execute(
-                    "SELECT cluster_key, title, summary FROM subsystem_summaries "
+                    "SELECT cluster_key, title, summary, source_hash "
+                    "FROM subsystem_summaries "
                     "WHERE repo=%s AND branch=%s AND embedding IS NULL ORDER BY cluster_key",
                     (repo, branch)).fetchall()
         except psycopg.errors.UndefinedTable:
             return []
-        return [{"cluster_key": k, "title": t, "summary": s} for k, t, s in rows]
+        return [
+            {
+                "cluster_key": cluster_key,
+                "title": title,
+                "summary": summary,
+                "source_hash": source_hash,
+            }
+            for cluster_key, title, summary, source_hash in rows
+        ]
 
     def set_embedding(self, repo: str, branch: str, cluster_key: str,
                       embedding: list[float]) -> None:
@@ -174,3 +505,34 @@ class SummaryStore:
                 "WHERE repo=%s AND branch=%s AND cluster_key=%s",
                 (Vector(embedding), repo, branch, cluster_key))
             conn.commit()
+
+    def set_embedding_if_source_hash(
+        self,
+        repo: str,
+        branch: str,
+        cluster_key: str,
+        source_hash: str,
+        embedding: list[float],
+        *,
+        title: str | None = None,
+        summary: str | None = None,
+    ) -> bool:
+        """Записать вектор, только если сводка не изменилась после генерации.
+
+        Переданные вместе ``title``/``summary`` усиливают CAS для случая, когда
+        конкурирующая запись сохранила тот же структурный source_hash с новым текстом.
+        """
+        if (title is None) != (summary is None):
+            raise ValueError("title и summary для embedding CAS передаются вместе")
+        query = (
+            "UPDATE subsystem_summaries SET embedding=%s "
+            "WHERE repo=%s AND branch=%s AND cluster_key=%s AND source_hash=%s"
+        )
+        params: tuple = (Vector(embedding), repo, branch, cluster_key, source_hash)
+        if title is not None:
+            query += " AND title=%s AND summary=%s"
+            params += (title, summary)
+        with self._connect() as conn:
+            cur = conn.execute(query, params)
+            conn.commit()
+            return cur.rowcount == 1

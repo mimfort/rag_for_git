@@ -83,6 +83,22 @@ def test_payload_digest_ignores_python_bytecode_artifacts(tmp_path):
     assert payload_digest(plugin) == clean
 
 
+def test_payload_digest_ignores_os_metadata_artifacts(tmp_path):
+    """Finder/Explorer сами кладут .DS_Store и Thumbs.db в рабочее дерево —
+    payload от этого не меняется, иначе --check краснеет на пустом месте."""
+    plugin = tmp_path / "plugin"
+    skills = plugin / "skills"
+    skills.mkdir(parents=True)
+    (skills / "SKILL.md").write_text("ask")
+    clean = payload_digest(plugin)
+
+    (plugin / ".DS_Store").write_bytes(b"\x00\x00\x00\x01Bud1")
+    (skills / ".DS_Store").write_bytes(b"\x00\x00\x00\x01Bud1")
+    (skills / "Thumbs.db").write_bytes(b"\xd0\xcf\x11\xe0")
+
+    assert payload_digest(plugin) == clean
+
+
 @pytest.mark.parametrize("part", (".git", ".env", ".venv", "build", "dist"))
 def test_payload_digest_still_rejects_forbidden_paths(tmp_path, part):
     """Секреты и артефакты сборки в payload остаются жёсткой ошибкой."""
@@ -282,6 +298,6 @@ def test_real_payload_registers_every_skill_directory_dynamically():
     english = (ROOT / "README.md").read_text(encoding="utf-8")
     russian = (ROOT / "README.ru.md").read_text(encoding="utf-8")
     for name in expected:
-        marker = f"reviewer_{name}"
+        marker = f"/rag-reviewer:{name}"
         assert marker in english
         assert marker in russian

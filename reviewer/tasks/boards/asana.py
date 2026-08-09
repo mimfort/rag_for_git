@@ -20,10 +20,11 @@ from urllib.parse import quote, urlsplit
 import httpx
 
 from reviewer.tasks.boards.attachments import attachment_supported, fetch_attachment
-from reviewer.tasks.boards.base import RawTask, project_prefix
+from reviewer.tasks.boards.base import RawTask, TaskListing, TaskListingStats, project_prefix
 from reviewer.tasks.boards.errors import BoardProviderError
 from reviewer.tasks.boards.markup import html_to_md, md_to_html
 from reviewer.tasks.boards.pagination import paginate_cursor
+from reviewer.config.provider_access import ProviderAccessSpec
 from reviewer.tasks.boards.registry import (
     BoardProviderSpec,
     CredentialFieldSpec,
@@ -54,15 +55,15 @@ def _next_offset(payload: Any) -> str | None:
     return str(offset) if offset else None
 
 
-def _timestamp(value: object) -> int:
-    """ISO 8601 ``modified_at`` → epoch ms (UTC-aware); мусор/пусто → 0."""
+def _timestamp(value: object) -> int | None:
+    """ISO 8601 ``modified_at`` → epoch ms; мусор/пусто остаются неизвестными."""
     if not isinstance(value, str) or not value:
-        return 0
+        return None
     text = value[:-1] + "+00:00" if value.endswith("Z") else value
     try:
         parsed = datetime.fromisoformat(text)
     except ValueError:
-        return 0
+        return None
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=UTC)
     return int(parsed.timestamp() * 1000)
@@ -108,6 +109,12 @@ def provider_spec() -> BoardProviderSpec:
                 "Создайте personal access token в Asana: My Settings → Apps → "
                 "Manage developer apps (app.asana.com/0/my-apps) → Create new token. "
                 "Токен показывается один раз — сохраните его сразу."
+            ),
+            access=ProviderAccessSpec(
+                minimum_permissions="personal access token с read/write к выбранному project",
+                read_operations=("workspaces, projects, sections, tasks, dependencies и files",),
+                write_operations=("создание, правка и завершение tasks, добавление PR-ссылок",),
+                validation="user identity и видимость project",
             ),
         ),
         option_fields=(
@@ -293,6 +300,7 @@ class AsanaBoard(RestBoardBase):
         html_notes = task.get("html_notes")
         notes = task.get("notes")
         description = html_notes if isinstance(html_notes, str) and html_notes else notes
+        completed = task.get("completed")
         return RawTask(
             key=key,
             project_code=key,
@@ -302,7 +310,8 @@ class AsanaBoard(RestBoardBase):
             subtask_ids=[],
             timestamp=_timestamp(task.get("modified_at")),
             board_id=gid,
-            completed=bool(task.get("completed")),
+            archived=None,
+            terminal=completed if isinstance(completed, bool) else None,
             provider_data={
                 "gid": gid,
                 "project_gid": project_gid,
@@ -315,7 +324,22 @@ class AsanaBoard(RestBoardBase):
 
     # --- чтение ----------------------------------------------------------
 
-    def iter_raw(self, board: str | None, limit: int | None) -> Iterable[RawTask]:
+    def iter_raw(
+        self,
+        board: str | None,
+        limit: int | None,
+        *,
+        sync_filter=None,
+        now_ms=None,
+    ) -> TaskListing:
+        if limit == 0:
+            return TaskListing(rows=iter(()))
+        return TaskListing(
+            rows=self._iter_raw_rows(board, limit),
+            stats=TaskListingStats(),
+        )
+
+    def _iter_raw_rows(self, board: str | None, limit: int | None) -> Iterable[RawTask]:
         """Все задачи проекта: opaque-курсор ``next_page.offset``, страница 100."""
         project_gid = self._resolve_project_gid(board)
 
@@ -330,6 +354,8 @@ class AsanaBoard(RestBoardBase):
             return self._read("GET", "/tasks", params=params)
 
         count = 0
+        if limit is not None and count >= limit:
+            return
         for task in paginate_cursor(fetch, items=_data, next_cursor=_next_offset):
             yield self._raw_from_task(task, project_gid)
             count += 1
@@ -483,7 +509,7 @@ class AsanaBoard(RestBoardBase):
             "title": raw.title,
             "description": description,
             "criteria": criteria,
-            "status": "done" if raw.completed else raw.status,
+            "status": "done" if raw.terminal is True else raw.status,
             "url": str(provider_data.get("permalink_url") or "") or self._task_url(raw.key),
             "links": links,
             "project": project_prefix(raw.project_code or raw.key),

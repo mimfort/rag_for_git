@@ -21,8 +21,9 @@ from reviewer.agent.outcomes import account_outcomes
 from reviewer.app import Components
 from reviewer.config.provider_credentials import ProviderCredentialSource
 from reviewer.config.settings import Settings
-from reviewer.config.task_board import migrate_legacy_board_args
+from reviewer.config.task_board import migrate_legacy_board_args, normalize_task_sync_filter
 from reviewer.index.refs import base_ref
+from reviewer.mcp.schemas import FindingIn, SummaryFragmentIn, VerdictIn
 from reviewer.mcp.session_serde import from_payload, to_payload
 from reviewer.mcp.session_store import SessionStore
 from reviewer.retrieval.retriever import ContextPack
@@ -32,7 +33,20 @@ from reviewer.services.review_service import (
     PreparedReview,
     ReviewService,
 )
-from reviewer.tasks.boards.base import JsonValue, TaskBoardProvider
+from reviewer.services.summary_fragments import (
+    FragmentDelta,
+    FragmentFile,
+    StoredSummaryFragment,
+    build_fragment_delta,
+    has_complete_fragment_generation,
+    with_server_generation_provenance,
+)
+from reviewer.tasks.boards.base import (
+    JsonValue,
+    NativeSubtaskIdentity,
+    RawTask,
+    TaskBoardProvider,
+)
 from reviewer.tasks.boards.errors import (
     BoardProviderError,
     sanitize_provider_payload,
@@ -41,16 +55,26 @@ from reviewer.tasks.boards.errors import (
 from reviewer.tasks.boards.registry import BoardProviderRegistry, default_board_registry
 from reviewer.tasks.boards.runtime import resolved_provider
 from reviewer.tasks.graph import PRRef
+from reviewer.tasks.subtasks import (
+    ConfirmedSubtaskIdentityError,
+    SubtaskBatchResult,
+    SubtaskRequest,
+    WriteThroughResult,
+    validate_confirmed_subtask_identities,
+    validate_subtask_request,
+)
 from reviewer.tasks.sync import SyncProvider, SyncService
 from reviewer.tasks.taskdoc import TaskDoc, render_markdown
 from reviewer.tools.code_tools import ToolContext, make_tools
 from reviewer.tools.graph_format import format_neighbors
-from reviewer.mcp.schemas import FindingIn, VerdictIn
 from reviewer.vcs.base import ChangedFile, Finding, VCSProvider
 from reviewer.vcs.diff import commentable_lines
 
 if TYPE_CHECKING:
+    from reviewer.config.layers import ResolutionMeta
+    from reviewer.graph.summaries import Cluster, Member
     from reviewer.policy.context_limits import ContextLimits
+    from reviewer.policy.policy import ReviewPolicy
 
 log = logging.getLogger(__name__)
 
@@ -64,6 +88,9 @@ _MAX_SESSION_STEPS = 1000
 # _TOUCH_INTERVAL_S. Тулы зовутся LLM-темпом; при TTL в часах минутная
 # гранулярность ничего не теряет и убирает бессмысленно частые UPDATE.
 _TOUCH_INTERVAL_S = 60
+_SUBTASK_RECOVERY_WARNING = (
+    "subtask operation failed; durable recovery used a safe fallback"
+)
 
 
 @dataclass
@@ -94,6 +121,32 @@ class _Session:
     # PRI-212: момент последнего DB-touch (троттлинг _TOUCH_INTERVAL_S).
     db_touched_at: datetime | None = None
     _seq: int = 0
+
+
+@dataclass(frozen=True)
+class _SummaryState:
+    """Единый снимок текущего состояния file-level сводок."""
+
+    depth: int
+    layout_token: str
+    depth_source: str
+    members: list["Member"]
+    clusters: list["Cluster"]
+    file_fingerprints: dict[str, str]
+    fragments: list[StoredSummaryFragment]
+    completed_depth: int | None
+    completed_layout: str | None
+
+    @property
+    def bootstrap(self) -> bool:
+        return self.completed_layout is None
+
+    @property
+    def full_rebuild(self) -> bool:
+        return (
+            self.completed_layout is not None
+            and self.completed_layout != self.layout_token
+        )
 
 
 @dataclass
@@ -179,7 +232,8 @@ class MCPReviewService:
             log.info("Ревью %s#%s пропущено: ветка '%s' не отслеживается",
                      repo, pr, e.branch)
             return {"status": "skipped",
-                    "reason": f"branch '{e.branch}' not tracked (REVIEW_BRANCHES)"}
+                    "reason": f"branch '{e.branch}' is not tracked for this "
+                              "repository (see `reviewer config show`)"}
         except Exception:
             # Любой другой сбой prepare (в т.ч. недостроенный overlay, который
             # ReviewService.prepare уже подчищает сам себе в своём except) —
@@ -436,6 +490,80 @@ class MCPReviewService:
         return sanitized if isinstance(sanitized, dict) else {}
 
     @staticmethod
+    def _unknown_subtask_outcome(
+        request: SubtaskRequest,
+        board_type: str,
+        warning: str = _SUBTASK_RECOVERY_WARNING,
+    ) -> dict:
+        return {
+            "status": "partial",
+            "board_type": board_type,
+            "parent_key": request.parent_key,
+            "idempotency_key": request.idempotency_key,
+            "resumed": False,
+            "created": [],
+            "attached": [],
+            "unattached": [],
+            "pending": [],
+            "warnings": [warning],
+            "reindexed": False,
+            "category": "unknown_outcome",
+            "retryable": True,
+        }
+
+    def _recover_subtask_failure(
+        self,
+        request: SubtaskRequest,
+        board_type: str,
+        secrets: frozenset[str],
+        error: Exception,
+    ) -> dict:
+        warning = _SUBTASK_RECOVERY_WARNING
+        try:
+            rendered = sanitize_provider_text(error, secrets)
+            if isinstance(rendered, str) and rendered:
+                warning = rendered
+        except Exception:  # noqa: BLE001 - rendering must be total
+            warning = _SUBTASK_RECOVERY_WARNING
+
+        try:
+            result = self.components.subtask_service.recover_result(request)
+        except Exception:  # noqa: BLE001 - durable reload must be fail-safe
+            result = None
+            warning = _SUBTASK_RECOVERY_WARNING
+        if type(result) is not SubtaskBatchResult:
+            return self._unknown_subtask_outcome(request, board_type, warning)
+
+        try:
+            payload = result.payload()
+            persisted_warnings = payload.get("warnings", ())
+            if not isinstance(persisted_warnings, (list, tuple)) or not all(
+                isinstance(item, str) for item in persisted_warnings
+            ):
+                persisted_warnings = ()
+            payload["warnings"] = [*persisted_warnings, warning]
+            safe_payload = self._safe_board_payload(payload, secrets)
+            if not safe_payload:
+                raise ValueError("recovery payload sanitizer returned no payload")
+            return safe_payload
+        except Exception:  # noqa: BLE001 - final rendering fallback is literal-only
+            return {
+                "status": result.status,
+                "board_type": result.board_type,
+                "parent_key": result.parent_key,
+                "idempotency_key": result.idempotency_key,
+                "resumed": result.resumed,
+                "created": [],
+                "attached": [],
+                "unattached": [],
+                "pending": [],
+                "warnings": [_SUBTASK_RECOVERY_WARNING],
+                "reindexed": result.reindexed,
+                "category": result.category,
+                "retryable": result.retryable,
+            }
+
+    @staticmethod
     def _board_error(operation: str, error: Exception,
                      secrets: frozenset[str] = frozenset()) -> dict:
         reason = sanitize_provider_text(error, secrets)
@@ -469,6 +597,224 @@ class MCPReviewService:
         except Exception:
             log.warning("board write-through реиндекс не удался")
             return None
+
+    def _write_through_subtasks(
+        self,
+        provider: TaskBoardProvider,
+        parent: RawTask,
+        identities: tuple[NativeSubtaskIdentity, ...],
+        sanitize: Callable[[object], str],
+    ) -> WriteThroughResult:
+        """Строго переиндексировать parent и подтверждённых children одним батчем."""
+        warnings: list[str] = []
+
+        def warning(value: object) -> None:
+            safe = sanitize(value)
+            warnings.append(safe if isinstance(safe, str) else "write-through failed")
+
+        try:
+            if (
+                not isinstance(parent, RawTask)
+                or not isinstance(parent.board_id, str)
+                or not parent.board_id.strip()
+                or not isinstance(parent.key, str)
+                or not parent.key.strip()
+            ):
+                warning("write-through parent snapshot has no usable identity")
+                return WriteThroughResult(False, tuple(warnings))
+
+            current_parent = provider.fetch_one(parent.board_id)
+            if current_parent is None:
+                warning(f"write-through parent not found: {parent.key}")
+                return WriteThroughResult(False, tuple(warnings))
+            if (
+                not isinstance(current_parent, RawTask)
+                or current_parent.board_id != parent.board_id
+                or current_parent.key != parent.key
+                or type(current_parent.subtask_ids) is not list
+                or not all(
+                    isinstance(subtask_id, str) and subtask_id.strip()
+                    for subtask_id in current_parent.subtask_ids
+                )
+            ):
+                warning("write-through parent point-read returned a different or malformed task")
+                return WriteThroughResult(False, tuple(warnings))
+
+            try:
+                validate_confirmed_subtask_identities(
+                    current_parent.board_id,
+                    tuple(enumerate(identities)),
+                )
+            except ConfirmedSubtaskIdentityError as error:
+                warning(error)
+                return WriteThroughResult(False, tuple(warnings))
+
+            confirmed_ids = {identity.board_id for identity in identities}
+            if not confirmed_ids.issubset(current_parent.subtask_ids):
+                warning("write-through parent no longer contains all confirmed subtasks")
+                return WriteThroughResult(False, tuple(warnings))
+
+            raw_tasks = [current_parent]
+            for identity in identities:
+                raw = provider.fetch_one(identity.board_id)
+                if raw is None:
+                    warning(f"write-through task not found: {identity.key}")
+                    return WriteThroughResult(False, tuple(warnings))
+                if not isinstance(raw, RawTask) or raw.board_id != identity.board_id:
+                    warning("write-through child point-read returned a different task")
+                    return WriteThroughResult(False, tuple(warnings))
+                canonical_keys = {
+                    value
+                    for value in (raw.key, raw.project_code)
+                    if isinstance(value, str) and value.strip()
+                }
+                if identity.key != identity.board_id and identity.key not in canonical_keys:
+                    warning("write-through child canonical identity does not match point-read")
+                    return WriteThroughResult(False, tuple(warnings))
+                raw_tasks.append(raw)
+
+            briefs: list[dict] = []
+            seen_keys: set[str] = set()
+            for raw in raw_tasks:
+                brief = provider.normalize(raw)
+                if (
+                    not isinstance(brief, dict)
+                    or not isinstance(brief.get("key"), str)
+                    or not brief["key"].strip()
+                    or type(brief.get("links")) is not list
+                    or not all(
+                        isinstance(link, dict)
+                        and isinstance(link.get("type"), str)
+                        and link["type"].strip()
+                        and isinstance(link.get("key"), str)
+                        and link["key"].strip()
+                        for link in brief["links"]
+                    )
+                ):
+                    warning("write-through normalize returned an incomplete TaskBrief")
+                    return WriteThroughResult(False, tuple(warnings))
+                key = brief["key"]
+                if key in seen_keys:
+                    warning(f"write-through duplicate normalized task key: {key}")
+                    return WriteThroughResult(False, tuple(warnings))
+                seen_keys.add(key)
+                briefs.append(brief)
+
+            child_keys = {brief["key"] for brief in briefs[1:]}
+            parent_subtask_keys = {
+                link["key"]
+                for link in briefs[0]["links"]
+                if link["type"] == "subtask"
+            }
+            if not child_keys.issubset(parent_subtask_keys):
+                warning("write-through parent links do not cover normalized subtasks")
+                return WriteThroughResult(False, tuple(warnings))
+
+            results = self.components.task_service.index_batch(briefs)
+            if not isinstance(results, list) or len(results) != len(briefs):
+                warning("write-through index result count does not match TaskBrief count")
+                return WriteThroughResult(False, tuple(warnings))
+
+            for brief, result in zip(briefs, results):
+                if not isinstance(result, dict) or result.get("key") != brief["key"]:
+                    warning("write-through index result does not match TaskBrief")
+                    continue
+                result_warnings = result.get("warnings")
+                if type(result_warnings) is not list or not all(
+                    isinstance(item, str) for item in result_warnings
+                ):
+                    warning("write-through index returned invalid warnings")
+                else:
+                    for item in result_warnings:
+                        warning(item)
+                if result.get("links_stored") is not True:
+                    warning(f"write-through links were not stored for {brief['key']}")
+        except Exception as error:  # noqa: BLE001 - provider/store boundary
+            warning(error)
+            return WriteThroughResult(False, tuple(warnings))
+        return WriteThroughResult(not warnings, tuple(warnings))
+
+    def _resolved_subtask_request(
+        self,
+        parent_key: str,
+        subtasks: list[dict],
+        idempotency_key: str,
+        board_type: str | None,
+        project: str | None,
+        provider_options: Mapping[str, JsonValue] | None,
+    ):
+        """Резолв generic board config без создания provider и нормализация hash input."""
+        registry, credentials = self._board_runtime()
+        durable_request = None
+        if board_type is None or project is None or provider_options is None:
+            durable_request = self.components.subtask_service.lookup_request(idempotency_key)
+        defaults = (
+            self.settings.task_board_default() or {}
+            if durable_request is None
+            else {}
+        )
+
+        requested_type = (
+            board_type
+            if board_type is not None
+            else durable_request.board_type
+            if durable_request is not None
+            else None
+        )
+        if requested_type is None:
+            default_type = defaults.get("type") if isinstance(defaults, dict) else None
+            if isinstance(default_type, str):
+                requested_type = default_type
+        if requested_type is not None:
+            if not isinstance(requested_type, str) or not requested_type.strip():
+                raise BoardProviderError("configuration", "board_type must be a non-empty string.")
+            resolved_type: str | None = requested_type.strip()
+        else:
+            configured = registry.configured_types(credentials)
+            resolved_type = configured[0] if len(configured) == 1 else None
+        if resolved_type is None:
+            raise BoardProviderError(
+                "configuration",
+                "board_type is required unless exactly one provider is configured.",
+            )
+        try:
+            registry.get(resolved_type)
+        except KeyError:
+            raise BoardProviderError(
+                "configuration", "Board provider type is not registered."
+            ) from None
+        default_project = defaults.get("project") if isinstance(defaults, dict) else None
+        resolved_project = (
+            project
+            if project is not None
+            else durable_request.project
+            if durable_request is not None
+            else default_project
+        )
+        default_options = defaults.get("options", {}) if isinstance(defaults, dict) else {}
+        if not isinstance(default_options, Mapping):
+            raise BoardProviderError("configuration", "Board provider options are invalid.")
+        if provider_options is not None and not isinstance(provider_options, Mapping):
+            raise BoardProviderError("configuration", "Board provider options are invalid.")
+        if provider_options is not None:
+            options = (
+                dict(provider_options)
+                if durable_request is not None
+                else {**default_options, **dict(provider_options)}
+            )
+        elif durable_request is not None:
+            options = durable_request.provider_options
+        else:
+            options = dict(default_options)
+        request = validate_subtask_request(
+            parent_key,
+            subtasks,
+            idempotency_key,
+            resolved_type,
+            resolved_project,
+            options,
+        )
+        return request, registry, credentials
 
     def _backlink_pr(self, pr_url: str, key: str, task_url: str) -> tuple[bool, list[str]]:
         """Дописать ссылку на задачу в начало тела PR. Возвращает (added, warnings).
@@ -515,9 +861,190 @@ class MCPReviewService:
         provider_options: Mapping[str, JsonValue] | None = None,
         force_renormalize: bool = False,
         *,
+        repo: str | None = None,
+        branch: str | None = None,
+        sync_filter: Mapping[str, JsonValue] | None = None,
         status_field: str | None = None,
     ) -> dict:
-        """Server-side ETL зарегистрированной доски через generic provider options."""
+        """Server-side ETL в explicit-режиме или из effective policy репозитория."""
+        if repo is None and branch is not None:
+            return self._board_error(
+                "sync_board",
+                BoardProviderError(
+                    "configuration",
+                    "branch requires repo in sync_board.",
+                ),
+            )
+
+        if repo is not None:
+            if not isinstance(repo, str) or not repo.strip():
+                return self._board_error(
+                    "sync_board",
+                    BoardProviderError(
+                        "configuration",
+                        "repo must be a non-empty owner/name value.",
+                    ),
+                )
+            mixed = [
+                name
+                for name, supplied in (
+                    ("board", board is not None),
+                    ("board_type", board_type is not None),
+                    ("provider_options", provider_options is not None),
+                    ("sync_filter", sync_filter is not None),
+                    ("status_field", status_field is not None),
+                )
+                if supplied
+            ]
+            if mixed:
+                return self._board_error(
+                    "sync_board",
+                    BoardProviderError(
+                        "configuration",
+                        "repo mode cannot be combined with explicit board arguments: "
+                        + ", ".join(mixed),
+                    ),
+                )
+
+            repo_secrets = self._board_secrets() | frozenset(
+                secret
+                for secret in (
+                    self.settings.github_token,
+                    self.settings.gitlab_token,
+                )
+                if secret
+            )
+            resolved_repo_branch = self._resolve_repo_branch(repo, branch)
+            if isinstance(resolved_repo_branch, str):
+                reason = resolved_repo_branch.removeprefix("(").removesuffix(")")
+                return self._board_error(
+                    "sync_board",
+                    BoardProviderError(
+                        "configuration",
+                        reason,
+                        secrets=repo_secrets,
+                    ),
+                    repo_secrets,
+                )
+            normalized_repo, resolved_branch = resolved_repo_branch
+            try:
+                policy, meta = self._resolve_policy(normalized_repo, resolved_branch)
+            except Exception as error:
+                return self._board_error(
+                    "sync_board",
+                    BoardProviderError(
+                        "configuration",
+                        "Task board policy could not be resolved: "
+                        f"{type(error).__name__}: {error}",
+                        secrets=repo_secrets,
+                    ),
+                    repo_secrets,
+                )
+            if meta.warnings:
+                return self._board_error(
+                    "sync_board",
+                    BoardProviderError(
+                        "configuration",
+                        "Task board policy resolution warnings: "
+                        + "; ".join(meta.warnings),
+                        secrets=repo_secrets,
+                    ),
+                    repo_secrets,
+                )
+            task_board = policy.task_board
+            if task_board is None:
+                return {
+                    "status": "error",
+                    "reason": "task board REST is not configured",
+                }
+            if not isinstance(task_board, Mapping):
+                return self._board_error(
+                    "sync_board",
+                    BoardProviderError(
+                        "configuration",
+                        "Effective task_board policy must be a mapping.",
+                    ),
+                )
+            repo_board_type = task_board.get("type")
+            if not isinstance(repo_board_type, str) or not repo_board_type.strip():
+                return self._board_error(
+                    "sync_board",
+                    BoardProviderError(
+                        "configuration",
+                        "Effective task_board.type must be an explicit non-empty string.",
+                        secrets=repo_secrets,
+                    ),
+                    repo_secrets,
+                )
+            options = task_board.get("options")
+            if options is not None and not isinstance(options, Mapping):
+                return self._board_error(
+                    "sync_board",
+                    BoardProviderError(
+                        "configuration",
+                        "Effective task_board.options must be a mapping.",
+                    ),
+                )
+            try:
+                typed_filter = (
+                    normalize_task_sync_filter(task_board["sync_filter"])
+                    if "sync_filter" in task_board
+                    else None
+                )
+            except (TypeError, ValueError) as error:
+                return self._board_error(
+                    "sync_board",
+                    BoardProviderError(
+                        "configuration",
+                        str(error),
+                        secrets=repo_secrets,
+                    ),
+                    repo_secrets,
+                )
+
+            registry, credentials = self._board_runtime()
+            try:
+                with resolved_provider(
+                    self.settings,
+                    repo_board_type,
+                    options,
+                    registry=registry,
+                    credential_source=credentials,
+                ) as resolved:
+                    scoped = SyncService(
+                        [SyncProvider(resolved.provider, resolved.secrets)],
+                        self.components.task_service,
+                        self.components.store,
+                    )
+                    result = scoped.run(
+                        board=task_board.get("project"),
+                        limit=limit,
+                        purge_orphaned=purge_orphaned,
+                        keep_with_prs=keep_with_prs,
+                        board_type=resolved.board_type,
+                        force_renormalize=force_renormalize,
+                        sync_filter=typed_filter,
+                        filter_source=meta.sources.get("task_board", "env"),
+                    )
+                    result.setdefault("warnings", []).extend(
+                        policy.task_board_warnings
+                    )
+                    return self._safe_board_payload(result, resolved.secrets)
+            except BoardProviderError as error:
+                return self._board_error("sync_board", error)
+
+        try:
+            typed_filter = (
+                normalize_task_sync_filter(sync_filter)
+                if sync_filter is not None
+                else None
+            )
+        except (TypeError, ValueError) as error:
+            return self._board_error(
+                "sync_board",
+                BoardProviderError("configuration", str(error)),
+            )
+        filter_source = "explicit" if sync_filter is not None else None
         _, options, migration_warnings = migrate_legacy_board_args(
             target=None,
             provider_options=provider_options,
@@ -538,6 +1065,8 @@ class MCPReviewService:
                     purge_orphaned=purge_orphaned,
                     keep_with_prs=keep_with_prs,
                     force_renormalize=force_renormalize,
+                    sync_filter=typed_filter,
+                    filter_source=filter_source,
                 )
             except Exception as error:
                 return self._board_error("sync_board", error, secrets)
@@ -565,6 +1094,8 @@ class MCPReviewService:
                     keep_with_prs=keep_with_prs,
                     board_type=resolved.board_type,
                     force_renormalize=force_renormalize,
+                    sync_filter=typed_filter,
+                    filter_source=filter_source,
                 )
                 result.setdefault("warnings", []).extend(migration_warnings)
                 return self._safe_board_payload(result, resolved.secrets)
@@ -685,6 +1216,90 @@ class MCPReviewService:
         except BoardProviderError as error:
             return self._board_error("create_task", error)
 
+    def create_subtasks(
+        self,
+        parent_key: str,
+        subtasks: list[dict],
+        idempotency_key: str,
+        board_type: str | None = None,
+        project: str | None = None,
+        provider_options: Mapping[str, JsonValue] | None = None,
+    ) -> dict:
+        """Создать и привязать batch нативных подзадач с durable idempotency."""
+        secrets = frozenset()
+        try:
+            secrets = self._board_secrets()
+            request, registry, credentials = self._resolved_subtask_request(
+                parent_key,
+                subtasks,
+                idempotency_key,
+                board_type,
+                project,
+                provider_options,
+            )
+            secrets = credentials.secret_values(registry.get(request.board_type))
+            preflight = self.components.subtask_service.preflight(request)
+            if preflight.result is not None:
+                return self._safe_board_payload(preflight.result.payload(), secrets)
+
+            with resolved_provider(
+                self.settings,
+                request.board_type,
+                request.provider_options,
+                registry=registry,
+                credential_source=credentials,
+            ) as resolved:
+                if "native_subtasks" not in resolved.capabilities:
+                    return self._safe_board_payload(
+                        {
+                            "status": "error",
+                            "board_type": resolved.board_type,
+                            "parent_key": request.parent_key,
+                            "idempotency_key": request.idempotency_key,
+                            "category": "unsupported",
+                            "retryable": False,
+                            "reason": "Board provider does not support native subtasks.",
+                        },
+                        resolved.secrets,
+                    )
+                def sanitize(value: object) -> str:
+                    return sanitize_provider_text(value, resolved.secrets)
+
+                try:
+                    result = self.components.subtask_service.run(
+                        request,
+                        operation=preflight.operation,
+                        provider=resolved.provider,
+                        board_type=resolved.board_type,
+                        write_through=lambda parent, identities: self._write_through_subtasks(
+                            resolved.provider,
+                            parent,
+                            identities,
+                            sanitize,
+                        ),
+                        sanitize=sanitize,
+                    )
+                except BoardProviderError:
+                    raise
+                except Exception as error:  # noqa: BLE001 - durable recovery boundary
+                    return self._recover_subtask_failure(
+                        request,
+                        request.board_type or resolved.board_type,
+                        resolved.secrets,
+                        error,
+                    )
+                return self._safe_board_payload(result.payload(), resolved.secrets)
+        except BoardProviderError as error:
+            return self._safe_board_payload(
+                self._board_error("create_subtasks", error, secrets),
+                secrets,
+            )
+        except Exception as error:  # noqa: BLE001 - ledger/config boundary
+            return self._safe_board_payload(
+                self._board_error("create_subtasks", error, secrets),
+                secrets,
+            )
+
     def get_board_targets(
         self,
         board_type: str | None = None,
@@ -704,9 +1319,10 @@ class MCPReviewService:
                 result = resolved.provider.list_targets(project)
                 return self._safe_board_payload(
                     {
+                        **result,
                         "board_type": resolved.board_type,
                         "project": project,
-                        **result,
+                        "capabilities": sorted(resolved.capabilities),
                     },
                     resolved.secrets,
                 )
@@ -718,7 +1334,8 @@ class MCPReviewService:
 
         Возвращает (normalized_repo, resolved_branch) при успехе либо строку-заметку
         об ошибке (её тул отдаёт пользователю как есть). Ветка валидируется по
-        REVIEW_BRANCHES; пустая ветка → первичная.
+        отслеживаемым веткам репозитория (см. `reviewer config show`); пустая
+        ветка → первичная ветка репозитория.
         """
         from reviewer.services.repo_id import normalize_repo
         raw = repo or self.settings.default_repo
@@ -728,111 +1345,91 @@ class MCPReviewService:
             repo = normalize_repo(raw)
         except ValueError:
             return f"(некорректный repo: {raw!r})"
-        if branch and branch not in self.settings.review_branches_list():
-            return (f"(ветка {branch!r} не в REVIEW_BRANCHES "
-                    f"({self.settings.review_branches_list()}))")
-        return (repo, branch or self.settings.primary_branch())
+
+        from reviewer.config.branches import resolve_repo_branches
+        from reviewer.services.branch import resolve_branch
+
+        try:
+            branches = resolve_repo_branches(repo, settings=self.settings)
+            return (repo, resolve_branch(branch, None, branches))
+        except ValueError as exc:
+            return f"({exc})"
+
+    def _resolve_policy(self, repo: str, branch: str) -> tuple["ReviewPolicy", "ResolutionMeta"]:
+        """Резолвит effective policy из env, home-слоёв и committed `.review.yml`."""
+        from reviewer.config.layers import resolve_policy_data
+        from reviewer.policy.policy import ReviewPolicy
+        owner, name = repo.split("/", 1)
+        vcs = None
+        try:
+            vcs = (
+                self._vcs_factory(owner, name)
+                if self._vcs_factory is not None
+                else self._review_service._create_vcs_provider(owner, name)
+            )
+            data, meta = resolve_policy_data(
+                repo,
+                branch,
+                lambda ref: vcs.get_file_at_ref(".review.yml", ref),
+            )
+            for warning in meta.warnings:
+                log.warning("Домашний слой policy пропущен: %s", warning)
+            return ReviewPolicy.load_data(self.settings, data), meta
+        finally:
+            if vcs is not None and self._vcs_factory is None:
+                try:
+                    vcs.close()
+                except Exception:
+                    log.warning("_resolve_policy: не удалось закрыть VCS", exc_info=True)
 
     def _resolve_summary_depth(self, repo: str, branch: str) -> tuple[int, dict[str, int], str]:
-        """Резолв глубины кластеризации сводок: env-дефолт → override из .review.yml ветки.
-
-        Возвращает (depth, depth_overrides, source). depth_overrides — карта
-        префикс→depth из .review.yml (PRI-161); пусто, если ключа нет. Fail-soft:
-        нет токена/ветки/файла/кривой yml → (settings.summary_cluster_depth, {}, "env").
-        source = ".review.yml", если файл задаёт summary_cluster_depth или _overrides."""
-        import yaml
-        from reviewer.policy.policy import ReviewPolicy
+        """Резолв глубины кластеризации сводок с сохранением fail-soft env-дефолта."""
         default = self.settings.summary_cluster_depth
-        owner, name = repo.split("/", 1)
-        vcs = None
         try:
-            vcs = (self._vcs_factory(owner, name) if self._vcs_factory
-                   else self._review_service._create_vcs_provider(owner, name))
-            text = vcs.get_file_at_ref(".review.yml", branch)
-            if not text:
-                return default, {}, "env"
-            data = yaml.safe_load(text) or {}
-            pol = ReviewPolicy.load(self.settings, text)
-            keyed = ("summary_cluster_depth" in data
-                     or "summary_cluster_depth_overrides" in data)
-            return (pol.summary_cluster_depth, pol.summary_cluster_depth_overrides,
-                    ".review.yml" if keyed else "env")
+            policy, meta = self._resolve_policy(repo, branch)
+            source = meta.sources.get(
+                "summary_cluster_depth",
+                meta.sources.get("summary_cluster_depth_overrides", "env"),
+            )
+            return policy.summary_cluster_depth, policy.summary_cluster_depth_overrides, source
         except Exception:
-            log.warning("_resolve_summary_depth: fail-soft → env-дефолт", exc_info=True)
+            log.warning("_resolve_summary_depth: fail-soft → env-дефолт")
             return default, {}, "env"
-        finally:
-            if vcs is not None and self._vcs_factory is None:
-                try:
-                    vcs.close()
-                except Exception:
-                    log.warning("_resolve_summary_depth: не удалось закрыть VCS", exc_info=True)
 
     def _resolve_summary_topk_threshold(self, repo: str, branch: str) -> tuple[int, str]:
-        """Резолв порога масштаба приора сводок: env-дефолт → override из .review.yml ветки.
-
-        repo уже нормализован (вызывается после _resolve_repo_branch). Fail-soft:
-        нет токена/ветки/файла/кривой yml → (settings.summary_topk_threshold, "env").
-        source = ".review.yml", только если файл явно задаёт ключ summary_topk_threshold."""
-        import yaml
-        from reviewer.policy.policy import ReviewPolicy
+        """Резолв порога масштаба приора сводок с сохранением env-дефолта."""
         default = self.settings.summary_topk_threshold
-        owner, name = repo.split("/", 1)
-        vcs = None
         try:
-            vcs = (self._vcs_factory(owner, name) if self._vcs_factory
-                   else self._review_service._create_vcs_provider(owner, name))
-            text = vcs.get_file_at_ref(".review.yml", branch)
-            if not text:
-                return default, "env"
-            data = yaml.safe_load(text) or {}
-            val = ReviewPolicy.load(self.settings, text).summary_topk_threshold
-            return val, (".review.yml" if "summary_topk_threshold" in data else "env")
+            policy, meta = self._resolve_policy(repo, branch)
+            source = meta.sources.get("summary_topk_threshold", "env")
+            return policy.summary_topk_threshold, source
         except Exception:
-            log.warning("_resolve_summary_topk_threshold: fail-soft → env-дефолт", exc_info=True)
+            log.warning("_resolve_summary_topk_threshold: fail-soft → env-дефолт")
             return default, "env"
-        finally:
-            if vcs is not None and self._vcs_factory is None:
-                try:
-                    vcs.close()
-                except Exception:
-                    log.warning("_resolve_summary_topk_threshold: не удалось закрыть VCS",
-                                exc_info=True)
 
     def _resolve_context_limits(self, repo: str, branch: str) -> "ContextLimits":
-        """Лимиты контекста из .review.yml ветки (PRI-202). Fail-soft → дефолт-константы."""
+        """Лимиты контекста из всех policy-слоёв. Fail-soft → дефолт-константы."""
         from reviewer.policy.context_limits import ContextLimits
-        from reviewer.policy.policy import ReviewPolicy
-        owner, name = repo.split("/", 1)
-        vcs = None
         try:
-            vcs = (self._vcs_factory(owner, name) if self._vcs_factory
-                   else self._review_service._create_vcs_provider(owner, name))
-            text = vcs.get_file_at_ref(".review.yml", branch)
-            if not text:
-                return ContextLimits()
-            return ReviewPolicy.load(self.settings, text).context_limits
+            policy, _ = self._resolve_policy(repo, branch)
+            return policy.context_limits
         except Exception:
-            log.warning("_resolve_context_limits: fail-soft → дефолт-константы", exc_info=True)
+            log.warning("_resolve_context_limits: fail-soft → дефолт-константы")
             return ContextLimits()
-        finally:
-            if vcs is not None and self._vcs_factory is None:
-                try:
-                    vcs.close()
-                except Exception:
-                    log.warning("_resolve_context_limits: не удалось закрыть VCS", exc_info=True)
 
     def search_codebase(self, repo: str, query: str, top_k: int | None = None,
                         branch: str | None = None,
                         include_tests: bool = False) -> str:
         """Гибрид-поиск по base-индексу репозитория (без PR-сессии) — для /solve-task.
 
-        branch — отслеживаемая ветка (allowlist REVIEW_BRANCHES); по умолчанию
-        первичная. Поиск идёт по индексу указанной ветки (base:<branch>).
+        branch — отслеживаемая ветка репозитория (см. `reviewer config show`);
+        по умолчанию первичная. Поиск идёт по индексу указанной ветки (base:<branch>).
         Выдача: без вложенных дублей и (по умолчанию) без тест-чанков, с
         построчными номерами для цитирования path:line без повторного Read.
         include_tests=True возвращает тест-чанки. Охват адаптивен (cliff-отсечка
         реранкера, PRI-202): top_k — необязательный override потолка (ceiling)
-        для этого вызова; None → потолок берётся из .review.yml/дефолта.
+        для этого вызова; None → потолок берётся из effective layered policy
+        либо дефолта.
         """
         rb = self._resolve_repo_branch(repo, branch)
         if isinstance(rb, str):
@@ -941,105 +1538,548 @@ class MCPReviewService:
             log.warning("definition: сбой", exc_info=True)
             return "(определение не найдено)"
 
+    def _summary_state(
+        self,
+        repo: str,
+        branch: str,
+        *,
+        depth: int | None = None,
+        min_size: int = 1,
+        with_centrality: bool = False,
+    ) -> _SummaryState:
+        """Собрать единый снимок для list/work/index без расхождения вывода."""
+        from reviewer.graph.summaries import (
+            Member,
+            build_clusters,
+            canonicalize_layout,
+            compute_file_fingerprints,
+            compute_layout_token,
+        )
+
+        raw = self.components.store.list_base_members(repo, branch)
+        if not raw:
+            resolved_depth = (
+                self.settings.summary_cluster_depth
+                if depth is None
+                else depth
+            )
+            return _SummaryState(
+                depth=resolved_depth,
+                layout_token=compute_layout_token(resolved_depth, {}),
+                depth_source="env" if depth is None else "arg",
+                members=[],
+                clusters=[],
+                file_fingerprints={},
+                fragments=[],
+                completed_depth=None,
+                completed_layout=None,
+            )
+        if depth is None:
+            resolved_depth, overrides, depth_source = self._resolve_summary_depth(
+                repo, branch
+            )
+        else:
+            resolved_depth, overrides, depth_source = depth, {}, "arg"
+        overrides, layout_token = canonicalize_layout(
+            resolved_depth,
+            overrides,
+        )
+        members = [
+            Member(
+                node_id=f"{path}#{symbol}",
+                path=path,
+                content_hash=content_hash,
+                start_line=start_line,
+                skeleton_hash=skeleton_hash,
+            )
+            for path, symbol, content_hash, start_line, skeleton_hash in raw
+        ]
+        graph = self.components.graph
+        in_degree_fn = (
+            (lambda ids: graph.in_degree(repo, ids, branch=branch))
+            if with_centrality and graph is not None
+            else None
+        )
+        clusters = build_clusters(
+            members,
+            in_degree_fn,
+            depth=resolved_depth,
+            min_size=min_size,
+            depth_overrides=overrides,
+        )
+        fragments = [
+            StoredSummaryFragment(
+                cluster_key=item["cluster_key"],
+                path=item["path"],
+                fingerprint=item["fingerprint"],
+                summary=item["summary"],
+                provenance=item.get("provenance", {}),
+            )
+            for item in self.components.summary_store.get_fragments(repo, branch)
+        ]
+        completed_layout = self.components.summary_store.get_completed_layout(
+            repo, branch
+        )
+        return _SummaryState(
+            depth=resolved_depth,
+            layout_token=layout_token,
+            depth_source=depth_source,
+            members=members,
+            clusters=clusters,
+            file_fingerprints=compute_file_fingerprints(members),
+            fragments=fragments,
+            completed_depth=self.components.summary_store.get_completed_depth(
+                repo, branch
+            ),
+            completed_layout=(
+                completed_layout
+                if isinstance(completed_layout, str)
+                else None
+            ),
+        )
+
+    @staticmethod
+    def _cluster_generation_flags(
+        state: _SummaryState,
+        cluster: "Cluster",
+    ) -> tuple[bool, bool]:
+        current = {
+            path: state.file_fingerprints[path]
+            for path in cluster.files
+        }
+        complete = has_complete_fragment_generation(
+            cluster.key,
+            current,
+            state.fragments,
+            state.depth,
+            state.layout_token,
+        )
+        return state.bootstrap and not complete, state.full_rebuild and not complete
+
+    @classmethod
+    def _summary_delta(cls, state: _SummaryState, cluster: "Cluster") -> FragmentDelta:
+        current = {
+            path: state.file_fingerprints[path]
+            for path in cluster.files
+        }
+        bootstrap, full_rebuild = cls._cluster_generation_flags(state, cluster)
+        delta = build_fragment_delta(
+            cluster.key,
+            current,
+            state.fragments,
+            bootstrap=bootstrap,
+            full_rebuild=full_rebuild,
+        )
+        if full_rebuild:
+            return FragmentDelta(
+                added=(),
+                changed=delta.added + delta.changed,
+                removed=delta.removed,
+                moved=(),
+                reused=(),
+            )
+        return delta
+
+    @staticmethod
+    def _fragment_ref(item: FragmentFile, *, include_content: bool = False) -> dict:
+        result = {"path": item.path, "fingerprint": item.fingerprint}
+        if item.from_cluster_key is not None:
+            result["from_cluster_key"] = item.from_cluster_key
+        if include_content:
+            result["summary"] = item.summary
+            result["provenance"] = dict(item.provenance)
+        return result
+
+    def _serialize_summary_delta(
+        self,
+        delta: FragmentDelta,
+        *,
+        include_reused_content: bool,
+    ) -> dict:
+        return {
+            "added_files": [self._fragment_ref(item) for item in delta.added],
+            "changed_files": [self._fragment_ref(item) for item in delta.changed],
+            "removed_files": [item.path for item in delta.removed],
+            "moved_files": [
+                self._fragment_ref(item, include_content=include_reused_content)
+                for item in delta.moved
+            ],
+            "reused_fragments": (
+                [
+                    self._fragment_ref(item, include_content=True)
+                    for item in delta.reused
+                ]
+                if include_reused_content
+                else []
+            ),
+        }
+
     def list_subsystem_clusters(self, repo: str, branch: str | None = None,
                                 depth: int | None = None, min_size: int | None = None,
                                 cap: int | None = None) -> dict:
         """Кластеризовать base-граф по модулям → кластеры для /summarize-subsystems.
         cap (дефолт Settings.summary_rebuild_cap; None/0=безлимит) отбрасывает наименее
         приоритетные stale-кластеры (без сводки → старейшие updated_at первыми) и считает
-        их в deferred (PRI-165)."""
-        from reviewer.graph.summaries import Member, build_clusters
+        их в deferred (PRI-165). Ответ содержит layout_token — canonical identity default
+        depth + normalized overrides. Если depth не задан, он берётся из effective layered
+        policy с fail-soft env-дефолтом."""
         rb = self._resolve_repo_branch(repo, branch)
         if isinstance(rb, str):
-            return {"branch": branch or "", "deferred": 0, "clusters": [], "note": rb}
+            return {
+                "branch": branch or "",
+                "deferred": 0,
+                "deferred_files": 0,
+                "clusters": [],
+                "note": rb,
+            }
         repo, resolved = rb
-        raw = self.components.store.list_base_members(repo, resolved)
-        if not raw:
-            return {"branch": resolved, "deferred": 0, "clusters": [],
-                    "note": "(base-индекс пуст — выполните /reviewer_sync-codebase)"}
-        members = [Member(node_id=f"{p}#{s}", path=p, content_hash=h, start_line=sl,
-                          skeleton_hash=sk)
-                   for p, s, h, sl, sk in raw]
-        graph = self.components.graph
-        in_degree_fn = (
-            (lambda ids: graph.in_degree(repo, ids, branch=resolved))
-            if graph is not None else None)
-        if depth is None:
-            resolved_depth, overrides, depth_source = self._resolve_summary_depth(repo, resolved)
-        else:
-            resolved_depth, overrides, depth_source = depth, {}, "arg"
-        clusters = build_clusters(
-            members, in_degree_fn, depth=resolved_depth, min_size=min_size or 1,
-            depth_overrides=overrides)
+        state = self._summary_state(
+            repo,
+            resolved,
+            depth=depth,
+            min_size=min_size or 1,
+            with_centrality=True,
+        )
+        if not state.members:
+            return {
+                "branch": resolved,
+                "deferred": 0,
+                "deferred_files": 0,
+                "clusters": [],
+                "note": "(base-индекс пуст — выполните rag-reviewer:sync-codebase)",
+            }
         stored = self.components.summary_store.get_source_hashes(repo, resolved)
-        stale = {c.key: (stored.get(c.key) != c.source_hash) for c in clusters}
-        orphans = len(set(stored) - {c.key for c in clusters})
+        generation_flags = {
+            cluster.key: self._cluster_generation_flags(state, cluster)
+            for cluster in state.clusters
+        }
+        stale = {
+            cluster.key: (
+                generation_flags[cluster.key][1]
+                or stored.get(cluster.key) != cluster.source_hash
+            )
+            for cluster in state.clusters
+        }
+        deltas = {
+            cluster.key: self._summary_delta(state, cluster)
+            for cluster in state.clusters
+        }
+        orphans = len(set(stored) - {cluster.key for cluster in state.clusters})
         effective_cap = cap if cap is not None else self.settings.summary_rebuild_cap
         deferred_keys: set[str] = set()
         if effective_cap and effective_cap > 0:
-            stale_cl = [c for c in clusters if stale[c.key]]
-            if len(stale_cl) > effective_cap:
+            rebuild_clusters = [
+                cluster
+                for cluster in state.clusters
+                if stale[cluster.key] or generation_flags[cluster.key][0]
+            ]
+            if len(rebuild_clusters) > effective_cap:
                 updated = self.components.summary_store.get_updated_ats(repo, resolved)
-                never = [c for c in stale_cl if c.key not in updated]      # без сводки — первыми
-                aged = sorted((c for c in stale_cl if c.key in updated),
-                              key=lambda c: updated[c.key])                # старейшие — раньше
-                deferred_keys = {c.key for c in (never + aged)[effective_cap:]}
-        return {"branch": resolved, "depth": resolved_depth, "depth_source": depth_source,
-                "deferred": len(deferred_keys), "orphans": orphans, "clusters": [
-            {"cluster_key": c.key, "num_members": c.num_members, "files": c.files,
-             "top_symbols": c.top_symbols, "source_hash": c.source_hash,
-             "stale": stale[c.key]}
-            for c in clusters if c.key not in deferred_keys]}
+                never = [
+                    cluster
+                    for cluster in rebuild_clusters
+                    if cluster.key not in updated
+                ]
+                aged = sorted(
+                    (
+                        cluster
+                        for cluster in rebuild_clusters
+                        if cluster.key in updated
+                    ),
+                    key=lambda cluster: updated[cluster.key],
+                )
+                deferred_keys = {
+                    cluster.key
+                    for cluster in (never + aged)[effective_cap:]
+                }
+        deferred_files = sum(
+            len(deltas[key].pending_paths) for key in deferred_keys
+        )
+        clusters = []
+        for cluster in state.clusters:
+            if cluster.key in deferred_keys:
+                continue
+            delta = deltas[cluster.key]
+            serialized = self._serialize_summary_delta(
+                delta, include_reused_content=False
+            )
+            clusters.append(
+                {
+                    "cluster_key": cluster.key,
+                    "num_members": cluster.num_members,
+                    "files": cluster.files,
+                    "top_symbols": cluster.top_symbols,
+                    "source_hash": cluster.source_hash,
+                    "stale": stale[cluster.key],
+                    "added_files": serialized["added_files"],
+                    "changed_files": serialized["changed_files"],
+                    "removed_files": serialized["removed_files"],
+                    "moved_files": serialized["moved_files"],
+                    "reused_files": len(delta.reused),
+                    "bootstrap": generation_flags[cluster.key][0],
+                    "full_rebuild": generation_flags[cluster.key][1],
+                }
+            )
+        return {
+            "branch": resolved,
+            "depth": state.depth,
+            "layout_token": state.layout_token,
+            "depth_source": state.depth_source,
+            "deferred": len(deferred_keys),
+            "deferred_files": deferred_files,
+            "orphans": orphans,
+            "clusters": clusters,
+        }
 
-    def index_subsystem_summary(self, repo: str, branch: str, cluster_key: str,
-                                title: str, summary: str, source_hash: str) -> dict:
-        """Персистнуть один summary подсистемы (idempotent upsert).
+    def get_subsystem_summary_work(
+        self,
+        repo: str,
+        branch: str,
+        cluster_key: str,
+        source_hash: str,
+    ) -> dict:
+        """Вернуть read-only file-level работу для одной актуальной сводки."""
+        rb = self._resolve_repo_branch(repo, branch)
+        if isinstance(rb, str):
+            return {"ready": False, "note": rb}
+        repo, resolved = rb
+        state = self._summary_state(repo, resolved)
+        cluster = next(
+            (item for item in state.clusters if item.key == cluster_key),
+            None,
+        )
+        if cluster is None or cluster.source_hash != source_hash:
+            return {
+                "ready": False,
+                "note": "состав кластера изменился с момента list",
+            }
+        bootstrap, full_rebuild = self._cluster_generation_flags(state, cluster)
+        delta = self._summary_delta(state, cluster)
+        return {
+            "ready": True,
+            "branch": resolved,
+            "cluster_key": cluster.key,
+            "source_hash": cluster.source_hash,
+            **self._serialize_summary_delta(
+                delta, include_reused_content=True
+            ),
+            "bootstrap": bootstrap,
+            "full_rebuild": full_rebuild,
+        }
 
-        member_node_ids выводятся сервером (re-derive по cluster_key над base-составом)
-        и пишутся только при совпадении пере-вычисленного source_hash с переданным —
-        иначе [] + note (состав базы изменился между list и index; самозалечивается
-        следующим проходом summarize-subsystems)."""
-        from reviewer.graph.summaries import (cluster_key as cluster_key_of,
-                                              compute_source_hash, depth_for)
+    def _embed_subsystem_summary(
+        self,
+        repo: str,
+        branch: str,
+        cluster_key: str,
+        title: str,
+        summary: str,
+        source_hash: str,
+    ) -> bool:
+        """Вычислить post-commit embedding и записать его через source-hash CAS."""
+        try:
+            embedding = self.components.embedder.embed_documents(
+                [f"{title}\n{summary}"]
+            )[0]
+            return self.components.summary_store.set_embedding_if_source_hash(
+                repo,
+                branch,
+                cluster_key,
+                source_hash,
+                embedding,
+                title=title,
+                summary=summary,
+            )
+        except Exception:
+            log.warning(
+                "index_subsystem_summary: сбой post-commit эмбеддинга",
+                exc_info=True,
+            )
+            return False
+
+    def index_subsystem_summary(
+        self,
+        repo: str,
+        branch: str,
+        cluster_key: str,
+        title: str,
+        summary: str,
+        source_hash: str,
+        fragments: list[SummaryFragmentIn] | list[dict] | None = None,
+    ) -> dict:
+        """Строго проверить и атомарно сохранить summary с file fragments."""
         rb = self._resolve_repo_branch(repo, branch)
         if isinstance(rb, str):
             return {"stored": False, "note": rb}
         repo, resolved = rb
-        # depth резолвится тем же хелпером, что list_subsystem_clusters без явного depth:
-        # cluster_key и source_hash зависят от depth, поэтому совпадение хешей гарантировано
-        # только когда кластеры листались тем же дефолтом. При нестандартном depth —
-        # fail-soft []+note ниже.
-        depth, overrides, _ = self._resolve_summary_depth(repo, resolved)
-        raw = self.components.store.list_base_members(repo, resolved)
-        members = [(f"{p}#{s}", sk) for p, s, _h, _sl, sk in raw
-                   if cluster_key_of(p, depth_for(p, depth, overrides)) == cluster_key]
-        consistent = compute_source_hash(members) == source_hash
-        member_node_ids = sorted(nid for nid, _ in members) if consistent else []
-        # Дедуп эмбеддинга по source_hash (PRI-167): пересчитываем вектор только если
-        # хеш кластера изменился; иначе embedding=None → COALESCE сохранит старый вектор,
-        # Voyage не дёргается. Сбой Voyage → embedding=None + note (бэкфилл доберёт).
-        note: str | None = None
-        embedding: list[float] | None = None
-        # Свежесть эмбеддинга держится на source_hash (зависит только от node_id+skeleton_hash):
-        # неизменный hash → embedding=None → COALESCE сохраняет старый вектор. Скилл зовёт index
-        # только для stale-кластеров, поэтому «тот же hash, иной текст» в норме не возникает.
-        stored_hash = self.components.summary_store.get_source_hashes(repo, resolved).get(cluster_key)
-        if stored_hash != source_hash:
+        state = self._summary_state(repo, resolved)
+        cluster = next(
+            (item for item in state.clusters if item.key == cluster_key),
+            None,
+        )
+        if cluster is None or cluster.source_hash != source_hash:
+            return {
+                "cluster_key": cluster_key,
+                "stored": False,
+                "race": True,
+                "note": "состав кластера изменился с момента list",
+            }
+
+        member_node_ids = cluster.member_node_ids
+        metrics: dict[str, int] = {}
+        if fragments is None:
+            self.components.summary_store.upsert_summary(
+                repo,
+                resolved,
+                cluster_key,
+                title,
+                summary,
+                member_node_ids,
+                source_hash,
+                embedding=None,
+                preserve_embedding=False,
+            )
+        else:
             try:
-                embedding = self.components.embedder.embed_documents([f"{title}\n{summary}"])[0]
+                validated = [
+                    (
+                        fragment
+                        if isinstance(fragment, SummaryFragmentIn)
+                        else SummaryFragmentIn.model_validate(fragment)
+                    )
+                    for fragment in fragments
+                ]
             except Exception:
-                log.warning("index_subsystem_summary: сбой эмбеддинга — бэкфилл доберёт",
-                            exc_info=True)
-                note = "эмбеддинг не вычислен (Voyage недоступен) — будет добран бэкфиллом"
-        self.components.summary_store.upsert_summary(
-            repo, resolved, cluster_key, title, summary, member_node_ids, source_hash,
-            embedding=embedding)
-        out = {"cluster_key": cluster_key, "stored": True, "members": len(member_node_ids)}
-        if not consistent:
-            out["note"] = "состав кластера изменился с момента list — member_node_ids не сохранены"
-        elif note:
-            out["note"] = note
+                return {
+                    "cluster_key": cluster_key,
+                    "stored": False,
+                    "note": "некорректный payload summary fragments",
+                }
+            delta = self._summary_delta(state, cluster)
+            incoming_paths = [fragment.path for fragment in validated]
+            pending_paths = list(delta.pending_paths)
+            if (
+                len(incoming_paths) != len(set(incoming_paths))
+                or sorted(incoming_paths) != sorted(pending_paths)
+            ):
+                return {
+                    "cluster_key": cluster_key,
+                    "stored": False,
+                    "note": "payload не покрывает ровно все pending summary fragments",
+                }
+            current_fingerprints = {
+                path: state.file_fingerprints[path] for path in cluster.files
+            }
+            if any(
+                current_fingerprints.get(fragment.path) != fragment.fingerprint
+                for fragment in validated
+            ):
+                return {
+                    "cluster_key": cluster_key,
+                    "stored": False,
+                    "note": "fingerprint summary fragment устарел",
+                }
+            new_fragments = []
+            for fragment in validated:
+                payload = fragment.model_dump(mode="python")
+                payload["provenance"] = with_server_generation_provenance(
+                    fragment.provenance,
+                    state.depth,
+                    state.layout_token,
+                )
+                new_fragments.append(payload)
+            try:
+                metrics = self.components.summary_store.commit_summary_bundle(
+                    repo,
+                    resolved,
+                    cluster_key,
+                    title,
+                    summary,
+                    member_node_ids,
+                    source_hash,
+                    current_fingerprints=current_fingerprints,
+                    new_fragments=new_fragments,
+                )
+            except ValueError as exc:
+                return {
+                    "cluster_key": cluster_key,
+                    "stored": False,
+                    "note": str(exc),
+                }
+
+        embedded = self._embed_subsystem_summary(
+            repo,
+            resolved,
+            cluster_key,
+            title,
+            summary,
+            source_hash,
+        )
+        out = {
+            "cluster_key": cluster_key,
+            "stored": True,
+            "members": len(member_node_ids),
+            **metrics,
+            "embedded": embedded,
+        }
+        if not embedded:
+            out["note"] = (
+                "эмбеддинг не сохранён — будет добран бэкфиллом"
+            )
         return out
+
+    def _current_subsystem_hashes(
+        self, repo: str, branch: str
+    ) -> dict[str, str] | None:
+        from reviewer.graph.summaries import Member, build_clusters
+
+        try:
+            raw = self.components.store.list_base_members(repo, branch)
+            if not raw:
+                return None
+            members = [
+                Member(
+                    node_id=f"{path}#{symbol}",
+                    path=path,
+                    content_hash=content_hash,
+                    start_line=start_line,
+                    skeleton_hash=skeleton_hash,
+                )
+                for path, symbol, content_hash, start_line, skeleton_hash in raw
+            ]
+            depth, overrides, _ = self._resolve_summary_depth(repo, branch)
+            clusters = build_clusters(
+                members,
+                None,
+                depth=depth,
+                min_size=1,
+                depth_overrides=overrides,
+            )
+            return {cluster.key: cluster.source_hash for cluster in clusters}
+        except Exception:
+            log.warning(
+                "get_subsystem_summaries: не удалось вычислить свежесть",
+                exc_info=True,
+            )
+            return None
+
+    def _annotate_summary_staleness(
+        self, repo: str, branch: str, summaries: list[dict]
+    ) -> list[dict]:
+        if not summaries:
+            return []
+        current = self._current_subsystem_hashes(repo, branch)
+        return [
+            {
+                **summary,
+                "stale": (
+                    None
+                    if current is None
+                    else summary.get("source_hash") != current.get(summary["cluster_key"])
+                ),
+            }
+            for summary in summaries
+        ]
 
     def get_subsystem_summaries(self, repo: str, branch: str | None = None,
                                 cluster_key: str | None = None, query: str | None = None,
@@ -1047,42 +2087,108 @@ class MCPReviewService:
         """Дешёвый приор: предрасчитанные summary подсистем (fail-open у потребителя).
 
         cluster_key → одна сводка. Иначе: при query И числе сводок > порога масштаба
-        (SUMMARY_TOPK_THRESHOLD, per-repo .review.yml) — ANN top-k по близости (PRI-167);
-        иначе (без query или ≤ порога) — все (бэк-компат)."""
+        (effective `summary_topk_threshold` layered policy) — ANN top-k по близости
+        (PRI-167); иначе (без query или ≤ порога) — все (бэк-компат)."""
         rb = self._resolve_repo_branch(repo, branch)
         if isinstance(rb, str):
             return {"summaries": [], "note": rb}
         repo, resolved = rb
         store = self.components.summary_store
         if cluster_key:
-            return {"summary": store.get_summary(repo, resolved, cluster_key)}
+            summary = store.get_summary(repo, resolved, cluster_key)
+            annotated = self._annotate_summary_staleness(
+                repo, resolved, [summary] if summary is not None else []
+            )
+            return {"summary": annotated[0] if annotated else None}
         if query:
             threshold, _ = self._resolve_summary_topk_threshold(repo, resolved)
             if store.count_summaries(repo, resolved) > threshold:
                 qvec = self.components.embedder.embed_query(query)
-                return {"summaries": store.search_summaries(repo, resolved, qvec, top_k or 8)}
-        return {"summaries": store.get_summaries(repo, resolved)}
+                summaries = store.search_summaries(repo, resolved, qvec, top_k or 8)
+                return {
+                    "summaries": [{**summary, "stale": None} for summary in summaries]
+                }
+        summaries = store.get_summaries(repo, resolved)
+        return {
+            "summaries": self._annotate_summary_staleness(repo, resolved, summaries)
+        }
 
-    def prune_subsystem_summaries(self, repo: str, branch: str | None = None) -> dict:
-        """Удалить сводки подсистем, осиротевшие после смены depth или удаления модулей.
-
-        Пере-выводит текущие cluster_keys из base-состава на резолвнутом depth и
-        удаляет сводки вне этого множества. Вызывать ТОЛЬКО на полном (uncapped)
-        прогоне скилла — иначе отложенные капом кластеры будут приняты за осиротевшие.
-        Пустой base → no-op (не вайпать на транзиентной пустоте). Fail-soft."""
-        from reviewer.graph.summaries import cluster_key as cluster_key_of, depth_for
+    def prune_subsystem_summaries(
+        self,
+        repo: str,
+        branch: str | None = None,
+        layout_token: str | None = None,
+        expected_source_hashes: dict[str, str] | None = None,
+    ) -> dict:
+        """Финализировать только полный подтверждённый snapshot текущего layout."""
         rb = self._resolve_repo_branch(repo, branch)
         if isinstance(rb, str):
-            return {"pruned": 0, "kept": 0, "note": rb}
+            return {
+                "completed": False,
+                "race": True,
+                "deferred": 1,
+                "pruned": 0,
+                "kept": 0,
+                "fragments_pruned": 0,
+                "depth": None,
+                "layout_token": None,
+                "note": rb,
+            }
         repo, resolved = rb
-        depth, overrides, _ = self._resolve_summary_depth(repo, resolved)
-        raw = self.components.store.list_base_members(repo, resolved)
-        if not raw:
-            return {"pruned": 0, "kept": 0, "note": "(base-индекс пуст — purge пропущен)"}
-        keep_keys = sorted({cluster_key_of(p, depth_for(p, depth, overrides))
-                            for p, _s, _h, _sl, _sk in raw})
-        pruned = self.components.summary_store.delete_summaries_except(repo, resolved, keep_keys)
-        return {"pruned": pruned, "kept": len(keep_keys)}
+        state = self._summary_state(repo, resolved)
+        rejected = {
+            "completed": False,
+            "race": True,
+            "deferred": len(state.clusters),
+            "pruned": 0,
+            "kept": len(state.clusters),
+            "fragments_pruned": 0,
+            "depth": state.depth,
+            "layout_token": state.layout_token,
+        }
+        if not state.members:
+            return {
+                **rejected,
+                "note": "(base-индекс пуст — purge пропущен)",
+            }
+        if layout_token is None or expected_source_hashes is None:
+            return {
+                **rejected,
+                "note": "обязателен snapshot из успешного uncapped list",
+            }
+        if layout_token != state.layout_token:
+            return {
+                **rejected,
+                "note": "layout изменился после list",
+            }
+        current_source_hashes = {
+            cluster.key: cluster.source_hash
+            for cluster in state.clusters
+        }
+        if expected_source_hashes != current_source_hashes:
+            return {
+                **rejected,
+                "note": "source_hash кластера изменился после list",
+            }
+        current_fingerprints = {
+            cluster.key: {
+                path: state.file_fingerprints[path]
+                for path in cluster.files
+            }
+            for cluster in state.clusters
+        }
+        result = self.components.summary_store.prune_verified_layout(
+            repo,
+            resolved,
+            expected_source_hashes,
+            current_fingerprints,
+            state.depth,
+            state.layout_token,
+        )
+        return {
+            **result,
+            "kept": len(state.clusters),
+        }
 
     def backfill_summary_embeddings(self, repo: str, branch: str | None = None) -> dict:
         """Self-heal: дозаполнить эмбеддинги сводок с embedding IS NULL из хранимого
@@ -1102,9 +2208,19 @@ class MCPReviewService:
         except Exception:
             log.warning("backfill_summary_embeddings: сбой эмбеддинга", exc_info=True)
             return {"embedded": 0, "note": "Voyage недоступен — бэкфилл пропущен"}
-        for p, vec in zip(pending, vecs):
-            store.set_embedding(repo, resolved, p["cluster_key"], vec)
-        return {"embedded": len(pending)}
+        embedded = sum(
+            store.set_embedding_if_source_hash(
+                repo,
+                resolved,
+                item["cluster_key"],
+                item["source_hash"],
+                vec,
+                title=item["title"],
+                summary=item["summary"],
+            )
+            for item, vec in zip(pending, vecs)
+        )
+        return {"embedded": embedded}
 
     def get_pr_diff(self, repo: str, number: int) -> str:
         """Unified diff изменённых файлов PR (session-less) — ленивая подтяжка для /solve-task.
@@ -1164,6 +2280,7 @@ class MCPReviewService:
     def get_candidate_findings(self, repo: str, pr: int) -> str:
         """Вернуть накопленных кандидатов с id для verify (JSON-строка)."""
         import json
+
         from reviewer.services.repo_id import normalize_repo
         repo = normalize_repo(repo)
         s = self._session(repo, pr)
@@ -1471,6 +2588,7 @@ class MCPReviewService:
                     1 for r in asm.findings_rows if r["published"] and not r["inline"]
                 ),
                 "usage": metadata.usage,
+                "config_sources": p.config_sources,
                 "total_cost": metadata.total_cost,
                 "error_text": error or None,
             }
@@ -1557,6 +2675,18 @@ class MCPReviewService:
             if u.structural_summary:
                 unit["structural_summary"] = u.structural_summary
             units.append(unit)
+        risk_paths = []
+        for item in p.risk_paths:
+            patch = p.patches.get(item.path)
+            lines = commentable_lines(patch)
+            risk_paths.append({
+                "path": item.path,
+                "status": item.status,
+                "reasons": list(item.reasons),
+                "patch": patch,
+                "commentable_right": sorted(lines["RIGHT"]),
+                "commentable_left": sorted(lines["LEFT"]),
+            })
         return {
             "repo": p.repo,
             "pr": {
@@ -1582,6 +2712,8 @@ class MCPReviewService:
             "task_board_warnings": list(p.policy.task_board_warnings),
             "task_keys": p.task_keys,
             "skipped_paths": p.skipped_paths,
+            "risk_paths": risk_paths,
+            "risk_skipped_paths": list(p.risk_skipped_paths),
             "skip_drafts": self.settings.review_skip_drafts,
             "suggestions_mode": self._suggestions_mode(),
         }

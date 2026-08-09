@@ -20,14 +20,15 @@ import time
 from collections.abc import Callable, Iterable, Mapping
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urlsplit
 
 import httpx
 
-from reviewer.tasks.boards.base import RawTask, project_prefix
+from reviewer.tasks.boards.base import RawTask, TaskListing, TaskListingStats, project_prefix
 from reviewer.tasks.boards.errors import BoardProviderError
 from reviewer.tasks.boards.pagination import paginate_page
+from reviewer.config.provider_access import ProviderAccessSpec
 from reviewer.tasks.boards.registry import (
     BoardProviderSpec,
     CredentialFieldSpec,
@@ -36,6 +37,9 @@ from reviewer.tasks.boards.registry import (
     ProviderSetupSpec,
 )
 from reviewer.tasks.boards.restbase import RestBoardBase
+
+if TYPE_CHECKING:
+    from reviewer.config.task_board import TaskSyncFilter
 
 _PAGE = 100
 _API_VERSION = "2022-11-28"
@@ -124,6 +128,14 @@ def provider_spec() -> BoardProviderSpec:
                 "репозиторию и правом Issues: Read and write (classic token — scope repo). "
                 "Токен показывается один раз, сохраните его сразу."
             ),
+            access=ProviderAccessSpec(
+                minimum_permissions=(
+                    "fine-grained PAT с Issues: Read and write для выбранного репозитория"
+                ),
+                read_operations=("issues, labels, milestones и comments",),
+                write_operations=("создание, правка и закрытие issues, добавление PR-ссылок",),
+                validation="identity, доступ к репозиторию и write capability",
+            ),
             help_url_builder=_token_url,
         ),
         default_api_base=_CLOUD_API_BASE,
@@ -167,19 +179,33 @@ def _web_base(api_base: str) -> str:
     return f"https://{host}{port}{parsed.path.rstrip('/').removesuffix('/api/v3')}"
 
 
-def _epoch_ms(value: object) -> int:
-    """ISO 8601 UTC-aware → epoch ms; нераспознанное значение → 0 (без падения)."""
+def _epoch_ms(value: object) -> int | None:
+    """ISO 8601 UTC-aware → epoch ms; отсутствующее/невалидное значение → None."""
     if not isinstance(value, str) or not value.strip():
-        return 0
+        return None
     text = value.strip()
     text = f"{text[:-1]}+00:00" if text.endswith(("Z", "z")) else text
     try:
         parsed = datetime.fromisoformat(text)
     except ValueError:
-        return 0
+        return None
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=UTC)
-    return int(parsed.timestamp() * 1000)
+    try:
+        return int(parsed.timestamp() * 1000)
+    except (OverflowError, OSError):
+        return None
+
+
+def _terminal_from_state(value: object) -> bool | None:
+    if not isinstance(value, str):
+        return None
+    state = value.strip().lower()
+    if state == "closed":
+        return True
+    if state == "open":
+        return False
+    return None
 
 
 def _rate_limit_hint(status: int, headers: Mapping[str, str]) -> float | None:
@@ -420,7 +446,8 @@ class GitHubIssuesBoard(RestBoardBase):
             links=[],
             attachments=_attachments(body, web_base=self._web_base),
             board_id=str(number),
-            completed=str(issue.get("state") or "").lower() == "closed",
+            archived=None,
+            terminal=_terminal_from_state(issue.get("state")),
             provider_data={
                 "repo": repo,
                 "number": number,
@@ -439,7 +466,7 @@ class GitHubIssuesBoard(RestBoardBase):
             },
         )
 
-    def iter_raw(self, board: str | None, limit: int | None) -> Iterable[RawTask]:
+    def _iter_raw_rows(self, board: str | None, limit: int | None) -> Iterable[RawTask]:
         """Ленивый обход всех страниц ``/issues`` (page+per_page); PR отфильтрованы."""
         repo = self._require_repo(board)
 
@@ -457,6 +484,8 @@ class GitHubIssuesBoard(RestBoardBase):
             ) or []
 
         count = 0
+        if limit is not None and count >= limit:
+            return
         for issue in paginate_page(fetch, page_size=_PAGE):
             # /issues отдаёт и pull request'ы — в корпус задач они попадать не должны.
             if not isinstance(issue, Mapping) or issue.get("pull_request") is not None:
@@ -465,6 +494,21 @@ class GitHubIssuesBoard(RestBoardBase):
             count += 1
             if limit is not None and count >= limit:
                 return
+
+    def iter_raw(
+        self,
+        board: str | None,
+        limit: int | None,
+        *,
+        sync_filter: TaskSyncFilter | None = None,
+        now_ms: int | None = None,
+    ) -> TaskListing:
+        if limit == 0:
+            return TaskListing(rows=iter(()))
+        return TaskListing(
+            rows=self._iter_raw_rows(board, limit),
+            stats=TaskListingStats(),
+        )
 
     # --- discovery целей ---
 

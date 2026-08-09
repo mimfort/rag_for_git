@@ -7,9 +7,12 @@ task-context-<type>.md), оркестратор SyncService остаётся boa
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
+
+if TYPE_CHECKING:
+    from reviewer.config.task_board import TaskSyncFilter
 
 JsonValue = None | bool | int | float | str | list["JsonValue"] | dict[str, "JsonValue"]
 
@@ -32,15 +35,76 @@ class RawTask:
     description: str
     status: str | None     # резолвнутый title колонки
     subtask_ids: list[str]  # UUID подзадач (titles резолвятся в normalize)
-    timestamp: int         # epoch ms последнего изменения
+    timestamp: int | None  # epoch ms последнего изменения
     links: list[dict] = field(default_factory=list)  # предрезолвленные ссылки
     # (youtrack кладёт сразу в iter_raw; yougile оставляет пустым, резолвит в normalize)
     attachments: list[dict] = field(default_factory=list)  # метаданные вложений из iter_raw
     # (youtrack: name/mime/size/url inline из _FIELDS; yougile: пусто, фетчится в normalize)
     board_id: str = ""  # внутренний id задачи у провайдера (yougile UUID для чат-эндпоинта;
     # youtrack не использует — там везде idReadable)
-    completed: bool = False  # YouGile: булев чекбокс «выполнено» (мапится в status="done")
+    archived: bool | None = None
+    terminal: bool | None = None
     provider_data: dict = field(default_factory=dict)  # нейтральные расширенные метаданные
+
+
+@dataclass
+class TaskListingStats:
+    filtered_by_age: int = 0
+    filtered_archived: int = 0
+    warnings: list[str] = field(default_factory=list)
+
+
+@dataclass
+class TaskListing:
+    rows: Iterable[RawTask]
+    stats: TaskListingStats = field(default_factory=TaskListingStats)
+
+    def __iter__(self) -> Iterator[RawTask]:
+        return iter(self.rows)
+
+
+@dataclass(frozen=True)
+class NativeSubtaskIdentity:
+    board_id: str
+    key: str
+    title: str
+    aliases: tuple[str, ...] = ()
+    url: str | None = None
+    warnings: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class ReconciledNativeSubtask:
+    marker: str
+    identity: NativeSubtaskIdentity
+
+
+class NativeSubtaskProvider(Protocol):
+    """Опциональные операции провайдера с нативными подзадачами."""
+
+    def reconcile_native_subtasks(
+        self,
+        source_board_id: str,
+        markers: frozenset[str],
+    ) -> list[ReconciledNativeSubtask]:
+        ...
+
+    def create_native_subtask(
+        self,
+        doc_md: str,
+        *,
+        title: str,
+        source_column_id: str,
+        marker: str,
+    ) -> NativeSubtaskIdentity:
+        ...
+
+    def replace_native_subtasks(
+        self,
+        parent_task_id: str,
+        subtask_ids: list[str],
+    ) -> None:
+        ...
 
 
 class TaskBoardProvider(Protocol):
@@ -55,7 +119,14 @@ class TaskBoardProvider(Protocol):
     def validate_connection(self, project: str | None = None) -> dict:
         ...
 
-    def iter_raw(self, board: str | None, limit: int | None) -> Iterable[RawTask]:
+    def iter_raw(
+        self,
+        board: str | None,
+        limit: int | None,
+        *,
+        sync_filter: TaskSyncFilter | None = None,
+        now_ms: int | None = None,
+    ) -> TaskListing:
         ...
 
     def normalize(self, raw: RawTask) -> dict:
@@ -93,8 +164,8 @@ class TaskBoardProvider(Protocol):
 
         После finish закрытую задачу надо сразу переиндексировать в стор reviewer,
         не дожидаясь инкрементального sync_board (тот отсекает задачи с
-        timestamp <= watermark-курсор). fail-soft: сетевой сбой / 404 / нет задачи
-        → None (write-through пропускается, стор догонит обычным синком)."""
+        timestamp <= watermark-курсор). ``None`` означает только достоверное
+        отсутствие задачи; ошибки чтения провайдер обязан пробрасывать."""
         ...
 
     def create(self, doc_md: str, *, title: str, target: str | None,

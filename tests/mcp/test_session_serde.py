@@ -9,6 +9,7 @@ import pytest
 from reviewer.agent.state import ReviewUnit
 from reviewer.mcp.session_serde import from_payload, to_payload
 from reviewer.policy.policy import ReviewPolicy
+from reviewer.services.risk_paths import RiskPath
 from reviewer.services.review_service import PreparedReview
 from reviewer.vcs.base import PullRequest
 
@@ -38,6 +39,15 @@ def _prepared(vcs) -> PreparedReview:
         changed_status={"a.py": "modified", "b.py": "added"},
         task_board={"type": "yougile"},
         task_keys={"primary": "PRI-7", "others": []},
+        risk_paths=[
+            RiskPath("migrations/001.sql", "modified", ("migration",)),
+        ],
+        risk_skipped_paths=["infra/overflow.tf"],
+        config_sources={
+            "sources": {"paths": "home:repos/o/r.yml"},
+            "shadowed": {"paths": [".review.yml"]},
+            "warnings": [],
+        },
     )
 
 
@@ -63,6 +73,9 @@ def test_payload_roundtrip_preserves_fields() -> None:
     assert restored.changed_status == original.changed_status
     assert restored.task_board == original.task_board
     assert restored.task_keys == original.task_keys
+    assert restored.risk_paths == original.risk_paths
+    assert restored.risk_skipped_paths == original.risk_skipped_paths
+    assert restored.config_sources == original.config_sources
     assert restored.vcs is new_vcs                       # vcs не сериализуется, подставлен заново
 
 
@@ -95,3 +108,25 @@ def test_from_payload_bad_prq_raises_type_error() -> None:
     payload["prq"] = {"unexpected_field": 1}  # PullRequest(**...) → TypeError
     with pytest.raises(TypeError):
         from_payload(payload, _DummyVCS())
+
+
+def test_from_payload_defaults_missing_risk_fields() -> None:
+    """Сессии до PRI-134 восстанавливаются без risk-полей."""
+    payload = json.loads(json.dumps(to_payload(_prepared(_DummyVCS()))))
+    payload.pop("risk_paths")
+    payload.pop("risk_skipped_paths")
+
+    restored = from_payload(payload, _DummyVCS())
+
+    assert restored.risk_paths == []
+    assert restored.risk_skipped_paths == []
+
+
+def test_from_payload_without_config_sources_is_backward_compatible() -> None:
+    """Payload старой сессии восстанавливается с пустой конфигурацией источников."""
+    payload = json.loads(json.dumps(to_payload(_prepared(_DummyVCS()))))
+    payload.pop("config_sources")
+
+    restored = from_payload(payload, _DummyVCS())
+
+    assert restored.config_sources == {}

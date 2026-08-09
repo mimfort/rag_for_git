@@ -11,6 +11,7 @@ from dataclasses import asdict
 from reviewer.agent.state import ReviewUnit
 from reviewer.policy.context_limits import ContextLimits
 from reviewer.policy.policy import ReviewPolicy
+from reviewer.services.risk_paths import RiskPath
 from reviewer.services.review_service import PreparedReview
 from reviewer.vcs.base import PullRequest, VCSProvider
 
@@ -36,6 +37,9 @@ def to_payload(prepared: PreparedReview) -> dict:
         "changed_status": prepared.changed_status,
         "task_board": prepared.task_board,
         "task_keys": prepared.task_keys,
+        "risk_paths": [asdict(item) for item in prepared.risk_paths],
+        "risk_skipped_paths": prepared.risk_skipped_paths,
+        "config_sources": prepared.config_sources,
     }
 
 
@@ -79,4 +83,14 @@ def from_payload(d: dict, vcs: VCSProvider) -> PreparedReview:
         changed_status=d["changed_status"],
         task_board=d.get("task_board"),
         task_keys=d.get("task_keys"),
+        risk_paths=[
+            RiskPath(
+                path=item["path"],
+                status=item["status"],
+                reasons=tuple(item["reasons"]),
+            )
+            for item in d.get("risk_paths", [])
+        ],
+        risk_skipped_paths=d.get("risk_skipped_paths", []),
+        config_sources=d.get("config_sources", {}),
     )

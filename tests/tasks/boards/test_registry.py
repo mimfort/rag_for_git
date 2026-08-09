@@ -4,6 +4,11 @@ from dataclasses import replace
 
 import pytest
 
+from reviewer.tasks.boards.base import (
+    NativeSubtaskIdentity,
+    ReconciledNativeSubtask,
+    TaskListing,
+)
 from reviewer.tasks.boards.registry import (
     BoardProviderRegistry,
     BoardProviderSpec,
@@ -13,7 +18,7 @@ from reviewer.tasks.boards.registry import (
     ProviderSetupSpec,
     default_board_registry,
 )
-
+from tests.provider_access import FAKE_PROVIDER_ACCESS
 
 EXPECTED_BOARD_TYPES = (
     "yougile",
@@ -44,8 +49,8 @@ class _CompleteProvider:
     def validate_connection(self, project=None):
         return {}
 
-    def iter_raw(self, board, limit):
-        return []
+    def iter_raw(self, board, limit, *, sync_filter=None, now_ms=None):
+        return TaskListing(rows=())
 
     def normalize(self, raw):
         return {}
@@ -69,13 +74,41 @@ class _CompleteProvider:
         return None
 
 
-def fake_spec(*, board_type="fake", secret_env="FAKE_TOKEN", factory=None, options=()):
+class _NativeSubtaskProvider(_CompleteProvider):
+    def __init__(self):
+        self.closed = False
+
+    def reconcile_native_subtasks(self, source_board_id, markers):
+        identity = NativeSubtaskIdentity("subtask-1", "FAKE-2", "Child")
+        return [ReconciledNativeSubtask(next(iter(markers)), identity)]
+
+    def create_native_subtask(self, doc_md, *, title, source_column_id, marker):
+        return NativeSubtaskIdentity("subtask-1", "FAKE-2", title)
+
+    def replace_native_subtasks(self, parent_task_id, subtask_ids):
+        return None
+
+    def close(self):
+        self.closed = True
+
+
+def fake_spec(
+    *,
+    board_type="fake",
+    secret_env="FAKE_TOKEN",
+    factory=None,
+    options=(),
+    capabilities=frozenset(),
+):
     return BoardProviderSpec(
         board_type=board_type,
         factory=factory or (lambda _: _CompleteProvider()),
         credential_fields=(CredentialFieldSpec(secret_env, "Token", secret=True),),
-        setup=ProviderSetupSpec("Fake", "https://example.test/help", "Create a token."),
+        setup=ProviderSetupSpec(
+            "Fake", "https://example.test/help", "Create a token.", FAKE_PROVIDER_ACCESS
+        ),
         option_fields=options,
+        capabilities=capabilities,
     )
 
 
@@ -241,6 +274,80 @@ def test_registry_creates_provider_with_validated_context():
     assert contexts[0].key_pattern == BUILD_DEFAULTS["key_pattern"]
 
 
+def test_registry_creates_ordinary_provider_without_capability_methods():
+    registry = BoardProviderRegistry([fake_spec()])
+
+    provider = registry.create(
+        "fake",
+        credentials={"FAKE_TOKEN": "secret"},
+        options={},
+        build_defaults=BUILD_DEFAULTS,
+    )
+
+    assert not hasattr(provider, "create_native_subtask")
+    assert registry.get("fake").capabilities == frozenset()
+
+
+def test_registry_creates_provider_with_declared_native_subtask_capability():
+    provider = _NativeSubtaskProvider()
+    registry = BoardProviderRegistry([
+        fake_spec(
+            factory=lambda _: provider,
+            capabilities=frozenset({"native_subtasks"}),
+        ),
+    ])
+
+    created = registry.create(
+        "fake",
+        credentials={"FAKE_TOKEN": "secret"},
+        options={},
+        build_defaults=BUILD_DEFAULTS,
+    )
+
+    assert created is provider
+    assert registry.get("fake").capabilities == frozenset({"native_subtasks"})
+
+
+def test_registry_rejects_unknown_provider_capability():
+    with pytest.raises(ValueError, match="unknown provider capability"):
+        BoardProviderRegistry([fake_spec(capabilities=frozenset({"unknown"}))])
+
+
+@pytest.mark.parametrize("capabilities", [{"native_subtasks"}, ["native_subtasks"], ()])
+def test_registry_rejects_capabilities_that_are_not_frozenset(capabilities):
+    with pytest.raises(TypeError, match="frozenset"):
+        BoardProviderRegistry([fake_spec(capabilities=capabilities)])
+
+
+@pytest.mark.parametrize(
+    "method_name",
+    [
+        "reconcile_native_subtasks",
+        "create_native_subtask",
+        "replace_native_subtasks",
+    ],
+)
+def test_registry_closes_capable_provider_with_non_callable_method(method_name):
+    provider = _NativeSubtaskProvider()
+    setattr(provider, method_name, None)
+    registry = BoardProviderRegistry([
+        fake_spec(
+            factory=lambda _: provider,
+            capabilities=frozenset({"native_subtasks"}),
+        ),
+    ])
+
+    with pytest.raises(TypeError, match=method_name):
+        registry.create(
+            "fake",
+            credentials={"FAKE_TOKEN": "secret"},
+            options={},
+            build_defaults=BUILD_DEFAULTS,
+        )
+
+    assert provider.closed is True
+
+
 # Поля, форма которых строже «просто https-URL»: tenant-origin Jira и ровно один
 # из двух взаимоисключающих org-заголовков Yandex Tracker.
 CREDENTIAL_OVERRIDES = {
@@ -264,6 +371,17 @@ def test_default_registry_registers_every_complete_provider_in_order():
     registry = default_board_registry()
 
     assert registry.registered_types() == EXPECTED_BOARD_TYPES
+
+
+def test_every_board_provider_documents_access_contract():
+    registry = default_board_registry()
+
+    for board_type in registry.registered_types():
+        access = registry.get(board_type).setup.access
+        assert access.minimum_permissions, board_type
+        assert access.read_operations, board_type
+        assert access.write_operations, board_type
+        assert access.validation, board_type
 
 
 def test_default_registry_builds_and_validates_every_registered_provider():

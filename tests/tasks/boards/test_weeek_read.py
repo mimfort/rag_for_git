@@ -140,14 +140,15 @@ def test_raw_task_maps_synthesized_key_native_id_and_epoch_ms() -> None:
     assert row.key == "WEEEK-7"
     assert row.project_code == "WEEEK-7"
     assert row.board_id == "7"
-    assert row.completed is True
+    assert row.archived is None
+    assert row.terminal is True
     assert row.subtask_ids == ["9", "10"]
     assert row.timestamp == 1784798100000  # 2026-07-23T09:15:00Z
     assert row.provider_data["parent_id"] == 3
     assert row.provider_data["board_column_id"] == 8
 
 
-def test_unparsable_updated_at_degrades_to_zero_without_raising() -> None:
+def test_unparsable_updated_at_is_unknown_without_raising() -> None:
     payload = {"success": True, "tasks": [_task(1, updatedAt="никогда")], "hasMore": False}
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -157,7 +158,32 @@ def test_unparsable_updated_at_degrades_to_zero_without_raising() -> None:
 
     row = next(iter(_board(handler).iter_raw(None, None)))
 
-    assert row.timestamp == 0
+    assert row.timestamp is None
+
+
+def test_lifecycle_uses_is_completed_but_not_is_deleted_as_archive() -> None:
+    missing = _task(3, isDeleted=True)
+    missing.pop("isCompleted")
+    payload = {
+        "success": True,
+        "tasks": [
+            _task(1, isCompleted=True, isDeleted=True),
+            _task(2, isCompleted=False),
+            missing,
+        ],
+        "hasMore": False,
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/tm/board-columns"):
+            return httpx.Response(200, json=COLUMNS)
+        return httpx.Response(200, json=payload)
+
+    rows = list(_board(handler).iter_raw(None, None))
+
+    assert [row.terminal for row in rows] == [True, False, None]
+    assert [row.archived for row in rows] == [None, None, None]
+    assert rows[0].provider_data["is_deleted"] is True
 
 
 def test_limit_stops_the_walk_before_the_second_page() -> None:

@@ -22,13 +22,13 @@ from pathlib import Path, PureWindowsPath
 from typing import Callable
 from urllib.parse import urlsplit
 
+from reviewer.config.provider_access import ProviderAccessSpec
 from reviewer.tasks.boards.registry import default_board_registry as _default_board_registry
 
 PACKAGE = "rag-reviewer"
 SERVER_NAME = "reviewer"
 COMMON_BOARD_ENV_KEYS = frozenset(
     {
-        "TASK_BOARD_MCP",
         "TASK_BOARD_KEY_PATTERN",
         "TASK_BOARD_URL_TEMPLATE",
     }
@@ -129,6 +129,65 @@ class EnvGroup:
     optional: bool = False
 
 
+@dataclass(frozen=True)
+class VcsSetupSpec:
+    """Несекретный setup-контракт одного VCS provider."""
+
+    provider: str
+    label: str
+    credential_fields: tuple[EnvField, ...]
+    help_url: str
+    help_text: str
+    access: ProviderAccessSpec
+
+
+VCS_SETUPS = {
+    "github": VcsSetupSpec(
+        provider="github",
+        label="GitHub",
+        credential_fields=(
+            EnvField("GITHUB_TOKEN", "GitHub personal access token", secret=True),
+        ),
+        help_url="https://github.com/settings/personal-access-tokens/new",
+        help_text="Создайте fine-grained PAT для репозитория reviewer.",
+        access=ProviderAccessSpec(
+            minimum_permissions="Pull requests: Read and write; Contents: Read",
+            read_operations=("PR metadata, files, comments, contents and compare",),
+            write_operations=("review comments/summary and PR body backlink",),
+            validation="reviewer check authenticates /user identity",
+        ),
+    ),
+    "gitlab": VcsSetupSpec(
+        provider="gitlab",
+        label="GitLab",
+        credential_fields=(
+            EnvField("GITLAB_URL", "GitLab base URL", default="https://gitlab.com"),
+            EnvField(
+                "GITLAB_TOKEN",
+                "GitLab personal/project access token",
+                secret=True,
+            ),
+        ),
+        help_url="https://docs.gitlab.com/user/profile/personal_access_tokens/",
+        help_text="Создайте PAT или project access token для GitLab API v4.",
+        access=ProviderAccessSpec(
+            minimum_permissions="PAT/project token with api scope",
+            read_operations=("MR metadata, changes, notes, repository files and compare",),
+            write_operations=("MR discussions/notes and description backlink",),
+            validation="reviewer check authenticates /api/v4/user identity",
+        ),
+    ),
+}
+
+
+def vcs_env_group() -> EnvGroup:
+    """Canonical union VCS-полей для render/preserve, не prompt selection."""
+    fields = [EnvField("VCS_PROVIDER", "VCS fallback provider", default="github")]
+    for spec in VCS_SETUPS.values():
+        fields.extend(spec.credential_fields)
+    return EnvGroup(title="VCS", fields=fields, optional=True)
+
+
 def board_env_group(registry) -> EnvGroup:
     """Построить canonical env-поля досок из registry metadata.
 
@@ -136,10 +195,6 @@ def board_env_group(registry) -> EnvGroup:
     генерирует.
     """
     fields = [
-        EnvField(
-            key="TASK_BOARD_MCP",
-            prompt_text="TASK_BOARD_MCP (имя MCP-сервера доски)",
-        ),
         EnvField(
             key="TASK_BOARD_KEY_PATTERN",
             prompt_text=r"TASK_BOARD_KEY_PATTERN (напр. [A-Z]+-\d+)",
@@ -165,7 +220,7 @@ def board_env_group(registry) -> EnvGroup:
 
 
 def common_board_env_fields(group: EnvGroup) -> list[EnvField]:
-    """Только три non-secret поля общей связки; prefix matching запрещён."""
+    """Только два non-secret поля общей связки; prefix matching запрещён."""
     return [field for field in group.fields if field.key in COMMON_BOARD_ENV_KEYS]
 
 
@@ -190,11 +245,6 @@ WIZARD_GROUPS: list[EnvGroup] = [
                 secret=True,
                 required=True,
             ),
-            EnvField(
-                key="GITHUB_TOKEN",
-                prompt_text="GITHUB_TOKEN (PAT: Pull requests read/write, Contents read)",
-                secret=True,
-            ),
         ],
     ),
     EnvGroup(
@@ -216,62 +266,8 @@ WIZARD_GROUPS: list[EnvGroup] = [
             ),
         ],
     ),
-    EnvGroup(
-        title="Мульти-репо / ветки",
-        optional=True,
-        fields=[
-            EnvField(
-                key="DEFAULT_REPO",
-                prompt_text="DEFAULT_REPO (owner/name или пусто)",
-                default="",
-            ),
-            EnvField(
-                key="REVIEW_BRANCHES",
-                prompt_text="REVIEW_BRANCHES (CSV, первая — первичная)",
-                default="main,master",
-            ),
-        ],
-    ),
-    EnvGroup(
-        title="GitLab VCS",
-        optional=True,
-        fields=[
-            EnvField(
-                key="GITLAB_TOKEN",
-                prompt_text="GITLAB_TOKEN (PAT GitLab: api scope)",
-                default="",
-                secret=True,
-            ),
-            EnvField(
-                key="GITLAB_URL",
-                prompt_text="GITLAB_URL (self-hosted base URL)",
-                default="https://gitlab.com",
-            ),
-            EnvField(
-                key="VCS_PROVIDER",
-                prompt_text="VCS_PROVIDER (фолбэк-платформа: github)",
-                default="github",
-            ),
-        ],
-    ),
+    vcs_env_group(),
     board_env_group(_default_board_registry()),
-    EnvGroup(
-        title="Веб-админка",
-        optional=True,
-        fields=[
-            EnvField(
-                key="WEB_ADMIN_USER",
-                prompt_text="WEB_ADMIN_USER (basic-auth логин)",
-                default="",
-            ),
-            EnvField(
-                key="WEB_ADMIN_PASSWORD",
-                prompt_text="WEB_ADMIN_PASSWORD (basic-auth пароль)",
-                default="",
-                secret=True,
-            ),
-        ],
-    ),
 ]
 
 ENV_TEMPLATE = _env_template_with_board_fields(
@@ -296,11 +292,10 @@ def read_env(path: Path) -> dict[str, str]:
 
 
 _GROUP_HEADERS: dict[str, str] = {
-    "Обязательные": "# --- Voyage / GitHub ---",
+    "Обязательные": "# --- Voyage ---",
     "Хранилища (Postgres / Neo4j)": "# --- Postgres (ParadeDB :5433) / Neo4j (:7687) ---",
-    "Мульти-репо / ветки": "# --- Мульти-репо / ветки (опционально) ---",
-    "GitLab VCS": (
-        "# --- GitLab VCS (опционально; multi-platform: ревью GitLab MR) ---\n"
+    "VCS": (
+        "# --- VCS credentials (GitHub / GitLab) ---\n"
         "# VCS_PROVIDER — фолбэк, когда репо не индексирован. Тип VCS\n"
         "# автоопределяется из git remote при `reviewer index`."
     ),
@@ -312,7 +307,6 @@ _GROUP_HEADERS: dict[str, str] = {
         "# YouGile key можно получить автоматически через reviewer init; password не пишется.\n"
         "# TASK_BOARD_API_KEY/BASE — только read-only compatibility aliases для YouGile."
     ),
-    "Веб-админка": "# --- Веб-админка наблюдаемости (опционально; пусто = без аутентификации) ---",
 }
 
 
@@ -320,7 +314,7 @@ def render_env(values: dict[str, str], extra: dict[str, str]) -> str:
     """Сгенерировать содержимое .env по wizard-группам и прочим (extra) ключам."""
     lines: list[str] = [
         "# rag_for_git — конфигурация (сгенерировано reviewer init)",
-        "# Обязательный ключ: VOYAGE_API_KEY; GITHUB_TOKEN нужен для ревью PR.",
+        "# Обязательный ключ: VOYAGE_API_KEY; выбранный VCS token нужен для ревью PR.",
         "# Остальные переменные имеют дефолты в reviewer/config/settings.py.",
         "",
     ]

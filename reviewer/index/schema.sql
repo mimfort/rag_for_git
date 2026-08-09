@@ -70,6 +70,8 @@ CREATE TABLE IF NOT EXISTS tasks (
 ALTER TABLE tasks ADD COLUMN IF NOT EXISTS project text NOT NULL DEFAULT '';
 -- PRI-196: вложения задачи (распарсенный текст + метаданные) как jsonb.
 ALTER TABLE tasks ADD COLUMN IF NOT EXISTS attachments jsonb NOT NULL DEFAULT '[]';
+-- PRI-224: authoritative snapshot явных связей задачи.
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS links jsonb NOT NULL DEFAULT '[]';
 CREATE INDEX IF NOT EXISTS tasks_bm25 ON tasks
 USING bm25 (id, text, key) WITH (key_field='id');
 CREATE INDEX IF NOT EXISTS tasks_hnsw ON tasks
@@ -93,6 +95,32 @@ CREATE TABLE IF NOT EXISTS subsystem_summaries (
 -- ANN по сводкам подсистем (pgvector HNSW, косинус) — PRI-167
 CREATE INDEX IF NOT EXISTS subsystem_summaries_hnsw ON subsystem_summaries
 USING hnsw (embedding vector_cosine_ops) WITH (m = 16, ef_construction = 64);
+
+CREATE TABLE IF NOT EXISTS subsystem_summary_fragments (
+    repo text NOT NULL DEFAULT '',
+    branch text NOT NULL,
+    cluster_key text NOT NULL,
+    path text NOT NULL,
+    fingerprint text NOT NULL,
+    summary text NOT NULL,
+    provenance jsonb NOT NULL DEFAULT '{}',
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (repo, branch, cluster_key, path)
+);
+
+CREATE INDEX IF NOT EXISTS subsystem_summary_fragments_path
+ON subsystem_summary_fragments (repo, branch, path);
+
+CREATE TABLE IF NOT EXISTS subsystem_summary_state (
+    repo text NOT NULL DEFAULT '',
+    branch text NOT NULL,
+    completed_depth integer NOT NULL,
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (repo, branch)
+);
+
+ALTER TABLE subsystem_summary_state
+ADD COLUMN IF NOT EXISTS completed_layout text;
 
 -- Карта платформы VCS репозитория (PRI-133): auto-derive из git remote при
 -- `reviewer index`. Читается _create_vcs_provider при ревью (API-only движок)

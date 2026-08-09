@@ -12,7 +12,7 @@ CLI остаётся тонкой обёрткой: парсит аргумен�
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from reviewer.app import Components
 from reviewer.config.settings import Settings
@@ -26,15 +26,24 @@ from reviewer.index.freshness import build_overlay, update_base
 from reviewer.web.history import ReviewHistory
 from reviewer.agent.state import ReviewUnit
 from reviewer.services.task_keys import extract_task_keys
+from reviewer.services.risk_paths import RiskPath, select_risk_paths
 
 log = logging.getLogger(__name__)
 
 
 class BranchNotTrackedError(Exception):
-    """Целевая ветка PR не в REVIEW_BRANCHES — ревью пропускается."""
+    """Целевая ветка PR не отслеживается для этого репозитория — ревью пропускается.
+
+    Отслеживаемые ветки резолвятся слоями: домашний per-repo файл → домашний
+    глобальный `review.yml` → env `REVIEW_BRANCHES` → `["main"]`
+    (`reviewer/config/branches.py::resolve_repo_branches`).
+    """
 
     def __init__(self, branch: str) -> None:
-        super().__init__(f"ветка '{branch}' не отслеживается (REVIEW_BRANCHES)")
+        super().__init__(
+            f"ветка '{branch}' не отслеживается для этого репозитория "
+            "(см. `reviewer config show`)"
+        )
         self.branch = branch
 
 
@@ -97,6 +106,9 @@ class PreparedReview:
     changed_status: dict[str, str]       # path -> статус файла (modified/added/removed)
     task_board: dict | None = None       # конфиг доски из policy (прокидывается в payload)
     task_keys: dict | None = None        # {"primary": str|None, "others": [...]}; None только когда task_board выкл.
+    risk_paths: list[RiskPath] = field(default_factory=list)
+    risk_skipped_paths: list[str] = field(default_factory=list)
+    config_sources: dict = field(default_factory=dict)
 
 
 class ReviewService:
@@ -194,19 +206,31 @@ class ReviewService:
 
             # Маршрутизация: PR в неотслеживаемую ветку пропускаем ДО дорогих
             # шагов (overlay/эмбеддинги ещё не строились — очистка идемпотентна).
+            # HomeConfigError здесь намеренно не глушится: битый домашний конфиг
+            # обязан быть громким, иначе PR молча останется без ревью.
+            from reviewer.config.branches import resolve_repo_branches
+
             branch = prq.base_ref
-            if branch not in self.settings.review_branches_list():
+            if branch not in resolve_repo_branches(repo, settings=self.settings).index:
                 raise BranchNotTrackedError(branch)
 
+            from reviewer.config.layers import resolve_policy_data
             from reviewer.index.refs import base_ref as _base_ref
 
-            # paths.ignore из .review.yml целевой (base) ветки — общий для
-            # base-досинка и overlay; берётся по base_sha, а не по ref-имени,
-            # чтобы видеть конфиг именно целевого коммита PR.
-            review_yml = vcs.get_file_at_ref(".review.yml", prq.base_sha)
-            ignore = ReviewPolicy.from_yaml(review_yml).ignore if review_yml else []
+            # Политика резолвится по точному base-коммиту PR и переиспользуется
+            # для досинка base-индекса, overlay и дальнейшего гейта.
+            policy_data, policy_meta = resolve_policy_data(
+                repo,
+                prq.base_sha,
+                lambda ref: vcs.get_file_at_ref(".review.yml", ref),
+            )
+            policy = ReviewPolicy.load_data(self.settings, policy_data)
+            ignore = policy.ignore
+            for warning in policy_meta.warnings:
+                log.warning("Домашний слой policy пропущен: %s", warning)
 
             files = vcs.get_changed_files(pr_number)
+            risk_paths, risk_skipped_paths = select_risk_paths(files)
 
             # Свежесть base-индекса: подтягиваем чанки файлов, изменённых после
             # последней индексации (граф кода обновляется только на reviewer index).
@@ -282,6 +306,18 @@ class ReviewService:
                 if src:
                     head_sources[f.path] = src
 
+            risk_sources: dict[str, str] = {}
+            for item in risk_paths:
+                if item.status == "removed":
+                    continue
+                try:
+                    src = vcs.get_file_at_ref(item.path, prq.head_sha)
+                except Exception:
+                    log.warning("Не удалось загрузить head-source risk path %s", item.path)
+                    continue
+                if src:
+                    risk_sources[item.path] = src
+
             build_overlay(
                 self.components.store,
                 self.components.embedder,
@@ -316,14 +352,10 @@ class ReviewService:
 
             # sources нужны для проверки наличия символов
             sources = {u.path: u.new_source for u in units}
+            sources.update(risk_sources)
 
             # changed_node_ids — объединение node_id всех юнитов (для graph-expansion)
             changed_node_ids = [nid for u in units for nid in u.node_ids]
-
-            policy = ReviewPolicy.load(
-                self.settings,
-                vcs.get_file_at_ref(".review.yml", prq.base_ref),
-            )
 
             task_board = policy.task_board
             task_keys = (
@@ -355,6 +387,9 @@ class ReviewService:
                 changed_status=changed_status,
                 task_board=task_board,
                 task_keys=task_keys,
+                risk_paths=risk_paths,
+                risk_skipped_paths=risk_skipped_paths,
+                config_sources=policy_meta.as_dict(),
             )
         except Exception:
             # При сбое подготовки чистим возможный недостроенный overlay pr:N —

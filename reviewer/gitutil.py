@@ -8,6 +8,31 @@ def _git(repo: str, *args: str) -> str:
     return subprocess.run(["git", "-C", repo, *args],
                           check=True, capture_output=True, text=True).stdout
 
+
+def repo_root(path: str = ".") -> str | None:
+    try:
+        root = _git(path, "rev-parse", "--show-toplevel").strip()
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    return os.path.abspath(root) if root else None
+
+
+def remote_default_branch(repo: str) -> str | None:
+    try:
+        ref = _git(
+            repo,
+            "symbolic-ref",
+            "--quiet",
+            "refs/remotes/origin/HEAD",
+        ).strip()
+    except (OSError, subprocess.CalledProcessError):
+        return None
+
+    prefix = "refs/remotes/origin/"
+    branch = ref.removeprefix(prefix)
+    return branch if ref.startswith(prefix) and branch else None
+
+
 def changed_files(repo: str, base: str, head: str) -> list[str]:
     out = _git(repo, "diff", "--name-only", f"{base}..{head}")
     return [line for line in out.splitlines() if line]

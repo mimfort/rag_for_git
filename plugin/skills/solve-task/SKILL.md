@@ -1,6 +1,6 @@
 ---
-name: reviewer_solve-task
-description: Gather disciplined context for solving a task, then hand off to development. Use when the user asks to solve/implement a task ("solve PRI-4", "/reviewer_solve-task <key or description>", "реши задачу X"). Reads a keyed task from the reviewer store, pulls related/similar tasks and relevant code, distills a brief, and enters brainstorming. Requires the reviewer MCP server.
+name: solve-task
+description: Gather disciplined context for solving a task, then hand off to development. Use when the user asks to solve/implement a task ("solve PRI-4", "rag-reviewer:solve-task <key or description>", "реши задачу X"). Reads a keyed task from the reviewer store, pulls related/similar tasks and relevant code, distills a brief, and enters brainstorming. Requires the reviewer MCP server.
 ---
 
 # Solve Task
@@ -33,7 +33,7 @@ brief to `superpowers:brainstorming` (which leads to writing-plans → subagent-
       for that branch:
       - `drift == 0` → continue;
       - `drift > 0` → tell the user (in Russian) «индекс отстаёт на N коммитов» and **ask for
-        confirmation**: reindex now? **Yes** → delegate to `/reviewer_sync-codebase`
+        confirmation**: reindex now? **Yes** → delegate to `rag-reviewer:sync-codebase`
         (`--path <path> --ref <branch>`), which reindexes and reports problems, then continue;
         **No** → continue on the stale index and record the gap under **Constraints / open
         questions** in the brief;
@@ -53,26 +53,33 @@ brief to `superpowers:brainstorming` (which leads to writing-plans → subagent-
       `status=error` → tell the user to run `reviewer init`, configure the selected registered
       provider's registry-declared credentials as documented in `docs/board-providers.md`, run
       `reviewer check`, and reconnect MCP; continue board-less.
-   4. **Summary warmth.** Call `get_subsystem_summaries(repo, branch)` (without `query`) and check
-      the returned count. Skip this check if `drift == null` (no index at all — summaries can't
-      exist). If count == 0 (summaries not built yet):
-      - Tell the user (in Russian): «Сводки подсистем не построены — архитектурный приор будет
-        пустым. Как поступим?» and present **three options**:
-        1. «Прогреть сейчас» → delegate to `/reviewer_summarize-subsystems`, wait for it to
+   4. **Summary warmth.** Read `summaries` from the branch object of the Step 0.1 status payload —
+      do NOT probe the summaries tool here. Skip this check if `drift == null` (no index at all —
+      summaries can't exist). If Step 0.1 produced no payload at all (the fail-open path in Step
+      0.2), treat that the same as the key being absent below.
+      - `summaries > 0` → silently continue (no message needed — summaries are warm).
+      - `summaries == 0` (summaries not built yet) → tell the user (in Russian): «Сводки подсистем
+        не построены — архитектурный приор будет пустым. Как поступим?» and present **three
+        options**:
+        1. «Прогреть сейчас» → delegate to `rag-reviewer:summarize-subsystems`, wait for it to
            complete, then continue. (Good if using the default model.)
-        2. «Прогрею сам» → **PAUSE HERE** and wait for the user to write something like
-           «готово», «прогрел», «done» or any confirmation that they have run their own tool
-           (e.g. an external CLI with a cheaper model). Once confirmed, call
-           `get_subsystem_summaries(repo, branch)` again to verify count > 0, then continue.
+        2. «Прогрею сам» → **PAUSE HERE** and wait for the user to write something like «готово»,
+           «прогрел», «done» or any confirmation that they have run their own tool (e.g. an
+           external CLI with a cheaper model). Once confirmed, re-run
+           `uvx --from rag-reviewer reviewer status <path> --branch <branch> --json` and verify
+           `summaries > 0`, then continue.
         3. «Пропустить» → note in brief under **Constraints**: «сводки подсистем не построены;
-           `/reviewer_summarize-subsystems` не запускался». Continue without them.
-      - If count > 0: silently continue (no message needed — summaries are warm).
-      - Fail-open: an error from `get_subsystem_summaries` → treat as count == 0 and offer the
-        same options, but include the error detail in option 3's Constraints note.
+           `rag-reviewer:summarize-subsystems` не запускался». Continue without them.
+      - `summaries` is `null`, or the key is absent (deploy older than this field) → fall back to
+        the legacy probe: call `get_subsystem_summaries(repo, branch)` and use the returned count
+        with the same three options; unlike the main path, this fallback's option 2 re-verifies by
+        repeating the same legacy probe rather than re-reading the status payload. An error from
+        the probe counts as 0 and adds the error detail to option 3's Constraints note.
 
    Decisions: stale → confirmation, never auto (Voyage free tier is 3 RPM / 10K TPM); failures →
    reported like `sync-codebase`; `sync_board` runs incrementally at start; summaries missing →
-   three-way choice (build now / build yourself / skip).
+   three-way choice (build now / build yourself / skip), read from the status
+   payload instead of dumping every summary into context.
 
 1. **Config.** Reuse the resolved value from preflight; do not read `.review.yml` or call
    `get_board_config()` again. If no board resolved, continue board-less. For incomplete metadata
@@ -140,6 +147,13 @@ brief to `superpowers:brainstorming` (which leads to writing-plans → subagent-
      note / an error is non-fatal — omit the `## Subsystems` brief section and note the gap.
      The summary is only a prior — every `path:line` in the brief still comes from
      `search_codebase` snippets, never from the summary text.
+     If a returned summary has `stale: true`, keep it only as a weak prior, do not use it for structural
+     claims, and prefix its `## Subsystems` line with `[stale]`. `stale: null` is unknown freshness and
+     gets no marker. For `stale: true`, either omit the item or use exactly this line shape:
+     `- [stale] <cluster_key> — summary content omitted; verify against code.` Do not interpolate its
+     title or summary claims. Omitting a stale summary does not change the directly-informing
+     `search_codebase` entries selected for `## Relevant code`: evaluate every code item solely against
+     the task, independently of whether it corroborates or refutes any stale-summary claim.
    - **Project scope.** Pass `project=<task_board.project>` (from Step 1; empty = unscoped) to
      `get_task`, `get_task_context`, and `search_tasks` so only this repo's project surfaces (PRI-170).
    - If you have a task key: `get_task_context(key, project=<task_board.project>)` → linked tasks, their PRs, and the code those PRs
@@ -228,7 +242,9 @@ Use the session-less tools above.
    # Brief — <KEY> <title>
    ## Task — key/title/requirements/criteria (or the user's formulation in board-less mode). ≤~6 lines.
    ## Related work — every directly-informing task, one line each: «KEY — what to reuse / follow». (dropped N: …)
-   ## Subsystems — ≤8 relevant subsystems, one line: «cluster_key — gist of summary». (omit if prior empty)
+   ## Subsystems — ≤8 relevant subsystems, one line: «cluster_key — gist of summary». For `stale: true`,
+   either omit the item or use exactly: `- [stale] <cluster_key> — summary content omitted; verify against code.`
+   (omit if prior empty)
    ## Relevant code — every directly-informing file/symbol, one line: «path:line — why» (+ blast radius from the graph). (dropped N: …)
    ## Test exemplars — every directly-informing test file/symbol, one line: «path:line — what's mocked / which pattern». (omit if none; dropped N: …)
    ## Constraints / open questions — terse bullets: limits, unknowns, context gaps (e.g. "board unavailable", "task corpus empty").
@@ -266,15 +282,21 @@ Use the session-less tools above.
 5. **Hand off to development.** Show the brief, state the saved file path
    (`docs/superpowers/briefs/…`), then invoke `superpowers:brainstorming` with the brief **file
    path** as the seed/context — so the brief survives compaction, not just the in-context text.
+   **Ask brainstorming to record the brief's provenance in the spec:** one line under the spec
+   heading pointing at the brief's path (`docs/superpowers/briefs/…md`), in the spec's own
+   language — the path itself is the greppable anchor for the задача→бриф→спека→PR trace, so no
+   dedicated marker is needed. Do NOT ask it to copy the brief's `## Constraints / open
+   questions` verbatim: those are open questions brainstorming exists to RESOLVE, and a verbatim
+   copy would contradict the very spec that answers them.
    From there the normal cycle takes over (brainstorming → writing-plans →
    subagent-driven-development/TDD). Your job ends at the handoff — do NOT plan or implement here.
 
    **After the PR is created (later in the dev cycle):** offer to close the task with the
-   `/reviewer_finish-task` skill — it appends the PR link to the task and marks it done (bumping
+   `rag-reviewer:finish-task` skill — it appends the PR link to the task and marks it done (bumping
    last-modified so the sync re-indexes the closed task). Skip in board-less mode (no task key).
 
    **Board-less mode:** when the user's formulation has no task key and a board IS configured,
-   you may offer `/reviewer_create-task` first — it files the task with the canonical structure,
+   you may offer `rag-reviewer:create-task` first — it files the task with the canonical structure,
    so the work gets a key, a URL and a place in the task corpus before implementation starts.
 
 ## Failure handling (fail-open)
@@ -284,7 +306,7 @@ Use the session-less tools above.
   the missing task context.
 - Neo4j down → `get_task_context` / `index_task` graph parts degrade (empty + warning); build the
   brief from `search_tasks` + `search_codebase`.
-- Empty task corpus (no prior `/reviewer_sync-tasks` or reviews) → `search_tasks` is empty; use
+- Empty task corpus (no prior `rag-reviewer:sync-tasks` or reviews) → `search_tasks` is empty; use
   `search_codebase` + the user's formulation and note the missing task context.
 - Postgres down → `search_codebase` / `search_tasks` return empty; build the brief from the user's
   formulation alone and note the missing task context; still hand off to brainstorming.

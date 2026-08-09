@@ -4,7 +4,7 @@ from types import SimpleNamespace
 from reviewer.config.provider_credentials import ProviderCredentialSource
 from reviewer.config.settings import Settings
 from reviewer.mcp.service import MCPReviewService
-from reviewer.tasks.boards.base import RawTask
+from reviewer.tasks.boards.base import RawTask, TaskListing
 from reviewer.tasks.boards.registry import (
     BoardProviderRegistry,
     BoardProviderSpec,
@@ -13,6 +13,7 @@ from reviewer.tasks.boards.registry import (
     ProviderOptionSpec,
     ProviderSetupSpec,
 )
+from tests.provider_access import FAKE_PROVIDER_ACCESS
 from reviewer.tasks.sync import SyncService
 
 
@@ -66,14 +67,16 @@ class _Provider:
         self.closed = False
         self.secret_warning = secret_warning
         self.fail_targets = fail_targets
+        self.sync_calls = []
         state.providers.append(self)
 
     def validate_connection(self, project=None):
         return {"status": "ok", "identity": {}, "project": project,
                 "capabilities": [], "warnings": []}
 
-    def iter_raw(self, board, limit):
-        yield self.fetch_one("FAKE-1")
+    def iter_raw(self, board, limit, *, sync_filter=None, now_ms=None):
+        self.sync_calls.append((board, sync_filter))
+        return TaskListing(rows=[self.fetch_one("FAKE-1")])
 
     def normalize(self, raw):
         return {"key": raw.key, "title": raw.title, "description": raw.description,
@@ -140,8 +143,13 @@ def _service(*, secret_warning=False, fail_targets=False):
         credential_fields=(
             CredentialFieldSpec("FAKE_TOKEN", "Token", secret=True),
         ),
-        option_fields=(ProviderOptionSpec("lane", "Lane"),),
-        setup=ProviderSetupSpec("Fake", "https://fake/help", "Configure."),
+        option_fields=(
+            ProviderOptionSpec("lane", "Lane"),
+            ProviderOptionSpec("status_field", "Status field"),
+        ),
+        setup=ProviderSetupSpec(
+            "Fake", "https://fake/help", "Configure.", FAKE_PROVIDER_ACCESS
+        ),
     )
     registry = BoardProviderRegistry([spec])
     credentials = ProviderCredentialSource(values={"FAKE_TOKEN": "runtime-secret"})

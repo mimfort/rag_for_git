@@ -337,6 +337,36 @@ def test_compose_documents_start_interval_docker_requirement() -> None:
     ) in normalized
 
 
+def test_web_dockerfile_delegates_port_to_runtime() -> None:
+    root = Path(__file__).parents[1]
+    dockerfile = (root / "web" / "Dockerfile").read_text(encoding="utf-8")
+
+    assert "EXPOSE" not in dockerfile
+    assert "8000" not in dockerfile
+    assert 'CMD ["python", "-m", "reviewer.web.serve"]' in dockerfile
+    assert '"psycopg-pool>=3.2"' in dockerfile
+
+
+def test_compose_web_service_is_opt_in_with_separate_runtime_ports() -> None:
+    root = Path(__file__).parents[1]
+    compose = yaml.safe_load((root / "docker-compose.yml").read_text(encoding="utf-8"))
+    web = compose["services"]["web"]
+
+    assert web["profiles"] == ["web"]
+    assert web["build"] == {"context": ".", "dockerfile": "web/Dockerfile"}
+    assert web["environment"] == {
+        "PG_DSN": "postgresql://reviewer:reviewer@paradedb:5432/reviewer",
+        "REVIEWER_WEB_HOST": "0.0.0.0",
+        "REVIEWER_WEB_PORT": "${REVIEWER_WEB_PORT:-8000}",
+        "WEB_ADMIN_USER": "${WEB_ADMIN_USER:-}",
+        "WEB_ADMIN_PASSWORD": "${WEB_ADMIN_PASSWORD:-}",
+    }
+    assert web["ports"] == [
+        "127.0.0.1:${REVIEWER_WEB_PUBLISH_PORT:-8000}:${REVIEWER_WEB_PORT:-8000}"
+    ]
+    assert web["depends_on"] == ["paradedb"]
+
+
 def test_env_example_documents_exact_test_endpoint_defaults() -> None:
     root = Path(__file__).parents[1]
     values = {

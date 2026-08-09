@@ -48,10 +48,11 @@ from reviewer.tasks.boards.attachments import (
     fetch_attachment,
     host_allowed,
 )
-from reviewer.tasks.boards.base import RawTask, project_prefix
+from reviewer.tasks.boards.base import RawTask, TaskListing, TaskListingStats, project_prefix
 from reviewer.tasks.boards.errors import BoardProviderError
 from reviewer.tasks.boards.markup import html_to_md, md_to_html
 from reviewer.tasks.boards.pagination import paginate_cursor
+from reviewer.config.provider_access import ProviderAccessSpec
 from reviewer.tasks.boards.registry import (
     BoardProviderSpec,
     CredentialFieldSpec,
@@ -136,6 +137,12 @@ def provider_spec() -> BoardProviderSpec:
                 "token: все запросы выполняются от имени его создателя, поэтому нужен "
                 "аккаунт с доступом к проекту задач."
             ),
+            access=ProviderAccessSpec(
+                minimum_permissions="token владельца с read/write к project и board",
+                read_operations=("workspaces, projects, boards, columns, tasks и attachments",),
+                write_operations=("создание, правка и завершение tasks, добавление PR-ссылок",),
+                validation="user identity и видимость project",
+            ),
         ),
         default_api_base=_API_BASE,
         create_target_label="Колонка создания",
@@ -168,16 +175,16 @@ def _normalize_api_base(value: str, *, secrets: tuple[str, ...]) -> str:
     return f"https://{hostname}{port}{parsed.path.rstrip('/')}"
 
 
-def _epoch_ms(value: object) -> int:
-    """ISO 8601 → epoch ms (naive-время трактуется как UTC); нераспознанное → 0."""
+def _epoch_ms(value: object) -> int | None:
+    """ISO 8601 → epoch ms; нераспознанное значение остаётся неизвестным."""
     if not isinstance(value, str) or not value.strip():
-        return 0
+        return None
     text = value.strip()
     text = f"{text[:-1]}+00:00" if text.endswith(("Z", "z")) else text
     try:
         parsed = datetime.fromisoformat(text)
     except ValueError:
-        return 0
+        return None
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=UTC)
     return int(parsed.timestamp() * 1000)
@@ -470,6 +477,7 @@ class WeeekBoard(RestBoardBase):
             for value in (_as_int(item) for item in task.get("subTasks") or [])
             if value is not None
         ]
+        completed = task.get("isCompleted")
         return RawTask(
             key=key,
             project_code=key,
@@ -481,7 +489,8 @@ class WeeekBoard(RestBoardBase):
             links=[],
             attachments=_attachments(task),
             board_id=str(task_id),
-            completed=bool(task.get("isCompleted")),
+            archived=None,
+            terminal=completed if isinstance(completed, bool) else None,
             provider_data={
                 "task_id": task_id,
                 "project_id": project_id,
@@ -519,11 +528,28 @@ class WeeekBoard(RestBoardBase):
 
         yield from paginate_cursor(fetch, items=items, next_cursor=next_cursor)
 
-    def iter_raw(self, board: str | None, limit: int | None) -> Iterable[RawTask]:
+    def iter_raw(
+        self,
+        board: str | None,
+        limit: int | None,
+        *,
+        sync_filter=None,
+        now_ms=None,
+    ) -> TaskListing:
+        if limit == 0:
+            return TaskListing(rows=iter(()))
+        return TaskListing(
+            rows=self._iter_raw_rows(board, limit),
+            stats=TaskListingStats(),
+        )
+
+    def _iter_raw_rows(self, board: str | None, limit: int | None) -> Iterable[RawTask]:
         """Все задачи скоупа: серверные фильтры projectId/boardId + префикс-скоуп ключа."""
         params, prefix = self._scope(board)
-        columns = self._column_titles()
         count = 0
+        if limit is not None and count >= limit:
+            return
+        columns = self._column_titles()
         for task in self._iter_tasks(params):
             raw = self._raw_from_task(task, columns=columns)
             if prefix and project_prefix(raw.project_code) != prefix:
@@ -844,7 +870,7 @@ class WeeekBoard(RestBoardBase):
             "title": raw.title,
             "description": description,
             "criteria": criteria,
-            "status": "done" if raw.completed else raw.status,
+            "status": "done" if raw.terminal is True else raw.status,
             "url": self._task_url(raw.key) or None,
             "links": links,
             "project": project_prefix(raw.key),

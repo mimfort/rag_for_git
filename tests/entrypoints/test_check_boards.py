@@ -6,6 +6,7 @@ from click.testing import CliRunner
 
 from reviewer.config.provider_credentials import ProviderCredentialSource
 from reviewer.entrypoints.cli import _check_board_providers, check
+from reviewer.tasks.boards.base import TaskListing
 from reviewer.tasks.boards.errors import BoardProviderError
 from reviewer.tasks.boards.registry import (
     BoardProviderRegistry,
@@ -13,6 +14,7 @@ from reviewer.tasks.boards.registry import (
     CredentialFieldSpec,
     ProviderSetupSpec,
 )
+from tests.provider_access import FAKE_PROVIDER_ACCESS
 
 
 class CheckProvider:
@@ -35,8 +37,8 @@ class CheckProvider:
             raise self.error
         return self.result
 
-    def iter_raw(self, board, limit):
-        return []
+    def iter_raw(self, board, limit, *, sync_filter=None, now_ms=None):
+        return TaskListing(rows=())
 
     def normalize(self, raw):
         return {}
@@ -83,6 +85,7 @@ def _registry(provider: CheckProvider) -> BoardProviderRegistry:
                     "Fake",
                     "https://fake.example/setup",
                     "Create a token.",
+                    FAKE_PROVIDER_ACCESS,
                 ),
             )
         ]

@@ -18,6 +18,26 @@ COMMAND_PRESENTATION = {
         scenarios=("После установки", "После изменения .env"),
         keywords=("health", "диагностика", "доступы"),
     ),
+    ("config", "migrate"): CommandPresentation(
+        summary="Перенести policy в домашний слой",
+        details=(
+            "Атомарно копирует committed .review.yml в repository-scoped home config; "
+            "при конфликте ничего не перезаписывает."
+        ),
+        effects=(Effect.READ, Effect.NETWORK, Effect.WRITE),
+        scenarios=("Переход на home config",),
+        keywords=("config", "migration", "policy"),
+    ),
+    ("config", "show"): CommandPresentation(
+        summary="Показать effective repository policy",
+        details=(
+            "Показывает публичные effective values, источники слоёв и затенённые ключи "
+            "без раскрытия credentials."
+        ),
+        effects=(Effect.READ, Effect.NETWORK),
+        scenarios=("Диагностика repository policy",),
+        keywords=("config", "policy", "provenance"),
+    ),
     ("gc",): CommandPresentation(
         summary="Очистить осиротевшие overlay",
         details="Удаляет только overlay без живой review session и просроченные сессии.",
@@ -34,10 +54,13 @@ COMMAND_PRESENTATION = {
     ),
     ("init",): CommandPresentation(
         summary="Настроить reviewer",
-        details="Создаёт или обновляет user-scope .env через существующий setup wizard.",
+        details=(
+            "Планирует и настраивает global .env и per-repo branch config "
+            "с preview до записи."
+        ),
         effects=(Effect.WRITE,),
-        scenarios=("Первичная настройка", "Смена credentials"),
-        keywords=("config", "env", "wizard"),
+        scenarios=("Первичная настройка", "Добавление репозитория", "Смена credentials"),
+        keywords=("config", "env", "repository", "wizard"),
     ),
     ("install",): CommandPresentation(
         summary="Подключить reviewer к AI-клиенту",

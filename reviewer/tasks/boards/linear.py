@@ -11,13 +11,14 @@ import re
 import time
 from collections.abc import Callable, Iterable, Mapping
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import httpx
 
-from reviewer.tasks.boards.base import RawTask, project_prefix
+from reviewer.tasks.boards.base import RawTask, TaskListing, TaskListingStats, project_prefix
 from reviewer.tasks.boards.errors import BoardProviderError
 from reviewer.tasks.boards.graphql import GraphQLClient
+from reviewer.config.provider_access import ProviderAccessSpec
 from reviewer.tasks.boards.registry import (
     BoardProviderSpec,
     CredentialFieldSpec,
@@ -26,6 +27,9 @@ from reviewer.tasks.boards.registry import (
     ProviderSetupSpec,
 )
 from reviewer.tasks.boards.restbase import RestBoardBase
+
+if TYPE_CHECKING:
+    from reviewer.config.task_board import TaskSyncFilter
 
 DEFAULT_API_BASE = "https://api.linear.app"
 _PAGE = 50
@@ -124,6 +128,7 @@ query ReviewerLinearViewer {
 
 # Терминальные типы workflow state: только они годятся как done-цель.
 _DONE_STATE_TYPES = frozenset({"completed", "canceled"})
+_ACTIVE_STATE_TYPES = frozenset({"triage", "backlog", "unstarted", "started"})
 
 # Окна лимитов Linear: (счётчик остатка, момент сброса в epoch ms UTC).
 _RATE_LIMIT_WINDOWS = (
@@ -196,13 +201,19 @@ def provider_spec() -> BoardProviderSpec:
             ),
         ),
         setup=ProviderSetupSpec(
-            "Linear",
-            "https://linear.app/settings/account/security",
-            (
+            label="Linear",
+            help_url="https://linear.app/settings/account/security",
+            help_text=(
                 "Settings → Account → Security & access → Personal API keys: создайте "
                 "ключ с правами Read и Write (плюс Create issues, если нужен create-task) "
                 "и, если ограничиваете доступ, разрешите нужные команды. Ключ виден "
                 "только при создании; OAuth не поддерживается."
+            ),
+            access=ProviderAccessSpec(
+                minimum_permissions="personal API key с Read and Write для выбранной team",
+                read_operations=("teams, workflow states, issues, relations и metadata вложений",),
+                write_operations=("создание и правка issues, смена state и PR-ссылки",),
+                validation="viewer identity и видимость team",
             ),
         ),
         default_api_base=DEFAULT_API_BASE,
@@ -211,18 +222,32 @@ def provider_spec() -> BoardProviderSpec:
     )
 
 
-def _timestamp(value: object) -> int:
+def _timestamp(value: object) -> int | None:
     """ISO 8601 ``updatedAt`` → epoch ms; naive-время трактуется как UTC."""
     if not isinstance(value, str) or not value:
-        return 0
+        return None
     normalized = value[:-1] + "+00:00" if value.endswith("Z") else value
     try:
         parsed = datetime.fromisoformat(normalized)
     except ValueError:
-        return 0
+        return None
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=UTC)
-    return int(parsed.timestamp() * 1000)
+    try:
+        return int(parsed.timestamp() * 1000)
+    except (OverflowError, OSError):
+        return None
+
+
+def _terminal_from_state_type(value: object) -> bool | None:
+    if not isinstance(value, str):
+        return None
+    state_type = value.strip().lower()
+    if state_type in _DONE_STATE_TYPES:
+        return True
+    if state_type in _ACTIVE_STATE_TYPES:
+        return False
+    return None
 
 
 def _nodes(block: object) -> list[dict]:
@@ -305,6 +330,8 @@ class LinearBoard(RestBoardBase):
             links=[],
             attachments=_attachments(issue),
             board_id=str(issue.get("id") or ""),
+            archived=None,
+            terminal=_terminal_from_state_type(state.get("type")),
             provider_data={
                 "subtasks": subtasks,
                 "state": {
@@ -328,9 +355,11 @@ class LinearBoard(RestBoardBase):
         key = (board or "").strip()
         return {"team": {"key": {"eq": key}}} if key else None
 
-    def iter_raw(self, board: str | None, limit: int | None) -> Iterable[RawTask]:
+    def _iter_raw_rows(self, board: str | None, limit: int | None) -> Iterable[RawTask]:
         """Все задачи команды: курсорная пагинация ``issues`` по ``pageInfo``."""
         count = 0
+        if limit is not None and count >= limit:
+            return
         nodes = self._gql.paginate(
             _ISSUES_QUERY,
             {"filter": self._issue_filter(board or self._team_key), "first": _PAGE},
@@ -341,6 +370,21 @@ class LinearBoard(RestBoardBase):
             count += 1
             if limit is not None and count >= limit:
                 return
+
+    def iter_raw(
+        self,
+        board: str | None,
+        limit: int | None,
+        *,
+        sync_filter: TaskSyncFilter | None = None,
+        now_ms: int | None = None,
+    ) -> TaskListing:
+        if limit == 0:
+            return TaskListing(rows=iter(()))
+        return TaskListing(
+            rows=self._iter_raw_rows(board, limit),
+            stats=TaskListingStats(),
+        )
 
     def fetch_one(self, key: str) -> RawTask | None:
         """Одна задача по ключу: ``issue(id:)`` принимает и UUID, и ``ENG-123``.

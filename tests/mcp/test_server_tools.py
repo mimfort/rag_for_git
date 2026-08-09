@@ -27,7 +27,13 @@ def test_board_tools_advertise_generic_targets_and_options_only():
     server = create_server(_service())
     tools = {tool.name: tool for tool in asyncio.run(server.list_tools())}
 
-    for name in ("sync_board", "create_task", "finish_task", "get_board_targets"):
+    for name in (
+        "sync_board",
+        "create_task",
+        "create_subtasks",
+        "finish_task",
+        "get_board_targets",
+    ):
         schema = tools[name].inputSchema
         assert "provider_options" in schema["properties"]
         for legacy in ("status_field", "done_state", "done_column"):
@@ -40,11 +46,64 @@ def test_board_tools_advertise_generic_targets_and_options_only():
         assert "done_column" not in description
     assert "target" in tools["create_task"].inputSchema["properties"]
     assert "target" in tools["finish_task"].inputSchema["properties"]
+    subtasks_schema = tools["create_subtasks"].inputSchema["properties"]["subtasks"]
+    assert subtasks_schema["minItems"] == 1
+    assert subtasks_schema["maxItems"] == 20
     discovery = tools["get_board_targets"].description or ""
     assert "registered provider type" in discovery
-    assert "{board_type, project, targets, options, warnings}" in discovery
+    assert "{board_type, project, capabilities, targets, options, warnings}" in discovery
     assert "required_for" in discovery
     assert "choices" in discovery
+    sync_schema = tools["sync_board"].inputSchema["properties"]
+    assert list(sync_schema) == [
+        "repo",
+        "branch",
+        "board",
+        "limit",
+        "purge_orphaned",
+        "keep_with_prs",
+        "board_type",
+        "provider_options",
+        "force_renormalize",
+        "sync_filter",
+    ]
+
+
+def test_sync_board_tool_forwards_every_argument_by_keyword():
+    import asyncio
+
+    svc = _service()
+    svc.sync_board.return_value = {"status": "ok", "warnings": []}
+    server = create_server(svc)
+
+    asyncio.run(server.call_tool(
+        "sync_board",
+        {
+            "board": "PRI",
+            "limit": 5,
+            "purge_orphaned": True,
+            "keep_with_prs": False,
+            "board_type": "fake",
+            "provider_options": {"lane": "Backend"},
+            "force_renormalize": True,
+            "repo": "owner/repo",
+            "branch": "main",
+            "sync_filter": {"max_age_days": 30},
+        },
+    ))
+
+    svc.sync_board.assert_called_once_with(
+        board="PRI",
+        limit=5,
+        purge_orphaned=True,
+        keep_with_prs=False,
+        board_type="fake",
+        provider_options={"lane": "Backend"},
+        force_renormalize=True,
+        repo="owner/repo",
+        branch="main",
+        sync_filter={"max_age_days": 30},
+    )
 
 
 def test_publish_review_tool_forwards_task_key():

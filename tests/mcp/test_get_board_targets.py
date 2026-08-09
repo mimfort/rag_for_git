@@ -1,6 +1,7 @@
 from reviewer.config.provider_credentials import ProviderCredentialSource
 from reviewer.config.settings import Settings
 from reviewer.mcp.service import MCPReviewService
+from reviewer.tasks.boards.base import NativeSubtaskIdentity, TaskListing
 from reviewer.tasks.boards.errors import BoardProviderError
 from reviewer.tasks.boards.registry import (
     BoardProviderRegistry,
@@ -9,6 +10,7 @@ from reviewer.tasks.boards.registry import (
     ProviderBuildContext,
     ProviderSetupSpec,
 )
+from tests.provider_access import FAKE_PROVIDER_ACCESS
 
 
 class _Provider:
@@ -22,8 +24,8 @@ class _Provider:
     def validate_connection(self, project=None):
         return {}
 
-    def iter_raw(self, board, limit):
-        return []
+    def iter_raw(self, board, limit, *, sync_filter=None, now_ms=None):
+        return TaskListing(rows=())
 
     def normalize(self, raw):
         return {}
@@ -48,8 +50,19 @@ class _Provider:
         self.closed = True
 
 
+class _NativeSubtaskProvider(_Provider):
+    def reconcile_native_subtasks(self, source_board_id, markers):
+        return []
+
+    def create_native_subtask(self, doc_md, *, title, source_column_id, marker):
+        return NativeSubtaskIdentity("child-id", "FAKE-2", title)
+
+    def replace_native_subtasks(self, parent_task_id, subtask_ids):
+        return None
+
+
 class _Svc(MCPReviewService):
-    def __init__(self, configured, provider=None):
+    def __init__(self, configured, provider=None, capabilities=frozenset()):
         provider = provider or _Provider(
             {"targets": [], "options": [], "warnings": []}
         )
@@ -66,7 +79,10 @@ class _Svc(MCPReviewService):
                 board_type=board_type,
                 factory=factory,
                 credential_fields=(CredentialFieldSpec(env, "Token", secret=True),),
-                setup=ProviderSetupSpec(board_type, "https://fake/help", "Configure."),
+                setup=ProviderSetupSpec(
+                    board_type, "https://fake/help", "Configure.", FAKE_PROVIDER_ACCESS
+                ),
+                capabilities=capabilities,
             ))
             values[env] = "secret"
         self._board_registry = BoardProviderRegistry(specs)
@@ -82,6 +98,7 @@ def test_get_board_targets_single_board_threads_project():
     out = _Svc(["fake"], prov).get_board_targets(project="PRI")
     assert out["board_type"] == "fake"
     assert out["project"] == "PRI"
+    assert out["capabilities"] == []
     assert out["targets"][0]["label"] == "Готово"
     assert prov.project == "PRI"
     assert prov.closed is True
@@ -156,3 +173,24 @@ def test_get_board_targets_preserves_safe_structured_provider_error():
         "retryable": True,
     }
     assert secret not in repr(out)
+
+
+def test_get_board_targets_uses_authoritative_sorted_registry_metadata():
+    provider = _NativeSubtaskProvider({
+        "board_type": "spoofed",
+        "project": "spoofed",
+        "capabilities": ["spoofed"],
+        "targets": [],
+        "options": [],
+        "warnings": [],
+    })
+
+    out = _Svc(
+        ["fake"],
+        provider,
+        capabilities=frozenset({"native_subtasks"}),
+    ).get_board_targets(project="PRI")
+
+    assert out["board_type"] == "fake"
+    assert out["project"] == "PRI"
+    assert out["capabilities"] == ["native_subtasks"]

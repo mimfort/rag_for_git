@@ -1,7 +1,7 @@
 import pytest
 
 from reviewer.tasks.boards.errors import BoardProviderError
-from reviewer.tasks.boards.yougile import YougileBoard
+from reviewer.tasks.boards.yougile import YougileBoard, provider_spec
 
 
 class _Resp:
@@ -113,6 +113,15 @@ def test_yougile_validate_connection_resolves_exact_requested_project():
         "key": "PRI",
         "name": "PRI",
     }
+    assert result["capabilities"] == {"read": True}
+
+
+def test_yougile_access_metadata_matches_non_mutating_validation():
+    validation = provider_spec().setup.access.validation
+
+    assert "identity" in validation
+    assert "видимость проекта" in validation
+    assert "lifecycle" not in validation
 
 
 def test_yougile_validate_connection_rejects_inaccessible_requested_project():

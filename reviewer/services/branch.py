@@ -6,23 +6,23 @@
 from __future__ import annotations
 
 import subprocess
-from typing import TYPE_CHECKING
 
-if TYPE_CHECKING:
-    from reviewer.config.settings import Settings
+from reviewer.config.branches import RepoBranches
 
 
-def resolve_branch(requested: str | None, current: str | None, settings: Settings) -> str:
-    allow = settings.review_branches_list()
+def resolve_branch(requested: str | None, current: str | None,
+                   branches: RepoBranches) -> str:
+    """Выбрать ветку: явный запрос → текущая git-ветка → первичная."""
     if requested:
-        if requested not in allow:
+        if requested not in branches.index:
             raise ValueError(
-                f"ветка {requested!r} не в REVIEW_BRANCHES ({allow})"
+                f"ветка {requested!r} не отслеживается для этого репозитория "
+                f"({list(branches.index)}; источник: {branches.source})"
             )
         return requested
-    if current and current in allow:
+    if current and current in branches.index:
         return current
-    return settings.primary_branch()
+    return branches.primary
 
 
 def current_git_branch(path: str = ".") -> str | None:

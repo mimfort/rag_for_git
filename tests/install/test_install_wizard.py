@@ -9,6 +9,16 @@ from reviewer.tasks.boards.registry import (
     BoardProviderSpec,
     ProviderSetupSpec,
 )
+from tests.provider_access import FAKE_PROVIDER_ACCESS
+
+
+REMOVED_STANDARD_KEYS = {
+    "DEFAULT_REPO",
+    "REVIEW_BRANCHES",
+    "WEB_ADMIN_USER",
+    "WEB_ADMIN_PASSWORD",
+    "TASK_BOARD_MCP",
+}
 
 
 def _keys_from_text(text: str) -> set[str]:
@@ -58,9 +68,6 @@ def test_render_env_contains_wizard_keys():
         "NEO4J_URI": "neo4j://localhost:7687",
         "NEO4J_USER": "neo4j",
         "NEO4J_PASSWORD": "reviewerpass",
-        "DEFAULT_REPO": "",
-        "REVIEW_BRANCHES": "main,master",
-        "TASK_BOARD_MCP": "",
         "TASK_BOARD_KEY_PATTERN": "",
         "TASK_BOARD_URL_TEMPLATE": "",
     }
@@ -77,9 +84,6 @@ def test_render_env_extra_keys_preserved():
         "NEO4J_URI": "neo4j://localhost:7687",
         "NEO4J_USER": "neo4j",
         "NEO4J_PASSWORD": "reviewerpass",
-        "DEFAULT_REPO": "",
-        "REVIEW_BRANCHES": "main,master",
-        "TASK_BOARD_MCP": "",
         "TASK_BOARD_KEY_PATTERN": "",
         "TASK_BOARD_URL_TEMPLATE": "",
     }
@@ -106,17 +110,40 @@ def test_prompt_groups_yes_uses_current_values():
 def test_prompt_groups_yes_uses_field_default_when_no_current():
     result = inst.prompt_groups(inst.WIZARD_GROUPS, current={}, yes=True)
     assert result["PG_DSN"] == "postgresql://reviewer:reviewer@localhost:5433/reviewer"
-    assert result["REVIEW_BRANCHES"] == "main,master"
     assert result["VOYAGE_API_KEY"] == ""
+    assert result.keys().isdisjoint(REMOVED_STANDARD_KEYS)
 
 
 def test_prompt_groups_yes_skips_optional_groups():
     # При yes=True опциональные группы сохраняют current или default — не вызывают confirm
-    current = {"TASK_BOARD_MCP": "yougile"}
+    current = {"TASK_BOARD_KEY_PATTERN": "PRI-\\d+"}
     result = inst.prompt_groups(inst.WIZARD_GROUPS, current=current, yes=True)
-    assert result["TASK_BOARD_MCP"] == "yougile"
-    # Остальные поля доски — пустые (default)
-    assert result["TASK_BOARD_KEY_PATTERN"] == ""
+    assert result["TASK_BOARD_KEY_PATTERN"] == "PRI-\\d+"
+    assert result["TASK_BOARD_URL_TEMPLATE"] == ""
+
+
+def test_fresh_wizard_omits_repo_web_and_legacy_board_mcp():
+    keys = {field.key for group in inst.WIZARD_GROUPS for field in group.fields}
+
+    assert keys.isdisjoint(REMOVED_STANDARD_KEYS)
+
+
+def test_runtime_template_keeps_compatibility_keys():
+    assert REMOVED_STANDARD_KEYS <= _keys_from_text(inst.ENV_TEMPLATE)
+
+
+def test_render_env_preserves_removed_existing_keys_as_extra():
+    values = {
+        field.key: field.default
+        for group in inst.WIZARD_GROUPS
+        for field in group.fields
+    }
+    extra = {key: f"existing-{key.lower()}" for key in REMOVED_STANDARD_KEYS}
+
+    rendered = inst.render_env(values, extra)
+
+    for key, value in extra.items():
+        assert f"{key}={value}" in rendered
 
 
 def test_render_env_includes_board_api_key_and_hint():
@@ -138,7 +165,7 @@ def test_init_yes_creates_env_file(tmp_path, monkeypatch):
     dest = tmp_path / ".env"
     monkeypatch.setattr("reviewer.install.default_env_path", lambda: dest)
     runner = CliRunner()
-    result = runner.invoke(cli, ["init", "--yes"])
+    result = runner.invoke(cli, ["init", "--scope", "global", "--yes"])
     assert result.exit_code == 0, result.output
     assert dest.exists()
     content = dest.read_text(encoding="utf-8")
@@ -147,6 +174,7 @@ def test_init_yes_creates_env_file(tmp_path, monkeypatch):
     assert "YOUGILE_API_KEY=" in content
     assert "YOUTRACK_TOKEN=" in content
     assert "JIRA_API_TOKEN=" in content
+    assert all(f"{key}=" not in content for key in REMOVED_STANDARD_KEYS)
 
 
 def test_init_dry_run_is_safe_preview_only(tmp_path, monkeypatch):
@@ -161,7 +189,7 @@ def test_init_dry_run_is_safe_preview_only(tmp_path, monkeypatch):
         "click.prompt",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("prompt called")),
     )
-    result = CliRunner().invoke(cli, ["init", "--dry-run"])
+    result = CliRunner().invoke(cli, ["init", "--scope", "global", "--dry-run"])
 
     assert result.exit_code == 0, result.output
     assert "JIRA_API_TOKEN=" in result.output
@@ -183,7 +211,7 @@ def test_init_dry_run_redacts_legacy_and_unknown_extra_secrets(tmp_path, monkeyp
     )
     monkeypatch.setattr("reviewer.install.default_env_path", lambda: dest)
 
-    result = CliRunner().invoke(cli, ["init", "--dry-run"])
+    result = CliRunner().invoke(cli, ["init", "--scope", "global", "--dry-run"])
 
     assert result.exit_code == 0, result.output
     assert "TASK_BOARD_API_KEY=" in result.output
@@ -240,6 +268,7 @@ def test_init_noninteractive_modes_never_touch_provider_setup_stages(
                     label="Sentinel",
                     help_url="https://sentinel.example/setup",
                     help_text="Sentinel setup.",
+                    access=FAKE_PROVIDER_ACCESS,
                     acquisition=acquire,
                 ),
             )
@@ -267,7 +296,7 @@ def test_init_noninteractive_modes_never_touch_provider_setup_stages(
         lambda *_args, **_kwargs: calls.append("http-construction") or SentinelClient(),
     )
 
-    result = CliRunner().invoke(cli, ["init", mode])
+    result = CliRunner().invoke(cli, ["init", "--scope", "global", mode])
 
     assert result.exit_code == 0, result.output
     assert calls == []
@@ -300,11 +329,11 @@ def test_init_interactive_configures_selected_registry_provider(tmp_path, monkey
             "JIRA_API_TOKEN": "jira-secret",
         },
     )
-    answers = iter([True, False])
+    answers = iter([False, True, True, False])
     monkeypatch.setattr("click.confirm", lambda *_args, **_kwargs: next(answers))
     monkeypatch.setattr("reviewer.entrypoints.cli._shutil.which", lambda _name: None)
 
-    result = CliRunner().invoke(cli, ["init"])
+    result = CliRunner().invoke(cli, ["init", "--scope", "global"])
 
     assert result.exit_code == 0, result.output
     assert configured == ["jira"]
@@ -312,6 +341,102 @@ def test_init_interactive_configures_selected_registry_provider(tmp_path, monkey
     assert "JIRA_BASE_URL=https://acme.atlassian.net" in content
     assert "JIRA_EMAIL=bot@example.test" in content
     assert "JIRA_API_TOKEN=jira-secret" in content
+
+
+@pytest.mark.parametrize(
+    ("selected", "prompted", "not_prompted"),
+    [
+        ("github", {"GITHUB_TOKEN"}, {"GITLAB_URL", "GITLAB_TOKEN"}),
+        ("gitlab", {"GITLAB_URL", "GITLAB_TOKEN"}, {"GITHUB_TOKEN"}),
+    ],
+)
+def test_init_prompts_only_selected_vcs_provider(
+    selected,
+    prompted,
+    not_prompted,
+    tmp_path,
+    monkeypatch,
+):
+    dest = tmp_path / ".env"
+    seen = []
+    monkeypatch.setattr("reviewer.install.default_env_path", lambda: dest)
+    monkeypatch.setattr(
+        "reviewer.install.prompt_groups",
+        lambda groups, current, yes: {
+            field.key: current.get(field.key, "") or field.default
+            for group in groups
+            for field in group.fields
+        },
+    )
+    monkeypatch.setattr(
+        "reviewer.entrypoints.cli._select_vcs_provider",
+        lambda *_args, **_kwargs: selected,
+        raising=False,
+    )
+
+    def prompt_vcs(_inst, spec, current):
+        seen.extend(field.key for field in spec.credential_fields)
+        return {
+            field.key: current.get(field.key, "") or field.default
+            for field in spec.credential_fields
+        }
+
+    monkeypatch.setattr(
+        "reviewer.entrypoints.cli._prompt_vcs_provider",
+        prompt_vcs,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "click.confirm",
+        lambda text, **_kwargs: (
+            "VCS provider" in text or "Записать показанные изменения" in text
+        ),
+    )
+    monkeypatch.setattr("reviewer.entrypoints.cli._shutil.which", lambda _name: None)
+
+    result = CliRunner().invoke(cli, ["init", "--scope", "global"])
+
+    assert result.exit_code == 0, result.output
+    assert set(seen) == prompted
+    assert set(seen).isdisjoint(not_prompted)
+
+
+def test_unselected_existing_vcs_credentials_survive(tmp_path, monkeypatch):
+    dest = tmp_path / ".env"
+    dest.write_text("GITLAB_TOKEN=keep-me\n", encoding="utf-8")
+    monkeypatch.setattr("reviewer.install.default_env_path", lambda: dest)
+    monkeypatch.setattr(
+        "reviewer.install.prompt_groups",
+        lambda groups, current, yes: {
+            field.key: current.get(field.key, "") or field.default
+            for group in groups
+            for field in group.fields
+        },
+    )
+    monkeypatch.setattr(
+        "reviewer.entrypoints.cli._select_vcs_provider",
+        lambda *_args, **_kwargs: "github",
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "reviewer.entrypoints.cli._prompt_vcs_provider",
+        lambda *_args, **_kwargs: {"GITHUB_TOKEN": "new-github"},
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "click.confirm",
+        lambda text, **_kwargs: (
+            "VCS provider" in text or "Записать показанные изменения" in text
+        ),
+    )
+    monkeypatch.setattr("reviewer.entrypoints.cli._shutil.which", lambda _name: None)
+
+    result = CliRunner().invoke(cli, ["init", "--scope", "global"])
+
+    assert result.exit_code == 0, result.output
+    content = dest.read_text(encoding="utf-8")
+    assert "GITHUB_TOKEN=new-github" in content
+    assert "GITLAB_TOKEN=keep-me" in content
 
 
 def test_init_interactive_common_board_fields_do_not_require_rest_provider(
@@ -328,25 +453,22 @@ def test_init_interactive_common_board_fields_do_not_require_rest_provider(
             if group.title == "Доска задач":
                 seen_board_group.extend(field.key for field in group.fields)
             for field in group.fields:
-                values[field.key] = (
-                    "board-mcp" if field.key == "TASK_BOARD_MCP" else field.default
-                )
+                values[field.key] = field.default
         return values
 
     monkeypatch.setattr("reviewer.install.prompt_groups", prompt_groups)
-    answers = iter([False, False])
+    answers = iter([False, False, True, False])
     monkeypatch.setattr("click.confirm", lambda *_args, **_kwargs: next(answers))
     monkeypatch.setattr("reviewer.entrypoints.cli._shutil.which", lambda _name: None)
 
-    result = CliRunner().invoke(cli, ["init"])
+    result = CliRunner().invoke(cli, ["init", "--scope", "global"])
 
     assert result.exit_code == 0, result.output
     assert seen_board_group == [
-        "TASK_BOARD_MCP",
         "TASK_BOARD_KEY_PATTERN",
         "TASK_BOARD_URL_TEMPLATE",
     ]
-    assert "TASK_BOARD_MCP=board-mcp" in dest.read_text(encoding="utf-8")
+    assert "TASK_BOARD_MCP=" not in dest.read_text(encoding="utf-8")
 
 
 def test_init_yes_preserves_existing_secret(tmp_path, monkeypatch):
@@ -354,36 +476,43 @@ def test_init_yes_preserves_existing_secret(tmp_path, monkeypatch):
     dest.write_text("VOYAGE_API_KEY=sk-existing\n", encoding="utf-8")
     monkeypatch.setattr("reviewer.install.default_env_path", lambda: dest)
     runner = CliRunner()
-    result = runner.invoke(cli, ["init", "--yes"])
+    result = runner.invoke(cli, ["init", "--scope", "global", "--yes"])
     assert result.exit_code == 0, result.output
     content = dest.read_text(encoding="utf-8")
     assert "VOYAGE_API_KEY=sk-existing" in content
 
 
-def test_render_env_includes_gitlab_and_web_admin():
+def test_render_env_includes_gitlab_fields():
     values = {f.key: f.default for g in inst.WIZARD_GROUPS for f in g.fields}
     values["GITLAB_TOKEN"] = "glpat-secret"
-    values["WEB_ADMIN_PASSWORD"] = "admin-secret"
     result = inst.render_env(values, extra={})
     # отличительный текст многострочного заголовка GitLab VCS (нет в дефолтном):
     assert "автоопределяется из git remote" in result
     assert "GITLAB_TOKEN=glpat-secret" in result
     assert "GITLAB_URL=https://gitlab.com" in result
     assert "VCS_PROVIDER=github" in result
-    assert "WEB_ADMIN_USER=" in result
-    assert "WEB_ADMIN_PASSWORD=admin-secret" in result
     assert "YOUGILE_API_BASE=" in result
 
 
 def test_init_yes_preserves_extra_keys(tmp_path, monkeypatch):
     dest = tmp_path / ".env"
-    dest.write_text("VOYAGE_API_KEY=sk-x\nREVIEW_MAX_COMMENTS=42\n", encoding="utf-8")
+    dest.write_text(
+        "VOYAGE_API_KEY=sk-x\n"
+        "REVIEW_MAX_COMMENTS=42\n"
+        "DEFAULT_REPO=owner/legacy\n"
+        "WEB_ADMIN_USER=legacy-admin\n"
+        "TASK_BOARD_MCP=legacy-board\n",
+        encoding="utf-8",
+    )
     monkeypatch.setattr("reviewer.install.default_env_path", lambda: dest)
     runner = CliRunner()
-    result = runner.invoke(cli, ["init", "--yes"])
+    result = runner.invoke(cli, ["init", "--scope", "global", "--yes"])
     assert result.exit_code == 0, result.output
     content = dest.read_text(encoding="utf-8")
     assert "REVIEW_MAX_COMMENTS=42" in content
+    assert "DEFAULT_REPO=owner/legacy" in content
+    assert "WEB_ADMIN_USER=legacy-admin" in content
+    assert "TASK_BOARD_MCP=legacy-board" in content
 
 
 def test_env_template_mirrors_env_example():

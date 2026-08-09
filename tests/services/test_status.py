@@ -33,6 +33,16 @@ class FakeGraph:
         return self._nodes.get(branch, 0)
 
 
+class FakeSummaryStore:
+    def __init__(self, counts, fail=False):
+        self._counts, self._fail = counts, fail
+
+    def count_summaries(self, repo, branch):
+        if self._fail:
+            raise RuntimeError("postgres down")
+        return self._counts.get(branch, 0)
+
+
 @pytest.fixture
 def status_report() -> RepoStatus:
     """Возвращает отчёт с одной свежей основной веткой."""
@@ -106,6 +116,7 @@ def test_status_command_smoke(monkeypatch):
     monkeypatch.setattr(cli_mod, "build_status_report", lambda *a, **k: rep)
     monkeypatch.setattr(cli_mod, "ChunkStore", MagicMock())
     monkeypatch.setattr(cli_mod, "GraphStore", MagicMock())
+    monkeypatch.setattr(cli_mod, "SummaryStore", MagicMock())
     res = CliRunner().invoke(cli_mod.cli, ["status", ".", "--repo", "a/x"])
     assert res.exit_code == 0, res.output
     assert "Ветка main" in res.output
@@ -146,9 +157,91 @@ def test_status_command_json(monkeypatch):
     monkeypatch.setattr(cli_mod, "build_status_report", lambda *a, **k: rep)
     monkeypatch.setattr(cli_mod, "ChunkStore", MagicMock())
     monkeypatch.setattr(cli_mod, "GraphStore", MagicMock())
+    monkeypatch.setattr(cli_mod, "SummaryStore", MagicMock())
     res = CliRunner().invoke(cli_mod.cli, ["status", ".", "--repo", "a/x", "--json"])
     assert res.exit_code == 0, res.output
     payload = json.loads(res.output)
     assert payload["repo"] == "a/x"
     assert payload["branches"][0]["drift"] == 0
     assert payload["branches"][0]["indexed_sha"] == "abc1234567def"
+
+
+def test_build_status_report_counts_summaries(monkeypatch):
+    dt = datetime(2026, 6, 18, 14, 2)
+    store = FakeStore(
+        meta={"base:main": ("abc1234", dt), "base:dev": ("def5678", dt)},
+        chunks={"base:main": 1843, "base:dev": 1850},
+        refs=["base:main", "base:dev"])
+    graph = FakeGraph(nodes={"main": 1207, "dev": 1190})
+    monkeypatch.setattr(status_mod, "commits_behind", lambda *a: 0)
+    rep = build_status_report(store, graph, "a/x", ["main", "dev"], "/tmp/repo",
+                              summary_store=FakeSummaryStore({"main": 26, "dev": 14}))
+    assert rep.branches[0].summaries == 26
+    assert rep.branches[1].summaries == 14
+
+
+def test_build_status_report_without_summary_store(monkeypatch):
+    dt = datetime(2026, 6, 18, 14, 2)
+    store = FakeStore(meta={"base:main": ("abc1234", dt)},
+                      chunks={"base:main": 5}, refs=["base:main"])
+    graph = FakeGraph(nodes={"main": 3})
+    monkeypatch.setattr(status_mod, "commits_behind", lambda *a: 0)
+    rep = build_status_report(store, graph, "a/x", ["main"], "/tmp/repo")
+    assert rep.branches[0].summaries is None      # обратная совместимость вызовов
+
+
+def test_build_status_report_summary_store_down(monkeypatch):
+    dt = datetime(2026, 6, 18, 14, 2)
+    store = FakeStore(meta={"base:main": ("abc1234", dt)},
+                      chunks={"base:main": 5}, refs=["base:main"])
+    graph = FakeGraph(nodes={"main": 3})
+    monkeypatch.setattr(status_mod, "commits_behind", lambda *a: 0)
+    rep = build_status_report(store, graph, "a/x", ["main"], "/tmp/repo",
+                              summary_store=FakeSummaryStore({}, fail=True))
+    assert rep.branches[0].summaries is None      # fail-soft, как у graph_nodes
+
+
+def test_render_status_json_includes_summaries():
+    dt = datetime(2026, 6, 18, 14, 2)
+    rep = RepoStatus(
+        repo="a/x",
+        branches=[
+            BranchStatus("main", "base:main", "abc1234567def", dt, 1843, 1207, 0, 26),
+            BranchStatus("dev", "base:dev", "def5678901abc", dt, 1850, None, 12, None),
+        ],
+        overlays=[])
+    by = {b["branch"]: b for b in json.loads(render_status_json(rep))["branches"]}
+    assert by["main"]["summaries"] == 26
+    assert by["dev"]["summaries"] is None       # стор недоступен → null
+
+
+def test_render_status_shows_summaries():
+    dt = datetime(2026, 6, 18, 14, 2)
+    rep = RepoStatus(
+        repo="a/x",
+        branches=[
+            BranchStatus("main", "base:main", "abc1234567", dt, 1843, 1207, 0, 26),
+            BranchStatus("dev", "base:dev", "def5678901", dt, 1850, None, 12, None),
+        ],
+        overlays=[])
+    out = render_status(rep, "tree-sitter (fallback)")
+    assert "Сводки: 26" in out
+    assert "Сводки: —" in out                   # неизвестно
+
+
+def test_status_command_passes_and_closes_summary_store(monkeypatch, status_report):
+    captured = {}
+
+    def fake_build(*a, **k):
+        captured.update(k)
+        return status_report
+
+    summary_store_cls = MagicMock()
+    monkeypatch.setattr(cli_mod, "build_status_report", fake_build)
+    monkeypatch.setattr(cli_mod, "ChunkStore", MagicMock())
+    monkeypatch.setattr(cli_mod, "GraphStore", MagicMock())
+    monkeypatch.setattr(cli_mod, "SummaryStore", summary_store_cls)
+    res = CliRunner().invoke(cli_mod.cli, ["status", ".", "--repo", "a/x", "--json"])
+    assert res.exit_code == 0, res.output
+    assert captured["summary_store"] is summary_store_cls.return_value
+    summary_store_cls.return_value.close.assert_called_once()

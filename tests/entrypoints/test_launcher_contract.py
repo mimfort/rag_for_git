@@ -90,6 +90,7 @@ def test_launcher_status_json_is_clean(monkeypatch, capsys, status_report):
     )
     monkeypatch.setattr(cli_mod, "ChunkStore", MagicMock())
     monkeypatch.setattr(cli_mod, "GraphStore", MagicMock())
+    monkeypatch.setattr(cli_mod, "SummaryStore", MagicMock())
 
     code, stdout, stderr = _invoke_launcher(
         ("status", ".", "--repo", "a/x", "--json"),

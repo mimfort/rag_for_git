@@ -60,15 +60,22 @@ def _card(state: State, number: int) -> dict[str, Any]:
         "idBoard": BOARD_ID,
         "shortLink": f"sh{number:06d}",
         "shortUrl": f"https://trello.com/c/sh{number:06d}",
-        "closed": False,
+        "closed": number == CARDS,
     }
 
 
-def _page(state: State, params: httpx.QueryParams) -> list[dict]:
+def _page(
+    state: State,
+    params: httpx.QueryParams,
+    *,
+    include_archived: bool,
+) -> list[dict]:
     """Страница листинга: карточки от новых к старым, фильтр ``before`` по id."""
     limit = int(params.get("limit") or 1000)
     before = params.get("before")
     rows = [_card(state, number) for number in range(CARDS, 0, -1)]
+    if not include_archived:
+        rows = [row for row in rows if row["closed"] is not True]
     if before:
         rows = [row for row in rows if row["id"] < before]
     return rows[:limit]
@@ -101,7 +108,15 @@ def _trello_handler(
         if method == "GET" and path == f"/1/boards/{BOARD_ID}/lists":
             return httpx.Response(200, json=LISTS)
         if method == "GET" and path == f"/1/boards/{BOARD_ID}/cards":
-            return httpx.Response(200, json=_page(state, request.url.params))
+            return httpx.Response(
+                200,
+                json=_page(state, request.url.params, include_archived=False),
+            )
+        if method == "GET" and path == f"/1/boards/{BOARD_ID}/cards/all":
+            return httpx.Response(
+                200,
+                json=_page(state, request.url.params, include_archived=True),
+            )
         if method == "GET" and path.startswith(f"/1/boards/{BOARD_ID}/cards/"):
             short = path.rsplit("/", 1)[-1]
             if short.isdigit() and 1 <= int(short) <= len(state.created) + CARDS:
@@ -206,5 +221,5 @@ ADAPTER = ProviderAdapter(
     missing_target="Missing",
     factory=build,
     min_rows=PAGE,
-    page_paths=("/cards",),
+    page_paths=("/cards/all",),
 )

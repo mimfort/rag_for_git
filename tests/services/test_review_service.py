@@ -5,6 +5,10 @@
 """
 from __future__ import annotations
 
+import os
+from pathlib import Path
+import subprocess
+import sys
 from unittest.mock import MagicMock, call, patch
 
 import pytest
@@ -97,6 +101,125 @@ def _vcs_with_files(files: list[ChangedFile], draft: bool = False) -> MagicMock:
     vcs.get_changed_files.return_value = files
     vcs.get_file_at_ref.return_value = "def foo(): pass"
     return vcs
+
+
+@patch("reviewer.services.review_service.chunk_python", side_effect=_fake_chunk)
+@patch("reviewer.services.review_service.build_overlay")
+def test_prepare_routes_risk_files_without_indexing(
+    build_overlay_mock: MagicMock,
+    _chunk_python_mock: MagicMock,
+    settings: Settings,
+    components: MagicMock,
+) -> None:
+    """Рисковые не-Python пути отдаются LLM без overlay/чанков."""
+    files = [
+        _changed("reviewer/app.py"),
+        _changed("migrations/001.sql"),
+        _changed("config/app.yaml"),
+    ]
+    vcs = _vcs_with_files(files)
+    vcs.get_file_at_ref.side_effect = lambda path, ref: {
+        ".review.yml": "",
+        "reviewer/app.py": "def foo(): pass\n",
+        "migrations/001.sql": "DROP TABLE old_data;\n",
+        "config/app.yaml": "debug: false\n",
+    }.get(path, "")
+
+    prepared = ReviewService(settings, components).prepare(
+        "owner", "repo", 1, vcs_provider=vcs
+    )
+
+    assert [u.path for u in prepared.units] == ["reviewer/app.py"]
+    assert prepared.changed_paths == ["reviewer/app.py"]
+    assert [item.path for item in prepared.risk_paths] == ["migrations/001.sql"]
+    assert prepared.sources["migrations/001.sql"] == "DROP TABLE old_data;\n"
+    assert build_overlay_mock.call_args.args[4] == ["reviewer/app.py"]
+
+
+@patch("reviewer.services.review_service.chunk_python", side_effect=_fake_chunk)
+@patch("reviewer.services.review_service.build_overlay")
+def test_prepare_keeps_risk_item_when_its_head_source_cannot_be_loaded(
+    build_overlay_mock: MagicMock,
+    _chunk_python_mock: MagicMock,
+    settings: Settings,
+    components: MagicMock,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Сбой чтения risk-source не отменяет подготовку Python-ревью."""
+    risk_patch = "@@ -1 +1 @@\n-SELECT 1;\n+DROP TABLE old_data;"
+    files = [
+        _changed("reviewer/app.py", status="added"),
+        _changed("migrations/001.sql", patch=risk_patch),
+    ]
+    vcs = _vcs_with_files(files)
+
+    def read_file(path: str, ref: str) -> str:
+        if path == "migrations/001.sql":
+            raise RuntimeError("provider response with secret-content")
+        return {
+            ".review.yml": "",
+            "reviewer/app.py": "def foo(): pass\n",
+        }.get(path, "")
+
+    vcs.get_file_at_ref.side_effect = read_file
+
+    prepared = ReviewService(settings, components).prepare(
+        "owner", "repo", 1, vcs_provider=vcs
+    )
+
+    assert [unit.path for unit in prepared.units] == ["reviewer/app.py"]
+    assert [item.path for item in prepared.risk_paths] == ["migrations/001.sql"]
+    assert prepared.patches["migrations/001.sql"] == risk_patch
+    assert "migrations/001.sql" not in prepared.sources
+    assert build_overlay_mock.call_args.args[4] == ["reviewer/app.py"]
+    assert "migrations/001.sql" in caplog.text
+    assert "secret-content" not in caplog.text
+
+
+@patch("reviewer.services.review_service.chunk_python", side_effect=_fake_chunk)
+@patch("reviewer.services.review_service.build_overlay")
+def test_prepare_limits_risk_paths_and_reports_overflow(
+    _build_overlay_mock: MagicMock,
+    _chunk_python_mock: MagicMock,
+    settings: Settings,
+    components: MagicMock,
+) -> None:
+    """Одиннадцатый risk path остаётся в детерминированном overflow."""
+    files = [_changed(f".env.{number}") for number in range(11)]
+    vcs = _vcs_with_files(files)
+
+    prepared = ReviewService(settings, components).prepare(
+        "owner", "repo", 1, vcs_provider=vcs
+    )
+
+    assert len(prepared.risk_paths) == 10
+    assert prepared.risk_skipped_paths == [".env.9"]
+
+
+def test_prepare_module_isolated_from_conflicting_xdg_config(tmp_path):
+    """Prepare-тесты не должны наследовать repository-home policy разработчика."""
+    home = tmp_path / "developer-config/rag-reviewer/repos/o/r.yml"
+    home.parent.mkdir(parents=True)
+    home.write_text("task_board: {type: yougile}\n", encoding="utf-8")
+    env = {**os.environ, "XDG_CONFIG_HOME": str(tmp_path / "developer-config")}
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "-q",
+            "-p",
+            "no:cacheprovider",
+            "tests/services/test_review_service.py::test_prepare_task_keys_none_without_task_board",
+        ],
+        cwd=Path(__file__).parents[2],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 # ---------------------------------------------------------------------------
