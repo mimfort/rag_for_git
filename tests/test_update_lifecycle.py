@@ -1,7 +1,13 @@
 import hashlib
 import json
+from contextlib import nullcontext
+from types import SimpleNamespace
 
-from reviewer.update_lifecycle import sync_compose_file
+from reviewer.update_lifecycle import (
+    download_compose,
+    run_fresh_artifact_refresh,
+    sync_compose_file,
+)
 
 
 def _digest(content: bytes) -> str:
@@ -75,3 +81,52 @@ def test_sync_compose_preserves_unmanaged_nonmatching_file(tmp_path):
     assert result.action == "preserved"
     assert target.read_bytes() == b"custom\n"
     assert not (tmp_path / ".reviewer-update.json").exists()
+
+
+def test_download_compose_uses_canonical_url_and_no_cache_headers():
+    seen = {}
+
+    def opener(request, timeout):
+        seen["url"] = request.full_url
+        seen["cache"] = request.headers["Cache-control"]
+        seen["timeout"] = timeout
+        return nullcontext(SimpleNamespace(read=lambda: b"services: {}\n"))
+
+    assert download_compose(opener=opener, timeout=7) == b"services: {}\n"
+    assert seen == {
+        "url": (
+            "https://raw.githubusercontent.com/mimfort/rag_for_git/"
+            "main/docker-compose.yml"
+        ),
+        "cache": "no-cache, no-store",
+        "timeout": 7,
+    }
+
+
+def test_run_fresh_artifact_refresh_invokes_reviewer_hidden_phase():
+    calls = []
+
+    def run(argv, **kwargs):
+        calls.append((argv, kwargs))
+        return SimpleNamespace(returncode=0, stdout="compose current\n", stderr="")
+
+    result = run_fresh_artifact_refresh(
+        which=lambda name: "/tools/reviewer" if name == "reviewer" else None,
+        run=run,
+    )
+
+    assert calls == [
+        (
+            ["/tools/reviewer", "update", "--refresh-artifacts"],
+            {"capture_output": True, "text": True},
+        )
+    ]
+    assert result.returncode == 0
+    assert result.stdout == "compose current\n"
+
+
+def test_run_fresh_artifact_refresh_reports_missing_executable():
+    result = run_fresh_artifact_refresh(which=lambda name: None)
+
+    assert result.returncode == 127
+    assert "reviewer не найден" in result.stderr

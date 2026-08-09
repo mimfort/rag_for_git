@@ -3,19 +3,66 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
+import subprocess
 import tempfile
+import urllib.request
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
 
 STATE_NAME = ".reviewer-update.json"
+COMPOSE_URL = (
+    "https://raw.githubusercontent.com/mimfort/rag_for_git/main/docker-compose.yml"
+)
 
 
 @dataclass(frozen=True)
 class ComposeSyncResult:
     action: Literal["created", "adopted", "current", "updated", "preserved"]
     path: Path
+
+
+@dataclass(frozen=True)
+class RefreshProcessResult:
+    returncode: int
+    stdout: str
+    stderr: str
+
+
+def download_compose(
+    *,
+    opener: Callable = urllib.request.urlopen,
+    timeout: int = 30,
+) -> bytes:
+    request = urllib.request.Request(
+        COMPOSE_URL,
+        headers={"Cache-Control": "no-cache, no-store", "Pragma": "no-cache"},
+    )
+    with opener(request, timeout=timeout) as response:
+        return response.read()
+
+
+def run_fresh_artifact_refresh(
+    *,
+    which: Callable[[str], str | None] = shutil.which,
+    run: Callable = subprocess.run,
+) -> RefreshProcessResult:
+    executable = which("reviewer")
+    if executable is None:
+        return RefreshProcessResult(127, "", "reviewer не найден в PATH")
+    result = run(
+        [executable, "update", "--refresh-artifacts"],
+        capture_output=True,
+        text=True,
+    )
+    return RefreshProcessResult(
+        result.returncode,
+        result.stdout or "",
+        result.stderr or "",
+    )
 
 
 def default_config_dir() -> Path:
