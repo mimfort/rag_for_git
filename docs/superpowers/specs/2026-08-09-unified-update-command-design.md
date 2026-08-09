@@ -28,7 +28,7 @@ For the release that introduces this lifecycle, a user still running the old CLI
 may need one bootstrap invocation through latest uvx:
 
 ```bash
-uvx --refresh --from rag-reviewer@latest reviewer update
+uvx --refresh --from rag-reviewer@latest reviewer update --upgrade-tool
 ```
 
 After that transition, the short command is sufficient:
@@ -56,7 +56,9 @@ reviewer update
   version is known, then launch the artifact phase with a fresh executable;
 - `uvx`: the package is temporary, so do not mutate an unrelated persistent tool;
   refresh artifacts with the currently invoked latest package and explain that
-  future CLI invocations should use `@latest`;
+  future CLI invocations should use `@latest`. The explicit `--upgrade-tool`
+  bootstrap flag is the sole exception: it upgrades an existing persistent
+  rag-reviewer tool, then runs artifact refresh from that updated installation;
 - editable checkout: never run `git pull` or replace developer source; refresh
   artifacts from the current checkout and print the existing source-update hint.
 
