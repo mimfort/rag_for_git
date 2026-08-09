@@ -28,23 +28,20 @@ You need Python 3.11–3.13, [uv](https://docs.astral.sh/uv/), Docker, a Voyage 
 version-control system (VCS) token if reviewer should read or publish pull-request reviews. The
 stores run locally; embedding and reranking requests go to Voyage.
 
-1. Install the launcher, download the repository's Compose file into reviewer's config directory,
-   start the stores, and configure reviewer:
+1. Install the launcher, synchronize reviewer's managed artifacts, start the stores, and configure
+   reviewer:
 
    ```bash
    uv tool install rag-reviewer
-   mkdir -p ~/.config/rag-reviewer
-   curl -o ~/.config/rag-reviewer/docker-compose.yml \
-     https://raw.githubusercontent.com/mimfort/rag_for_git/main/docker-compose.yml
+   reviewer update
    docker compose -f ~/.config/rag-reviewer/docker-compose.yml up -d
    reviewer init
    ```
 
-   The Compose file lives next to the env file in `$XDG_CONFIG_HOME/rag-reviewer/`
-   (`~/.config/rag-reviewer/` by default), so one store stack serves every repository and the
-   Compose project name stays the same no matter which repository you are standing in. Plain
-   `curl -O` writes into the current directory instead; inside a clone of this repository it
-   overwrites the tracked `docker-compose.yml`.
+   `reviewer update` creates the managed Compose file next to the env file in
+   `$XDG_CONFIG_HOME/rag-reviewer/` (`~/.config/rag-reviewer/` by default). One store stack therefore
+   serves every repository, and the Compose project name stays independent of the current working
+   directory. The command also refreshes detected AI-client integrations and skills.
 
 2. See the supported AI clients and connect one:
 
@@ -102,9 +99,7 @@ reviewer env on every workstation instead of using the loopback Compose defaults
 1. **On the shared host, start the stores and configure secrets for the service account.**
 
    ```bash
-   mkdir -p ~/.config/rag-reviewer
-   curl -o ~/.config/rag-reviewer/docker-compose.yml \
-     https://raw.githubusercontent.com/mimfort/rag_for_git/main/docker-compose.yml
+   reviewer update
    docker compose -f ~/.config/rag-reviewer/docker-compose.yml up -d
    reviewer init
    ```
@@ -247,18 +242,40 @@ reviewer update
 (`--from rag-reviewer==0.4.3`, `--from git+…`); `--from PACKAGE COMMAND` is `uvx` syntax and
 `uv tool install` rejects it.
 
+For the one-time transition from 0.4.3, start the new lifecycle through latest uvx and explicitly
+allow it to upgrade the existing persistent tool:
+
+```bash
+uvx --refresh --from rag-reviewer@latest reviewer update --upgrade-tool
+```
+
+Every later update is the short command `reviewer update`. It performs one lifecycle:
+
+- checks PyPI and upgrades the persistent `uv tool` package when a newer version exists;
+- refreshes every detected AI-client MCP integration, native plugin, and file-based skill set;
+- synchronizes `$XDG_CONFIG_HOME/rag-reviewer/docker-compose.yml` from the canonical repository;
+- records the managed Compose content hash in `.reviewer-update.json`.
+
+If the Compose file differs from its recorded hash, reviewer treats it as user-modified, leaves it
+unchanged, and prints a warning. Update does not run `docker compose pull`, restart services, remove
+containers, or delete volumes, so existing databases, indexes, tasks, and subsystem summaries stay
+intact. Apply a new Compose definition when convenient with the documented `docker compose ... up
+-d` command.
+
 Temporary/latest invocation:
 
 ```bash
 uvx --from rag-reviewer@latest reviewer --help
 ```
 
-`reviewer update` checks before mutating a persistent uv tool installation. Use
-`reviewer install CLIENT --dry-run` to inspect integration writes.
+An ordinary uvx invocation never mutates a separate persistent tool; only the explicit
+`--upgrade-tool` bootstrap does. Use `reviewer install CLIENT --dry-run` to inspect a named
+integration write.
 
 ### AI clients
 
-Discover clients with `reviewer install --list`; install one client or every detected client:
+`reviewer update` refreshes all detected clients automatically. Use `reviewer install --list` and a
+named install when connecting a client for the first time, before it can be detected:
 
 ```bash
 reviewer install codex
@@ -283,7 +300,7 @@ claude plugin list --json
 claude plugin marketplace list --json
 ```
 
-After installation, start a new chat/CLI session; in an IDE, also use Reload Window.
+After installation or update, start a New Chat/new CLI session; in an IDE, also use Reload Window.
 
 ### Breaking skill-name migration
 
