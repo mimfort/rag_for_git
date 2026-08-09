@@ -246,7 +246,7 @@ reviewer update
 ```
 
 `uv tool install` принимает имя пакета и ставит обе его команды — `reviewer` и `reviewer-mcp`.
-Опция `--from` здесь лишь уточняет источник того же пакета (`--from rag-reviewer==0.4.2`,
+Опция `--from` здесь лишь уточняет источник того же пакета (`--from rag-reviewer==0.4.3`,
 `--from git+…`); форма `--from PACKAGE COMMAND` относится к `uvx`, и `uv tool install` её
 отвергает.
 

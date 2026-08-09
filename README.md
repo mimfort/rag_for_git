@@ -244,7 +244,7 @@ reviewer update
 
 `uv tool install` takes the package name and installs both of its commands, `reviewer` and
 `reviewer-mcp`. Its `--from` option only pins a different source for the same package
-(`--from rag-reviewer==0.4.2`, `--from git+…`); `--from PACKAGE COMMAND` is `uvx` syntax and
+(`--from rag-reviewer==0.4.3`, `--from git+…`); `--from PACKAGE COMMAND` is `uvx` syntax and
 `uv tool install` rejects it.
 
 Temporary/latest invocation:
