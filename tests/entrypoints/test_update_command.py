@@ -292,6 +292,7 @@ def test_update_uvx_upgrade_tool_is_explicit(monkeypatch):
     info = InstallationInfo(InstallMode.UVX, "0.4.4", "/usr/bin/uv")
     upgrade = Mock(return_value=UpgradeResult(0, ""))
     refresh = Mock()
+    fresh = Mock(return_value=SimpleNamespace(returncode=0, stdout="", stderr=""))
     monkeypatch.setattr(cli_mod, "detect_installation", lambda: info)
     monkeypatch.setattr(
         cli_mod,
@@ -300,6 +301,8 @@ def test_update_uvx_upgrade_tool_is_explicit(monkeypatch):
     )
     monkeypatch.setattr(cli_mod, "upgrade_uv_tool", upgrade)
     monkeypatch.setattr(cli_mod, "_refresh_update_artifacts", refresh)
+    monkeypatch.setattr(cli_mod, "find_uv_tool_python", lambda uv: "/tools/python")
+    monkeypatch.setattr(cli_mod, "run_fresh_artifact_refresh", fresh)
 
     regular = CliRunner().invoke(cli_mod.cli, ["update"])
     bootstrap = CliRunner().invoke(cli_mod.cli, ["update", "--upgrade-tool"])
@@ -307,7 +310,8 @@ def test_update_uvx_upgrade_tool_is_explicit(monkeypatch):
     assert regular.exit_code == 0, regular.output
     assert bootstrap.exit_code == 0, bootstrap.output
     upgrade.assert_called_once_with(info)
-    assert refresh.call_count == 2
+    refresh.assert_called_once()
+    fresh.assert_called_once_with(python_executable="/tools/python")
 
 
 def test_update_editable_refreshes_artifacts_without_touching_source(monkeypatch):
@@ -348,12 +352,18 @@ def test_update_uvx_bootstrap_with_newer_version_upgrades_tool_once(monkeypatch)
     )
     monkeypatch.setattr(cli_mod, "upgrade_uv_tool", upgrade)
     monkeypatch.setattr(cli_mod, "_refresh_update_artifacts", refresh)
+    monkeypatch.setattr(cli_mod, "find_uv_tool_python", lambda uv: "/tools/python")
+    monkeypatch.setattr(
+        cli_mod,
+        "run_fresh_artifact_refresh",
+        lambda **kwargs: SimpleNamespace(returncode=0, stdout="", stderr=""),
+    )
 
     result = CliRunner().invoke(cli_mod.cli, ["update", "--upgrade-tool"])
 
     assert result.exit_code == 0, result.output
     upgrade.assert_called_once_with(info)
-    refresh.assert_called_once()
+    refresh.assert_not_called()
 
 
 def test_update_pypi_failure_still_refreshes_independent_artifacts(monkeypatch):
@@ -418,12 +428,48 @@ def test_update_explicit_bootstrap_is_not_skipped_by_version_check_failure(
     monkeypatch.setattr(cli_mod, "check_latest", lambda value: version_check)
     monkeypatch.setattr(cli_mod, "upgrade_uv_tool", upgrade)
     monkeypatch.setattr(cli_mod, "_refresh_update_artifacts", refresh)
+    monkeypatch.setattr(cli_mod, "find_uv_tool_python", lambda uv: "/tools/python")
+    monkeypatch.setattr(
+        cli_mod,
+        "run_fresh_artifact_refresh",
+        lambda **kwargs: SimpleNamespace(returncode=0, stdout="", stderr=""),
+    )
 
     result = CliRunner().invoke(cli_mod.cli, ["update", "--upgrade-tool"])
 
     assert result.exit_code == 0, result.output
     upgrade.assert_called_once_with(info)
-    refresh.assert_called_once()
+    refresh.assert_not_called()
+
+
+def test_update_uvx_bootstrap_refreshes_from_persistent_tool_python(monkeypatch):
+    info = InstallationInfo(InstallMode.UVX, "0.4.4", "/usr/bin/uv")
+    in_process_refresh = Mock()
+    fresh_refresh = Mock(
+        return_value=SimpleNamespace(returncode=0, stdout="persistent artifacts\n", stderr="")
+    )
+    check = Mock()
+    monkeypatch.setattr(cli_mod, "detect_installation", lambda: info)
+    monkeypatch.setattr(cli_mod, "upgrade_uv_tool", lambda value: UpgradeResult(0, ""))
+    monkeypatch.setattr(
+        cli_mod,
+        "find_uv_tool_python",
+        lambda uv: "/uv-tools/rag-reviewer/bin/python",
+        raising=False,
+    )
+    monkeypatch.setattr(cli_mod, "run_fresh_artifact_refresh", fresh_refresh)
+    monkeypatch.setattr(cli_mod, "_refresh_update_artifacts", in_process_refresh)
+    monkeypatch.setattr(cli_mod, "check_latest", check)
+
+    result = CliRunner().invoke(cli_mod.cli, ["update", "--upgrade-tool"])
+
+    assert result.exit_code == 0, result.output
+    assert "persistent artifacts" in result.output
+    fresh_refresh.assert_called_once_with(
+        python_executable="/uv-tools/rag-reviewer/bin/python"
+    )
+    in_process_refresh.assert_not_called()
+    check.assert_not_called()
 
 
 def test_refresh_artifacts_updates_compose_and_skips_absent_clients(monkeypatch, tmp_path):

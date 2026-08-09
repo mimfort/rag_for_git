@@ -1,11 +1,14 @@
 import hashlib
 import json
+import threading
 from contextlib import nullcontext
+from contextlib import contextmanager
 from types import SimpleNamespace
 
 import reviewer.update_lifecycle as lifecycle
 from reviewer.update_lifecycle import (
     download_compose,
+    find_uv_tool_python,
     run_fresh_artifact_refresh,
     sync_compose_file,
 )
@@ -120,6 +123,7 @@ def test_run_fresh_artifact_refresh_uses_same_python_environment():
         (
             [
                 "/tools/rag-reviewer/bin/python",
+                "-I",
                 "-c",
                 "from reviewer.entrypoints.launcher import main; main()",
                 "update",
@@ -173,3 +177,83 @@ def test_sync_compose_preserves_edit_that_races_managed_update(monkeypatch, tmp_
 
     assert result.action == "preserved"
     assert target.read_bytes() == custom
+
+
+def test_find_uv_tool_python_resolves_persistent_environment(tmp_path):
+    tools = tmp_path / "uv-tools"
+    python = tools / "rag-reviewer" / "bin" / "python"
+    python.parent.mkdir(parents=True)
+    python.write_bytes(b"")
+    calls = []
+
+    def run(argv, **kwargs):
+        calls.append((argv, kwargs))
+        return SimpleNamespace(returncode=0, stdout=f"{tools}\n")
+
+    result = find_uv_tool_python("/opt/uv", run=run, system="Linux")
+
+    assert result == str(python)
+    assert calls == [
+        (["/opt/uv", "tool", "dir"], {"capture_output": True, "text": True})
+    ]
+
+
+def test_find_uv_tool_python_returns_none_for_missing_environment(tmp_path):
+    result = find_uv_tool_python(
+        "/opt/uv",
+        run=lambda argv, **kwargs: SimpleNamespace(
+            returncode=0,
+            stdout=f"{tmp_path / 'uv-tools'}\n",
+        ),
+        system="Windows",
+    )
+
+    assert result is None
+
+
+def test_update_lock_serializes_parallel_syncs(tmp_path):
+    acquired = threading.Event()
+
+    def contender():
+        with lifecycle._update_lock(tmp_path):
+            acquired.set()
+
+    with lifecycle._update_lock(tmp_path):
+        thread = threading.Thread(target=contender)
+        thread.start()
+        assert acquired.wait(0.1) is False
+
+    assert acquired.wait(1) is True
+    thread.join()
+
+
+def test_sync_compose_holds_update_lock(monkeypatch, tmp_path):
+    entered = []
+
+    @contextmanager
+    def lock(directory):
+        entered.append(directory)
+        yield
+
+    monkeypatch.setattr(lifecycle, "_update_lock", lock)
+
+    sync_compose_file(b"services: {}\n", config_dir=tmp_path)
+
+    assert entered == [tmp_path]
+
+
+def test_sync_compose_preserves_file_created_during_missing_target_race(monkeypatch, tmp_path):
+    target = tmp_path / "docker-compose.yml"
+    custom = b"custom\n"
+
+    def collide(path, content):
+        path.write_bytes(custom)
+        return False
+
+    monkeypatch.setattr(lifecycle, "_atomic_create", collide, raising=False)
+
+    result = sync_compose_file(b"canonical\n", config_dir=tmp_path)
+
+    assert result.action == "preserved"
+    assert target.read_bytes() == custom
+    assert not (tmp_path / ".reviewer-update.json").exists()

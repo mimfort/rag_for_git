@@ -813,6 +813,21 @@ def test_update_details_explicitly_keep_startup_and_check_read_only():
     assert calls == []
 
 
+def test_update_special_action_ignores_f2_without_detached_focus_crash():
+    with create_pipe_input() as pipe:
+        stop = threading.Timer(0.2, lambda: pipe.send_bytes(b"\x03"))
+        stop.start()
+        pipe.send_bytes(b"\r\x1bOQ")
+        result = run_launcher(
+            commands=(_spec("update"),),
+            input=pipe,
+            output=DummyOutput(),
+        )
+        stop.join()
+
+    assert result == LauncherResult(None, 130)
+
+
 def test_update_check_runs_once_and_does_not_return_upgrade_without_confirm():
     checked = threading.Event()
     info = InstallationInfo(InstallMode.UV_TOOL, "0.4.0", "/usr/bin/uv")

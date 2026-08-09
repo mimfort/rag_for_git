@@ -50,6 +50,7 @@ from reviewer.services.status import build_status_report, render_status, render_
 from reviewer.tasks.boards.errors import sanitize_provider_text
 from reviewer.update_lifecycle import (
     download_compose,
+    find_uv_tool_python,
     run_fresh_artifact_refresh,
     sync_compose_file,
 )
@@ -1578,6 +1579,20 @@ def update(ctx: click.Context, upgrade_tool: bool, refresh_artifacts: bool) -> N
         if result.returncode != 0:
             raise click.ClickException(f"Ошибка uv tool upgrade: {result.stderr}")
         click.echo("✓ Persistent uv tool installation обновлена.")
+        tool_python = find_uv_tool_python(installation.uv_executable)
+        if tool_python is None:
+            raise click.ClickException(
+                "Persistent tool обновлён, но его Python executable не найден"
+            )
+        fresh = run_fresh_artifact_refresh(python_executable=tool_python)
+        if fresh.stdout:
+            click.echo(fresh.stdout, nl=not fresh.stdout.endswith("\n"))
+        if fresh.returncode != 0:
+            detail = fresh.stderr.strip() or "неизвестная ошибка"
+            raise click.ClickException(
+                f"Persistent tool обновлён, artifact refresh завершился ошибкой: {detail}"
+            )
+        return
 
     version_check = check_latest(installation)
     if version_check.latest is None:

@@ -174,7 +174,10 @@ class _LauncherUI:
 
     def toggle_advanced(self, event: KeyPressEvent) -> None:
         """Переключить расширенные поля и перестроить форму."""
-        if self.controller.screen is not Screen.DETAILS:
+        if (
+            self.controller.screen is not Screen.DETAILS
+            or self.controller.selected.special_action is not None
+        ):
             return
         self.controller.toggle_advanced()
         self._build_form()
