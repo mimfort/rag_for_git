@@ -34,7 +34,6 @@ from reviewer.launcher.command import parameter_occurrences, prepare_command
 from reviewer.launcher.controller import LauncherController, Screen
 from reviewer.launcher.models import CommandSpec, LauncherResult, ParameterSpec
 from reviewer.versioning import (
-    InstallMode,
     InstallationInfo,
     VersionCheck,
     check_latest,
@@ -120,7 +119,7 @@ class _LauncherUI:
         """Подтвердить preview или существующий Click update path."""
         if self.controller.screen is Screen.PREVIEW:
             self.controller.confirm()
-        elif self.controller.screen is Screen.UPDATE_RESULT and self._can_update_uv_tool():
+        elif self.controller.screen is Screen.UPDATE_RESULT and self._can_run_update():
             self.controller.result = LauncherResult(("update",), 0)
         if self.controller.result is not None:
             self._revoke_updates()
@@ -300,13 +299,15 @@ class _LauncherUI:
             Label("Проверка обновлений"),
             Label(self._update_message),
         ]
-        if self._can_update_uv_tool():
+        if self._can_run_update():
             preview = prepare_command(self.controller.selected, {}, set()).preview
             children.extend(
                 [
                     Label(f"Команда после подтверждения: {preview}"),
                     Label("Эффект после подтверждения: запись"),
-                    Label("Внимание: будет изменена постоянная uv tool-установка rag-reviewer."),
+                    Label(
+                        "Будут обновлены package, integrations, скилы и управляемый Compose."
+                    ),
                 ]
             )
         children.append(Label(self._update_hint))
@@ -329,32 +330,18 @@ class _LauncherUI:
         if not check.current_valid:
             return (
                 "Не удалось определить корректную текущую версию. "
-                "Сравнение и обновление недоступны."
+                "Package не будет изменён; остальные artifacts можно обновить."
             )
         if check.update_available:
             return f"Доступна новая версия: {info.current} → {check.latest}"
         return f"Версия актуальна: {info.current}."
 
     def _update_hint(self) -> str:
-        if self.update_error is not None or (
-            self.version_check is not None and self.version_check.latest is None
-        ):
-            return "Повторить проверку: Esc — назад, затем Enter"
+        if self._can_run_update():
+            return "Enter — подтвердить и передать команду · Esc — назад"
         if self.version_check is None:
             return "Ctrl+C — выход"
-        info = self.version_check.installation
-        if not self.version_check.current_valid:
-            return "Исправьте установку rag-reviewer · Esc — назад"
-        if self._can_update_uv_tool():
-            return "Enter — подтвердить и передать команду · Esc — назад"
-        if info.mode is InstallMode.EDITABLE:
-            return "Для обновления: git pull && pip install -e . · Esc — назад"
-        if info.mode is InstallMode.UVX:
-            return (
-                "MCP подхватит @latest автоматически; "
-                "CLI: uvx --from rag-reviewer@latest reviewer <команда> · Esc — назад"
-            )
-        return "Обновление не требуется · Esc — назад"
+        return "Повторить проверку: Esc — назад, затем Enter"
 
     def _build_form(self) -> None:
         self._drop_form()
@@ -554,12 +541,9 @@ class _LauncherUI:
         installation = self.installation_detector()
         return self.version_checker(installation, timeout=5)
 
-    def _can_update_uv_tool(self) -> bool:
-        return (
-            self.version_check is not None
-            and self.version_check.current_valid
-            and self.version_check.update_available
-            and self.version_check.installation.mode is InstallMode.UV_TOOL
+    def _can_run_update(self) -> bool:
+        return not self.checking_update and (
+            self.version_check is not None or self.update_error is not None
         )
 
 

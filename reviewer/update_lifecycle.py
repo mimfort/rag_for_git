@@ -3,8 +3,8 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import shutil
 import subprocess
+import sys
 import tempfile
 import urllib.request
 from collections.abc import Callable
@@ -47,14 +47,19 @@ def download_compose(
 
 def run_fresh_artifact_refresh(
     *,
-    which: Callable[[str], str | None] = shutil.which,
+    python_executable: str = sys.executable,
     run: Callable = subprocess.run,
 ) -> RefreshProcessResult:
-    executable = which("reviewer")
-    if executable is None:
-        return RefreshProcessResult(127, "", "reviewer не найден в PATH")
+    if not python_executable:
+        return RefreshProcessResult(127, "", "Python executable не найден")
     result = run(
-        [executable, "update", "--refresh-artifacts"],
+        [
+            python_executable,
+            "-c",
+            "from reviewer.entrypoints.launcher import main; main()",
+            "update",
+            "--refresh-artifacts",
+        ],
         capture_output=True,
         text=True,
     )
@@ -107,6 +112,8 @@ def sync_compose_file(
     target = directory / "docker-compose.yml"
     state_path = directory / STATE_NAME
     incoming_hash = _digest(content)
+    if target.is_symlink():
+        return ComposeSyncResult("preserved", target)
     if target.exists():
         existing = target.read_bytes()
         existing_hash = _digest(existing)
@@ -116,7 +123,14 @@ def sync_compose_file(
         action = "current" if _read_recorded_hash(state_path) == incoming_hash else "adopted"
         _write_state(state_path, incoming_hash)
         return ComposeSyncResult(action, target)
-    if existing_hash is not None and _read_recorded_hash(state_path) == existing_hash:
+    recorded_hash = _read_recorded_hash(state_path)
+    if existing_hash is not None and recorded_hash == existing_hash:
+        latest = target.read_bytes()
+        if latest != existing:
+            if latest == content:
+                _write_state(state_path, incoming_hash)
+                return ComposeSyncResult("current", target)
+            return ComposeSyncResult("preserved", target)
         _atomic_write(target, content)
         _write_state(state_path, incoming_hash)
         return ComposeSyncResult("updated", target)

@@ -3,6 +3,7 @@ import json
 from contextlib import nullcontext
 from types import SimpleNamespace
 
+import reviewer.update_lifecycle as lifecycle
 from reviewer.update_lifecycle import (
     download_compose,
     run_fresh_artifact_refresh,
@@ -103,7 +104,7 @@ def test_download_compose_uses_canonical_url_and_no_cache_headers():
     }
 
 
-def test_run_fresh_artifact_refresh_invokes_reviewer_hidden_phase():
+def test_run_fresh_artifact_refresh_uses_same_python_environment():
     calls = []
 
     def run(argv, **kwargs):
@@ -111,13 +112,19 @@ def test_run_fresh_artifact_refresh_invokes_reviewer_hidden_phase():
         return SimpleNamespace(returncode=0, stdout="compose current\n", stderr="")
 
     result = run_fresh_artifact_refresh(
-        which=lambda name: "/tools/reviewer" if name == "reviewer" else None,
+        python_executable="/tools/rag-reviewer/bin/python",
         run=run,
     )
 
     assert calls == [
         (
-            ["/tools/reviewer", "update", "--refresh-artifacts"],
+            [
+                "/tools/rag-reviewer/bin/python",
+                "-c",
+                "from reviewer.entrypoints.launcher import main; main()",
+                "update",
+                "--refresh-artifacts",
+            ],
             {"capture_output": True, "text": True},
         )
     ]
@@ -126,7 +133,43 @@ def test_run_fresh_artifact_refresh_invokes_reviewer_hidden_phase():
 
 
 def test_run_fresh_artifact_refresh_reports_missing_executable():
-    result = run_fresh_artifact_refresh(which=lambda name: None)
+    result = run_fresh_artifact_refresh(python_executable="")
 
     assert result.returncode == 127
-    assert "reviewer не найден" in result.stderr
+    assert "Python executable не найден" in result.stderr
+
+
+def test_sync_compose_preserves_symlink_even_when_content_matches(tmp_path):
+    source = tmp_path / "custom-compose.yml"
+    content = b"services:\n  db: {}\n"
+    source.write_bytes(content)
+    target = tmp_path / "docker-compose.yml"
+    target.symlink_to(source)
+
+    result = sync_compose_file(content, config_dir=tmp_path)
+
+    assert result.action == "preserved"
+    assert target.is_symlink()
+    assert source.read_bytes() == content
+    assert not (tmp_path / ".reviewer-update.json").exists()
+
+
+def test_sync_compose_preserves_edit_that_races_managed_update(monkeypatch, tmp_path):
+    old = b"services:\n  db: {image: old}\n"
+    new = b"services:\n  db: {image: new}\n"
+    custom = b"services:\n  db: {ports: [custom]}\n"
+    sync_compose_file(old, config_dir=tmp_path)
+    target = tmp_path / "docker-compose.yml"
+    original_read = lifecycle._read_recorded_hash
+
+    def read_then_edit(path):
+        recorded = original_read(path)
+        target.write_bytes(custom)
+        return recorded
+
+    monkeypatch.setattr(lifecycle, "_read_recorded_hash", read_then_edit)
+
+    result = sync_compose_file(new, config_dir=tmp_path)
+
+    assert result.action == "preserved"
+    assert target.read_bytes() == custom

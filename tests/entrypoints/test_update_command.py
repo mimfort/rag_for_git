@@ -392,6 +392,40 @@ def test_update_invalid_package_version_still_refreshes_artifacts(monkeypatch):
     refresh.assert_called_once()
 
 
+@pytest.mark.parametrize(
+    "version_check",
+    [
+        VersionCheck(
+            InstallationInfo(InstallMode.UVX, "0.4.4", "/usr/bin/uv"),
+            None,
+            False,
+        ),
+        VersionCheck(
+            InstallationInfo(InstallMode.UVX, "local", "/usr/bin/uv"),
+            "0.4.4",
+            False,
+            current_valid=False,
+        ),
+    ],
+)
+def test_update_explicit_bootstrap_is_not_skipped_by_version_check_failure(
+    monkeypatch, version_check
+):
+    info = version_check.installation
+    upgrade = Mock(return_value=UpgradeResult(0, ""))
+    refresh = Mock()
+    monkeypatch.setattr(cli_mod, "detect_installation", lambda: info)
+    monkeypatch.setattr(cli_mod, "check_latest", lambda value: version_check)
+    monkeypatch.setattr(cli_mod, "upgrade_uv_tool", upgrade)
+    monkeypatch.setattr(cli_mod, "_refresh_update_artifacts", refresh)
+
+    result = CliRunner().invoke(cli_mod.cli, ["update", "--upgrade-tool"])
+
+    assert result.exit_code == 0, result.output
+    upgrade.assert_called_once_with(info)
+    refresh.assert_called_once()
+
+
 def test_refresh_artifacts_updates_compose_and_skips_absent_clients(monkeypatch, tmp_path):
     target = tmp_path / "docker-compose.yml"
     install_call = Mock()
@@ -502,13 +536,17 @@ def test_refresh_artifacts_aggregates_integration_failure(monkeypatch, tmp_path)
     monkeypatch.setattr(
         cli_mod,
         "_install_detected_clients",
-        lambda ctx: (_ for _ in ()).throw(click.ClickException("Codex failed")),
+        lambda ctx: (_ for _ in ()).throw(
+            click.ClickException("Codex failed at /secret/profile")
+        ),
     )
 
     result = CliRunner().invoke(cli_mod.cli, ["update", "--refresh-artifacts"])
 
     assert result.exit_code != 0
-    assert "Integrations: Codex failed" in result.output
+    assert "Integrations: ClickException" in result.output
+    assert "reviewer install --all" in result.output
+    assert "/secret/profile" not in result.output
 
 
 def test_refresh_artifacts_sanitizes_unexpected_integration_failure(monkeypatch, tmp_path):
@@ -559,6 +597,19 @@ def test_has_detected_clients_includes_native_claude_cli(monkeypatch):
         cli_mod._shutil,
         "which",
         lambda name: "/usr/bin/claude" if name == "claude" else None,
+    )
+
+    assert cli_mod._has_detected_clients() is True
+
+
+def test_has_detected_clients_includes_native_codex_cli(monkeypatch):
+    from reviewer import install as inst
+
+    monkeypatch.setattr(inst, "detect_installed", lambda: [])
+    monkeypatch.setattr(
+        cli_mod._shutil,
+        "which",
+        lambda name: "/usr/bin/codex" if name == "codex" else None,
     )
 
     assert cli_mod._has_detected_clients() is True

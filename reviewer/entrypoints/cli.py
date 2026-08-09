@@ -1039,6 +1039,8 @@ def install(client: str | None, all_clients: bool, list_clients: bool,
         targets = [c for c in inst.detect_installed() if c.key != "claude-code"]
         if _shutil.which("claude"):
             targets.insert(0, inst.CLIENTS["claude-code"])
+        if _shutil.which("codex") and not any(target.key == "codex" for target in targets):
+            targets.append(inst.CLIENTS["codex"])
         if not targets:
             raise click.ClickException(
                 "Не обнаружено установленных клиентов. Укажите явно: reviewer install <client> "
@@ -1491,7 +1493,9 @@ def init(
 def _has_detected_clients() -> bool:
     from reviewer import install as inst
 
-    return bool(inst.detect_installed()) or _shutil.which("claude") is not None
+    return bool(inst.detect_installed()) or any(
+        _shutil.which(executable) is not None for executable in ("claude", "codex")
+    )
 
 
 def _install_detected_clients(ctx: click.Context) -> None:
@@ -1531,7 +1535,10 @@ def _refresh_update_artifacts(ctx: click.Context) -> None:
         try:
             _install_detected_clients(ctx)
         except click.ClickException as exc:
-            errors.append(f"Integrations: {exc.format_message()}")
+            errors.append(
+                f"Integrations: {type(exc).__name__} "
+                "(подробности: reviewer install --all)"
+            )
         except Exception as exc:  # noqa: BLE001 - do not expose profile paths or config content
             errors.append(f"Integrations: {type(exc).__name__}")
     else:
@@ -1566,6 +1573,11 @@ def update(ctx: click.Context, upgrade_tool: bool, refresh_artifacts: bool) -> N
 
     mode = "uv tool (постоянная)" if installation.mode is InstallMode.UV_TOOL else "uvx (временная)"
     click.echo(f"Режим: {mode} | Версия: {installation.current}")
+    if upgrade_tool and installation.mode is InstallMode.UVX:
+        result = upgrade_uv_tool(installation)
+        if result.returncode != 0:
+            raise click.ClickException(f"Ошибка uv tool upgrade: {result.stderr}")
+        click.echo("✓ Persistent uv tool installation обновлена.")
 
     version_check = check_latest(installation)
     if version_check.latest is None:
@@ -1582,11 +1594,6 @@ def update(ctx: click.Context, upgrade_tool: bool, refresh_artifacts: bool) -> N
         click.echo(f"Версия актуальна: {installation.current}.")
         if installation.mode is not InstallMode.UV_TOOL:
             click.echo("MCP-сервер обновляется автоматически — в конфиге клиента прописан @latest.")
-        if upgrade_tool and installation.mode is InstallMode.UVX:
-            result = upgrade_uv_tool(installation)
-            if result.returncode != 0:
-                raise click.ClickException(f"Ошибка uv tool upgrade: {result.stderr}")
-            click.echo("✓ Persistent uv tool installation обновлена.")
         _refresh_update_artifacts(ctx)
         return
 
@@ -1616,11 +1623,6 @@ def update(ctx: click.Context, upgrade_tool: bool, refresh_artifacts: bool) -> N
             "MCP-сервер подхватит обновление автоматически при следующем запуске (@latest в конфиге).\n"
             "Для CLI: uvx --from rag-reviewer@latest reviewer <команда>"
         )
-        if upgrade_tool:
-            result = upgrade_uv_tool(installation)
-            if result.returncode != 0:
-                raise click.ClickException(f"Ошибка uv tool upgrade: {result.stderr}")
-            click.echo("✓ Persistent uv tool installation обновлена.")
         _refresh_update_artifacts(ctx)
 
 
