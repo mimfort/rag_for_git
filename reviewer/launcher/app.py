@@ -95,6 +95,9 @@ class _LauncherUI:
         self.controller.open_selected()
         if self.controller.screen is not Screen.DETAILS:
             return
+        if self.controller.selected.special_action is not None:
+            event.app.invalidate()
+            return
         self._build_form()
         if self.form_widgets:
             event.app.layout.focus(self.form_widgets[0])
