@@ -1755,7 +1755,10 @@ class MCPReviewService:
         их в deferred (PRI-165). Ответ содержит layout_token — canonical identity default
         depth + normalized overrides. Если depth не задан, он берётся из effective layered
         policy с fail-soft env-дефолтом. offset/limit пагинируют финальный (после cap)
-        детерминированно отсортированный по cluster_key набор кластеров."""
+        детерминированно отсортированный по cluster_key набор кластеров.
+        В полном формате ``files`` содержит только неизменённые файлы: пути из
+        added_files/changed_files/moved_files в нём не повторяются, полный
+        состав кластера = files ∪ этих трёх списков (PRI-232)."""
         # Мягкая нормализация: тул вызывает LLM, падение на кривом аргументе
         # хуже, чем предсказуемое приведение. limit<=0 == «без лимита».
         page_offset = max(0, int(offset))
@@ -1870,11 +1873,23 @@ class MCPReviewService:
             serialized = self._serialize_summary_delta(
                 delta, include_reused_content=False
             )
+            # PRI-232: пути delta-списков не дублируются в files — там остаются
+            # только неизменённые файлы. Полный состав кластера восстановим как
+            # files ∪ added_files ∪ changed_files ∪ moved_files (removed_files в
+            # состав уже не входят).
+            delta_paths = {
+                item["path"]
+                for key in ("added_files", "changed_files", "moved_files")
+                for item in serialized[key]
+            }
+            unchanged_files = [
+                path for path in cluster.files if path not in delta_paths
+            ]
             clusters.append(
                 {
                     "cluster_key": cluster.key,
                     "num_members": cluster.num_members,
-                    "files": cluster.files,
+                    "files": unchanged_files,
                     "top_symbols": cluster.top_symbols,
                     "source_hash": cluster.source_hash,
                     "stale": stale[cluster.key],

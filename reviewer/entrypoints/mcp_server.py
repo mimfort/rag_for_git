@@ -324,7 +324,11 @@ def create_server(service: MCPReviewService) -> FastMCP:
         cluster_key, num_members, files, top_symbols (по центральности),
         source_hash, stale, bootstrap, full_rebuild, reused_files и file-level
         delta (added_files / changed_files / moved_files — объекты
-        {path, fingerprint}; removed_files — пути).
+        {path, fingerprint}; removed_files — пути). files содержит ТОЛЬКО
+        неизменённые файлы: пути из added_files / changed_files / moved_files в
+        нём не повторяются. Полный состав кластера восстановим как
+        files ∪ added_files ∪ changed_files ∪ moved_files (removed_files в
+        состав уже не входят).
 
         compact=True — сжатый формат без file-level payload: кластер содержит
         только cluster_key, num_members, source_hash, stale, bootstrap,

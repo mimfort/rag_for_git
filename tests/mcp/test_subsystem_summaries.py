@@ -228,6 +228,14 @@ def test_list_subsystem_clusters_adds_file_delta_without_changing_old_fields():
     assert cluster["bootstrap"] is False
     assert cluster["full_rebuild"] is False
     assert out["deferred_files"] == 0
+    assert not (
+        set(cluster["files"])
+        & {
+            item["path"]
+            for key in ("added_files", "changed_files", "moved_files")
+            for item in cluster[key]
+        }
+    )
 
 
 def test_list_subsystem_clusters_counts_pending_files_in_deferred_clusters():
@@ -1797,3 +1805,40 @@ def test_empty_index_note_carries_pagination_fields():
     assert out["total_clusters"] == 0
     assert out["has_more"] is False
     assert "note" in out
+
+
+def test_full_format_files_do_not_repeat_delta_paths():
+    out = _svc(_one_cluster_components()).list_subsystem_clusters(
+        "o/n", "dev", depth=2, min_size=1
+    )
+    [cluster] = out["clusters"]
+    delta_paths = {
+        item["path"]
+        for key in ("added_files", "changed_files", "moved_files")
+        for item in cluster[key]
+    }
+    assert delta_paths, "фикстура должна давать непустую дельту"
+    assert not (set(cluster["files"]) & delta_paths), "путь продублирован"
+    # полный состав кластера восстановим из ответа
+    assert set(cluster["files"]) | delta_paths == {
+        "reviewer/index/a.py",
+        "reviewer/index/b.py",
+    }
+
+
+def test_files_and_delta_never_overlap_across_all_clusters():
+    """Инвариант держится на всех кластерах, включая те, где дельта покрывает
+    весь состав (bootstrap/full_rebuild) — там files оказывается пустым."""
+    out = _svc(_four_cluster_components()).list_subsystem_clusters(
+        "o/n", "dev", depth=2, min_size=1, cap=0
+    )
+    assert out["clusters"], "фикстура должна давать кластеры"
+    for cluster in out["clusters"]:
+        delta_paths = {
+            item["path"]
+            for key in ("added_files", "changed_files", "moved_files")
+            for item in cluster[key]
+        }
+        assert not (set(cluster["files"]) & delta_paths)
+        # состав кластера восстановим целиком
+        assert len(set(cluster["files"]) | delta_paths) == cluster["num_members"]
