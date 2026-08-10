@@ -564,6 +564,7 @@ def build_config_report(
         "sources": sources,
         "shadowed": {key: list(value) for key, value in meta.shadowed.items()},
         "warnings": list(meta.warnings),
+        "skipped": [item.as_dict() for item in meta.skipped],
     }
 
 

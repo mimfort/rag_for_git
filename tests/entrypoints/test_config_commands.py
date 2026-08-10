@@ -89,7 +89,10 @@ def test_config_show_skips_credential_home_yaml_without_echoing_secret(
         cli_mod.cli, ["config", "show", "--repo", "o/r", "--branch", "main"]
     )
 
-    assert result.exit_code == 0, result.output
+    # PRI-234: credential-ключ в home-слое пропускает слой (не применяется) —
+    # это то же «слой не применён», что и другие категории skipped, поэтому
+    # код возврата теперь тоже ненулевой (раньше был 0).
+    assert result.exit_code != 0, result.output
     assert "credential key github_token" in result.output
     assert secret not in result.output
     assert secret not in repr(result.exception)
