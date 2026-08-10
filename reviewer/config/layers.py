@@ -106,7 +106,10 @@ def home_repo_path(repo: str, config_root: Path | None = None) -> Path:
 def _read_mapping(text: str | None, source: str) -> dict[str, object]:
     try:
         data = yaml.safe_load(text) if text else {}
-    except yaml.YAMLError:
+    except (yaml.YAMLError, ValueError, TypeError, ArithmeticError):
+        # PyYAML-конструкторы implicit-скаляров (timestamp/int/float) бросают
+        # голый ValueError/TypeError/ArithmeticError, не подкласс YAMLError
+        # (например `2020-13-45` -> ValueError('month must be in 1..12')).
         raise HomeConfigError(f"{source}: конфиг не прочитан: YAML") from None
     if data is None:
         return {}
@@ -137,6 +140,13 @@ _SETTINGS_SECRET_NAMES = frozenset({
     "youtrack_token",
 })
 _MISSING = object()
+
+# Префикс warning'а «коммиченный слой не прочитан» (PRI-234 fail-soft): вынесен
+# как модульная константа, чтобы потребители вроде sync_board могли отличить
+# этот НЕ блокирующий warning от остальных (credential/invalid/malformed
+# домашнего слоя, игнор ключа repository) без матчинга произвольного текста
+# чужого модуля.
+COMMITTED_UNREAD_WARNING_PREFIX = ".review.yml: слой не прочитан ("
 
 
 @lru_cache(maxsize=1)
@@ -386,7 +396,7 @@ def resolve_policy_data(
                 http_status=http_status,
             )
             message = (
-                f".review.yml: слой не прочитан (repo={repo}, ref={ref}, "
+                f"{COMMITTED_UNREAD_WARNING_PREFIX}repo={repo}, ref={ref}, "
                 f"category={category}, transport={transport}, "
                 f"http_status={http_status})"
             )
@@ -978,7 +988,10 @@ def _simulated_repo_layer(
         merged[key] = value
         sources[key] = source
     return merged, ResolutionMeta(
-        sources, {key: tuple(value) for key, value in shadowed.items()}, meta.warnings
+        sources,
+        {key: tuple(value) for key, value in shadowed.items()},
+        meta.warnings,
+        skipped=meta.skipped,
     )
 
 

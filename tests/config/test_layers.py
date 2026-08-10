@@ -377,6 +377,21 @@ def test_migrate_creates_file_and_second_call_is_noop(tmp_path: Path) -> None:
     assert destination.read_text(encoding="utf-8") == source
 
 
+def test_migrate_report_carries_skipped_global_home_layer(tmp_path: Path) -> None:
+    """M-1: `_simulated_repo_layer` не должен терять meta.skipped."""
+    _write(tmp_path / "review.yml", "github_token: leaked-value\n")
+    source = "paths:\n  ignore: [vendor]\n"
+
+    result = migrate_repo_config(
+        "o/r", "main", lambda ref: source, config_root=tmp_path
+    )
+
+    assert result.created is True
+    assert [(item.layer, item.category) for item in result.meta.skipped] == [
+        ("home:review.yml", "credential")
+    ]
+
+
 def test_migrate_refuses_different_destination(tmp_path: Path) -> None:
     destination = tmp_path / "repos/o/r.yml"
     _write(destination, "max_comments: 3\n")
@@ -1080,6 +1095,35 @@ def test_committed_failure_diagnostic_never_echoes_url_or_token(tmp_path):
         )
     assert secret not in str(excinfo.value)
     assert secret not in "".join(traceback.format_exception(excinfo.value))
+
+
+def test_bare_valueerror_from_pyyaml_scalar_is_soft_and_categorized(tmp_path):
+    """PyYAML бросает голый ValueError (не YAMLError) для невалидных implicit-скаляров."""
+    _write(tmp_path / "repos/o/r.yml", "max_comments: 5\n")
+
+    data, meta = resolve_policy_data(
+        "o/r", "main", lambda _ref: "ignore_before: 2020-13-45\n", config_root=tmp_path
+    )
+
+    assert data == {"max_comments": 5}
+    assert [(item.layer, item.category) for item in meta.skipped] == [
+        (".review.yml", "malformed")
+    ]
+
+
+def test_bare_valueerror_from_pyyaml_scalar_in_home_layer_is_soft(tmp_path):
+    """Тот же голый ValueError в home:review.yml мягко пропускается."""
+    _write(tmp_path / "review.yml", "ignore_before: 2020-13-45\n")
+    _write(tmp_path / "repos/o/r.yml", "max_comments: 5\n")
+
+    data, meta = resolve_policy_data(
+        "o/r", "main", lambda _ref: None, config_root=tmp_path
+    )
+
+    assert data == {"max_comments": 5}
+    assert [(item.layer, item.category) for item in meta.skipped] == [
+        ("home:review.yml", "malformed")
+    ]
 
 
 def test_migration_is_loud_when_committed_layer_cannot_be_read(tmp_path):
