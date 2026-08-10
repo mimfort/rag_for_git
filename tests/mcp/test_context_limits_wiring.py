@@ -216,6 +216,24 @@ def test_resolve_context_limits_uses_falsey_injected_vcs_factory() -> None:
     injected_vcs.close.assert_not_called()
 
 
+def test_home_repo_limits_survive_unavailable_vcs(isolated_xdg_config_home) -> None:
+    """PRI-234: при недоступном VCS лимиты берутся из home-слоя, а не из env-дефолтов."""
+    path = isolated_xdg_config_home / "rag-reviewer/repos/o/r.yml"
+    path.parent.mkdir(parents=True)
+    path.write_text("context_limits: {graph: {hops: 2}}\n", encoding="utf-8")
+    s = _settings()
+    components = MagicMock()
+    vcs = MagicMock()
+    vcs.get_file_at_ref.side_effect = RuntimeError("network down")
+    svc = MCPReviewService(s, components, vcs_factory=lambda o, n: vcs)
+
+    cl = svc._resolve_context_limits("o/r", "dev")
+
+    # Дефолт graph.hops — 1; значение 2 доказывает, что home-слой применён,
+    # хотя коммиченный слой недоступен.
+    assert cl.graph.hops == 2
+
+
 class _FakeRetriever:
     """Фейковый Retriever — фиксирует kwargs вызова search_base (новая сигнатура)."""
 

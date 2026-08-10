@@ -810,10 +810,14 @@ def index(repo: str, ref: str | None, branch_opt: str | None, repo_tag: str | No
     try:
         c.store.init_schema()
         files = list_python_files(repo, ref)
+        # strict_committed: неполный paths.ignore залил бы в индекс файлы,
+        # которые репозиторий исключил; фетчер здесь локальный (file_at_ref),
+        # его сбой означает битый клон, а не недоступную сеть.
         policy_data, policy_meta = resolve_policy_data(
             repo_id,
             ref,
             lambda selected_ref: file_at_ref(repo, ".review.yml", selected_ref),
+            strict_committed=True,
         )
         policy = ReviewPolicy.load_data(s, policy_data)
         ignore = policy.ignore

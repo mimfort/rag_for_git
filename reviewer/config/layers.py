@@ -863,7 +863,8 @@ def _existing_migration_result(
             destination, False, False, conflicts, before_data, _empty_meta()
         )
     data, meta = resolve_policy_data(
-        repo, ref, fetch_repo_yaml, config_root=root, strict_home=True
+        repo, ref, fetch_repo_yaml, config_root=root,
+        strict_home=True, strict_committed=True,
     )
     _effective_policy_snapshot(data, settings)
     return MigrationResult(destination, False, True, (), data, meta)
@@ -995,7 +996,15 @@ def migrate_repo_config(
 
     repo = normalize_repo(repo)
     root = config_root or reviewer_config_root()
-    source_text = fetch_repo_yaml(ref)
+    try:
+        source_text = fetch_repo_yaml(ref)
+    except Exception as exc:  # noqa: BLE001 — единый бессекретный диагностик
+        transport, http_status = classify_fetch_error(exc)
+        raise HomeConfigError(
+            f".review.yml: слой не прочитан (repo={repo}, ref={ref}, "
+            f"category=unavailable, transport={transport}, "
+            f"http_status={http_status})"
+        ) from None
     candidate = _read_mapping(source_text, ".review.yml")
     if not candidate:
         raise HomeConfigError(".review.yml отсутствует или пуст")
@@ -1019,7 +1028,8 @@ def migrate_repo_config(
         return source_text
 
     before_data, before_meta = resolve_policy_data(
-        repo, ref, fetch_snapshot, config_root=root, strict_home=True
+        repo, ref, fetch_snapshot, config_root=root,
+        strict_home=True, strict_committed=True,
     )
     before_effective = _effective_policy_snapshot(before_data, settings)
     destination = home_repo_path(repo, root)

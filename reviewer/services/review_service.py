@@ -219,10 +219,13 @@ class ReviewService:
 
             # Политика резолвится по точному base-коммиту PR и переиспользуется
             # для досинка base-индекса, overlay и дальнейшего гейта.
+            # strict_committed: в ревью тихая потеря политики недопустима —
+            # неполный gate пропустил бы находки, которые репозиторий отключил.
             policy_data, policy_meta = resolve_policy_data(
                 repo,
                 prq.base_sha,
                 lambda ref: vcs.get_file_at_ref(".review.yml", ref),
+                strict_committed=True,
             )
             policy = ReviewPolicy.load_data(self.settings, policy_data)
             ignore = policy.ignore

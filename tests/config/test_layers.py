@@ -1080,3 +1080,14 @@ def test_committed_failure_diagnostic_never_echoes_url_or_token(tmp_path):
         )
     assert secret not in str(excinfo.value)
     assert secret not in "".join(traceback.format_exception(excinfo.value))
+
+
+def test_migration_is_loud_when_committed_layer_cannot_be_read(tmp_path):
+    """Перенос неполной политики в home-файл необратим — миграция громкая."""
+    def boom(_ref):
+        raise RuntimeError("сеть недоступна")
+
+    with pytest.raises(HomeConfigError):
+        migrate_repo_config(
+            "o/r", "main", boom, config_root=tmp_path, settings=Settings(_env_file=None)
+        )
