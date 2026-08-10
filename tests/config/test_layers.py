@@ -918,3 +918,49 @@ def test_migration_strips_repository_block_when_publishing_new_config(tmp_path):
     published_text = result.path.read_text(encoding="utf-8")
     assert "repository" not in published_text
     assert "evil" not in published_text
+
+
+def test_home_credential_key_is_recorded_as_skipped_layer(tmp_path):
+    """PRI-234: пропуск домашнего слоя виден не только строкой в warnings."""
+    _write(tmp_path / "repos/o/r.yml", "paths: {ignore: [x]}\ngithub_token: t\n")
+
+    data, meta = resolve_policy_data(
+        "o/r", "main", lambda _ref: "max_comments: 5\n", config_root=tmp_path
+    )
+
+    assert data == {"max_comments": 5}
+    assert [item.as_dict() for item in meta.skipped] == [
+        {
+            "layer": "home:repos/o/r.yml",
+            "repo": "o/r",
+            "ref": None,
+            "category": "credential",
+            "transport": None,
+            "http_status": None,
+        }
+    ]
+
+
+def test_invalid_home_policy_value_is_recorded_as_skipped_layer(tmp_path):
+    # Значение взято из существующего
+    # test_invalid_home_task_sync_filter_is_quarantined_or_rejected: оно
+    # гарантированно даёт HomePolicyError.
+    _write(
+        tmp_path / "review.yml",
+        "task_board:\n  project: PRI\n  sync_filter: {max_age_days: 0}\n",
+    )
+
+    _data, meta = resolve_policy_data(
+        "o/r", "main", lambda _ref: "max_comments: 5\n", config_root=tmp_path
+    )
+
+    assert [(item.layer, item.category) for item in meta.skipped] == [
+        ("home:review.yml", "invalid")
+    ]
+
+
+def test_resolution_meta_as_dict_exposes_skipped_and_defaults_to_empty():
+    meta = ResolutionMeta(sources={}, shadowed={}, warnings=())
+
+    assert meta.skipped == ()
+    assert meta.as_dict()["skipped"] == []

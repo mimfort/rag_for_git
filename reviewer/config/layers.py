@@ -34,16 +34,46 @@ class HomePolicyError(HomeConfigError):
 
 
 @dataclass(frozen=True)
+class SkippedLayer:
+    """Слой политики, который существовал (или мог существовать), но не применён.
+
+    Отсутствие слоя записи не создаёт: фетчер, вернувший None, означает «слоя
+    нет в репозитории», а запись здесь — «слой не прочитан» (PRI-234).
+    """
+
+    layer: str
+    repo: str
+    ref: str | None
+    category: str
+    transport: str | None = None
+    http_status: int | None = None
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "layer": self.layer,
+            "repo": self.repo,
+            "ref": self.ref,
+            "category": self.category,
+            "transport": self.transport,
+            "http_status": self.http_status,
+        }
+
+
+@dataclass(frozen=True)
 class ResolutionMeta:
     sources: dict[str, str]
     shadowed: dict[str, tuple[str, ...]]
     warnings: tuple[str, ...]
+    # Дефолт обязателен: frozen dataclass без него сломал бы _empty_meta()
+    # и существующие конструкторы в тестах.
+    skipped: tuple[SkippedLayer, ...] = ()
 
     def as_dict(self) -> dict[str, object]:
         return {
             "sources": dict(self.sources),
             "shadowed": {key: list(value) for key, value in self.shadowed.items()},
             "warnings": list(self.warnings),
+            "skipped": [item.as_dict() for item in self.skipped],
         }
 
 
@@ -273,6 +303,19 @@ def resolve_policy_data(
     sources: dict[str, str] = {}
     shadowed: dict[str, list[str]] = {}
     warnings: list[str] = []
+    skipped: list[SkippedLayer] = []
+
+    def record_skip(
+        layer: str,
+        category: str,
+        *,
+        ref_value: str | None = None,
+        transport: str | None = None,
+        http_status: int | None = None,
+    ) -> None:
+        skipped.append(
+            SkippedLayer(layer, repo, ref_value, category, transport, http_status)
+        )
 
     def merge(data: Mapping[str, object], source: str) -> None:
         for key, value in data.items():
@@ -296,8 +339,10 @@ def resolve_policy_data(
         except FileNotFoundError:
             return
         except HomeCredentialError as exc:
+            record_skip(source, "credential")
             warnings.append(str(exc))
         except HomePolicyError as exc:
+            record_skip(source, "invalid")
             if strict_home:
                 raise
             warnings.append(str(exc))
@@ -311,6 +356,7 @@ def resolve_policy_data(
             wrapped = HomeConfigError(
                 f"{source}: конфиг не прочитан: {type(exc).__name__}"
             )
+            record_skip(source, "malformed")
             if strict_home:
                 raise wrapped from None
             warnings.append(str(wrapped))
@@ -330,6 +376,7 @@ def resolve_policy_data(
         sources=dict(sources),
         shadowed={key: tuple(value) for key, value in shadowed.items()},
         warnings=tuple(warnings),
+        skipped=tuple(skipped),
     )
 
 
