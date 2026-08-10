@@ -28,6 +28,10 @@ class _ConnectError(Exception):
     pass
 
 
+class _NetworkError(Exception):
+    pass
+
+
 def test_http_status_is_extracted_from_response():
     assert classify_fetch_error(_HTTPStatusError("boom", 404)) == ("http", 404)
     assert classify_fetch_error(_HTTPStatusError("boom", 401)) == ("http", 401)
@@ -40,6 +44,10 @@ def test_timeout_wins_over_connection_in_class_name():
 def test_connection_error_is_classified_by_class_name():
     assert classify_fetch_error(_ConnectError("boom")) == ("connection", None)
     assert classify_fetch_error(ConnectionError("boom")) == ("connection", None)
+
+
+def test_network_named_exception_is_classified_as_connection():
+    assert classify_fetch_error(_NetworkError("boom")) == ("connection", None)
 
 
 def test_unknown_exception_falls_back_to_unknown():
