@@ -62,7 +62,11 @@ class Settings(BaseSettings):
     voyage_api_key: str = ""
     embedding_model: str = "voyage-code-3"
     embedding_dim: int = 1024
-    embedding_batch_size: int = 256
+    embedding_batch_size: int = 256   # верхняя граница батча по ЧИСЛУ чанков
+    # Бюджет батча по токенам (PRI-228): Voyage отвергает запрос дороже 120000
+    # токенов валидационной ошибкой, которую retry не спасает. Батч набирается
+    # по этому бюджету, а embedding_batch_size остаётся вторым потолком.
+    embedding_token_budget: int = 100000
     rerank_model: str = "rerank-2.5"
     # stores
     pg_dsn: str = "postgresql://reviewer:reviewer@localhost:5433/reviewer"
