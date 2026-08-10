@@ -516,6 +516,48 @@ def test_explicit_mode_preserves_hidden_status_field_migration():
     assert state.providers[0].closed is True
 
 
+def test_repo_sync_reaches_provider_when_committed_layer_unavailable(
+    isolated_xdg_config_home,
+):
+    """PRI-234: недоступный VCS не должен блокировать home:repos task_board."""
+    path = isolated_xdg_config_home / "rag-reviewer/repos/owner/repo.yml"
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        "task_board: {type: fake, project: FAKE, options: {lane: Backend}}\n",
+        encoding="utf-8",
+    )
+    service, state, _ = _service()
+    service.settings = Settings(_env_file=None, review_branches="main")
+    vcs = SimpleNamespace(get_file_at_ref=lambda *a, **k: (_ for _ in ()).throw(
+        RuntimeError("network down")
+    ))
+    service._vcs_factory = lambda owner, name: vcs
+
+    out = service.sync_board(repo="owner/repo")
+
+    assert out["enumerated"] == 1
+    assert state.providers[0].closed is True
+
+
+def test_repo_sync_still_blocks_on_home_layer_credential_warning(
+    isolated_xdg_config_home,
+):
+    """Warning из домашнего слоя (не коммиченного) по-прежнему configuration-error."""
+    path = isolated_xdg_config_home / "rag-reviewer/repos/owner/repo.yml"
+    path.parent.mkdir(parents=True)
+    path.write_text("github_token: leaked-value\n", encoding="utf-8")
+    service, state, _ = _service()
+    service.settings = Settings(_env_file=None, review_branches="main")
+    vcs = SimpleNamespace(get_file_at_ref=lambda *a, **k: None)
+    service._vcs_factory = lambda owner, name: vcs
+
+    out = service.sync_board(repo="owner/repo")
+
+    assert out["status"] == "error"
+    assert out["category"] == "configuration"
+    assert state.providers == []
+
+
 def test_invalid_explicit_sync_filter_returns_configuration_error_without_io():
     class NoIoSync:
         def run(self, **kwargs):

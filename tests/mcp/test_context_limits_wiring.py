@@ -143,7 +143,7 @@ def test_resolve_policy_logs_sanitized_home_credential_warning(
 
     assert policy.context_limits == ContextLimits()
     assert meta.warnings
-    assert "Домашний слой policy пропущен" in caplog.text
+    assert "Слой policy пропущен" in caplog.text
     assert "github_token" in caplog.text
     assert "leaked-value" not in caplog.text
 
@@ -232,6 +232,25 @@ def test_home_repo_limits_survive_unavailable_vcs(isolated_xdg_config_home) -> N
     # Дефолт graph.hops — 1; значение 2 доказывает, что home-слой применён,
     # хотя коммиченный слой недоступен.
     assert cl.graph.hops == 2
+
+
+def test_home_repo_summary_depth_survives_unavailable_vcs(isolated_xdg_config_home) -> None:
+    """PRI-234: summary_cluster_depth из home-слоя выживает при недоступном VCS."""
+    path = isolated_xdg_config_home / "rag-reviewer/repos/o/r.yml"
+    path.parent.mkdir(parents=True)
+    path.write_text("summary_cluster_depth: 4\n", encoding="utf-8")
+    s = _settings()
+    components = MagicMock()
+    vcs = MagicMock()
+    vcs.get_file_at_ref.side_effect = RuntimeError("network down")
+    svc = MCPReviewService(s, components, vcs_factory=lambda o, n: vcs)
+
+    depth, overrides, source = svc._resolve_summary_depth("o/r", "dev")
+
+    # Дефолт SUMMARY_CLUSTER_DEPTH — 2; значение 4 доказывает, что home-слой
+    # применён, хотя коммиченный слой недоступен.
+    assert depth == 4
+    assert source == "home:repos/o/r.yml"
 
 
 class _FakeRetriever:

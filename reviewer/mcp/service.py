@@ -940,13 +940,20 @@ class MCPReviewService:
                     ),
                     repo_secrets,
                 )
-            if meta.warnings:
+            from reviewer.config.layers import COMMITTED_UNREAD_WARNING_PREFIX
+
+            blocking_warnings = [
+                warning
+                for warning in meta.warnings
+                if not warning.startswith(COMMITTED_UNREAD_WARNING_PREFIX)
+            ]
+            if blocking_warnings:
                 return self._board_error(
                     "sync_board",
                     BoardProviderError(
                         "configuration",
                         "Task board policy resolution warnings: "
-                        + "; ".join(meta.warnings),
+                        + "; ".join(blocking_warnings),
                         secrets=repo_secrets,
                     ),
                     repo_secrets,
@@ -1382,7 +1389,7 @@ class MCPReviewService:
                 strict_committed=False,
             )
             for warning in meta.warnings:
-                log.warning("Домашний слой policy пропущен: %s", warning)
+                log.warning("Слой policy пропущен: %s", warning)
             return ReviewPolicy.load_data(self.settings, data), meta
         finally:
             if vcs is not None and self._vcs_factory is None:
