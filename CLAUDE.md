@@ -137,6 +137,19 @@ MCP-сессия (PreparedReview + ToolContext) живёт в процессе `
   бессекретный: слой, репо, ref, категория, транспорт, HTTP-код — никаких URL, заголовков и
   токенов (классификация формы исключения — `config/fetch_errors.py`). `reviewer config show`
   печатает эффективные значения и блок `skipped`, но код возврата остаётся `1`.
+- **Коммиченный слой читается из локального клона, а не из API хостинга (PRI-235).**
+  `config/committed.py::CommittedLayerFetcher` — единственный фетчер коммиченного `.review.yml`
+  для `config show` и MCP `_resolve_policy`: при пригодном клоне это `git show <ref>:.review.yml`
+  (ноль сетевых вызовов; VCS-провайдер вообще не создаётся — фабрика ленивая), иначе прежний
+  `vcs.get_file_at_ref`. `config show` берёт клон из `--path`, иначе из текущего каталога
+  (в Postgres за путём не ходит — диагностика не должна зависеть от живой БД); MCP берёт его из
+  таблицы `repo_clone`, которую пишет `reviewer index` (он и так выполняется из клона, рядом с
+  `set_repo_vcs`). Ни один путь не принимается на слово: `validate_clone` требует git-репо и
+  сверяет remote с целевым repo, **но клон без распознаваемого remote принимает** — ради него
+  задача и делалась. Ref проверяется `rev_parse` ДО чтения: иначе «ветка не выкачана в клоне»
+  неотличимо от «файла нет на ref» и молча обнулило бы слой вместо фолбэка на VCS. Способ чтения
+  виден в отчёте (`committed: local|vcs`, ключ `committed_source` в JSON); путь к клону в
+  диагностику не попадает.
 - **Мульти-репо через `repo`-дискриминатор**: один деплой обслуживает N репозиториев через `repo` (`owner/name`) в Postgres (`chunks`/`index_meta`) и Neo4j (`:Symbol.repo`, составная уникальность `(repo, branch, id)`). Индексация: `reviewer index --repo owner/name` (или derive из git remote `origin` / `DEFAULT_REPO`). Граф задач `:Task` глобален — задача может покрывать несколько микросервисных репозиториев. Каждое ревью изолировано в рамках своего репо (без кросс-репо ретрива).
 - **`reviewer check`** проверяет готовность окружения (ключи, Postgres, Neo4j, GitHub) без трат квот Voyage.
 - **Layout кластеризации сводок (`SUMMARY_CLUSTER_DEPTH`, дефолт 2).** Default depth и per-prefix `summary_cluster_depth_overrides` из effective `.review.yml` образуют canonical `layout_token` (нормализованные и отсортированные overrides). Смена любого компонента token → **полный пересбор всех сводок и пофайловых fragments**, даже если default depth не изменился. `subsystem_summary_state` хранит `completed_depth` для диагностики и nullable `completed_layout` как identity завершённого прохода; legacy row без token считается незавершённым. Осиротевшие данные вычищаются только verified `prune_subsystem_summaries` после полного uncapped прохода (PRI-166/PRI-226).

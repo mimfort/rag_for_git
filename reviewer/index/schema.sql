@@ -131,3 +131,14 @@ CREATE TABLE IF NOT EXISTS repo_vcs (
     base_url   text        NOT NULL DEFAULT '',
     updated_at timestamptz NOT NULL DEFAULT now()
 );
+
+-- Путь к локальному клону репозитория (PRI-235): пишется при `reviewer index`,
+-- который и так выполняется из клона. Читается MCP при резолве коммиченного
+-- `.review.yml`, чтобы не ходить за файлом в API хостинга. Путь никогда не
+-- доверяется на слово: MCP может работать на другой машине, поэтому кандидат
+-- проходит validate_clone (git-репо + сверка remote) перед использованием.
+CREATE TABLE IF NOT EXISTS repo_clone (
+    repo       text        PRIMARY KEY,
+    path       text        NOT NULL,
+    updated_at timestamptz NOT NULL DEFAULT now()
+);
