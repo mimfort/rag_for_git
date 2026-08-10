@@ -1714,9 +1714,39 @@ class MCPReviewService:
             ),
         }
 
+    @staticmethod
+    def _compact_cluster_record(
+        cluster: "Cluster",
+        *,
+        stale: bool,
+        bootstrap: bool,
+        full_rebuild: bool,
+        delta: FragmentDelta,
+    ) -> dict:
+        """Запись кластера без file-level payload: только метаданные и счётчики.
+
+        Счётчики намеренно названы ``added``/``changed``/``removed``/``moved``
+        (без суффикса ``_files``): одноимённые ключи полного формата — списки, и
+        совпадение имён при разных типах ломало бы клиента, не проверившего режим.
+        """
+        return {
+            "cluster_key": cluster.key,
+            "num_members": cluster.num_members,
+            "source_hash": cluster.source_hash,
+            "stale": stale,
+            "bootstrap": bootstrap,
+            "full_rebuild": full_rebuild,
+            "reused_files": len(delta.reused),
+            "added": len(delta.added),
+            "changed": len(delta.changed),
+            "removed": len(delta.removed),
+            "moved": len(delta.moved),
+        }
+
     def list_subsystem_clusters(self, repo: str, branch: str | None = None,
                                 depth: int | None = None, min_size: int | None = None,
-                                cap: int | None = None) -> dict:
+                                cap: int | None = None,
+                                compact: bool = False) -> dict:
         """Кластеризовать base-граф по модулям → кластеры для /summarize-subsystems.
         cap (дефолт Settings.summary_rebuild_cap; None/0=безлимит) отбрасывает наименее
         приоритетные stale-кластеры (без сводки → старейшие updated_at первыми) и считает
@@ -1800,6 +1830,18 @@ class MCPReviewService:
             if cluster.key in deferred_keys:
                 continue
             delta = deltas[cluster.key]
+            bootstrap, full_rebuild = generation_flags[cluster.key]
+            if compact:
+                clusters.append(
+                    self._compact_cluster_record(
+                        cluster,
+                        stale=stale[cluster.key],
+                        bootstrap=bootstrap,
+                        full_rebuild=full_rebuild,
+                        delta=delta,
+                    )
+                )
+                continue
             serialized = self._serialize_summary_delta(
                 delta, include_reused_content=False
             )
@@ -1816,8 +1858,8 @@ class MCPReviewService:
                     "removed_files": serialized["removed_files"],
                     "moved_files": serialized["moved_files"],
                     "reused_files": len(delta.reused),
-                    "bootstrap": generation_flags[cluster.key][0],
-                    "full_rebuild": generation_flags[cluster.key][1],
+                    "bootstrap": bootstrap,
+                    "full_rebuild": full_rebuild,
                 }
             )
         return {

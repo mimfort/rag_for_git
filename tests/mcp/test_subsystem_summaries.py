@@ -1560,3 +1560,122 @@ def test_backfill_summary_embeddings_failsoft_when_embed_raises():
     assert out["embedded"] == 0
     assert "note" in out
     c.summary_store.set_embedding_if_source_hash.assert_not_called()
+
+
+def _one_cluster_components():
+    """Фейк с одним кластером reviewer/index из двух файлов: один свежий (fragment
+    сохранён), второй новый → delta.added непустая, delta.reused непустая."""
+    from reviewer.graph.summaries import (
+        Member,
+        compute_file_fingerprints,
+        compute_layout_token,
+        compute_source_hash,
+    )
+
+    c = MagicMock()
+    c.store.list_base_members.return_value = [
+        ("reviewer/index/a.py", "A", "h1", 1, "sk1"),
+        ("reviewer/index/b.py", "B", "h2", 1, "sk2"),
+    ]
+    c.graph = None
+    members = [
+        Member("reviewer/index/a.py#A", "reviewer/index/a.py", "h1", "sk1", 1),
+        Member("reviewer/index/b.py#B", "reviewer/index/b.py", "h2", "sk2", 1),
+    ]
+    fingerprints = compute_file_fingerprints(members)
+    source_hash = compute_source_hash(
+        [("reviewer/index/a.py#A", "sk1"), ("reviewer/index/b.py#B", "sk2")]
+    )
+    c.summary_store.get_source_hashes.return_value = {"reviewer/index": source_hash}
+    c.summary_store.get_completed_depth.return_value = 2
+    c.summary_store.get_completed_layout.return_value = compute_layout_token(2, {})
+    c.summary_store.get_fragments.return_value = [
+        {
+            "cluster_key": "reviewer/index",
+            "path": "reviewer/index/a.py",
+            "fingerprint": fingerprints["reviewer/index/a.py"],
+            "summary": "A",
+            "provenance": {},
+        }
+    ]
+    return c
+
+
+def test_compact_cluster_record_has_exact_keys():
+    out = _svc(_one_cluster_components()).list_subsystem_clusters(
+        "o/n", "dev", depth=2, min_size=1, compact=True
+    )
+    [cluster] = out["clusters"]
+    assert set(cluster) == {
+        "cluster_key",
+        "num_members",
+        "source_hash",
+        "stale",
+        "bootstrap",
+        "full_rebuild",
+        "reused_files",
+        "added",
+        "changed",
+        "removed",
+        "moved",
+    }
+    assert cluster["cluster_key"] == "reviewer/index"
+    assert cluster["num_members"] == 2
+    assert cluster["added"] == 1
+    assert cluster["reused_files"] == 1
+
+
+def test_compact_response_carries_no_paths_or_fingerprints():
+    """Сжатая запись не должна содержать ни путей, ни 64-символьных hex-хешей,
+    кроме разрешённых cluster_key и source_hash."""
+    import re
+
+    out = _svc(_one_cluster_components()).list_subsystem_clusters(
+        "o/n", "dev", depth=2, min_size=1, compact=True
+    )
+    [cluster] = out["clusters"]
+    hex64 = re.compile(r"^[0-9a-f]{64}$")
+    for key, value in cluster.items():
+        if key in ("cluster_key", "source_hash"):
+            continue
+        assert not isinstance(value, (list, dict)), f"{key} остался структурой"
+        if isinstance(value, str):
+            assert "/" not in value, f"{key} похоже на путь: {value}"
+            assert not hex64.match(value), f"{key} похоже на fingerprint"
+
+
+def test_compact_counters_match_full_format_list_lengths():
+    svc_full = _svc(_one_cluster_components())
+    svc_compact = _svc(_one_cluster_components())
+    full = svc_full.list_subsystem_clusters("o/n", "dev", depth=2, min_size=1)
+    compact = svc_compact.list_subsystem_clusters(
+        "o/n", "dev", depth=2, min_size=1, compact=True
+    )
+    by_key_full = {c["cluster_key"]: c for c in full["clusters"]}
+    by_key_compact = {c["cluster_key"]: c for c in compact["clusters"]}
+    assert by_key_full.keys() == by_key_compact.keys()
+    for key, cf in by_key_full.items():
+        cc = by_key_compact[key]
+        assert cc["added"] == len(cf["added_files"])
+        assert cc["changed"] == len(cf["changed_files"])
+        assert cc["removed"] == len(cf["removed_files"])
+        assert cc["moved"] == len(cf["moved_files"])
+        assert cc["reused_files"] == cf["reused_files"]
+        assert cc["num_members"] == cf["num_members"]
+        assert cc["source_hash"] == cf["source_hash"]
+        assert cc["stale"] == cf["stale"]
+        assert cc["bootstrap"] == cf["bootstrap"]
+        assert cc["full_rebuild"] == cf["full_rebuild"]
+
+
+def test_full_format_is_default_and_top_level_fields_match_both_modes():
+    svc_full = _svc(_one_cluster_components())
+    svc_compact = _svc(_one_cluster_components())
+    full = svc_full.list_subsystem_clusters("o/n", "dev", depth=2, min_size=1)
+    compact = svc_compact.list_subsystem_clusters(
+        "o/n", "dev", depth=2, min_size=1, compact=True
+    )
+    assert "files" in full["clusters"][0]           # дефолт — полный формат
+    for field in ("branch", "depth", "layout_token", "depth_source",
+                  "deferred", "deferred_files", "orphans"):
+        assert full[field] == compact[field], field
