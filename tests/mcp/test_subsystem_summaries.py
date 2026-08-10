@@ -1679,3 +1679,121 @@ def test_full_format_is_default_and_top_level_fields_match_both_modes():
     for field in ("branch", "depth", "layout_token", "depth_source",
                   "deferred", "deferred_files", "orphans"):
         assert full[field] == compact[field], field
+
+
+def _four_cluster_components():
+    """Фейк с четырьмя кластерами (d/x, b/x, a/x, c/x) — порядок членов намеренно
+    не отсортирован, чтобы поймать зависимость выдачи от порядка обхода."""
+    c = MagicMock()
+    c.store.list_base_members.return_value = [
+        ("d/x/d.py", "D", "h4", 1, "sk4"),
+        ("b/x/b.py", "B", "h2", 1, "sk2"),
+        ("a/x/a.py", "A", "h1", 1, "sk1"),
+        ("c/x/c.py", "C", "h3", 1, "sk3"),
+    ]
+    c.graph = None
+    c.summary_store.get_source_hashes.return_value = {}
+    c.summary_store.get_completed_depth.return_value = 2
+    c.summary_store.get_fragments.return_value = []
+    return c
+
+
+def test_pagination_full_walk_equals_unpaginated_call():
+    unpaged = _svc(_four_cluster_components()).list_subsystem_clusters(
+        "o/n", "dev", depth=2, min_size=1, cap=0, compact=True
+    )
+    expected = [c["cluster_key"] for c in unpaged["clusters"]]
+
+    walked, offset, pages = [], 0, 0
+    while True:
+        page = _svc(_four_cluster_components()).list_subsystem_clusters(
+            "o/n", "dev", depth=2, min_size=1, cap=0, compact=True,
+            offset=offset, limit=2,
+        )
+        walked.extend(c["cluster_key"] for c in page["clusters"])
+        pages += 1
+        if not page["has_more"]:
+            break
+        offset += 2
+        assert pages < 10, "пагинация не сходится"
+
+    assert walked == expected
+    assert len(walked) == len(set(walked)), "дубли при обходе страницами"
+    assert unpaged["total_clusters"] == len(expected)
+
+
+def test_pagination_order_is_reproducible_and_sorted_by_cluster_key():
+    first = _svc(_four_cluster_components()).list_subsystem_clusters(
+        "o/n", "dev", depth=2, min_size=1, cap=0, compact=True
+    )
+    second = _svc(_four_cluster_components()).list_subsystem_clusters(
+        "o/n", "dev", depth=2, min_size=1, cap=0, compact=True
+    )
+    keys = [c["cluster_key"] for c in first["clusters"]]
+    assert keys == [c["cluster_key"] for c in second["clusters"]]
+    assert keys == sorted(keys)
+
+
+def test_pagination_offset_beyond_set_returns_empty_page():
+    out = _svc(_four_cluster_components()).list_subsystem_clusters(
+        "o/n", "dev", depth=2, min_size=1, cap=0, compact=True,
+        offset=99, limit=2,
+    )
+    assert out["clusters"] == []
+    assert out["has_more"] is False
+    assert out["total_clusters"] == 4
+
+
+def test_pagination_limit_larger_than_set_returns_single_page():
+    out = _svc(_four_cluster_components()).list_subsystem_clusters(
+        "o/n", "dev", depth=2, min_size=1, cap=0, compact=True, limit=100
+    )
+    assert len(out["clusters"]) == 4
+    assert out["has_more"] is False
+
+
+def test_pagination_normalizes_negative_offset_and_nonpositive_limit():
+    out = _svc(_four_cluster_components()).list_subsystem_clusters(
+        "o/n", "dev", depth=2, min_size=1, cap=0, compact=True,
+        offset=-5, limit=0,
+    )
+    assert out["offset"] == 0
+    assert out["limit"] is None
+    assert len(out["clusters"]) == 4
+
+
+def test_global_fields_identical_on_every_page():
+    """deferred / deferred_files / orphans / layout_token / total_clusters
+    считаются по полному множеству и не зависят от страницы."""
+    globals_fields = ("deferred", "deferred_files", "orphans",
+                      "layout_token", "depth", "depth_source", "total_clusters")
+    unpaged = _svc(_four_cluster_components()).list_subsystem_clusters(
+        "o/n", "dev", depth=2, min_size=1, cap=2, compact=True
+    )
+    for offset in (0, 1, 2):
+        page = _svc(_four_cluster_components()).list_subsystem_clusters(
+            "o/n", "dev", depth=2, min_size=1, cap=2, compact=True,
+            offset=offset, limit=1,
+        )
+        for field in globals_fields:
+            assert page[field] == unpaged[field], f"{field} на offset={offset}"
+
+
+def test_pagination_works_in_full_format_too():
+    out = _svc(_four_cluster_components()).list_subsystem_clusters(
+        "o/n", "dev", depth=2, min_size=1, cap=0, offset=1, limit=2
+    )
+    assert [c["cluster_key"] for c in out["clusters"]] == ["b/x", "c/x"]
+    assert out["has_more"] is True
+    assert "files" in out["clusters"][0]
+
+
+def test_empty_index_note_carries_pagination_fields():
+    c = MagicMock()
+    c.store.list_base_members.return_value = []
+    c.graph = None
+    out = _svc(c).list_subsystem_clusters("o/n", "dev")
+    assert out["clusters"] == []
+    assert out["total_clusters"] == 0
+    assert out["has_more"] is False
+    assert "note" in out

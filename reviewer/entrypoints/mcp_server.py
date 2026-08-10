@@ -310,7 +310,9 @@ def create_server(service: MCPReviewService) -> FastMCP:
                                 depth: int | None = None,
                                 min_size: int | None = None,
                                 cap: int | None = None,
-                                compact: bool = False) -> dict:
+                                compact: bool = False,
+                                offset: int = 0,
+                                limit: int | None = None) -> dict:
         """Кластеризовать base-граф кода по путям модулей для скилла
         rag-reviewer:summarize-subsystems. Возвращает
         {branch, depth, layout_token, depth_source, deferred, deferred_files,
@@ -332,13 +334,23 @@ def create_server(service: MCPReviewService) -> FastMCP:
         числу кластеров, а не файлов; детализация по кластеру — через
         get_subsystem_summary_work.
 
+        Пагинация: offset (по умолчанию 0) и limit (по умолчанию None = все
+        кластеры). Порядок кластеров детерминирован — сортировка по cluster_key.
+        Ответ содержит total_clusters (число не-deferred кластеров во всём
+        наборе), применённые offset / limit и has_more. Поля branch, depth,
+        layout_token, depth_source, deferred, deferred_files, orphans и
+        total_clusters считаются по полному множеству кластеров и одинаковы на
+        каждой странице. offset за границей набора возвращает пустой clusters
+        без ошибки; offset<0 приводится к 0, limit<=0 трактуется как «без
+        лимита». Пагинация не является override'ом и не делает проход частичным.
+
         cap (по умолчанию — env SUMMARY_REBUILD_CAP; None/0 = без ограничений)
         отбрасывает наименее приоритетные stale-кластеры за один проход: сначала
         кластеры без сводки, затем с наиболее старым updated_at. Отложенные
         кластеры не попадают в clusters, но учитываются в deferred — количестве
         задержанных этим проходом кластеров."""
         return service.list_subsystem_clusters(
-            repo, branch, depth, min_size, cap, compact
+            repo, branch, depth, min_size, cap, compact, offset, limit
         )
 
     @mcp.tool()

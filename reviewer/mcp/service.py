@@ -1746,19 +1746,30 @@ class MCPReviewService:
     def list_subsystem_clusters(self, repo: str, branch: str | None = None,
                                 depth: int | None = None, min_size: int | None = None,
                                 cap: int | None = None,
-                                compact: bool = False) -> dict:
+                                compact: bool = False,
+                                offset: int = 0,
+                                limit: int | None = None) -> dict:
         """Кластеризовать base-граф по модулям → кластеры для /summarize-subsystems.
         cap (дефолт Settings.summary_rebuild_cap; None/0=безлимит) отбрасывает наименее
         приоритетные stale-кластеры (без сводки → старейшие updated_at первыми) и считает
         их в deferred (PRI-165). Ответ содержит layout_token — canonical identity default
         depth + normalized overrides. Если depth не задан, он берётся из effective layered
-        policy с fail-soft env-дефолтом."""
+        policy с fail-soft env-дефолтом. offset/limit пагинируют финальный (после cap)
+        детерминированно отсортированный по cluster_key набор кластеров."""
+        # Мягкая нормализация: тул вызывает LLM, падение на кривом аргументе
+        # хуже, чем предсказуемое приведение. limit<=0 == «без лимита».
+        page_offset = max(0, int(offset))
+        page_limit = int(limit) if limit is not None and int(limit) > 0 else None
         rb = self._resolve_repo_branch(repo, branch)
         if isinstance(rb, str):
             return {
                 "branch": branch or "",
                 "deferred": 0,
                 "deferred_files": 0,
+                "total_clusters": 0,
+                "offset": page_offset,
+                "limit": page_limit,
+                "has_more": False,
                 "clusters": [],
                 "note": rb,
             }
@@ -1775,6 +1786,10 @@ class MCPReviewService:
                 "branch": resolved,
                 "deferred": 0,
                 "deferred_files": 0,
+                "total_clusters": 0,
+                "offset": page_offset,
+                "limit": page_limit,
+                "has_more": False,
                 "clusters": [],
                 "note": "(base-индекс пуст — выполните rag-reviewer:sync-codebase)",
             }
@@ -1825,10 +1840,20 @@ class MCPReviewService:
         deferred_files = sum(
             len(deltas[key].pending_paths) for key in deferred_keys
         )
+        selected = sorted(
+            (cluster for cluster in state.clusters
+             if cluster.key not in deferred_keys),
+            key=lambda cluster: cluster.key,
+        )
+        total_clusters = len(selected)
+        page_end = (
+            total_clusters if page_limit is None else page_offset + page_limit
+        )
+        page = selected[page_offset:page_end]
+        has_more = page_end < total_clusters
+
         clusters = []
-        for cluster in state.clusters:
-            if cluster.key in deferred_keys:
-                continue
+        for cluster in page:
             delta = deltas[cluster.key]
             bootstrap, full_rebuild = generation_flags[cluster.key]
             if compact:
@@ -1870,6 +1895,10 @@ class MCPReviewService:
             "deferred": len(deferred_keys),
             "deferred_files": deferred_files,
             "orphans": orphans,
+            "total_clusters": total_clusters,
+            "offset": page_offset,
+            "limit": page_limit,
+            "has_more": has_more,
             "clusters": clusters,
         }
 
