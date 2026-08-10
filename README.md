@@ -424,7 +424,26 @@ reviewer config show --repo group/service --branch main --json
 ```
 
 The committed layer is fetched at the selected ref, so review/config resolution never reads an
-uncommitted worktree `.review.yml`. To copy a safe committed policy into the repo-specific home
+uncommitted worktree `.review.yml`.
+
+It is read **from a local clone whenever one is usable**, and only otherwise through the hosting
+API. `config show` uses `--path <clone>` if given and the current directory otherwise; the MCP
+server uses the clone path recorded by `reviewer index` (which already runs from a clone). A
+candidate is accepted only if it is a git repository whose remote matches the target repo — a clone
+with **no** recognizable remote is accepted too, which is exactly the case where the committed layer
+was previously unreachable. If the ref does not resolve in the clone (branch not fetched), the read
+falls back to the API rather than silently reporting an empty layer. The report states which path
+was taken:
+
+```bash
+reviewer config show --repo group/service --branch main --path /srv/clones/service
+# committed: local        ← resolved without a single network call
+```
+
+In JSON the same value is the `committed_source` key (`local` / `vcs`); the clone path itself is
+never printed.
+
+To copy a safe committed policy into the repo-specific home
 layer without modifying the committed file, run:
 
 ```bash

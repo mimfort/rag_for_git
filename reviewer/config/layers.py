@@ -558,8 +558,14 @@ def build_config_report(
     settings,
     data: Mapping[str, object],
     meta: ResolutionMeta,
+    committed_source: str | None = None,
 ) -> dict[str, object]:
-    """Собрать безопасный диагностический отчёт об эффективной policy."""
+    """Собрать безопасный диагностический отчёт об эффективной policy.
+
+    `committed_source` — способ чтения коммиченного слоя (`local`/`vcs`) или
+    None, если слой не читался вовсе (PRI-235). Путь к клону в отчёт не
+    попадает: диагностике достаточно способа, путь — лишний факт о машине.
+    """
     try:
         policy = ReviewPolicy.load_data(settings, data)
         effective = policy_to_public_data(policy)
@@ -575,6 +581,7 @@ def build_config_report(
         "shadowed": {key: list(value) for key, value in meta.shadowed.items()},
         "warnings": list(meta.warnings),
         "skipped": [item.as_dict() for item in meta.skipped],
+        "committed_source": committed_source,
     }
 
 

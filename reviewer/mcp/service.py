@@ -1362,17 +1362,49 @@ class MCPReviewService:
         except ValueError as exc:
             return f"({exc})"
 
+    def _repo_clone_path(self, repo: str) -> str | None:
+        """Путь к локальному клону репо из индекса, если он там записан (PRI-235).
+
+        Пишет его `reviewer index`, который и так выполняется из клона. Fail-soft:
+        недоступный Postgres или индекс, построенный до миграции, просто лишают
+        резолв локального пути — коммиченный слой уйдёт читаться через VCS.
+        Годность самого пути проверяет CommittedLayerFetcher: MCP-сервер может
+        работать не на той машине, где индексировали.
+        """
+        store = getattr(self.components, "store", None)
+        if store is None:
+            return None
+        try:
+            return store.get_repo_clone(repo)
+        except Exception:  # noqa: BLE001 — путь вторичен, VCS остаётся фолбэком
+            log.warning("Не удалось прочитать путь к клону для %s", repo)
+            return None
+
     def _resolve_policy(self, repo: str, branch: str) -> tuple["ReviewPolicy", "ResolutionMeta"]:
         """Резолвит effective policy из env, home-слоёв и committed `.review.yml`."""
+        from reviewer.config.committed import CommittedLayerFetcher
         from reviewer.config.layers import resolve_policy_data
         from reviewer.policy.policy import ReviewPolicy
         owner, name = repo.split("/", 1)
         vcs = None
+
+        def vcs_fetch_factory():
+            # Провайдер создаётся ЛЕНИВО: при живом клоне (PRI-235) он не нужен
+            # вовсе, а его создание — это ещё и токен, которого может не быть.
+            nonlocal vcs
+            if vcs is None:
+                vcs = (
+                    self._vcs_factory(owner, name)
+                    if self._vcs_factory is not None
+                    else self._review_service._create_vcs_provider(owner, name)
+                )
+            return lambda ref: vcs.get_file_at_ref(".review.yml", ref)
+
         try:
-            vcs = (
-                self._vcs_factory(owner, name)
-                if self._vcs_factory is not None
-                else self._review_service._create_vcs_provider(owner, name)
+            fetch_committed = CommittedLayerFetcher(
+                repo,
+                clone_path=self._repo_clone_path(repo),
+                vcs_fetch_factory=vcs_fetch_factory,
             )
             # strict_committed=False намеренно: у _resolve_policy четыре
             # потребителя, и три из них (_resolve_summary_depth,
@@ -1385,7 +1417,7 @@ class MCPReviewService:
             data, meta = resolve_policy_data(
                 repo,
                 branch,
-                lambda ref: vcs.get_file_at_ref(".review.yml", ref),
+                fetch_committed,
                 strict_committed=False,
             )
             for warning in meta.warnings:
