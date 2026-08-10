@@ -150,3 +150,35 @@ def test_skill_reports_incremental_metrics():
         "embedded",
     ):
         assert metric in text, f"скилл не сообщает метрику {metric}"
+
+
+def test_skill_lists_clusters_in_compact_mode_with_pagination():
+    """Шаг 2 должен перечислять кластеры в сжатом режиме и обходить страницы."""
+    text = _assembled_skill()
+    normalized = " ".join(text.split())
+    assert "compact=True" in normalized, "перечисление не в сжатом режиме"
+    assert "has_more" in text, "скилл не обходит страницы до конца"
+    assert "offset" in text, "скилл не использует offset"
+    assert "total_clusters" in text
+
+
+def test_skill_gets_file_level_detail_from_summary_work_not_from_listing():
+    text = _assembled_skill()
+    normalized = " ".join(text.split())
+    assert "get_subsystem_summary_work" in text
+    assert "added_files + changed_files" in text
+    assert "does not carry file-level" in normalized or \
+        "no file-level" in normalized, (
+            "скилл не объясняет, что file-level данные берутся не из перечисления"
+        )
+
+
+def test_skill_full_pass_requires_walking_every_page():
+    """Пагинация не override: полный проход требует has_more == false."""
+    text = _assembled_skill()
+    normalized = " ".join(text.split())
+    assert "`has_more == false`" in normalized, (
+        "определение полного прохода не учитывает обход всех страниц"
+    )
+    assert "pagination is not an override" in normalized.lower() or \
+        "Pagination is not an override" in text
