@@ -328,7 +328,10 @@ def create_server(service: MCPReviewService) -> FastMCP:
         неизменённые файлы: пути из added_files / changed_files / moved_files в
         нём не повторяются. Полный состав кластера восстановим как
         files ∪ added_files ∪ changed_files ∪ moved_files (removed_files в
-        состав уже не входят).
+        состав уже не входят). Вне full_rebuild files перечисляет ровно те же
+        файлы, что учитывает счётчик reused_files (пути против количества) —
+        избыточность намеренна: клиенту, которому пути не нужны, достаточно
+        счётчика.
 
         compact=True — сжатый формат без file-level payload: кластер содержит
         только cluster_key, num_members, source_hash, stale, bootstrap,
@@ -354,7 +357,8 @@ def create_server(service: MCPReviewService) -> FastMCP:
         кластеры не попадают в clusters, но учитываются в deferred — количестве
         задержанных этим проходом кластеров."""
         return service.list_subsystem_clusters(
-            repo, branch, depth, min_size, cap, compact, offset, limit
+            repo, branch, depth, min_size, cap,
+            compact=compact, offset=offset, limit=limit,
         )
 
     @mcp.tool()

@@ -1829,6 +1829,12 @@ def test_full_format_files_do_not_repeat_delta_paths():
 def test_files_and_delta_never_overlap_across_all_clusters():
     """Инвариант держится на всех кластерах, включая те, где дельта покрывает
     весь состав (bootstrap/full_rebuild) — там files оказывается пустым."""
+    expected_paths = {
+        "a/x": {"a/x/a.py"},
+        "b/x": {"b/x/b.py"},
+        "c/x": {"c/x/c.py"},
+        "d/x": {"d/x/d.py"},
+    }
     out = _svc(_four_cluster_components()).list_subsystem_clusters(
         "o/n", "dev", depth=2, min_size=1, cap=0
     )
@@ -1840,5 +1846,7 @@ def test_files_and_delta_never_overlap_across_all_clusters():
             for item in cluster[key]
         }
         assert not (set(cluster["files"]) & delta_paths)
-        # состав кластера восстановим целиком
-        assert len(set(cluster["files"]) | delta_paths) == cluster["num_members"]
+        # полный состав кластера восстановим из files ∪ delta-списков —
+        # сравниваем с явным литеральным набором путей фикстуры, а не с
+        # num_members (числом символов кластера, не файлов)
+        assert set(cluster["files"]) | delta_paths == expected_paths[cluster["cluster_key"]]

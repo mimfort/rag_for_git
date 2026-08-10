@@ -1746,6 +1746,7 @@ class MCPReviewService:
     def list_subsystem_clusters(self, repo: str, branch: str | None = None,
                                 depth: int | None = None, min_size: int | None = None,
                                 cap: int | None = None,
+                                *,
                                 compact: bool = False,
                                 offset: int = 0,
                                 limit: int | None = None) -> dict:
