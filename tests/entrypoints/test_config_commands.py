@@ -200,9 +200,10 @@ def test_config_show_sanitizes_committed_yaml_and_closes_every_resource(
     )
 
     # Ошибка policy-слоя больше не роняет команду целиком (Task 6): секция
-    # веток печатается, а policy-часть уходит в policy_error; ресурсы
-    # закрываются как прежде — независимо от исхода policy-части. Код
-    # возврата при этом остаётся ненулевым (сигнал внешним скриптам).
+    # веток печатается, а сбой коммиченного слоя уходит в skipped (PRI-234,
+    # fail-soft); ресурсы закрываются как прежде — независимо от исхода
+    # policy-части. Код возврата при этом остаётся ненулевым (сигнал внешним
+    # скриптам).
     assert result.exit_code != 0
     assert "branches:" in result.output
     assert ".review.yml" in result.output

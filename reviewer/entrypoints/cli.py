@@ -839,7 +839,7 @@ def index(repo: str, ref: str | None, branch_opt: str | None, repo_tag: str | No
         policy = ReviewPolicy.load_data(s, policy_data)
         ignore = policy.ignore
         for warning in policy_meta.warnings:
-            log.warning("Домашний слой policy пропущен: %s", warning)
+            log.warning("Слой policy пропущен: %s", warning)
         if ignore:
             files = [f for f in files if not is_ignored(f, ignore)]
         update_base(c.store, c.embedder, repo_id, branch, files,
