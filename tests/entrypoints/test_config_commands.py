@@ -89,7 +89,10 @@ def test_config_show_skips_credential_home_yaml_without_echoing_secret(
         cli_mod.cli, ["config", "show", "--repo", "o/r", "--branch", "main"]
     )
 
-    assert result.exit_code == 0, result.output
+    # PRI-234: credential-ключ в home-слое пропускает слой (не применяется) —
+    # это то же «слой не применён», что и другие категории skipped, поэтому
+    # код возврата теперь тоже ненулевой (раньше был 0).
+    assert result.exit_code != 0, result.output
     assert "credential key github_token" in result.output
     assert secret not in result.output
     assert secret not in repr(result.exception)
@@ -197,9 +200,10 @@ def test_config_show_sanitizes_committed_yaml_and_closes_every_resource(
     )
 
     # Ошибка policy-слоя больше не роняет команду целиком (Task 6): секция
-    # веток печатается, а policy-часть уходит в policy_error; ресурсы
-    # закрываются как прежде — независимо от исхода policy-части. Код
-    # возврата при этом остаётся ненулевым (сигнал внешним скриптам).
+    # веток печатается, а сбой коммиченного слоя уходит в skipped (PRI-234,
+    # fail-soft); ресурсы закрываются как прежде — независимо от исхода
+    # policy-части. Код возврата при этом остаётся ненулевым (сигнал внешним
+    # скриптам).
     assert result.exit_code != 0
     assert "branches:" in result.output
     assert ".review.yml" in result.output

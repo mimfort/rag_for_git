@@ -150,6 +150,13 @@ def _render_config_report(report: Mapping[str, object]) -> None:
             click.echo(f"  shadowed: {', '.join(shadowed[key])}")
     for warning in report["warnings"]:
         click.echo(f"warning: {warning}")
+    for item in report.get("skipped") or ():
+        assert isinstance(item, Mapping)
+        click.echo(
+            f"skipped: {item['layer']} (repo={item['repo']}, ref={item['ref']}, "
+            f"category={item['category']}, transport={item['transport']}, "
+            f"http_status={item['http_status']})"
+        )
 
 
 @contextmanager
@@ -195,18 +202,28 @@ def config_show(repo: str, branch: str | None, as_json: bool) -> None:
 
     Секция веток печатается всегда, даже если VCS недоступен (нет сети, нет
     токена) — резолв веток чисто локальный и не зависит от policy-части.
+    Недоступный коммиченный `.review.yml` тоже больше не обнуляет вывод:
+    печатаются домашние слои, а сам пропуск попадает в `skipped` (PRI-234).
+    Код возврата при этом остаётся ненулевым.
     """
     try:
         with _config_context(repo, branch) as ctx:
             settings, _components, vcs, repo_id, ref, branches, vcs_error = ctx
             payload = _branches_report(branches)
-            try:
+
+            def fetch_committed(selected_ref: str) -> str | None:
+                # Недоступный VCS-провайдер — такой же сбой доставки слоя, как
+                # сетевая ошибка: он уходит в общий механизм skipped, а не в
+                # отдельную ветку policy_error (PRI-234).
                 if vcs_error is not None:
                     raise vcs_error
+                return vcs.get_file_at_ref(".review.yml", selected_ref)
+
+            try:
                 data, meta = resolve_policy_data(
                     repo_id,
                     ref,
-                    lambda selected_ref: vcs.get_file_at_ref(".review.yml", selected_ref),
+                    fetch_committed,
                     strict_home=True,
                 )
                 payload.update(build_config_report(repo_id, ref, settings, data, meta))
@@ -215,8 +232,8 @@ def config_show(repo: str, branch: str | None, as_json: bool) -> None:
                 # сырой YAML/normalization payload исключения.
                 payload["policy_error"] = _config_error_message(exc)
             except Exception as exc:  # noqa: BLE001 — диагностика не должна падать целиком
-                # Прочие сбои (VCS, сеть) — без текста исключения: он может
-                # содержать URL/токены из VCS-клиента.
+                # Прочие сбои — без текста исключения: он может содержать
+                # URL/токены из VCS-клиента.
                 payload["policy_error"] = type(exc).__name__
     except (HomeConfigError, yaml.YAMLError) as exc:
         raise click.ClickException(_config_error_message(exc)) from exc
@@ -224,10 +241,10 @@ def config_show(repo: str, branch: str | None, as_json: bool) -> None:
         click.echo(json.dumps(payload, ensure_ascii=False, sort_keys=True, indent=2))
     else:
         _render_config_report(payload)
-    if "policy_error" in payload:
-        # Branch-секция и диагностика уже напечатаны — не через ClickException
-        # (он подавил бы вывод), но код возврата должен сигналить о проблеме
-        # внешним скриптам (`config show; echo $?`).
+    if "policy_error" in payload or payload.get("skipped"):
+        # Эффективная политика неполная (или не собралась вовсе): вывод уже
+        # напечатан, но код возврата обязан сигналить внешним скриптам
+        # (`config show; echo $?`).
         raise SystemExit(1)
 
 
@@ -810,15 +827,19 @@ def index(repo: str, ref: str | None, branch_opt: str | None, repo_tag: str | No
     try:
         c.store.init_schema()
         files = list_python_files(repo, ref)
+        # strict_committed: неполный paths.ignore залил бы в индекс файлы,
+        # которые репозиторий исключил; фетчер здесь локальный (file_at_ref),
+        # его сбой означает битый клон, а не недоступную сеть.
         policy_data, policy_meta = resolve_policy_data(
             repo_id,
             ref,
             lambda selected_ref: file_at_ref(repo, ".review.yml", selected_ref),
+            strict_committed=True,
         )
         policy = ReviewPolicy.load_data(s, policy_data)
         ignore = policy.ignore
         for warning in policy_meta.warnings:
-            log.warning("Домашний слой policy пропущен: %s", warning)
+            log.warning("Слой policy пропущен: %s", warning)
         if ignore:
             files = [f for f in files if not is_ignored(f, ignore)]
         update_base(c.store, c.embedder, repo_id, branch, files,

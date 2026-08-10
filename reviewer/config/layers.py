@@ -16,6 +16,7 @@ import tempfile
 
 import yaml
 
+from reviewer.config.fetch_errors import classify_fetch_error
 from reviewer.config.task_board import normalize_task_board_config
 from reviewer.policy.policy import ReviewPolicy
 from reviewer.services.repo_id import normalize_repo
@@ -34,16 +35,46 @@ class HomePolicyError(HomeConfigError):
 
 
 @dataclass(frozen=True)
+class SkippedLayer:
+    """Слой политики, который существовал (или мог существовать), но не применён.
+
+    Отсутствие слоя записи не создаёт: фетчер, вернувший None, означает «слоя
+    нет в репозитории», а запись здесь — «слой не прочитан» (PRI-234).
+    """
+
+    layer: str
+    repo: str
+    ref: str | None
+    category: str
+    transport: str | None = None
+    http_status: int | None = None
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "layer": self.layer,
+            "repo": self.repo,
+            "ref": self.ref,
+            "category": self.category,
+            "transport": self.transport,
+            "http_status": self.http_status,
+        }
+
+
+@dataclass(frozen=True)
 class ResolutionMeta:
     sources: dict[str, str]
     shadowed: dict[str, tuple[str, ...]]
     warnings: tuple[str, ...]
+    # Дефолт обязателен: frozen dataclass без него сломал бы _empty_meta()
+    # и существующие конструкторы в тестах.
+    skipped: tuple[SkippedLayer, ...] = ()
 
     def as_dict(self) -> dict[str, object]:
         return {
             "sources": dict(self.sources),
             "shadowed": {key: list(value) for key, value in self.shadowed.items()},
             "warnings": list(self.warnings),
+            "skipped": [item.as_dict() for item in self.skipped],
         }
 
 
@@ -75,7 +106,10 @@ def home_repo_path(repo: str, config_root: Path | None = None) -> Path:
 def _read_mapping(text: str | None, source: str) -> dict[str, object]:
     try:
         data = yaml.safe_load(text) if text else {}
-    except yaml.YAMLError:
+    except (yaml.YAMLError, ValueError, TypeError, ArithmeticError):
+        # PyYAML-конструкторы implicit-скаляров (timestamp/int/float) бросают
+        # голый ValueError/TypeError/ArithmeticError, не подкласс YAMLError
+        # (например `2020-13-45` -> ValueError('month must be in 1..12')).
         raise HomeConfigError(f"{source}: конфиг не прочитан: YAML") from None
     if data is None:
         return {}
@@ -106,6 +140,13 @@ _SETTINGS_SECRET_NAMES = frozenset({
     "youtrack_token",
 })
 _MISSING = object()
+
+# Префикс warning'а «коммиченный слой не прочитан» (PRI-234 fail-soft): вынесен
+# как модульная константа, чтобы потребители вроде sync_board могли отличить
+# этот НЕ блокирующий warning от остальных (credential/invalid/malformed
+# домашнего слоя, игнор ключа repository) без матчинга произвольного текста
+# чужого модуля.
+COMMITTED_UNREAD_WARNING_PREFIX = ".review.yml: слой не прочитан ("
 
 
 @lru_cache(maxsize=1)
@@ -261,8 +302,15 @@ def resolve_policy_data(
     *,
     config_root: Path | None = None,
     strict_home: bool = False,
+    strict_committed: bool = False,
 ) -> tuple[dict[str, object], ResolutionMeta]:
-    """Resolve global home, committed, and repository home policy layers."""
+    """Resolve global home, committed, and repository home policy layers.
+
+    `strict_committed` управляет ТОЛЬКО коммиченным слоем и намеренно отделён
+    от `strict_home`: `config show` вызывает резолвер со `strict_home=True`, и
+    расширение того флага заставило бы его падать там, где он обязан печатать
+    эффективную политику из домашних слоёв (PRI-234).
+    """
     # Локальный импорт: branches.py импортирует layers.py, модульный импорт
     # создал бы цикл.
     from reviewer.config.branches import BRANCHES_KEY
@@ -273,6 +321,19 @@ def resolve_policy_data(
     sources: dict[str, str] = {}
     shadowed: dict[str, list[str]] = {}
     warnings: list[str] = []
+    skipped: list[SkippedLayer] = []
+
+    def record_skip(
+        layer: str,
+        category: str,
+        *,
+        ref_value: str | None = None,
+        transport: str | None = None,
+        http_status: int | None = None,
+    ) -> None:
+        skipped.append(
+            SkippedLayer(layer, repo, ref_value, category, transport, http_status)
+        )
 
     def merge(data: Mapping[str, object], source: str) -> None:
         for key, value in data.items():
@@ -296,8 +357,10 @@ def resolve_policy_data(
         except FileNotFoundError:
             return
         except HomeCredentialError as exc:
+            record_skip(source, "credential")
             warnings.append(str(exc))
         except HomePolicyError as exc:
+            record_skip(source, "invalid")
             if strict_home:
                 raise
             warnings.append(str(exc))
@@ -311,25 +374,67 @@ def resolve_policy_data(
             wrapped = HomeConfigError(
                 f"{source}: конфиг не прочитан: {type(exc).__name__}"
             )
+            record_skip(source, "malformed")
             if strict_home:
                 raise wrapped from None
             warnings.append(str(wrapped))
 
+    def merge_committed() -> None:
+        """Прочитать коммиченный слой, не обнуляя уже смерженные домашние.
+
+        Два раздельных try: сбой доставки (сеть, токен, 404) и сбой разбора
+        уже полученного текста — разные категории, но обе fail-soft, как у
+        merge_home. Диагностик собирается только из структурированных полей:
+        текст исключения VCS-клиента содержит URL и токен.
+        """
+        def fail(category: str, transport: str | None, http_status: int | None) -> None:
+            record_skip(
+                ".review.yml",
+                category,
+                ref_value=ref,
+                transport=transport,
+                http_status=http_status,
+            )
+            message = (
+                f"{COMMITTED_UNREAD_WARNING_PREFIX}repo={repo}, ref={ref}, "
+                f"category={category}, transport={transport}, "
+                f"http_status={http_status})"
+            )
+            warnings.append(message)
+            if strict_committed:
+                # from None обязателен: цепочка исключений вынесла бы URL
+                # VCS-клиента в трейсбек.
+                raise HomeConfigError(message) from None
+
+        try:
+            text = fetch_repo_yaml(ref)
+        except Exception as exc:  # noqa: BLE001 — сбой доставки слоя не должен
+            # уничтожать резолв целиком (PRI-234)
+            transport, http_status = classify_fetch_error(exc)
+            fail("unavailable", transport, http_status)
+            return
+        try:
+            committed = _read_mapping(text, ".review.yml")
+        except (HomeConfigError, RecursionError, UnicodeError):
+            fail("malformed", None, None)
+            return
+        if BRANCHES_KEY in committed:
+            committed = {k: v for k, v in committed.items() if k != BRANCHES_KEY}
+            warnings.append(
+                ".review.yml: ключ repository игнорируется "
+                "(ветки задаются домашним слоем, см. reviewer config show)"
+            )
+        merge(committed, ".review.yml")
+
     merge_home(root / "review.yml", "home:review.yml")
-    committed = _read_mapping(fetch_repo_yaml(ref), ".review.yml")
-    if BRANCHES_KEY in committed:
-        committed = {k: v for k, v in committed.items() if k != BRANCHES_KEY}
-        warnings.append(
-            ".review.yml: ключ repository игнорируется "
-            "(ветки задаются домашним слоем, см. reviewer config show)"
-        )
-    merge(committed, ".review.yml")
+    merge_committed()
     repo_source = f"home:repos/{repo}.yml"
     merge_home(home_repo_path(repo, root), repo_source)
     return merged, ResolutionMeta(
         sources=dict(sources),
         shadowed={key: tuple(value) for key, value in shadowed.items()},
         warnings=tuple(warnings),
+        skipped=tuple(skipped),
     )
 
 
@@ -469,6 +574,7 @@ def build_config_report(
         "sources": sources,
         "shadowed": {key: list(value) for key, value in meta.shadowed.items()},
         "warnings": list(meta.warnings),
+        "skipped": [item.as_dict() for item in meta.skipped],
     }
 
 
@@ -768,7 +874,8 @@ def _existing_migration_result(
             destination, False, False, conflicts, before_data, _empty_meta()
         )
     data, meta = resolve_policy_data(
-        repo, ref, fetch_repo_yaml, config_root=root, strict_home=True
+        repo, ref, fetch_repo_yaml, config_root=root,
+        strict_home=True, strict_committed=True,
     )
     _effective_policy_snapshot(data, settings)
     return MigrationResult(destination, False, True, (), data, meta)
@@ -881,7 +988,10 @@ def _simulated_repo_layer(
         merged[key] = value
         sources[key] = source
     return merged, ResolutionMeta(
-        sources, {key: tuple(value) for key, value in shadowed.items()}, meta.warnings
+        sources,
+        {key: tuple(value) for key, value in shadowed.items()},
+        meta.warnings,
+        skipped=meta.skipped,
     )
 
 
@@ -900,7 +1010,15 @@ def migrate_repo_config(
 
     repo = normalize_repo(repo)
     root = config_root or reviewer_config_root()
-    source_text = fetch_repo_yaml(ref)
+    try:
+        source_text = fetch_repo_yaml(ref)
+    except Exception as exc:  # noqa: BLE001 — единый бессекретный диагностик
+        transport, http_status = classify_fetch_error(exc)
+        raise HomeConfigError(
+            f".review.yml: слой не прочитан (repo={repo}, ref={ref}, "
+            f"category=unavailable, transport={transport}, "
+            f"http_status={http_status})"
+        ) from None
     candidate = _read_mapping(source_text, ".review.yml")
     if not candidate:
         raise HomeConfigError(".review.yml отсутствует или пуст")
@@ -924,7 +1042,8 @@ def migrate_repo_config(
         return source_text
 
     before_data, before_meta = resolve_policy_data(
-        repo, ref, fetch_snapshot, config_root=root, strict_home=True
+        repo, ref, fetch_snapshot, config_root=root,
+        strict_home=True, strict_committed=True,
     )
     before_effective = _effective_policy_snapshot(before_data, settings)
     destination = home_repo_path(repo, root)

@@ -940,13 +940,20 @@ class MCPReviewService:
                     ),
                     repo_secrets,
                 )
-            if meta.warnings:
+            from reviewer.config.layers import COMMITTED_UNREAD_WARNING_PREFIX
+
+            blocking_warnings = [
+                warning
+                for warning in meta.warnings
+                if not warning.startswith(COMMITTED_UNREAD_WARNING_PREFIX)
+            ]
+            if blocking_warnings:
                 return self._board_error(
                     "sync_board",
                     BoardProviderError(
                         "configuration",
                         "Task board policy resolution warnings: "
-                        + "; ".join(meta.warnings),
+                        + "; ".join(blocking_warnings),
                         secrets=repo_secrets,
                     ),
                     repo_secrets,
@@ -1367,13 +1374,22 @@ class MCPReviewService:
                 if self._vcs_factory is not None
                 else self._review_service._create_vcs_provider(owner, name)
             )
+            # strict_committed=False намеренно: у _resolve_policy четыре
+            # потребителя, и три из них (_resolve_summary_depth,
+            # _resolve_summary_topk_threshold, _resolve_context_limits) уже
+            # обёрнуты в собственный fail-soft с откатом на env-дефолты.
+            # Строгий режим здесь заставил бы их молча потерять
+            # home:repos/<repo>.yml — то есть воспроизвёл бы исходный баг
+            # PRI-234 этажом выше. Ревью остаётся громким за счёт
+            # ReviewService.prepare.
             data, meta = resolve_policy_data(
                 repo,
                 branch,
                 lambda ref: vcs.get_file_at_ref(".review.yml", ref),
+                strict_committed=False,
             )
             for warning in meta.warnings:
-                log.warning("Домашний слой policy пропущен: %s", warning)
+                log.warning("Слой policy пропущен: %s", warning)
             return ReviewPolicy.load_data(self.settings, data), meta
         finally:
             if vcs is not None and self._vcs_factory is None:
