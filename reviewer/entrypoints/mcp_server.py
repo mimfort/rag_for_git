@@ -309,22 +309,57 @@ def create_server(service: MCPReviewService) -> FastMCP:
     def list_subsystem_clusters(repo: str, branch: str | None = None,
                                 depth: int | None = None,
                                 min_size: int | None = None,
-                                cap: int | None = None) -> dict:
+                                cap: int | None = None,
+                                compact: bool = False,
+                                offset: int = 0,
+                                limit: int | None = None) -> dict:
         """Кластеризовать base-граф кода по путям модулей для скилла
         rag-reviewer:summarize-subsystems. Возвращает
-        {branch, depth, layout_token, deferred, deferred_files, clusters:[...]},
-        где layout_token — обязательная canonical identity default depth +
-        normalized overrides для последующего verified prune. Каждый кластер
-        содержит cluster_key, num_members, files, top_symbols
-        (по центральности), source_hash, stale и file-level delta. Без PR-сессии;
-        branch по умолчанию — первичная отслеживаемая ветка.
+        {branch, depth, layout_token, depth_source, deferred, deferred_files,
+        orphans, clusters:[...]}, где layout_token — обязательная canonical
+        identity default depth + normalized overrides для последующего verified
+        prune. Без PR-сессии; branch по умолчанию — первичная отслеживаемая ветка.
+
+        compact=False (по умолчанию) — полный формат: кластер содержит
+        cluster_key, num_members, files, top_symbols (по центральности),
+        source_hash, stale, bootstrap, full_rebuild, reused_files и file-level
+        delta (added_files / changed_files / moved_files — объекты
+        {path, fingerprint}; removed_files — пути). files содержит ТОЛЬКО
+        неизменённые файлы: пути из added_files / changed_files / moved_files в
+        нём не повторяются. Полный состав кластера восстановим как
+        files ∪ added_files ∪ changed_files ∪ moved_files (removed_files в
+        состав уже не входят). Вне full_rebuild files перечисляет ровно те же
+        файлы, что учитывает счётчик reused_files (пути против количества) —
+        избыточность намеренна: клиенту, которому пути не нужны, достаточно
+        счётчика.
+
+        compact=True — сжатый формат без file-level payload: кластер содержит
+        только cluster_key, num_members, source_hash, stale, bootstrap,
+        full_rebuild, reused_files и числовые счётчики added / changed /
+        removed / moved (без суффикса _files — это числа, а не списки).
+        Ни путей, ни fingerprint'ов, ни top_symbols. Размер ответа растёт по
+        числу кластеров, а не файлов; детализация по кластеру — через
+        get_subsystem_summary_work.
+
+        Пагинация: offset (по умолчанию 0) и limit (по умолчанию None = все
+        кластеры). Порядок кластеров детерминирован — сортировка по cluster_key.
+        Ответ содержит total_clusters (число не-deferred кластеров во всём
+        наборе), применённые offset / limit и has_more. Поля branch, depth,
+        layout_token, depth_source, deferred, deferred_files, orphans и
+        total_clusters считаются по полному множеству кластеров и одинаковы на
+        каждой странице. offset за границей набора возвращает пустой clusters
+        без ошибки; offset<0 приводится к 0, limit<=0 трактуется как «без
+        лимита». Пагинация не является override'ом и не делает проход частичным.
 
         cap (по умолчанию — env SUMMARY_REBUILD_CAP; None/0 = без ограничений)
         отбрасывает наименее приоритетные stale-кластеры за один проход: сначала
         кластеры без сводки, затем с наиболее старым updated_at. Отложенные
         кластеры не попадают в clusters, но учитываются в deferred — количестве
         задержанных этим проходом кластеров."""
-        return service.list_subsystem_clusters(repo, branch, depth, min_size, cap)
+        return service.list_subsystem_clusters(
+            repo, branch, depth, min_size, cap,
+            compact=compact, offset=offset, limit=limit,
+        )
 
     @mcp.tool()
     def get_subsystem_summary_work(repo: str, branch: str, cluster_key: str,

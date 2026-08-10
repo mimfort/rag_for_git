@@ -141,6 +141,15 @@ MCP-сессия (PreparedReview + ToolContext) живёт в процессе `
 - **`reviewer check`** проверяет готовность окружения (ключи, Postgres, Neo4j, GitHub) без трат квот Voyage.
 - **Layout кластеризации сводок (`SUMMARY_CLUSTER_DEPTH`, дефолт 2).** Default depth и per-prefix `summary_cluster_depth_overrides` из effective `.review.yml` образуют canonical `layout_token` (нормализованные и отсортированные overrides). Смена любого компонента token → **полный пересбор всех сводок и пофайловых fragments**, даже если default depth не изменился. `subsystem_summary_state` хранит `completed_depth` для диагностики и nullable `completed_layout` как identity завершённого прохода; legacy row без token считается незавершённым. Осиротевшие данные вычищаются только verified `prune_subsystem_summaries` после полного uncapped прохода (PRI-166/PRI-226).
 - **Инкрементальные fragments сводок (`/summarize-subsystems`).** Первый полный прогон после обновления bootstrap-ит все текущие файлы, не удаляя старые сводки до успешной атомарной замены каждого cluster bundle; при cap bootstrap продолжается в следующих проходах. Server-owned `_reviewer` stamp содержит generation, `layout_token` и diagnostic depth; только exact same-cluster path/fingerprint/stamp доказывает completion. Дальше LLM читает и суммаризирует по одному job только `added_files + changed_files`, а composer получает сохранённые/перенесённые/новые fragment-тексты без исходников; несколько exact cross-cluster кандидатов считаются ambiguous и регенерируются. Fingerprint строится по skeleton-коду: body-only правки намеренно не меняют freshness. Частичный/capped прогон и optimistic race (`ready=false`/`stored=false`) считаются deferred/raced и не запускают prune. Полный проход передаёт list `layout_token` и exact source-hash map; service re-derive и store-проверка summary/fragment coverage под advisory lock предшествуют любому delete/state advance. Backfill использует CAS по `source_hash + title + summary` и считает только успешные записи. Отчёт суммирует `created`, `reused`, `removed`, `moved`, `deferred`/`raced`, `fragments_pruned` и `embedded`.
+  Перечисление кластеров идёт в **сжатом режиме с пагинацией** (`list_subsystem_clusters(...,
+  compact=True, limit=N, offset=M)`): по кластеру только метаданные и числовые счётчики
+  `added`/`changed`/`removed`/`moved` — без путей и fingerprint'ов, размер O(числа кластеров), а
+  не файлов (на этом репозитории 10 922 Б в сжатом режиме против 97 530 Б в полном; до PRI-229
+  полный формат весил 106 878 Б). File-level детализация — через `get_subsystem_summary_work`.
+  В полном формате `files` содержит только
+  неизменённые файлы: пути delta-списков в нём не дублируются, полный состав =
+  `files ∪ added_files ∪ changed_files ∪ moved_files`. Пагинация не считается override'ом —
+  полный проход требует лишь дойти до `has_more == false`.
 - **Overlay удаляется автоматически** (`store.delete_ref("pr:N")`) — после `publish_review` эфемерный
   ref не остаётся в Postgres. При сбое prepare также чистится (fail-soft). Но если ревью **брошено**
   между `prepare_review` и `publish_review` (пользователь отменил, оркестрирующая LLM-сессия упала),

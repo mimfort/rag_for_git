@@ -640,6 +640,13 @@ threshold, graph backend и retrieval ceilings меняют cost/recall; сна�
 - **Нужно:** свежий base index, code graph, reviewer MCP и подтверждённый cluster depth.
 - **Чтение/запись:** читает symbols кластеров и пишет grounded summaries в summary store.
 - **Результат:** fresh/pruned summaries с отчётом deferred и orphans.
+- **Объём ответа:** перечисление кластеров идёт в сжатом режиме с пагинацией
+  (`compact=True`, `offset`/`limit`): метаданные и счётчики `added`/`changed`/`removed`/`moved`,
+  без путей и fingerprint'ов — размер растёт по числу кластеров, а не файлов
+  (на этом репозитории 10 922 Б в сжатом режиме против 97 530 Б в полном; до PRI-229 полный
+  формат весил 106 878 Б). Детализация по кластеру — через `get_subsystem_summary_work`. В полном
+  формате `files` перечисляет только неизменённые файлы: пути delta-списков в нём не дублируются,
+  полный состав = `files ∪ added_files ∪ changed_files ∪ moved_files`.
 
 ### `configure-review` — обновить layered policy и ветки
 

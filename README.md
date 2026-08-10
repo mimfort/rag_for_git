@@ -636,6 +636,12 @@ namespaced skills with `$rag-reviewer:...`.
   пофайловые fragments и атомарно пишет fragments вместе со сводкой кластера.
 - **Result:** сводки и метрики `created`/`reused`/`removed`/`moved`,
   `deferred`/`raced`, `fragments_pruned` и `embedded`.
+- **Payload:** the cluster listing runs in compact, paginated mode
+  (`compact=True`, `offset`/`limit`): metadata plus `added`/`changed`/`removed`/`moved` counters,
+  no paths and no fingerprints, so its size grows with the number of clusters rather than files
+  (10 922 B compact vs 97 530 B full on this repository; the full format itself was 106 878 B
+  before PRI-229). Per-cluster file detail comes from `get_subsystem_summary_work`. In full
+  format `files` lists only unchanged files — the delta lists are not repeated there.
 
 Первый полный прогон после обновления создаёт fragments для всех текущих файлов, но не удаляет
 старые сводки: каждый кластер заменяется только после успешной атомарной записи нового bundle.
