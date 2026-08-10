@@ -90,7 +90,8 @@ def build_components(settings: Settings, connect: bool = True) -> Components:
         vclient = _voyage_client(settings)
         embedder = VoyageEmbedder(client=vclient, model=settings.embedding_model,
                                   dim=settings.embedding_dim,
-                                  batch_size=settings.embedding_batch_size)
+                                  batch_size=settings.embedding_batch_size,
+                                  token_budget=settings.embedding_token_budget)
         reranker = VoyageReranker(client=vclient, model=settings.rerank_model)
         graph = GraphStore(settings.neo4j_uri, settings.neo4j_user, settings.neo4j_password) \
             if connect else None
