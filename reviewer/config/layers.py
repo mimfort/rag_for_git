@@ -16,6 +16,7 @@ import tempfile
 
 import yaml
 
+from reviewer.config.fetch_errors import classify_fetch_error
 from reviewer.config.task_board import normalize_task_board_config
 from reviewer.policy.policy import ReviewPolicy
 from reviewer.services.repo_id import normalize_repo
@@ -291,8 +292,15 @@ def resolve_policy_data(
     *,
     config_root: Path | None = None,
     strict_home: bool = False,
+    strict_committed: bool = False,
 ) -> tuple[dict[str, object], ResolutionMeta]:
-    """Resolve global home, committed, and repository home policy layers."""
+    """Resolve global home, committed, and repository home policy layers.
+
+    `strict_committed` управляет ТОЛЬКО коммиченным слоем и намеренно отделён
+    от `strict_home`: `config show` вызывает резолвер со `strict_home=True`, и
+    расширение того флага заставило бы его падать там, где он обязан печатать
+    эффективную политику из домашних слоёв (PRI-234).
+    """
     # Локальный импорт: branches.py импортирует layers.py, модульный импорт
     # создал бы цикл.
     from reviewer.config.branches import BRANCHES_KEY
@@ -361,15 +369,55 @@ def resolve_policy_data(
                 raise wrapped from None
             warnings.append(str(wrapped))
 
+    def merge_committed() -> None:
+        """Прочитать коммиченный слой, не обнуляя уже смерженные домашние.
+
+        Два раздельных try: сбой доставки (сеть, токен, 404) и сбой разбора
+        уже полученного текста — разные категории, но обе fail-soft, как у
+        merge_home. Диагностик собирается только из структурированных полей:
+        текст исключения VCS-клиента содержит URL и токен.
+        """
+        def fail(category: str, transport: str | None, http_status: int | None) -> None:
+            record_skip(
+                ".review.yml",
+                category,
+                ref_value=ref,
+                transport=transport,
+                http_status=http_status,
+            )
+            message = (
+                f".review.yml: слой не прочитан (repo={repo}, ref={ref}, "
+                f"category={category}, transport={transport}, "
+                f"http_status={http_status})"
+            )
+            warnings.append(message)
+            if strict_committed:
+                # from None обязателен: цепочка исключений вынесла бы URL
+                # VCS-клиента в трейсбек.
+                raise HomeConfigError(message) from None
+
+        try:
+            text = fetch_repo_yaml(ref)
+        except Exception as exc:  # noqa: BLE001 — сбой доставки слоя не должен
+            # уничтожать резолв целиком (PRI-234)
+            transport, http_status = classify_fetch_error(exc)
+            fail("unavailable", transport, http_status)
+            return
+        try:
+            committed = _read_mapping(text, ".review.yml")
+        except (HomeConfigError, RecursionError, UnicodeError):
+            fail("malformed", None, None)
+            return
+        if BRANCHES_KEY in committed:
+            committed = {k: v for k, v in committed.items() if k != BRANCHES_KEY}
+            warnings.append(
+                ".review.yml: ключ repository игнорируется "
+                "(ветки задаются домашним слоем, см. reviewer config show)"
+            )
+        merge(committed, ".review.yml")
+
     merge_home(root / "review.yml", "home:review.yml")
-    committed = _read_mapping(fetch_repo_yaml(ref), ".review.yml")
-    if BRANCHES_KEY in committed:
-        committed = {k: v for k, v in committed.items() if k != BRANCHES_KEY}
-        warnings.append(
-            ".review.yml: ключ repository игнорируется "
-            "(ветки задаются домашним слоем, см. reviewer config show)"
-        )
-    merge(committed, ".review.yml")
+    merge_committed()
     repo_source = f"home:repos/{repo}.yml"
     merge_home(home_repo_path(repo, root), repo_source)
     return merged, ResolutionMeta(

@@ -964,3 +964,119 @@ def test_resolution_meta_as_dict_exposes_skipped_and_defaults_to_empty():
 
     assert meta.skipped == ()
     assert meta.as_dict()["skipped"] == []
+
+
+def test_committed_fetch_failure_keeps_both_home_layers(tmp_path):
+    """PRI-234, критерий 2: сбой доставки коммиченного слоя не обнуляет home."""
+    _write(tmp_path / "review.yml", "max_comments: 5\ncontext_limits: {graph: {hops: 2}}\n")
+    _write(tmp_path / "repos/o/r.yml", "paths: {ignore: [home-repo]}\ntask_board:\n")
+
+    def boom(_ref):
+        raise RuntimeError("сеть недоступна")
+
+    data, meta = resolve_policy_data("o/r", "main", boom, config_root=tmp_path)
+
+    assert data["paths"] == {"ignore": ["home-repo"]}
+    assert data["max_comments"] == 5
+    assert data["context_limits"] == {"graph": {"hops": 2}}
+    assert data["task_board"] is None
+    assert len(meta.warnings) == 1
+    assert [item.as_dict() for item in meta.skipped] == [
+        {
+            "layer": ".review.yml",
+            "repo": "o/r",
+            "ref": "main",
+            "category": "unavailable",
+            "transport": "unknown",
+            "http_status": None,
+        }
+    ]
+
+
+def test_committed_fetch_failure_is_loud_in_strict_committed_mode(tmp_path):
+    _write(tmp_path / "repos/o/r.yml", "paths: {ignore: [home-repo]}\n")
+
+    def boom(_ref):
+        raise RuntimeError("сеть недоступна")
+
+    with pytest.raises(HomeConfigError):
+        resolve_policy_data(
+            "o/r", "main", boom, config_root=tmp_path, strict_committed=True
+        )
+
+
+def test_committed_http_failure_reports_status_and_transport(tmp_path):
+    class _Response:
+        status_code = 403
+
+    class _HTTPStatusError(Exception):
+        response = _Response()
+
+    def boom(_ref):
+        raise _HTTPStatusError("forbidden")
+
+    _data, meta = resolve_policy_data("o/r", "sha123", boom, config_root=tmp_path)
+
+    assert meta.skipped[0].transport == "http"
+    assert meta.skipped[0].http_status == 403
+    assert meta.skipped[0].ref == "sha123"
+
+
+def test_malformed_committed_yaml_is_soft_and_categorized(tmp_path):
+    _write(tmp_path / "repos/o/r.yml", "max_comments: 5\n")
+
+    data, meta = resolve_policy_data(
+        "o/r", "main", lambda _ref: "paths: [broken\n", config_root=tmp_path
+    )
+
+    assert data == {"max_comments": 5}
+    assert [(item.layer, item.category) for item in meta.skipped] == [
+        (".review.yml", "malformed")
+    ]
+    with pytest.raises(HomeConfigError):
+        resolve_policy_data(
+            "o/r",
+            "main",
+            lambda _ref: "paths: [broken\n",
+            config_root=tmp_path,
+            strict_committed=True,
+        )
+
+
+def test_absent_committed_layer_records_nothing(tmp_path):
+    """Фетчер вернул None: «слоя нет» — не то же, что «слой не прочитан»."""
+    _write(tmp_path / "repos/o/r.yml", "max_comments: 5\n")
+
+    data, meta = resolve_policy_data(
+        "o/r", "main", lambda _ref: None, config_root=tmp_path
+    )
+
+    assert data == {"max_comments": 5}
+    assert meta.skipped == ()
+    assert meta.warnings == ()
+
+
+def test_committed_failure_diagnostic_never_echoes_url_or_token(tmp_path):
+    secret = "do-not-echo-token-xyz"
+
+    class _Request:
+        url = f"https://api.example/repos/o/r?token={secret}"
+
+    class _HTTPStatusError(Exception):
+        request = _Request()
+
+    def boom(_ref):
+        raise _HTTPStatusError(f"GET {_Request.url} -> 500")
+
+    _data, meta = resolve_policy_data("o/r", "main", boom, config_root=tmp_path)
+
+    rendered = " ".join(meta.warnings) + repr([i.as_dict() for i in meta.skipped])
+    assert secret not in rendered
+    assert "https://" not in rendered
+
+    with pytest.raises(HomeConfigError) as excinfo:
+        resolve_policy_data(
+            "o/r", "main", boom, config_root=tmp_path, strict_committed=True
+        )
+    assert secret not in str(excinfo.value)
+    assert secret not in "".join(traceback.format_exception(excinfo.value))
