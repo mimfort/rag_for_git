@@ -122,6 +122,9 @@ class EnvField:
     default: str = ""
     secret: bool = False
     required: bool = False
+    # Дефолт, выводимый из уже собранных значений (напр. порт из PG_DSN).
+    # None — статичный default.
+    derive_default: Callable[[dict[str, str]], str] | None = None
 
 
 @dataclass
@@ -382,6 +385,29 @@ def render_env_preview(values: dict[str, str], extra: dict[str, str]) -> str:
     return render_env(safe_values, safe_extra)
 
 
+def _port_from_url(value: str, fallback: str) -> str:
+    """Порт из URL (DSN/URI) строкой; fallback при пустом/кривом URL или URL без порта."""
+    try:
+        port = urlsplit((value or "").strip()).port
+    except ValueError:
+        return fallback
+    return str(port) if port else fallback
+
+
+def _effective_default(
+    field: EnvField,
+    values: dict[str, str],
+    current: dict[str, str],
+) -> str:
+    """Дефолт поля: значение из .env → производный (derive_default) → статичный."""
+    cur = current.get(field.key, "")
+    if cur:
+        return cur
+    if field.derive_default is not None:
+        return field.derive_default(values)
+    return field.default
+
+
 def prompt_groups(
     groups: list[EnvGroup],
     current: dict[str, str],
@@ -402,18 +428,18 @@ def prompt_groups(
             if yes:
                 # CI: сохраняем текущее или дефолт, не спрашиваем
                 for f in group.fields:
-                    values[f.key] = current.get(f.key, "") or f.default
+                    values[f.key] = _effective_default(f, values, current)
                 continue
             if not click.confirm(f"\nНастроить {group.title}?", default=False):
                 for f in group.fields:
-                    values[f.key] = current.get(f.key, "") or f.default
+                    values[f.key] = _effective_default(f, values, current)
                 continue
         elif not yes:
             click.echo(f"\n[{group.title}]")
 
         for field in group.fields:
             cur = current.get(field.key, "")
-            effective_default = cur or field.default
+            effective_default = _effective_default(field, values, current)
 
             if yes:
                 values[field.key] = effective_default

@@ -536,3 +536,76 @@ def test_env_template_contains_all_wizard_keys():
     wizard_keys = {f.key for g in inst.WIZARD_GROUPS for f in g.fields}
     missing = wizard_keys - template_keys
     assert not missing, f"в ENV_TEMPLATE нет ключей wizard: {sorted(missing)}"
+
+
+def test_port_from_url_reads_explicit_port():
+    dsn = "postgresql://reviewer:reviewer@localhost:6543/reviewer"
+    assert inst._port_from_url(dsn, "5433") == "6543"
+    assert inst._port_from_url("neo4j://localhost:7999", "7687") == "7999"
+
+
+def test_port_from_url_falls_back_when_port_missing_or_broken():
+    assert inst._port_from_url("postgresql://reviewer@localhost/reviewer", "5433") == "5433"
+    assert inst._port_from_url("neo4j://localhost:not-a-port", "7687") == "7687"
+    assert inst._port_from_url("", "5433") == "5433"
+    assert inst._port_from_url("   ", "5433") == "5433"
+
+
+def _derived_probe_group(optional: bool) -> inst.EnvGroup:
+    """Группа из источника и производного от него поля — для проверки derive_default."""
+    return inst.EnvGroup(
+        title="Проба",
+        optional=optional,
+        fields=[
+            inst.EnvField(
+                key="PROBE_URI",
+                prompt_text="PROBE_URI",
+                default="neo4j://localhost:7687",
+            ),
+            inst.EnvField(
+                key="PROBE_PORT",
+                prompt_text="PROBE_PORT",
+                default="7687",
+                derive_default=lambda values: inst._port_from_url(
+                    values.get("PROBE_URI", ""), "7687"
+                ),
+            ),
+        ],
+    )
+
+
+def test_prompt_groups_derives_default_from_earlier_field():
+    result = inst.prompt_groups(
+        [_derived_probe_group(optional=False)],
+        current={"PROBE_URI": "neo4j://localhost:7999"},
+        yes=True,
+    )
+    assert result["PROBE_PORT"] == "7999"
+
+
+def test_prompt_groups_derives_default_in_optional_group():
+    # Опциональная группа при yes=True идёт коротким путём — derive_default обязан работать и там
+    result = inst.prompt_groups(
+        [_derived_probe_group(optional=True)],
+        current={"PROBE_URI": "neo4j://localhost:7999"},
+        yes=True,
+    )
+    assert result["PROBE_PORT"] == "7999"
+
+
+def test_prompt_groups_existing_value_beats_derived_default():
+    result = inst.prompt_groups(
+        [_derived_probe_group(optional=False)],
+        current={"PROBE_URI": "neo4j://localhost:7999", "PROBE_PORT": "7000"},
+        yes=True,
+    )
+    assert result["PROBE_PORT"] == "7000"
+
+
+def test_prompt_groups_derive_default_falls_back_to_static_default():
+    result = inst.prompt_groups(
+        [_derived_probe_group(optional=False)],
+        current={"PROBE_URI": "neo4j://localhost"},
+        yes=True,
+    )
+    assert result["PROBE_PORT"] == "7687"
