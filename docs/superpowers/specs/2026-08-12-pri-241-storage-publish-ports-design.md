@@ -54,13 +54,22 @@ neo4j:
 derive_default: Callable[[dict[str, str]], str] | None = None
 ```
 
-`prompt_groups` (`reviewer/install.py:385-...`) вычисляет эффективный дефолт как
+`prompt_groups` (`reviewer/install.py:385-434`) получает общий хелпер
 
 ```python
-effective_default = cur or (
-    field.derive_default(values) if field.derive_default is not None else field.default
-)
+def _effective_default(field, values, current) -> str:
+    cur = current.get(field.key, "")
+    if cur:
+        return cur
+    if field.derive_default is not None:
+        return field.derive_default(values)
+    return field.default
 ```
+
+Хелпер применяется во **всех трёх** местах, где сейчас вычисляется `cur or field.default`:
+в основном цикле опроса и в двух ранних ветках опциональной группы (`yes=True` и отказ от
+`confirm`). Группа «Хранилища» именно опциональная, поэтому без правки коротких веток
+`reviewer init --yes` молча игнорировал бы производный дефолт.
 
 Приоритет существующего значения из `.env` (`cur`) сохраняется без изменений. Порядок полей
 внутри группы гарантирует, что `PG_DSN`/`NEO4J_URI` уже лежат в `values`, когда очередь доходит
