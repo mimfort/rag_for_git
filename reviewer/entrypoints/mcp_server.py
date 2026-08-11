@@ -143,8 +143,10 @@ def create_server(service: MCPReviewService) -> FastMCP:
         task's last-modified bumps and the next sync_board re-indexes the updated task.
         board_type is a registered provider type, target is the selected generic done
         target, and provider_options is a non-secret JSON object. It also appends a
-        clickable task link to the PR body (task_link_added; fail-soft, reasons land in
-        warnings). Credentials remain server-side; failures are returned safely."""
+        clickable task link to the PR body: task_link_status is "added", "already_present"
+        (the link was already there — an idempotent no-op, not a problem) or "failed"
+        (reason in warnings); task_link_added keeps its old meaning "written just now".
+        Fail-soft. Credentials remain server-side; failures are returned safely."""
         return service.finish_task(
             key,
             pr_url,
@@ -240,6 +242,83 @@ def create_server(service: MCPReviewService) -> FastMCP:
         .review.yml task_board block, so the board need not be duplicated per repo.
         null = no board configured in this deploy."""
         return service.board_config()
+
+    @mcp.tool()
+    def report_bug(
+        kind: str,
+        summary: str,
+        expected: str = "",
+        actual: str = "",
+        steps: list[str] | None = None,
+        severity: str | None = None,
+        tool: str = "",
+        skill_step: str = "",
+        error_class: str = "",
+        details: str = "",
+        caused_by_skill_instruction: bool = False,
+        repo: str = "",
+        branch: str = "",
+        client_environment: dict[str, object] | None = None,
+        scale: dict[str, object] | None = None,
+        index_drift: int | None = None,
+        environment_include: list[str] | None = None,
+        environment_exclude: list[str] | None = None,
+        confirmed: bool = False,
+        non_interactive: bool = False,
+        decline: bool = False,
+    ) -> dict:
+        """Report a defect OF REVIEWER ITSELF as an anonymized issue in mimfort/rag_for_git.
+
+        Two phases, enforced server-side. Call it WITHOUT `confirmed` first: nothing is
+        published and you get back the exact final issue text (`issue_text`) plus
+        `environment_keys` and `identity_notice`; show that text in full and ask the user.
+        Call it again with `confirmed=True` only after an explicit human approval. Pass
+        `non_interactive=True` in headless/cron/background runs — the server then returns a
+        `fallback` markdown instead of publishing, because approval without a human is not
+        approval. `decline=True` records a refusal so the same symptom is never offered again.
+
+        `kind` is the symptom class and decides whether the channel speaks at all. Ours:
+        tool_exception, contract_violation, skill_impossible, skill_contradiction,
+        invariant_violation, deterministic_repro. Not ours (the channel stays silent):
+        environment, external_service, user_code, permission, llm_behaviour — except
+        llm_behaviour caused by a contradictory skill instruction, where you set
+        `caused_by_skill_instruction=True` and it becomes a prompt bug of ours.
+        `severity` is blocker | degraded | contract; contract-level reports come back with
+        `defer=true`, meaning batch them until the end of the session.
+
+        Every text field is anonymized server-side (code, paths, repo/branch/file names,
+        task keys and URLs, self-hosted hosts, e-mails, tokens) — never pre-redact by hand
+        and never paste source code. The Environment block is assembled by the server;
+        `client_environment` carries only what a model knows about itself
+        (orchestrator_model, subagent_models, mode, cli, cli_version) and `scale` only
+        integer counts. The user may trim the block via `environment_include` /
+        `environment_exclude`, and trimming never blocks publication.
+
+        Statuses: disabled | not_reported | suppressed | declined | preview | published |
+        commented | fallback. Fail-soft — a failure to report never breaks the session."""
+        return service.report_bug(
+            kind,
+            summary,
+            expected=expected,
+            actual=actual,
+            steps=steps,
+            severity=severity,
+            tool=tool,
+            skill_step=skill_step,
+            error_class=error_class,
+            details=details,
+            caused_by_skill_instruction=caused_by_skill_instruction,
+            repo=repo,
+            branch=branch,
+            client_environment=client_environment,
+            scale=scale,
+            index_drift=index_drift,
+            environment_include=environment_include,
+            environment_exclude=environment_exclude,
+            confirmed=confirmed,
+            non_interactive=non_interactive,
+            decline=decline,
+        )
 
     @mcp.tool()
     def get_board_targets(board_type: str | None = None,

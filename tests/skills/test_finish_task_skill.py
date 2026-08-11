@@ -55,3 +55,12 @@ def test_finish_task_mentions_pr_backlink():
     t = SKILL.read_text(encoding="utf-8")
     assert "task_link_added" in t     # отчёт озвучивает результат обратного линка
     assert "PR body" in t             # offer предупреждает о правке тела PR
+
+
+def test_finish_task_reports_link_status_three_outcomes():
+    # Шаг 6 читает task_link_status: 'уже была' — норма, а не проблема (PRI-238).
+    t = SKILL.read_text(encoding="utf-8")
+    assert "task_link_status" in t
+    for outcome in ("added", "already_present", "failed"):
+        assert outcome in t
+    assert "only" in t and "failed" in t   # о проблеме сообщаем только при failed

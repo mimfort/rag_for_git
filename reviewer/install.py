@@ -95,6 +95,7 @@ REVIEW_OUTPUT_LANGUAGE=ru
 REVIEW_SKIP_DRAFTS=true
 REVIEW_HISTORY=true
 MAX_TOOL_RESULT_CHARS=8000
+REVIEW_BUG_REPORTS=true
 
 # --- Доска задач (опционально; canonical per-provider credentials) ---
 # Тип доски (yougile|youtrack|jira) задаётся в .review.yml каждого репо (task_board.type),

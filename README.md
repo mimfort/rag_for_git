@@ -502,7 +502,7 @@ The server-side flow is **store-first**:
 2. Skills call `get_task(key, project=...)`; linked tasks/PRs/code come from task context tools.
 3. Client models never enumerate the provider directly and never send credentials.
 
-The MCP server currently exposes **38 tools**, including the native-subtask batch operation.
+The MCP server currently exposes **39 tools**, including the native-subtask batch operation.
 
 Legacy aliases remain **legacy metadata for older clients** for one compatibility window:
 `TASK_BOARD_API_KEY → YOUGILE_API_KEY` and
@@ -623,7 +623,45 @@ namespaced skills with `$rag-reviewer:...`.
 - **Needs:** task key, PR URL, registered board config, and discovered done target/options.
 - **Reads/writes:** after explicit confirmation, appends the PR idempotently, updates the task,
   prepends a task backlink to the PR body, and re-syncs.
-- **Result:** done state plus `already_closed`/`task_link_added` reporting without duplicate links.
+- **Result:** done state plus `already_closed`/`task_link_status` (`added` | `already_present` |
+  `failed`) reporting without duplicate links; `task_link_added` keeps its old meaning
+  ("written just now").
+
+### `report-bug` — report a defect of reviewer itself
+
+- **When:** a reviewer MCP tool broke its own documented contract, a skill step was impossible with
+  the available tools, a stated invariant failed, or a reviewer frame appeared in a traceback.
+  Problems of the user's project (environment, external services, permissions, their own code) are
+  deliberately out of scope: the channel is only worth having while it stays silent on them.
+- **Invoke:** `/rag-reviewer:report-bug`.
+- **Needs:** nothing beyond the MCP server; a GitHub token only for the publishing path.
+- **Reads/writes:** the server triages the symptom class, anonymizes every text field
+  deterministically in Python (source fragments, absolute paths, repo/branch/file names, task keys
+  and board URLs, self-hosted hosts, e-mails, tokens) and assembles the issue for
+  `mimfort/rag_for_git`. **What leaves your machine** is the anonymized narrative plus an
+  Environment block of *shape only*: orchestrator and subagent models, mode, CLI and OS, reviewer /
+  plugin / Python versions and install mode, registered board type, VCS type and whether it is
+  self-hosted (never the host), graph backend, index presence and drift as a number, and integer
+  counts of clusters/files/findings/tasks. The exact final text is shown before anything is sent,
+  and the Environment block can be trimmed line by line or dropped entirely without blocking the
+  report.
+- **Approval:** publication happens **only** after an explicit human yes, and never in headless,
+  cron or background runs — this is enforced server-side, not by the prompt. The issue is created
+  from the user's GitHub account, so their username becomes visible in a public repository; the
+  skill says so before asking. A matching open issue gets a comment instead of a duplicate.
+- **Result:** `published` / `commented` with URLs, or `fallback` with ready-made markdown and a
+  prefilled issue link for manual posting — a failure to report never breaks the session.
+- **Automatic trigger:** a `PostToolUse` hook watches reviewer tool results and recognizes two
+  shapes deterministically — a traceback with `reviewer/*` frames, and a `status` value outside a
+  tool's documented set — so noticing a defect is not left to the model's attention. Routine
+  failures are checked **first** and always win: unavailable stores, missing keys or tokens, board
+  rate limits, 401/403/404, network timeouts, a missing or stale index, and an untracked branch
+  never produce a nudge. Invariant violations (idempotency, dedup, counters) stay model-noticed:
+  they are invisible in a single response, and guessing from one call is how a hook turns into
+  noise. The nudge carries only the shape of the failure, fires at most once per symptom per
+  session, and costs nothing when nothing is wrong.
+- **Switch:** `bug_reports: false` in a repository's `.review.yml` disables the channel and the
+  hook for that repository, `REVIEW_BUG_REPORTS=false` for the whole deploy.
 
 ### `sync-codebase` — build or update the base index
 
