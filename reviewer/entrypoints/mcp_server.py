@@ -143,8 +143,10 @@ def create_server(service: MCPReviewService) -> FastMCP:
         task's last-modified bumps and the next sync_board re-indexes the updated task.
         board_type is a registered provider type, target is the selected generic done
         target, and provider_options is a non-secret JSON object. It also appends a
-        clickable task link to the PR body (task_link_added; fail-soft, reasons land in
-        warnings). Credentials remain server-side; failures are returned safely."""
+        clickable task link to the PR body: task_link_status is "added", "already_present"
+        (the link was already there — an idempotent no-op, not a problem) or "failed"
+        (reason in warnings); task_link_added keeps its old meaning "written just now".
+        Fail-soft. Credentials remain server-side; failures are returned safely."""
         return service.finish_task(
             key,
             pr_url,

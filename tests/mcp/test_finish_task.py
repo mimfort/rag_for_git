@@ -216,6 +216,7 @@ def test_finish_task_backlinks_task_into_pr_body():
     out = _Svc(["fake"], vcs=vcs).finish_task("PRI-10", PR_URL)
     assert out["status"] == "ok"
     assert out["task_link_added"] is True
+    assert out["task_link_status"] == "added"
     assert len(vcs.updated) == 1
     number, body = vcs.updated[0]
     assert number == 7
@@ -230,6 +231,18 @@ def test_finish_task_backlink_idempotent_on_second_run():
     out = _Svc(["fake"], vcs=vcs).finish_task("PRI-10", PR_URL)
     assert out["status"] == "ok"
     assert out["task_link_added"] is False
+    # Ссылка уже на месте — это норма, а не сбой: отдельный статус отличает её от неудачи.
+    assert out["task_link_status"] == "already_present"
+    assert vcs.updated == []
+    assert out["warnings"] == []
+
+
+def test_finish_task_backlink_already_present_when_author_linked_manually():
+    # Ручная ссылка автора PR (без нашего маркера) — тоже идемпотентный no-op.
+    vcs = _FakeVCS(body="см. [PRI-10](https://board.example/#PRI-10)\n\nтекст")
+    out = _Svc(["fake"], vcs=vcs).finish_task("PRI-10", PR_URL)
+    assert out["task_link_added"] is False
+    assert out["task_link_status"] == "already_present"
     assert vcs.updated == []
     assert out["warnings"] == []
 
@@ -241,6 +254,7 @@ def test_finish_task_backlink_failsoft_on_vcs_error():
     assert out["status"] == "ok"
     assert out["done_set"] is True
     assert out["task_link_added"] is False
+    assert out["task_link_status"] == "failed"
     assert any("403" in w for w in out["warnings"])
 
 
@@ -254,6 +268,7 @@ def test_finish_task_backlink_skipped_without_task_url():
     out = _Svc(["fake"], _NoUrl(), vcs=vcs).finish_task("PRI-10", PR_URL)
     assert out["status"] == "ok"
     assert out["task_link_added"] is False
+    assert out["task_link_status"] == "failed"
     assert vcs.updated == []
     assert any("url_template" in w for w in out["warnings"])
 
@@ -263,6 +278,8 @@ def test_finish_task_backlink_skipped_on_unparsable_pr_url():
     out = _Svc(["fake"], vcs=vcs).finish_task("PRI-10", "не ссылка")
     assert out["status"] == "ok"
     assert out["task_link_added"] is False
+    assert out["task_link_status"] == "failed"
+    assert any("не распознан" in w for w in out["warnings"])
     assert vcs.updated == []
 
 
@@ -277,4 +294,14 @@ def test_finish_task_backlink_skipped_when_writethrough_failed():
     assert out["status"] == "ok"
     assert out["reindexed"] is False
     assert out["task_link_added"] is False
+    assert out["task_link_status"] == "failed"
     assert vcs.updated == []
+
+
+def test_finish_task_link_status_matches_warnings_contract():
+    # Контракт: 'failed' ⇔ есть warning про ссылку; норма ('added'/'already_present') — без него.
+    vcs = _FakeVCS()
+    out = _Svc(["fake"], vcs=vcs).finish_task("PRI-10", PR_URL)
+    assert out["task_link_status"] in {"added", "already_present", "failed"}
+    assert out["task_link_added"] is (out["task_link_status"] == "added")
+    assert not [w for w in out["warnings"] if "ссылка на задачу" in w]

@@ -623,7 +623,9 @@ namespaced skills with `$rag-reviewer:...`.
 - **Needs:** task key, PR URL, registered board config, and discovered done target/options.
 - **Reads/writes:** after explicit confirmation, appends the PR idempotently, updates the task,
   prepends a task backlink to the PR body, and re-syncs.
-- **Result:** done state plus `already_closed`/`task_link_added` reporting without duplicate links.
+- **Result:** done state plus `already_closed`/`task_link_status` (`added` | `already_present` |
+  `failed`) reporting without duplicate links; `task_link_added` keeps its old meaning
+  ("written just now").
 
 ### `sync-codebase` — build or update the base index
 

@@ -29,7 +29,11 @@ target, and adds a clickable task link to the PR body; clients never send creden
    On `status == "error"`, report the reason in Russian and stop.
 6. **Re-index.** Call `sync_board(board=<project or null>, board_type=<type>,
    provider_options=<task_board.options or {}>)`, then report the write and sync result. When
-   `already_closed` is true, state that no duplicate PR link was added. Report `task_link_added`:
-   when false, relay the warning verbatim — the board write still succeeded.
+   `already_closed` is true, state that no duplicate PR link was added. Report the task link from
+   `task_link_status`, not from `task_link_added` alone: `added` — the link was written now;
+   `already_present` — it was already in the PR body, so report it as normal (an idempotent no-op,
+   never as a problem); `failed` — only then relay the warning verbatim, and the board write still
+   succeeded. `task_link_added` stays `true` only for `added` (older deploys may omit
+   `task_link_status`: treat a missing field as `added`/`failed` by whether warnings mention the link).
 
 All reads are fail-open; the explicitly confirmed `finish_task` call is the only write.
