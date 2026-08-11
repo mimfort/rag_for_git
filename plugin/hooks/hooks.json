@@ -9,6 +9,15 @@
             "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/brief_post_write.py\""
           }
         ]
+      },
+      {
+        "matcher": "mcp__reviewer__.*|mcp__plugin_rag-reviewer_reviewer__.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/reviewer_defect.py\""
+          }
+        ]
       }
     ]
   }
