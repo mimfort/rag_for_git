@@ -75,6 +75,10 @@ PG_POOL_MAX_SIZE=4
 NEO4J_URI=neo4j://localhost:7687
 NEO4J_USER=neo4j
 NEO4J_PASSWORD=reviewerpass
+# Публикуемые (хостовые) порты docker compose; контейнерные порты фиксированы.
+PARADEDB_PUBLISH_PORT=5433
+NEO4J_BOLT_PUBLISH_PORT=7687
+NEO4J_HTTP_PUBLISH_PORT=7474
 
 # --- Граф кода: auto|scip|treesitter ---
 GRAPH_BACKEND=auto
@@ -268,6 +272,23 @@ WIZARD_GROUPS: list[EnvGroup] = [
                 prompt_text="NEO4J_PASSWORD",
                 default="reviewerpass",
                 secret=True,
+            ),
+            EnvField(
+                key="PARADEDB_PUBLISH_PORT",
+                prompt_text="PARADEDB_PUBLISH_PORT (публикуемый порт ParadeDB в docker compose)",
+                default="5433",
+                derive_default=lambda values: _port_from_url(values.get("PG_DSN", ""), "5433"),
+            ),
+            EnvField(
+                key="NEO4J_BOLT_PUBLISH_PORT",
+                prompt_text="NEO4J_BOLT_PUBLISH_PORT (публикуемый bolt-порт Neo4j)",
+                default="7687",
+                derive_default=lambda values: _port_from_url(values.get("NEO4J_URI", ""), "7687"),
+            ),
+            EnvField(
+                key="NEO4J_HTTP_PUBLISH_PORT",
+                prompt_text="NEO4J_HTTP_PUBLISH_PORT (публикуемый порт браузера Neo4j)",
+                default="7474",
             ),
         ],
     ),

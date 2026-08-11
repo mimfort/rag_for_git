@@ -609,3 +609,48 @@ def test_prompt_groups_derive_default_falls_back_to_static_default():
         yes=True,
     )
     assert result["PROBE_PORT"] == "7687"
+
+
+PUBLISH_PORT_DEFAULTS = {
+    "PARADEDB_PUBLISH_PORT": "5433",
+    "NEO4J_BOLT_PUBLISH_PORT": "7687",
+    "NEO4J_HTTP_PUBLISH_PORT": "7474",
+}
+
+
+def test_storage_group_declares_publish_ports_with_compose_defaults():
+    group = next(
+        g for g in inst.WIZARD_GROUPS if g.title == "Хранилища (Postgres / Neo4j)"
+    )
+    declared = {f.key: f.default for f in group.fields}
+
+    for key, default in PUBLISH_PORT_DEFAULTS.items():
+        assert declared[key] == default
+
+
+def test_wizard_yes_derives_publish_ports_from_connection_strings():
+    current = {
+        "PG_DSN": "postgresql://reviewer:reviewer@localhost:6543/reviewer",
+        "NEO4J_URI": "neo4j://localhost:7999",
+    }
+    result = inst.prompt_groups(inst.WIZARD_GROUPS, current=current, yes=True)
+
+    assert result["PARADEDB_PUBLISH_PORT"] == "6543"
+    assert result["NEO4J_BOLT_PUBLISH_PORT"] == "7999"
+    # HTTP-порт неоткуда выводить: в NEO4J_URI только bolt
+    assert result["NEO4J_HTTP_PUBLISH_PORT"] == "7474"
+
+
+def test_wizard_yes_keeps_compose_defaults_without_current_values():
+    result = inst.prompt_groups(inst.WIZARD_GROUPS, current={}, yes=True)
+
+    for key, default in PUBLISH_PORT_DEFAULTS.items():
+        assert result[key] == default
+
+
+def test_render_env_writes_publish_ports():
+    values = {f.key: f.default for g in inst.WIZARD_GROUPS for f in g.fields}
+    rendered = inst.render_env(values, extra={})
+
+    for key, default in PUBLISH_PORT_DEFAULTS.items():
+        assert f"{key}={default}" in rendered
