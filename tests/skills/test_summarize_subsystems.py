@@ -182,3 +182,63 @@ def test_skill_full_pass_requires_walking_every_page():
     )
     assert "pagination is not an override" in normalized.lower() or \
         "Pagination is not an override" in text
+
+
+_STEP_52_START = "Let pending work be exactly"
+_STEP_53_START = "Build the **ordered reused/moved/new fragment texts**"
+
+
+def _file_job_step() -> str:
+    """Срез шага 5.2 (диспатч file-job'ов) — без соседних пунктов 5.1 и 5.3."""
+    text = _assembled_skill()
+    start = text.index(_STEP_52_START)
+    end = text.index(_STEP_53_START, start)
+    return " ".join(text[start:end].split())
+
+
+def test_skill_file_job_does_not_echo_fingerprint():
+    """PRI-237: job не получает и не возвращает fingerprint — это серверное значение."""
+    step = _file_job_step()
+    assert "`{path, summary, provenance}`" in step, (
+        "шаг 5.2 не требует от job'а результат {path, summary, provenance}"
+    )
+    assert "never compute, guess, or return a `fingerprint`" in step, (
+        "шаг 5.2 не запрещает job'у выдумывать fingerprint"
+    )
+    assert "plus that entry's fingerprint" not in step, (
+        "шаг 5.2 снова передаёт fingerprint во вход job'а"
+    )
+    assert "{path, fingerprint" not in step, (
+        "шаг 5.2 снова требует fingerprint в результате job'а"
+    )
+
+
+def test_skill_orchestrator_supplies_fingerprints():
+    """PRI-237: fingerprint берётся только из ответа get_subsystem_summary_work."""
+    normalized = " ".join(_assembled_skill().split())
+    assert (
+        "The orchestrator attaches each new fragment's `fingerprint` by joining on `path`"
+        in normalized
+    ), "шаг 5.3 не предписывает оркестратору подстановку fingerprint по path"
+    assert (
+        "authoritative `added_files` / `changed_files` entries of the "
+        "`get_subsystem_summary_work` response"
+        in normalized
+    ), "шаг 5.3 не называет авторитетный источник fingerprint"
+    assert "never from a job's answer" in normalized, (
+        "шаг 5.3 не запрещает брать fingerprint из ответа субагента"
+    )
+
+
+def test_skill_rejects_file_job_path_mismatch():
+    """PRI-237: path — единственное поле job'а, участвующее в join; рассинхрон не персистится."""
+    step = _file_job_step()
+    assert "returns a `path` outside the pending list" in step, (
+        "шаг 5.2 не описывает рассинхрон path"
+    )
+    assert "discard that result and re-dispatch the job" in step, (
+        "шаг 5.2 не предписывает отбросить результат и перевызвать job"
+    )
+    assert "on a second mismatch count the cluster as deferred" in step, (
+        "шаг 5.2 не переводит кластер в deferred при повторном рассинхроне"
+    )
