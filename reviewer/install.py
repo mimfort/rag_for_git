@@ -19,7 +19,7 @@ import shutil
 import tomllib
 from dataclasses import dataclass, field as _field
 from pathlib import Path, PureWindowsPath
-from typing import Callable
+from typing import Callable, Mapping
 from urllib.parse import urlsplit
 
 from reviewer.config.provider_access import ProviderAccessSpec
@@ -75,6 +75,10 @@ PG_POOL_MAX_SIZE=4
 NEO4J_URI=neo4j://localhost:7687
 NEO4J_USER=neo4j
 NEO4J_PASSWORD=reviewerpass
+# Публикуемые (хостовые) порты docker compose; контейнерные порты фиксированы.
+PARADEDB_PUBLISH_PORT=5433
+NEO4J_BOLT_PUBLISH_PORT=7687
+NEO4J_HTTP_PUBLISH_PORT=7474
 
 # --- Граф кода: auto|scip|treesitter ---
 GRAPH_BACKEND=auto
@@ -122,6 +126,9 @@ class EnvField:
     default: str = ""
     secret: bool = False
     required: bool = False
+    # Дефолт, выводимый из уже собранных значений (напр. порт из PG_DSN).
+    # None — статичный default.
+    derive_default: Callable[[dict[str, str]], str] | None = None
 
 
 @dataclass
@@ -266,6 +273,23 @@ WIZARD_GROUPS: list[EnvGroup] = [
                 default="reviewerpass",
                 secret=True,
             ),
+            EnvField(
+                key="PARADEDB_PUBLISH_PORT",
+                prompt_text="PARADEDB_PUBLISH_PORT (публикуемый порт ParadeDB в docker compose)",
+                default="5433",
+                derive_default=lambda values: _port_from_url(values.get("PG_DSN", ""), "5433"),
+            ),
+            EnvField(
+                key="NEO4J_BOLT_PUBLISH_PORT",
+                prompt_text="NEO4J_BOLT_PUBLISH_PORT (публикуемый bolt-порт Neo4j)",
+                default="7687",
+                derive_default=lambda values: _port_from_url(values.get("NEO4J_URI", ""), "7687"),
+            ),
+            EnvField(
+                key="NEO4J_HTTP_PUBLISH_PORT",
+                prompt_text="NEO4J_HTTP_PUBLISH_PORT (публикуемый порт браузера Neo4j)",
+                default="7474",
+            ),
         ],
     ),
     vcs_env_group(),
@@ -382,6 +406,68 @@ def render_env_preview(values: dict[str, str], extra: dict[str, str]) -> str:
     return render_env(safe_values, safe_extra)
 
 
+def _port_from_url(value: str, fallback: str) -> str:
+    """Порт из URL (DSN/URI) строкой; fallback при пустом/кривом URL или URL без порта."""
+    try:
+        port = urlsplit((value or "").strip()).port
+    except ValueError:
+        return fallback
+    return str(port) if port else fallback
+
+
+def _effective_default(
+    field: EnvField,
+    values: dict[str, str],
+    current: dict[str, str],
+) -> str:
+    """Дефолт поля: значение из .env → производный (derive_default) → статичный."""
+    cur = current.get(field.key, "")
+    if cur:
+        return cur
+    if field.derive_default is not None:
+        return field.derive_default(values)
+    return field.default
+
+
+# Хосты, для которых publish-порт docker compose и порт клиентской строки — одно и то же.
+_LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
+
+# Пары «клиентская строка → переменная публикуемого порта». HTTP-порт Neo4j не сверяется:
+# в NEO4J_URI его нет, выводить не из чего.
+_PUBLISH_PORT_PAIRS: tuple[tuple[str, str], ...] = (
+    ("PG_DSN", "PARADEDB_PUBLISH_PORT"),
+    ("NEO4J_URI", "NEO4J_BOLT_PUBLISH_PORT"),
+)
+
+
+def publish_port_warnings(values: Mapping[str, str]) -> list[str]:
+    """Расхождения publish-порта compose с портом локальной строки подключения.
+
+    Сверяем только локальный хост: при внешнем Postgres/Neo4j публикуемый порт
+    контейнера к подключению отношения не имеет, и предупреждение было бы ложным.
+    """
+    warnings: list[str] = []
+    for url_key, port_key in _PUBLISH_PORT_PAIRS:
+        url = (values.get(url_key) or "").strip()
+        published = (values.get(port_key) or "").strip()
+        if not url or not published:
+            continue
+        try:
+            parsed = urlsplit(url)
+            host = (parsed.hostname or "").lower()
+            port = parsed.port
+        except ValueError:
+            continue
+        if host not in _LOCAL_HOSTS or port is None:
+            continue
+        if str(port) != published:
+            warnings.append(
+                f"{url_key} указывает порт {port}, а {port_key}={published}: "
+                f"контейнер опубликует {published}, и подключение не сойдётся."
+            )
+    return warnings
+
+
 def prompt_groups(
     groups: list[EnvGroup],
     current: dict[str, str],
@@ -402,18 +488,18 @@ def prompt_groups(
             if yes:
                 # CI: сохраняем текущее или дефолт, не спрашиваем
                 for f in group.fields:
-                    values[f.key] = current.get(f.key, "") or f.default
+                    values[f.key] = _effective_default(f, values, current)
                 continue
             if not click.confirm(f"\nНастроить {group.title}?", default=False):
                 for f in group.fields:
-                    values[f.key] = current.get(f.key, "") or f.default
+                    values[f.key] = _effective_default(f, values, current)
                 continue
         elif not yes:
             click.echo(f"\n[{group.title}]")
 
         for field in group.fields:
             cur = current.get(field.key, "")
-            effective_default = cur or field.default
+            effective_default = _effective_default(field, values, current)
 
             if yes:
                 values[field.key] = effective_default

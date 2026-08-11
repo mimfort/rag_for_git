@@ -1419,6 +1419,8 @@ def init(
                 values = inst.prompt_groups(groups, current=current, yes=True)
 
             extra = {key: value for key, value in current.items() if key not in wizard_keys}
+            for warning in inst.publish_port_warnings(values):
+                click.echo(f"⚠ {warning}")
             content = inst.render_env(values, extra)
             if dest.is_file() and dest.read_text(encoding="utf-8") == content:
                 action = "noop"

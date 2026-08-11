@@ -367,6 +367,20 @@ def test_compose_web_service_is_opt_in_with_separate_runtime_ports() -> None:
     assert web["depends_on"] == ["paradedb"]
 
 
+def test_compose_publishes_storage_ports_through_overridable_variables() -> None:
+    """Хостовые порты dev-хранилищ параметризованы, контейнерные — фиксированы."""
+    root = Path(__file__).parents[1]
+    compose = yaml.safe_load((root / "docker-compose.yml").read_text(encoding="utf-8"))
+
+    assert compose["services"]["paradedb"]["ports"] == [
+        "127.0.0.1:${PARADEDB_PUBLISH_PORT:-5433}:5432"
+    ]
+    assert compose["services"]["neo4j"]["ports"] == [
+        "127.0.0.1:${NEO4J_HTTP_PUBLISH_PORT:-7474}:7474",
+        "127.0.0.1:${NEO4J_BOLT_PUBLISH_PORT:-7687}:7687",
+    ]
+
+
 def test_env_example_documents_exact_test_endpoint_defaults() -> None:
     root = Path(__file__).parents[1]
     values = {
