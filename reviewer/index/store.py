@@ -124,6 +124,20 @@ class ChunkStore:
             ).fetchall()
         return {r[0] for r in rows}
 
+    @staticmethod
+    def _vector_to_list(value) -> list[float]:
+        """Привести вектор из БД к list[float] независимо от версии pgvector.
+
+        `register_vector` отдаёт разные типы: до pgvector-python 0.4 — numpy-массив,
+        с 0.4 — `pgvector.vector.Vector` без `__iter__`. Зависимость закреплена
+        только снизу (`pgvector>=0.3.6`), поэтому обе формы достижимы в проде и
+        полагаться на итерируемость нельзя.
+        """
+        to_list = getattr(value, "to_list", None)
+        if to_list is not None:
+            return [float(x) for x in to_list()]
+        return [float(x) for x in value]
+
     def find_embeddings_by_hashes(self, repo: str, hashes: list[str]) -> dict[str, list[float]]:
         """Готовые векторы по content_hash из любого ref репо (cross-branch reuse).
 
@@ -139,7 +153,7 @@ class ChunkStore:
                 "ORDER BY content_hash",
                 (repo, list(hashes)),
             ).fetchall()
-        return {h: list(v) for h, v in rows}
+        return {h: self._vector_to_list(v) for h, v in rows}
 
     def delete_ref(self, repo: str, ref: str) -> None:
         """Удалить все чанки указанного ref (например, эфемерный overlay pr:N после ревью)."""
