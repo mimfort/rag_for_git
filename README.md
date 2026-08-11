@@ -651,8 +651,17 @@ namespaced skills with `$rag-reviewer:...`.
   skill says so before asking. A matching open issue gets a comment instead of a duplicate.
 - **Result:** `published` / `commented` with URLs, or `fallback` with ready-made markdown and a
   prefilled issue link for manual posting — a failure to report never breaks the session.
-- **Switch:** `bug_reports: false` in a repository's `.review.yml` disables the channel for that
-  repository, `REVIEW_BUG_REPORTS=false` for the whole deploy.
+- **Automatic trigger:** a `PostToolUse` hook watches reviewer tool results and recognizes two
+  shapes deterministically — a traceback with `reviewer/*` frames, and a `status` value outside a
+  tool's documented set — so noticing a defect is not left to the model's attention. Routine
+  failures are checked **first** and always win: unavailable stores, missing keys or tokens, board
+  rate limits, 401/403/404, network timeouts, a missing or stale index, and an untracked branch
+  never produce a nudge. Invariant violations (idempotency, dedup, counters) stay model-noticed:
+  they are invisible in a single response, and guessing from one call is how a hook turns into
+  noise. The nudge carries only the shape of the failure, fires at most once per symptom per
+  session, and costs nothing when nothing is wrong.
+- **Switch:** `bug_reports: false` in a repository's `.review.yml` disables the channel and the
+  hook for that repository, `REVIEW_BUG_REPORTS=false` for the whole deploy.
 
 ### `sync-codebase` — build or update the base index
 
