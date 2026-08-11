@@ -124,8 +124,10 @@ class ChunkStore:
             ).fetchall()
         return {r[0] for r in rows}
 
-    # Проба для check_vector_roundtrip: знаки и дробная часть подобраны так,
-    # чтобы искажение типа или потеря точности не совпали с ней случайно.
+    # Проба для check_vector_roundtrip: значения обязаны быть точно представимы
+    # в float32 (pgvector хранит vector как float4) — сравнение ниже строгое.
+    # Знаки и дробная часть при этом подобраны так, чтобы искажение типа не
+    # совпало с пробой случайно.
     _PROBE_VECTOR = [0.25, -0.5, 1.0]
 
     def check_vector_roundtrip(self) -> None:
