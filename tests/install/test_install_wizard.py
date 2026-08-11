@@ -654,3 +654,82 @@ def test_render_env_writes_publish_ports():
 
     for key, default in PUBLISH_PORT_DEFAULTS.items():
         assert f"{key}={default}" in rendered
+
+
+def test_publish_port_warnings_reports_local_mismatch():
+    warnings = inst.publish_port_warnings(
+        {
+            "PG_DSN": "postgresql://reviewer:reviewer@localhost:6543/reviewer",
+            "PARADEDB_PUBLISH_PORT": "5433",
+            "NEO4J_URI": "neo4j://localhost:7687",
+            "NEO4J_BOLT_PUBLISH_PORT": "7687",
+        }
+    )
+
+    assert len(warnings) == 1
+    assert "PARADEDB_PUBLISH_PORT" in warnings[0]
+    assert "6543" in warnings[0]
+    assert "5433" in warnings[0]
+
+
+def test_publish_port_warnings_silent_when_ports_agree():
+    assert inst.publish_port_warnings(
+        {
+            "PG_DSN": "postgresql://reviewer:reviewer@localhost:5433/reviewer",
+            "PARADEDB_PUBLISH_PORT": "5433",
+            "NEO4J_URI": "neo4j://localhost:7687",
+            "NEO4J_BOLT_PUBLISH_PORT": "7687",
+        }
+    ) == []
+
+
+def test_publish_port_warnings_ignore_remote_hosts():
+    # Внешнее хранилище: publish-порт compose к этому подключению отношения не имеет
+    assert inst.publish_port_warnings(
+        {
+            "PG_DSN": "postgresql://reviewer:reviewer@db.internal:5432/reviewer",
+            "PARADEDB_PUBLISH_PORT": "5433",
+            "NEO4J_URI": "neo4j://graph.internal:7687",
+            "NEO4J_BOLT_PUBLISH_PORT": "7687",
+        }
+    ) == []
+
+
+def test_publish_port_warnings_ignore_unparsable_or_missing_values():
+    assert inst.publish_port_warnings({}) == []
+    assert inst.publish_port_warnings(
+        {"PG_DSN": "not a url", "PARADEDB_PUBLISH_PORT": "5433"}
+    ) == []
+    assert inst.publish_port_warnings(
+        {"PG_DSN": "postgresql://reviewer@localhost/reviewer", "PARADEDB_PUBLISH_PORT": "5433"}
+    ) == []
+
+
+def test_publish_port_warnings_reports_both_pairs():
+    warnings = inst.publish_port_warnings(
+        {
+            "PG_DSN": "postgresql://reviewer:reviewer@127.0.0.1:6543/reviewer",
+            "PARADEDB_PUBLISH_PORT": "5433",
+            "NEO4J_URI": "neo4j://localhost:7999",
+            "NEO4J_BOLT_PUBLISH_PORT": "7687",
+        }
+    )
+
+    assert len(warnings) == 2
+
+
+def test_init_yes_warns_about_port_mismatch(tmp_path, monkeypatch):
+    dest = tmp_path / ".env"
+    dest.write_text(
+        "VOYAGE_API_KEY=sk-test\n"
+        "PG_DSN=postgresql://reviewer:reviewer@localhost:6543/reviewer\n"
+        "PARADEDB_PUBLISH_PORT=5433\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("reviewer.install.default_env_path", lambda: dest)
+
+    result = CliRunner().invoke(cli, ["init", "--scope", "global", "--yes"])
+
+    assert result.exit_code == 0, result.output
+    assert "PARADEDB_PUBLISH_PORT" in result.output
+    assert "6543" in result.output
