@@ -627,7 +627,8 @@ threshold, graph backend и retrieval ceilings меняют cost/recall; сна�
 - **Нужно:** task key, PR URL, registered board config и обнаруженный done target/options.
 - **Чтение/запись:** после подтверждения идемпотентно добавляет PR, обновляет задачу, добавляет
   task backlink в PR body и запускает sync.
-- **Результат:** done state и отчёт `already_closed`/`task_link_added` без duplicate links.
+- **Результат:** done state и отчёт `already_closed`/`task_link_status` (`added` | `already_present`
+  | `failed`) без duplicate links; `task_link_added` сохраняет прежнюю семантику («записали сейчас»).
 
 ### `sync-codebase` — построить или обновить base index
 
