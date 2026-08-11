@@ -1,5 +1,5 @@
 {
   "name": "rag-reviewer",
-  "version": "0.4.6",
+  "version": "0.4.7",
   "description": "Agentic PR review: hybrid RAG + code graph via MCP, review skills for Claude Code"
 }
