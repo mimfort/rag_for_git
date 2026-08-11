@@ -479,3 +479,36 @@ def test_check_fails_on_github_api_error(
 
     assert result.exit_code == 1
     assert "GitHub" in result.output
+
+
+# ---------------------------------------------------------------------------
+# Версия CLI и честность help-текстов (PRI-236)
+# ---------------------------------------------------------------------------
+
+
+def test_version_option_prints_package_version(runner):
+    """`reviewer --version` печатает версию дистрибутива и выходит с кодом 0.
+
+    Источник — метаданные пакета, те же, что читает `versioning.detect_installation`,
+    поэтому `--version` не может разойтись с логикой `reviewer update`.
+    """
+    from importlib import metadata
+
+    result = runner.invoke(cli, ["--version"])
+
+    assert result.exit_code == 0
+    assert metadata.version("rag-reviewer") in result.output
+    assert "reviewer" in result.output
+
+
+def test_config_show_help_does_not_promise_clone_path_from_index(runner):
+    """Help `--path` не обещает путь из индекса: CLI его намеренно не читает.
+
+    Проверка негативная: закреплять формулировку целиком значило бы ломать тест на
+    любой редактуре, тогда как ловить надо ровно возврат ложного обещания
+    (`_resolve_clone_path` берёт `--path`, иначе cwd, и в `repo_clone` не ходит).
+    """
+    result = runner.invoke(cli, ["config", "show", "--help"])
+
+    assert result.exit_code == 0
+    assert "из индекса" not in result.output
