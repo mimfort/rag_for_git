@@ -816,20 +816,25 @@ class MCPReviewService:
         )
         return request, registry, credentials
 
-    def _backlink_pr(self, pr_url: str, key: str, task_url: str) -> tuple[bool, list[str]]:
-        """Дописать ссылку на задачу в начало тела PR. Возвращает (added, warnings).
+    def _backlink_pr(self, pr_url: str, key: str, task_url: str) -> tuple[str, list[str]]:
+        """Дописать ссылку на задачу в начало тела PR. Возвращает (status, warnings).
+
+        status — один из трёх исходов: "added" (записали сейчас), "already_present"
+        (ссылка уже была в теле — идемпотентный no-op, это норма) и "failed"
+        (записать не удалось; причина — в warnings). Один bool их не различал, и
+        клиент рапортовал о проблеме, которой не было (PRI-238).
 
         Обратная сторона связи: finish пишет PR-ссылку в задачу, здесь — ссылку
         на задачу в PR. Полностью fail-soft: доска к этому моменту уже записана,
         поэтому ни одна ошибка правки PR не отменяет успех finish_task."""
         from reviewer.tasks.pr_backlink import apply_backlink, parse_pr_url
         if not task_url:
-            return False, ["ссылка на задачу не добавлена в PR: url задачи не резолвится "
-                           "(task_board.url_template не задан)"]
+            return "failed", ["ссылка на задачу не добавлена в PR: url задачи не резолвится "
+                              "(task_board.url_template не задан)"]
         target = parse_pr_url(pr_url)
         if target is None:
-            return False, ["ссылка на задачу не добавлена в PR: "
-                           f"{pr_url!r} не распознан как ссылка на PR/MR"]
+            return "failed", ["ссылка на задачу не добавлена в PR: "
+                              f"{pr_url!r} не распознан как ссылка на PR/MR"]
         vcs = None
         try:
             vcs = (self._vcs_factory(target.owner, target.repo) if self._vcs_factory
@@ -838,12 +843,12 @@ class MCPReviewService:
                        platform=target.platform, base_url=target.base_url))
             body = apply_backlink(vcs.get_pull_request(target.number).body, key, task_url)
             if body is None:
-                return False, []       # ссылка уже на месте — идемпотентный no-op
+                return "already_present", []   # ссылка уже на месте — идемпотентный no-op
             vcs.update_pull_request_body(target.number, body)
-            return True, []
+            return "added", []
         except Exception as exc:
             log.warning("бэклинк задачи в PR не удался", exc_info=True)
-            return False, [f"ссылка на задачу не добавлена в PR: {exc}"]
+            return "failed", [f"ссылка на задачу не добавлена в PR: {exc}"]
         finally:
             if vcs is not None and self._vcs_factory is None:
                 try:
@@ -1148,7 +1153,7 @@ class MCPReviewService:
                     target=target,
                 )
                 brief = self._write_through(resolved.provider, key)
-                link_added, link_warnings = self._backlink_pr(
+                link_status, link_warnings = self._backlink_pr(
                     pr_url, key, (brief or {}).get("url") or "")
                 result.setdefault("warnings", []).extend(migration_warnings)
                 result["warnings"].extend(link_warnings)
@@ -1157,7 +1162,10 @@ class MCPReviewService:
                         "status": "ok",
                         "board_type": resolved.board_type,
                         "reindexed": brief is not None,
-                        "task_link_added": link_added,
+                        # task_link_added — прежняя семантика («записали сейчас»),
+                        # task_link_status — три различимых исхода (PRI-238).
+                        "task_link_added": link_status == "added",
+                        "task_link_status": link_status,
                         **result,
                     },
                     resolved.secrets,
