@@ -87,7 +87,8 @@ Plus `list_subsystem_clusters`, `get_subsystem_summary_work`, `index_subsystem_s
       `{path, summary, provenance}`. A job must never compute, guess, or return a `fingerprint`: that
       value is server-side and the orchestrator supplies it. If a job returns a `path` outside the
       pending list, discard that result and re-dispatch the job for that pending entry once; on a
-      second mismatch count the cluster as deferred and persist nothing for it. The orchestrator and
+      second mismatch count the cluster as deferred, increment `raced`, and persist nothing for it.
+      The orchestrator and
       every job must not read unchanged source files. If per-subagent model override is unavailable,
       generate the same per-file result inline and note that fallback in the report.
    3. Build the **ordered reused/moved/new fragment texts** by merging `reused_fragments`,
@@ -102,7 +103,8 @@ Plus `list_subsystem_clusters`, `get_subsystem_summary_work`, `index_subsystem_s
       symbols, and invariants supported by the fragments.
    4. Persist the bundle:
       `index_subsystem_summary(repo, branch, cluster_key, title, summary, source_hash,
-      fragments=[new file results])`. Pass only the newly generated pending-file results in
+      fragments=[new file results])` (the fingerprint-enriched records from 5.3). Pass only the
+      newly generated pending-file results in
       `fragments`; reused and moved fragments are committed server-side. If the response has
       `stored=false`, count the cluster as deferred/raced, increment `raced`, and must not count it as success
       or add its metrics. For `stored=true`, add returned `created`, `reused`, `removed`,
