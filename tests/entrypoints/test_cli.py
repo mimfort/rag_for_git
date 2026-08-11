@@ -512,3 +512,55 @@ def test_config_show_help_does_not_promise_clone_path_from_index(runner):
 
     assert result.exit_code == 0
     assert "из индекса" not in result.output
+
+
+@patch("reviewer.entrypoints.cli._shutil")
+@patch("reviewer.entrypoints.cli.httpx.get")
+@patch("reviewer.entrypoints.cli.GraphStore")
+@patch("reviewer.entrypoints.cli.ChunkStore")
+@patch("reviewer.entrypoints.cli.Settings")
+def test_check_fails_when_vector_roundtrip_broken(
+    mock_settings_cls,
+    mock_chunk_cls,
+    mock_graph_cls,
+    mock_httpx,
+    mock_shutil,
+    runner,
+):
+    """Несовместимость типа pgvector краснит check, а не всплывает в ревью.
+
+    Приёмка 0.4.5 (PRI-236) поймала обратный случай: check был зелёным ровно
+    тогда, когда prepare_review падал на каждом PR — подключение к Postgres
+    проверялось, а совместимость типа вектора нет.
+    """
+    s = MagicMock()
+    s.voyage_api_key = "key"
+    s.github_token = "key"
+    s.gitlab_token = ""
+    s.pg_dsn = "pg://test"
+    s.pg_pool_min_size = 1
+    s.pg_pool_max_size = 4
+    s.neo4j_uri = "neo4j://test"
+    s.neo4j_user = "u"
+    s.neo4j_password = "p"
+    mock_settings_cls.return_value = s
+
+    store = MagicMock()
+    store._connect.return_value.__enter__.return_value.execute.return_value = None
+    store.check_vector_roundtrip.side_effect = TypeError(
+        "'Vector' object is not iterable"
+    )
+    mock_chunk_cls.return_value = store
+
+    mock_graph_cls.return_value = MagicMock()
+    resp = MagicMock()
+    resp.status_code = 200
+    resp.json.return_value = {"login": "testuser"}
+    mock_httpx.return_value = resp
+    mock_shutil.which.return_value = "/usr/bin/scip-python"
+
+    result = runner.invoke(cli, ["check"])
+
+    assert result.exit_code == 1
+    assert "pgvector" in result.output
+    store.close.assert_called_once()

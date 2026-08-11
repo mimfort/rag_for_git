@@ -777,6 +777,18 @@ def check(board_project_values: tuple[str, ...]) -> None:
         with store._connect() as conn:
             conn.execute("SELECT 1 FROM chunks LIMIT 1")
         click.echo(f"✓ Postgres ({s.pg_dsn}): подключение и таблица chunks — OK")
+        try:
+            store.check_vector_roundtrip()
+            click.echo("✓ pgvector: вектор читается из БД в list[float] — OK")
+        except Exception as e:
+            # Отдельная ветка, а не общий except Postgres: подключение здесь
+            # исправно, сломана совместимость типа вектора — это бьёт только по
+            # ревью PR, и подсказка должна вести к версии pgvector (PRI-236).
+            click.echo(
+                f"✗ pgvector: вектор из БД не читается в list[float] ({e}) — "
+                "ревью PR работать не будет; проверьте версию пакета pgvector"
+            )
+            failed = True
     except Exception as e:
         err = str(e)
         if "chunks" in err or "does not exist" in err:

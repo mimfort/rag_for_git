@@ -124,6 +124,28 @@ class ChunkStore:
             ).fetchall()
         return {r[0] for r in rows}
 
+    # Проба для check_vector_roundtrip: значения обязаны быть точно представимы
+    # в float32 (pgvector хранит vector как float4) — сравнение ниже строгое.
+    # Знаки и дробная часть при этом подобраны так, чтобы искажение типа не
+    # совпало с пробой случайно.
+    _PROBE_VECTOR = [0.25, -0.5, 1.0]
+
+    def check_vector_roundtrip(self) -> None:
+        """Убедиться, что вектор доезжает из БД обратно в list[float].
+
+        Проверка не полагается на наличие строк в chunks: тип вектора задаёт
+        связка драйвера и pgvector-python, а не данные. Приёмка 0.4.5 (PRI-236)
+        показала, зачем это в `check`: подключение к Postgres было исправным
+        ровно тогда, когда `prepare_review` падал на каждом PR.
+        """
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT %s::vector", (Vector(self._PROBE_VECTOR),)
+            ).fetchone()
+        got = self._vector_to_list(row[0])
+        if got != self._PROBE_VECTOR:
+            raise RuntimeError(f"вектор вернулся искажённым: {got!r}")
+
     @staticmethod
     def _vector_to_list(value) -> list[float]:
         """Привести вектор из БД к list[float] независимо от версии pgvector.
