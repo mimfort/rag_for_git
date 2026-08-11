@@ -81,6 +81,7 @@ def _resolve_repo(repo_opt: str | None, path: str, settings) -> str:
 
 
 @click.group()
+@click.version_option(package_name="rag-reviewer", prog_name="reviewer")
 def cli() -> None: ...
 
 
@@ -218,8 +219,7 @@ def _resolve_config_repo(repo: str) -> str:
 @click.option("--branch", default=None, help="ветка policy; по умолчанию первичная")
 @click.option("--path", "clone_path", default=None,
               help="путь к локальному клону: коммиченный .review.yml читается "
-                   "из него без сети (по умолчанию — путь из индекса, затем "
-                   "текущий каталог)")
+                   "из него без сети (по умолчанию — текущий каталог)")
 @click.option("--json", "as_json", is_flag=True, default=False)
 def config_show(repo: str, branch: str | None, clone_path: str | None,
                 as_json: bool) -> None:
