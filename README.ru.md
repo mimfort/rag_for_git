@@ -327,6 +327,23 @@ New Chat или новую CLI-сессию. В IDE также выполнит�
   слой имеет приоритет — см. [Репозитории и ветки](#репозитории-и-ветки));
 - board credentials: provider-specific env из registry.
 
+Публикуемые хостовые порты storage-сервисов Compose заданы переменными, а не литералами:
+`PARADEDB_PUBLISH_PORT` (дефолт `5433`), `NEO4J_BOLT_PUBLISH_PORT` (дефолт `7687`) и
+`NEO4J_HTTP_PUBLISH_PORT` (дефолт `7474`). Контейнерные порты фиксированы. `reviewer init`
+спрашивает их в группе хранилищ и выводит первые два из `PG_DSN` и `NEO4J_URI`, поэтому строка
+подключения и публикуемый порт не разъезжаются молча; расхождение на локальном хосте печатает
+предупреждение, но не блокирует.
+
+```bash
+PARADEDB_PUBLISH_PORT=6543 NEO4J_BOLT_PUBLISH_PORT=7999 \
+  docker compose -f ~/.config/rag-reviewer/docker-compose.yml up -d
+```
+
+Настраивайте переменными, а не правкой Compose-файла: отредактированный вручную
+`~/.config/rag-reviewer/docker-compose.yml` перестаёт совпадать с записанным hash, поэтому
+`reviewer update` считает его изменённым пользователем (статус `preserved`) и больше не доставляет
+в него новые Compose-описания.
+
 Credentials остаются на сервере. **Credentials are not returned** board metadata/discovery tools
 и не должны попадать в `.review.yml`.
 

@@ -322,6 +322,23 @@ Important groups:
   layer takes precedence — see [Repositories and branches](#repositories-and-branches));
 - board credentials: provider-specific env declared in the registry.
 
+Published host ports of the Compose storage services are variables, not literals:
+`PARADEDB_PUBLISH_PORT` (default `5433`), `NEO4J_BOLT_PUBLISH_PORT` (default `7687`) and
+`NEO4J_HTTP_PUBLISH_PORT` (default `7474`). Container ports stay fixed. `reviewer init` asks for
+them in the storage group and derives the first two from `PG_DSN` and `NEO4J_URI`, so the client
+string and the published port cannot drift apart silently; a mismatch on a local host prints a
+warning without blocking.
+
+```bash
+PARADEDB_PUBLISH_PORT=6543 NEO4J_BOLT_PUBLISH_PORT=7999 \
+  docker compose -f ~/.config/rag-reviewer/docker-compose.yml up -d
+```
+
+Prefer variables over editing the Compose file: a hand-edited
+`~/.config/rag-reviewer/docker-compose.yml` no longer matches its recorded hash, so `reviewer
+update` treats it as user-modified (status `preserved`) and stops delivering new Compose
+definitions to it.
+
 Credentials stay server-side. **Credentials are not returned** by board metadata or discovery
 tools and must not be placed in `.review.yml`.
 

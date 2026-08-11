@@ -263,6 +263,21 @@ def test_readmes_document_web_container_runtime_ports() -> None:
             assert marker in section, (filename, marker)
 
 
+def test_readmes_document_storage_publish_ports() -> None:
+    for filename, heading in (
+        ("README.md", "### Required services and credentials"),
+        ("README.ru.md", "### Сервисы и credentials"),
+    ):
+        section = _section(_read(filename), heading)
+        for marker in (
+            "PARADEDB_PUBLISH_PORT",
+            "NEO4J_BOLT_PUBLISH_PORT",
+            "NEO4J_HTTP_PUBLISH_PORT",
+            "preserved",
+        ):
+            assert marker in section, (filename, marker)
+
+
 def test_readmes_document_configuration_ownership_and_scenarios():
     cases = (
         (
