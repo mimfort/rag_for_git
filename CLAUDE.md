@@ -125,10 +125,44 @@ MCP-сессия (PreparedReview + ToolContext) живёт в процессе `
 - **Болк-синк задач — server-side ETL, не LLM (`sync_board`).** Скил `sync-tasks` — тонкий триггер generic lifecycle: `sync_board(..., board_type, provider_options)` резолвит зарегистрированный тип, проверяет безопасную credential schema, создаёт provider с immutable options и гарантированно вызывает `close()`. `reviewer-mcp` перечисляет доску по REST за полным `TaskBoardProvider` контрактом, нормализует в `TaskBrief` и индексирует через `TaskService.index_batch`; LLM не перечисляет доску и не передаёт текст задач → O(1) токенов. Watermark ключуется `ref="tasks:<type>:<board>"`; повторный синк трогает ~0 задач, а `--limit` отключает purge и продвижение курсора. Задачи глобальны (таблица `tasks` и граф `:Task` без repo-скоупа), но синк и выдача скоупятся `task_board.project`; клиент передаёт этот project, сервер repo-агностичен.
 - **SHA base-индекса** хранится в таблице `index_meta` (пишется при `reviewer index`). При каждом `prepare_review` (MCP) SHA сравнивается с `base_sha` PR и при расхождении автоматически досинхронизируются чанки изменившихся файлов через GitHub compare API. Граф (Neo4j) **также** инкрементально досинхронизируется в этом шаге (tree-sitter, repo-scoped, входящие `CALLS`-рёбра сохраняются, fail-soft). Полная точность (рёбра `IMPLEMENTS` + все `CALLS`) восстанавливается ручным `reviewer index` с SCIP.
 - **Мульти-бранч base-индекс.** Отслеживаемые ветки репозитория резолвятся слоями (`reviewer/config/branches.py::resolve_repo_branches`): домашний per-repo файл `home:repos/<owner>/<name>.yml` → домашний глобальный `home:review.yml` → env `REVIEW_BRANCHES` (CSV, первая — первичная) → `["main"]`; `RepoBranches.source` показывает, какой слой сработал (`reviewer config show` печатает эффективные ветки и источник). Каждая отслеживаемая ветка имеет изолированный base-индекс: в Postgres `ref="base:<branch>"` (overlay PR остаётся `pr:N`), в Neo4j `:Symbol{repo, branch, id}` (составная уникальность `(repo, branch, id)`). PR ревьюится против индекса своей целевой ветки (`prq.base_ref`); PR в ветку вне списка ревью **пропускает** (`prepare_review` → `{"status":"skipped",...}`). `reviewer index --ref <branch>` строит индекс ветки; `reviewer search --branch <branch>` ищет по нему. Эмбеддинги переиспользуются между ветками по `content_hash` (экономия Voyage). Ветка-агностичные операции (CLI search, solve-task) идут по первичной ветке или текущей git-ветке клона. Миграция legacy env-данных в домашний слой: `reviewer config migrate` (per-repo) или `reviewer migrate-branches` (один раз после апгрейда).
+- **Сбой чтения коммиченного `.review.yml` не обнуляет домашние слои.** `resolve_policy_data`
+  (`reviewer/config/layers.py`) читает коммиченный слой fail-soft: сбой доставки (сеть, токен, 404 —
+  категория `unavailable`) и сбой разбора (`malformed`) пропускают слой, пишут структурную запись в
+  `ResolutionMeta.skipped` и продолжают резолв, поэтому `home:review.yml` и
+  `home:repos/<owner>/<name>.yml` применяются. Строгость включается отдельным флагом
+  `strict_committed` и выставлена в `True` только там, где тихая потеря политики недопустима:
+  ревью PR (`services/review_service.py`), `reviewer index` (`entrypoints/cli.py`) и миграция
+  конфига (`config/layers.py`). MCP `_resolve_policy` намеренно мягкий — три его потребителя уже
+  откатываются на env-дефолты, и строгий режим заставил бы их потерять домашний слой. Диагностик
+  бессекретный: слой, репо, ref, категория, транспорт, HTTP-код — никаких URL, заголовков и
+  токенов (классификация формы исключения — `config/fetch_errors.py`). `reviewer config show`
+  печатает эффективные значения и блок `skipped`, но код возврата остаётся `1`.
+- **Коммиченный слой читается из локального клона, а не из API хостинга (PRI-235).**
+  `config/committed.py::CommittedLayerFetcher` — единственный фетчер коммиченного `.review.yml`
+  для `config show` и MCP `_resolve_policy`: при пригодном клоне это `git show <ref>:.review.yml`
+  (ноль сетевых вызовов; VCS-провайдер вообще не создаётся — фабрика ленивая), иначе прежний
+  `vcs.get_file_at_ref`. `config show` берёт клон из `--path`, иначе из текущего каталога
+  (в Postgres за путём не ходит — диагностика не должна зависеть от живой БД); MCP берёт его из
+  таблицы `repo_clone`, которую пишет `reviewer index` (он и так выполняется из клона, рядом с
+  `set_repo_vcs`). Ни один путь не принимается на слово: `validate_clone` требует git-репо и
+  сверяет remote с целевым repo, **но клон без распознаваемого remote принимает** — ради него
+  задача и делалась. Ref проверяется `rev_parse` ДО чтения: иначе «ветка не выкачана в клоне»
+  неотличимо от «файла нет на ref» и молча обнулило бы слой вместо фолбэка на VCS. Способ чтения
+  виден в отчёте (`committed: local|vcs`, ключ `committed_source` в JSON); путь к клону в
+  диагностику не попадает.
 - **Мульти-репо через `repo`-дискриминатор**: один деплой обслуживает N репозиториев через `repo` (`owner/name`) в Postgres (`chunks`/`index_meta`) и Neo4j (`:Symbol.repo`, составная уникальность `(repo, branch, id)`). Индексация: `reviewer index --repo owner/name` (или derive из git remote `origin` / `DEFAULT_REPO`). Граф задач `:Task` глобален — задача может покрывать несколько микросервисных репозиториев. Каждое ревью изолировано в рамках своего репо (без кросс-репо ретрива).
 - **`reviewer check`** проверяет готовность окружения (ключи, Postgres, Neo4j, GitHub) без трат квот Voyage.
 - **Layout кластеризации сводок (`SUMMARY_CLUSTER_DEPTH`, дефолт 2).** Default depth и per-prefix `summary_cluster_depth_overrides` из effective `.review.yml` образуют canonical `layout_token` (нормализованные и отсортированные overrides). Смена любого компонента token → **полный пересбор всех сводок и пофайловых fragments**, даже если default depth не изменился. `subsystem_summary_state` хранит `completed_depth` для диагностики и nullable `completed_layout` как identity завершённого прохода; legacy row без token считается незавершённым. Осиротевшие данные вычищаются только verified `prune_subsystem_summaries` после полного uncapped прохода (PRI-166/PRI-226).
 - **Инкрементальные fragments сводок (`/summarize-subsystems`).** Первый полный прогон после обновления bootstrap-ит все текущие файлы, не удаляя старые сводки до успешной атомарной замены каждого cluster bundle; при cap bootstrap продолжается в следующих проходах. Server-owned `_reviewer` stamp содержит generation, `layout_token` и diagnostic depth; только exact same-cluster path/fingerprint/stamp доказывает completion. Дальше LLM читает и суммаризирует по одному job только `added_files + changed_files`, а composer получает сохранённые/перенесённые/новые fragment-тексты без исходников; несколько exact cross-cluster кандидатов считаются ambiguous и регенерируются. Fingerprint строится по skeleton-коду: body-only правки намеренно не меняют freshness. Частичный/capped прогон и optimistic race (`ready=false`/`stored=false`) считаются deferred/raced и не запускают prune. Полный проход передаёт list `layout_token` и exact source-hash map; service re-derive и store-проверка summary/fragment coverage под advisory lock предшествуют любому delete/state advance. Backfill использует CAS по `source_hash + title + summary` и считает только успешные записи. Отчёт суммирует `created`, `reused`, `removed`, `moved`, `deferred`/`raced`, `fragments_pruned` и `embedded`.
+  Перечисление кластеров идёт в **сжатом режиме с пагинацией** (`list_subsystem_clusters(...,
+  compact=True, limit=N, offset=M)`): по кластеру только метаданные и числовые счётчики
+  `added`/`changed`/`removed`/`moved` — без путей и fingerprint'ов, размер O(числа кластеров), а
+  не файлов (на этом репозитории 10 922 Б в сжатом режиме против 97 530 Б в полном; до PRI-229
+  полный формат весил 106 878 Б). File-level детализация — через `get_subsystem_summary_work`.
+  В полном формате `files` содержит только
+  неизменённые файлы: пути delta-списков в нём не дублируются, полный состав =
+  `files ∪ added_files ∪ changed_files ∪ moved_files`. Пагинация не считается override'ом —
+  полный проход требует лишь дойти до `has_more == false`.
 - **Overlay удаляется автоматически** (`store.delete_ref("pr:N")`) — после `publish_review` эфемерный
   ref не остаётся в Postgres. При сбое prepare также чистится (fail-soft). Но если ревью **брошено**
   между `prepare_review` и `publish_review` (пользователь отменил, оркестрирующая LLM-сессия упала),

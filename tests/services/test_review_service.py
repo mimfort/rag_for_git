@@ -705,3 +705,28 @@ def test_prepare_graph_sync_respects_ignore(
     assert "vendor/x.py" in captured.get("removed_paths", []), (
         "игнорируемый путь vendor/x.py не добавлен в removed_paths"
     )
+
+
+@patch("reviewer.services.review_service.chunk_python", side_effect=_fake_chunk)
+@patch("reviewer.services.review_service.build_overlay")
+def test_prepare_is_loud_when_committed_policy_cannot_be_read(
+    _mock_overlay: MagicMock,
+    _mock_chunk: MagicMock,
+    settings: Settings,
+    components: MagicMock,
+) -> None:
+    """PRI-234: тихая потеря политики в ревью недопустима — prepare падает."""
+    from reviewer.config.layers import HomeConfigError
+
+    vcs = _vcs_with_files([_changed("a.py")])
+
+    def fetch(path, ref):
+        if path == ".review.yml":
+            raise RuntimeError("сеть недоступна")
+        return "def foo(): pass"
+
+    vcs.get_file_at_ref.side_effect = fetch
+    service = ReviewService(settings, components)
+
+    with pytest.raises(HomeConfigError):
+        service.prepare("owner", "repo", 1, vcs_provider=vcs)

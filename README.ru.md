@@ -430,7 +430,24 @@ reviewer config show --repo group/service --branch main --json
 ```
 
 Committed-слой берётся на выбранном ref, поэтому разрешение review/config никогда не читает
-незакоммиченный `.review.yml` из worktree. Чтобы скопировать безопасную committed policy в
+незакоммиченный `.review.yml` из worktree.
+
+Читается он **из локального клона, если тот пригоден**, и только иначе — через API хостинга.
+`config show` берёт клон из `--path <клон>`, а без него — из текущего каталога; MCP-сервер берёт
+путь, записанный командой `reviewer index` (она и так выполняется из клона). Кандидат принимается,
+только если это git-репозиторий, remote которого совпадает с целевым repo, — клон **без**
+распознаваемого remote тоже принимается, и это ровно тот случай, когда коммиченный слой раньше был
+недостижим в принципе. Если ref в клоне не резолвится (ветка не выкачана), чтение уходит в API, а не
+объявляет слой пустым. Способ чтения виден в отчёте:
+
+```bash
+reviewer config show --repo group/service --branch main --path /srv/clones/service
+# committed: local        ← резолв прошёл без единого сетевого вызова
+```
+
+В JSON это ключ `committed_source` (`local` / `vcs`); сам путь к клону не печатается.
+
+Чтобы скопировать безопасную committed policy в
 repo-specific home-слой, не меняя committed-файл, выполните:
 
 ```bash
@@ -640,6 +657,13 @@ threshold, graph backend и retrieval ceilings меняют cost/recall; сна�
 - **Нужно:** свежий base index, code graph, reviewer MCP и подтверждённый cluster depth.
 - **Чтение/запись:** читает symbols кластеров и пишет grounded summaries в summary store.
 - **Результат:** fresh/pruned summaries с отчётом deferred и orphans.
+- **Объём ответа:** перечисление кластеров идёт в сжатом режиме с пагинацией
+  (`compact=True`, `offset`/`limit`): метаданные и счётчики `added`/`changed`/`removed`/`moved`,
+  без путей и fingerprint'ов — размер растёт по числу кластеров, а не файлов
+  (на этом репозитории 10 922 Б в сжатом режиме против 97 530 Б в полном; до PRI-229 полный
+  формат весил 106 878 Б). Детализация по кластеру — через `get_subsystem_summary_work`. В полном
+  формате `files` перечисляет только неизменённые файлы: пути delta-списков в нём не дублируются,
+  полный состав = `files ∪ added_files ∪ changed_files ∪ moved_files`.
 
 ### `configure-review` — обновить layered policy и ветки
 
@@ -686,6 +710,7 @@ Base indexes отслеживают committed refs, а не working-tree edits. 
 | `reviewer check` не видит Postgres/Neo4j | Stores не запущены или DSN отличается | Запустите `docker compose -f ~/.config/rag-reviewer/docker-compose.yml up -d`, затем повторите `reviewer check` |
 | Voyage отвечает 429 | Исчерпан free-tier RPM/TPM | Дождитесь quota window; повторите incremental index, не удаляя существующий |
 | PR пропущен | Target branch не отслеживается для этого репозитория (см. `reviewer config show`), или draft policy его исключает | Прочитайте reason `prepare_review`; для намеренной target branch добавьте её в домашний per-repo слой (или fallback `REVIEW_BRANCHES`), а не только в policy |
+| `config show` показывает пропущенный слой `.review.yml` и ненулевой код возврата | Коммиченный слой политики не доставлен (нет сети/токена, 404) или не разбирается | Домашние слои всё равно применены — смотрите `category`/`http_status` в выводе; почините remote или коммиченный YAML. Ревью, индексация и миграция остаются громкими и падают. Домашний слой с запрещённым credential-ключом тоже попадает в `skipped` и даёт код возврата `1`, хотя слой всего лишь исключён из резолва |
 | Task lookup пуст | Board отключён/не настроен или corpus не прогрет | Проверьте [board setup](docs/board-providers.md), затем запустите `/rag-reviewer:sync-tasks` |
 | Q&A не видит новый локальный код | Base index содержит только committed ref | Прочитайте локальный файл или commit/index нужную ветку |
 | AI-клиент не видит новые skills | Session открыта до установки | Начните New Chat/new CLI session; в IDE выполните Reload Window |

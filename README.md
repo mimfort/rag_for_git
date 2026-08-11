@@ -424,7 +424,26 @@ reviewer config show --repo group/service --branch main --json
 ```
 
 The committed layer is fetched at the selected ref, so review/config resolution never reads an
-uncommitted worktree `.review.yml`. To copy a safe committed policy into the repo-specific home
+uncommitted worktree `.review.yml`.
+
+It is read **from a local clone whenever one is usable**, and only otherwise through the hosting
+API. `config show` uses `--path <clone>` if given and the current directory otherwise; the MCP
+server uses the clone path recorded by `reviewer index` (which already runs from a clone). A
+candidate is accepted only if it is a git repository whose remote matches the target repo — a clone
+with **no** recognizable remote is accepted too, which is exactly the case where the committed layer
+was previously unreachable. If the ref does not resolve in the clone (branch not fetched), the read
+falls back to the API rather than silently reporting an empty layer. The report states which path
+was taken:
+
+```bash
+reviewer config show --repo group/service --branch main --path /srv/clones/service
+# committed: local        ← resolved without a single network call
+```
+
+In JSON the same value is the `committed_source` key (`local` / `vcs`); the clone path itself is
+never printed.
+
+To copy a safe committed policy into the repo-specific home
 layer without modifying the committed file, run:
 
 ```bash
@@ -636,6 +655,12 @@ namespaced skills with `$rag-reviewer:...`.
   пофайловые fragments и атомарно пишет fragments вместе со сводкой кластера.
 - **Result:** сводки и метрики `created`/`reused`/`removed`/`moved`,
   `deferred`/`raced`, `fragments_pruned` и `embedded`.
+- **Payload:** the cluster listing runs in compact, paginated mode
+  (`compact=True`, `offset`/`limit`): metadata plus `added`/`changed`/`removed`/`moved` counters,
+  no paths and no fingerprints, so its size grows with the number of clusters rather than files
+  (10 922 B compact vs 97 530 B full on this repository; the full format itself was 106 878 B
+  before PRI-229). Per-cluster file detail comes from `get_subsystem_summary_work`. In full
+  format `files` lists only unchanged files — the delta lists are not repeated there.
 
 Первый полный прогон после обновления создаёт fragments для всех текущих файлов, но не удаляет
 старые сводки: каждый кластер заменяется только после успешной атомарной записи нового bundle.
@@ -696,6 +721,7 @@ uncommitted files directly from disk.
 | `reviewer check` reports Postgres/Neo4j unavailable | Default stores are not running or DSNs differ | Run `docker compose -f ~/.config/rag-reviewer/docker-compose.yml up -d`, then repeat `reviewer check` |
 | Voyage returns 429 | Free-tier RPM/TPM quota is exhausted | Wait for the quota window; rerun incremental indexing rather than deleting the index |
 | PR is skipped | Its target branch is not tracked for this repository (see `reviewer config show`), or draft policy skips it | Inspect `prepare_review` reason; if the target is intentional, add the branch via the per-repo home layer (or `REVIEW_BRANCHES` fallback), not just policy |
+| `config show` reports a `skipped` `.review.yml` layer and exits non-zero | The committed policy layer could not be fetched (no network/token, 404) or could not be parsed | Home layers are still applied — check the reported `category`/`http_status`; fix the remote or the committed YAML. Review, indexing, and migration stay loud and fail instead. A home layer with a forbidden credential key is also reported as `skipped` and exits `1`, even though the layer is simply excluded from resolution |
 | Task lookup is empty | Board is disabled/unconfigured or the corpus is cold | Validate [board setup](docs/board-providers.md), then run `/rag-reviewer:sync-tasks` |
 | Q&A misses new local code | Base index contains only a committed ref | Read the local file or commit/index the intended branch |
 | AI client cannot see new skills | Client session predates installation | Start a New Chat/new CLI session; use Reload Window in an IDE |

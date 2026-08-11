@@ -89,7 +89,10 @@ def test_config_show_skips_credential_home_yaml_without_echoing_secret(
         cli_mod.cli, ["config", "show", "--repo", "o/r", "--branch", "main"]
     )
 
-    assert result.exit_code == 0, result.output
+    # PRI-234: credential-ключ в home-слое пропускает слой (не применяется) —
+    # это то же «слой не применён», что и другие категории skipped, поэтому
+    # код возврата теперь тоже ненулевой (раньше был 0).
+    assert result.exit_code != 0, result.output
     assert "credential key github_token" in result.output
     assert secret not in result.output
     assert secret not in repr(result.exception)
@@ -197,9 +200,10 @@ def test_config_show_sanitizes_committed_yaml_and_closes_every_resource(
     )
 
     # Ошибка policy-слоя больше не роняет команду целиком (Task 6): секция
-    # веток печатается, а policy-часть уходит в policy_error; ресурсы
-    # закрываются как прежде — независимо от исхода policy-части. Код
-    # возврата при этом остаётся ненулевым (сигнал внешним скриптам).
+    # веток печатается, а сбой коммиченного слоя уходит в skipped (PRI-234,
+    # fail-soft); ресурсы закрываются как прежде — независимо от исхода
+    # policy-части. Код возврата при этом остаётся ненулевым (сигнал внешним
+    # скриптам).
     assert result.exit_code != 0
     assert "branches:" in result.output
     assert ".review.yml" in result.output
@@ -306,3 +310,114 @@ def test_config_migrate_conflict_closes_every_resource_without_masking_error(
     vcs.close.assert_called_once()
     for component in vars(components).values():
         component.close.assert_called_once()
+
+
+def _make_local_clone(tmp_path, *, remote: str, content: str, branch: str = "main"):
+    """Клон с коммиченным .review.yml — источник локального слоя (PRI-235)."""
+    import subprocess
+
+    root = tmp_path / "clone"
+    root.mkdir()
+
+    def git(*args):
+        subprocess.run(["git", "-C", str(root), *args], check=True, capture_output=True)
+
+    git("init", "-q", "-b", branch)
+    git("config", "user.email", "t@example.com")
+    git("config", "user.name", "t")
+    (root / ".review.yml").write_text(content, encoding="utf-8")
+    git("add", ".review.yml")
+    git("commit", "-qm", "policy")
+    git("remote", "add", "origin", remote)
+    return root
+
+
+def test_config_show_reads_committed_layer_from_local_clone(monkeypatch, tmp_path):
+    """PRI-235, критерии 1 и 4: клон читается локально, VCS не дёргается."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "home"))
+    clone = _make_local_clone(
+        tmp_path, remote="https://github.com/o/r.git", content="max_comments: 11\n"
+    )
+    vcs, _components = _install_fake_vcs(monkeypatch, "max_comments: 7\n")
+
+    result = CliRunner().invoke(
+        cli_mod.cli,
+        ["config", "show", "--repo", "o/r", "--branch", "main",
+         "--path", str(clone), "--json"],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["effective"]["max_comments"] == 11        # слой из клона
+    assert payload["committed_source"] == "local"
+    vcs.get_file_at_ref.assert_not_called()                  # ни одного сетевого вызова
+
+
+def test_config_show_reads_local_clone_without_working_remote(monkeypatch, tmp_path):
+    """PRI-235, критерий 2: у клона нет remote — слой всё равно участвует в резолве."""
+    import subprocess
+
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "home"))
+    root = tmp_path / "no-remote"
+    root.mkdir()
+
+    def git(*args):
+        subprocess.run(["git", "-C", str(root), *args], check=True, capture_output=True)
+
+    git("init", "-q", "-b", "main")
+    git("config", "user.email", "t@example.com")
+    git("config", "user.name", "t")
+    (root / ".review.yml").write_text("max_comments: 9\n", encoding="utf-8")
+    git("add", ".review.yml")
+    git("commit", "-qm", "policy")
+
+    vcs, _components = _install_fake_vcs(monkeypatch, "max_comments: 7\n")
+
+    result = CliRunner().invoke(
+        cli_mod.cli,
+        ["config", "show", "--repo", "o/r", "--branch", "main",
+         "--path", str(root), "--json"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output)["effective"]["max_comments"] == 9
+    vcs.get_file_at_ref.assert_not_called()
+
+
+def test_config_show_falls_back_to_vcs_for_foreign_clone(monkeypatch, tmp_path):
+    """PRI-235, критерий 3: клон чужого репозитория не подменяет слой — читаем через VCS."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "home"))
+    clone = _make_local_clone(
+        tmp_path, remote="https://github.com/other/project.git",
+        content="max_comments: 11\n",
+    )
+    vcs, _components = _install_fake_vcs(monkeypatch, "max_comments: 7\n")
+
+    result = CliRunner().invoke(
+        cli_mod.cli,
+        ["config", "show", "--repo", "o/r", "--branch", "main",
+         "--path", str(clone), "--json"],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["effective"]["max_comments"] == 7
+    assert payload["committed_source"] == "vcs"
+    vcs.get_file_at_ref.assert_called_once()
+
+
+def test_config_show_text_output_reports_committed_source(monkeypatch, tmp_path):
+    """PRI-235, критерий 4: способ чтения виден и в текстовом отчёте."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "home"))
+    clone = _make_local_clone(
+        tmp_path, remote="https://github.com/o/r.git", content="max_comments: 11\n"
+    )
+    _install_fake_vcs(monkeypatch, "max_comments: 7\n")
+
+    result = CliRunner().invoke(
+        cli_mod.cli,
+        ["config", "show", "--repo", "o/r", "--branch", "main", "--path", str(clone)],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "committed: local" in result.output

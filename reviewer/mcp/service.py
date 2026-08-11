@@ -940,13 +940,20 @@ class MCPReviewService:
                     ),
                     repo_secrets,
                 )
-            if meta.warnings:
+            from reviewer.config.layers import COMMITTED_UNREAD_WARNING_PREFIX
+
+            blocking_warnings = [
+                warning
+                for warning in meta.warnings
+                if not warning.startswith(COMMITTED_UNREAD_WARNING_PREFIX)
+            ]
+            if blocking_warnings:
                 return self._board_error(
                     "sync_board",
                     BoardProviderError(
                         "configuration",
                         "Task board policy resolution warnings: "
-                        + "; ".join(meta.warnings),
+                        + "; ".join(blocking_warnings),
                         secrets=repo_secrets,
                     ),
                     repo_secrets,
@@ -1355,25 +1362,66 @@ class MCPReviewService:
         except ValueError as exc:
             return f"({exc})"
 
+    def _repo_clone_path(self, repo: str) -> str | None:
+        """Путь к локальному клону репо из индекса, если он там записан (PRI-235).
+
+        Пишет его `reviewer index`, который и так выполняется из клона. Fail-soft:
+        недоступный Postgres или индекс, построенный до миграции, просто лишают
+        резолв локального пути — коммиченный слой уйдёт читаться через VCS.
+        Годность самого пути проверяет CommittedLayerFetcher: MCP-сервер может
+        работать не на той машине, где индексировали.
+        """
+        store = getattr(self.components, "store", None)
+        if store is None:
+            return None
+        try:
+            return store.get_repo_clone(repo)
+        except Exception:  # noqa: BLE001 — путь вторичен, VCS остаётся фолбэком
+            log.warning("Не удалось прочитать путь к клону для %s", repo)
+            return None
+
     def _resolve_policy(self, repo: str, branch: str) -> tuple["ReviewPolicy", "ResolutionMeta"]:
         """Резолвит effective policy из env, home-слоёв и committed `.review.yml`."""
+        from reviewer.config.committed import CommittedLayerFetcher
         from reviewer.config.layers import resolve_policy_data
         from reviewer.policy.policy import ReviewPolicy
         owner, name = repo.split("/", 1)
         vcs = None
+
+        def vcs_fetch_factory():
+            # Провайдер создаётся ЛЕНИВО: при живом клоне (PRI-235) он не нужен
+            # вовсе, а его создание — это ещё и токен, которого может не быть.
+            nonlocal vcs
+            if vcs is None:
+                vcs = (
+                    self._vcs_factory(owner, name)
+                    if self._vcs_factory is not None
+                    else self._review_service._create_vcs_provider(owner, name)
+                )
+            return lambda ref: vcs.get_file_at_ref(".review.yml", ref)
+
         try:
-            vcs = (
-                self._vcs_factory(owner, name)
-                if self._vcs_factory is not None
-                else self._review_service._create_vcs_provider(owner, name)
+            fetch_committed = CommittedLayerFetcher(
+                repo,
+                clone_path=self._repo_clone_path(repo),
+                vcs_fetch_factory=vcs_fetch_factory,
             )
+            # strict_committed=False намеренно: у _resolve_policy четыре
+            # потребителя, и три из них (_resolve_summary_depth,
+            # _resolve_summary_topk_threshold, _resolve_context_limits) уже
+            # обёрнуты в собственный fail-soft с откатом на env-дефолты.
+            # Строгий режим здесь заставил бы их молча потерять
+            # home:repos/<repo>.yml — то есть воспроизвёл бы исходный баг
+            # PRI-234 этажом выше. Ревью остаётся громким за счёт
+            # ReviewService.prepare.
             data, meta = resolve_policy_data(
                 repo,
                 branch,
-                lambda ref: vcs.get_file_at_ref(".review.yml", ref),
+                fetch_committed,
+                strict_committed=False,
             )
             for warning in meta.warnings:
-                log.warning("Домашний слой policy пропущен: %s", warning)
+                log.warning("Слой policy пропущен: %s", warning)
             return ReviewPolicy.load_data(self.settings, data), meta
         finally:
             if vcs is not None and self._vcs_factory is None:
@@ -1714,21 +1762,66 @@ class MCPReviewService:
             ),
         }
 
+    @staticmethod
+    def _compact_cluster_record(
+        cluster: "Cluster",
+        *,
+        stale: bool,
+        bootstrap: bool,
+        full_rebuild: bool,
+        delta: FragmentDelta,
+    ) -> dict:
+        """Запись кластера без file-level payload: только метаданные и счётчики.
+
+        Счётчики намеренно названы ``added``/``changed``/``removed``/``moved``
+        (без суффикса ``_files``): одноимённые ключи полного формата — списки, и
+        совпадение имён при разных типах ломало бы клиента, не проверившего режим.
+        """
+        return {
+            "cluster_key": cluster.key,
+            "num_members": cluster.num_members,
+            "source_hash": cluster.source_hash,
+            "stale": stale,
+            "bootstrap": bootstrap,
+            "full_rebuild": full_rebuild,
+            "reused_files": len(delta.reused),
+            "added": len(delta.added),
+            "changed": len(delta.changed),
+            "removed": len(delta.removed),
+            "moved": len(delta.moved),
+        }
+
     def list_subsystem_clusters(self, repo: str, branch: str | None = None,
                                 depth: int | None = None, min_size: int | None = None,
-                                cap: int | None = None) -> dict:
+                                cap: int | None = None,
+                                *,
+                                compact: bool = False,
+                                offset: int = 0,
+                                limit: int | None = None) -> dict:
         """Кластеризовать base-граф по модулям → кластеры для /summarize-subsystems.
         cap (дефолт Settings.summary_rebuild_cap; None/0=безлимит) отбрасывает наименее
         приоритетные stale-кластеры (без сводки → старейшие updated_at первыми) и считает
         их в deferred (PRI-165). Ответ содержит layout_token — canonical identity default
         depth + normalized overrides. Если depth не задан, он берётся из effective layered
-        policy с fail-soft env-дефолтом."""
+        policy с fail-soft env-дефолтом. offset/limit пагинируют финальный (после cap)
+        детерминированно отсортированный по cluster_key набор кластеров.
+        В полном формате ``files`` содержит только неизменённые файлы: пути из
+        added_files/changed_files/moved_files в нём не повторяются, полный
+        состав кластера = files ∪ этих трёх списков (PRI-232)."""
+        # Мягкая нормализация: тул вызывает LLM, падение на кривом аргументе
+        # хуже, чем предсказуемое приведение. limit<=0 == «без лимита».
+        page_offset = max(0, int(offset))
+        page_limit = int(limit) if limit is not None and int(limit) > 0 else None
         rb = self._resolve_repo_branch(repo, branch)
         if isinstance(rb, str):
             return {
                 "branch": branch or "",
                 "deferred": 0,
                 "deferred_files": 0,
+                "total_clusters": 0,
+                "offset": page_offset,
+                "limit": page_limit,
+                "has_more": False,
                 "clusters": [],
                 "note": rb,
             }
@@ -1745,6 +1838,10 @@ class MCPReviewService:
                 "branch": resolved,
                 "deferred": 0,
                 "deferred_files": 0,
+                "total_clusters": 0,
+                "offset": page_offset,
+                "limit": page_limit,
+                "has_more": False,
                 "clusters": [],
                 "note": "(base-индекс пуст — выполните rag-reviewer:sync-codebase)",
             }
@@ -1795,19 +1892,53 @@ class MCPReviewService:
         deferred_files = sum(
             len(deltas[key].pending_paths) for key in deferred_keys
         )
+        selected = sorted(
+            (cluster for cluster in state.clusters
+             if cluster.key not in deferred_keys),
+            key=lambda cluster: cluster.key,
+        )
+        total_clusters = len(selected)
+        page_end = (
+            total_clusters if page_limit is None else page_offset + page_limit
+        )
+        page = selected[page_offset:page_end]
+        has_more = page_end < total_clusters
+
         clusters = []
-        for cluster in state.clusters:
-            if cluster.key in deferred_keys:
-                continue
+        for cluster in page:
             delta = deltas[cluster.key]
+            bootstrap, full_rebuild = generation_flags[cluster.key]
+            if compact:
+                clusters.append(
+                    self._compact_cluster_record(
+                        cluster,
+                        stale=stale[cluster.key],
+                        bootstrap=bootstrap,
+                        full_rebuild=full_rebuild,
+                        delta=delta,
+                    )
+                )
+                continue
             serialized = self._serialize_summary_delta(
                 delta, include_reused_content=False
             )
+            # PRI-232: пути delta-списков не дублируются в files — там остаются
+            # только неизменённые файлы. Полный состав кластера восстановим как
+            # files ∪ added_files ∪ changed_files ∪ moved_files (removed_files в
+            # состав уже не входят).
+            delta_paths = {
+                item["path"]
+                for key in ("added_files", "changed_files", "moved_files")
+                for item in serialized[key]
+            }
+            unchanged_files = [
+                path for path in cluster.files if path not in delta_paths
+            ]
             clusters.append(
                 {
                     "cluster_key": cluster.key,
                     "num_members": cluster.num_members,
-                    "files": cluster.files,
+                    "files": unchanged_files,
                     "top_symbols": cluster.top_symbols,
                     "source_hash": cluster.source_hash,
                     "stale": stale[cluster.key],
@@ -1816,8 +1947,8 @@ class MCPReviewService:
                     "removed_files": serialized["removed_files"],
                     "moved_files": serialized["moved_files"],
                     "reused_files": len(delta.reused),
-                    "bootstrap": generation_flags[cluster.key][0],
-                    "full_rebuild": generation_flags[cluster.key][1],
+                    "bootstrap": bootstrap,
+                    "full_rebuild": full_rebuild,
                 }
             )
         return {
@@ -1828,6 +1959,10 @@ class MCPReviewService:
             "deferred": len(deferred_keys),
             "deferred_files": deferred_files,
             "orphans": orphans,
+            "total_clusters": total_clusters,
+            "offset": page_offset,
+            "limit": page_limit,
+            "has_more": has_more,
             "clusters": clusters,
         }
 

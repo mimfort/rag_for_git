@@ -206,6 +206,36 @@ class ChunkStore:
             )
             conn.commit()
 
+    def get_repo_clone(self, repo: str) -> str | None:
+        """Путь к локальному клону репо или None (PRI-235).
+
+        Отсутствие таблицы (индекс, построенный до этой миграции) равнозначно
+        отсутствию записи — чтение коммиченной политики откатится на VCS."""
+        import psycopg.errors
+        try:
+            with self._connect() as conn:
+                row = conn.execute(
+                    "SELECT path FROM repo_clone WHERE repo=%s", (repo,)
+                ).fetchone()
+        except psycopg.errors.UndefinedTable:
+            return None
+        return row[0] if row else None
+
+    def set_repo_clone(self, repo: str, path: str) -> None:
+        """Записать/обновить путь к клону репо (UPSERT по repo)."""
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO repo_clone (repo, path, updated_at)
+                VALUES (%s, %s, now())
+                ON CONFLICT (repo) DO UPDATE SET
+                    path = EXCLUDED.path,
+                    updated_at = now()
+                """,
+                (repo, path),
+            )
+            conn.commit()
+
     def get_index_meta_row(self, repo: str, ref: str) -> tuple[str, datetime] | None:
         """SHA и время последней индексации для ref, или None.
 

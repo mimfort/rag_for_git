@@ -219,15 +219,18 @@ class ReviewService:
 
             # Политика резолвится по точному base-коммиту PR и переиспользуется
             # для досинка base-индекса, overlay и дальнейшего гейта.
+            # strict_committed: в ревью тихая потеря политики недопустима —
+            # неполный gate пропустил бы находки, которые репозиторий отключил.
             policy_data, policy_meta = resolve_policy_data(
                 repo,
                 prq.base_sha,
                 lambda ref: vcs.get_file_at_ref(".review.yml", ref),
+                strict_committed=True,
             )
             policy = ReviewPolicy.load_data(self.settings, policy_data)
             ignore = policy.ignore
             for warning in policy_meta.warnings:
-                log.warning("Домашний слой policy пропущен: %s", warning)
+                log.warning("Слой policy пропущен: %s", warning)
 
             files = vcs.get_changed_files(pr_number)
             risk_paths, risk_skipped_paths = select_risk_paths(files)

@@ -55,6 +55,7 @@ VOYAGE_API_KEY=
 EMBEDDING_MODEL=voyage-code-3
 EMBEDDING_DIM=1024
 EMBEDDING_BATCH_SIZE=256
+EMBEDDING_TOKEN_BUDGET=100000
 RERANK_MODEL=rerank-2.5
 
 # --- GitHub (PAT: Pull requests read/write, Contents read) ---
