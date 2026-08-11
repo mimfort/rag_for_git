@@ -11,9 +11,6 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Команды
 
 ```bash
-# Установка (Python 3.11–3.13)
-python -m venv .venv && .venv/bin/pip install -e ".[dev]"
-
 # Инфраструктура: ParadeDB (5433) + Neo4j (7687)
 docker compose up -d
 
@@ -30,12 +27,7 @@ docker compose --profile test up -d --wait paradedb-test neo4j-test
 # только безопасное удаление
 docker compose --profile test rm -sfv paradedb-test neo4j-test
 
-# Точечные прогоны
-.venv/bin/pytest tests/index/test_store_hybrid.py     # один файл
-.venv/bin/pytest tests/policy/test_policy.py::test_name -q   # один тест
-
 # Линт
-.venv/bin/ruff check .        # line-length 100, target py311
 git config core.hooksPath .githooks   # один раз на клон: pre-commit гоняет ruff по staged .py
 
 # CLI (после pip install -e .)
