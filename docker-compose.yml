@@ -6,13 +6,13 @@ services:
       POSTGRES_PASSWORD: reviewer
       POSTGRES_DB: reviewer
     # loopback-only: локальный dev-стек не должен слушать LAN. Креды — одноразовые dev-дефолты.
-    ports: ["127.0.0.1:5433:5432"]   # 5433 на хосте: 5432 занят локальным Postgres разработчика
+    ports: ["127.0.0.1:${PARADEDB_PUBLISH_PORT:-5433}:5432"]   # 5433 на хосте: 5432 занят локальным Postgres разработчика
     volumes: ["paradedb_data:/var/lib/postgresql/"]
   neo4j:
     image: neo4j:5
     environment:
       NEO4J_AUTH: neo4j/reviewerpass
-    ports: ["127.0.0.1:7474:7474", "127.0.0.1:7687:7687"]
+    ports: ["127.0.0.1:${NEO4J_HTTP_PUBLISH_PORT:-7474}:7474", "127.0.0.1:${NEO4J_BOLT_PUBLISH_PORT:-7687}:7687"]
     volumes: ["neo4j_data:/data"]
   web:
     # Web admin собирается и запускается только через явный `--profile web`.
