@@ -70,3 +70,36 @@ def test_find_embeddings_short_circuits_without_hashes():
     store._connect = MagicMock(side_effect=AssertionError("не должно быть запроса"))
 
     assert store.find_embeddings_by_hashes("owner/name", []) == {}
+
+
+def test_vector_roundtrip_accepts_faithful_driver():
+    """Драйвер, вернувший вектор без искажений, проверку проходит."""
+    store = ChunkStore("postgresql://unused/unused")
+    conn = MagicMock()
+    conn.execute.return_value.fetchone.return_value = (
+        Vector(ChunkStore._PROBE_VECTOR),
+    )
+
+    @contextmanager
+    def _connect():
+        yield conn
+
+    store._connect = _connect  # type: ignore[method-assign]
+
+    store.check_vector_roundtrip()  # не поднимает
+
+
+def test_vector_roundtrip_rejects_distorted_value():
+    """Искажённый вектор — отказ, а не молчаливое согласие."""
+    store = ChunkStore("postgresql://unused/unused")
+    conn = MagicMock()
+    conn.execute.return_value.fetchone.return_value = ([0.0, 0.0, 0.0],)
+
+    @contextmanager
+    def _connect():
+        yield conn
+
+    store._connect = _connect  # type: ignore[method-assign]
+
+    with pytest.raises(RuntimeError, match="искажённ"):
+        store.check_vector_roundtrip()
