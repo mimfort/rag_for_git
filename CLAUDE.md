@@ -192,6 +192,21 @@ MCP-сессия (PreparedReview + ToolContext) живёт в процессе `
   immutable spec → explicit registry line → full contract fixture → provider-specific tests →
   documentation matrix row. Partial registration запрещена.
 
+- **Канал репорта багов самого reviewer (`report_bug`, PRI-239).** Скилл `report-bug` — тонкий
+  триггер server-side lifecycle: триаж → анонимизация → сборка issue → публикация в
+  `mimfort/rag_for_git`. Двухфазность — **серверный** инвариант, не договорённость с промптом:
+  без `confirmed=True` тул возвращает `status="preview"` с полным итоговым текстом и ничего не
+  отправляет, а при `non_interactive=True` подменяет публикацию фолбэком даже с `confirmed`
+  («апрув» без человека апрувом не является). Фильтр «наш баг / не наш» живёт в
+  `bugreport/triage.py` и решает по **форме** (класс симптома), а не по тексту: чужие проблемы
+  (окружение, внешние сервисы, код пользователя, права, поведение LLM) канал не репортит — кроме
+  `llm_behaviour` с `caused_by_skill_instruction=True`, потому что баг промпта тоже наш.
+  Анонимизация (`bugreport/sanitize.py`) детерминирована и не доверена LLM; литералы установки
+  (репо, ветки, хосты, секреты) вымарываются ДО эвристик, а пути внутри `reviewer/` и `plugin/`
+  сознательно сохраняются — без них баг невоспроизводим. Порог шума: одно предложение на
+  сигнатуру за жизнь процесса, отказ запоминается (`_bug_offered`/`_bug_declined`).
+  Выключатели независимы: `REVIEW_BUG_REPORTS=false` (деплой) и `bug_reports: false` (`.review.yml`).
+
 ## Соглашения
 
 - Внешние сервисы (GitHub, Voyage, Postgres, Neo4j) изолированы за интерфейсами и мокаются в unit-тестах; реальные вызовы — только в integration/E2E.

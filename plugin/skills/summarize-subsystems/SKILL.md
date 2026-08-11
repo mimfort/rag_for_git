@@ -151,3 +151,7 @@ say so briefly rather than guessing.
 - Precondition: base index built (`reviewer index`). Re-running is incremental at file-skeleton
   fingerprint granularity: unchanged source files are not read or summarized again.
 - Read-only on code and GitHub; only writes summaries to the reviewer store.
+
+## Reporting a reviewer defect
+
+<!-- include: _common/bug-reporting.md -->

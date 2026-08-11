@@ -142,3 +142,7 @@ blocks.
 - If `prepare_review` fails, surface its error text to the user as-is (it contains
   the remediation hint, e.g. "docker compose up -d").
 - Never post comments yourself via gh/git — only through `publish_review`.
+
+## Reporting a reviewer defect
+
+<!-- include: _common/bug-reporting.md -->

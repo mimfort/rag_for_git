@@ -58,6 +58,10 @@ class Settings(BaseSettings):
     review_history: bool = True                   # сохранять историю прогонов в Postgres
     review_session_persist: bool = True           # персист сессии PR в Postgres (crash-recovery)
     review_session_ttl_hours: int = 24            # TTL персистнутой сессии до истечения
+    # Канал репорта багов самого reviewer (PRI-239). Выключатель уровня деплоя:
+    # False запрещает канал для всех репозиториев, per-repo `bug_reports: false`
+    # в .review.yml — только для своего. Публикация в любом случае требует апрува.
+    review_bug_reports: bool = True
     # Voyage
     voyage_api_key: str = ""
     embedding_model: str = "voyage-code-3"
