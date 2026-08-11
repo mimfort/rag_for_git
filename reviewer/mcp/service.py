@@ -191,6 +191,11 @@ class MCPReviewService:
         )
         self._sessions: dict[tuple[str, int], _Session] = {}
         self._session_store: SessionStore | None = None
+        # PRI-239: порог шума канала репорта багов. Не более одного предложения на
+        # симптом за жизнь процесса, отказ пользователя запоминается. In-memory —
+        # ровно как сессии ревью: «сессия» здесь и есть процесс reviewer-mcp.
+        self._bug_offered: set[str] = set()
+        self._bug_declined: set[str] = set()
 
     def prepare_review(self, repo: str, pr: int) -> dict:
         """Подготовить ревью PR: получить юниты, policy, patches; сохранить сессию.
@@ -462,6 +467,206 @@ class MCPReviewService:
         проверьте подключение через ``reviewer check``.
         """
         return {"task_board": self.settings.task_board_default()}
+
+    # --- Канал репорта багов самого reviewer (PRI-239) -------------------------
+
+    def report_bug(
+        self,
+        kind: str,
+        summary: str,
+        *,
+        expected: str = "",
+        actual: str = "",
+        steps: list[str] | None = None,
+        severity: str | None = None,
+        tool: str = "",
+        skill_step: str = "",
+        error_class: str = "",
+        details: str = "",
+        caused_by_skill_instruction: bool = False,
+        repo: str = "",
+        branch: str = "",
+        client_environment: Mapping[str, object] | None = None,
+        scale: Mapping[str, object] | None = None,
+        index_drift: int | None = None,
+        environment_include: list[str] | None = None,
+        environment_exclude: list[str] | None = None,
+        confirmed: bool = False,
+        non_interactive: bool = False,
+        decline: bool = False,
+    ) -> dict:
+        """Собрать анонимизированный репорт дефекта reviewer; опубликовать — только по апруву.
+
+        Двухфазность — серверный инвариант, а не договорённость с промптом: без
+        ``confirmed`` тул возвращает ПОЛНЫЙ итоговый текст (``status="preview"``) и
+        ничего никуда не отправляет. Скилл — это промпт, а не ``try/finally``, поэтому
+        гарантию «сами не ходим» даёт сервер: в неинтерактивном режиме публикация
+        подменяется фолбэком даже при ``confirmed=True``.
+
+        Исходы: ``disabled`` (канал выключен), ``not_reported`` (чужая проблема),
+        ``suppressed`` (симптом уже предлагали или пользователь отказался),
+        ``declined`` (зафиксирован отказ), ``preview``, ``published``, ``commented``,
+        ``fallback``.
+        """
+        from reviewer.bugreport.environment import collect_environment
+        from reviewer.bugreport.publish import publish_report
+        from reviewer.bugreport.render import TARGET_REPO, render_issue
+        from reviewer.bugreport.triage import triage
+
+        verdict = triage(
+            kind,
+            severity=severity,
+            tool=tool,
+            step=skill_step,
+            error_class=error_class,
+            caused_by_skill_instruction=caused_by_skill_instruction,
+        )
+        if decline:
+            # Отказ запоминается до конца жизни процесса: повторно не спрашиваем.
+            self._bug_declined.add(verdict.signature)
+            return {"status": "declined", "signature": verdict.signature,
+                    "triage": verdict.as_dict()}
+
+        enabled, disabled_reason = self._bug_reports_enabled(repo, branch)
+        if not enabled:
+            return {"status": "disabled", "reason": disabled_reason,
+                    "triage": verdict.as_dict()}
+        if not verdict.ours:
+            return {"status": "not_reported", "reason": verdict.reason,
+                    "triage": verdict.as_dict()}
+        if verdict.signature in self._bug_declined:
+            return {"status": "suppressed", "reason": "пользователь уже отказался от репорта "
+                                                      "по этому симптому в этой сессии",
+                    "signature": verdict.signature, "triage": verdict.as_dict()}
+        if not confirmed and verdict.signature in self._bug_offered:
+            return {"status": "suppressed", "reason": "репорт по этому симптому уже предлагался "
+                                                      "в этой сессии",
+                    "signature": verdict.signature, "triage": verdict.as_dict()}
+
+        sanitizer = self._bug_sanitizer(repo, branch)
+        environment = collect_environment(
+            client_fields={**dict(client_environment or {}),
+                           "tool": tool, "skill_step": skill_step},
+            board_type=self._bug_board_type(),
+            vcs_type=self.settings.vcs_provider,
+            vcs_self_hosted=self._bug_vcs_self_hosted(),
+            graph_backend=str(self.settings.graph_backend),
+            index_drift=index_drift,
+            scale=scale,
+            sanitizer=sanitizer,
+        ).trimmed(include=environment_include, exclude=environment_exclude or ())
+
+        report = render_issue(
+            summary=sanitizer.text(summary),
+            expected=sanitizer.text(expected),
+            actual=sanitizer.text(actual),
+            steps=sanitizer.lines(steps or []),
+            severity=verdict.severity,
+            kind_reason=verdict.reason,
+            signature=verdict.signature,
+            environment=environment,
+            details=sanitizer.text(details),
+        )
+        payload = {
+            "signature": verdict.signature,
+            "triage": verdict.as_dict(),
+            "defer": verdict.defer,
+            "target_repo": TARGET_REPO,
+            "title": report.title,
+            "issue_text": report.body,
+            "environment_keys": environment.keys(),
+            "identity_notice": (
+                "Issue публикуется от вашего GitHub-аккаунта — ник будет виден в публичном "
+                "репозитории. Альтернатива: отказаться от публикации и открыть issue вручную "
+                "по ссылке-заготовке."
+            ),
+        }
+        if not confirmed:
+            self._bug_offered.add(verdict.signature)
+            return {**payload, "status": "preview"}
+        if non_interactive:
+            # Автономных публикаций нет ни в одном режиме: «апрув» без человека
+            # апрувом не является, каким бы ни был флаг confirmed.
+            from reviewer.bugreport.render import prefilled_url
+
+            return {**payload, "status": "fallback",
+                    "fallback_url": prefilled_url(report),
+                    "reason": "неинтерактивный режим: канал не публикует без человека"}
+        result = publish_report(report, token=self.settings.github_token)
+        return {**payload, **result.as_dict(), "status": result.status}
+
+    def _bug_reports_enabled(self, repo: str, branch: str) -> tuple[bool, str]:
+        """Выключатель канала: деплой (env) и репо (.review.yml) — независимо."""
+        if not self.settings.review_bug_reports:
+            return False, "канал выключен на уровне деплоя (REVIEW_BUG_REPORTS=false)"
+        if not repo:
+            return True, ""
+        try:
+            policy, _ = self._resolve_policy(repo, branch or self._bug_branches(repo)[0])
+        except Exception:      # noqa: BLE001 — недоступная политика не включает канал молча
+            log.warning("не удалось резолвить политику для канала репорта багов", exc_info=True)
+            return True, ""
+        if not policy.bug_reports:
+            return False, "канал выключен для этого репозитория (bug_reports: false в .review.yml)"
+        return True, ""
+
+    def _bug_branches(self, repo: str) -> tuple[str, tuple[str, ...]]:
+        """Отслеживаемые ветки репо через общий резолвер; сбой → безопасный дефолт.
+
+        Прямой env-фолбэк Settings здесь запрещён guard-тестом и по делу: в мульти-репо
+        деплое он дал бы ветки чужого репозитория.
+        """
+        from reviewer.config.branches import resolve_repo_branches
+
+        if not repo:
+            return "main", ()
+        try:
+            resolved = resolve_repo_branches(repo, settings=self.settings)
+        except Exception:      # noqa: BLE001 — резолв веток вторичен для репорта
+            return "main", ()
+        return resolved.primary, tuple(resolved.index)
+
+    def _bug_sanitizer(self, repo: str, branch: str):
+        """Санитайзер, знающий литералы этой установки: репо, ветки, хосты, секреты.
+
+        Точное знание идёт впереди эвристик: имя репозитория, упомянутое в прозе без
+        слэша, регуляркой не ловится, а утечь не должно.
+        """
+        from reviewer.bugreport.sanitize import Sanitizer
+
+        secrets = set(self._bug_board_secrets())
+        for value in (self.settings.github_token, self.settings.gitlab_token,
+                      self.settings.voyage_api_key, self.settings.neo4j_password):
+            if value:
+                secrets.add(value)
+        repos = {value for value in (repo, self.settings.default_repo) if value}
+        primary, tracked = self._bug_branches(repo)
+        branches = {primary, *tracked}
+        if branch:
+            branches.add(branch)
+        hosts = set()
+        for url in (self.settings.gitlab_url, self.settings.neo4j_uri, self.settings.pg_dsn):
+            host = _hostname(url)
+            if host:
+                hosts.add(host)
+        return Sanitizer.build(secrets=secrets, repos=repos, branches=branches, hosts=hosts)
+
+    def _bug_board_secrets(self) -> frozenset[str]:
+        try:
+            return self._board_secrets()
+        except Exception:      # noqa: BLE001 — отсутствие доски не мешает репорту
+            return frozenset()
+
+    def _bug_board_type(self) -> str:
+        """Тип зарегистрированной доски — безопасен; её project и URL в блок не идут."""
+        default = self.settings.task_board_default() or {}
+        return str(default.get("type") or "")
+
+    def _bug_vcs_self_hosted(self) -> bool | None:
+        """Факт self-hosted инсталляции без хоста и URL."""
+        if self.settings.vcs_provider == "gitlab":
+            return not self.settings.gitlab_url.startswith("https://gitlab.com")
+        return False
 
     def purge_orphaned_tasks(
         self, active_keys: list[str], keep_with_prs: bool = True
@@ -2864,6 +3069,18 @@ class MCPReviewService:
     def _suggestions_mode(self) -> str:
         """Режим предложений (apply/text) — передаётся в assemble_review для сборки suggestion-блоков."""
         return self.settings.review_suggestions
+
+
+def _hostname(url: str) -> str:
+    """Хост из URL/DSN для санитайзера канала репорта (PRI-239); мусор → пусто."""
+    if not url:
+        return ""
+    try:
+        from urllib.parse import urlsplit
+
+        return urlsplit(url).hostname or ""
+    except ValueError:
+        return ""
 
 
 _PR_DIFF_MAX_CHARS = 20000

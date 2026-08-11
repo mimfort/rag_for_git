@@ -30,6 +30,7 @@ class ReviewPolicy:
     summary_cluster_depth_overrides: dict[str, int] = field(
         default_factory=dict)             # per-prefix depth из .review.yml (PRI-161)
     context_limits: ContextLimits = field(default_factory=ContextLimits)  # PRI-202, только из .review.yml
+    bug_reports: bool = True                                     # канал репорта багов reviewer (PRI-239)
 
     @staticmethod
     def _normalized_task_board(raw) -> tuple[dict | None, list[str]]:
@@ -63,6 +64,7 @@ class ReviewPolicy:
             summary_cluster_depth_overrides=dict(
                 data.get("summary_cluster_depth_overrides", {}) or {}),
             context_limits=ContextLimits.from_review_yaml(data),
+            bug_reports=bool(data.get("bug_reports", True)),
         )
 
     @classmethod
@@ -81,6 +83,8 @@ class ReviewPolicy:
             grounding_max_distance=settings.review_grounding_max_distance,
             summary_cluster_depth=settings.summary_cluster_depth,
             summary_topk_threshold=settings.summary_topk_threshold,
+            # getattr: from_settings вызывают и со стаб-настройками, где поля ещё нет.
+            bug_reports=bool(getattr(settings, "review_bug_reports", True)),
         )
 
     @classmethod
@@ -120,6 +124,8 @@ class ReviewPolicy:
                 data["summary_cluster_depth_overrides"] or {})
         if "context_limits" in data:
             policy.context_limits = ContextLimits.from_review_yaml(data)
+        if "bug_reports" in data:
+            policy.bug_reports = bool(data["bug_reports"])
         return policy
 
     @classmethod

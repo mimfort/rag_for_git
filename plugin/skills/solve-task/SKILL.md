@@ -314,3 +314,7 @@ Use the session-less tools above.
   to brainstorming.
 - This skill reads task data only through the reviewer store and generic `sync_board`/retry. The
   brief file under `docs/superpowers/briefs/` is its only repository write.
+
+## Reporting a reviewer defect
+
+<!-- include: _common/bug-reporting.md -->

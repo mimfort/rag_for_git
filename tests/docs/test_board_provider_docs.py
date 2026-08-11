@@ -167,7 +167,7 @@ def test_decompose_task_is_in_every_public_skill_inventory():
 
 def test_public_docs_tool_count_matches_registered_server():
     runtime_count = len(asyncio.run(create_server(MagicMock()).list_tools()))
-    assert runtime_count == 38
+    assert runtime_count == 39
 
     count_pattern = re.compile(
         r"MCP(?:-сервер| server)[^\n]*?\b(\d+)\s+(?:tools|тул)\b",
