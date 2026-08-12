@@ -20,7 +20,9 @@ VISIBLE_COMMANDS = {
     "migrate-branches",
     "search",
     "serve",
+    "start",
     "status",
+    "stop",
     "update",
 }
 

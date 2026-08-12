@@ -339,10 +339,32 @@ PARADEDB_PUBLISH_PORT=6543 NEO4J_BOLT_PUBLISH_PORT=7999 \
   docker compose -f ~/.config/rag-reviewer/docker-compose.yml up -d
 ```
 
+`reviewer start` и `reviewer stop` управляют этим Compose-файлом:
+
+```bash
+reviewer start   # up -d --wait, ждёт готовности healthcheck ParadeDB и Neo4j
+reviewer stop    # останавливает контейнеры; named volumes и построенный индекс сохраняются
+```
+
+Обе работают под явным именем Compose-проекта `rag-reviewer`. Клон этого репозитория поднимает
+собственный стек под именем `rag_for_git` — они публикуют одни и те же хостовые порты и держат
+разные тома, поэтому одновременно их запускать нельзя. Контрибьюторам внутри клона следует
+по-прежнему пользоваться `docker compose up -d`.
+
+`reviewer stop` не удаляет тома никогда: он выполняет `docker compose stop`, у которого флага
+`-v` не существует.
+
+На Docker Engine старше 25.0 ключ healthcheck `start_interval` игнорируется, поэтому первая проба
+neo4j происходит только после обычного `interval` (300s) — ровно того таймаута `--wait`, что
+использует `reviewer start`. На таких движках `reviewer start` может сообщить об ошибке по
+таймауту, даже если стек поднялся нормально; апгрейд Docker Engine убирает проблему.
+
 Настраивайте переменными, а не правкой Compose-файла: отредактированный вручную
 `~/.config/rag-reviewer/docker-compose.yml` перестаёт совпадать с записанным hash, поэтому
 `reviewer update` считает его изменённым пользователем (статус `preserved`) и больше не доставляет
-в него новые Compose-описания.
+в него новые Compose-описания. Файл со статусом `preserved` перестаёт получать и новые определения
+healthcheck, поэтому `reviewer start` для него сводится к ожиданию состояния `running`, а не
+реальной готовности.
 
 Credentials остаются на сервере. **Credentials are not returned** board metadata/discovery tools
 и не должны попадать в `.review.yml`.
@@ -543,6 +565,7 @@ threshold, graph backend и retrieval ceilings меняют cost/recall; сна�
 |---|---|
 | Настройка и integrations | `init`, `install`, `install-skills`, `update` |
 | Проверка окружения | `check` |
+| Управление локальной инфраструктурой | `start`, `stop` |
 | Управление индексом | `index`, `status`, `search`, `migrate-branches`, `gc` |
 | Observability UI | `serve` |
 | Прямой запуск MCP | `reviewer-mcp` |

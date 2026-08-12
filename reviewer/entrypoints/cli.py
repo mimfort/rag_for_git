@@ -10,6 +10,7 @@ import platform as _platform
 import re
 import shutil as _shutil
 from typing import TYPE_CHECKING
+from urllib.parse import urlsplit
 
 import click
 import httpx
@@ -34,6 +35,13 @@ from reviewer.config.onboarding import (
     plan_repository_config,
 )
 from reviewer.config.provider_access import render_provider_access
+from reviewer.compose_lifecycle import (
+    COMPOSE_PROJECT,
+    ComposeResult,
+    ComposeStatus,
+    start_services,
+    stop_services,
+)
 from reviewer.gitutil import file_at_ref, list_python_files, repo_root, rev_parse, remote_url
 from reviewer.graph.backend import build_code_graph
 from reviewer.graph.store import GraphStore
@@ -725,6 +733,25 @@ def _check_vcs_providers(settings: Settings) -> bool:
     return failed
 
 
+_LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1", ""})
+
+
+def _is_loopback_endpoint(value: str) -> bool:
+    """Адресован ли DSN/URI локальной машине.
+
+    Нужен, чтобы совет `reviewer start` не показывался деплою с удалёнными
+    хранилищами: там локальный docker-стек ничего не чинит.
+    """
+    try:
+        host = urlsplit(value).hostname
+    except ValueError:
+        return False
+    if host is None:
+        match = re.search(r"host=([^\s]+)", value)
+        host = match.group(1) if match else None
+    return (host or "").lower() in _LOOPBACK_HOSTS
+
+
 def _parse_board_projects(values: tuple[str, ...]) -> dict[str, str]:
     projects: dict[str, str] = {}
     for value in values:
@@ -757,6 +784,7 @@ def check(board_project_values: tuple[str, ...]) -> None:
     s = Settings()
     board_projects = _parse_board_projects(board_project_values)
     failed = False
+    local_storage_down = False
 
     # 1. Ключи
     for label, val in (("VOYAGE_API_KEY", s.voyage_api_key),):
@@ -798,6 +826,7 @@ def check(board_project_values: tuple[str, ...]) -> None:
         else:
             click.echo(f"✗ Postgres: {err}")
         failed = True
+        local_storage_down = local_storage_down or _is_loopback_endpoint(s.pg_dsn)
     finally:
         if store is not None:
             store.close()
@@ -813,6 +842,12 @@ def check(board_project_values: tuple[str, ...]) -> None:
     except Exception as e:
         click.echo(f"✗ Neo4j: {e}")
         failed = True
+        local_storage_down = local_storage_down or _is_loopback_endpoint(s.neo4j_uri)
+
+    if local_storage_down:
+        click.echo(
+            "  Подсказка: локальные хранилища не отвечают — запустите reviewer start"
+        )
 
     # 4. scip-python (информационно, не влияет на exit-code)
     if _shutil.which("scip-python"):
@@ -840,6 +875,50 @@ def check(board_project_values: tuple[str, ...]) -> None:
     if failed:
         raise SystemExit(1)
     click.echo("Готово к работе.")
+
+
+def _report_compose_failure(result: ComposeResult) -> None:
+    """Печатает русское объяснение неуспеха и завершает процесс кодом 1."""
+    if result.status is ComposeStatus.COMPOSE_MISSING:
+        click.echo(f"✗ {result.compose_path} не найден — выполните reviewer update")
+    elif result.status is ComposeStatus.DOCKER_MISSING:
+        click.echo("✗ docker не найден в PATH — установите Docker")
+    elif result.status is ComposeStatus.DAEMON_UNAVAILABLE:
+        click.echo(
+            "✗ docker установлен, но демон не отвечает — запустите Docker и повторите"
+        )
+    else:
+        click.echo(f"✗ docker compose завершился с кодом {result.returncode}")
+        if result.stderr.strip():
+            click.echo(result.stderr.strip())
+    raise SystemExit(1)
+
+
+@cli.command()
+def start() -> None:
+    """Запустить локальную инфраструктуру (ParadeDB + Neo4j)."""
+    click.echo(
+        f"Запускаю инфраструктуру (проект {COMPOSE_PROJECT}); первая загрузка "
+        "образов может занять несколько минут…"
+    )
+    result = start_services()
+    if result.status is ComposeStatus.OK:
+        click.echo(
+            f"✓ Инфраструктура запущена (проект {COMPOSE_PROJECT}): ParadeDB, Neo4j"
+        )
+        return
+    _report_compose_failure(result)
+
+
+@cli.command()
+def stop() -> None:
+    """Остановить локальную инфраструктуру, сохранив тома и индекс."""
+    click.echo(f"Останавливаю инфраструктуру (проект {COMPOSE_PROJECT})…")
+    result = stop_services()
+    if result.status is ComposeStatus.OK:
+        click.echo("✓ Инфраструктура остановлена; тома и индекс сохранены")
+        return
+    _report_compose_failure(result)
 
 
 @cli.command()
