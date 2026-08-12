@@ -38,7 +38,9 @@ def test_review_pr_task_board_payload_uses_generic_metadata_only():
 
 def test_solve_task_resolves_board_once_before_preflight_sync():
     solve = (SKILL.parents[1] / "solve-task" / "SKILL.md").read_text(encoding="utf-8")
-    preflight = re.search(r"0\. \*\*Preflight.*?(?=\n1\. \*\*Config\.)", solve, re.DOTALL)
+    # Заголовок Шага 0 переименован в PRI-243 (стартовый опрос + preflight); якорь ловит
+    # оба варианта, но требует, чтобы слово "Preflight" осталось в заголовке.
+    preflight = re.search(r"0\. \*\*[^\n]*Preflight.*?(?=\n1\. \*\*Config\.)", solve, re.DOTALL)
     assert preflight
     assert "Resolve `task_board` exactly once" in preflight.group()
     assert preflight.group().index("Resolve `task_board` exactly once") < preflight.group().index("sync_board(")

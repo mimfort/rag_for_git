@@ -588,6 +588,22 @@ namespaced skills with `$rag-reviewer:...`.
 - **Needs:** reviewer MCP; board context is optional and the pipeline continues board-less.
 - **Reads/writes:** reads task/code context and writes one brief under `docs/superpowers/briefs/`.
 - **Result:** a compact brief handed to brainstorming; implementation happens in later skills.
+- **Startup survey:** one `AskUserQuestion` panel asks three things before anything else — the
+  brief model tier (`cheap`/`mid`/`premium`), the interaction mode, and the execution strategy.
+  No answer, or a headless run, applies the defaults `mid` / `normal` / `subagent` without
+  blocking.
+- **Interaction modes:** `normal` — brainstorming questions plus spec and plan approvals;
+  `auto` — questions asked, approvals dropped; `full-auto` — no questions, the recommended option
+  taken at every fork, approvals dropped. In every mode the spec and the plan are still written,
+  self-reviewed and committed. `full-auto` still asks before `git push`, opening a PR, or writing
+  to the board.
+- **Execution strategies:** `inline` (executing-plans), `subagent` (subagent-driven-development),
+  `lite` (`plugin/skills/_profiles/execution-lite.md` — one reviewer per group of up to 3 tasks
+  sharing files, a 3-round fix cap, a mandatory final whole-branch review), and `auto` (resolved
+  after the plan by an ordered rubric: risk signals or >8 tasks or >10 files → `subagent`;
+  ≤3 tasks and ≤3 files → `inline`; otherwise `lite`).
+- **Run state:** the chosen mode and strategy are written to `.superpowers/solve-task/<KEY>.md`,
+  which is git-ignored — never to the brief, the spec, or the plan.
 
 ### `ask` — grounded codebase Q&A
 

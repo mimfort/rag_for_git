@@ -86,27 +86,20 @@ def test_solve_task_warns_on_existing_artifacts():
     assert "Do NOT block" in text or "not block" in text  # не блокировка
 
 
-def test_solve_task_step_1_5_handles_auto_permission_mode():
-    """PRI-209: в auto permission mode выбор модели брифа происходит silently, иначе — спрашиваем."""
-    text = SKILL_PATH.read_text(encoding="utf-8")
-    lower = text.lower()
-    # Auto-mode branch exists.
-    assert "if auto permission mode is active" in lower
-    assert "silently choose" in lower
-    # Manual branch exists.
-    assert "otherwise" in lower
-    assert "ask the user" in lower
-
-
 def test_solve_task_asks_brief_model_choice():
-    """PRI-208: Step 1.5 спрашивает у юзера tier модели для сборки брифа."""
+    """PRI-208: тир модели для сборки брифа спрашивается — требование живо, но с PRI-243
+    переехало из Step 1.5 в панель стартового опроса (Step 0 `0. **Startup survey.**`)."""
     text = SKILL_PATH.read_text(encoding="utf-8")
-    assert "Ask the user which model tier to use for building the brief" in text, (
-        "нет шага выбора модели для брифа (уникальная фраза шага удалена)"
+    assert "0. **Startup survey.**" in text, "нет стартовой панели опроса (Step 0)"
+    assert "**Brief model tier**" in text, (
+        "нет вопроса о тире модели для брифа в стартовой панели"
     )
-    # Рекомендация-дефолт — mid/Sonnet-класс
-    assert "mid tier (Sonnet-class)" in text, (
-        "скилл не рекомендует mid/Sonnet-класс как дефолт"
+    # Значения тира и рекомендация-дефолт — mid.
+    assert "`cheap`" in text and "`mid`" in text and "`premium`" in text, (
+        "не все значения тира (cheap/mid/premium) присутствуют"
+    )
+    assert "`mid` (recommended)" in text, (
+        "скилл не рекомендует mid как дефолт-тир"
     )
 
 
