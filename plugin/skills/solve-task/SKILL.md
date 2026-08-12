@@ -17,7 +17,7 @@ brief to `superpowers:brainstorming` (which leads to writing-plans → subagent-
 
 ## Pipeline
 
-0. **Preflight (index freshness + task-corpus warm-up).** Run this BEFORE anything else.
+0. **Startup: survey + Preflight (index freshness + task-corpus warm-up).** Run this BEFORE anything else.
    First resolve, once, the repo path (`git rev-parse --show-toplevel`) and the working branch
    (`git branch --show-current`; if it is in `REVIEW_BRANCHES` use it, else the primary branch) —
    step 3 reuses the same branch for `search_codebase`.
@@ -27,6 +27,35 @@ brief to `superpowers:brainstorming` (which leads to writing-plans → subagent-
    an explicit empty `task_board:` disables board work for this run. Keep the resolved
    `{type, project, key_pattern, create_target, done_target, options}` value and **reuse this resolved value** in Step 1 and every board operation. Never call the deploy fallback when the
    repo explicitly disables the board.
+
+   0. **Startup survey.** Ask the user, in **one panel** (`AskUserQuestion`), three questions at
+      once. This is the only survey of the run: none of the three is asked again later. Talk to the
+      user in Russian.
+      1. **Brief model tier** — `cheap` / `mid` (recommended) / `premium`. Phrase the choice by
+         tier, not by concrete model names, so it works across CLIs (Claude Code, Codex, Gemini,
+         Cursor, …). Do not recommend a coarse tier such as Fable — the brief still needs sound
+         judgment. This question replaces the former Step 1.5.
+      2. **Interaction mode** — three values; the option text must **explain what it means**:
+         - `normal` — «вопросы на брейншторме, апрув спеки и апрув плана» (current behaviour);
+         - `auto` — «вопросы задаются, апрувы спеки и плана не запрашиваются»;
+         - `full-auto` — «вопросы не задаются, на каждой развилке берётся рекомендованный вариант,
+           апрувы не запрашиваются». Add the cost to the same option text: «уместен для задач с
+           полным описанием и критериями; для расплывчатых формулировок подавляет канал, по
+           которому в дизайн попадает недостающая информация».
+      3. **Execution strategy** — `inline` (superpowers:executing-plans), `subagent`
+         (superpowers:subagent-driven-development as-is), `lite` (the profile at
+         `_profiles/execution-lite.md`), `auto` (resolved by the rubric in Step 5 after the plan is
+         written). Asked now, applied later.
+
+      **Defaults (fail-open).** No answer, a decline, or a headless / `non-interactive` run → tier
+      `mid`, mode `normal`, strategy `subagent`. In a headless / `non-interactive` run do not show
+      the panel at all and apply those defaults silently. Otherwise the panel is always shown.
+      **never block** — the survey must not stop the pipeline under any circumstance.
+
+      **The mode governs the preflight questions below.** In `full-auto`, do not ask the
+      confirmations of steps 1 and 4 (stale index, missing summaries): take the recommended option
+      in each (reindex; warm the summaries) and record each one as a decision made on the user's
+      behalf, per Step 4's run-state file. In `normal` and `auto`, ask them as written.
 
    1. **Base-index freshness.** Run
       `uvx --from rag-reviewer reviewer status <path> --branch <branch> --json` and read `drift`
@@ -88,13 +117,8 @@ brief to `superpowers:brainstorming` (which leads to writing-plans → subagent-
    `targets` by `label`, and use option `required_for` / `choices` to ask for missing `options`.
    Never guess a target or an option and never branch on a board type.
 
-1.5. **Choose the brief model (cross-CLI).** Building the brief (Steps 2–4: gather + distill) is a
-   light reasoning task over session-less retrieval tools — a top-tier model is overkill and burns
-   tokens. **If auto permission mode is active, silently choose the mid tier (Sonnet-class)** and
-   continue without asking the user. Otherwise, **Ask the user which model tier to use for building the brief**, phrasing the choice by **tier (cheap / mid / premium)** — not by concrete model names — so it works across CLIs (Claude Code, Codex, Gemini, Cursor, …). **Recommend a mid tier (Sonnet-class) as the default** (do not recommend Fable — a coarse tier is fine but the brief still needs sound judgment). Talk to the user in Russian. Remember the choice for this run. Fail-open: no answer, a decline, or inability to detect auto mode → use the default tier (or, on Path B below, the session model inline). Never block.
-
 **Brief-building unit (Steps 2–4) runs on the chosen model.** Steps 2–4 (identify → gather → distill
-→ persist) are non-interactive; run them on the model chosen in Step 1.5:
+→ persist) are non-interactive; run them on the model chosen in the Step 0 startup survey:
 - **Path A — per-subagent model override available:** **dispatch a subagent on the chosen model** to
   execute Steps 2–4, giving it the reviewer session-less tools (`get_task`, `search_codebase`,
   `get_subsystem_summaries`, `get_task_context`, `search_tasks`, the graph tools, `get_pr_diff`) plus
