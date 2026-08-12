@@ -44,6 +44,15 @@ class ComposeStatus(StrEnum):
 
 @dataclass(frozen=True)
 class ComposeResult:
+    """Исход одного вызова `docker compose`.
+
+    `returncode` осмыслен только при `status in (OK, FAILED)` — это реальный
+    код возврата процесса `docker compose`. При `COMPOSE_MISSING` и
+    `DOCKER_MISSING` процесс вообще не запускался: там лежат заглушки (`0` и
+    синтетический `127` соответственно), которых docker не возвращал. Вызывающий
+    код обязан ветвиться по `status`, а не по `returncode`.
+    """
+
     status: ComposeStatus
     returncode: int
     stdout: str

@@ -31,6 +31,16 @@ def test_start_reports_success_and_project_name(monkeypatch) -> None:
     assert "rag-reviewer" in result.output
 
 
+def test_start_warns_before_result_that_first_pull_takes_minutes(monkeypatch) -> None:
+    monkeypatch.setattr(cli_mod, "start_services", lambda: _result(ComposeStatus.OK))
+
+    result = CliRunner().invoke(cli_mod.cli, ["start"])
+
+    assert result.exit_code == 0
+    assert "несколько минут" in result.output
+    assert result.output.index("несколько минут") < result.output.index("Инфраструктура запущена")
+
+
 def test_stop_reports_that_volumes_survived(monkeypatch) -> None:
     monkeypatch.setattr(cli_mod, "stop_services", lambda: _result(ComposeStatus.OK))
 
@@ -38,6 +48,19 @@ def test_stop_reports_that_volumes_survived(monkeypatch) -> None:
 
     assert result.exit_code == 0
     assert "тома и индекс сохранены" in result.output
+
+
+def test_stop_warns_before_result(monkeypatch) -> None:
+    monkeypatch.setattr(cli_mod, "stop_services", lambda: _result(ComposeStatus.OK))
+
+    result = CliRunner().invoke(cli_mod.cli, ["stop"])
+
+    assert result.exit_code == 0
+    assert "Останавливаю инфраструктуру" in result.output
+    assert (
+        result.output.index("Останавливаю инфраструктуру")
+        < result.output.index("тома и индекс сохранены")
+    )
 
 
 def test_missing_compose_points_at_update_without_traceback(monkeypatch) -> None:

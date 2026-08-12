@@ -349,6 +349,11 @@ should keep using `docker compose up -d` there.
 `reviewer stop` never removes volumes: it runs `docker compose stop`, which has no `-v` flag at
 all.
 
+On Docker Engine older than 25.0, the `start_interval` healthcheck key is ignored, so the first
+Neo4j probe only happens after the plain `interval` (300s) — exactly the `--wait` timeout used by
+`reviewer start`. On such engines `reviewer start` can report a timeout failure even though the
+stack came up fine; upgrading Docker Engine removes the issue.
+
 Prefer variables over editing the Compose file: a hand-edited
 `~/.config/rag-reviewer/docker-compose.yml` no longer matches its recorded hash, so `reviewer
 update` treats it as user-modified (status `preserved`) and stops delivering new Compose

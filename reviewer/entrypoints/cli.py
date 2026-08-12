@@ -897,6 +897,10 @@ def _report_compose_failure(result: ComposeResult) -> None:
 @cli.command()
 def start() -> None:
     """Запустить локальную инфраструктуру (ParadeDB + Neo4j)."""
+    click.echo(
+        f"Запускаю инфраструктуру (проект {COMPOSE_PROJECT}); первая загрузка "
+        "образов может занять несколько минут…"
+    )
     result = start_services()
     if result.status is ComposeStatus.OK:
         click.echo(
@@ -909,6 +913,7 @@ def start() -> None:
 @cli.command()
 def stop() -> None:
     """Остановить локальную инфраструктуру, сохранив тома и индекс."""
+    click.echo(f"Останавливаю инфраструктуру (проект {COMPOSE_PROJECT})…")
     result = stop_services()
     if result.status is ComposeStatus.OK:
         click.echo("✓ Инфраструктура остановлена; тома и индекс сохранены")
