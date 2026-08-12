@@ -97,12 +97,32 @@ COMMAND_PRESENTATION = {
         scenarios=("Просмотр истории ревью",),
         keywords=("web", "history", "dashboard"),
     ),
+    ("start",): CommandPresentation(
+        summary="Запустить локальную инфраструктуру",
+        details=(
+            "Поднимает ParadeDB и Neo4j из управляемого docker-compose "
+            "и ждёт готовности их healthcheck."
+        ),
+        effects=(Effect.NETWORK, Effect.WRITE),
+        scenarios=("Перед индексацией", "После перезагрузки машины"),
+        keywords=("docker", "compose", "postgres", "neo4j"),
+    ),
     ("status",): CommandPresentation(
         summary="Проверить свежесть индекса",
         details="Показывает SHA, drift, chunks, graph nodes и overlay без Voyage-затрат.",
         effects=(Effect.READ,),
         scenarios=("Перед solve-task", "Диагностика индекса"),
         keywords=("drift", "json", "health"),
+    ),
+    ("stop",): CommandPresentation(
+        summary="Остановить локальную инфраструктуру",
+        details=(
+            "Останавливает контейнеры reviewer, сохраняя named volumes "
+            "и построенный индекс."
+        ),
+        effects=(Effect.WRITE,),
+        scenarios=("Освободить ресурсы машины",),
+        keywords=("docker", "compose", "stop"),
     ),
     ("update",): CommandPresentation(
         summary="Обновить reviewer и integrations",

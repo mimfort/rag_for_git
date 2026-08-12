@@ -6,14 +6,32 @@ services:
       POSTGRES_PASSWORD: reviewer
       POSTGRES_DB: reviewer
     # loopback-only: локальный dev-стек не должен слушать LAN. Креды — одноразовые dev-дефолты.
-    ports: ["127.0.0.1:5433:5432"]   # 5433 на хосте: 5432 занят локальным Postgres разработчика
+    ports: ["127.0.0.1:${PARADEDB_PUBLISH_PORT:-5433}:5432"]   # 5433 на хосте: 5432 занят локальным Postgres разработчика
     volumes: ["paradedb_data:/var/lib/postgresql/"]
+    # Без healthcheck `up -d --wait` (и `reviewer start`) считает сервис готовым
+    # по состоянию running — до того, как Postgres примет первое соединение.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U reviewer -d reviewer"]
+      start_period: 180s
+      start_interval: 2s
+      interval: 30s
+      timeout: 2s
+      retries: 3
   neo4j:
     image: neo4j:5
     environment:
       NEO4J_AUTH: neo4j/reviewerpass
-    ports: ["127.0.0.1:7474:7474", "127.0.0.1:7687:7687"]
+    ports: ["127.0.0.1:${NEO4J_HTTP_PUBLISH_PORT:-7474}:7474", "127.0.0.1:${NEO4J_BOLT_PUBLISH_PORT:-7687}:7687"]
     volumes: ["neo4j_data:/data"]
+    # Редкий idle-interval: cypher-shell поднимает JVM (~2.5 c CPU за пробу),
+    # поэтому частые пробы допустимы только в фазе старта — через start_interval.
+    healthcheck:
+      test: ["CMD-SHELL", "cypher-shell -u neo4j -p reviewerpass 'RETURN 1'"]
+      start_period: 180s
+      start_interval: 2s
+      interval: 300s
+      timeout: 3s
+      retries: 3
   web:
     # Web admin собирается и запускается только через явный `--profile web`.
     profiles: ["web"]

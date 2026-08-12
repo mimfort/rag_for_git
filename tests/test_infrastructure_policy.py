@@ -286,6 +286,33 @@ def test_compose_defines_isolated_test_profile_services() -> None:
     )
 
 
+def test_compose_dev_services_expose_readiness_healthchecks() -> None:
+    """Без healthcheck `up -d --wait` отдаёт готовность по состоянию running.
+
+    Для сервиса без пробы docker считает его готовым, как только контейнер
+    запущен, — то есть до того, как Postgres начинает принимать соединения.
+    `reviewer start` в этот момент рапортовал бы об успехе неверно.
+    """
+    root = Path(__file__).parents[1]
+    compose = yaml.safe_load((root / "docker-compose.yml").read_text(encoding="utf-8"))
+
+    paradedb = compose["services"]["paradedb"]
+    assert "profiles" not in paradedb, "dev-сервис не должен быть за профилем"
+    _assert_cheap_idle_healthcheck(
+        paradedb["healthcheck"],
+        probe=["CMD-SHELL", "pg_isready -U reviewer -d reviewer"],
+        min_interval=30,
+    )
+
+    neo4j = compose["services"]["neo4j"]
+    assert "profiles" not in neo4j
+    _assert_cheap_idle_healthcheck(
+        neo4j["healthcheck"],
+        probe=["CMD-SHELL", "cypher-shell -u neo4j -p reviewerpass 'RETURN 1'"],
+        min_interval=300,
+    )
+
+
 def test_compose_pins_only_test_service_images_by_digest() -> None:
     root = Path(__file__).parents[1]
     compose = yaml.safe_load((root / "docker-compose.yml").read_text(encoding="utf-8"))
@@ -365,6 +392,20 @@ def test_compose_web_service_is_opt_in_with_separate_runtime_ports() -> None:
         "127.0.0.1:${REVIEWER_WEB_PUBLISH_PORT:-8000}:${REVIEWER_WEB_PORT:-8000}"
     ]
     assert web["depends_on"] == ["paradedb"]
+
+
+def test_compose_publishes_storage_ports_through_overridable_variables() -> None:
+    """Хостовые порты dev-хранилищ параметризованы, контейнерные — фиксированы."""
+    root = Path(__file__).parents[1]
+    compose = yaml.safe_load((root / "docker-compose.yml").read_text(encoding="utf-8"))
+
+    assert compose["services"]["paradedb"]["ports"] == [
+        "127.0.0.1:${PARADEDB_PUBLISH_PORT:-5433}:5432"
+    ]
+    assert compose["services"]["neo4j"]["ports"] == [
+        "127.0.0.1:${NEO4J_HTTP_PUBLISH_PORT:-7474}:7474",
+        "127.0.0.1:${NEO4J_BOLT_PUBLISH_PORT:-7687}:7687",
+    ]
 
 
 def test_env_example_documents_exact_test_endpoint_defaults() -> None:

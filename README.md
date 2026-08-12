@@ -322,6 +322,44 @@ Important groups:
   layer takes precedence — see [Repositories and branches](#repositories-and-branches));
 - board credentials: provider-specific env declared in the registry.
 
+Published host ports of the Compose storage services are variables, not literals:
+`PARADEDB_PUBLISH_PORT` (default `5433`), `NEO4J_BOLT_PUBLISH_PORT` (default `7687`) and
+`NEO4J_HTTP_PUBLISH_PORT` (default `7474`). Container ports stay fixed. `reviewer init` asks for
+them in the storage group and derives the first two from `PG_DSN` and `NEO4J_URI`, so the client
+string and the published port cannot drift apart silently; a mismatch on a local host prints a
+warning without blocking.
+
+```bash
+PARADEDB_PUBLISH_PORT=6543 NEO4J_BOLT_PUBLISH_PORT=7999 \
+  docker compose -f ~/.config/rag-reviewer/docker-compose.yml up -d
+```
+
+`reviewer start` and `reviewer stop` manage that Compose file for you:
+
+```bash
+reviewer start   # up -d --wait, waits for the ParadeDB and Neo4j healthchecks
+reviewer stop    # stops the containers; named volumes and the built index survive
+```
+
+Both run under the explicit Compose project `rag-reviewer`. A clone of this repository runs its
+own stack under the project name `rag_for_git` — the two publish the same host ports and keep
+separate volumes, so do not run them at the same time. Contributors working inside the clone
+should keep using `docker compose up -d` there.
+
+`reviewer stop` never removes volumes: it runs `docker compose stop`, which has no `-v` flag at
+all.
+
+On Docker Engine older than 25.0, the `start_interval` healthcheck key is ignored, so the first
+Neo4j probe only happens after the plain `interval` (300s) — exactly the `--wait` timeout used by
+`reviewer start`. On such engines `reviewer start` can report a timeout failure even though the
+stack came up fine; upgrading Docker Engine removes the issue.
+
+Prefer variables over editing the Compose file: a hand-edited
+`~/.config/rag-reviewer/docker-compose.yml` no longer matches its recorded hash, so `reviewer
+update` treats it as user-modified (status `preserved`) and stops delivering new Compose
+definitions to it. A `preserved` Compose file also stops receiving new healthcheck definitions, so
+`reviewer start` falls back to waiting for the `running` state instead of real readiness.
+
 Credentials stay server-side. **Credentials are not returned** by board metadata or discovery
 tools and must not be placed in `.review.yml`.
 
@@ -522,6 +560,7 @@ defaults and tune only after observing real misses or excessive context.
 |---|---|
 | Configure and integrate | `init`, `install`, `install-skills`, `update` |
 | Validate environment | `check` |
+| Manage local infrastructure | `start`, `stop` |
 | Manage indexes | `index`, `status`, `search`, `migrate-branches`, `gc` |
 | Run observability UI | `serve` |
 | Start MCP directly | `reviewer-mcp` |
@@ -549,6 +588,22 @@ namespaced skills with `$rag-reviewer:...`.
 - **Needs:** reviewer MCP; board context is optional and the pipeline continues board-less.
 - **Reads/writes:** reads task/code context and writes one brief under `docs/superpowers/briefs/`.
 - **Result:** a compact brief handed to brainstorming; implementation happens in later skills.
+- **Startup survey:** one `AskUserQuestion` panel asks three things before anything else — the
+  brief model tier (`cheap`/`mid`/`premium`), the interaction mode, and the execution strategy.
+  No answer, or a headless run, applies the defaults `mid` / `normal` / `subagent` without
+  blocking.
+- **Interaction modes:** `normal` — brainstorming questions plus spec and plan approvals;
+  `auto` — questions asked, approvals dropped; `full-auto` — no questions, the recommended option
+  taken at every fork, approvals dropped. In every mode the spec and the plan are still written,
+  self-reviewed and committed. `full-auto` still asks before `git push`, opening a PR, or writing
+  to the board.
+- **Execution strategies:** `inline` (executing-plans), `subagent` (subagent-driven-development),
+  `lite` (`plugin/skills/_profiles/execution-lite.md` — one reviewer per group of up to 3 tasks
+  sharing files, a 3-round fix cap, a mandatory final whole-branch review), and `auto` (resolved
+  after the plan by an ordered rubric: risk signals or >8 tasks or >10 files → `subagent`;
+  ≤3 tasks and ≤3 files → `inline`; otherwise `lite`).
+- **Run state:** the chosen mode and strategy are written to `.superpowers/solve-task/<KEY>.md`,
+  which is git-ignored — never to the brief, the spec, or the plan.
 
 ### `ask` — grounded codebase Q&A
 

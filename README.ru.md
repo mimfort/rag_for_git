@@ -327,6 +327,45 @@ New Chat или новую CLI-сессию. В IDE также выполнит�
   слой имеет приоритет — см. [Репозитории и ветки](#репозитории-и-ветки));
 - board credentials: provider-specific env из registry.
 
+Публикуемые хостовые порты storage-сервисов Compose заданы переменными, а не литералами:
+`PARADEDB_PUBLISH_PORT` (дефолт `5433`), `NEO4J_BOLT_PUBLISH_PORT` (дефолт `7687`) и
+`NEO4J_HTTP_PUBLISH_PORT` (дефолт `7474`). Контейнерные порты фиксированы. `reviewer init`
+спрашивает их в группе хранилищ и выводит первые два из `PG_DSN` и `NEO4J_URI`, поэтому строка
+подключения и публикуемый порт не разъезжаются молча; расхождение на локальном хосте печатает
+предупреждение, но не блокирует.
+
+```bash
+PARADEDB_PUBLISH_PORT=6543 NEO4J_BOLT_PUBLISH_PORT=7999 \
+  docker compose -f ~/.config/rag-reviewer/docker-compose.yml up -d
+```
+
+`reviewer start` и `reviewer stop` управляют этим Compose-файлом:
+
+```bash
+reviewer start   # up -d --wait, ждёт готовности healthcheck ParadeDB и Neo4j
+reviewer stop    # останавливает контейнеры; named volumes и построенный индекс сохраняются
+```
+
+Обе работают под явным именем Compose-проекта `rag-reviewer`. Клон этого репозитория поднимает
+собственный стек под именем `rag_for_git` — они публикуют одни и те же хостовые порты и держат
+разные тома, поэтому одновременно их запускать нельзя. Контрибьюторам внутри клона следует
+по-прежнему пользоваться `docker compose up -d`.
+
+`reviewer stop` не удаляет тома никогда: он выполняет `docker compose stop`, у которого флага
+`-v` не существует.
+
+На Docker Engine старше 25.0 ключ healthcheck `start_interval` игнорируется, поэтому первая проба
+neo4j происходит только после обычного `interval` (300s) — ровно того таймаута `--wait`, что
+использует `reviewer start`. На таких движках `reviewer start` может сообщить об ошибке по
+таймауту, даже если стек поднялся нормально; апгрейд Docker Engine убирает проблему.
+
+Настраивайте переменными, а не правкой Compose-файла: отредактированный вручную
+`~/.config/rag-reviewer/docker-compose.yml` перестаёт совпадать с записанным hash, поэтому
+`reviewer update` считает его изменённым пользователем (статус `preserved`) и больше не доставляет
+в него новые Compose-описания. Файл со статусом `preserved` перестаёт получать и новые определения
+healthcheck, поэтому `reviewer start` для него сводится к ожиданию состояния `running`, а не
+реальной готовности.
+
 Credentials остаются на сервере. **Credentials are not returned** board metadata/discovery tools
 и не должны попадать в `.review.yml`.
 
@@ -526,6 +565,7 @@ threshold, graph backend и retrieval ceilings меняют cost/recall; сна�
 |---|---|
 | Настройка и integrations | `init`, `install`, `install-skills`, `update` |
 | Проверка окружения | `check` |
+| Управление локальной инфраструктурой | `start`, `stop` |
 | Управление индексом | `index`, `status`, `search`, `migrate-branches`, `gc` |
 | Observability UI | `serve` |
 | Прямой запуск MCP | `reviewer-mcp` |
@@ -553,6 +593,22 @@ threshold, graph backend и retrieval ceilings меняют cost/recall; сна�
 - **Нужно:** reviewer MCP; board context опционален, pipeline продолжает board-less.
 - **Чтение/запись:** читает task/code context и пишет один brief в `docs/superpowers/briefs/`.
 - **Результат:** компактный brief для brainstorming; реализация идёт в следующих skills.
+- **Стартовый опрос:** одна панель `AskUserQuestion` до всех остальных шагов спрашивает три вещи —
+  тир модели для брифа (`cheap`/`mid`/`premium`), режим взаимодействия и стратегию исполнения.
+  Нет ответа или headless-прогон — применяются дефолты `mid` / `normal` / `subagent`, пайплайн не
+  блокируется.
+- **Режимы взаимодействия:** `normal` — вопросы брейншторма плюс апрув спеки и плана; `auto` —
+  вопросы задаются, апрувы не запрашиваются; `full-auto` — вопросов нет, на каждой развилке
+  берётся рекомендованный вариант, апрувов нет. В любом режиме спека и план всё равно пишутся,
+  проходят self-review и коммитятся. `full-auto` по-прежнему спрашивает перед `git push`,
+  созданием PR и записью в доску.
+- **Стратегии исполнения:** `inline` (executing-plans), `subagent` (subagent-driven-development),
+  `lite` (`plugin/skills/_profiles/execution-lite.md` — один ревьюер на группу до 3 задач с общими
+  файлами, потолок fix-раундов 3, обязательное финальное ревью всей ветки) и `auto` (решается
+  после плана по упорядоченной рубрике: рисковые признаки, либо >8 задач, либо >10 файлов →
+  `subagent`; ≤3 задач и ≤3 файлов → `inline`; иначе `lite`).
+- **Файл прогона:** выбранные режим и стратегия пишутся в `.superpowers/solve-task/<KEY>.md`,
+  который git-ignored — и никогда в бриф, спеку или план.
 
 ### `ask` — обоснованный Q&A по коду
 
