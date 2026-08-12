@@ -313,6 +313,22 @@ def test_compose_dev_services_expose_readiness_healthchecks() -> None:
     )
 
 
+def test_compose_dev_services_shut_down_gracefully() -> None:
+    """Дефолтных 10 с `docker compose stop` не хватает JVM Neo4j.
+
+    Контейнер уходит по SIGKILL (137), а store — на восстановление при следующем
+    старте. Запас нужен обоим сервисам с персистентным томом: это таймаут до
+    SIGKILL, а не задержка остановки.
+    """
+    root = Path(__file__).parents[1]
+    compose = yaml.safe_load((root / "docker-compose.yml").read_text(encoding="utf-8"))
+
+    for name in ("paradedb", "neo4j"):
+        service = compose["services"][name]
+        assert "stop_grace_period" in service, f"{name}: нет запаса на штатное завершение"
+        assert _duration_seconds(service["stop_grace_period"]) >= 30
+
+
 def test_compose_pins_only_test_service_images_by_digest() -> None:
     root = Path(__file__).parents[1]
     compose = yaml.safe_load((root / "docker-compose.yml").read_text(encoding="utf-8"))

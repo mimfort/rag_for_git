@@ -341,6 +341,12 @@ reviewer start   # up -d --wait, waits for the ParadeDB and Neo4j healthchecks
 reviewer stop    # stops the containers; named volumes and the built index survive
 ```
 
+`reviewer stop` also stops the web admin when it was started with `--profile web`: without an
+explicit profile selection docker compose does not see it. It leaves the test services
+(`--profile test`) alone — those belong to the repository clone's own Compose project. Both
+storages declare `stop_grace_period: 60s`: the default 10s are not enough for the Neo4j JVM to
+shut down cleanly, which left the store to be recovered on the next start.
+
 Both run under the explicit Compose project `rag-reviewer`. A clone of this repository runs its
 own stack under the project name `rag_for_git` — the two publish the same host ports and keep
 separate volumes, so do not run them at the same time. Contributors working inside the clone

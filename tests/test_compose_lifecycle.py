@@ -7,6 +7,7 @@ import pytest
 
 from reviewer.compose_lifecycle import (
     COMPOSE_PROJECT,
+    STOP_PROFILES,
     ComposeStatus,
     build_compose_argv,
     compose_file_path,
@@ -78,8 +79,37 @@ def test_stop_builds_exact_argv(config_dir: Path) -> None:
         "rag-reviewer",
         "-f",
         str(config_dir / "docker-compose.yml"),
+        "--profile",
+        "web",
         "stop",
     ]
+
+
+def test_stop_selects_profiles_before_the_subcommand(config_dir: Path) -> None:
+    """Без явного профиля запущенная админка переживает «остановку инфраструктуры».
+
+    Флаг `--profile` — опция самой `docker compose`, поэтому он обязан стоять до
+    подкоманды: после `stop` docker разберёт его как аргумент подкоманды.
+    """
+    run = RecordingRun()
+
+    stop_services(config_dir=config_dir, run=run)
+
+    argv = run.calls[0][0]
+    for profile in STOP_PROFILES:
+        assert argv.index("--profile") < argv.index("stop")
+        assert argv[argv.index(profile) - 1] == "--profile"
+    # Тестовые сервисы поднимает клон в своём Compose-проекте — их профиль не наш.
+    assert "test" not in argv
+
+
+def test_start_does_not_select_extra_profiles(config_dir: Path) -> None:
+    """`start` поднимает только хранилища: админка — отдельное явное решение."""
+    run = RecordingRun()
+
+    start_services(config_dir=config_dir, run=run)
+
+    assert "--profile" not in run.calls[0][0]
 
 
 def test_stop_never_removes_containers_or_volumes(config_dir: Path) -> None:

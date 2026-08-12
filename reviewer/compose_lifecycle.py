@@ -23,6 +23,12 @@ from reviewer.update_lifecycle import default_config_dir
 COMPOSE_PROJECT = "rag-reviewer"
 WAIT_TIMEOUT_SECONDS = 300
 
+# Профили, которые `stop` обязан выбрать явно. Без флага docker compose видит
+# только сервисы активных профилей, поэтому запущенная `--profile web` админка
+# переживала бы «остановку инфраструктуры». Профиля `test` здесь нет намеренно:
+# тестовые сервисы поднимает клон репозитория в своём Compose-проекте, а не этот.
+STOP_PROFILES = ("web",)
+
 # Сигнатуры недоступного демона в stderr (сверка идёт по нижнему регистру).
 # Не совпало — исход FAILED с сырым stderr: неизвестная ошибка должна быть
 # видна, а не замаскирована под известную.
@@ -135,5 +141,11 @@ def stop_services(
 
     Именно `stop`, а не `down`: у `stop` нет флага `-v` в принципе, поэтому
     запрет из CLAUDE.md соблюдается по конструкции, а не договорённостью.
+
+    Профили из `STOP_PROFILES` выбираются явно — иначе сервис профиля остаётся
+    работать после «остановки инфраструктуры».
     """
-    return _run_compose(("stop",), config_dir=config_dir, run=run)
+    arguments: tuple[str, ...] = ()
+    for profile in STOP_PROFILES:
+        arguments += ("--profile", profile)
+    return _run_compose(arguments + ("stop",), config_dir=config_dir, run=run)
