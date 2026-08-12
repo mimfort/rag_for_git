@@ -3,6 +3,7 @@
 Тесты маркерные: пинят стабильные якоря спеки, а не формулировки, чтобы правка
 промпта не удалила требование молча.
 """
+import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -93,11 +94,22 @@ def test_survey_defaults_are_fail_open():
     assert "non-interactive" in section          # единственное исключение из показа панели
 
 
+def test_survey_defaults_pin_the_whole_triple():
+    # Голая проверка вхождения `mid` была бы вакуумной: `normal` и `subagent`
+    # уже встречаются в срезе как значения опций. Пиним строку дефолтов целиком
+    # (regex допускает перенос строки между "tier" и `mid`, как в исходнике).
+    section = _survey_section()
+    assert re.search(
+        r"tier\s*`mid`,\s*mode\s*`normal`,\s*strategy\s*`subagent`", section
+    ), "не найдена строка дефолтов целиком: tier mid, mode normal, strategy subagent"
+
+
 def test_auto_permission_mode_shortcut_removed():
     # Правило «в auto permission mode тир выбирается молча» удалено: панель
     # показывается всегда, кроме headless/non-interactive.
     text = SKILL.read_text(encoding="utf-8")
     assert "auto permission mode" not in text
+    assert "auto-permission mode" not in text
     assert "1.5. **Choose the brief model" not in text
 
 
@@ -133,6 +145,14 @@ def _handoff_section() -> str:
     return text[start:text.index("## Failure handling", start)]
 
 
+def test_run_state_persist_is_orchestrator_owned():
+    # Critical (находка 1): Steps 2-4 могут диспатчиться сабагенту, у которого
+    # нет опроса/предполёта/абсолютного пути плагина — персист файла прогона
+    # обязан быть явно закреплён за оркестратором, а не за этим сабагентом.
+    section = _run_state_section()
+    assert "orchestrator" in section
+
+
 def test_run_state_lives_in_gitignored_dir():
     section = _run_state_section()
     assert ".superpowers/solve-task/" in section
@@ -156,8 +176,10 @@ def test_decisions_section_only_in_full_auto():
 
 def test_mode_never_written_into_committed_artifacts():
     # Спека и план коммитятся: ни режим, ни перечень решений туда не пишутся.
+    # Блок персиста брифа вправе *упоминать* full-auto в инструкциях исполнителю
+    # (например, поведение existing-artifacts warn), но не вправе предписывать
+    # запись значения режима как поля брифа.
     brief_section = _brief_persist_section()
-    assert "full-auto" not in brief_section
     assert "Режим" not in brief_section
     run_state = _run_state_section()
     assert "never write the mode" in run_state
@@ -165,10 +187,11 @@ def test_mode_never_written_into_committed_artifacts():
 
 
 def test_full_auto_confirmation_boundary_is_a_named_list():
-    text = SKILL.read_text(encoding="utf-8")
-    assert "git push" in text
-    assert "creating a PR" in text
-    assert "board write" in text
+    section = _handoff_section()
+    assert "git push" in section
+    assert "creating a PR" in section
+    assert "board write" in section
+    assert "sync_board` call in write mode" in section
 
 
 def test_auto_strategy_rubric_has_observable_thresholds():

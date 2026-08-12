@@ -7,7 +7,8 @@ description: Gather disciplined context for solving a task, then hand off to dev
 
 Gather the right context for a task, distill it into a brief, then enter the normal development
 workflow. This skill does NOT plan or implement — it disciplines context-gathering and hands the
-brief to `superpowers:brainstorming` (which leads to writing-plans → subagent-driven-development).
+brief to `superpowers:brainstorming` (which leads to writing-plans → subagent-driven-development,
+or the execution strategy chosen in the startup survey (inline / subagent / lite)).
 
 ## Inputs
 
@@ -54,9 +55,10 @@ brief to `superpowers:brainstorming` (which leads to writing-plans → subagent-
       **never block** — the survey must not stop the pipeline under any circumstance.
 
       **The mode governs the preflight questions below.** In `full-auto`, do not ask the
-      confirmations of steps 1 and 4 (stale index, missing summaries): take the recommended option
-      in each (reindex; warm the summaries) and record each one as a decision made on the user's
-      behalf, per Step 4's run-state file. In `normal` and `auto`, ask them as written.
+      confirmations of Steps 0.1 and 0.4 (stale index, missing summaries): take the recommended
+      option in each (reindex; warm the summaries) and record each one as a decision made on the
+      user's behalf, per the run-state file of pipeline Step 4. In `normal` and `auto`, ask them as
+      written.
 
    1. **Base-index freshness.** Run
       `uvx --from rag-reviewer reviewer status <path> --branch <branch> --json` and read `drift`
@@ -135,7 +137,7 @@ brief to `superpowers:brainstorming` (which leads to writing-plans → subagent-
   Step 4 warn is thus **orchestrator-only**; only the idempotency overwrite-glob stays inside the
   subagent's persist.
 - After the unit returns, the orchestrator **appends a marker line to the brief**:
-  `Собран на: <tier/модель>, режим: subagent | inline` — records which model built the brief. The
+  `Собран на: <tier/модель>, сборка: subagent | inline` — records which model built the brief. The
   `brief_cost` token block is best-effort and may miss subagent sidechain tokens (documented limitation).
 - Fail-open: an error or empty return from the subagent → the orchestrator finishes the brief inline
   on the session model. Model choice must never break the pipeline.
@@ -295,8 +297,10 @@ Use the session-less tools above.
      > "⚠️ Похожие артефакты уже существуют: briefs/PRI-176-..., specs/pri-176-...-design.md,
      > plans/pri-176-....md. Продолжить? [Y/n]"
      Do **not** block — continue unless the user explicitly says no. If the user continues (or
-     auto-permission mode leaves no choice), list the found artifacts under `## Constraints` with
-     the tag `[existing_artifacts]`.
+     the harness auto-approves prompts), list the found artifacts under `## Constraints` with
+     the tag `[existing_artifacts]`. In `full-auto` do not ask: continue and record the warning
+     under `## Constraints` with `[existing_artifacts]`, plus one line in the run-state decisions
+     section.
    - **Idempotency:** before writing, glob `docs/superpowers/briefs/*-<KEY>-*.md` and overwrite
      the match if any (slug drift between runs must not spawn duplicates); board-less → exact name.
    - **Content:** the distilled brief verbatim (the `# Brief — <KEY> <title>` skeleton); add the
@@ -304,10 +308,14 @@ Use the session-less tools above.
    - **Fail-open:** a failed write (read-only FS, no permission) is non-fatal — note it and still
      hand off with the in-context brief.
 
-   **Persist the run state (mode + strategy).** The survey's answers must survive context
-   compaction and two skill handoffs, but they must NOT land in a committed artifact: the spec and
-   the plan end up in the PR, where a list of decisions made on the user's behalf reads as a
-   receipt that nobody approved the design. So they go to a **git-ignored** run-state file instead.
+   **Persist the run state (mode + strategy).** This subsection is **orchestrator-only**, like the
+   existing-artifacts warn: the survey answers, the preflight decisions and the plugin's absolute
+   base path live in the orchestrator, not in the brief subagent. Write it after the
+   brief-building unit returns, next to the `Собран на:` marker line. The survey's answers must
+   survive context compaction and two skill handoffs, but they must NOT land in a committed
+   artifact: the spec and the plan end up in the PR, where a list of decisions made on the user's
+   behalf reads as a receipt that nobody approved the design. So they go to a **git-ignored**
+   run-state file instead.
    - **Path:** `.superpowers/solve-task/<KEY>.md` — board-less: `.superpowers/solve-task/<slug>.md`.
      `.superpowers/` is already git-ignored (it is where subagent-driven-development keeps its
      ledger). Create the directory if missing (`mkdir -p`). The path is derived from the task KEY,
@@ -319,14 +327,17 @@ Use the session-less tools above.
      Стратегия: lite
      Профиль: /absolute/path/to/plugin/skills/_profiles/execution-lite.md
      Бриф: docs/superpowers/briefs/2026-08-12-PRI-243-….md
+     Подтверждения (даже в full-auto): git push, создание PR, запись в доску (finish_task, create_task, sync_board в режиме записи).
 
      ## Решения, принятые за пользователя
      - Предполёт: индекс отставал на 12 коммитов → переиндексирован (рекомендованный вариант).
      ```
 
      Write the profile path in its **absolute** form: by the time the `lite` strategy is applied,
-     the plugin's base directory is no longer in context. The `Профиль:` line is written only when
-     the strategy is `lite`.
+     the plugin's base directory is no longer in context. The `Профиль:` line is written when the
+     strategy is `lite` **or** `auto` — `auto` resolves after the plan is written (Step 5), already
+     outside the plugin's context, so the absolute path must already be on hand in case it resolves
+     to `lite`.
    - **The decisions section is filled only in `full-auto`**, one line per decision taken by
      recommendation, including the preflight decisions of Step 0. In `normal` and `auto` the
      section is omitted.
@@ -361,8 +372,8 @@ Use the session-less tools above.
 
    **Confirmations that survive `full-auto`.** Design questions and approvals are suppressed, but
    these named actions still require an explicit confirmation: `git push`, `creating a PR`, and any
-   `board write` (`finish_task`, `create_task`, a writing `sync_board`). The list is named on
-   purpose — «irreversible actions» in the abstract is not actionable for an executor.
+   `board write` (`finish_task`, `create_task`, a `sync_board` call in write mode). The list is
+   named on purpose — «irreversible actions» in the abstract is not actionable for an executor.
 
    **Right-size the plan's tasks.** Ask the planning step to apply `Task Right-Sizing` from
    superpowers:writing-plans — a task is the smallest unit a reviewer could meaningfully reject —
@@ -402,8 +413,9 @@ Use the session-less tools above.
   formulation alone and note the missing task context; still hand off to brainstorming.
 - Never abort: with any gap, distill what you have, note the deficit in the brief, and still hand off
   to brainstorming.
-- This skill reads task data only through the reviewer store and generic `sync_board`/retry. The
-  brief file under `docs/superpowers/briefs/` is its only repository write.
+- This skill reads task data only through the reviewer store and generic `sync_board`/retry. It
+  writes exactly two files: the brief under `docs/superpowers/briefs/` and the git-ignored
+  run-state file under `.superpowers/solve-task/`; nothing else in the repository.
 
 ## Reporting a reviewer defect
 
