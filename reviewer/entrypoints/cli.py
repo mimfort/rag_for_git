@@ -34,6 +34,13 @@ from reviewer.config.onboarding import (
     plan_repository_config,
 )
 from reviewer.config.provider_access import render_provider_access
+from reviewer.compose_lifecycle import (
+    COMPOSE_PROJECT,
+    ComposeResult,
+    ComposeStatus,
+    start_services,
+    stop_services,
+)
 from reviewer.gitutil import file_at_ref, list_python_files, repo_root, rev_parse, remote_url
 from reviewer.graph.backend import build_code_graph
 from reviewer.graph.store import GraphStore
@@ -840,6 +847,45 @@ def check(board_project_values: tuple[str, ...]) -> None:
     if failed:
         raise SystemExit(1)
     click.echo("Готово к работе.")
+
+
+def _report_compose_failure(result: ComposeResult) -> None:
+    """Печатает русское объяснение неуспеха и завершает процесс кодом 1."""
+    if result.status is ComposeStatus.COMPOSE_MISSING:
+        click.echo(f"✗ {result.compose_path} не найден — выполните reviewer update")
+    elif result.status is ComposeStatus.DOCKER_MISSING:
+        click.echo("✗ docker не найден в PATH — установите Docker")
+    elif result.status is ComposeStatus.DAEMON_UNAVAILABLE:
+        click.echo(
+            "✗ docker установлен, но демон не отвечает — запустите Docker и повторите"
+        )
+    else:
+        click.echo(f"✗ docker compose завершился с кодом {result.returncode}")
+        if result.stderr.strip():
+            click.echo(result.stderr.strip())
+    raise SystemExit(1)
+
+
+@cli.command()
+def start() -> None:
+    """Запустить локальную инфраструктуру (ParadeDB + Neo4j)."""
+    result = start_services()
+    if result.status is ComposeStatus.OK:
+        click.echo(
+            f"✓ Инфраструктура запущена (проект {COMPOSE_PROJECT}): ParadeDB, Neo4j"
+        )
+        return
+    _report_compose_failure(result)
+
+
+@cli.command()
+def stop() -> None:
+    """Остановить локальную инфраструктуру, сохранив тома и индекс."""
+    result = stop_services()
+    if result.status is ComposeStatus.OK:
+        click.echo("✓ Инфраструктура остановлена; тома и индекс сохранены")
+        return
+    _report_compose_failure(result)
 
 
 @cli.command()
