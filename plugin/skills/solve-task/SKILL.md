@@ -34,7 +34,8 @@ brief to `superpowers:brainstorming` (which leads to writing-plans → subagent-
       1. **Brief model tier** — `cheap` / `mid` (recommended) / `premium`. Phrase the choice by
          tier, not by concrete model names, so it works across CLIs (Claude Code, Codex, Gemini,
          Cursor, …). Do not recommend a coarse tier such as Fable — the brief still needs sound
-         judgment. This question replaces the former Step 1.5.
+         judgment. This question used to be a separate step earlier in the pipeline; it now lives
+         here, in the startup panel.
       2. **Interaction mode** — three values; the option text must **explain what it means**:
          - `normal` — «вопросы на брейншторме, апрув спеки и апрув плана» (current behaviour);
          - `auto` — «вопросы задаются, апрувы спеки и плана не запрашиваются»;
