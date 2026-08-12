@@ -111,3 +111,92 @@ def test_full_auto_suppresses_preflight_questions():
     text = SKILL.read_text(encoding="utf-8")
     assert "In `full-auto`, do not ask" in text
     assert "recommended option" in text
+
+
+def _run_state_section() -> str:
+    """Вырезать подраздел персиста выбора — от его заголовка до хендоффа."""
+    text = SKILL.read_text(encoding="utf-8")
+    start = text.index("**Persist the run state")
+    return text[start:text.index("5. **Hand off to development.**", start)]
+
+
+def _brief_persist_section() -> str:
+    """Вырезать подраздел персиста брифа — он не должен нести режим."""
+    text = SKILL.read_text(encoding="utf-8")
+    start = text.index("**Persist the brief (survivability).**")
+    return text[start:text.index("**Persist the run state", start)]
+
+
+def _handoff_section() -> str:
+    text = SKILL.read_text(encoding="utf-8")
+    start = text.index("5. **Hand off to development.**")
+    return text[start:text.index("## Failure handling", start)]
+
+
+def test_run_state_lives_in_gitignored_dir():
+    section = _run_state_section()
+    assert ".superpowers/solve-task/" in section
+    assert "<KEY>.md" in section
+    assert "git-ignored" in section
+
+
+def test_run_state_records_mode_strategy_and_profile_path():
+    section = _run_state_section()
+    assert "Режим:" in section
+    assert "Стратегия:" in section
+    assert "_profiles/execution-lite.md" in section
+    assert "absolute" in section          # путь профиля пишется абсолютным
+
+
+def test_decisions_section_only_in_full_auto():
+    section = _run_state_section()
+    assert "Решения, принятые за пользователя" in section
+    assert "only in `full-auto`" in section
+
+
+def test_mode_never_written_into_committed_artifacts():
+    # Спека и план коммитятся: ни режим, ни перечень решений туда не пишутся.
+    brief_section = _brief_persist_section()
+    assert "full-auto" not in brief_section
+    assert "Режим" not in brief_section
+    run_state = _run_state_section()
+    assert "never write the mode" in run_state
+    assert "spec" in run_state and "plan" in run_state
+
+
+def test_full_auto_confirmation_boundary_is_a_named_list():
+    text = SKILL.read_text(encoding="utf-8")
+    assert "git push" in text
+    assert "creating a PR" in text
+    assert "board write" in text
+
+
+def test_auto_strategy_rubric_has_observable_thresholds():
+    section = _handoff_section()
+    assert "> 8 tasks" in section
+    assert "> 10" in section
+    assert "≤ 3 tasks" in section
+    assert "first match wins" in section   # правила упорядочены, ветка ровно одна
+
+
+def test_auto_rubric_names_risk_signals():
+    section = _handoff_section()
+    for signal in ("schema migration", "MCP tool", "credentials", "irreversible"):
+        assert signal in section, f"нет рискового признака {signal}"
+
+
+def test_handoff_passes_mode_as_user_instruction():
+    section = _handoff_section()
+    assert "the user's explicit instruction" in section
+    assert "not a request to bypass" in section
+
+
+def test_handoff_requires_task_right_sizing():
+    section = _handoff_section()
+    assert "Task Right-Sizing" in section
+
+
+def test_handoff_carries_run_state_path_forward():
+    section = _handoff_section()
+    assert ".superpowers/solve-task/" in section
+    assert "re-read" in section
