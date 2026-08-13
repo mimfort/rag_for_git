@@ -91,8 +91,10 @@ Plus `list_subsystem_clusters`, `get_subsystem_summary_work`, `get_file_skeleton
       `get_file_skeletons(repo, paths, branch)` call. A job must read nothing else: no harness
       `Read` of a source file, no `read_file`. The skeleton is deliberately the whole input —
       it is exactly the material a fragment's freshness hash is computed from, so a summary
-      derived from it cannot silently go stale. The job returns one Russian result per path:
-      `{path, summary, provenance}`. A job must never compute, guess, or return a `fingerprint`:
+      derived from it cannot silently go stale. A skeleton value that starts with `(` or contains
+      the `(…усечено)` truncation marker is not source: the job must not summarize it. Treat that
+      path as not done for this batch and count it toward `deferred`. The job returns one Russian
+      result per path: `{path, summary, provenance}`. A job must never compute, guess, or return a `fingerprint`:
       that value is server-side and the orchestrator supplies it. If a job returns a `path`
       outside its batch, or omits a path of its batch, discard that batch's results and
       re-dispatch that batch once; on a second mismatch count the cluster as deferred, increment

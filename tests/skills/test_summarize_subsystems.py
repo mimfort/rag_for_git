@@ -255,6 +255,20 @@ def test_skill_file_job_reads_skeletons_not_source():
     assert "no `read_file`" in step, "шаг 5.2 не запрещает PR-сессионный read_file"
 
 
+def test_skill_file_job_rejects_note_or_truncated_skeleton():
+    """PRI-245 финальное ревью: усечённый/отсутствующий скелет не должен молча
+    стать «валидной» сводкой — job обязан отбраковать такой путь как deferred."""
+    step = _file_job_step()
+    assert "starts with `(`" in step, (
+        "шаг 5.2 не запрещает суммаризацию скелета-ноты (значение, начинающееся с `(`)"
+    )
+    assert "`(…усечено)`" in step, (
+        "шаг 5.2 не упоминает точный маркер усечения скелета"
+    )
+    assert "not source" in step
+    assert "count it toward `deferred`" in step
+
+
 def test_skill_batches_file_jobs():
     """PRI-245: один субагент на порцию путей, а не на файл."""
     step = _file_job_step()
