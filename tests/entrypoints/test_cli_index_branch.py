@@ -16,7 +16,7 @@ def test_index_stores_under_branch_ref(m_update, m_lpf, m_far, m_rev, m_graph, m
     c = MagicMock()
     m_build.return_value = c
     runner = CliRunner()
-    res = runner.invoke(cli, ["index", str(tmp_path), "--ref", "master"])
+    res = runner.invoke(cli, ["index", str(tmp_path), "--ref", "master", "--repo", "a/x"])
     assert res.exit_code == 0, res.output
     # update_base вызван с target_ref="master"
     assert m_update.call_args.args[3] == "master"
@@ -42,7 +42,8 @@ def test_index_ref_not_validated_when_branch_given(m_update, m_lpf, m_far, m_rev
     m_build.return_value = c
     runner = CliRunner()
     res = runner.invoke(
-        cli, ["index", str(tmp_path), "--ref", "v1.2", "--branch", "main"]
+        cli, ["index", str(tmp_path), "--ref", "v1.2", "--branch", "main",
+              "--repo", "a/x"]
     )
     assert res.exit_code == 0, res.output
     # чтение файлов идёт с непроверенного ref v1.2 (не проверяется против
@@ -72,6 +73,6 @@ def test_index_ref_still_validated_without_branch(m_update, m_lpf, m_far, m_rev,
     c = MagicMock()
     m_build.return_value = c
     runner = CliRunner()
-    res = runner.invoke(cli, ["index", str(tmp_path), "--ref", "v1.2"])
+    res = runner.invoke(cli, ["index", str(tmp_path), "--ref", "v1.2", "--repo", "a/x"])
     assert res.exit_code != 0
     assert "v1.2" in res.output

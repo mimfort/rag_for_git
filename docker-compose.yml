@@ -8,6 +8,11 @@ services:
     # loopback-only: локальный dev-стек не должен слушать LAN. Креды — одноразовые dev-дефолты.
     ports: ["127.0.0.1:${PARADEDB_PUBLISH_PORT:-5433}:5432"]   # 5433 на хосте: 5432 занят локальным Postgres разработчика
     volumes: ["paradedb_data:/var/lib/postgresql/"]
+    # Дефолтные 10 с `docker compose stop` — таймаут до SIGKILL, а не задержка:
+    # быстрое завершение не ждёт весь период. Для СУБД с персистентным томом
+    # запас важнее, чем скорость остановки: контрольная точка большого индекса
+    # в 10 с не всегда укладывается.
+    stop_grace_period: 60s
     # Без healthcheck `up -d --wait` (и `reviewer start`) считает сервис готовым
     # по состоянию running — до того, как Postgres примет первое соединение.
     healthcheck:
@@ -23,6 +28,10 @@ services:
       NEO4J_AUTH: neo4j/reviewerpass
     ports: ["127.0.0.1:${NEO4J_HTTP_PUBLISH_PORT:-7474}:7474", "127.0.0.1:${NEO4J_BOLT_PUBLISH_PORT:-7687}:7687"]
     volumes: ["neo4j_data:/data"]
+    # За дефолтные 10 с JVM Neo4j не успевает завершиться штатно: контейнер уходит
+    # по SIGKILL (код выхода 137), а store остаётся на восстановление при следующем
+    # старте. Штатное завершение по-прежнему занимает свои несколько секунд.
+    stop_grace_period: 60s
     # Редкий idle-interval: cypher-shell поднимает JVM (~2.5 c CPU за пробу),
     # поэтому частые пробы допустимы только в фазе старта — через start_interval.
     healthcheck:

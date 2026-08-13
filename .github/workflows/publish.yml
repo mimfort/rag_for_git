@@ -32,3 +32,65 @@ jobs:
       - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33  # v1.14.2
         with:
           skip-existing: true
+
+  release:
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.11"
+
+      - name: Прочитать версию из pyproject.toml
+        id: version
+        run: |
+          version="$(python -c 'import tomllib,pathlib; print(tomllib.loads(pathlib.Path("pyproject.toml").read_text())["project"]["version"])')"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if git rev-parse --verify --quiet "refs/tags/v$version" >/dev/null; then
+            echo "Тег v$version уже существует — релиз пропускается."
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Тело релиза — секция CHANGELOG.md, написанная человеком до мержа.
+      # Секции нет: пакет уже на PyPI, ронять пайплайн из-за нот бессмысленно —
+      # берём список коммитов с прошлого тега и предупреждаем в логе.
+      - name: Собрать тело релиза
+        if: steps.version.outputs.exists == 'false'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          version="$VERSION"
+          if python scripts/changelog_section.py "$version" > release-notes.md; then
+            echo "Ноты взяты из CHANGELOG.md."
+          else
+            echo "::warning::В CHANGELOG.md нет секции $version — тело релиза собрано из истории коммитов."
+            previous="$(git describe --tags --abbrev=0 --match 'v*' 2>/dev/null || true)"
+            range="${previous:+$previous..}HEAD"
+            {
+              echo "_Секция \`$version\` отсутствует в CHANGELOG.md; ниже — коммиты релиза._"
+              echo
+              git log --no-merges --pretty='- %s' "$range"
+            } > release-notes.md
+          fi
+
+      - name: Создать тег и GitHub Release
+        if: steps.version.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          version="$VERSION"
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "v$version" -m "v$version"
+          git push origin "v$version"
+          gh release create "v$version" \
+            --title "v$version" \
+            --notes-file release-notes.md

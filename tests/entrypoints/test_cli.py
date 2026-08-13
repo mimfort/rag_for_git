@@ -564,3 +564,126 @@ def test_check_fails_when_vector_roundtrip_broken(
     assert result.exit_code == 1
     assert "pgvector" in result.output
     store.close.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# Происхождение repo-тега: index fail-closed, status/migrate-branches fail-open
+# (issue #190: нераспознанный origin молча подставлял чужое имя)
+# ---------------------------------------------------------------------------
+
+
+@patch("reviewer.entrypoints.cli.build_components")
+@patch("reviewer.entrypoints.cli.remote_url")
+@patch("reviewer.entrypoints.cli.Settings")
+def test_index_refuses_repo_substituted_from_default(
+    mock_settings_cls,
+    mock_remote_url,
+    mock_build,
+    runner,
+    fake_components,
+    fake_settings,
+):
+    """Нераспознанный origin + DEFAULT_REPO → index падает, ничего не индексируя."""
+    fake_settings.default_repo = "owner/default"
+    mock_settings_cls.return_value = fake_settings
+    mock_build.return_value = fake_components
+    mock_remote_url.return_value = "ssh://tunnel/blocked"
+
+    result = runner.invoke(cli, ["index", "/repo", "--ref", "main"])
+
+    assert result.exit_code != 0
+    assert "DEFAULT_REPO" in result.output
+    assert "--repo" in result.output
+    mock_build.assert_not_called()
+
+
+@patch("reviewer.entrypoints.cli.build_code_graph")
+@patch("reviewer.entrypoints.cli.rev_parse")
+@patch("reviewer.entrypoints.cli.file_at_ref")
+@patch("reviewer.entrypoints.cli.list_python_files")
+@patch("reviewer.entrypoints.cli.update_base")
+@patch("reviewer.entrypoints.cli.remote_url")
+@patch("reviewer.entrypoints.cli.build_components")
+@patch("reviewer.entrypoints.cli.Settings")
+def test_index_allows_explicit_repo_despite_unrecognized_origin(
+    mock_settings_cls,
+    mock_build,
+    mock_remote_url,
+    mock_update_base,
+    mock_list_files,
+    mock_file_at_ref,
+    mock_rev_parse,
+    mock_build_graph,
+    runner,
+    fake_components,
+    fake_settings,
+    monkeypatch,
+    tmp_path,
+):
+    """Явный --repo — законный обход: origin не разбирается, но имя задано человеком."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    fake_settings.default_repo = "owner/default"
+    mock_settings_cls.return_value = fake_settings
+    mock_build.return_value = fake_components
+    mock_remote_url.return_value = "ssh://tunnel/blocked"
+    mock_list_files.return_value = []
+    mock_rev_parse.return_value = "aaa0000"
+    mock_file_at_ref.return_value = None
+    mock_build_graph.return_value = ([], [], "treesitter")
+
+    result = runner.invoke(cli, ["index", "/repo", "--ref", "main", "--repo", "a/x"])
+
+    assert result.exit_code == 0, result.output
+    mock_update_base.assert_called_once()
+
+
+@patch("reviewer.entrypoints.cli.remote_url")
+@patch("reviewer.entrypoints.cli.Settings")
+def test_status_reports_repo_source_in_json(
+    mock_settings_cls, mock_remote_url, runner, fake_settings, monkeypatch,
+):
+    """status fail-open: подставленное имя работает, но источник виден в JSON."""
+    import json as _json
+
+    fake_settings.default_repo = "owner/default"
+    mock_settings_cls.return_value = fake_settings
+    mock_remote_url.return_value = "ssh://tunnel/blocked"
+    captured = {}
+
+    def fake_build(*a, **k):
+        captured.update(k)
+        from reviewer.services.status import RepoStatus
+        return RepoStatus(repo=a[2], branches=[], overlays=[],
+                          repo_source=k.get("repo_source"))
+
+    monkeypatch.setattr("reviewer.entrypoints.cli.build_status_report", fake_build)
+    monkeypatch.setattr("reviewer.entrypoints.cli.ChunkStore", MagicMock())
+    monkeypatch.setattr("reviewer.entrypoints.cli.GraphStore", MagicMock())
+    monkeypatch.setattr("reviewer.entrypoints.cli.SummaryStore", MagicMock())
+
+    result = runner.invoke(cli, ["status", "/repo", "--branch", "main", "--json"])
+
+    assert result.exit_code == 0, result.output
+    assert captured["repo_source"] == "env:DEFAULT_REPO"
+    assert _json.loads(result.output)["repo_source"] == "env:DEFAULT_REPO"
+
+
+@patch("reviewer.entrypoints.cli.remote_url")
+@patch("reviewer.entrypoints.cli.Settings")
+def test_migrate_branches_warns_on_substituted_repo(
+    mock_settings_cls, mock_remote_url, runner, fake_components, fake_settings,
+    monkeypatch, tmp_path,
+):
+    """migrate-branches остаётся fail-open, но предупреждает о подстановке."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    fake_settings.default_repo = "owner/default"
+    mock_settings_cls.return_value = fake_settings
+    mock_remote_url.return_value = "ssh://tunnel/blocked"
+    fake_components.store.migrate_legacy_base.return_value = 0
+    monkeypatch.setattr("reviewer.entrypoints.cli.build_components",
+                        MagicMock(return_value=fake_components))
+
+    result = runner.invoke(cli, ["migrate-branches"])
+
+    assert result.exit_code == 0, result.output
+    assert "DEFAULT_REPO" in result.output

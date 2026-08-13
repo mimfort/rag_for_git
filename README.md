@@ -341,6 +341,12 @@ reviewer start   # up -d --wait, waits for the ParadeDB and Neo4j healthchecks
 reviewer stop    # stops the containers; named volumes and the built index survive
 ```
 
+`reviewer stop` also stops the web admin when it was started with `--profile web`: without an
+explicit profile selection docker compose does not see it. It leaves the test services
+(`--profile test`) alone — those belong to the repository clone's own Compose project. Both
+storages declare `stop_grace_period: 60s`: the default 10s are not enough for the Neo4j JVM to
+shut down cleanly, which left the store to be recovered on the next start.
+
 Both run under the explicit Compose project `rag-reviewer`. A clone of this repository runs its
 own stack under the project name `rag_for_git` — the two publish the same host ports and keep
 separate volumes, so do not run them at the same time. Contributors working inside the clone
@@ -403,7 +409,15 @@ contract before prompting only for the selected provider's credentials.
 
 ### Repositories and branches
 
-`DEFAULT_REPO` identifies the fallback `owner/name`. Tracked branches for a repository are
+`DEFAULT_REPO` identifies the fallback `owner/name`. The repo tag is resolved as `--repo` →
+`git remote origin` → `DEFAULT_REPO`, and the resolution reports its own origin: `cli`,
+`git:origin`, or `env:DEFAULT_REPO`. Because an index written under the wrong tag surfaces only
+as odd search results, `reviewer index` **refuses** to write when the name was substituted from
+`DEFAULT_REPO` rather than derived from the clone — pass `--repo owner/name` or fix the origin
+URL. `reviewer status` stays fail-open and instead exposes the origin: a warning line in the text
+output and a `repo_source` key in `--json`.
+
+Tracked branches for a repository are
 resolved in layered order — the first source that defines them wins entirely (no per-branch
 merge): a per-repo home file `$XDG_CONFIG_HOME/rag-reviewer/repos/<owner>/<name>.yml` →
 the home-global `review.yml` → the env `REVIEW_BRANCHES` CSV allowlist → `["main"]`. In every

@@ -36,6 +36,9 @@ class RepoStatus:
     repo: str
     branches: list[BranchStatus]
     overlays: list[OverlayStatus]
+    # Происхождение repo-тега ('cli' | 'git:origin' | 'env:DEFAULT_REPO'); None —
+    # источник не сообщён вызывающим (обратная совместимость прежних вызовов).
+    repo_source: str | None = None
 
 
 def _drift(repo_path: str, sha: str, branch: str) -> int | None:
@@ -48,7 +51,8 @@ def _drift(repo_path: str, sha: str, branch: str) -> int | None:
 
 
 def build_status_report(store, graph, repo: str, branches: list[str],
-                        repo_path: str, *, summary_store=None) -> RepoStatus:
+                        repo_path: str, *, summary_store=None,
+                        repo_source: str | None = None) -> RepoStatus:
     """Собрать RepoStatus по веткам. Neo4j и стор сводок fail-soft (поле=None при сбое)."""
     branch_statuses: list[BranchStatus] = []
     for branch in branches:
@@ -74,7 +78,8 @@ def build_status_report(store, graph, repo: str, branches: list[str],
         for r in store.list_refs(repo)
         if not r.startswith("base:")
     ]
-    return RepoStatus(repo=repo, branches=branch_statuses, overlays=overlays)
+    return RepoStatus(repo=repo, branches=branch_statuses, overlays=overlays,
+                      repo_source=repo_source)
 
 
 def render_status_json(report: RepoStatus) -> str:
@@ -86,6 +91,7 @@ def render_status_json(report: RepoStatus) -> str:
     """
     payload = {
         "repo": report.repo,
+        "repo_source": report.repo_source,
         "branches": [
             {
                 "branch": b.branch,
@@ -110,11 +116,15 @@ def _fmt_dt(dt: datetime | None) -> str:
 
 def render_status(report: RepoStatus, backend: str) -> str:
     """Человекочитаемый отчёт по RepoStatus (для click.echo)."""
-    lines = [
-        f"Репозиторий: {report.repo}",
-        f"Граф (бэкенд для индексации): {backend}",
-        "",
-    ]
+    lines = [f"Репозиторий: {report.repo}"]
+    if report.repo_source:
+        lines.append(f"Источник имени: {report.repo_source}")
+    if report.repo_source == "env:DEFAULT_REPO":
+        lines.append(
+            "  ⚠ имя НЕ выведено из git remote origin текущего клона, а подставлено "
+            "из DEFAULT_REPO — индекс и политика относятся к другому репозиторию; "
+            "укажите --repo owner/name или почините origin")
+    lines += [f"Граф (бэкенд для индексации): {backend}", ""]
     for b in report.branches:
         lines.append(f"Ветка {b.branch}   [{b.ref}]")
         if b.indexed_sha is None:

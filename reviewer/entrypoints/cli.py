@@ -73,19 +73,29 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 
-def _resolve_repo(repo_opt: str | None, path: str, settings) -> str:
-    """Резолв repo-тега: --repo → git remote → DEFAULT_REPO → ошибка."""
-    from reviewer.services.repo_id import normalize_repo, derive_repo_from_remote
-    if repo_opt:
-        return normalize_repo(repo_opt)
-    derived = derive_repo_from_remote(remote_url(path) or "")
-    if derived:
-        return derived
-    if settings.default_repo:
-        return normalize_repo(settings.default_repo)
-    raise click.ClickException(
-        "Не удалось определить repo: укажите --repo owner/name "
-        "(или задайте DEFAULT_REPO в .env)")
+_SUBSTITUTED = "env:DEFAULT_REPO"
+
+
+def _resolve_repo(repo_opt: str | None, path: str, settings):
+    """Резолв repo-тега с происхождением: --repo → git remote → DEFAULT_REPO → ошибка.
+
+    Возвращает `RepoResolution(repo, source)`: источник нужен вызывающим, чтобы
+    отличить имя, выведенное из текущего клона, от подставленного из env.
+    """
+    from reviewer.services.repo_id import resolve_repo_id
+    resolution = resolve_repo_id(repo_opt, remote_url(path), settings.default_repo)
+    if resolution is None:
+        raise click.ClickException(
+            "Не удалось определить repo: укажите --repo owner/name "
+            "(или задайте DEFAULT_REPO в .env)")
+    return resolution
+
+
+def _substitution_note(path: str, repo: str) -> str:
+    """Текст про подстановку имени из env вместо вывода из origin."""
+    origin = remote_url(path) or "отсутствует"
+    return (f"repo не выведен из git remote origin клона {path} (origin: {origin}) — "
+            f"подставлено DEFAULT_REPO={repo}")
 
 
 @click.group()
@@ -936,7 +946,14 @@ def stop() -> None:
 def index(repo: str, ref: str | None, branch_opt: str | None, repo_tag: str | None) -> None:
     """Построить/обновить base-индекс целевой ветки из локального репо."""
     s = Settings()
-    repo_id = _resolve_repo(repo_tag, repo, s)
+    resolution = _resolve_repo(repo_tag, repo, s)
+    if resolution.source == _SUBSTITUTED:
+        # Fail-closed: индекс под чужим тегом обнаруживается только по странной
+        # выдаче поиска, поэтому лучше отказаться до единой записи в хранилища.
+        raise click.ClickException(
+            _substitution_note(repo, resolution.repo)
+            + "; укажите --repo owner/name или почините origin")
+    repo_id = resolution.repo
     try:
         branches = resolve_repo_branches(repo_id, settings=s)
         if branch_opt is None:
@@ -1018,7 +1035,12 @@ def index(repo: str, ref: str | None, branch_opt: str | None, repo_tag: str | No
 def migrate_branches(repo_tag: str | None) -> None:
     """Один раз после апгрейда: перенести legacy base-индекс на первичную ветку."""
     s = Settings()
-    repo_id = _resolve_repo(repo_tag, ".", s)
+    resolution = _resolve_repo(repo_tag, ".", s)
+    if resolution.source == _SUBSTITUTED:
+        # Fail-open: миграция ничего не индексирует, но мигрировать чужой тег
+        # молча она тоже не должна.
+        click.echo("⚠ " + _substitution_note(".", resolution.repo), err=True)
+    repo_id = resolution.repo
     try:
         primary = resolve_repo_branches(repo_id, settings=s).primary
     except (HomeConfigError, ValueError) as exc:
@@ -1084,7 +1106,8 @@ def status(path: str, repo_tag: str | None, branch_opt: str | None,
            as_json: bool) -> None:
     """Показать здоровье/свежесть base-индекса по веткам (не тратит Voyage)."""
     s = Settings()
-    repo = _resolve_repo(repo_tag, path, s)
+    resolution = _resolve_repo(repo_tag, path, s)
+    repo = resolution.repo
     try:
         repo_branches = resolve_repo_branches(repo, settings=s)
     except HomeConfigError as exc:
@@ -1096,7 +1119,8 @@ def status(path: str, repo_tag: str | None, branch_opt: str | None,
                                  max_size=s.pg_pool_max_size)
     try:
         report = build_status_report(store, graph, repo, branches, path,
-                                     summary_store=summary_store)
+                                     summary_store=summary_store,
+                                     repo_source=resolution.source)
     except psycopg.OperationalError as e:
         raise click.ClickException(f"Postgres недоступен: {e}")
     finally:

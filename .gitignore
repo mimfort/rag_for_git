@@ -28,9 +28,11 @@ htmlcov/
 .vscode/
 .DS_Store
 
-# Claude Code: личное/транзиентное игнорируем, общий settings.json коммитим
+# Claude Code: личное/транзиентное игнорируем, общий settings.json и
+# командные скиллы мейнтейнера (не идут в plugin/) коммитим
 .claude/*
 !.claude/settings.json
+!.claude/skills/
 
 # Superpowers transient
 .superpowers/
