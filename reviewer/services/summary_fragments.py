@@ -7,7 +7,7 @@ from typing import Mapping
 from reviewer.tasks.boards.base import JsonValue
 
 _SERVER_PROVENANCE_KEY = "_reviewer"
-_GENERATION = "summary-fragment-v1"
+_GENERATION = "summary-fragment-v2"   # PRI-245: вход фрагмента сменился на скелет
 
 
 @dataclass(frozen=True)

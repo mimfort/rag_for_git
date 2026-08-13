@@ -110,7 +110,7 @@ def test_server_generation_provenance_overwrites_reserved_client_value():
     ) == {
         "model": "cheap",
         "_reviewer": {
-            "generation": "summary-fragment-v1",
+            "generation": "summary-fragment-v2",
             "layout_token": "layout-v2",
             "depth": 2,
         },
@@ -121,7 +121,7 @@ def test_generation_completion_requires_every_exact_same_cluster_fragment_at_dep
     current = {"a.py": "fp-a", "b.py": "fp-b"}
     stamped = {
         "_reviewer": {
-            "generation": "summary-fragment-v1",
+            "generation": "summary-fragment-v2",
             "layout_token": "layout-v2",
             "depth": 2,
         }

@@ -16,7 +16,7 @@ log = logging.getLogger(__name__)
 
 
 def create_server(service: MCPReviewService) -> FastMCP:
-    """Создать и вернуть сконфигурированный FastMCP-сервер с 38 тулами.
+    """Создать и вернуть сконфигурированный FastMCP-сервер с 40 тулами.
 
     Все тулы — обычные def (sync), а не async: сервис не потокобезопасен
     и рассчитан на последовательное исполнение sync-тулов FastMCP в event loop.
@@ -376,6 +376,18 @@ def create_server(service: MCPReviewService) -> FastMCP:
         """Find a symbol definition over the base index (graph -> index -> semantic
         fallback), no PR session. branch defaults to the primary tracked branch."""
         return service.definition(repo, symbol, branch)
+
+    @mcp.tool()
+    def get_file_skeletons(repo: str, paths: list[str],
+                           branch: str | None = None) -> dict:
+        """AST skeletons (def/class signatures + first docstring line) of indexed
+        files, no PR session. Takes a BATCH of paths and returns {path: skeleton},
+        line-numbered as "N|code". Built from the indexed chunks — exactly the
+        material a subsystem summary's freshness hash is computed from, so a
+        summary job reads what invalidates it. Every requested path is a key:
+        missing files, empty skeletons and over-cap paths come back as a note
+        rather than silently dropped. branch defaults to the primary tracked branch."""
+        return service.get_file_skeletons(repo, paths, branch)
 
     @mcp.tool()
     def get_pr_diff(repo: str, number: int) -> str:

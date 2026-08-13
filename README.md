@@ -447,6 +447,11 @@ paths:
 summary_cluster_depth: 2
 summary_topk_threshold: 20
 
+summary_paths:
+  ignore:
+    - tests
+    - test
+
 context_limits:
   search_codebase:
     floor: 4
@@ -454,6 +459,10 @@ context_limits:
   graph:
     hops: 1
 ```
+
+`summary_paths.ignore` only filters which files feed subsystem-summary clustering — unlike
+`paths.ignore`, it does not affect indexing or PR review. Default is `["tests", "test"]`; there
+is no env layer (like `context_limits`), and an explicit empty list disables the filter.
 
 ### Layered repository policy
 
@@ -554,7 +563,7 @@ The server-side flow is **store-first**:
 2. Skills call `get_task(key, project=...)`; linked tasks/PRs/code come from task context tools.
 3. Client models never enumerate the provider directly and never send credentials.
 
-The MCP server currently exposes **39 tools**, including the native-subtask batch operation.
+The MCP server currently exposes **40 tools**, including the native-subtask batch operation.
 
 Legacy aliases remain **legacy metadata for older clients** for one compatibility window:
 `TASK_BOARD_API_KEY → YOUGILE_API_KEY` and
@@ -758,8 +767,9 @@ namespaced skills with `$rag-reviewer:...`.
 - **When:** build or refresh the architectural prior used by Q&A and PR walkthroughs.
 - **Invoke:** `/rag-reviewer:summarize-subsystems`.
 - **Needs:** a fresh base index, code graph, reviewer MCP, and confirmation of cluster depth.
-- **Reads/writes:** читает только добавленные/изменённые файлы, переиспользует сохранённые
-  пофайловые fragments и атомарно пишет fragments вместе со сводкой кластера.
+- **Reads/writes:** reads skeletons of only added/changed files via `get_file_skeletons` (job's
+  input is a skeleton, not the source), batched up to 15 paths per job, reuses stored per-file
+  fragments, and atomically writes fragments together with the cluster summary.
 - **Result:** сводки и метрики `created`/`reused`/`removed`/`moved`,
   `deferred`/`raced`, `fragments_pruned` и `embedded`.
 - **Payload:** the cluster listing runs in compact, paginated mode

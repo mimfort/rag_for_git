@@ -12,8 +12,8 @@ is required for the baseline.
 ## Scope
 
 Manage `summary_cluster_depth`, `summary_cluster_depth_overrides`, `summary_topk_threshold`,
-`paths.ignore`, `context_limits`, and the optional `task_board` block, including its generic
-`sync_filter`. An empty `task_board:` disables the board for this repository. Never read, request,
+`summary_paths.ignore`, `paths.ignore`, `context_limits`, and the optional `task_board` block,
+including its generic `sync_filter`. An empty `task_board:` disables the board for this repository. Never read, request,
 display, or write credential values in either policy target.
 
 Tracked branches are separate from review policy. Manage `repository.primary_branch` and
@@ -115,6 +115,10 @@ Branch changes never trigger subsystem-summary work.
 - Changed `paths.ignore` → suggest `rag-reviewer:sync-codebase`.
 - Changed `summary_cluster_depth` → suggest `rag-reviewer:summarize-subsystems`.
 - Changed `summary_cluster_depth_overrides` → suggest `rag-reviewer:summarize-subsystems`.
+- Changed `summary_paths.ignore` → this key is part of the summary `layout_token`; suggest
+  `rag-reviewer:summarize-subsystems` and warn it forces a **full rebuild of every subsystem
+  summary** (same `layout_token` invalidation as `summary_cluster_depth`/
+  `summary_cluster_depth_overrides`).
 - Changed `summary_topk_threshold` → no rebuild needed.
 - Changed `context_limits` → no rebuild needed.
 - Changed `task_board.sync_filter` → suggest `rag-reviewer:sync-tasks` for a full unlimited run

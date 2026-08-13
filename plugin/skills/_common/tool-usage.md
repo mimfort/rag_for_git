@@ -28,3 +28,5 @@ Tool discipline (shared):
 - `callers(repo, node_id, branch?)` — direct callers (impact);
 - `definition(repo, symbol, branch?)` — where a symbol is defined.
 - `implementations(repo, node_id, branch?)` — directed subclasses/overrides (incoming IMPLEMENTS).
+- `get_file_skeletons(repo, paths, branch?)` — AST skeletons of indexed files, a batch of paths
+  per call; built from indexed chunks, so it matches what a summary's freshness hash sees.

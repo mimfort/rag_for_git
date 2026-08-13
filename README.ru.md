@@ -453,6 +453,11 @@ paths:
 summary_cluster_depth: 2
 summary_topk_threshold: 20
 
+summary_paths:
+  ignore:
+    - tests
+    - test
+
 context_limits:
   search_codebase:
     floor: 4
@@ -460,6 +465,10 @@ context_limits:
   graph:
     hops: 1
 ```
+
+`summary_paths.ignore` фильтрует только состав кластеризации сводок подсистем — в отличие от
+`paths.ignore`, он не влияет на индексацию и ревью PR. Дефолт `["tests", "test"]`; env-слоя нет
+(как у `context_limits`), явный пустой список выключает фильтр.
 
 ### Слоистая политика репозитория
 
@@ -560,7 +569,7 @@ Server-side workflow — **store-first**:
    context tools.
 3. Client models не перечисляют provider напрямую и не передают credentials.
 
-MCP server сейчас предоставляет **39 tools**, включая batch-операцию нативных подзадач.
+MCP server сейчас предоставляет **40 tools**, включая batch-операцию нативных подзадач.
 
 Legacy aliases остаются как **legacy metadata for older clients** на одно compatibility window:
 `TASK_BOARD_API_KEY → YOUGILE_API_KEY` и
@@ -762,7 +771,9 @@ threshold, graph backend и retrieval ceilings меняют cost/recall; сна�
 - **Когда:** построить architectural prior для Q&A и PR walkthrough.
 - **Вызов:** `/rag-reviewer:summarize-subsystems`.
 - **Нужно:** свежий base index, code graph, reviewer MCP и подтверждённый cluster depth.
-- **Чтение/запись:** читает symbols кластеров и пишет grounded summaries в summary store.
+- **Чтение/запись:** читает скелеты только добавленных/изменённых файлов через
+  `get_file_skeletons` (вход job'а — скелет, а не исходник), батчами до 15 путей на job, и пишет
+  grounded summaries в summary store.
 - **Результат:** fresh/pruned summaries с отчётом deferred и orphans.
 - **Объём ответа:** перечисление кластеров идёт в сжатом режиме с пагинацией
   (`compact=True`, `offset`/`limit`): метаданные и счётчики `added`/`changed`/`removed`/`moved`,

@@ -20,7 +20,7 @@ def _svc(components) -> MCPReviewService:
     svc = MCPReviewService(_settings(), components)
     # изолируем резолв repo/ветки и depth от .env / сети
     svc._resolve_repo_branch = lambda repo, branch: ("o/n", "dev")
-    svc._resolve_summary_depth = lambda repo, branch: (2, {}, "env")
+    svc._resolve_summary_layout = lambda repo, branch: (2, {}, [], "env")
     svc._resolve_summary_topk_threshold = lambda repo, branch: (20, "env")
     return svc
 
@@ -395,9 +395,10 @@ def test_capped_override_layout_rebuild_converges_at_fixed_default_depth():
         fragment_depth=2,
     )
     svc = _svc(c)
-    svc._resolve_summary_depth = lambda repo, branch: (
+    svc._resolve_summary_layout = lambda repo, branch: (
         2,
         {"a/x": 3},
+        [],
         ".review.yml",
     )
     old_layout = compute_layout_token(2, {})
@@ -869,7 +870,7 @@ def test_index_subsystem_summary_commits_bundle_before_embedding_with_hash_cas()
                 "provenance": {
                     "generator": "test",
                         "_reviewer": {
-                            "generation": "summary-fragment-v1",
+                            "generation": "summary-fragment-v2",
                             "layout_token": compute_layout_token(2, {}),
                             "depth": 2,
                         },
@@ -1128,7 +1129,7 @@ def test_list_subsystem_clusters_no_cap_returns_all():
     c.summary_store.get_updated_ats.assert_not_called()           # порядок не нужен без cap
 
 
-# ── тесты _resolve_summary_depth и depth/orphans в ответе list ──────────────
+# ── тесты _resolve_summary_layout и depth/orphans в ответе list ─────────────
 
 class _FakeVCS:
     def __init__(self, text):
@@ -1139,7 +1140,7 @@ class _FakeVCS:
 
 
 def _svc_with_vcs(vcs_or_exc):
-    """Сервис БЕЗ стаба _resolve_summary_depth — для проверки самого хелпера."""
+    """Сервис БЕЗ стаба _resolve_summary_layout — для проверки самого хелпера."""
     c = MagicMock()
     svc = MCPReviewService(_settings(), components=c)
     svc._resolve_repo_branch = lambda repo, branch: ("o/n", "dev")
@@ -1162,27 +1163,68 @@ def _service_for_summary_resolution() -> tuple[MCPReviewService, MagicMock]:
 
 
 def test_resolve_summary_depth_override_from_review_yml():
+    from reviewer.graph.summaries import normalize_summary_paths_ignore
+    from reviewer.policy.policy import DEFAULT_SUMMARY_PATHS_IGNORE
+
     svc = _svc_with_vcs(_FakeVCS("summary_cluster_depth: 3"))
-    depth, overrides, source = svc._resolve_summary_depth("o/n", "dev")
+    depth, overrides, ignore, source = svc._resolve_summary_layout("o/n", "dev")
     assert depth == 3
     assert overrides == {}
+    assert ignore == normalize_summary_paths_ignore(DEFAULT_SUMMARY_PATHS_IGNORE)
     assert source == ".review.yml"
 
 
 def test_resolve_summary_depth_no_key_falls_back_to_env():
+    from reviewer.graph.summaries import normalize_summary_paths_ignore
+    from reviewer.policy.policy import DEFAULT_SUMMARY_PATHS_IGNORE
+
     svc = _svc_with_vcs(_FakeVCS("severity_threshold: high"))
-    depth, overrides, source = svc._resolve_summary_depth("o/n", "dev")
+    depth, overrides, ignore, source = svc._resolve_summary_layout("o/n", "dev")
     assert depth == svc.settings.summary_cluster_depth
     assert overrides == {}
+    assert ignore == normalize_summary_paths_ignore(DEFAULT_SUMMARY_PATHS_IGNORE)
     assert source == "env"
 
 
 def test_resolve_summary_depth_failsoft_on_vcs_error():
+    """Ruling 3: fail-soft резолва политики возвращает ДЕФОЛТНЫЙ фильтр, не пустой."""
+    from reviewer.graph.summaries import normalize_summary_paths_ignore
+    from reviewer.policy.policy import DEFAULT_SUMMARY_PATHS_IGNORE
+
     svc = _svc_with_vcs(RuntimeError("no token"))
-    depth, overrides, source = svc._resolve_summary_depth("o/n", "dev")
+    depth, overrides, ignore, source = svc._resolve_summary_layout("o/n", "dev")
     assert depth == svc.settings.summary_cluster_depth
     assert overrides == {}
+    assert ignore == normalize_summary_paths_ignore(DEFAULT_SUMMARY_PATHS_IGNORE)
     assert source == "env"
+
+
+def test_summary_state_reports_real_depth_source_on_empty_index():
+    """Minor 7: пустой индекс (нет members) не должен врать depth_source="env",
+    когда глубина на самом деле пришла из .review.yml/арг — иначе диагностика
+    (`list_subsystem_clusters`/preflight-эхо) вводит пользователя в заблуждение."""
+    c = MagicMock()
+    c.store.list_base_members.return_value = []
+    c.graph = None
+    svc = _svc(c)
+    svc._resolve_summary_layout = lambda repo, branch: (3, {}, [], ".review.yml")
+
+    state = svc._summary_state("o/n", "dev")
+    assert state.members == []
+    assert state.depth == 3
+    assert state.depth_source == ".review.yml"
+
+
+def test_summary_state_reports_arg_depth_source_on_empty_index_with_explicit_depth():
+    c = MagicMock()
+    c.store.list_base_members.return_value = []
+    c.graph = None
+    svc = _svc(c)
+    svc._resolve_summary_layout = lambda repo, branch: (3, {}, [], ".review.yml")
+
+    state = svc._summary_state("o/n", "dev", depth=5)
+    assert state.depth == 5
+    assert state.depth_source == "arg"
 
 
 def test_list_subsystem_clusters_reports_depth_and_orphans():
@@ -1203,7 +1245,7 @@ def test_list_subsystem_clusters_resolves_depth_when_not_given():
     c.store.list_base_members.return_value = [("reviewer/index/a.py", "A", "h1", 1, "sk1")]
     c.graph = None
     c.summary_store.get_source_hashes.return_value = {}
-    svc = _svc(c)                                  # стаб _resolve_summary_depth → (2, "env")
+    svc = _svc(c)                                  # стаб _resolve_summary_layout → (2, {}, [], "env")
     out = svc.list_subsystem_clusters("o/n", "dev")   # depth не передан
     assert out["depth"] == 2
     assert out["depth_source"] == "env"
@@ -1305,9 +1347,10 @@ def test_prune_subsystem_summaries_rejects_policy_change_after_list():
         cluster["cluster_key"]: cluster["source_hash"]
         for cluster in listed["clusters"]
     }
-    svc._resolve_summary_depth = lambda repo, branch: (
+    svc._resolve_summary_layout = lambda repo, branch: (
         2,
         {"a/x": 3},
+        [],
         ".review.yml",
     )
 
@@ -1468,9 +1511,10 @@ def test_current_subsystem_hashes_rejects_conflicting_raw_layout_aliases():
     ]
     c.graph = None
     svc = _svc(c)
-    svc._resolve_summary_depth = lambda repo, branch: (
+    svc._resolve_summary_layout = lambda repo, branch: (
         2,
         {"/x/": 1, "x": 2},
+        [],
         ".review.yml",
     )
 

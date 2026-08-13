@@ -92,6 +92,18 @@ _SUBTASK_RECOVERY_WARNING = (
     "subtask operation failed; durable recovery used a safe fallback"
 )
 
+# PRI-245: get_file_skeletons — капы batch-тула без PR-сессии.
+_MAX_SKELETON_PATHS = 25      # путей на один вызов get_file_skeletons
+# Кап защищает контекст, но не должен срабатывать на штатных файлах: самый
+# большой скелет в этом репозитории (tests/install/test_codex_install.py) —
+# 485 строк, у reviewer/mcp/service.py — 399 (капа 400 не хватало впритык).
+# 2000 даёт >4x запас над текущим максимумом.
+_MAX_SKELETON_LINES = 2000
+# Маркер усечения скелета: дословно совпадает с текстом, на который опирается
+# правило шага 5.2 в plugin/skills/summarize-subsystems/SKILL.md (guard-тест
+# tests/skills/test_summarize_subsystems.py держит их в связке).
+_SKELETON_TRUNCATION_MARKER = "(…усечено)"
+
 
 @dataclass
 class _Session:
@@ -1620,7 +1632,7 @@ class MCPReviewService:
                 vcs_fetch_factory=vcs_fetch_factory,
             )
             # strict_committed=False намеренно: у _resolve_policy четыре
-            # потребителя, и три из них (_resolve_summary_depth,
+            # потребителя, и три из них (_resolve_summary_layout,
             # _resolve_summary_topk_threshold, _resolve_context_limits) уже
             # обёрнуты в собственный fail-soft с откатом на env-дефолты.
             # Строгий режим здесь заставил бы их молча потерять
@@ -1643,8 +1655,24 @@ class MCPReviewService:
                 except Exception:
                     log.warning("_resolve_policy: не удалось закрыть VCS", exc_info=True)
 
-    def _resolve_summary_depth(self, repo: str, branch: str) -> tuple[int, dict[str, int], str]:
-        """Резолв глубины кластеризации сводок с сохранением fail-soft env-дефолта."""
+    def _resolve_summary_layout(
+        self, repo: str, branch: str
+    ) -> tuple[int, dict[str, int], list[str], str]:
+        """Резолв layout-политики сводок: глубина, overrides, ignore-фильтр, источник.
+
+        ``ignore`` возвращается уже нормализованным ``normalize_summary_paths_ignore``
+        (страп пробелов/'/', дедуп, сортировка) — так обе точки применения
+        фильтра (``_summary_state`` через ``canonicalize_layout`` и
+        ``_current_subsystem_hashes`` напрямую) видят одно и то же значение;
+        двойная нормализация идемпотентна.
+
+        Fail-soft: при сбое резолва политики — env-глубина и ДЕФОЛТНЫЙ фильтр,
+        а не пустой. Пустой фильтр при сбое молча вернул бы тестовые кластеры
+        и сделал бы стоимость прохода недетерминированной.
+        """
+        from reviewer.graph.summaries import normalize_summary_paths_ignore
+        from reviewer.policy.policy import DEFAULT_SUMMARY_PATHS_IGNORE
+
         default = self.settings.summary_cluster_depth
         try:
             policy, meta = self._resolve_policy(repo, branch)
@@ -1652,10 +1680,20 @@ class MCPReviewService:
                 "summary_cluster_depth",
                 meta.sources.get("summary_cluster_depth_overrides", "env"),
             )
-            return policy.summary_cluster_depth, policy.summary_cluster_depth_overrides, source
+            return (
+                policy.summary_cluster_depth,
+                policy.summary_cluster_depth_overrides,
+                normalize_summary_paths_ignore(policy.summary_paths_ignore),
+                source,
+            )
         except Exception:
-            log.warning("_resolve_summary_depth: fail-soft → env-дефолт")
-            return default, {}, "env"
+            log.warning("_resolve_summary_layout: fail-soft → env-дефолт")
+            return (
+                default,
+                {},
+                normalize_summary_paths_ignore(DEFAULT_SUMMARY_PATHS_IGNORE),
+                "env",
+            )
 
     def _resolve_summary_topk_threshold(self, repo: str, branch: str) -> tuple[int, str]:
         """Резолв порога масштаба приора сводок с сохранением env-дефолта."""
@@ -1774,6 +1812,58 @@ class MCPReviewService:
             overlay_ref=None, changed_paths=[], empty_msg="(implementations не найдены)",
             cap=cl.graph.callers_topk)
 
+    def get_file_skeletons(
+        self, repo: str, paths: list[str], branch: str | None = None
+    ) -> dict[str, str]:
+        """AST-скелеты проиндексированных файлов пачкой (PRI-245), без PR-сессии.
+
+        Источник — чанки base-индекса ветки, то есть ровно тот материал, из
+        которого считается skeleton_hash: файловый job сводок читает то же, что
+        инвалидирует его результат. Ключ ответа есть у КАЖДОГО запрошенного
+        пути — отсутствие, пустой скелет и превышение капа возвращаются нотой,
+        а не молчаливым пропуском.
+        """
+        from reviewer.index.chunker import file_skeleton_lines
+
+        requested = [str(p) for p in (paths or []) if p]
+        if not requested:
+            return {}
+        accepted = requested[:_MAX_SKELETON_PATHS]
+        overflow = requested[_MAX_SKELETON_PATHS:]
+        out = {
+            path: f"(превышен лимит путей на вызов: {_MAX_SKELETON_PATHS})"
+            for path in overflow
+        }
+        rb = self._resolve_repo_branch(repo, branch)
+        if isinstance(rb, str):
+            return {**out, **{path: rb for path in accepted}}
+        repo, resolved = rb
+        try:
+            rows = self.components.store.fetch_chunks_at_paths(
+                repo, resolved, accepted
+            )
+        except Exception:
+            log.warning("get_file_skeletons: сбой чтения чанков", exc_info=True)
+            return {**out, **{p: "(чтение скелета недоступно)" for p in accepted}}
+        grouped: dict[str, list[tuple[int, str]]] = {}
+        for path, start_line, text in rows:
+            grouped.setdefault(path, []).append((start_line, text))
+        for path in accepted:
+            chunks = grouped.get(path)
+            if not chunks:
+                out[path] = f"(файл не найден в индексе: {path})"
+                continue
+            skeleton = file_skeleton_lines(chunks)
+            if not skeleton:
+                out[path] = "(нет определений для скелета)"
+                continue
+            capped = len(skeleton) > _MAX_SKELETON_LINES
+            body = "\n".join(
+                f"{n}|{text}" for n, text in skeleton[:_MAX_SKELETON_LINES]
+            )
+            out[path] = f"{body}\n{_SKELETON_TRUNCATION_MARKER}" if capped else body
+        return out
+
     def definition(self, repo: str, symbol: str,
                    branch: str | None = None) -> str:
         """Где определён символ + исходник (граф → индекс → семантический фолбэк),
@@ -1816,18 +1906,20 @@ class MCPReviewService:
             compute_file_fingerprints,
             compute_layout_token,
         )
+        from reviewer.index.pathfilter import is_ignored
 
         raw = self.components.store.list_base_members(repo, branch)
         if not raw:
-            resolved_depth = (
-                self.settings.summary_cluster_depth
-                if depth is None
-                else depth
-            )
+            resolved_depth, _, ignore, policy_source = self._resolve_summary_layout(
+                repo, branch)
+            if depth is None:
+                depth_source = policy_source
+            else:
+                resolved_depth, depth_source = depth, "arg"
             return _SummaryState(
                 depth=resolved_depth,
-                layout_token=compute_layout_token(resolved_depth, {}),
-                depth_source="env" if depth is None else "arg",
+                layout_token=compute_layout_token(resolved_depth, {}, ignore),
+                depth_source=depth_source,
                 members=[],
                 clusters=[],
                 file_fingerprints={},
@@ -1835,15 +1927,17 @@ class MCPReviewService:
                 completed_depth=None,
                 completed_layout=None,
             )
+        resolved_depth, policy_overrides, ignore, policy_source = (
+            self._resolve_summary_layout(repo, branch)
+        )
         if depth is None:
-            resolved_depth, overrides, depth_source = self._resolve_summary_depth(
-                repo, branch
-            )
+            overrides, depth_source = policy_overrides, policy_source
         else:
             resolved_depth, overrides, depth_source = depth, {}, "arg"
-        overrides, layout_token = canonicalize_layout(
+        overrides, ignore, layout_token = canonicalize_layout(
             resolved_depth,
             overrides,
+            ignore,
         )
         members = [
             Member(
@@ -1854,6 +1948,7 @@ class MCPReviewService:
                 skeleton_hash=skeleton_hash,
             )
             for path, symbol, content_hash, start_line, skeleton_hash in raw
+            if not is_ignored(path, ignore)
         ]
         graph = self.components.graph
         in_degree_fn = (
@@ -2380,11 +2475,13 @@ class MCPReviewService:
         self, repo: str, branch: str
     ) -> dict[str, str] | None:
         from reviewer.graph.summaries import Member, build_clusters
+        from reviewer.index.pathfilter import is_ignored
 
         try:
             raw = self.components.store.list_base_members(repo, branch)
             if not raw:
                 return None
+            depth, overrides, ignore, _ = self._resolve_summary_layout(repo, branch)
             members = [
                 Member(
                     node_id=f"{path}#{symbol}",
@@ -2394,8 +2491,8 @@ class MCPReviewService:
                     skeleton_hash=skeleton_hash,
                 )
                 for path, symbol, content_hash, start_line, skeleton_hash in raw
+                if not is_ignored(path, ignore)
             ]
-            depth, overrides, _ = self._resolve_summary_depth(repo, branch)
             clusters = build_clusters(
                 members,
                 None,
