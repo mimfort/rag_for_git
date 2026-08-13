@@ -83,5 +83,27 @@ review the notes get before they are public.
    (it must print exactly the intended body)
 6. Commit: `chore(release): X.Y.Z` — no self-attribution
 
-Then tell the user to open the `dev → main` PR. Do not push tags or create Releases by hand: the
-tag is CI's job, and a hand-made tag makes the `release` job skip the Release silently.
+Do not push tags or create Releases by hand: the tag is CI's job, and a hand-made tag makes the
+`release` job skip the Release silently.
+
+## 7. Ship it to main
+
+The release commit must first reach `dev` (the default branch), then `main`:
+
+1. If you are on a feature branch, open a PR into `dev`, wait for checks, merge it. If the release
+   commit is already on `dev`, skip to the next step.
+2. Open the release PR: `gh pr create --base main --head dev --title "release: X.Y.Z"` with a body
+   that is the CHANGELOG section.
+3. `gh pr checks <N> --watch` — merge only on green.
+4. Merge it. **Use the keyring token for every write to a protected branch and for releases**:
+   `env -u GITHUB_TOKEN -u GH_TOKEN gh pr merge <N> --merge`. The fine-grained PAT in `GITHUB_TOKEN`
+   answers `403 Resource not accessible by personal access token`.
+5. Watch the deploy: `gh run watch` on the `Publish to PyPI` run. The `release` job runs after
+   `publish` and produces tag `vX.Y.Z` plus the GitHub Release.
+6. Verify and report the real result: `gh release view vX.Y.Z` and the PyPI version. If the
+   `release` job logged a `::warning::` about a missing CHANGELOG section, the Release body fell
+   back to a commit list — fix the section and edit the Release.
+
+Never claim the release shipped before step 6 shows it. `publish` is skipped without complaint when
+the version already exists on PyPI (`skip-existing: true`), so a merge without a version bump looks
+green and ships nothing.
