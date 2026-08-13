@@ -9,7 +9,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass
-from typing import Callable
+from typing import Callable, Sequence
 
 
 @dataclass
@@ -77,27 +77,49 @@ def normalize_depth_overrides(overrides: dict[str, int]) -> dict[str, int]:
     return dict(sorted(normalized.items()))
 
 
+def normalize_summary_paths_ignore(patterns: Sequence[str] | None) -> list[str]:
+    """Канонизировать ignore-паттерны кластеризации сводок.
+
+    strip пробелов и '/', отбрасывание пустых, дедуп, сортировка — чтобы
+    порядок и написание в .review.yml не меняли layout_token.
+    """
+    cleaned = {str(p).strip().strip("/") for p in (patterns or []) if p is not None}
+    return sorted(p for p in cleaned if p)
+
+
 def canonicalize_layout(
     default_depth: int,
     overrides: dict[str, int],
-) -> tuple[dict[str, int], str]:
-    """Вернуть единые normalized overrides и token для clustering/state."""
+    summary_paths_ignore: Sequence[str] | None = None,
+) -> tuple[dict[str, int], list[str], str]:
+    """Вернуть единые normalized overrides, normalized ignore и token.
+
+    ``summary_paths_ignore`` входит в payload token'а намеренно (PRI-245):
+    смена состава кластеров обязана инвалидировать layout, иначе штатный
+    prune не соберёт осиротевшие сводки.
+    """
     normalized = normalize_depth_overrides(overrides)
+    ignore = normalize_summary_paths_ignore(summary_paths_ignore)
     payload = json.dumps(
         {
             "default_depth": int(default_depth),
             "overrides": list(normalized.items()),
+            "summary_paths_ignore": ignore,
         },
         ensure_ascii=False,
         separators=(",", ":"),
     )
     token = hashlib.sha256(payload.encode("utf-8")).hexdigest()
-    return normalized, token
+    return normalized, ignore, token
 
 
-def compute_layout_token(default_depth: int, overrides: dict[str, int]) -> str:
+def compute_layout_token(
+    default_depth: int,
+    overrides: dict[str, int],
+    summary_paths_ignore: Sequence[str] | None = None,
+) -> str:
     """Вернуть canonical identity effective layout policy."""
-    return canonicalize_layout(default_depth, overrides)[1]
+    return canonicalize_layout(default_depth, overrides, summary_paths_ignore)[2]
 
 
 def compute_source_hash(items: list[tuple[str, str]]) -> str:

@@ -1841,7 +1841,7 @@ class MCPReviewService:
             )
         else:
             resolved_depth, overrides, depth_source = depth, {}, "arg"
-        overrides, layout_token = canonicalize_layout(
+        overrides, _ignore, layout_token = canonicalize_layout(
             resolved_depth,
             overrides,
         )

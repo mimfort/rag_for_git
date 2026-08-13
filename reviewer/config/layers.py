@@ -262,6 +262,17 @@ def _validate_known_policy_data(
                     isinstance(item, str) for item in ignore
                 ):
                     raise TypeError
+        summary_paths = data.get("summary_paths", _MISSING)
+        if summary_paths is not _MISSING:
+            if summary_paths is not None and not isinstance(summary_paths, Mapping):
+                raise TypeError
+            if isinstance(summary_paths, Mapping) and "ignore" in summary_paths:
+                ignore = summary_paths["ignore"]
+                if ignore is not None and (
+                    not isinstance(ignore, list)
+                    or not all(isinstance(item, str) for item in ignore)
+                ):
+                    raise TypeError
         for key in (
             "max_comments",
             "grounding_max_distance",
@@ -445,6 +456,7 @@ def policy_to_public_data(policy: ReviewPolicy) -> dict[str, object]:
         "enabled_only": list(policy.enabled_only),
         "severity_threshold": policy.severity_threshold,
         "paths": {"ignore": list(policy.ignore)},
+        "summary_paths": {"ignore": list(policy.summary_paths_ignore)},
         "max_comments": policy.max_comments,
         "min_confidence": policy.min_confidence,
         "output_language": policy.output_language,
@@ -481,9 +493,9 @@ def _validate_mapping_shape(
 def _validate_public_policy_data(effective: Mapping[str, object]) -> None:
     """Проверить полную публичную форму до любого CLI-rendering."""
     expected = {
-        "categories", "enabled_only", "severity_threshold", "paths", "max_comments",
-        "min_confidence", "output_language", "task_board", "grounding_max_distance",
-        "summary_cluster_depth", "summary_topk_threshold",
+        "categories", "enabled_only", "severity_threshold", "paths", "summary_paths",
+        "max_comments", "min_confidence", "output_language", "task_board",
+        "grounding_max_distance", "summary_cluster_depth", "summary_topk_threshold",
         "summary_cluster_depth_overrides", "context_limits",
     }
     if set(effective) != expected:
@@ -500,6 +512,9 @@ def _validate_public_policy_data(effective: Mapping[str, object]) -> None:
     if effective["severity_threshold"] not in {"low", "medium", "high", "critical"}:
         raise TypeError("invalid severity")
     _validate_mapping_shape(effective["paths"], {"ignore": lambda value: (
+        isinstance(value, list) and all(isinstance(item, str) for item in value)
+    )})
+    _validate_mapping_shape(effective["summary_paths"], {"ignore": lambda value: (
         isinstance(value, list) and all(isinstance(item, str) for item in value)
     )})
     if not _is_int(effective["max_comments"]) or not _is_number(effective["min_confidence"]):
