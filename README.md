@@ -409,7 +409,15 @@ contract before prompting only for the selected provider's credentials.
 
 ### Repositories and branches
 
-`DEFAULT_REPO` identifies the fallback `owner/name`. Tracked branches for a repository are
+`DEFAULT_REPO` identifies the fallback `owner/name`. The repo tag is resolved as `--repo` →
+`git remote origin` → `DEFAULT_REPO`, and the resolution reports its own origin: `cli`,
+`git:origin`, or `env:DEFAULT_REPO`. Because an index written under the wrong tag surfaces only
+as odd search results, `reviewer index` **refuses** to write when the name was substituted from
+`DEFAULT_REPO` rather than derived from the clone — pass `--repo owner/name` or fix the origin
+URL. `reviewer status` stays fail-open and instead exposes the origin: a warning line in the text
+output and a `repo_source` key in `--json`.
+
+Tracked branches for a repository are
 resolved in layered order — the first source that defines them wins entirely (no per-branch
 merge): a per-repo home file `$XDG_CONFIG_HOME/rag-reviewer/repos/<owner>/<name>.yml` →
 the home-global `review.yml` → the env `REVIEW_BRANCHES` CSV allowlist → `["main"]`. In every

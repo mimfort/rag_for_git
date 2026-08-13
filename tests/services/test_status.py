@@ -245,3 +245,58 @@ def test_status_command_passes_and_closes_summary_store(monkeypatch, status_repo
     assert res.exit_code == 0, res.output
     assert captured["summary_store"] is summary_store_cls.return_value
     summary_store_cls.return_value.close.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# repo_source: происхождение repo-тега видно в отчёте (issue #190)
+# ---------------------------------------------------------------------------
+
+
+def test_build_status_report_carries_repo_source(monkeypatch):
+    """build_status_report прокидывает источник имени в отчёт."""
+    dt = datetime(2026, 6, 18, 14, 2)
+    store = FakeStore(meta={"base:main": ("abc1234", dt)},
+                      chunks={"base:main": 5}, refs=["base:main"])
+    graph = FakeGraph(nodes={"main": 3})
+    monkeypatch.setattr(status_mod, "commits_behind", lambda *a: 0)
+    rep = build_status_report(store, graph, "a/x", ["main"], "/tmp/repo",
+                              repo_source="env:DEFAULT_REPO")
+    assert rep.repo_source == "env:DEFAULT_REPO"
+
+
+def test_build_status_report_repo_source_defaults_to_none(monkeypatch):
+    """Вызов без repo_source не ломается: поле остаётся None."""
+    store = FakeStore(meta={}, chunks={}, refs=[])
+    graph = FakeGraph(nodes={})
+    monkeypatch.setattr(status_mod, "commits_behind", lambda *a: None)
+    rep = build_status_report(store, graph, "a/x", ["main"], "/tmp/repo")
+    assert rep.repo_source is None
+
+
+def test_render_status_json_includes_repo_source():
+    """JSON несёт repo_source рядом с repo — потребитель машинный."""
+    rep = RepoStatus(repo="a/x", branches=[], overlays=[], repo_source="git:origin")
+    payload = json.loads(render_status_json(rep))
+    assert payload["repo_source"] == "git:origin"
+
+
+def test_render_status_json_repo_source_null_when_unknown():
+    """Источник неизвестен → null, а не отсутствующий ключ."""
+    payload = json.loads(render_status_json(RepoStatus(repo="a/x", branches=[], overlays=[])))
+    assert payload["repo_source"] is None
+
+
+def test_render_status_warns_on_substituted_repo():
+    """Подстановка из env — громкое предупреждение в текстовом выводе."""
+    rep = RepoStatus(repo="a/x", branches=[], overlays=[], repo_source="env:DEFAULT_REPO")
+    out = render_status(rep, "tree-sitter (fallback)")
+    assert "DEFAULT_REPO" in out
+    assert "--repo" in out
+
+
+def test_render_status_no_warning_when_derived_from_origin():
+    """Имя выведено из origin → предупреждения нет, источник просто показан."""
+    rep = RepoStatus(repo="a/x", branches=[], overlays=[], repo_source="git:origin")
+    out = render_status(rep, "tree-sitter (fallback)")
+    assert "git:origin" in out
+    assert "DEFAULT_REPO" not in out

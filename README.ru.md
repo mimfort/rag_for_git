@@ -416,7 +416,15 @@ contract перед запросом credentials только выбранног
 
 ### Репозитории и ветки
 
-`DEFAULT_REPO` задаёт fallback `owner/name`. Отслеживаемые ветки репозитория резолвятся слоями —
+`DEFAULT_REPO` задаёт fallback `owner/name`. Repo-тег резолвится как `--repo` →
+`git remote origin` → `DEFAULT_REPO`, и резолв сообщает собственное происхождение: `cli`,
+`git:origin` или `env:DEFAULT_REPO`. Индекс, записанный под чужим тегом, обнаруживается только по
+странной выдаче поиска, поэтому `reviewer index` **отказывается** писать, если имя подставлено из
+`DEFAULT_REPO`, а не выведено из клона, — укажите `--repo owner/name` или почините URL origin.
+`reviewer status` остаётся fail-open и вместо отказа показывает происхождение: строку-предупреждение
+в текстовом выводе и ключ `repo_source` в `--json`.
+
+Отслеживаемые ветки репозитория резолвятся слоями —
 первый источник, где они заданы, выигрывает целиком (без поветочного слияния): домашний per-repo
 файл `$XDG_CONFIG_HOME/rag-reviewer/repos/<owner>/<name>.yml` → домашний глобальный `review.yml` →
 env-allowlist `REVIEW_BRANCHES` (CSV) → `["main"]`. В любом источнике первая запись — primary,
