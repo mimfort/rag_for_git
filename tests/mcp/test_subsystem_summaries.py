@@ -870,7 +870,7 @@ def test_index_subsystem_summary_commits_bundle_before_embedding_with_hash_cas()
                 "provenance": {
                     "generator": "test",
                         "_reviewer": {
-                            "generation": "summary-fragment-v1",
+                            "generation": "summary-fragment-v2",
                             "layout_token": compute_layout_token(2, {}),
                             "depth": 2,
                         },

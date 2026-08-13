@@ -16,9 +16,10 @@ file's language. Tool calls, code identifiers and `path:line` stay verbatim.
 ## Tools
 
 <!-- include: _common/tool-usage.md -->
-Plus `list_subsystem_clusters`, `get_subsystem_summary_work`, `index_subsystem_summary`,
-`prune_subsystem_summaries` and `backfill_summary_embeddings` (reviewer MCP), and the harness
-`Read`.
+Plus `list_subsystem_clusters`, `get_subsystem_summary_work`, `get_file_skeletons`,
+`index_subsystem_summary`, `prune_subsystem_summaries` and `backfill_summary_embeddings`
+(reviewer MCP). File-summary jobs read source ONLY through `get_file_skeletons`; the harness
+`Read` is not used on source files in this skill.
 
 ## Pipeline
 
@@ -63,9 +64,11 @@ Plus `list_subsystem_clusters`, `get_subsystem_summary_work`, `index_subsystem_s
    - If any cluster has `bootstrap == true`, explain that this is the first post-upgrade fragment
      bootstrap: all current files in selected clusters get fragments, cap-deferred clusters wait for
      later passes, and old cluster summaries remain available until their replacements are stored.
-   - State the invariant explicitly: `cluster_key` depends on the whole layout policy, so
-     **changing default depth or any depth override triggers a full rebuild of every summary**
-     (old-layout summaries orphan and get pruned).
+   - State the invariant explicitly: `cluster_key` and the layout identity depend on the whole
+     layout policy — the default depth, every depth override, **and the `summary_paths.ignore`
+     clustering filter (which keeps test trees out of summaries without touching the review
+     index)** — so changing any of them triggers a full rebuild of every summary (old-layout
+     summaries orphan and get pruned).
    Then **ask the user to confirm** before running. If they decline, stop without summarizing or pruning.
 
 4. **Choose the summary model (only if work is selected).** Select clusters where
@@ -81,16 +84,21 @@ Plus `list_subsystem_clusters`, `get_subsystem_summary_work`, `index_subsystem_s
    1. Call `get_subsystem_summary_work(repo, branch, cluster_key, source_hash)` **once**, passing the
       cluster's listed `source_hash`. If `ready=false`, count the cluster as deferred/raced, increment
       `raced`, and continue without jobs or persistence.
-   2. Let pending work be exactly `added_files + changed_files`. Dispatch exactly one file-summary job
-      on the chosen model for each pending entry, and no other source-reading jobs. Each file prompt must name only its own path,
-      tell the job to `Read` exactly that path, and require one Russian result:
-      `{path, summary, provenance}`. A job must never compute, guess, or return a `fingerprint`: that
-      value is server-side and the orchestrator supplies it. If a job returns a `path` outside the
-      pending list, discard that result and re-dispatch the job for that pending entry once; on a
-      second mismatch count the cluster as deferred, increment `raced`, and persist nothing for it.
-      The orchestrator and
-      every job must not read unchanged source files. If per-subagent model override is unavailable,
-      generate the same per-file result inline and note that fallback in the report.
+   2. Let pending work be exactly `added_files + changed_files`. Split it into **batches of at
+      most 15 paths**, preserving order, and dispatch exactly one file-summary job per batch on
+      the chosen model — and no other source-reading jobs. Each batch prompt must name only its
+      own paths and tell the job to fetch their skeletons with a **single**
+      `get_file_skeletons(repo, paths, branch)` call. A job must read nothing else: no harness
+      `Read` of a source file, no `read_file`. The skeleton is deliberately the whole input —
+      it is exactly the material a fragment's freshness hash is computed from, so a summary
+      derived from it cannot silently go stale. The job returns one Russian result per path:
+      `{path, summary, provenance}`. A job must never compute, guess, or return a `fingerprint`:
+      that value is server-side and the orchestrator supplies it. If a job returns a `path`
+      outside its batch, or omits a path of its batch, discard that batch's results and
+      re-dispatch that batch once; on a second mismatch count the cluster as deferred, increment
+      `raced`, and persist nothing for it. The orchestrator and every job must not read
+      unchanged source files. If per-subagent model override is unavailable, generate the same
+      per-file results inline and note that fallback in the report.
    3. Build the **ordered reused/moved/new fragment texts** by merging `reused_fragments`,
       `moved_files`, and the new file results, then sorting by `path`. The orchestrator attaches each
       new fragment's `fingerprint` by joining on `path` with the authoritative `added_files` /
