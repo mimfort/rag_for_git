@@ -251,8 +251,9 @@ def test_home_repo_summary_depth_survives_unavailable_vcs(isolated_xdg_config_ho
     # применён, хотя коммиченный слой недоступен.
     assert depth == 4
     assert source == "home:repos/o/r.yml"
+    from reviewer.graph.summaries import normalize_summary_paths_ignore
     from reviewer.policy.policy import DEFAULT_SUMMARY_PATHS_IGNORE
-    assert ignore == list(DEFAULT_SUMMARY_PATHS_IGNORE)
+    assert ignore == normalize_summary_paths_ignore(DEFAULT_SUMMARY_PATHS_IGNORE)
 
 
 class _FakeRetriever:

@@ -53,6 +53,58 @@ def _service(raw_members):
     return MCPReviewService(settings, components)
 
 
+def test_resolve_summary_layout_normalizes_ignore(monkeypatch):
+    """Minor 3: `_resolve_summary_layout` отдаёт УЖЕ канонизированный ignore.
+
+    Сырое значение с ведущим слэшем ("/tests") нормализуется в "tests" тем же
+    способом, что и внутри `canonicalize_layout` — иначе `_summary_state`
+    (нормализованный список) и `_current_subsystem_hashes` (сырой список)
+    видят разные паттерны и расходятся в составе кластеров.
+    """
+    from reviewer.policy.policy import ReviewPolicy
+
+    class _Meta:
+        sources = {}
+
+    service = _service([])
+    policy = ReviewPolicy(summary_paths_ignore=["/tests", "tests/", " test "])
+    monkeypatch.setattr(
+        service, "_resolve_policy", lambda repo, branch: (policy, _Meta())
+    )
+    _, _, ignore, _ = service._resolve_summary_layout("owner/name", "dev")
+    assert ignore == ["test", "tests"]
+
+
+def test_leading_slash_ignore_yields_same_members_in_both_cluster_paths(monkeypatch):
+    """Minor 3: раньше `_summary_state` (нормализованный ignore через
+    `canonicalize_layout`) и `_current_subsystem_hashes` (сырой ignore из
+    `_resolve_summary_layout`) видели разные наборы members для "/tests" —
+    `is_ignored` не переваривает ведущий слэш, а `canonicalize_layout` его
+    срезает. Итог был расхождением source_hash и вечным `stale=true`.
+    """
+    from reviewer.policy.policy import ReviewPolicy
+
+    class _Meta:
+        sources = {}
+
+    raw = [
+        ("reviewer/index/store.py", "A", "h1", 1, "s1"),
+        ("tests/mcp/test_x.py", "B", "h2", 1, "s2"),
+    ]
+    service = _service(raw)
+    policy = ReviewPolicy(summary_paths_ignore=["/tests"])
+    monkeypatch.setattr(
+        service, "_resolve_policy", lambda repo, branch: (policy, _Meta())
+    )
+    state = service._summary_state("owner/name", "dev")
+    hashes = service._current_subsystem_hashes("owner/name", "dev")
+    assert {c.key for c in state.clusters} == {"reviewer/index"}
+    assert set(hashes) == {"reviewer/index"}
+    assert hashes["reviewer/index"] == next(
+        c.source_hash for c in state.clusters if c.key == "reviewer/index"
+    )
+
+
 def test_service_filters_members_in_both_cluster_paths(monkeypatch):
     """_summary_state и _current_subsystem_hashes видят ОДИН набор кластеров.
 

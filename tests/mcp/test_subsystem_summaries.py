@@ -1163,37 +1163,68 @@ def _service_for_summary_resolution() -> tuple[MCPReviewService, MagicMock]:
 
 
 def test_resolve_summary_depth_override_from_review_yml():
+    from reviewer.graph.summaries import normalize_summary_paths_ignore
     from reviewer.policy.policy import DEFAULT_SUMMARY_PATHS_IGNORE
 
     svc = _svc_with_vcs(_FakeVCS("summary_cluster_depth: 3"))
     depth, overrides, ignore, source = svc._resolve_summary_layout("o/n", "dev")
     assert depth == 3
     assert overrides == {}
-    assert ignore == list(DEFAULT_SUMMARY_PATHS_IGNORE)
+    assert ignore == normalize_summary_paths_ignore(DEFAULT_SUMMARY_PATHS_IGNORE)
     assert source == ".review.yml"
 
 
 def test_resolve_summary_depth_no_key_falls_back_to_env():
+    from reviewer.graph.summaries import normalize_summary_paths_ignore
     from reviewer.policy.policy import DEFAULT_SUMMARY_PATHS_IGNORE
 
     svc = _svc_with_vcs(_FakeVCS("severity_threshold: high"))
     depth, overrides, ignore, source = svc._resolve_summary_layout("o/n", "dev")
     assert depth == svc.settings.summary_cluster_depth
     assert overrides == {}
-    assert ignore == list(DEFAULT_SUMMARY_PATHS_IGNORE)
+    assert ignore == normalize_summary_paths_ignore(DEFAULT_SUMMARY_PATHS_IGNORE)
     assert source == "env"
 
 
 def test_resolve_summary_depth_failsoft_on_vcs_error():
     """Ruling 3: fail-soft резолва политики возвращает ДЕФОЛТНЫЙ фильтр, не пустой."""
+    from reviewer.graph.summaries import normalize_summary_paths_ignore
     from reviewer.policy.policy import DEFAULT_SUMMARY_PATHS_IGNORE
 
     svc = _svc_with_vcs(RuntimeError("no token"))
     depth, overrides, ignore, source = svc._resolve_summary_layout("o/n", "dev")
     assert depth == svc.settings.summary_cluster_depth
     assert overrides == {}
-    assert ignore == list(DEFAULT_SUMMARY_PATHS_IGNORE)
+    assert ignore == normalize_summary_paths_ignore(DEFAULT_SUMMARY_PATHS_IGNORE)
     assert source == "env"
+
+
+def test_summary_state_reports_real_depth_source_on_empty_index():
+    """Minor 7: пустой индекс (нет members) не должен врать depth_source="env",
+    когда глубина на самом деле пришла из .review.yml/арг — иначе диагностика
+    (`list_subsystem_clusters`/preflight-эхо) вводит пользователя в заблуждение."""
+    c = MagicMock()
+    c.store.list_base_members.return_value = []
+    c.graph = None
+    svc = _svc(c)
+    svc._resolve_summary_layout = lambda repo, branch: (3, {}, [], ".review.yml")
+
+    state = svc._summary_state("o/n", "dev")
+    assert state.members == []
+    assert state.depth == 3
+    assert state.depth_source == ".review.yml"
+
+
+def test_summary_state_reports_arg_depth_source_on_empty_index_with_explicit_depth():
+    c = MagicMock()
+    c.store.list_base_members.return_value = []
+    c.graph = None
+    svc = _svc(c)
+    svc._resolve_summary_layout = lambda repo, branch: (3, {}, [], ".review.yml")
+
+    state = svc._summary_state("o/n", "dev", depth=5)
+    assert state.depth == 5
+    assert state.depth_source == "arg"
 
 
 def test_list_subsystem_clusters_reports_depth_and_orphans():

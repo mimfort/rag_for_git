@@ -94,7 +94,11 @@ _SUBTASK_RECOVERY_WARNING = (
 
 # PRI-245: get_file_skeletons — капы batch-тула без PR-сессии.
 _MAX_SKELETON_PATHS = 25      # путей на один вызов get_file_skeletons
-_MAX_SKELETON_LINES = 400     # строк скелета на файл — как у read_file
+# Кап защищает контекст, но не должен срабатывать на штатных файлах: самый
+# большой скелет в этом репозитории (tests/install/test_codex_install.py) —
+# 485 строк, у reviewer/mcp/service.py — 399 (капа 400 не хватало впритык).
+# 2000 даёт >4x запас над текущим максимумом.
+_MAX_SKELETON_LINES = 2000
 
 
 @dataclass
@@ -1652,10 +1656,17 @@ class MCPReviewService:
     ) -> tuple[int, dict[str, int], list[str], str]:
         """Резолв layout-политики сводок: глубина, overrides, ignore-фильтр, источник.
 
+        ``ignore`` возвращается уже нормализованным ``normalize_summary_paths_ignore``
+        (страп пробелов/'/', дедуп, сортировка) — так обе точки применения
+        фильтра (``_summary_state`` через ``canonicalize_layout`` и
+        ``_current_subsystem_hashes`` напрямую) видят одно и то же значение;
+        двойная нормализация идемпотентна.
+
         Fail-soft: при сбое резолва политики — env-глубина и ДЕФОЛТНЫЙ фильтр,
         а не пустой. Пустой фильтр при сбое молча вернул бы тестовые кластеры
         и сделал бы стоимость прохода недетерминированной.
         """
+        from reviewer.graph.summaries import normalize_summary_paths_ignore
         from reviewer.policy.policy import DEFAULT_SUMMARY_PATHS_IGNORE
 
         default = self.settings.summary_cluster_depth
@@ -1668,12 +1679,17 @@ class MCPReviewService:
             return (
                 policy.summary_cluster_depth,
                 policy.summary_cluster_depth_overrides,
-                list(policy.summary_paths_ignore),
+                normalize_summary_paths_ignore(policy.summary_paths_ignore),
                 source,
             )
         except Exception:
             log.warning("_resolve_summary_layout: fail-soft → env-дефолт")
-            return default, {}, list(DEFAULT_SUMMARY_PATHS_IGNORE), "env"
+            return (
+                default,
+                {},
+                normalize_summary_paths_ignore(DEFAULT_SUMMARY_PATHS_IGNORE),
+                "env",
+            )
 
     def _resolve_summary_topk_threshold(self, repo: str, branch: str) -> tuple[int, str]:
         """Резолв порога масштаба приора сводок с сохранением env-дефолта."""
@@ -1816,7 +1832,7 @@ class MCPReviewService:
         }
         rb = self._resolve_repo_branch(repo, branch)
         if isinstance(rb, str):
-            return {**out, **{path: f"({rb})" for path in accepted}}
+            return {**out, **{path: rb for path in accepted}}
         repo, resolved = rb
         try:
             rows = self.components.store.fetch_chunks_at_paths(
@@ -1890,13 +1906,16 @@ class MCPReviewService:
 
         raw = self.components.store.list_base_members(repo, branch)
         if not raw:
-            resolved_depth, _, ignore, _ = self._resolve_summary_layout(repo, branch)
-            if depth is not None:
-                resolved_depth = depth
+            resolved_depth, _, ignore, policy_source = self._resolve_summary_layout(
+                repo, branch)
+            if depth is None:
+                depth_source = policy_source
+            else:
+                resolved_depth, depth_source = depth, "arg"
             return _SummaryState(
                 depth=resolved_depth,
                 layout_token=compute_layout_token(resolved_depth, {}, ignore),
-                depth_source="env" if depth is None else "arg",
+                depth_source=depth_source,
                 members=[],
                 clusters=[],
                 file_fingerprints={},

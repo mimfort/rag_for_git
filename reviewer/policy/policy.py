@@ -42,15 +42,21 @@ class ReviewPolicy:
 
     @staticmethod
     def _summary_paths_ignore(data: Mapping[str, object]) -> list[str] | None:
-        """Явный список из слоя или None, если ключ не задан (→ дефолт).
+        """Явный список из слоя или None, если ключ не задан/пуст (→ дефолт).
 
-        Присутствующий ключ заменяет дефолт целиком, поэтому `ignore: []`
-        выключает фильтр, а не откатывается на дефолт.
+        Присутствующий непустой (в т.ч. явный `[]`) ключ заменяет дефолт целиком,
+        поэтому `ignore: []` выключает фильтр. Но `ignore:` без значения — это
+        YAML `None`, а не явный пустой список: как и у соседнего `paths`
+        (см. `load_data`), он не должен молча выключать фильтр — только
+        откатываться на дефолт.
         """
         raw = data.get("summary_paths")
         if not isinstance(raw, Mapping) or "ignore" not in raw:
             return None
-        return [str(item) for item in (raw["ignore"] or [])]
+        value = raw["ignore"]
+        if value is None:
+            return None
+        return [str(item) for item in value]
 
     @staticmethod
     def _normalized_task_board(raw) -> tuple[dict | None, list[str]]:

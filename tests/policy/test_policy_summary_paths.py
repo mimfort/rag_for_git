@@ -44,6 +44,17 @@ def test_explicit_empty_list_disables_filter():
     assert policy.summary_paths_ignore == []
 
 
+def test_null_value_keeps_default():
+    """`ignore:` без значения — YAML None, не явный []: фильтр не выключается."""
+    policy = ReviewPolicy.load_data(_Settings(), {"summary_paths": {"ignore": None}})
+    assert policy.summary_paths_ignore == list(DEFAULT_SUMMARY_PATHS_IGNORE)
+
+
+def test_from_yaml_null_value_keeps_default():
+    policy = ReviewPolicy.from_yaml("summary_paths:\n  ignore:\n")
+    assert policy.summary_paths_ignore == list(DEFAULT_SUMMARY_PATHS_IGNORE)
+
+
 def test_from_yaml_reads_summary_paths():
     policy = ReviewPolicy.from_yaml("summary_paths:\n  ignore:\n    - tests\n")
     assert policy.summary_paths_ignore == ["tests"]
