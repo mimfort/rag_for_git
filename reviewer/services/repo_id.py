@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 
 _REMOTE_RE = re.compile(r"github\.com[:/]([^/]+)/([^/]+?)(?:\.git)?/?$")
 
@@ -31,6 +32,37 @@ def derive_repo_from_remote(remote_url: str) -> str | None:
     if not m:
         return None
     return f"{m.group(1).lower()}/{m.group(2).lower()}"
+
+
+@dataclass(frozen=True)
+class RepoResolution:
+    """Идентификатор репозитория и происхождение имени.
+
+    `source` — тот же словарь, что у `RepositoryDetection` в config/onboarding.py,
+    расширенный третьим значением: 'cli' | 'git:origin' | 'env:DEFAULT_REPO'.
+    """
+
+    repo: str
+    source: str
+
+
+def resolve_repo_id(repo_opt: str | None, remote: str | None,
+                    default_repo: str | None) -> RepoResolution | None:
+    """Резолв repo-тега с явным происхождением: --repo → origin → DEFAULT_REPO.
+
+    Принимает УЖЕ прочитанный URL origin (а не путь), поэтому модуль остаётся
+    без git/subprocess и тестируется без моков. None = резолвить нечем.
+
+    :raises ValueError: repo_opt или default_repo не приводятся к 'owner/name'.
+    """
+    if repo_opt:
+        return RepoResolution(normalize_repo(repo_opt), "cli")
+    derived = derive_repo_from_remote(remote or "")
+    if derived:
+        return RepoResolution(derived, "git:origin")
+    if default_repo:
+        return RepoResolution(normalize_repo(default_repo), "env:DEFAULT_REPO")
+    return None
 
 
 def _remote_host(remote_url: str) -> str | None:

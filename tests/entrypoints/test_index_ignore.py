@@ -6,6 +6,7 @@ from unittest.mock import MagicMock
 from click.testing import CliRunner
 
 import reviewer.entrypoints.cli as cli_mod
+from reviewer.services.repo_id import RepoResolution
 
 
 def test_index_filters_ignored_files(monkeypatch):
@@ -18,7 +19,8 @@ def test_index_filters_ignored_files(monkeypatch):
 
     fake_components = MagicMock()
     monkeypatch.setattr(cli_mod, "build_components", lambda s: fake_components)
-    monkeypatch.setattr(cli_mod, "_resolve_repo", lambda *a: "o/r")
+    monkeypatch.setattr(cli_mod, "_resolve_repo",
+                        lambda *a: RepoResolution("o/r", "cli"))
     monkeypatch.setattr(cli_mod, "list_python_files",
                         lambda repo, ref: ["vendor/x.py", "reviewer/a.py"])
     monkeypatch.setattr(cli_mod, "rev_parse", lambda repo, ref: "deadbeef")
@@ -57,7 +59,8 @@ def test_index_uses_home_policy_without_committed_file(
 
     fake_components = MagicMock()
     monkeypatch.setattr(cli_mod, "build_components", lambda s: fake_components)
-    monkeypatch.setattr(cli_mod, "_resolve_repo", lambda *a: "o/r")
+    monkeypatch.setattr(cli_mod, "_resolve_repo",
+                        lambda *a: RepoResolution("o/r", "cli"))
     monkeypatch.setattr(cli_mod, "list_python_files",
                         lambda repo, ref: ["vendor/x.py", "reviewer/a.py"])
     monkeypatch.setattr(cli_mod, "rev_parse", lambda repo, ref: "deadbeef")
