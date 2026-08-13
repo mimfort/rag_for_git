@@ -150,7 +150,7 @@ Plus `list_subsystem_clusters`, `get_subsystem_summary_work`, `get_file_skeleton
 
 <!-- include: _common/anti-hallucination.md -->
 
-Each new file fragment must reflect the one pending source file its job read. Cluster composers
+Each new file fragment must reflect exactly its own pending file's skeleton and nothing else's. Cluster composers
 ground only on provided fragments and never read source. If the fragments leave a cluster unclear,
 say so briefly rather than guessing.
 

@@ -238,6 +238,9 @@ def test_skill_batch_keeps_path_mismatch_rejection():
     assert "outside its batch" in step
     assert "re-dispatch that batch" in step
     assert "increment `raced`" in step
+    assert "discard that batch's results" in step
+    assert "on a second mismatch count the cluster as deferred" in step
+    assert "persist nothing for it" in step
 
 
 def test_skill_file_job_reads_skeletons_not_source():
