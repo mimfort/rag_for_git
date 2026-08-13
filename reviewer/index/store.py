@@ -310,6 +310,24 @@ class ChunkStore:
                 "WHERE repo=%s AND ref=%s", (repo, base_ref(branch))).fetchall()
         return [(p, s, h, sl, symbol_skeleton_hash(t)) for p, s, h, sl, t in rows]
 
+    def fetch_chunks_at_paths(self, repo: str, branch: str, paths: list[str]
+                              ) -> list[tuple[str, int, str]]:
+        """(path, start_line, text) чанков base-индекса ветки для заданных путей.
+
+        Дешевле list_base_members: не тянет весь индекс и не считает
+        skeleton_hash — нужен только текст запрошенных файлов (PRI-245).
+        """
+        from reviewer.index.refs import base_ref
+        if not paths:
+            return []
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT path, start_line, text FROM chunks "
+                "WHERE repo=%s AND ref=%s AND path = ANY(%s) "
+                "ORDER BY path, start_line",
+                (repo, base_ref(branch), list(paths))).fetchall()
+        return [(p, sl, t) for p, sl, t in rows]
+
     def list_refs(self, repo: str) -> list[str]:
         """Отсортированный список distinct ref репо (для поиска overlay)."""
         with self._connect() as conn:

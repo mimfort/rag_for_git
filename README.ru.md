@@ -560,7 +560,7 @@ Server-side workflow — **store-first**:
    context tools.
 3. Client models не перечисляют provider напрямую и не передают credentials.
 
-MCP server сейчас предоставляет **39 tools**, включая batch-операцию нативных подзадач.
+MCP server сейчас предоставляет **40 tools**, включая batch-операцию нативных подзадач.
 
 Legacy aliases остаются как **legacy metadata for older clients** на одно compatibility window:
 `TASK_BOARD_API_KEY → YOUGILE_API_KEY` и

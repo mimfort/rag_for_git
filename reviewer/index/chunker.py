@@ -107,3 +107,28 @@ def symbol_skeleton_hash(text: str) -> str:
     else:
         body = "\n".join(ln.rstrip() for ln in lines)
     return hashlib.sha256(body.strip().encode("utf-8")).hexdigest()
+
+
+def file_skeleton_lines(chunks: list[tuple[int, str]]) -> list[tuple[int, str]]:
+    """Скелет файла как объединение скелетов его символов-чанков (PRI-245).
+
+    ``chunks`` — пары (start_line, text) чанков ОДНОГО файла. Возвращает
+    отсортированные (абсолютный номер строки, текст строки).
+
+    Источник намеренно тот же, из которого считается ``symbol_skeleton_hash``:
+    так вход файлового job'а совпадает с тем, что инвалидирует его результат.
+    Цена — module-level docstring и код вне символов в чанки не попадают.
+    Вложенные символы схлопываются множеством: скелет класса уже содержит
+    сигнатуры своих методов.
+    """
+    out: dict[int, str] = {}
+    for start_line, text in chunks:
+        lines = text.splitlines()
+        for rel in python_skeleton(text.encode("utf-8")):
+            if 1 <= rel <= len(lines):
+                # first-write-wins: chunk_python отдаёт родителя раньше потомков
+                # (pre-order), а у вложенного символа своя первая строка (def/class)
+                # начинается сразу с токена, без исходного отступа — текст родителя
+                # для той же абсолютной строки полный и приоритетнее.
+                out.setdefault(start_line + rel - 1, lines[rel - 1])
+    return sorted(out.items())

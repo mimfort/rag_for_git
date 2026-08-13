@@ -92,6 +92,10 @@ _SUBTASK_RECOVERY_WARNING = (
     "subtask operation failed; durable recovery used a safe fallback"
 )
 
+# PRI-245: get_file_skeletons — капы batch-тула без PR-сессии.
+_MAX_SKELETON_PATHS = 25      # путей на один вызов get_file_skeletons
+_MAX_SKELETON_LINES = 400     # строк скелета на файл — как у read_file
+
 
 @dataclass
 class _Session:
@@ -1787,6 +1791,58 @@ class MCPReviewService:
             found, store=self.components.store, repo=repo, branch=resolved,
             overlay_ref=None, changed_paths=[], empty_msg="(implementations не найдены)",
             cap=cl.graph.callers_topk)
+
+    def get_file_skeletons(
+        self, repo: str, paths: list[str], branch: str | None = None
+    ) -> dict[str, str]:
+        """AST-скелеты проиндексированных файлов пачкой (PRI-245), без PR-сессии.
+
+        Источник — чанки base-индекса ветки, то есть ровно тот материал, из
+        которого считается skeleton_hash: файловый job сводок читает то же, что
+        инвалидирует его результат. Ключ ответа есть у КАЖДОГО запрошенного
+        пути — отсутствие, пустой скелет и превышение капа возвращаются нотой,
+        а не молчаливым пропуском.
+        """
+        from reviewer.index.chunker import file_skeleton_lines
+
+        requested = [str(p) for p in (paths or []) if p]
+        if not requested:
+            return {}
+        accepted = requested[:_MAX_SKELETON_PATHS]
+        overflow = requested[_MAX_SKELETON_PATHS:]
+        out = {
+            path: f"(превышен лимит путей на вызов: {_MAX_SKELETON_PATHS})"
+            for path in overflow
+        }
+        rb = self._resolve_repo_branch(repo, branch)
+        if isinstance(rb, str):
+            return {**out, **{path: f"({rb})" for path in accepted}}
+        repo, resolved = rb
+        try:
+            rows = self.components.store.fetch_chunks_at_paths(
+                repo, resolved, accepted
+            )
+        except Exception:
+            log.warning("get_file_skeletons: сбой чтения чанков", exc_info=True)
+            return {**out, **{p: "(чтение скелета недоступно)" for p in accepted}}
+        grouped: dict[str, list[tuple[int, str]]] = {}
+        for path, start_line, text in rows:
+            grouped.setdefault(path, []).append((start_line, text))
+        for path in accepted:
+            chunks = grouped.get(path)
+            if not chunks:
+                out[path] = f"(файл не найден в индексе: {path})"
+                continue
+            skeleton = file_skeleton_lines(chunks)
+            if not skeleton:
+                out[path] = "(нет определений для скелета)"
+                continue
+            capped = len(skeleton) > _MAX_SKELETON_LINES
+            body = "\n".join(
+                f"{n}|{text}" for n, text in skeleton[:_MAX_SKELETON_LINES]
+            )
+            out[path] = body + "\n(…усечено)" if capped else body
+        return out
 
     def definition(self, repo: str, symbol: str,
                    branch: str | None = None) -> str:
