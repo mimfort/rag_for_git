@@ -1,7 +1,7 @@
 """Тесты effective layered policy для context limits в session-less MCP-тулах.
 
 _resolve_context_limits fail-soft объединяет env, home-слои и committed
-`.review.yml` (зеркало `_resolve_summary_depth`). `search_codebase` передаёт
+`.review.yml` (зеркало `_resolve_summary_layout`). `search_codebase` передаёт
 limits/hops/ceiling_override в `Retriever.search_base`.
 """
 import logging
@@ -245,12 +245,14 @@ def test_home_repo_summary_depth_survives_unavailable_vcs(isolated_xdg_config_ho
     vcs.get_file_at_ref.side_effect = RuntimeError("network down")
     svc = MCPReviewService(s, components, vcs_factory=lambda o, n: vcs)
 
-    depth, overrides, source = svc._resolve_summary_depth("o/r", "dev")
+    depth, overrides, ignore, source = svc._resolve_summary_layout("o/r", "dev")
 
     # Дефолт SUMMARY_CLUSTER_DEPTH — 2; значение 4 доказывает, что home-слой
     # применён, хотя коммиченный слой недоступен.
     assert depth == 4
     assert source == "home:repos/o/r.yml"
+    from reviewer.policy.policy import DEFAULT_SUMMARY_PATHS_IGNORE
+    assert ignore == list(DEFAULT_SUMMARY_PATHS_IGNORE)
 
 
 class _FakeRetriever:

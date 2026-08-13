@@ -1620,7 +1620,7 @@ class MCPReviewService:
                 vcs_fetch_factory=vcs_fetch_factory,
             )
             # strict_committed=False намеренно: у _resolve_policy четыре
-            # потребителя, и три из них (_resolve_summary_depth,
+            # потребителя, и три из них (_resolve_summary_layout,
             # _resolve_summary_topk_threshold, _resolve_context_limits) уже
             # обёрнуты в собственный fail-soft с откатом на env-дефолты.
             # Строгий режим здесь заставил бы их молча потерять
@@ -1643,8 +1643,17 @@ class MCPReviewService:
                 except Exception:
                     log.warning("_resolve_policy: не удалось закрыть VCS", exc_info=True)
 
-    def _resolve_summary_depth(self, repo: str, branch: str) -> tuple[int, dict[str, int], str]:
-        """Резолв глубины кластеризации сводок с сохранением fail-soft env-дефолта."""
+    def _resolve_summary_layout(
+        self, repo: str, branch: str
+    ) -> tuple[int, dict[str, int], list[str], str]:
+        """Резолв layout-политики сводок: глубина, overrides, ignore-фильтр, источник.
+
+        Fail-soft: при сбое резолва политики — env-глубина и ДЕФОЛТНЫЙ фильтр,
+        а не пустой. Пустой фильтр при сбое молча вернул бы тестовые кластеры
+        и сделал бы стоимость прохода недетерминированной.
+        """
+        from reviewer.policy.policy import DEFAULT_SUMMARY_PATHS_IGNORE
+
         default = self.settings.summary_cluster_depth
         try:
             policy, meta = self._resolve_policy(repo, branch)
@@ -1652,10 +1661,15 @@ class MCPReviewService:
                 "summary_cluster_depth",
                 meta.sources.get("summary_cluster_depth_overrides", "env"),
             )
-            return policy.summary_cluster_depth, policy.summary_cluster_depth_overrides, source
+            return (
+                policy.summary_cluster_depth,
+                policy.summary_cluster_depth_overrides,
+                list(policy.summary_paths_ignore),
+                source,
+            )
         except Exception:
-            log.warning("_resolve_summary_depth: fail-soft → env-дефолт")
-            return default, {}, "env"
+            log.warning("_resolve_summary_layout: fail-soft → env-дефолт")
+            return default, {}, list(DEFAULT_SUMMARY_PATHS_IGNORE), "env"
 
     def _resolve_summary_topk_threshold(self, repo: str, branch: str) -> tuple[int, str]:
         """Резолв порога масштаба приора сводок с сохранением env-дефолта."""
@@ -1816,17 +1830,16 @@ class MCPReviewService:
             compute_file_fingerprints,
             compute_layout_token,
         )
+        from reviewer.index.pathfilter import is_ignored
 
         raw = self.components.store.list_base_members(repo, branch)
         if not raw:
-            resolved_depth = (
-                self.settings.summary_cluster_depth
-                if depth is None
-                else depth
-            )
+            resolved_depth, _, ignore, _ = self._resolve_summary_layout(repo, branch)
+            if depth is not None:
+                resolved_depth = depth
             return _SummaryState(
                 depth=resolved_depth,
-                layout_token=compute_layout_token(resolved_depth, {}),
+                layout_token=compute_layout_token(resolved_depth, {}, ignore),
                 depth_source="env" if depth is None else "arg",
                 members=[],
                 clusters=[],
@@ -1835,15 +1848,17 @@ class MCPReviewService:
                 completed_depth=None,
                 completed_layout=None,
             )
+        resolved_depth, policy_overrides, ignore, policy_source = (
+            self._resolve_summary_layout(repo, branch)
+        )
         if depth is None:
-            resolved_depth, overrides, depth_source = self._resolve_summary_depth(
-                repo, branch
-            )
+            overrides, depth_source = policy_overrides, policy_source
         else:
             resolved_depth, overrides, depth_source = depth, {}, "arg"
-        overrides, _ignore, layout_token = canonicalize_layout(
+        overrides, ignore, layout_token = canonicalize_layout(
             resolved_depth,
             overrides,
+            ignore,
         )
         members = [
             Member(
@@ -1854,6 +1869,7 @@ class MCPReviewService:
                 skeleton_hash=skeleton_hash,
             )
             for path, symbol, content_hash, start_line, skeleton_hash in raw
+            if not is_ignored(path, ignore)
         ]
         graph = self.components.graph
         in_degree_fn = (
@@ -2380,11 +2396,13 @@ class MCPReviewService:
         self, repo: str, branch: str
     ) -> dict[str, str] | None:
         from reviewer.graph.summaries import Member, build_clusters
+        from reviewer.index.pathfilter import is_ignored
 
         try:
             raw = self.components.store.list_base_members(repo, branch)
             if not raw:
                 return None
+            depth, overrides, ignore, _ = self._resolve_summary_layout(repo, branch)
             members = [
                 Member(
                     node_id=f"{path}#{symbol}",
@@ -2394,8 +2412,8 @@ class MCPReviewService:
                     skeleton_hash=skeleton_hash,
                 )
                 for path, symbol, content_hash, start_line, skeleton_hash in raw
+                if not is_ignored(path, ignore)
             ]
-            depth, overrides, _ = self._resolve_summary_depth(repo, branch)
             clusters = build_clusters(
                 members,
                 None,
