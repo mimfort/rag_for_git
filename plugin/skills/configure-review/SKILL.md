@@ -117,7 +117,8 @@ Branch changes never trigger subsystem-summary work.
 - Changed `summary_cluster_depth_overrides` → suggest `rag-reviewer:summarize-subsystems`.
 - Changed `summary_paths.ignore` → this key is part of the summary `layout_token`; suggest
   `rag-reviewer:summarize-subsystems` and warn it forces a **full rebuild of every subsystem
-  summary** — the most expensive rebuild among all keys in this scope.
+  summary** (same `layout_token` invalidation as `summary_cluster_depth`/
+  `summary_cluster_depth_overrides`).
 - Changed `summary_topk_threshold` → no rebuild needed.
 - Changed `context_limits` → no rebuild needed.
 - Changed `task_board.sync_filter` → suggest `rag-reviewer:sync-tasks` for a full unlimited run

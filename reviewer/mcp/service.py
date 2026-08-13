@@ -99,6 +99,10 @@ _MAX_SKELETON_PATHS = 25      # путей на один вызов get_file_ske
 # 485 строк, у reviewer/mcp/service.py — 399 (капа 400 не хватало впритык).
 # 2000 даёт >4x запас над текущим максимумом.
 _MAX_SKELETON_LINES = 2000
+# Маркер усечения скелета: дословно совпадает с текстом, на который опирается
+# правило шага 5.2 в plugin/skills/summarize-subsystems/SKILL.md (guard-тест
+# tests/skills/test_summarize_subsystems.py держит их в связке).
+_SKELETON_TRUNCATION_MARKER = "(…усечено)"
 
 
 @dataclass
@@ -1857,7 +1861,7 @@ class MCPReviewService:
             body = "\n".join(
                 f"{n}|{text}" for n, text in skeleton[:_MAX_SKELETON_LINES]
             )
-            out[path] = body + "\n(…усечено)" if capped else body
+            out[path] = f"{body}\n{_SKELETON_TRUNCATION_MARKER}" if capped else body
         return out
 
     def definition(self, repo: str, symbol: str,

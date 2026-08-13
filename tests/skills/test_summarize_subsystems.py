@@ -290,3 +290,14 @@ def test_skill_preflight_names_clustering_filter_as_layout_component():
 def test_common_tool_usage_lists_get_file_skeletons():
     text = _assembled_skill()
     assert "get_file_skeletons(repo, paths, branch?)" in text
+
+
+def test_skill_truncation_marker_matches_code():
+    """PRI-245: маркер усечения скелета в шаге 5.2 должен дословно совпадать с
+    reviewer/mcp/service.py — иначе job перестанет распознавать усечённый скелет."""
+    from reviewer.mcp.service import _SKELETON_TRUNCATION_MARKER
+
+    step = _file_job_step()
+    assert f"`{_SKELETON_TRUNCATION_MARKER}`" in step, (
+        "маркер усечения скелета в скилле разошёлся с reviewer/mcp/service.py"
+    )

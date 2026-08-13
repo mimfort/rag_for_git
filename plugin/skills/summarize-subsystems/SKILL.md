@@ -96,9 +96,10 @@ Plus `list_subsystem_clusters`, `get_subsystem_summary_work`, `get_file_skeleton
       path as not done for this batch and count it toward `deferred`. The job returns one Russian
       result per path: `{path, summary, provenance}`. A job must never compute, guess, or return a `fingerprint`:
       that value is server-side and the orchestrator supplies it. If a job returns a `path`
-      outside its batch, or omits a path of its batch, discard that batch's results and
-      re-dispatch that batch once; on a second mismatch count the cluster as deferred, increment
-      `raced`, and persist nothing for it. The orchestrator and every job must not read
+      outside its batch, or omits a path of its batch — other than a path already treated as not
+      done for this batch under the note/truncated-skeleton rule above — discard that batch's
+      results and re-dispatch that batch once; on a second mismatch count the cluster as deferred,
+      increment `raced`, and persist nothing for it. The orchestrator and every job must not read
       unchanged source files. If per-subagent model override is unavailable, generate the same
       per-file results inline and note that fallback in the report.
    3. Build the **ordered reused/moved/new fragment texts** by merging `reused_fragments`,
