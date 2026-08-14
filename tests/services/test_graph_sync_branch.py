@@ -9,6 +9,9 @@ class FakeGraph:
     def symbols_for_paths(self, repo, paths, *, branch=""):
         return set()
 
+    def all_node_ids(self, repo, *, branch=""):
+        return set()
+
     def delete_symbols(self, repo, ids, *, branch=""):
         pass
 

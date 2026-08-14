@@ -21,6 +21,9 @@ class FakeGraph:
         return {s for s in self.symbols.get(repo, set())
                 if any(s.startswith(p) for p in prefixes)}
 
+    def all_node_ids(self, repo, *, branch=""):
+        return set(self.symbols.get(repo, set()))
+
     def delete_symbols(self, repo, ids, *, branch=""):
         self.deleted.append((repo, set(ids)))
         self.symbols.get(repo, set()).difference_update(ids)
@@ -61,6 +64,36 @@ def test_patch_deletes_outgoing_implements_of_changed_surface():
     assert g.deleted_implements and g.deleted_implements[0][0] == "a/x"
     deleted_ids = g.deleted_implements[0][1]
     assert "a.py#X" in deleted_ids
+
+
+def test_patch_restores_implements_when_base_lives_in_unchanged_file():
+    """Important N1 (ре-ревью): инкрементальный парс одного файла-наследника
+    не может локально резолвить базу из неизменённого файла — без доп.
+    источника ребро терялось бы после сноса исходящих IMPLEMENTS self-heal'ом
+    (Important 3) и не восстанавливалось бы до ручного `reviewer index`.
+    Если база уже проиндексирована (есть в графе), self-heal обязан
+    восстановить ребро, подмешав существующие символы графа как
+    дополнительный (последний по приоритету) источник резолвинга.
+    """
+    g = FakeGraph({"a/x": {"a.py#Child", "base.py#Base"}})
+    sources = {"a.py": "class Child(Base):\n    pass\n"}
+    patch_graph_incremental(g, "a/x", changed_sources=sources, removed_paths=[])
+    edges = [e for _, batch in g.upserted_edges for e in batch]
+    assert ("a.py#Child", "IMPLEMENTS", "base.py#Base") in edges
+
+
+def test_patch_graph_symbol_fallback_does_not_leak_into_calls():
+    """Доп. источник резолвинга (символы графа) используется ТОЛЬКО для баз
+    наследования — резолвинг CALLS не должен видеть ничего, кроме changed_sources,
+    иначе это молчаливо расширило бы глобальный fallback вызовов на весь граф."""
+    g = FakeGraph({"a/x": {"a.py#caller", "other.py#helper"}})
+    sources = {"a.py": "def caller():\n    helper()\n"}
+    patch_graph_incremental(g, "a/x", changed_sources=sources, removed_paths=[])
+    edges = [e for _, batch in g.upserted_edges for e in batch]
+    # helper() резолвится только внутри changed_sources (a.py) — там его нет,
+    # значит CALLS-ребро на other.py#helper НЕ создаётся, даже если такой
+    # символ уже существует в графе под тем же простым именем.
+    assert not any(rel == "CALLS" and dst == "other.py#helper" for _, rel, dst in edges)
 
 
 def test_patch_removed_files_delete_symbols():

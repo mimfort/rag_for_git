@@ -60,7 +60,8 @@ def _leading_name(node) -> str:
 
 
 def extract_inheritance_edges(files, chunks_by_path, name_to_nodes,
-                              name_to_nodes_by_path) -> list[tuple[str, str, str]]:
+                              name_to_nodes_by_path,
+                              extra_base_names=None) -> list[tuple[str, str, str]]:
     """Рёбра ``(class_node_id, "IMPLEMENTS", base_node_id)`` по всем файлам.
 
     Резолвинг имени базы повторяет приоритет ``_resolve_call``: локальные
@@ -71,6 +72,14 @@ def extract_inheritance_edges(files, chunks_by_path, name_to_nodes,
     ребро. Так же ведёт себя резолвинг CALLS; цена ошибки — лишний член
     семейства, а не потерянный. База, не совпавшая ни с одним символом, ребра
     не даёт.
+
+    ``extra_base_names`` — дополнительный простое-имя → node_id индекс поверх
+    ``name_to_nodes`` для ТОГО ЖЕ последнего (глобального fallback) шага —
+    только для резолвинга баз наследования (self-heal при инкрементальном
+    парсе, см. :func:`reviewer.services.graph_sync.patch_graph_incremental`),
+    когда база наследования лежит в файле, отсутствующем в ``files``. Резолвинг
+    CALLS его не видит — сюда не передаётся и не используется нигде, кроме
+    этой функции.
 
     Класс сопоставляется с чанком через ``build_fqn_resolver`` (самый узкий
     чанк, покрывающий строку ``class``), а не по точному ``start_line``:
@@ -95,14 +104,16 @@ def extract_inheritance_edges(files, chunks_by_path, name_to_nodes,
             for name in _base_names(cls):
                 for base in _resolve_base(name, path, imports, files,
                                           name_to_nodes, name_to_nodes_by_path,
-                                          _resolve_module, _symbols_named):
+                                          _resolve_module, _symbols_named,
+                                          extra_base_names):
                     if base != child:
                         edges.append((child, "IMPLEMENTS", base))
     return list(dict.fromkeys(edges))
 
 
 def _resolve_base(name, path, imports, files, name_to_nodes,
-                  name_to_nodes_by_path, resolve_module, symbols_named) -> list[str]:
+                  name_to_nodes_by_path, resolve_module, symbols_named,
+                  extra_base_names=None) -> list[str]:
     """Имя базы -> список node_id (приоритет от точного к размытому)."""
     local = symbols_named(name, path, name_to_nodes_by_path)
     if local:
@@ -120,4 +131,9 @@ def _resolve_base(name, path, imports, files, name_to_nodes,
         hits = symbols_named(name, target, name_to_nodes_by_path)
         if hits:
             return hits
-    return list(name_to_nodes.get(name, []))
+    fallback = list(name_to_nodes.get(name, []))
+    if extra_base_names:
+        for node_id in extra_base_names.get(name, ()):
+            if node_id not in fallback:
+                fallback.append(node_id)
+    return fallback

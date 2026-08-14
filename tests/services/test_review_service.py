@@ -443,6 +443,9 @@ def test_prepare_patches_graph_incrementally_on_drift(
             self.symbols_calls.append((repo, list(paths)))
             return set()
 
+        def all_node_ids(self, repo, *, branch=""):
+            return set()
+
         def delete_symbols(self, repo, ids, *, branch=""):
             pass
 
@@ -660,6 +663,9 @@ def test_prepare_graph_sync_respects_ignore(
             self.upsert_nodes_calls: list[tuple[str, list[str]]] = []
 
         def symbols_for_paths(self, repo, paths, *, branch=""):
+            return set()
+
+        def all_node_ids(self, repo, *, branch=""):
             return set()
 
         def delete_symbols(self, repo, ids, *, branch=""):

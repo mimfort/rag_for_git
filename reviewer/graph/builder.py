@@ -156,14 +156,19 @@ def _symbols_named(name: str, path: str, name_to_nodes_by_path: dict[str, dict[s
     return name_to_nodes_by_path.get(path, {}).get(name, [])
 
 
-def build_graph_from_files(files: dict[str, str]):
+def build_graph_from_files(files: dict[str, str], extra_base_names=None):
     """Строит (nodes, edges) графа кода по tree-sitter с import-aware резолвингом.
 
     Узлы = все символы (``path#fqn``). Рёбра CALLS резолвятся по приоритету
     от точного к размытому: локальные определения файла → импортированные имена
-    → star-импорты → глобальный fallback (все символы с этим простым именем).
-    Рёбра IMPLEMENTS — наследование классов, извлечённое синтаксически
-    (см. :mod:`reviewer.graph.inherit`).
+    → star-импорты → глобальный fallback (все символы с этим простым именем;
+    ``extra_base_names`` сюда НЕ подмешивается — резолвинг CALLS видит только
+    ``files``). Рёбра IMPLEMENTS — наследование классов, извлечённое
+    синтаксически (см. :mod:`reviewer.graph.inherit`); ``extra_base_names`` —
+    опциональный простое-имя → node_id индекс поверх уже существующих в графе
+    символов, подмешиваемый ТОЛЬКО в глобальный fallback резолвинга баз
+    наследования (self-heal при инкрементальном парсе — база наследования
+    может лежать в файле, отсутствующем в ``files``).
     """
     chunks_by_path: dict[str, list] = {}
     name_to_nodes: dict[str, list[str]] = {}                  # глобально: имя -> узлы
@@ -200,7 +205,8 @@ def build_graph_from_files(files: dict[str, str]):
                     edges.append((caller, "CALLS", callee))
 
     edges += extract_inheritance_edges(files, chunks_by_path,
-                                       name_to_nodes, name_to_nodes_by_path)
+                                       name_to_nodes, name_to_nodes_by_path,
+                                       extra_base_names)
     return nodes, list(dict.fromkeys(edges))
 
 

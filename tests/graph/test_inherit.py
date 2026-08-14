@@ -90,6 +90,37 @@ def test_calls_edges_are_unchanged():
     assert ("pkg/m.py#caller", "CALLS", "pkg/m.py#helper") in edges
 
 
+def test_extra_base_names_resolves_base_absent_from_parsed_files():
+    """extra_base_names (self-heal: символы уже в графе) резолвит базу,
+    отсутствующую в текущем наборе parsed files — иначе инкрементальный
+    парс одного файла-наследника теряет базу из неизменённого файла (N1)."""
+    files = {"pkg/adapter.py": "class Child(Base):\n    pass\n"}
+    extra = {"Base": ["pkg/base.py#Base"]}
+    _, edges = build_graph_from_files(files, extra)
+    assert ("pkg/adapter.py#Child", "IMPLEMENTS", "pkg/base.py#Base") in edges
+
+
+def test_extra_base_names_loses_to_local_definition():
+    """Локальная база в parsed files всё ещё перекрывает extra_base_names —
+    приоритет резолвинга (локально → импорт → star → fallback) не меняется."""
+    files = {
+        "pkg/adapter.py": "class Base:\n    pass\n\n\nclass Child(Base):\n    pass\n",
+    }
+    extra = {"Base": ["pkg/other.py#Base"]}
+    _, edges = build_graph_from_files(files, extra)
+    assert ("pkg/adapter.py#Child", "IMPLEMENTS", "pkg/adapter.py#Base") in edges
+    assert ("pkg/adapter.py#Child", "IMPLEMENTS", "pkg/other.py#Base") not in edges
+
+
+def test_extra_base_names_does_not_leak_into_calls():
+    """extra_base_names участвует только в резолвинге баз наследования — CALLS
+    его не видит, даже если там есть символ с тем же простым именем."""
+    files = {"pkg/m.py": "def caller():\n    helper()\n"}
+    extra = {"helper": ["pkg/other.py#helper"]}
+    _, edges = build_graph_from_files(files, extra)
+    assert not any(e[1] == "CALLS" for e in edges)
+
+
 def test_inheritance_edge_for_decorated_class():
     """Декоратор не ломает сопоставление класса с чанком.
 

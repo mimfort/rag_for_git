@@ -264,6 +264,20 @@ class GraphStore:
             "MATCH (s:Symbol {repo: $repo, branch: $branch, id: id})-[r:IMPLEMENTS]->() DELETE r",
             ids=list(ids), repo=repo, branch=branch)
 
+    def all_node_ids(self, repo: str, *, branch: str = "") -> set[str]:
+        """Все node_id символов (repo, branch) — только идентификаторы, без свойств.
+
+        Дёшево (один индексный скан, никаких обходов рёбер). Нужен self-heal
+        инкрементального парса (:mod:`reviewer.services.graph_sync`) как
+        источник резолвинга баз наследования из НЕизменённых файлов — тех,
+        что не попадают в ``changed_sources`` и потому не видны локальному
+        парсеру.
+        """
+        records, _, _ = self._driver.execute_query(
+            "MATCH (s:Symbol {repo: $repo, branch: $branch}) RETURN s.id AS id",
+            repo=repo, branch=branch)
+        return {r["id"] for r in records}
+
     def count_nodes(self, repo: str, branch: str = "") -> int:
         """Число :Symbol-узлов в (repo, branch)."""
         records, _, _ = self._driver.execute_query(
