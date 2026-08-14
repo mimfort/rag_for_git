@@ -97,6 +97,29 @@ def test_incremental_methods_preserve_incoming_calls(graph_store):
 
 
 @pytest.mark.integration
+def test_incremental_methods_preserve_incoming_implements(graph_store):
+    """Minor N2 (ре-ревью): парный тест к test_incremental_methods_preserve_incoming_calls
+    на живом Neo4j — delete_outgoing_implements сносит только ИСХОДЯЩИЕ IMPLEMENTS
+    патчируемых узлов, входящие (от неизменённых файлов-наследников) уцелевают."""
+    graph_store.clear()
+    # unchanged sibling s.py#Sibling наследует a.py#Base; a.py также содержит
+    # протухшую базу a.py#OldBase, от которой self-heal должен отвязать Base.
+    graph_store.upsert_nodes("a/x", ["a.py#Base", "a.py#OldBase", "s.py#Sibling"])
+    graph_store.upsert_edges("a/x", [("s.py#Sibling", "IMPLEMENTS", "a.py#Base"),
+                                     ("a.py#Base", "IMPLEMENTS", "a.py#OldBase")])
+    # simulate incremental patch of a.py: Base больше не наследует OldBase,
+    # зато сам наследует новый a.py#NewBase.
+    graph_store.delete_outgoing_implements("a/x", ["a.py#Base"])
+    graph_store.upsert_nodes("a/x", ["a.py#NewBase"])
+    graph_store.upsert_edges("a/x", [("a.py#Base", "IMPLEMENTS", "a.py#NewBase")])
+    # входящее ребро от неизменённого файла-наследника уцелело:
+    assert graph_store.implementations_detailed("a/x", ["a.py#Base"]) == [
+        {"id": "s.py#Sibling", "rel": "IMPLEMENTS"}]
+    # исходящее протухшее ребро снесено, свежее исходящее на месте:
+    assert graph_store.bases_of("a/x", ["a.py#Base"]) == {"a.py#Base": ["a.py#NewBase"]}
+
+
+@pytest.mark.integration
 def test_callers_detailed_returns_rel_and_id(graph_store):
     graph_store.init_schema()
     graph_store.clear()
