@@ -60,7 +60,7 @@ def test_local_symbols_do_not_leak_across_documents():
     b = Document(relative_path="b.py")
     b.occurrences.append(_occ("local 0", 5, DEF))    # то же ИМЯ символа в b.py
     b.occurrences.append(_occ("local 0", 6))         # ссылка внутри b.py
-    idx.documents.extend([a, b])
+    idx.documents.extend([b, a])   # b (опр.+ссылка) раньше a — на старом коде a перетирает символ b
 
     resolve = _resolver({"a.py": [("f", 1, 4)],
                          "b.py": [("g", 6, 6), ("h", 7, 9)]})
