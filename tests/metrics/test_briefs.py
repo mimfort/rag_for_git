@@ -1,7 +1,7 @@
 """Unit-тесты парсера корпуса брифов офлайн-харнесса метрик solve-task."""
 import pytest
 
-from eval.solve_task_metrics import briefs
+from reviewer.metrics.brief_quality import briefs
 
 BRIEF_WITH_TOKENS = """# Brief — PRI-42 пример
 

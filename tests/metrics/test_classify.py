@@ -1,7 +1,7 @@
 """Unit-тесты классификатора путей и таксономии промахов."""
 import pytest
 
-from eval.solve_task_metrics import classify
+from reviewer.metrics.brief_quality import classify
 
 
 @pytest.mark.parametrize(

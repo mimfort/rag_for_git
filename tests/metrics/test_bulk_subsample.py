@@ -4,7 +4,7 @@
 попадают все четыре задачи-развёртки, давшие провал core-recall
 (PRI-223 — 25 файлов ядра, PRI-225 — 18, PRI-215 — 14, PRI-196 — 10).
 """
-from eval.solve_task_metrics.recall import BULK_CORE_THRESHOLD, TaskQuality, aggregate
+from reviewer.metrics.brief_quality.recall import BULK_CORE_THRESHOLD, TaskQuality, aggregate
 
 
 def _row(key: str, expected_core: int, core_recall: float | None) -> TaskQuality:
