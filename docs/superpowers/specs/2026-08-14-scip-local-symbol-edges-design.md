@@ -93,8 +93,10 @@ reviewer/app.py#_close_resources  --CALLS-->  tests/web/test_pool.py#test_histor
   и уже переживает апгрейды. Добавляется nullable колонка `graph_edges jsonb`.
   Миграция аддитивная и идемпотентная (`ADD COLUMN IF NOT EXISTS`) — принятый в проекте
   стиль; отсутствие колонки (индекс старой версии) читается как «предыдущего замера нет».
-- **Store:** `set_index_meta` принимает необязательный `graph_edges`;
-  новый `get_graph_edge_counts(repo, ref) -> dict | None` возвращает `None` при
+- **Store:** два новых метода — `set_graph_edge_counts(repo, ref, counts)` и
+  `get_graph_edge_counts(repo, ref) -> dict | None`. Счётчики пишутся отдельным методом,
+  а не параметром `set_index_meta`: SHA записывается до построения графа, а счётчики
+  известны только после него. Чтение возвращает `None` при
   `UndefinedTable`/`UndefinedColumn`/отсутствии записи — тем же fail-soft способом, что
   уже применяют `get_index_meta` и `get_index_meta_row`.
 - **Порог:** просадка типа рёбер более чем на 10 % от предыдущего замера той же ветки, а
