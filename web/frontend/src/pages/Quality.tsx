@@ -40,8 +40,23 @@ export default function Quality() {
       .finally(() => setLoading(false))
   }, [days])
 
-  if (loading) return <div className="page-state">Загрузка…</div>
-  if (error) return <div className="page-state error">{error}</div>
+  if (loading) {
+    return (
+      <div className="state-center">
+        <div className="spinner" />
+        <div className="state-msg">Загрузка…</div>
+      </div>
+    )
+  }
+  if (error) {
+    return (
+      <div className="state-center">
+        <div className="state-icon">⚠</div>
+        <div className="state-msg">Ошибка загрузки</div>
+        <div className="state-detail">{error}</div>
+      </div>
+    )
+  }
   if (!data) return null
 
   const bulk = data.trend.filter((p) => p.expected_core >= data.bulk_threshold)
@@ -54,14 +69,14 @@ export default function Quality() {
   }))
 
   return (
-    <div className="page">
-      <div className="page-head">
-        <h1>Качество брифа solve-task</h1>
-        <div className="period-switch">
+    <div>
+      <div className="page-header">
+        <div className="page-title">Качество брифа solve-task</div>
+        <div className="period-selector">
           {PERIODS.map((period) => (
             <button
               key={period.value}
-              className={period.value === days ? 'active' : ''}
+              className={`period-btn${period.value === days ? ' active' : ''}`}
               onClick={() => setDays(period.value)}
             >
               {period.label}
@@ -70,15 +85,19 @@ export default function Quality() {
         </div>
       </div>
 
-      <div className="kpi-row">
+      <div className="kpi-grid">
         <div className="kpi-card">
           <div className="kpi-label">core-recall, медиана</div>
-          <div className="kpi-value">{fmtPct(data.aggregate.core_recall_median ?? 0)}</div>
+          <div className="kpi-value">
+            {data.aggregate.core_recall_median == null ? '—' : fmtPct(data.aggregate.core_recall_median)}
+          </div>
           <div className="kpi-sub">измерено задач: {data.aggregate.n_measured}</div>
         </div>
         <div className="kpi-card">
           <div className="kpi-label">bulk-подвыборка (ядро ≥ {data.bulk_threshold})</div>
-          <div className="kpi-value">{fmtPct(data.bulk.core_recall_median ?? 0)}</div>
+          <div className="kpi-value">
+            {data.bulk.core_recall_median == null ? '—' : fmtPct(data.bulk.core_recall_median)}
+          </div>
           <div className="kpi-sub">
             задач: {data.bulk.n_measured} · база до family: {fmtPct(BULK_BASELINE)}
           </div>
@@ -115,7 +134,7 @@ export default function Quality() {
           </LineChart>
         </ResponsiveContainer>
         {bulk.length === 0 && (
-          <p className="chart-note">
+          <p style={{ fontSize: 12, color: 'var(--text-muted)', fontFamily: 'JetBrains Mono, monospace', marginTop: 8 }}>
             В окне нет задач с ядром ≥ {data.bulk_threshold}: bulk-линия пуста.
           </p>
         )}
