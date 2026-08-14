@@ -10,6 +10,14 @@ from __future__ import annotations
 import statistics
 from dataclasses import dataclass
 
+BULK_CORE_THRESHOLD = 10
+"""Порог знаменателя ядра, с которого задача считается задачей-развёрткой.
+
+Значение из анализа PRI-246: на нём разделялись выборки (при expected_core >= 10
+медиана predicted 5.0, при expected_core < 10 — 6.0), и в него попадают все
+четыре задачи, давшие провал core-recall.
+"""
+
 
 @dataclass
 class TaskQuality:
@@ -35,6 +43,8 @@ class QualityAggregate:
     core_recall_mean: float | None = None
     raw_recall_median: float | None = None
     denominator_median: float | None = None
+    bulk_core_recall_median: float | None = None
+    bulk_n_measured: int = 0
 
 
 def evaluate_task(task_key: str, predicted: set, expected: set, expected_core: set) -> TaskQuality:
@@ -68,6 +78,10 @@ def aggregate(rows: list) -> QualityAggregate:
         agg.denominator_median = statistics.median(
             [r.expected_core for r in measured]
         )
+    bulk = [r for r in measured if r.expected_core >= BULK_CORE_THRESHOLD]
+    agg.bulk_n_measured = len(bulk)
+    if bulk:
+        agg.bulk_core_recall_median = statistics.median([r.core_recall for r in bulk])
     raw_values = [r.raw_recall for r in rows if r.raw_recall is not None]
     if raw_values:
         agg.raw_recall_median = statistics.median(raw_values)
