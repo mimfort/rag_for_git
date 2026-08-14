@@ -928,6 +928,25 @@ docker compose --profile test rm -sfv paradedb-test neo4j-test
 Не используйте `docker compose --profile test down -v`: test и development services входят в один
 Compose project, поэтому команда может удалить development volumes.
 
+### Метрики этапа solve-task (офлайн)
+
+Офлайн-харнесс считает цену этапа и качество ретрива по накопленному корпусу
+брифов (`docs/superpowers/briefs/`), хранит историю срезов и умеет сравнивать
+прогоны. Не требует Postgres, Neo4j и сети — только локальный git.
+
+```bash
+python -m eval.solve_task_metrics snapshot   # пересчитать метрики, сохранить срез, обновить отчёт
+python -m eval.solve_task_metrics compare    # дельты последнего среза против предыдущего
+python -m eval.solve_task_metrics forecast   # прогноз core-recall с разбросом
+```
+
+Цена считается во взвешенных input-эквивалентах (`output ×5`, `cache-write ×1.25`,
+`cache-read ×0.1`); сырая сумма токенов показывается только справочно — она не
+пропорциональна стоимости. Качество — core-recall на суженном знаменателе;
+задачи без файлов ядра в diff'е учитываются как «нет точки измерения», а не как
+нулевой recall. Срезы лежат в `eval/solve_task_metrics_history.jsonl`, отчёт —
+в `eval/solve_task_metrics_report.md`.
+
 | Область | Ответственность |
 |---|---|
 | `reviewer/index/`, `reviewer/retrieval/` | chunking, vectors/BM25, freshness, reranking |
