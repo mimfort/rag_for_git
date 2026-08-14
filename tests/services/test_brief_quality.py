@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import pytest
 
+from reviewer.metrics.brief_quality import classify, recall
 from reviewer.services.brief_quality import BRIEFS_DIR, find_brief, measure
 
 _BRIEF = """# Brief — PRI-999 Тестовая задача
@@ -178,3 +179,100 @@ def test_brief_in_broken_encoding_is_unreadable(tmp_path):
     )
     assert result.status == "brief_unreadable"
     assert result.brief_path == f"{BRIEFS_DIR}/2026-08-14-PRI-998-cp1251.md"
+
+
+def test_no_brief_on_broken_path_not_raising(tmp_path, monkeypatch):
+    """`find_brief` не бросает даже на битом/недоступном пути клона (finding 7):
+    `is_dir()`/`glob()` могут кинуть OSError/ValueError (null-байт в пути,
+    снятые права на каталог) до начала защищённого чтения брифа."""
+    import pathlib
+
+    def _broken_is_dir(self):
+        raise OSError("permission denied")
+
+    monkeypatch.setattr(pathlib.Path, "is_dir", _broken_is_dir)
+    result = measure(
+        task_key="PRI-999", clone_path=str(tmp_path),
+        changed_paths=["reviewer/web/api.py"], changed_status={"reviewer/web/api.py": "modified"},
+    )
+    assert result.status == "no_brief"
+
+
+def test_online_matches_offline_formula_on_full_diff(tmp_path):
+    """Стык: онлайн (`measure`) и офлайн-формула (`recall.evaluate_task` по
+    правилам `eval/solve_task_metrics/snapshot.py`) обязаны считать один и тот
+    же вход одинаково — иначе линейка «до/после» несравнима (finding 1, 2).
+
+    Вход намеренно содержит то, что раньше терялось в онлайне:
+    - не-`.py` файл (`docs/readme.md`) — должен попасть в `expected`, но не в
+      `expected_core`;
+    - удалённый файл ядра (`reviewer/old/legacy.py`) — офлайн берёт diff целиком
+      (`git diff --name-only`), значит `removed` обязан остаться в знаменателе;
+    - переименованный файл ядра (`reviewer/new/renamed_target.py`) — офлайн
+      проверяет `git cat-file -e <parent>:<path>`, для переименованного пути
+      это False, значит он исключается из `expected_core` как «не существовал
+      до PR».
+
+    `changed_paths` намеренно уже отобранного review-подмножества (без
+    удалённых и не-.py файлов) — измерение обязано игнорировать его в пользу
+    полного `changed_status`.
+    """
+    brief_text = (
+        "# Brief — PRI-999 Тестовая задача\n\n"
+        "## Relevant code\n"
+        "- `reviewer/mcp/service.py:1` — точка съёма\n"
+        "- `reviewer/old/legacy.py:1` — устаревший код\n"
+    )
+    clone = _clone(tmp_path, text=brief_text)
+
+    changed_status = {
+        "reviewer/mcp/service.py": "modified",
+        "reviewer/old/legacy.py": "removed",
+        "reviewer/new/renamed_target.py": "renamed",
+        "docs/readme.md": "modified",
+        "tests/test_x.py": "added",
+    }
+    # То, что реально дошло бы до ревью после _select_changed_files: только
+    # *.py, без removed, без docs/.
+    review_selected_paths = [
+        "reviewer/mcp/service.py",
+        "reviewer/new/renamed_target.py",
+        "tests/test_x.py",
+    ]
+
+    result = measure(
+        task_key="PRI-999",
+        clone_path=clone,
+        changed_paths=review_selected_paths,
+        changed_status=changed_status,
+    )
+
+    # Офлайн-формула (snapshot.py::build_snapshot), воспроизведённая явно на
+    # том же входе: expected — весь diff, expected_core — ядро И существовал
+    # до PR (`status not in {added, renamed, copied}`).
+    predicted = {"reviewer/mcp/service.py", "reviewer/old/legacy.py"}
+    expected_offline = set(changed_status)
+
+    def existed_offline(path: str) -> bool:
+        return changed_status.get(path) not in {"added", "renamed", "copied"}
+
+    expected_core_offline = {
+        path
+        for path in expected_offline
+        if classify.is_core_production_path(path) and existed_offline(path)
+    }
+    offline_row = recall.evaluate_task(
+        "PRI-999", predicted, expected_offline, expected_core_offline
+    )
+
+    assert result.status == "measured"
+    assert result.expected == offline_row.expected == 5
+    assert result.expected_core == offline_row.expected_core == 2
+    assert result.hit_core == offline_row.hit_core == 2
+    assert result.core_recall == pytest.approx(offline_row.core_recall) == pytest.approx(1.0)
+    assert result.raw_recall == pytest.approx(offline_row.raw_recall) == pytest.approx(0.4)
+    assert result.precision == pytest.approx(offline_row.precision) == pytest.approx(1.0)
+    assert set(result.expected_core_paths) == {
+        "reviewer/mcp/service.py",
+        "reviewer/old/legacy.py",
+    }

@@ -6,7 +6,10 @@
 кода делает числа «до/после» сравнимыми.
 
 Ground truth не требует git: PreparedReview.changed_status уже несёт статус
-файла (added/modified/removed), а «existed_before» — это ровно `status != added`.
+файла (added/modified/removed/renamed/copied), а «existed_before» — это
+`status not in {added, renamed, copied}`. Знаменатель `expected` строится по
+ПОЛНОМУ diff'у PR (ключи `changed_status`), а не по подмножеству, отобранному
+на ревью, — иначе числа «до/после» с офлайн-харнессом несравнимы.
 """
 from __future__ import annotations
 
@@ -58,18 +61,26 @@ def find_brief(clone_path: str | None, task_key: str) -> pathlib.Path | None:
     Ключ ищется по границе токена, а не подстрокой: `PRI-24` не должен
     совпадать с брифом `PRI-249`. Такая ошибка тихая — измерение вышло бы
     успешным, но посчитанным по чужому брифу.
+
+    Никогда не бросает: битый или недоступный путь клона (null-байт, снятые
+    права на каталог) даёт `None`, а не исключение наружу — вызывающий код
+    иначе получил бы «молчание» вместо статуса `no_brief`.
     """
     if not clone_path or not task_key:
         return None
     directory = pathlib.Path(clone_path) / BRIEFS_DIR
-    if not directory.is_dir():
+    try:
+        if not directory.is_dir():
+            return None
+        pattern = re.compile(
+            rf"(?<![A-Za-z0-9]){re.escape(task_key)}(?![A-Za-z0-9])", re.IGNORECASE
+        )
+        matches = sorted(
+            path for path in directory.glob("*.md") if pattern.search(path.name)
+        )
+    except (OSError, ValueError):
+        log.warning("Не удалось прочитать каталог брифов %s", directory, exc_info=True)
         return None
-    pattern = re.compile(
-        rf"(?<![A-Za-z0-9]){re.escape(task_key)}(?![A-Za-z0-9])", re.IGNORECASE
-    )
-    matches = sorted(
-        path for path in directory.glob("*.md") if pattern.search(path.name)
-    )
     return matches[-1] if matches else None
 
 
@@ -108,10 +119,23 @@ def measure(
         )
 
     predicted = briefs.extract_section_paths(text, briefs.RELEVANT_HEADER)
-    expected = set(changed_paths)
+    # Знаменатель — ПОЛНЫЙ diff PR, а не отобранное на ревью подмножество:
+    # `changed_status` строится из `vcs.get_changed_files(pr)` целиком (все
+    # расширения, включая удалённые файлы), тогда как `changed_paths` — это
+    # уже отфильтрованный `_select_changed_files` список (только *.py, без
+    # removed, обрезанный `review_max_files`). Офлайн-харнесс считает по
+    # полному diff'у (`git diff --name-only`), поэтому знаменатель здесь
+    # обязан быть тем же множеством — иначе линейки «до/после» несравнимы.
+    # `changed_paths` остаётся подстраховкой: пустой/отсутствующий
+    # `changed_status` не должен обнулять измерение.
+    expected = set(changed_status) or set(changed_paths)
 
     def existed_before(path: str) -> bool:
-        return changed_status.get(path) != "added"
+        # Эмуляция офлайновой проверки `git cat-file -e <parent>:<path>`:
+        # переименованного/скопированного пути в родительском коммите нет,
+        # поэтому и `renamed`, и `copied` — это «не существовал до PR», как
+        # и `added`.
+        return changed_status.get(path) not in {"added", "renamed", "copied"}
 
     expected_core = {
         path
