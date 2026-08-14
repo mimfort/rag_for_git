@@ -9,11 +9,27 @@ FqnResolver = Callable[[str, int], str | None]   # (path, line_1based) -> fqn|No
 def _start_line_1based(occ) -> int:
     return occ.range[0] + 1   # SCIP 0-based -> 1-based
 
+def _is_local(symbol: str) -> bool:
+    """True для файл-скоупного символа SCIP (`local <N>`).
+
+    Такой идентификатор уникален ТОЛЬКО внутри своего документа: `local 0` в
+    двух разных файлах — один и тот же ключ. Глобальная карта символов на них
+    давала кросс-файловую фикцию (половина CALLS-рёбер, PRI-252).
+    """
+    return symbol.startswith("local ")
+
+
 def parse_scip(index, resolve: FqnResolver):
     """index: scip_pb2.Index. Возвращает (nodes:set[str], edges:list[(src,rel,dst)])."""
     nodes: set[str] = set()
     edges: list[tuple[str, str, str]] = []
-    symbol_to_node: dict[str, str] = {}
+    symbol_to_node: dict[str, str] = {}                  # глобальные символы
+    local_to_node: dict[str, dict[str, str]] = {}        # {документ: {символ: node_id}}
+
+    def lookup(path: str, symbol: str) -> str | None:
+        if _is_local(symbol):
+            return local_to_node.get(path, {}).get(symbol)
+        return symbol_to_node.get(symbol)
 
     for doc in index.documents:
         for occ in doc.occurrences:
@@ -21,14 +37,17 @@ def parse_scip(index, resolve: FqnResolver):
                 fqn = resolve(doc.relative_path, _start_line_1based(occ))
                 if fqn:
                     nid = f"{doc.relative_path}#{fqn}"
-                    symbol_to_node[occ.symbol] = nid
+                    if _is_local(occ.symbol):
+                        local_to_node.setdefault(doc.relative_path, {})[occ.symbol] = nid
+                    else:
+                        symbol_to_node[occ.symbol] = nid
                     nodes.add(nid)
 
     for doc in index.documents:
         for occ in doc.occurrences:
             if occ.symbol_roles & DEFINITION:
                 continue
-            callee = symbol_to_node.get(occ.symbol)
+            callee = lookup(doc.relative_path, occ.symbol)
             if callee is None:
                 continue
             caller_fqn = resolve(doc.relative_path, _start_line_1based(occ))
@@ -41,12 +60,12 @@ def parse_scip(index, resolve: FqnResolver):
 
     for doc in index.documents:
         for si in doc.symbols:
-            src = symbol_to_node.get(si.symbol)
+            src = lookup(doc.relative_path, si.symbol)
             if src is None:
                 continue
             for rel in si.relationships:
                 if rel.is_implementation:
-                    dst = symbol_to_node.get(rel.symbol)
+                    dst = lookup(doc.relative_path, rel.symbol)
                     if dst:
                         edges.append((src, "IMPLEMENTS", dst))
 
