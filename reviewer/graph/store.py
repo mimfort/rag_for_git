@@ -142,10 +142,17 @@ class GraphStore:
         Класс и его члены различаются формой node_id: 'path#Class' против
         'path#Class.method'. Вложенные уровни глубже одного не учитываются —
         в этом репозитории их нет.
+
+        Форма node_id — единственный доступный признак: у ``:Symbol`` нет
+        свойства ``kind``. Поэтому вложенный класс ('path#Outer.Inner') попадёт
+        в набор ``Outer`` как метод 'Inner'. Различить их можно было бы только
+        миграцией схемы графа; на практике семейство от этого лишь расширяется
+        на один искусственный метод контракта, а вложенных классов в репозитории
+        нет.
         """
         records, _, _ = self._driver.execute_query(
             "MATCH (s:Symbol {repo: $repo, branch: $branch}) "
-            "WHERE s.id CONTAINS '.' "
+            "WHERE split(s.id, '#')[1] CONTAINS '.' "
             "RETURN s.id AS id",
             repo=repo, branch=branch)
         out: dict[str, set[str]] = {}
