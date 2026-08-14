@@ -790,6 +790,63 @@ def test_implementations_graph_none() -> None:
     assert svc.implementations("a/b", "base.py#Base") == "(граф недоступен)"
 
 
+def test_implementations_skips_family_lookup_for_method_nodes() -> None:
+    """Minor 9: узел-метод (fqn с точкой) не платит за подсчёт семейства."""
+    svc = _make_mcp_service()
+    svc.components.graph.implementations_detailed.return_value = []
+    out = svc.implementations("a/b", "base.py#Base.method")
+    assert out == "(implementations не найдены)"
+    svc.components.graph.class_members.assert_not_called()
+    svc.components.graph.bases_of.assert_not_called()
+
+
+def test_implementations_computes_family_for_class_nodes() -> None:
+    """Узел-класс (fqn без точки) по-прежнему считает семейство при пустых наследниках."""
+    svc = _make_mcp_service()
+    svc.components.graph.implementations_detailed.return_value = []
+    svc.components.graph.bases_of.return_value = {}
+    svc.components.graph.class_members.return_value = {}
+    out = svc.implementations("a/b", "base.py#Base")
+    assert out == "(implementations не найдены)"
+    svc.components.graph.class_members.assert_called_once()
+
+
+def test_family_includes_siblings_via_common_base() -> None:
+    """Important 1: узел-представитель без своих наследников получает сиблингов.
+
+    Воспроизводит основной сценарий провала: ретрив находит адаптер
+    (``AsanaBoard``), у которого нет собственных подклассов, — семейство
+    обязано находиться через сиблингов по общей базе (``RestBoardBase``).
+    """
+    node = "reviewer/tasks/boards/asana.py#AsanaBoard"
+    base = "reviewer/tasks/boards/restbase.py#RestBoardBase"
+    sibling = "reviewer/tasks/boards/trello.py#TrelloBoard"
+
+    def fake_bases_of(repo, ids, *, branch=None):
+        if ids == [node]:
+            return {node: [base]}
+        return {}
+
+    def fake_impl_detailed(repo, ids, *, branch=None):
+        if ids == [node]:
+            return []
+        if ids == [base]:
+            return [{"id": node, "rel": "IMPLEMENTS"}, {"id": sibling, "rel": "IMPLEMENTS"}]
+        return []
+
+    svc = _make_mcp_service()
+    svc.components.graph.bases_of.side_effect = fake_bases_of
+    svc.components.graph.implementations_detailed.side_effect = fake_impl_detailed
+    svc.components.graph.class_members.return_value = {}
+    svc.components.store.fetch_nodes.return_value = [
+        SimpleNamespace(node_id=sibling, path="reviewer/tasks/boards/trello.py",
+                        start_line=1, end_line=2, text="class TrelloBoard(RestBoardBase): ...")]
+
+    out = svc.family("a/b", node)
+    assert "// семейство из 1 членов" in out
+    assert sibling in out
+
+
 def test_definition_uses_graph_then_store() -> None:
     """definition: find_symbol → fetch_nodes → рендер через as_context (с номерами строк)."""
     svc = _make_mcp_service()

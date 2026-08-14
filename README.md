@@ -188,10 +188,15 @@ lets planning and review phases reuse session-less reviewer tools when the base 
 
 > **Reviewer grounding (plan/review, optional, fail-open).** Run
 > `reviewer status /path/to/repo --branch main --json` first. When `drift == 0`, prefer
-> `search_codebase` for cross-file facts and use `callers`, `related_symbols`, `definition`, or
-> `implementations` only for central symbols. The base index does not see uncommitted edits, so
-> read changed files from disk. If reviewer or the index is unavailable, fall back to local
-> search/read tools instead of blocking.
+> `search_codebase` for cross-file facts and use `callers`, `related_symbols`, `definition`,
+> `implementations`, or `family` only for central symbols. The base index does not see
+> uncommitted edits, so read changed files from disk. If reviewer or the index is unavailable,
+> fall back to local search/read tools instead of blocking.
+
+- `family(repo, node_id, branch)` — the family of look-alike symbols ("who else is
+  like this"): inheritance plus structural contract match. For roll-out tasks
+  ("add a field to every provider"), where one file found is a representative of a
+  family of N.
 
 ## How it works
 
@@ -209,8 +214,9 @@ PR → prepare_review → base + overlay retrieval → skill analysis
 - **Overlay.** Changed PR files use an ephemeral `pr:N` ref. Retrieval takes unchanged files from
   base and changed files from overlay.
 - **Code graph.** Neo4j nodes use `node_id = path#fqn`, where `fqn` is the fully qualified name.
-  SCIP, an external type-aware code indexer, provides `CALLS` and `IMPLEMENTS`; `auto` falls back
-  to tree-sitter `CALLS` when SCIP is unavailable.
+  SCIP, an external type-aware code indexer, provides `CALLS` and method-level `IMPLEMENTS`; `auto`
+  falls back to tree-sitter `CALLS` plus class-level `IMPLEMENTS` (from syntax) when SCIP is
+  unavailable.
 - **Grounded publishing.** Findings must quote real changed code. GitHub suggestions are emitted
   only when the replacement is safely applyable on the RIGHT side of the diff.
 - **Idempotency.** Hidden fingerprints prevent reposting the same finding. Overlay/session cleanup
@@ -563,7 +569,7 @@ The server-side flow is **store-first**:
 2. Skills call `get_task(key, project=...)`; linked tasks/PRs/code come from task context tools.
 3. Client models never enumerate the provider directly and never send credentials.
 
-The MCP server currently exposes **40 tools**, including the native-subtask batch operation.
+The MCP server currently exposes **41 tools**, including the native-subtask batch operation.
 
 Legacy aliases remain **legacy metadata for older clients** for one compatibility window:
 `TASK_BOARD_API_KEY → YOUGILE_API_KEY` and
@@ -895,8 +901,8 @@ errors are reported without preventing the process from starting where fail-soft
 ### Known limitations
 
 - Python is the supported analysis language; SCIP gives the most accurate graph.
-- Without SCIP, tree-sitter provides a useful but name-based `CALLS` graph and no precise
-  `IMPLEMENTS` coverage.
+- Without SCIP, tree-sitter provides a useful but name-based `CALLS` graph plus class-level
+  `IMPLEMENTS` from syntax; method-level override `IMPLEMENTS` coverage stays SCIP-only.
 - GitHub permits inline comments only on commentable diff lines; other findings appear in summary.
 - Full indexing can hit Voyage free-tier limits; updates are incremental and reuse embeddings.
 - The base index is branch-scoped and blind to uncommitted working-tree changes.

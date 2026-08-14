@@ -135,6 +135,8 @@ def build_snapshot(
             "denominator_median": aggregate.denominator_median,
             "n_measured": aggregate.n_measured,
             "no_measurement": aggregate.no_measurement,
+            "bulk_core_recall_median": aggregate.bulk_core_recall_median,
+            "bulk_n_measured": aggregate.bulk_n_measured,
         },
         "misses": dict(misses),
     }

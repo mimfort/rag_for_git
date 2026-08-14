@@ -372,6 +372,20 @@ def create_server(service: MCPReviewService) -> FastMCP:
         return service.implementations(repo, node_id, branch)
 
     @mcp.tool()
+    def family(repo: str, node_id: str, branch: str | None = None) -> str:
+        """Symbols of the same family as node_id 'path#fqn' — "who else is like
+        this" over the base index (no PR session). Combines two signals:
+        inheritance (subclasses/siblings via IMPLEMENTS) and structural contract
+        match (full coverage of a Protocol's method set, inherited methods
+        included — Protocol implementers have no inheritance edges by design).
+        The answer always names which signals fired: a silent empty result is
+        indistinguishable from "no family exists" and is never returned.
+        Use it for bulk tasks ("add a field to every provider") where one hit
+        is a single member of a family of N. branch defaults to the primary
+        tracked branch."""
+        return service.family(repo, node_id, branch)
+
+    @mcp.tool()
     def definition(repo: str, symbol: str, branch: str | None = None) -> str:
         """Find a symbol definition over the base index (graph -> index -> semantic
         fallback), no PR session. branch defaults to the primary tracked branch."""

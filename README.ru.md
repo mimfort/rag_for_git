@@ -191,10 +191,15 @@ base index.
 
 > **Грунтовка reviewer (план/ревью, опционально, fail-open).** Сначала запустите
 > `reviewer status /path/to/repo --branch main --json`. При `drift == 0` используйте
-> `search_codebase` для кросс-файловых фактов, а `callers`, `related_symbols`, `definition` или
-> `implementations` — только для центральных символов. Base index не видит незакоммиченные правки,
-> поэтому изменённые файлы читайте с диска. Если reviewer или индекс недоступен, откатитесь к
-> локальным search/read tools и не блокируйте работу.
+> `search_codebase` для кросс-файловых фактов, а `callers`, `related_symbols`, `definition`,
+> `implementations` или `family` — только для центральных символов. Base index не видит
+> незакоммиченные правки, поэтому изменённые файлы читайте с диска. Если reviewer или индекс
+> недоступен, откатитесь к локальным search/read tools и не блокируйте работу.
+
+- `family(repo, node_id, branch)` — семейство однотипных символов («кто ещё такой
+  же»): наследование + структурное соответствие контракту. Для задач-развёрток
+  («добавить поле во все провайдеры»), где один найденный файл — представитель
+  семейства из N.
 
 ## Как это работает
 
@@ -212,8 +217,9 @@ PR → prepare_review → base + overlay retrieval → skill analysis
 - **Overlay.** Изменённые файлы PR используют эфемерный ref `pr:N`. Retrieval берёт неизменённые
   файлы из base, а изменённые — из overlay.
 - **Code graph.** Узлы Neo4j используют `node_id = path#fqn`, где `fqn` — fully qualified name.
-  SCIP, внешний type-aware индексатор кода, даёт `CALLS` и `IMPLEMENTS`; режим `auto`
-  откатывается к tree-sitter `CALLS`, когда SCIP недоступен.
+  SCIP, внешний type-aware индексатор кода, даёт `CALLS` и метод-уровневый `IMPLEMENTS`; режим
+  `auto` откатывается к tree-sitter `CALLS` и class-level `IMPLEMENTS` из синтаксиса, когда SCIP
+  недоступен.
 - **Grounded publishing.** Finding обязан цитировать реальный изменённый код. GitHub suggestion
   создаётся только для безопасной замены в RIGHT-части диффа.
 - **Idempotency.** Скрытые fingerprint не дают повторно опубликовать тот же finding. Overlay и
@@ -569,7 +575,7 @@ Server-side workflow — **store-first**:
    context tools.
 3. Client models не перечисляют provider напрямую и не передают credentials.
 
-MCP server сейчас предоставляет **40 tools**, включая batch-операцию нативных подзадач.
+MCP server сейчас предоставляет **41 tools**, включая batch-операцию нативных подзадач.
 
 Legacy aliases остаются как **legacy metadata for older clients** на одно compatibility window:
 `TASK_BOARD_API_KEY → YOUGILE_API_KEY` и
@@ -885,7 +891,8 @@ REVIEWER_WEB_PORT=8080 REVIEWER_WEB_PUBLISH_PORT=18000 \
 ### Известные ограничения
 
 - Поддерживаемый язык анализа — Python; наиболее точный graph даёт SCIP.
-- Без SCIP tree-sitter строит полезный, но name-based `CALLS` graph без точного `IMPLEMENTS`.
+- Без SCIP tree-sitter строит полезный, но name-based `CALLS` graph плюс class-level `IMPLEMENTS`
+  из синтаксиса; метод-уровневый override `IMPLEMENTS` остаётся только за SCIP.
 - GitHub принимает inline-комментарии только на commentable diff lines; остальные findings идут в
   summary.
 - Полная индексация может упереться в free-tier limits Voyage; updates incremental и повторно

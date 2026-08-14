@@ -1793,7 +1793,9 @@ class MCPReviewService:
         """Кто реализует/наследует символ node_id ('path#fqn') — входящие
         IMPLEMENTS, без PR-сессии. Класс → подклассы; метод → override-ы.
         На элемент: file:line + строка определения + [IMPLEMENTS].
-        Точны после полного `reviewer index` с SCIP."""
+        Наследование классов приходит из tree-sitter (SCIP теряет его у
+        forward-referenced классов); метод-уровневые override-ы — из SCIP.
+        Пустой ответ при существующем семействе помечен явно (см. тул family)."""
         rb = self._resolve_repo_branch(repo, branch)
         if isinstance(rb, str):
             return rb
@@ -1807,10 +1809,157 @@ class MCPReviewService:
         except Exception:
             log.warning("implementations: сбой графа", exc_info=True)
             return "(implementations не найдены)"
+        if not found:
+            # Семейство считается только на узле-классе (fqn без точки):
+            # для узла-метода _compute_family всё равно тянет ВСЕ классы
+            # репо/ветки, а override без наследников — самый частый исход
+            # этого тула, платить за него на каждом вызове нельзя (Minor 9).
+            fqn = node_id.partition("#")[2]
+            size = 0
+            if "." not in fqn:
+                try:
+                    family = self._compute_family(repo, node_id, resolved)
+                    size = len(family.members)
+                except Exception:
+                    log.warning("implementations: подсчёт семейства не удался", exc_info=True)
+                    size = 0
+            return self._implementations_empty_message(size)
         return format_neighbors(
             found, store=self.components.store, repo=repo, branch=resolved,
             overlay_ref=None, changed_paths=[], empty_msg="(implementations не найдены)",
             cap=cl.graph.callers_topk)
+
+    def family(self, repo: str, node_id: str,
+               branch: str | None = None) -> str:
+        """Семейство однотипных символов: «кто ещё такой же» для node_id.
+
+        Два сигнала: наследование (подклассы и сиблинги по IMPLEMENTS) и
+        структурное соответствие контракту (полное покрытие набора методов
+        с учётом унаследованных — так находятся реализации typing.Protocol,
+        у которых рёбер наследования нет и быть не может).
+
+        Ответ всегда называет сработавшие сигналы: молчаливая пустота
+        неотличима от «семейства нет» и потому запрещена.
+        """
+        rb = self._resolve_repo_branch(repo, branch)
+        if isinstance(rb, str):
+            return rb
+        repo, resolved = rb
+        if self.components.graph is None:
+            return "(граф недоступен)"
+        cl = self._resolve_context_limits(repo, resolved)
+        try:
+            result = self._compute_family(repo, node_id, resolved)
+        except Exception:
+            log.warning("family: сбой графа", exc_info=True)
+            return "(семейство не определено: сбой графа)"
+        members = self._family_order(result.members)
+        header = self._family_header(result)
+        if not result.members:
+            return header
+        body = format_neighbors(
+            [{"id": m, "rel": "FAMILY"} for m in members],
+            store=self.components.store, repo=repo, branch=resolved,
+            overlay_ref=None, changed_paths=[],
+            empty_msg="(семейство пусто)", cap=cl.graph.callers_topk)
+        return f"{header}\n{body}"
+
+    def _compute_family(self, repo: str, node_id: str, branch: str):
+        """Собрать семейство узла из обоих сигналов.
+
+        inheritance = прямые наследники узла (входящие ``IMPLEMENTS``) ∪
+        сиблинги — остальные наследники баз узла (исходящие ``IMPLEMENTS`` из
+        узла, затем входящие в каждую базу). Без сиблингов узел-представитель
+        семейства (то, что реально даёт ретрив — ``asana.py#AsanaBoard``, а
+        не ``base.py#TaskBoardProvider``) отдавал бы пустой сигнал: у
+        конкретного адаптера наследников нет, они есть только у контракта.
+
+        Цена: ``class_members`` и ``bases_of(list(own))`` тянут ВСЕ классы
+        репо/ветки — структурное сопоставление по определению глобально,
+        кандидатом может быть любой класс. Отсюда же дополнительные вызовы
+        ``implementations_detailed`` на пустом ответе ``implementations``:
+        тот считает прямых наследников сам, а сюда приходит за семейством.
+        Все запросы дешевле любого обращения к Voyage и на порядок дешевле
+        полноты ответа, ради которой задача и делалась; кэш не вводится, пока
+        не появится замер, его оправдывающий.
+        """
+        from reviewer.graph.family import (
+            contract_too_thin,
+            effective_methods,
+            merge_signals,
+            structural_matches,
+        )
+
+        graph = self.components.graph
+        inheritance = [n["id"] for n in graph.implementations_detailed(
+            repo, [node_id], branch=branch)]
+        node_bases = graph.bases_of(repo, [node_id], branch=branch).get(node_id, [])
+        if node_bases:
+            siblings = [n["id"] for n in graph.implementations_detailed(
+                repo, node_bases, branch=branch) if n["id"] != node_id]
+            inheritance = sorted(set(inheritance) | set(siblings))
+        own = graph.class_members(repo, branch=branch)
+        bases = graph.bases_of(repo, list(own), branch=branch)
+        contract_methods = effective_methods(node_id, own, bases)
+        structural_skipped = contract_too_thin(contract_methods)
+        if structural_skipped:
+            structural: list[str] = []
+        else:
+            candidates = {
+                cls: effective_methods(cls, own, bases) for cls in own
+            }
+            structural = structural_matches(node_id, contract_methods, candidates)
+        return merge_signals(node_id, inheritance, structural,
+                             structural_skipped=structural_skipped)
+
+    @staticmethod
+    def _family_order(members: list[str]) -> list[str]:
+        """Продовые члены вперёд, тестовые дубли — в хвост.
+
+        Тестовые фейки реализуют тот же контракт и потому структурно
+        неотличимы от продовых: на живом графе ``TaskBoardProvider`` дал
+        11 адаптеров и 11 тестовых дублей. Отбрасывать их нельзя (они
+        законные члены семейства, и по ним видно, как контракт мокают),
+        но при обрезке по cap первыми должны выживать продовые.
+        """
+        from reviewer.retrieval.retriever import _is_test_path
+
+        prod = [m for m in members if not _is_test_path(m.partition("#")[0])]
+        tests = [m for m in members if _is_test_path(m.partition("#")[0])]
+        return prod + tests
+
+    @classmethod
+    def _family_header(cls, result) -> str:
+        """Шапка ответа: сигналы, полнота и доля тестовых дублей.
+
+        ``result.complete is False`` не только про пустой ответ — тот же
+        флаг стоит, когда структурный сигнал сознательно не применялся
+        (тонкий контракт, см. ``contract_too_thin``); в этом случае членов
+        не быть не может, но шапка обязана назвать причину неполноты явно.
+        """
+        if not result.members:
+            return f"(семейство не найдено; {result.note})"
+        signals = ", ".join(result.signals)
+        from reviewer.retrieval.retriever import _is_test_path
+
+        n_tests = sum(1 for m in result.members
+                      if _is_test_path(m.partition("#")[0]))
+        suffix = f"; из них тестовых дублей: {n_tests}" if n_tests else ""
+        incomplete = f"; {result.note}" if not result.complete and result.note else ""
+        return (f"// семейство из {len(result.members)} членов "
+                f"(сигналы: {signals}{suffix}){incomplete}")
+
+    @staticmethod
+    def _implementations_empty_message(family_size: int) -> str:
+        """Сообщение при отсутствии прямых наследников.
+
+        Если семейство всё же существует, молчать нельзя: пустой ответ
+        неотличим от «семейства нет» и уводит агента в ложный вывод.
+        """
+        if family_size > 0:
+            return (f"(прямых наследников нет, но семейство из {family_size} "
+                    f"членов существует — получить его: тул family)")
+        return "(implementations не найдены)"
 
     def get_file_skeletons(
         self, repo: str, paths: list[str], branch: str | None = None

@@ -66,3 +66,43 @@ def test_build_with_scip_real(tmp_path):
     assert "a.py#f" in nodes
     assert "b.py#g" in nodes
     assert ("a.py#f", "CALLS", "b.py#g") in edges
+
+
+@pytest.mark.integration
+@pytest.mark.skipif(shutil.which("scip-python") is None,
+                    reason="scip-python не установлен")
+def test_scip_still_drops_forward_referenced_class_symbol(tmp_path):
+    """Фиксирует дефект scip-python 0.6.6, ради которого наследование берётся
+    из tree-sitter: для класса, упомянутого выше своего определения,
+    SymbolInformation не эмитится вовсе.
+
+    Если будущая версия начнёт его эмитить — тест покраснеет, и это сигнал
+    пересмотреть комментарии, а не поломка: слияние в build_with_scip
+    дедуплицирует рёбра и останется корректным.
+    """
+    import subprocess
+
+    from reviewer.graph.scip_pb2 import Index
+
+    pkg = tmp_path / "pkg"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("")
+    (pkg / "base.py").write_text("class Base:\n    pass\n")
+    (pkg / "adapter.py").write_text(
+        "from pkg.base import Base\n\n\n"
+        "def spec():\n    return Adapter\n\n\n"
+        "class Adapter(Base):\n    pass\n"
+    )
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname = "probe"\nversion = "0.0.1"\n'
+    )
+    subprocess.run(["scip-python", "index", ".", "--project-name=probe"],
+                   cwd=tmp_path, check=True, capture_output=True)
+
+    idx = Index()
+    idx.ParseFromString((tmp_path / "index.scip").read_bytes())
+    symbols = {
+        si.symbol for doc in idx.documents for si in doc.symbols
+        if doc.relative_path.endswith("adapter.py")
+    }
+    assert not [s for s in symbols if s.endswith("/Adapter#")]

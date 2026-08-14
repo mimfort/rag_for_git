@@ -5,7 +5,7 @@
 
 ## Что внутри
 
-- **MCP-сервер** `reviewer` (`reviewer-mcp`, 40 тул, включая generic `create_subtasks`) — конфиг в
+- **MCP-сервер** `reviewer` (`reviewer-mcp`, 41 тул, включая generic `create_subtasks`) — конфиг в
   `.mcp.json` для Claude Code.
 - Каждый каталог `plugin/skills/` с файлом `SKILL.md` регистрируется в namespace `rag-reviewer`.
   `_common` и вложенные references доставляются как вспомогательные файлы, но не регистрируются как

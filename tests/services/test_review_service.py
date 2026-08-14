@@ -443,11 +443,17 @@ def test_prepare_patches_graph_incrementally_on_drift(
             self.symbols_calls.append((repo, list(paths)))
             return set()
 
+        def all_node_ids(self, repo, *, branch=""):
+            return set()
+
         def delete_symbols(self, repo, ids, *, branch=""):
             pass
 
         def delete_outgoing_calls(self, repo, ids, *, branch=""):
             self.delete_outgoing_calls_log.append((repo, list(ids)))
+
+        def delete_outgoing_implements(self, repo, ids, *, branch=""):
+            pass
 
         def upsert_nodes(self, repo, ids, *, branch=""):
             self.upsert_nodes_calls.append((repo, list(ids)))
@@ -659,10 +665,16 @@ def test_prepare_graph_sync_respects_ignore(
         def symbols_for_paths(self, repo, paths, *, branch=""):
             return set()
 
+        def all_node_ids(self, repo, *, branch=""):
+            return set()
+
         def delete_symbols(self, repo, ids, *, branch=""):
             pass
 
         def delete_outgoing_calls(self, repo, ids, *, branch=""):
+            pass
+
+        def delete_outgoing_implements(self, repo, ids, *, branch=""):
             pass
 
         def upsert_nodes(self, repo, ids, *, branch=""):

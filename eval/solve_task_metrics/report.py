@@ -59,6 +59,9 @@ def render(snapshot: dict, rows: list) -> str:
         f"{quality['no_measurement']} — не считаются нулевым recall",
         f"- Медианный размер знаменателя ядра: "
         f"{_num(quality['denominator_median'])}",
+        f"- core-recall на bulk-подвыборке (ядро ≥ 10 файлов): "
+        f"медиана {_pct(quality.get('bulk_core_recall_median'))}, "
+        f"N={quality.get('bulk_n_measured', 0)}",
         f"- Сырой recall (справочно, измеряет выбор знаменателя, не качество "
         f"ретрива): медиана {_pct(quality['raw_recall_median'])}",
         "",

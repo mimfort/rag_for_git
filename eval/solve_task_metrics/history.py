@@ -18,6 +18,7 @@ POLARITY = {
     "cost.inflation": "neutral",
     "quality.core_recall_median": "higher_better",
     "quality.core_recall_mean": "higher_better",
+    "quality.bulk_core_recall_median": "higher_better",
     "quality.raw_recall_median": "neutral",
     "quality.denominator_median": "neutral",
     "quality.no_measurement": "lower_better",
@@ -39,6 +40,7 @@ TREND_METRICS = (
     ("cost.weighted_median", "цена этапа"),
     ("endtoend.weighted_median", "цена «под ключ»"),
     ("quality.core_recall_median", "core-recall"),
+    ("quality.bulk_core_recall_median", "core-recall (bulk)"),
     ("quality.n_measured", "измерено"),
     ("corpus.briefs", "брифов"),
 )

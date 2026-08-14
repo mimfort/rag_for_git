@@ -99,6 +99,27 @@ def test_trend_marks_absent_metric_as_none_not_zero():
     assert rows[0]["commit"] == "aaa"
 
 
+def test_bulk_core_recall_is_higher_better_and_trended():
+    """Minor 8: bulk-метрика зарегистрирована в реестре полярности и тренда.
+
+    Без этого `compare` печатал бы рост как нейтральный «рост», а не
+    «улучшение», и метрика не показывалась бы в тренде — критерий 4 требует
+    подтверждать рост именно через сравнение срезов.
+    """
+    old = {"taken_at": "t1", "commit": "aaa", "window_mode": "sealed",
+           "quality": {"bulk_core_recall_median": 0.37}}
+    new = {"taken_at": "t2", "commit": "bbb", "window_mode": "sealed",
+           "quality": {"bulk_core_recall_median": 0.56}}
+
+    deltas = {d.metric: d for d in history.diff_snapshots(old, new)}
+    assert deltas["quality.bulk_core_recall_median"].direction == "улучшение"
+
+    trend_keys = [key for key, _ in history.TREND_METRICS]
+    assert "quality.bulk_core_recall_median" in trend_keys
+    rows = history.trend([old, new])
+    assert rows[1]["values"]["quality.bulk_core_recall_median"] == 0.56
+
+
 def test_select_pair_walks_back_and_refuses_short_history():
     snapshots = [{"taken_at": "t1"}, {"taken_at": "t2"}, {"taken_at": "t3"}]
 

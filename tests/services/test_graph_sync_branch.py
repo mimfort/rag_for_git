@@ -9,10 +9,16 @@ class FakeGraph:
     def symbols_for_paths(self, repo, paths, *, branch=""):
         return set()
 
+    def all_node_ids(self, repo, *, branch=""):
+        return set()
+
     def delete_symbols(self, repo, ids, *, branch=""):
         pass
 
     def delete_outgoing_calls(self, repo, ids, *, branch=""):
+        pass
+
+    def delete_outgoing_implements(self, repo, ids, *, branch=""):
         pass
 
     def upsert_nodes(self, repo, ids, *, branch=""):
