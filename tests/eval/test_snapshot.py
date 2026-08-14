@@ -81,3 +81,32 @@ def test_build_snapshot_brief_without_key_not_in_quality(tmp_path):
 
     assert rows == []
     assert snap["corpus"]["with_ground_truth"] == 0
+
+
+def test_build_snapshot_counts_one_key_once(tmp_path):
+    """Два брифа с одним ключом — одна задача, а не двойной вес в агрегате."""
+    briefs_dir = tmp_path / "briefs"
+    briefs_dir.mkdir()
+    body = (
+        "# Бриф — PRI-1\n\n## Relevant code\n- `reviewer/a.py:1` — деталь\n"
+    )
+    (briefs_dir / "2026-01-01-PRI-1-first.md").write_text(body, encoding="utf-8")
+    (briefs_dir / "2026-01-02-PRI-1-second.md").write_text(body, encoding="utf-8")
+
+    def fake_git(args):
+        if args[0] == "log":
+            return "aaa111 Merge pull request #1 from o/b\n"
+        if args[0] == "diff":
+            return "reviewer/a.py\n"
+        return ""
+
+    snap, rows = snapshot.build_snapshot(
+        briefs_dir=briefs_dir,
+        run_git=fake_git,
+        commit="deadbee",
+        taken_at="2026-01-03T00:00:00+00:00",
+    )
+
+    assert snap["corpus"]["briefs"] == 2
+    assert snap["corpus"]["with_key"] == 1
+    assert len(rows) == 1

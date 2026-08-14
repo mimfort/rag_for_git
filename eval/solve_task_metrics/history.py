@@ -21,12 +21,27 @@ POLARITY = {
     "quality.raw_recall_median": "neutral",
     "quality.denominator_median": "neutral",
     "quality.no_measurement": "lower_better",
+    "quality.n_measured": "higher_better",
     "corpus.briefs": "neutral",
     "corpus.with_tokens": "neutral",
+    "corpus.with_key": "neutral",
     "corpus.with_ground_truth": "neutral",
+    "corpus.sync_merges_skipped": "neutral",
+    "corpus.diff_failures": "lower_better",
     "endtoend.measured": "higher_better",
     "endtoend.weighted_median": "lower_better",
 }
+
+
+# Метрики, которые показывает тренд: то, ради чего харнесс запускают.
+# Пара (ключ, человекочитаемая подпись).
+TREND_METRICS = (
+    ("cost.weighted_median", "цена этапа"),
+    ("endtoend.weighted_median", "цена «под ключ»"),
+    ("quality.core_recall_median", "core-recall"),
+    ("quality.n_measured", "измерено"),
+    ("corpus.briefs", "брифов"),
+)
 
 
 @dataclass
@@ -75,6 +90,37 @@ def _flatten(snapshot: dict) -> dict:
             if isinstance(item, (int, float)) and not isinstance(item, bool):
                 flat[f"{section}.{name}"] = item
     return flat
+
+
+def trend(snapshots: list, metrics=TREND_METRICS) -> list:
+    """Строки тренда по срезам: метаданные плюс значения ключевых метрик.
+
+    Отсутствующая в срезе метрика даёт None, а не ноль: старый срез, снятый до
+    появления метрики, не «показал нулевое значение» — он её не мерил.
+    """
+    rows: list = []
+    for snapshot in snapshots:
+        flat = _flatten(snapshot)
+        rows.append(
+            {
+                "taken_at": snapshot.get("taken_at"),
+                "commit": snapshot.get("commit"),
+                "window_mode": snapshot.get("window_mode"),
+                "values": {key: flat.get(key) for key, _ in metrics},
+            }
+        )
+    return rows
+
+
+def select_pair(snapshots: list, back: int = 1) -> tuple:
+    """Пара (старый, новый) для сравнения: последний срез против среза на `back` шагов назад.
+
+    Returns:
+        (old, new); (None, None), если истории не хватает на такой отступ.
+    """
+    if back < 1 or len(snapshots) < back + 1:
+        return None, None
+    return snapshots[-1 - back], snapshots[-1]
 
 
 def _direction(metric: str, delta: float) -> str:

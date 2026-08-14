@@ -945,9 +945,10 @@ history of snapshots and compares runs. No Postgres, Neo4j or network needed —
 local git only.
 
 ```bash
-python -m eval.solve_task_metrics snapshot   # recompute metrics, store a snapshot, refresh the report
-python -m eval.solve_task_metrics compare    # deltas of the latest snapshot against the previous one
-python -m eval.solve_task_metrics forecast   # core-recall forecast with a spread
+python -m eval.solve_task_metrics snapshot            # recompute metrics, store a snapshot, refresh the report
+python -m eval.solve_task_metrics stats --last 10     # trend of the latest snapshots as a table, no recompute
+python -m eval.solve_task_metrics compare --back 1    # deltas of the latest snapshot against N steps back
+python -m eval.solve_task_metrics forecast            # core-recall forecast with a spread
 ```
 
 Cost is measured in weighted input-equivalents (`output ×5`, `cache-write ×1.25`,

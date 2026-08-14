@@ -61,3 +61,10 @@ def test_describe_of_insufficient_bucket_says_so():
     item = {i.label: i for i in forecast.build([_row(12, 0.3)])}["10+"]
 
     assert "недостаточно данных" in forecast.describe(item)
+
+
+def test_bucket_label_rejects_nonpositive_core_size():
+    """Знаменатель < 1 — не маленькая задача, а отсутствие точки измерения."""
+    for size in (0, -5):
+        with pytest.raises(ValueError):
+            forecast.bucket_label(size)

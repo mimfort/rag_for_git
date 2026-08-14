@@ -107,3 +107,17 @@ def test_path_existed_without_parent_assumes_existing():
         raise AssertionError("git не должен вызываться без parent_ref")
 
     assert gt.path_existed(None, "reviewer/a.py", fake_git) is True
+
+
+def test_collect_counts_diff_failures():
+    """Сбой diff'а настоящего PR-мержа считается, а не теряется молча."""
+
+    def fake_git(args):
+        if args[0] == "log":
+            return "aaa111 Merge pull request #1 from o/b\n"
+        raise gt.GitError("объект недоступен")
+
+    truth = gt.collect("PRI-1", fake_git)
+
+    assert truth.changed == set()
+    assert truth.diff_failures == 1

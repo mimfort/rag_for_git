@@ -159,8 +159,8 @@ class BriefRecord:
     filename: str
     task_key: str | None
     token_block: TokenBlock | None
-    relevant_paths: set
-    test_paths: set
+    relevant_paths: set[str]
+    test_paths: set[str]
 
 
 def load_briefs(briefs_dir: pathlib.Path) -> list[BriefRecord]:

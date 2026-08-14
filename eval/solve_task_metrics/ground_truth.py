@@ -75,7 +75,12 @@ def merge_rows(task_key: str, run_git: GitRunner) -> list:
 
 
 def changed_files(sha: str, run_git: GitRunner) -> set:
-    """Файлы merge-коммита по diff первого родителя (реальный контент PR)."""
+    """Файлы merge-коммита по diff первого родителя (реальный контент PR).
+
+    Сбой diff'а даёт пустое множество: у задачи просто не окажется ground truth.
+    Число таких сбоев считает `collect` — молчаливая потеря знаменателя иначе
+    неотличима от «PR ничего не менял».
+    """
     try:
         out = run_git(["diff", "--name-only", f"{sha}^1", sha])
     except GitError:
@@ -107,19 +112,24 @@ class TaskGroundTruth:
     sync_merges_skipped: int = 0
     changed: set = field(default_factory=set)
     parent_ref: str | None = None
+    diff_failures: int = 0
 
 
 def collect(task_key: str, run_git: GitRunner) -> TaskGroundTruth:
     """Собрать ground truth задачи: PR-мержи и объединение их изменённых файлов."""
     shas, skipped = filter_pr_merges(merge_rows(task_key, run_git))
     changed: set = set()
+    failures = 0
     for sha in shas:
-        changed |= changed_files(sha, run_git)
-    result = TaskGroundTruth(
+        files = changed_files(sha, run_git)
+        if not files:
+            failures += 1
+        changed |= files
+    return TaskGroundTruth(
         task_key=task_key,
         merge_shas=shas,
         sync_merges_skipped=skipped,
         changed=changed,
+        parent_ref=f"{shas[0]}^1" if shas else None,
+        diff_failures=failures,
     )
-    result.parent_ref = f"{shas[0]}^1" if shas else None
-    return result

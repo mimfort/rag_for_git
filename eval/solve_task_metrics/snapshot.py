@@ -38,7 +38,15 @@ def build_snapshot(
     """
     records = briefs.load_briefs(briefs_dir)
     with_tokens = [r for r in records if r.token_block]
-    with_key = [r for r in records if r.task_key]
+    # Один ключ = одна задача: два брифа с одним ключом (переписанный бриф,
+    # вторая итерация) иначе дали бы задаче двойной вес в агрегате.
+    seen_keys: set = set()
+    with_key: list = []
+    for record in records:
+        if not record.task_key or record.task_key in seen_keys:
+            continue
+        seen_keys.add(record.task_key)
+        with_key.append(record)
 
     weighted_values: list = []
     raw_values: list = []
@@ -54,25 +62,36 @@ def build_snapshot(
     report_rows: list = []
     misses: Counter = Counter()
     sync_skipped = 0
+    diff_failures = 0
 
     for record in with_key:
         truth = ground_truth.collect(record.task_key, run_git)
         sync_skipped += truth.sync_merges_skipped
+        diff_failures += truth.diff_failures
         if not truth.changed:
             continue
+        # Один путь проверяется дважды — как кандидат в ядро и как промах;
+        # кэш на задачу убирает лишний git cat-file на каждый такой файл.
+        existed_cache: dict = {}
+
+        def existed(path: str, _truth=truth, _cache=existed_cache) -> bool:
+            if path not in _cache:
+                _cache[path] = ground_truth.path_existed(
+                    _truth.parent_ref, path, run_git
+                )
+            return _cache[path]
+
         expected_core = {
             path
             for path in truth.changed
-            if classify.is_core_production_path(path)
-            and ground_truth.path_existed(truth.parent_ref, path, run_git)
+            if classify.is_core_production_path(path) and existed(path)
         }
         row = recall.evaluate_task(
             record.task_key, record.relevant_paths, truth.changed, expected_core
         )
         quality_rows.append(row)
         for missed in truth.changed - record.relevant_paths:
-            existed = ground_truth.path_existed(truth.parent_ref, missed, run_git)
-            misses[classify.categorize_miss(missed, existed)] += 1
+            misses[classify.categorize_miss(missed, existed(missed))] += 1
         report_rows.append(
             {
                 "key": row.task_key,
@@ -102,6 +121,7 @@ def build_snapshot(
             "with_key": len(with_key),
             "with_ground_truth": len(quality_rows),
             "sync_merges_skipped": sync_skipped,
+            "diff_failures": diff_failures,
         },
         "cost": {
             "weighted_median": weighted_median,

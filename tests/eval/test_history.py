@@ -79,3 +79,30 @@ def test_diff_flags_window_mode_change():
     assert deltas["window_mode"].old == "legacy"
     assert deltas["window_mode"].new == "sealed"
     assert deltas["window_mode"].direction == "несопоставимо"
+
+
+def test_trend_marks_absent_metric_as_none_not_zero():
+    """Срез, снятый до появления метрики, её не мерил — это не ноль."""
+    old = {"taken_at": "t1", "commit": "aaa", "window_mode": "sealed", "cost": {"weighted_median": 100.0}}
+    new = {
+        "taken_at": "t2",
+        "commit": "bbb",
+        "window_mode": "sealed",
+        "cost": {"weighted_median": 90.0},
+        "endtoend": {"weighted_median": 5.0},
+    }
+
+    rows = history.trend([old, new])
+
+    assert rows[0]["values"]["endtoend.weighted_median"] is None
+    assert rows[1]["values"]["endtoend.weighted_median"] == 5.0
+    assert rows[0]["commit"] == "aaa"
+
+
+def test_select_pair_walks_back_and_refuses_short_history():
+    snapshots = [{"taken_at": "t1"}, {"taken_at": "t2"}, {"taken_at": "t3"}]
+
+    assert history.select_pair(snapshots, 1) == (snapshots[1], snapshots[2])
+    assert history.select_pair(snapshots, 2) == (snapshots[0], snapshots[2])
+    assert history.select_pair(snapshots, 3) == (None, None)
+    assert history.select_pair(snapshots, 0) == (None, None)

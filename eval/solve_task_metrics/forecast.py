@@ -30,11 +30,16 @@ class BucketForecast:
 
 
 def bucket_label(core_size: int) -> str:
-    """Метка бакета для заданного размера знаменателя ядра."""
+    """Метка бакета для заданного размера знаменателя ядра.
+
+    Знаменатель меньше единицы — это «нет точки измерения», а не маленькая
+    задача: молчаливый откат в первый бакет выдал бы прогноз за размер,
+    которого не бывает.
+    """
     for label, low, high in BUCKETS:
         if core_size >= low and (high is None or core_size <= high):
             return label
-    return BUCKETS[0][0]
+    raise ValueError(f"размер знаменателя ядра должен быть ≥ 1, получено {core_size}")
 
 
 def _quantile(values: list, q: float) -> float:

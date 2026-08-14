@@ -935,9 +935,10 @@ Compose project, поэтому команда может удалить develop
 прогоны. Не требует Postgres, Neo4j и сети — только локальный git.
 
 ```bash
-python -m eval.solve_task_metrics snapshot   # пересчитать метрики, сохранить срез, обновить отчёт
-python -m eval.solve_task_metrics compare    # дельты последнего среза против предыдущего
-python -m eval.solve_task_metrics forecast   # прогноз core-recall с разбросом
+python -m eval.solve_task_metrics snapshot            # пересчитать метрики, сохранить срез, обновить отчёт
+python -m eval.solve_task_metrics stats --last 10     # тренд последних срезов таблицей, без пересчёта
+python -m eval.solve_task_metrics compare --back 1    # дельты последнего среза против среза N шагов назад
+python -m eval.solve_task_metrics forecast            # прогноз core-recall с разбросом
 ```
 
 Цена считается во взвешенных input-эквивалентах (`output ×5`, `cache-write ×1.25`,

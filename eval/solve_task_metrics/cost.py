@@ -25,14 +25,14 @@ def weighted(buckets: dict) -> float:
     return float(sum(buckets.get(key, 0.0) * WEIGHTS[key] for key in BUCKET_KEYS))
 
 
-def inflation(raw_value: float, weighted_value: float):
+def inflation(raw_value: float, weighted_value: float) -> float | None:
     """Во сколько раз сырая сумма завышает стоимость; None при нулевой цене."""
     if not weighted_value:
         return None
     return raw_value / weighted_value
 
 
-def sum_buckets(blocks: list) -> dict:
+def sum_buckets(blocks: list[dict]) -> dict[str, float]:
     """Поэлементная сумма нескольких наборов бакетов (например, по моделям)."""
     total = {key: 0.0 for key in BUCKET_KEYS}
     for block in blocks:
