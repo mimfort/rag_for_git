@@ -226,8 +226,21 @@ def _run_git(args: list[str]) -> str:
     return result.stdout
 
 
-def find_merge_commits(task_key: str) -> list[str]:
-    """Merge-коммиты, чья ветка содержит ключ задачи (регистронезависимо)."""
+# Настоящий PR-мерж: только «Merge pull request #N from <owner>/<ветка-с-ключом>».
+# Всё остальное с ключом в тексте — синхронизационные коммиты «влить dev в фичебранч»
+# («Merge remote-tracking branch 'origin/dev' into feature/pri-N», «merge: dev в …»).
+# Их diff(^1) тащит ВСЕ файлы, попавшие в dev от чужих задач за это время, и раздувает
+# ground truth в разы: у PRI-134 реальный PR #148 — 17 файлов, а два sync-коммита
+# добавляли 77 и 135 чужих. Считать их работой задачи нельзя.
+_PR_MERGE_SUBJECT_RE = re.compile(r"^Merge pull request #\d+ from ", re.IGNORECASE)
+
+
+def find_merge_commits(task_key: str) -> tuple[list[str], int]:
+    """PR-мержи, чья ветка содержит ключ задачи (регистронезависимо).
+
+    Returns:
+        (shas настоящих PR-мержей, число отброшенных sync-коммитов).
+    """
     out = _run_git(
         [
             "log",
@@ -238,12 +251,17 @@ def find_merge_commits(task_key: str) -> list[str]:
             f"--grep={task_key}",
         ]
     )
-    shas = []
+    shas: list[str] = []
+    skipped_sync = 0
     for line in out.splitlines():
         if not line.strip():
             continue
-        shas.append(line.split(" ", 1)[0])
-    return shas
+        sha, _, subject = line.partition(" ")
+        if _PR_MERGE_SUBJECT_RE.match(subject.strip()):
+            shas.append(sha)
+        else:
+            skipped_sync += 1
+    return shas, skipped_sync
 
 
 def changed_files_for_merge(sha: str) -> set[str]:
@@ -380,9 +398,11 @@ def main() -> None:
     matched = []  # (record, expected_files, predicted_relevant, predicted_test)
     unmatched_no_key = [r for r in records if not r.task_key]
     unmatched_no_merge = []
+    sync_merges_skipped = 0
 
     for r in with_key:
-        shas = find_merge_commits(r.task_key)
+        shas, _skipped_sync = find_merge_commits(r.task_key)
+        sync_merges_skipped += _skipped_sync
         if not shas:
             unmatched_no_merge.append(r)
             continue
@@ -441,7 +461,7 @@ def main() -> None:
             miss_categories[categorize_miss(m, True)] += 1
 
         # --- filtered/«core» recall: знаменатель без tests/docs/*.md/конфигов/новых файлов ---
-        shas = find_merge_commits(r.task_key)
+        shas, _ = find_merge_commits(r.task_key)
         parent = f"{shas[0]}^1" if shas else None
         expected_core = {
             f
@@ -474,7 +494,7 @@ def main() -> None:
     new_file_count = 0
     other_missed_total = 0
     for r, expected in matched:
-        shas = find_merge_commits(r.task_key)
+        shas, _ = find_merge_commits(r.task_key)
         parent = f"{shas[0]}^1" if shas else None
         missed = expected - r.relevant_paths
         for m in missed:
