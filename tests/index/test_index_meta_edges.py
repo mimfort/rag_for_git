@@ -1,7 +1,9 @@
 """Персист счётчиков рёбер графа в index_meta (PRI-252)."""
 from uuid import uuid4
 
+import psycopg
 import pytest
+from psycopg.conninfo import make_conninfo
 
 from reviewer.config.settings import Settings
 from reviewer.index.store import ChunkStore
@@ -52,3 +54,36 @@ def test_init_schema_is_idempotent_for_edge_counts():
     finally:
         store.clear(repo)
         store.close()
+
+
+@pytest.mark.integration
+def test_get_graph_edge_counts_returns_none_on_undefined_column():
+    """Ветка ``except (UndefinedTable, UndefinedColumn)`` в get_graph_edge_counts:
+    индекс, построенный версией до PRI-252, имеет таблицу ``index_meta`` БЕЗ
+    колонки ``graph_edges`` — чтение обязано отдать None, а не упасть.
+
+    Боевую таблицу ``index_meta`` общей БД не трогаем: подкладываем отдельную
+    временную схему с одноимённой таблицей без колонки graph_edges и шадовим
+    её только для соединений ЭТОГО store через ``search_path`` (libpq-опция
+    ``-c search_path=...``) — unqualified ``index_meta`` в запросе резолвится
+    в неё, публичная таблица не задета вообще. Схема дропается в finally
+    независимо от исхода теста.
+    """
+    settings = Settings()
+    schema = f"test_edge_counts_shadow_{uuid4().hex}"
+    admin_conn = psycopg.connect(settings.pg_dsn, autocommit=True)
+    try:
+        admin_conn.execute(f'CREATE SCHEMA "{schema}"')
+        admin_conn.execute(
+            f'CREATE TABLE "{schema}".index_meta '
+            "(repo text, ref text, sha text, PRIMARY KEY (repo, ref))"
+        )
+        shadow_dsn = make_conninfo(settings.pg_dsn, options=f"-c search_path={schema},public")
+        store = ChunkStore(shadow_dsn)
+        try:
+            assert store.get_graph_edge_counts("test/shadow-schema", "base:main") is None
+        finally:
+            store.close()
+    finally:
+        admin_conn.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
+        admin_conn.close()

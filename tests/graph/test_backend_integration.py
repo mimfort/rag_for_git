@@ -116,13 +116,24 @@ def test_scip_does_not_link_files_through_local_symbols(tmp_path):
 
     До PRI-252 файл-скоупные символы SCIP (`local N`) резолвились через общую
     карту, и ссылка на локальное имя в одном файле попадала в определение из
-    другого. Внутрифайловое ребро при этом обязано сохраниться.
+    другого. Внутрифайловое ребро при этом обязано сохраниться: в каждом файле
+    локальная переменная, определённая во внешней функции, читается вложенной
+    функцией через замыкание — это даёт ребро между двумя разными chunk-узлами
+    (`outer` и `outer.inner`) одного файла через тот же `local N`-символ,
+    который в дефекте PRI-252 давал кросс-файловую фикцию.
     """
     repo = str(tmp_path / "repo")
     os.mkdir(repo)
+    closure_src = (
+        "def outer():\n"
+        "    helper = 1\n\n"
+        "    def inner():\n"
+        "        return helper\n\n"
+        "    return inner()\n"
+    )
     files = {
-        "a.py": "def alpha():\n    helper = 1\n    return helper\n",
-        "b.py": "def beta():\n    helper = 2\n    return helper\n",
+        "a.py": closure_src,
+        "b.py": closure_src.replace("1\n", "2\n"),
         "pyproject.toml": '[project]\nname = "probe"\nversion = "0.0.1"\n',
     }
     _init_repo(repo, files)
@@ -134,3 +145,8 @@ def test_scip_does_not_link_files_through_local_symbols(tmp_path):
              if (e[0].startswith("a.py") and e[2].startswith("b.py"))
              or (e[0].startswith("b.py") and e[2].startswith("a.py"))]
     assert cross == [], f"кросс-файловые рёбра из local-символов: {cross}"
+
+    # Внутрифайловое ребро через local-символ обязано сохраниться (иначе тест
+    # был бы зелёным и при нуле рёбер вовсе).
+    assert ("a.py#outer.inner", "CALLS", "a.py#outer") in edges
+    assert ("b.py#outer.inner", "CALLS", "b.py#outer") in edges
