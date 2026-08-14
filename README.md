@@ -862,6 +862,14 @@ cd web/frontend && npm install && npm run build && cd ../..
 reviewer serve
 ```
 
+The **Quality** page shows the trend of the solve-task brief quality metric across tasks: median
+core-recall and precision, a bulk subsample (tasks with `expected_core >= 10`) with a horizontal
+line for the offline baseline for before/after comparison, and a breakdown of misses by taxonomy.
+The data source is the `brief_quality` table, populated on every real `publish_review` call
+(written by `MCPReviewService`, not a separate process). If a task's brief is unavailable or its
+`## Relevant code` section is empty, the measurement is simply skipped — no point shows up on the
+chart instead of a zero or an error.
+
 The container keeps its internal listen port separate from the published loopback port. Build it
 once and choose both at runtime (replace `database` with a Postgres host reachable from the
 container):
