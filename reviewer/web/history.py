@@ -429,6 +429,172 @@ class ReviewHistory:
             ],
         }
 
+    # ------------------------------------------------------------------
+    # Качество брифа solve-task (PRI-249)
+    # ------------------------------------------------------------------
+
+    def record_brief_quality(
+        self,
+        run_id: int,
+        repo: str,
+        pr_number: int,
+        head_sha: str | None,
+        measurement,
+    ) -> int | None:
+        """Записать измерение качества брифа (fail-soft, как record_run).
+
+        Строки со status != 'measured' пишутся намеренно: «точки измерения не
+        было и вот почему» — диагностический сигнал, а молчание неотличимо от
+        сломанной метрики.
+        """
+        sql = """
+        INSERT INTO brief_quality (
+            run_id, repo, pr_number, task_key, head_sha, status, brief_path,
+            expected, expected_core, predicted, hit_core,
+            core_recall, raw_recall, precision,
+            misses, predicted_paths, expected_core_paths, hit_core_paths
+        ) VALUES (
+            %(run_id)s, %(repo)s, %(pr_number)s, %(task_key)s, %(head_sha)s,
+            %(status)s, %(brief_path)s,
+            %(expected)s, %(expected_core)s, %(predicted)s, %(hit_core)s,
+            %(core_recall)s, %(raw_recall)s, %(precision)s,
+            %(misses)s, %(predicted_paths)s, %(expected_core_paths)s, %(hit_core_paths)s
+        ) RETURNING id
+        """
+        try:
+            params = {
+                "run_id": run_id,
+                "repo": repo,
+                "pr_number": pr_number,
+                "task_key": measurement.task_key,
+                "head_sha": head_sha,
+                "status": measurement.status,
+                "brief_path": measurement.brief_path,
+                "expected": measurement.expected,
+                "expected_core": measurement.expected_core,
+                "predicted": measurement.predicted,
+                "hit_core": measurement.hit_core,
+                "core_recall": measurement.core_recall,
+                "raw_recall": measurement.raw_recall,
+                "precision": measurement.precision,
+                "misses": json.dumps(measurement.misses, ensure_ascii=False),
+                "predicted_paths": json.dumps(list(measurement.predicted_paths)),
+                "expected_core_paths": json.dumps(list(measurement.expected_core_paths)),
+                "hit_core_paths": json.dumps(list(measurement.hit_core_paths)),
+            }
+            with self._connect() as conn:
+                row = conn.execute(sql, params).fetchone()
+                conn.commit()
+            return int(row[0]) if row else None
+        except Exception as exc:  # noqa: BLE001 — метрика не смеет ронять ревью
+            log.warning("Не удалось записать качество брифа для прогона %s: %s", run_id, exc)
+            return None
+
+    def brief_quality_trend(self, days: int = 90, repo: str | None = None) -> dict:
+        """Динамика качества брифа за окно, агрегированная ПО ЗАДАЧЕ.
+
+        Несколько PR одной задачи объединяются в одну точку (union множеств) —
+        ровно так считает офлайн-харнесс, чей baseline служит точкой «до» для
+        критерия 4 PRI-251. Считать по PR значило бы мерить другой линейкой.
+        """
+        from reviewer.metrics.brief_quality.recall import (
+            BULK_CORE_THRESHOLD,
+            TaskQuality,
+            aggregate,
+        )
+
+        empty = {
+            "trend": [],
+            "aggregate": {"n_measured": 0, "no_measurement": 0},
+            "bulk": {"n_measured": 0, "core_recall_median": None},
+            "misses": [],
+            "bulk_threshold": BULK_CORE_THRESHOLD,
+            "no_measurement_by_status": {},
+        }
+        sql = """
+        SELECT created_at, task_key, pr_number, status,
+               predicted_paths, expected_core_paths, hit_core_paths, misses
+        FROM brief_quality
+        WHERE created_at >= now() - %(days)s * INTERVAL '1 day'
+          AND (%(repo)s::text IS NULL OR repo = %(repo)s::text)
+        ORDER BY created_at
+        """
+        try:
+            with self._connect() as conn:
+                rows = conn.execute(sql, {"days": days, "repo": repo}).fetchall()
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Не удалось получить динамику качества брифа: %s", exc)
+            return empty
+
+        by_task: dict = {}
+        no_measurement: dict = {}
+        misses_total: dict = {}
+        for created_at, task_key, pr_number, status, predicted, core, hits, misses in rows:
+            for category, count in (misses or {}).items():
+                misses_total[category] = misses_total.get(category, 0) + int(count)
+            if status != "measured" or not task_key:
+                key = status or "unknown"
+                no_measurement[key] = no_measurement.get(key, 0) + 1
+                continue
+            entry = by_task.setdefault(
+                task_key,
+                {"created_at": created_at, "prs": [], "predicted": set(), "core": set(), "hits": set()},
+            )
+            entry["created_at"] = max(entry["created_at"], created_at)
+            entry["prs"].append(int(pr_number))
+            entry["predicted"].update(predicted or [])
+            entry["core"].update(core or [])
+            entry["hits"].update(hits or [])
+
+        trend: list = []
+        quality_rows: list = []
+        for task_key, entry in by_task.items():
+            core_recall = len(entry["hits"]) / len(entry["core"]) if entry["core"] else None
+            trend.append({
+                "date": entry["created_at"].isoformat(),
+                "task_key": task_key,
+                "prs": sorted(entry["prs"]),
+                "expected_core": len(entry["core"]),
+                "predicted": len(entry["predicted"]),
+                "hit_core": len(entry["hits"]),
+                "core_recall": core_recall,
+                "precision": (
+                    len(entry["hits"]) / len(entry["predicted"]) if entry["predicted"] else None
+                ),
+            })
+            quality_rows.append(TaskQuality(
+                task_key=task_key,
+                expected=len(entry["core"]),
+                expected_core=len(entry["core"]),
+                predicted=len(entry["predicted"]),
+                hit_core=len(entry["hits"]),
+                core_recall=core_recall,
+            ))
+        trend.sort(key=lambda point: point["date"])
+        agg = aggregate(quality_rows)
+        return {
+            "trend": trend,
+            "aggregate": {
+                "n_measured": agg.n_measured,
+                "no_measurement": sum(no_measurement.values()),
+                "core_recall_median": agg.core_recall_median,
+                "core_recall_mean": agg.core_recall_mean,
+                "denominator_median": agg.denominator_median,
+            },
+            "bulk": {
+                "n_measured": agg.bulk_n_measured,
+                "core_recall_median": agg.bulk_core_recall_median,
+            },
+            "misses": [
+                {"category": category, "count": count}
+                for category, count in sorted(
+                    misses_total.items(), key=lambda item: item[1], reverse=True
+                )
+            ],
+            "bulk_threshold": BULK_CORE_THRESHOLD,
+            "no_measurement_by_status": no_measurement,
+        }
+
 
 # ------------------------------------------------------------------
 # Вспомогательная функция
