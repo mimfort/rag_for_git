@@ -937,6 +937,27 @@ docker compose --profile test rm -sfv paradedb-test neo4j-test
 Never use `docker compose --profile test down -v`: the test and development services share a
 Compose project, so that command can remove development volumes.
 
+### solve-task metrics (offline)
+
+An offline harness measures the cost of the solve-task stage and retrieval
+quality over the accumulated brief corpus (`docs/superpowers/briefs/`), stores a
+history of snapshots and compares runs. No Postgres, Neo4j or network needed —
+local git only.
+
+```bash
+python -m eval.solve_task_metrics snapshot            # recompute metrics, store a snapshot, refresh the report
+python -m eval.solve_task_metrics stats --last 10     # trend of the latest snapshots as a table, no recompute
+python -m eval.solve_task_metrics compare --back 1    # deltas of the latest snapshot against N steps back
+python -m eval.solve_task_metrics forecast            # core-recall forecast with a spread
+```
+
+Cost is measured in weighted input-equivalents (`output ×5`, `cache-write ×1.25`,
+`cache-read ×0.1`); the raw token sum is shown for reference only — it is not
+proportional to cost. Quality is core-recall over a narrowed denominator; tasks
+whose diff contains no core files count as "no measurement point", not as zero
+recall. Snapshots live in `eval/solve_task_metrics_history.jsonl`, the report in
+`eval/solve_task_metrics_report.md`.
+
 | Area | Responsibility |
 |---|---|
 | `reviewer/index/`, `reviewer/retrieval/` | chunking, vectors/BM25, freshness, reranking |
