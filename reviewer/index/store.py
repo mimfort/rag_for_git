@@ -211,6 +211,40 @@ class ChunkStore:
             )
             conn.commit()
 
+    def get_graph_edge_counts(self, repo: str, ref: str) -> dict[str, int] | None:
+        """Счётчики рёбер графа предыдущего прогона для ref, или None.
+
+        None означает «сравнивать не с чем»: записи нет, либо индекс построен
+        версией без этой колонки/таблицы — как и в get_index_meta, отсутствие
+        схемы не вправе ронять индексацию."""
+        import psycopg.errors
+        try:
+            with self._connect() as conn:
+                row = conn.execute(
+                    "SELECT graph_edges FROM index_meta WHERE repo=%s AND ref=%s",
+                    (repo, ref),
+                ).fetchone()
+        except (psycopg.errors.UndefinedTable, psycopg.errors.UndefinedColumn):
+            return None
+        return row[0] if row and row[0] else None
+
+    def set_graph_edge_counts(self, repo: str, ref: str, counts: dict[str, int]) -> None:
+        """Записать счётчики рёбер графа для ref.
+
+        Отдельно от set_index_meta: SHA известен до построения графа, счётчики —
+        только после. Строка к этому моменту уже создана set_index_meta."""
+        from psycopg.types.json import Json
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO index_meta (repo, ref, sha, graph_edges, updated_at)
+                VALUES (%s, %s, '', %s, now())
+                ON CONFLICT (repo, ref) DO UPDATE SET graph_edges = EXCLUDED.graph_edges
+                """,
+                (repo, ref, Json(counts)),
+            )
+            conn.commit()
+
     def get_repo_vcs(self, repo: str) -> tuple[str, str] | None:
         """Платформа VCS репо: (provider, base_url) или None.
 

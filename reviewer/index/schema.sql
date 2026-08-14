@@ -51,6 +51,11 @@ ALTER TABLE index_meta ADD COLUMN IF NOT EXISTS repo text NOT NULL DEFAULT '';
 ALTER TABLE index_meta DROP CONSTRAINT IF EXISTS index_meta_pkey;
 ALTER TABLE index_meta ADD PRIMARY KEY (repo, ref);
 
+-- Счётчики рёбер графа последнего прогона по (repo, ref): {"CALLS": N, "IMPLEMENTS": M}.
+-- Нужны, чтобы просадка полноты графа не проходила молча (PRI-252). Nullable:
+-- на индексе, построенном старой версией, предыдущего замера просто нет.
+ALTER TABLE index_meta ADD COLUMN IF NOT EXISTS graph_edges JSONB;
+
 -- Задачи доски (фаза 3): эмбеддинги (pgvector) + BM25 (pg_search) для search_tasks.
 -- Отдельно от chunks — у задач нет path/symbol/lines и base/overlay-freshness.
 CREATE TABLE IF NOT EXISTS tasks (
