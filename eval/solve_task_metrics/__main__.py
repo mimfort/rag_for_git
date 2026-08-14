@@ -9,7 +9,7 @@ import datetime as dt
 import pathlib
 import sys
 
-from . import endtoend, ground_truth, history, report, snapshot as snapshot_mod
+from . import endtoend, forecast, ground_truth, history, report, snapshot as snapshot_mod
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 BRIEFS_DIR = REPO_ROOT / "docs" / "superpowers" / "briefs"
@@ -63,6 +63,27 @@ def cmd_compare(_args) -> int:
     return 0
 
 
+def cmd_forecast(args) -> int:
+    run_git = ground_truth.git_runner(REPO_ROOT)
+    _, rows = snapshot_mod.build_snapshot(
+        briefs_dir=BRIEFS_DIR,
+        run_git=run_git,
+        commit=_head_commit(run_git),
+        taken_at=dt.datetime.now(dt.timezone.utc).isoformat(),
+    )
+    items = forecast.build(rows)
+    if args.core_files is None:
+        print("Прогноз core-recall по размеру знаменателя ядра:")
+        for item in items:
+            print(f"  {forecast.describe(item)}")
+        return 0
+    label = forecast.bucket_label(args.core_files)
+    for item in items:
+        if item.label == label:
+            print(forecast.describe(item))
+    return 0
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(
         prog="python -m eval.solve_task_metrics",
@@ -71,9 +92,20 @@ def main(argv=None) -> int:
     subparsers = parser.add_subparsers(dest="command", required=True)
     subparsers.add_parser("snapshot", help="пересчитать метрики и сохранить срез")
     subparsers.add_parser("compare", help="дельты последнего среза против предыдущего")
+    forecast_parser = subparsers.add_parser(
+        "forecast", help="прогноз core-recall с разбросом"
+    )
+    forecast_parser.add_argument(
+        "--core-files",
+        type=int,
+        default=None,
+        help="предполагаемое число файлов ядра у задачи",
+    )
     args = parser.parse_args(argv)
     if args.command == "snapshot":
         return cmd_snapshot(args)
+    if args.command == "forecast":
+        return cmd_forecast(args)
     return cmd_compare(args)
 
 
