@@ -44,6 +44,11 @@ from reviewer.compose_lifecycle import (
 )
 from reviewer.gitutil import file_at_ref, list_python_files, repo_root, rev_parse, remote_url
 from reviewer.graph.backend import build_code_graph
+from reviewer.graph.metrics import (
+    count_edges_by_rel,
+    detect_edge_regression,
+    format_edge_counts,
+)
 from reviewer.graph.store import GraphStore
 from reviewer.index.freshness import update_base
 from reviewer.index.pathfilter import is_ignored
@@ -1012,6 +1017,14 @@ def index(repo: str, ref: str | None, branch_opt: str | None, repo_tag: str | No
         # --- граф кода (в рамках ветки) ---
         src_by_path = {p: file_at_ref(repo, p, ref) for p in files}
         src_by_path = {p: v for p, v in src_by_path.items() if v is not None}
+        # Предыдущий замер полноты графа читается ДО перестройки: сравнивать
+        # нужно с тем, что стояло в индексе этой ветки раньше (PRI-252).
+        # Fail-soft: недоступный замер значит «сравнивать не с чем», а не отказ.
+        try:
+            prev_edges = c.store.get_graph_edge_counts(repo_id, bref)
+        except Exception:  # noqa: BLE001 — диагностика вторична к индексации
+            log.warning("Не удалось прочитать предыдущие счётчики рёбер для %s", repo_id)
+            prev_edges = None
         gnodes, gedges, backend = build_code_graph(
             repo, ref, files, src_by_path, s.graph_backend,
         )
@@ -1019,10 +1032,19 @@ def index(repo: str, ref: str | None, branch_opt: str | None, repo_tag: str | No
         c.graph.clear(repo_id, branch=branch)   # rebuild только этой ветки репо
         c.graph.upsert_nodes(repo_id, list(gnodes), branch=branch)
         c.graph.upsert_edges(repo_id, gedges, branch=branch)
+        edge_counts = count_edges_by_rel(gedges)
+        try:
+            c.store.set_graph_edge_counts(repo_id, bref, edge_counts)
+        except Exception:  # noqa: BLE001 — граф уже записан, счётчики вторичны
+            log.warning("Не удалось записать счётчики рёбер для %s", repo_id)
         click.echo(
             f"Проиндексировано [{repo_id}@{branch}] файлов: {len(files)} @ {sha[:7]}; "
-            f"граф [{backend}]: узлов {len(gnodes)}, рёбер {len(gedges)}"
+            f"граф [{backend}]: узлов {len(gnodes)}, рёбер {len(gedges)} "
+            f"({format_edge_counts(edge_counts)})"
         )
+        for message in detect_edge_regression(prev_edges, edge_counts):
+            click.echo(f"⚠ Просадка полноты графа против предыдущего индекса ветки: {message}")
+            log.warning("Просадка полноты графа [%s@%s]: %s", repo_id, branch, message)
     finally:
         c.store.close()
         if c.graph:
