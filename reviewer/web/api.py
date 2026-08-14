@@ -31,6 +31,7 @@ def make_router(history: ReviewHistory, settings: Settings | None = None) -> API
         GET /api/runs/{run_id}/trace — трейс прогона.
         GET /api/stats           — агрегированная статистика.
         GET /api/runs/gap        — дней с последнего прогона по репо.
+        GET /api/quality         — динамика качества брифа solve-task.
     """
     settings = settings or Settings()
 
@@ -138,6 +139,23 @@ def make_router(history: ReviewHistory, settings: Settings | None = None) -> API
             return JSONResponse(data)
         except Exception as exc:
             log.error("Ошибка при получении статистики: %s", exc, exc_info=True)
+            raise HTTPException(status_code=500, detail="Внутренняя ошибка сервера") from exc
+
+    @router.get("/api/quality")
+    def get_brief_quality(
+        days: int = Query(default=90, ge=1, le=365, description="Окно в днях"),
+        repo: str | None = Query(default=None, description="Фильтр по репозиторию"),
+    ) -> JSONResponse:
+        """Динамика качества ретрива под бриф solve-task (PRI-249).
+
+        Точки агрегированы по задаче, а не по PR: так число совпадает с
+        методикой офлайн-харнесса, чей baseline служит точкой «до».
+        """
+        try:
+            data = history.brief_quality_trend(days=days, repo=repo)
+            return JSONResponse(data)
+        except Exception as exc:
+            log.error("Ошибка при получении качества брифов: %s", exc, exc_info=True)
             raise HTTPException(status_code=500, detail="Внутренняя ошибка сервера") from exc
 
     return router
