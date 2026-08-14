@@ -134,12 +134,17 @@ class _FakeHistory:
         self.runs: list[dict] = []
         self.findings: list[list[dict]] = []
         self.steps: list[list[dict] | None] = []
+        self.brief_quality: list = []
 
     def record_run(self, run: dict, findings: list[dict], steps=None) -> int:
         self.runs.append(run)
         self.findings.append(findings)
         self.steps.append(steps)
         return len(self.runs)
+
+    def record_brief_quality(self, run_id, repo, pr_number, head_sha, measurement):
+        self.brief_quality.append((run_id, repo, pr_number, head_sha, measurement))
+        return len(self.brief_quality)
 
 
 class _FakeChunk:
@@ -615,3 +620,84 @@ def test_publish_error_keeps_outcome_but_unpublishes(_ov, _ch) -> None:
     assert all(r["published"] is False for r in rows)
     # Намеченный исход не затёрт: инлайновая находка осталась published_inline.
     assert rows[0]["outcome"] == "published_inline"
+
+
+# ---------------------------------------------------------------------------
+# Качество брифа solve-task (PRI-249) — точка съёма в publish_review.
+# ---------------------------------------------------------------------------
+
+def _write_brief(tmp_path, body: str = "- `a.py:1` — точка правки") -> None:
+    """Положить бриф задачи PRI-999 в клон, как это делает solve-task."""
+    briefs = tmp_path / "docs" / "superpowers" / "briefs"
+    briefs.mkdir(parents=True, exist_ok=True)
+    (briefs / "2026-08-14-PRI-999-x.md").write_text(
+        f"# Brief — PRI-999\n\n## Relevant code\n{body}\n", encoding="utf-8"
+    )
+
+
+@patch("reviewer.services.review_service.chunk_python", side_effect=_fake_chunk)
+@patch("reviewer.services.review_service.build_overlay")
+def test_publish_records_brief_quality(_ov, _ch, monkeypatch, tmp_path) -> None:
+    """Успешная публикация пишет измерение качества брифа рядом с историей."""
+    _write_brief(tmp_path)
+    svc, _vcs, history = _make_mcp_service_with_publish()
+    monkeypatch.setattr(svc, "_repo_clone_path", lambda repo: str(tmp_path))
+    svc.prepare_review("o/r", 7)
+
+    _submit_then_publish(svc, "o/r", 7, [RAW], task_key="PRI-999")
+
+    assert len(history.brief_quality) == 1
+    run_id, repo, pr_number, _head, measurement = history.brief_quality[0]
+    assert (repo, pr_number) == ("o/r", 7)
+    assert run_id == 1                          # id прогона из _FakeHistory.record_run
+    assert measurement.status == "measured"
+    assert measurement.task_key == "PRI-999"
+    assert measurement.expected_core == 1       # a.py — корневой .py, existed_before
+    assert measurement.hit_core == 1            # бриф его предсказал
+    assert measurement.core_recall == 1.0
+
+
+@patch("reviewer.services.review_service.chunk_python", side_effect=_fake_chunk)
+@patch("reviewer.services.review_service.build_overlay")
+def test_publish_brief_quality_missing_brief_is_recorded(_ov, _ch, monkeypatch, tmp_path) -> None:
+    """Брифа нет — пишется строка no_brief: «точки измерения не было и вот почему»."""
+    svc, _vcs, history = _make_mcp_service_with_publish()
+    monkeypatch.setattr(svc, "_repo_clone_path", lambda repo: str(tmp_path))
+    svc.prepare_review("o/r", 7)
+
+    _submit_then_publish(svc, "o/r", 7, [RAW], task_key="PRI-999")
+
+    assert history.brief_quality[0][4].status == "no_brief"
+
+
+@patch("reviewer.services.review_service.chunk_python", side_effect=_fake_chunk)
+@patch("reviewer.services.review_service.build_overlay")
+def test_publish_survives_brief_quality_failure(_ov, _ch, monkeypatch, tmp_path) -> None:
+    """Сбой метрики не меняет ни отчёт publish_review, ни факт публикации."""
+    def _boom(**kwargs):
+        raise RuntimeError("метрика сломалась")
+
+    monkeypatch.setattr("reviewer.services.brief_quality.measure", _boom)
+    svc, vcs, _history = _make_mcp_service_with_publish()
+    monkeypatch.setattr(svc, "_repo_clone_path", lambda repo: str(tmp_path))
+    svc.prepare_review("o/r", 7)
+
+    report = _submit_then_publish(svc, "o/r", 7, [RAW], task_key="PRI-999")
+
+    assert report["posted"] is True
+    assert vcs.published                       # ревью опубликовано
+    assert "brief_quality" not in report       # отчёт тула не расширяется
+
+
+@patch("reviewer.services.review_service.chunk_python", side_effect=_fake_chunk)
+@patch("reviewer.services.review_service.build_overlay")
+def test_publish_dry_run_does_not_measure(_ov, _ch, monkeypatch, tmp_path) -> None:
+    """dry_run точкой измерения не является: ревью не опубликовано."""
+    _write_brief(tmp_path)
+    svc, _vcs, history = _make_mcp_service_with_publish()
+    monkeypatch.setattr(svc, "_repo_clone_path", lambda repo: str(tmp_path))
+    svc.prepare_review("o/r", 7)
+
+    _submit_then_publish(svc, "o/r", 7, [RAW], dry_run=True, task_key="PRI-999")
+
+    assert history.brief_quality == []
