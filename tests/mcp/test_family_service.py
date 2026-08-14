@@ -34,3 +34,37 @@ def test_implementations_stays_terse_when_no_family_either():
 
     msg = MCPReviewService._implementations_empty_message(family_size=0)
     assert msg == "(implementations не найдены)"
+
+
+def test_family_puts_test_doubles_last_and_counts_them():
+    """Тестовые дубли не теряются, но уходят в хвост и считаются в шапке.
+
+    На живом графе TaskBoardProvider дал 11 адаптеров и 11 тестовых фейков:
+    структурно они неотличимы, но при обрезке по cap выживать первыми должны
+    продовые.
+    """
+    from reviewer.mcp.service import MCPReviewService
+
+    members = [
+        "tests/mcp/test_finish_task.py#_Provider",
+        "reviewer/tasks/boards/jira.py#JiraCloudBoard",
+        "tests/tasks/boards/provider_fakes.py#FakeBoard",
+        "reviewer/tasks/boards/trello.py#TrelloBoard",
+    ]
+    ordered = MCPReviewService._family_order(members)
+    assert ordered[:2] == ["reviewer/tasks/boards/jira.py#JiraCloudBoard",
+                           "reviewer/tasks/boards/trello.py#TrelloBoard"]
+    assert set(ordered) == set(members)
+
+    result = merge_signals("reviewer/tasks/boards/base.py#TaskBoardProvider",
+                           [], members)
+    header = MCPReviewService._family_header(result)
+    assert "из них тестовых дублей: 2" in header
+
+
+def test_family_header_omits_test_count_when_none():
+    """Семейство без тестовых дублей шапку лишним хвостом не засоряет."""
+    from reviewer.mcp.service import MCPReviewService
+
+    result = merge_signals("b.py#Base", ["a.py#One"], [])
+    assert "тестовых дублей" not in MCPReviewService._family_header(result)

@@ -1846,11 +1846,12 @@ class MCPReviewService:
         except Exception:
             log.warning("family: сбой графа", exc_info=True)
             return "(семейство не определено: сбой графа)"
+        members = self._family_order(result.members)
         header = self._family_header(result)
         if not result.members:
             return header
         body = format_neighbors(
-            [{"id": m, "rel": "FAMILY"} for m in result.members],
+            [{"id": m, "rel": "FAMILY"} for m in members],
             store=self.components.store, repo=repo, branch=resolved,
             overlay_ref=None, changed_paths=[],
             empty_msg="(семейство пусто)", cap=cl.graph.callers_topk)
@@ -1887,13 +1888,34 @@ class MCPReviewService:
         return merge_signals(node_id, inheritance, structural)
 
     @staticmethod
-    def _family_header(result) -> str:
-        """Шапка ответа: сигналы и полнота — до списка членов."""
+    def _family_order(members: list[str]) -> list[str]:
+        """Продовые члены вперёд, тестовые дубли — в хвост.
+
+        Тестовые фейки реализуют тот же контракт и потому структурно
+        неотличимы от продовых: на живом графе ``TaskBoardProvider`` дал
+        11 адаптеров и 11 тестовых дублей. Отбрасывать их нельзя (они
+        законные члены семейства, и по ним видно, как контракт мокают),
+        но при обрезке по cap первыми должны выживать продовые.
+        """
+        from reviewer.retrieval.retriever import _is_test_path
+
+        prod = [m for m in members if not _is_test_path(m.partition("#")[0])]
+        tests = [m for m in members if _is_test_path(m.partition("#")[0])]
+        return prod + tests
+
+    @classmethod
+    def _family_header(cls, result) -> str:
+        """Шапка ответа: сигналы, полнота и доля тестовых дублей."""
         if not result.members:
             return f"(семейство не найдено; {result.note})"
         signals = ", ".join(result.signals)
+        from reviewer.retrieval.retriever import _is_test_path
+
+        n_tests = sum(1 for m in result.members
+                      if _is_test_path(m.partition("#")[0]))
+        suffix = f"; из них тестовых дублей: {n_tests}" if n_tests else ""
         return (f"// семейство из {len(result.members)} членов "
-                f"(сигналы: {signals})")
+                f"(сигналы: {signals}{suffix})")
 
     @staticmethod
     def _implementations_empty_message(family_size: int) -> str:
