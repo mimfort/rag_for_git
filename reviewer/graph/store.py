@@ -119,6 +119,47 @@ class GraphStore:
             ids=list(node_ids), repo=repo, branch=branch)
         return [{"id": r["id"], "rel": "IMPLEMENTS"} for r in records]
 
+    def bases_of(self, repo: str, node_ids: list[str], *,
+                 branch: str = "") -> dict[str, list[str]]:
+        """Базы символов — ИСХОДЯЩИЕ IMPLEMENTS (класс → его базы).
+
+        Обратное направление к :meth:`implementations_detailed`; нужно для
+        подсчёта унаследованных методов при структурном сопоставлении.
+        """
+        if not node_ids:
+            return {}
+        records, _, _ = self._driver.execute_query(
+            "UNWIND $ids AS sid "
+            "MATCH (s:Symbol {repo: $repo, branch: $branch, id: sid})-[:IMPLEMENTS]->"
+            "(b:Symbol {repo: $repo, branch: $branch}) "
+            "RETURN sid AS id, collect(DISTINCT b.id) AS bases",
+            ids=list(node_ids), repo=repo, branch=branch)
+        return {r["id"]: sorted(r["bases"]) for r in records}
+
+    def class_members(self, repo: str, *, branch: str = "") -> dict[str, set[str]]:
+        """Собственные методы каждого класса: {'path#Class': {'m1', 'm2'}}.
+
+        Класс и его члены различаются формой node_id: 'path#Class' против
+        'path#Class.method'. Вложенные уровни глубже одного не учитываются —
+        в этом репозитории их нет.
+        """
+        records, _, _ = self._driver.execute_query(
+            "MATCH (s:Symbol {repo: $repo, branch: $branch}) "
+            "WHERE s.id CONTAINS '.' "
+            "RETURN s.id AS id",
+            repo=repo, branch=branch)
+        out: dict[str, set[str]] = {}
+        for r in records:
+            node_id = r["id"]
+            path, _, fqn = node_id.partition("#")
+            if "." not in fqn:
+                continue
+            cls, _, method = fqn.rpartition(".")
+            if "." in cls:
+                continue
+            out.setdefault(f"{path}#{cls}", set()).add(method)
+        return out
+
     def expand_detailed(self, repo: str, node_ids: list[str], hops: int = 2, *,
                         branch: str = "") -> list[dict]:
         """Соседи символа с типами рёбер кратчайшего пути и дистанцией.
