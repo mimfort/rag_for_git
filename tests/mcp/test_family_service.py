@@ -1,27 +1,6 @@
 from reviewer.graph.family import merge_signals
 
 
-class _Graph:
-    """Граф-заглушка с заданными наследниками, базами и членами классов."""
-
-    def __init__(self, impls=None, bases=None, members=None):
-        self._impls = impls or {}
-        self._bases = bases or {}
-        self._members = members or {}
-
-    def implementations_detailed(self, repo, node_ids, *, branch=""):
-        out = []
-        for nid in node_ids:
-            out += [{"id": i, "rel": "IMPLEMENTS"} for i in self._impls.get(nid, [])]
-        return out
-
-    def bases_of(self, repo, node_ids, *, branch=""):
-        return {n: self._bases.get(n, []) for n in node_ids}
-
-    def class_members(self, repo, *, branch=""):
-        return dict(self._members)
-
-
 def test_family_finds_subclasses_by_inheritance():
     """Класс с наследниками отдаёт их как семейство по сигналу inheritance."""
     result = merge_signals("b.py#Base", ["a.py#One", "c.py#Two"], [])
