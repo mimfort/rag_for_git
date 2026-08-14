@@ -9,13 +9,14 @@ import datetime as dt
 import pathlib
 import sys
 
-from . import ground_truth, history, report, snapshot as snapshot_mod
+from . import endtoend, ground_truth, history, report, snapshot as snapshot_mod
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 BRIEFS_DIR = REPO_ROOT / "docs" / "superpowers" / "briefs"
 EVAL_DIR = REPO_ROOT / "eval"
 HISTORY_PATH = EVAL_DIR / history.HISTORY_PATH_NAME
 REPORT_PATH = EVAL_DIR / "solve_task_metrics_report.md"
+TRANSCRIPTS_ROOT = pathlib.Path.home() / ".claude" / "projects"
 
 
 def _head_commit(run_git) -> str:
@@ -28,16 +29,22 @@ def _head_commit(run_git) -> str:
 def cmd_snapshot(_args) -> int:
     run_git = ground_truth.git_runner(REPO_ROOT)
     taken_at = dt.datetime.now(dt.timezone.utc).isoformat()
+    transcripts = endtoend.scan_transcripts(TRANSCRIPTS_ROOT)
     snap, rows = snapshot_mod.build_snapshot(
         briefs_dir=BRIEFS_DIR,
         run_git=run_git,
         commit=_head_commit(run_git),
         taken_at=taken_at,
+        transcripts=transcripts,
     )
     history.append_snapshot(HISTORY_PATH, snap)
     REPORT_PATH.write_text(report.render(snap, rows), encoding="utf-8")
     print(f"Срез сохранён: {HISTORY_PATH}")
     print(f"Отчёт записан: {REPORT_PATH}")
+    print(
+        f"Полная цена «под ключ» измерена для {snap['endtoend']['measured']} задач "
+        "(остальные — транскрипт локально недоступен)"
+    )
     return 0
 
 
