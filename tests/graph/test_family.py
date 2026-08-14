@@ -1,5 +1,6 @@
 from reviewer.graph.family import (
     FamilyResult,
+    contract_too_thin,
     effective_methods,
     merge_signals,
     structural_matches,
@@ -86,6 +87,43 @@ def test_merge_signals_marks_empty_result_incomplete():
     assert result.members == []
     assert result.complete is False
     assert "не найдено" in result.note
+
+
+def test_contract_too_thin_below_threshold():
+    """Один-два значимых метода — контракт слишком тонок (Important 2)."""
+    assert contract_too_thin({"__init__"}) is True
+    assert contract_too_thin({"close"}) is True
+    assert contract_too_thin({"fetch", "close"}) is True
+
+
+def test_contract_too_thin_ignores_dunders():
+    """Dunder-методы не считаются к порогу — иначе __init__ добавляет вес контракту."""
+    assert contract_too_thin({"__init__", "__repr__", "fetch", "normalize"}) is True
+    assert contract_too_thin({"fetch", "normalize", "close"}) is False
+
+
+def test_contract_too_thin_at_and_above_threshold():
+    """Порог не задевает реальные контракты (9 и 8 методов у досок/VCS)."""
+    assert contract_too_thin({"fetch", "normalize", "close"}) is False
+    assert contract_too_thin({"fetch", "normalize", "close", "extra"}) is False
+
+
+def test_merge_signals_marks_structural_skipped_when_empty():
+    """Тонкий контракт без наследников — пустота объясняет ИМЕННО пропуск сигнала."""
+    result = merge_signals(node_id="c.py#Thin", inheritance=[], structural=[],
+                           structural_skipped=True)
+    assert result.members == []
+    assert result.complete is False
+    assert "тоньше" in result.note
+
+
+def test_merge_signals_marks_incomplete_even_with_members_when_structural_skipped():
+    """Найденные через inheritance члены не маскируют пропуск структурного сигнала."""
+    result = merge_signals(node_id="c.py#Thin", inheritance=["a.py#Child"],
+                           structural=[], structural_skipped=True)
+    assert result.members == ["a.py#Child"]
+    assert result.complete is False
+    assert "тоньше" in result.note
 
 
 class _FakeDriver:

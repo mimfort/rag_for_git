@@ -68,3 +68,13 @@ def test_family_header_omits_test_count_when_none():
 
     result = merge_signals("b.py#Base", ["a.py#One"], [])
     assert "тестовых дублей" not in MCPReviewService._family_header(result)
+
+
+def test_family_header_marks_skipped_structural_signal_even_with_members():
+    """Minor 6: FamilyResult.complete используется — шапка не молчит про пропуск сигнала."""
+    from reviewer.mcp.service import MCPReviewService
+
+    result = merge_signals("c.py#Thin", ["a.py#Child"], [], structural_skipped=True)
+    header = MCPReviewService._family_header(result)
+    assert "из 1 членов" in header
+    assert "тоньше" in header
