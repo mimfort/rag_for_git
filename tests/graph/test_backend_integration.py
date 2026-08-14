@@ -106,3 +106,31 @@ def test_scip_still_drops_forward_referenced_class_symbol(tmp_path):
         if doc.relative_path.endswith("adapter.py")
     }
     assert not [s for s in symbols if s.endswith("/Adapter#")]
+
+
+@pytest.mark.integration
+@pytest.mark.skipif(shutil.which("scip-python") is None,
+                    reason="scip-python не установлен")
+def test_scip_does_not_link_files_through_local_symbols(tmp_path):
+    """Одноимённые локальные переменные в разных файлах не связывают их рёбрами.
+
+    До PRI-252 файл-скоупные символы SCIP (`local N`) резолвились через общую
+    карту, и ссылка на локальное имя в одном файле попадала в определение из
+    другого. Внутрифайловое ребро при этом обязано сохраниться.
+    """
+    repo = str(tmp_path / "repo")
+    os.mkdir(repo)
+    files = {
+        "a.py": "def alpha():\n    helper = 1\n    return helper\n",
+        "b.py": "def beta():\n    helper = 2\n    return helper\n",
+        "pyproject.toml": '[project]\nname = "probe"\nversion = "0.0.1"\n',
+    }
+    _init_repo(repo, files)
+
+    src = {p: s for p, s in files.items() if p.endswith(".py")}
+    _nodes, edges = build_with_scip(repo, "HEAD", src)
+
+    cross = [e for e in edges
+             if (e[0].startswith("a.py") and e[2].startswith("b.py"))
+             or (e[0].startswith("b.py") and e[2].startswith("a.py"))]
+    assert cross == [], f"кросс-файловые рёбра из local-символов: {cross}"
