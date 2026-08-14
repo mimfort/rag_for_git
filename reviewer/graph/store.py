@@ -147,9 +147,9 @@ class GraphStore:
         Форма node_id — единственный доступный признак: у ``:Symbol`` нет
         свойства ``kind``. Поэтому вложенный класс ('path#Outer.Inner') попадёт
         в набор ``Outer`` как метод 'Inner'. Различить их можно было бы только
-        миграцией схемы графа; на практике семейство от этого лишь расширяется
-        на один искусственный метод контракта, а вложенных классов в репозитории
-        нет.
+        миграцией схемы графа; на практике семейство узла-контракта от этого
+        лишь сужается на один искусственный метод (полное покрытие становится
+        строже), а вложенных классов в репозитории нет.
         """
         records, _, _ = self._driver.execute_query(
             "MATCH (s:Symbol {repo: $repo, branch: $branch}) "
@@ -245,6 +245,23 @@ class GraphStore:
         self._driver.execute_query(
             "UNWIND $ids AS id "
             "MATCH (s:Symbol {repo: $repo, branch: $branch, id: id})-[r:CALLS]->() DELETE r",
+            ids=list(ids), repo=repo, branch=branch)
+
+    def delete_outgoing_implements(self, repo: str, ids: list[str], *, branch: str = "") -> None:
+        """Снести только ИСХОДЯЩИЕ IMPLEMENTS у символов (входящие сохраняются).
+
+        Симметрично :meth:`delete_outgoing_calls`: тот же инвариант self-heal —
+        входящие рёбра от неизменённых файлов не трогаем, свежие исходящие
+        переустанавливает вызывающий (:func:`reviewer.services.graph_sync.patch_graph_incremental`)
+        после этого вызова. Без него смена базы класса (``class X(A)`` →
+        ``class X(B)``) в PR оставляла бы в графе фантомное ``X IMPLEMENTS A``
+        навсегда — до ручного ``reviewer index``.
+        """
+        if not ids:
+            return
+        self._driver.execute_query(
+            "UNWIND $ids AS id "
+            "MATCH (s:Symbol {repo: $repo, branch: $branch, id: id})-[r:IMPLEMENTS]->() DELETE r",
             ids=list(ids), repo=repo, branch=branch)
 
     def count_nodes(self, repo: str, branch: str = "") -> int:

@@ -1,8 +1,12 @@
 """Инкрементальный repo-aware патч графа кода (tree-sitter) для self-heal на prepare.
 
 Симметрично self-heal векторов: переразбирает только изменённые файлы, сохраняя
-ВХОДЯЩИЕ CALLS от неизменённых вызывающих (см. spec §5). Полная точность (IMPLEMENTS,
-все рёбра) восстанавливается ручным `reviewer index` с SCIP.
+ВХОДЯЩИЕ CALLS и IMPLEMENTS от неизменённых файлов (см. spec §5), и сносит только
+ИСХОДЯЩИЕ CALLS/IMPLEMENTS патчируемых узлов — иначе смена базы класса в PR
+оставляла бы в графе фантомное ребро навсегда. tree-sitter теперь эмитит и
+class-level IMPLEMENTS (PRI-251), поэтому self-heal поддерживает его в актуальном
+состоянии наравне с CALLS. Метод-уровневые override-ы (SCIP) self-heal не трогает —
+полная точность по ним восстанавливается только ручным `reviewer index` с SCIP.
 """
 from __future__ import annotations
 
@@ -34,8 +38,10 @@ def patch_graph_incremental(graph, repo: str, *, branch: str = "",
     stale = old - nodes
     graph.delete_symbols(repo, list(stale), branch=branch)
 
-    # Снести только исходящие CALLS изменённой поверхности (входящие сохраняем),
-    # затем переустановить узлы и свежие исходящие рёбра.
+    # Снести только исходящие CALLS и IMPLEMENTS изменённой поверхности (входящие
+    # сохраняем — их могут держать неизменённые файлы), затем переустановить узлы
+    # и свежие исходящие рёбра.
     graph.delete_outgoing_calls(repo, list(nodes), branch=branch)
+    graph.delete_outgoing_implements(repo, list(nodes), branch=branch)
     graph.upsert_nodes(repo, list(nodes), branch=branch)
     graph.upsert_edges(repo, edges, branch=branch)

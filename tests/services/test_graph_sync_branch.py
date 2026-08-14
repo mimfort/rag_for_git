@@ -15,6 +15,9 @@ class FakeGraph:
     def delete_outgoing_calls(self, repo, ids, *, branch=""):
         pass
 
+    def delete_outgoing_implements(self, repo, ids, *, branch=""):
+        pass
+
     def upsert_nodes(self, repo, ids, *, branch=""):
         self.upsert_branches.append(branch)
 

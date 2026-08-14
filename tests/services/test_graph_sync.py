@@ -12,6 +12,7 @@ class FakeGraph:
         self.symbols = {k: set(v) for k, v in existing.items()}   # repo -> set(node_id)
         self.deleted = []
         self.deleted_calls = []
+        self.deleted_implements = []
         self.upserted_nodes = []
         self.upserted_edges = []
 
@@ -26,6 +27,9 @@ class FakeGraph:
 
     def delete_outgoing_calls(self, repo, ids, *, branch=""):
         self.deleted_calls.append((repo, set(ids)))
+
+    def delete_outgoing_implements(self, repo, ids, *, branch=""):
+        self.deleted_implements.append((repo, set(ids)))
 
     def upsert_nodes(self, repo, ids, *, branch=""):
         self.upserted_nodes.append((repo, set(ids)))
@@ -42,6 +46,21 @@ def test_patch_removes_stale_and_refreshes_changed():
     assert ("a/x", {"a.py#gone"}) in g.deleted
     assert any(repo == "a/x" and "a.py#bar" in ids for repo, ids in g.upserted_nodes)
     assert g.deleted_calls and g.deleted_calls[0][0] == "a/x"
+
+
+def test_patch_deletes_outgoing_implements_of_changed_surface():
+    """Important 3: смена базы класса в PR не оставляет фантомное IMPLEMENTS.
+
+    До фикса patch_graph_incremental сносил только исходящие CALLS — смена
+    ``class X(A)`` -> ``class X(B)`` оставляла в графе ``X IMPLEMENTS A``
+    навсегда, до ручного `reviewer index`.
+    """
+    g = FakeGraph({"a/x": {"a.py#X"}})
+    sources = {"a.py": "class X(B):\n    pass\n\nclass B:\n    pass\n"}
+    patch_graph_incremental(g, "a/x", changed_sources=sources, removed_paths=[])
+    assert g.deleted_implements and g.deleted_implements[0][0] == "a/x"
+    deleted_ids = g.deleted_implements[0][1]
+    assert "a.py#X" in deleted_ids
 
 
 def test_patch_removed_files_delete_symbols():
