@@ -75,8 +75,7 @@ def has_block(text: str) -> bool:
 def upsert_block(text: str, block: str) -> str:
     """Заменить существующий блок по HEADER либо дописать в конец. Идемпотентно."""
     block = block.rstrip("\n")
-    has_header = any(line.strip() == HEADER for line in text.splitlines())
-    if not has_header:
+    if not has_block(text):
         body = text.rstrip("\n")
         return f"{body}\n\n{block}\n"
     lines = text.splitlines()
