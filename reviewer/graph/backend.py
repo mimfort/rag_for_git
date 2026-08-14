@@ -13,6 +13,7 @@ import logging
 import shutil
 
 from reviewer.graph.builder import build_graph_from_files
+from reviewer.graph.inherit import extract_inheritance_edges
 from reviewer.graph.scip import build_fqn_resolver, chunks_by_path_for, parse_scip, run_scip_python
 from reviewer.gitutil import add_worktree, remove_worktree
 
@@ -46,11 +47,31 @@ def graph_from_scip_bytes(data: bytes, chunks_by_path: dict) -> tuple[set[str], 
     return all_nodes, edges
 
 
+def inheritance_edges(src_by_path: dict[str, str], chunks_by_path: dict) -> list:
+    """Рёбра наследования из синтаксиса — индексы имён строятся здесь же."""
+    name_to_nodes: dict[str, list[str]] = {}
+    name_to_nodes_by_path: dict[str, dict[str, list[str]]] = {}
+    for path, chunks in chunks_by_path.items():
+        per_file = name_to_nodes_by_path.setdefault(path, {})
+        for c in chunks:
+            simple = c.symbol_fqn.split(".")[-1]
+            name_to_nodes.setdefault(simple, []).append(c.node_id)
+            per_file.setdefault(simple, []).append(c.node_id)
+    return extract_inheritance_edges(src_by_path, chunks_by_path,
+                                     name_to_nodes, name_to_nodes_by_path)
+
+
 def build_with_scip(repo: str, ref: str, src_by_path: dict[str, str]) -> tuple[set, list]:
-    """Построить граф через SCIP.
+    """Построить граф через SCIP, добрав наследование классов синтаксически.
 
     Создаёт временный git worktree на ``ref``, запускает scip-python в нём
     и возвращает граф из полученного index.scip.
+
+    Наследование классов приходит НЕ из SCIP: scip-python 0.6.6 не эмитит
+    ``SymbolInformation`` для класса, упомянутого выше своего определения
+    (в этот провал попадают все адаптеры досок), поэтому рёбра ``IMPLEMENTS``
+    класс→база добираются tree-sitter'ом и сливаются с рёбрами SCIP.
+    SCIP остаётся источником точных ``CALLS`` и метод-уровневых ``IMPLEMENTS``.
 
     :raises Exception: при любой ошибке (subprocess, parse и т.д.)
     """
@@ -60,7 +81,9 @@ def build_with_scip(repo: str, ref: str, src_by_path: dict[str, str]) -> tuple[s
         data = run_scip_python(wt)
     finally:
         remove_worktree(repo, wt)
-    return graph_from_scip_bytes(data, chunks_by_path)
+    nodes, edges = graph_from_scip_bytes(data, chunks_by_path)
+    edges = list(dict.fromkeys(edges + inheritance_edges(src_by_path, chunks_by_path)))
+    return nodes, edges
 
 
 def build_code_graph(

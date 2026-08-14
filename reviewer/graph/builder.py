@@ -6,6 +6,7 @@ from tree_sitter import Language, Parser
 
 from reviewer.index.chunker import chunk_python
 from reviewer.graph.scip import build_fqn_resolver
+from reviewer.graph.inherit import extract_inheritance_edges
 
 _PY = Language(tspython.language())
 _PARSER = Parser(_PY)
@@ -161,6 +162,8 @@ def build_graph_from_files(files: dict[str, str]):
     Узлы = все символы (``path#fqn``). Рёбра CALLS резолвятся по приоритету
     от точного к размытому: локальные определения файла → импортированные имена
     → star-импорты → глобальный fallback (все символы с этим простым именем).
+    Рёбра IMPLEMENTS — наследование классов, извлечённое синтаксически
+    (см. :mod:`reviewer.graph.inherit`).
     """
     chunks_by_path: dict[str, list] = {}
     name_to_nodes: dict[str, list[str]] = {}                  # глобально: имя -> узлы
@@ -196,6 +199,8 @@ def build_graph_from_files(files: dict[str, str]):
                 if callee != caller:
                     edges.append((caller, "CALLS", callee))
 
+    edges += extract_inheritance_edges(files, chunks_by_path,
+                                       name_to_nodes, name_to_nodes_by_path)
     return nodes, list(dict.fromkeys(edges))
 
 
