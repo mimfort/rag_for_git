@@ -1793,7 +1793,9 @@ class MCPReviewService:
         """Кто реализует/наследует символ node_id ('path#fqn') — входящие
         IMPLEMENTS, без PR-сессии. Класс → подклассы; метод → override-ы.
         На элемент: file:line + строка определения + [IMPLEMENTS].
-        Точны после полного `reviewer index` с SCIP."""
+        Наследование классов приходит из tree-sitter (SCIP теряет его у
+        forward-referenced классов); метод-уровневые override-ы — из SCIP.
+        Пустой ответ при существующем семействе помечен явно (см. тул family)."""
         rb = self._resolve_repo_branch(repo, branch)
         if isinstance(rb, str):
             return rb
@@ -1807,10 +1809,93 @@ class MCPReviewService:
         except Exception:
             log.warning("implementations: сбой графа", exc_info=True)
             return "(implementations не найдены)"
+        if not found:
+            try:
+                family = self._compute_family(repo, node_id, resolved)
+                size = len(family.members)
+            except Exception:
+                log.warning("implementations: подсчёт семейства не удался", exc_info=True)
+                size = 0
+            return self._implementations_empty_message(size)
         return format_neighbors(
             found, store=self.components.store, repo=repo, branch=resolved,
             overlay_ref=None, changed_paths=[], empty_msg="(implementations не найдены)",
             cap=cl.graph.callers_topk)
+
+    def family(self, repo: str, node_id: str,
+               branch: str | None = None) -> str:
+        """Семейство однотипных символов: «кто ещё такой же» для node_id.
+
+        Два сигнала: наследование (подклассы и сиблинги по IMPLEMENTS) и
+        структурное соответствие контракту (полное покрытие набора методов
+        с учётом унаследованных — так находятся реализации typing.Protocol,
+        у которых рёбер наследования нет и быть не может).
+
+        Ответ всегда называет сработавшие сигналы: молчаливая пустота
+        неотличима от «семейства нет» и потому запрещена.
+        """
+        rb = self._resolve_repo_branch(repo, branch)
+        if isinstance(rb, str):
+            return rb
+        repo, resolved = rb
+        if self.components.graph is None:
+            return "(граф недоступен)"
+        cl = self._resolve_context_limits(repo, resolved)
+        try:
+            result = self._compute_family(repo, node_id, resolved)
+        except Exception:
+            log.warning("family: сбой графа", exc_info=True)
+            return "(семейство не определено: сбой графа)"
+        header = self._family_header(result)
+        if not result.members:
+            return header
+        body = format_neighbors(
+            [{"id": m, "rel": "FAMILY"} for m in result.members],
+            store=self.components.store, repo=repo, branch=resolved,
+            overlay_ref=None, changed_paths=[],
+            empty_msg="(семейство пусто)", cap=cl.graph.callers_topk)
+        return f"{header}\n{body}"
+
+    def _compute_family(self, repo: str, node_id: str, branch: str):
+        """Собрать семейство узла из обоих сигналов."""
+        from reviewer.graph.family import (
+            effective_methods,
+            merge_signals,
+            structural_matches,
+        )
+
+        graph = self.components.graph
+        inheritance = [n["id"] for n in graph.implementations_detailed(
+            repo, [node_id], branch=branch)]
+        own = graph.class_members(repo, branch=branch)
+        bases = graph.bases_of(repo, list(own), branch=branch)
+        contract_methods = effective_methods(node_id, own, bases)
+        candidates = {
+            cls: effective_methods(cls, own, bases) for cls in own
+        }
+        structural = structural_matches(node_id, contract_methods, candidates)
+        return merge_signals(node_id, inheritance, structural)
+
+    @staticmethod
+    def _family_header(result) -> str:
+        """Шапка ответа: сигналы и полнота — до списка членов."""
+        if not result.members:
+            return f"(семейство не найдено; {result.note})"
+        signals = ", ".join(result.signals)
+        return (f"// семейство из {len(result.members)} членов "
+                f"(сигналы: {signals})")
+
+    @staticmethod
+    def _implementations_empty_message(family_size: int) -> str:
+        """Сообщение при отсутствии прямых наследников.
+
+        Если семейство всё же существует, молчать нельзя: пустой ответ
+        неотличим от «семейства нет» и уводит агента в ложный вывод.
+        """
+        if family_size > 0:
+            return (f"(прямых наследников нет, но семейство из {family_size} "
+                    f"членов существует — получить его: тул family)")
+        return "(implementations не найдены)"
 
     def get_file_skeletons(
         self, repo: str, paths: list[str], branch: str | None = None

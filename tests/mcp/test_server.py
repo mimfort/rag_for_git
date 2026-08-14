@@ -127,6 +127,7 @@ def test_server_registers_all_tools() -> None:
         "related_symbols",
         "callers",
         "implementations",
+        "family",
         "definition",
         "get_file_skeletons",
         "get_pr_diff",

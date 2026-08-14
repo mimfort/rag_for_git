@@ -241,6 +241,27 @@ def test_implementations_tool_forwards():
     svc.implementations.assert_called_once_with("owner/name", "base.py#Base", None)
 
 
+def test_family_tool_registered():
+    import asyncio
+
+    svc = _service()
+    svc.family.return_value = "// семейство из 8 членов (сигналы: inheritance)"
+    server = create_server(svc)
+    names = {t.name for t in asyncio.run(server.list_tools())}
+    assert "family" in names
+
+
+def test_family_tool_forwards():
+    import asyncio
+
+    svc = _service()
+    svc.family.return_value = "// семейство из 8 членов (сигналы: inheritance)"
+    server = create_server(svc)
+    asyncio.run(server.call_tool(
+        "family", {"repo": "owner/name", "node_id": "base.py#Base"}))
+    svc.family.assert_called_once_with("owner/name", "base.py#Base", None)
+
+
 def test_definition_tool_forwards():
     import asyncio
 
