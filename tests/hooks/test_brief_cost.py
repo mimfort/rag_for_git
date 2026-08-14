@@ -300,3 +300,86 @@ def test_upsert_block_appends_when_header_only_in_prose():
     # стандартный заголовок-строка появился ровно один раз
     assert sum(1 for ln in out.splitlines() if ln.strip() == "## Токены (этап solve-task)") == 1
     assert "см. раздел ## Токены" in out  # прозаическая строка не съедена
+
+
+def _transcript(tmp_path, assistant_turns):
+    """Транскрипт с вызовом скилла solve-task и N assistant-ходов."""
+    rows = [
+        {
+            "type": "user",
+            "message": {
+                "content": (
+                    "Base directory for this skill: /x/skills/solve-task\n# Solve Task"
+                )
+            },
+        }
+    ]
+    for _ in range(assistant_turns):
+        rows.append(
+            {
+                "type": "assistant",
+                "message": {
+                    "model": "m",
+                    "usage": {
+                        "input_tokens": 100,
+                        "output_tokens": 200,
+                        "cache_creation_input_tokens": 300,
+                        "cache_read_input_tokens": 400,
+                    },
+                },
+            }
+        )
+    path = tmp_path / "transcript.jsonl"
+    path.write_text(
+        "\n".join(json.dumps(r, ensure_ascii=False) for r in rows), encoding="utf-8"
+    )
+    return str(path)
+
+
+def _brief_setup(tmp_path):
+    """Каталог брифов с .review.yml, где флаг brief_token_cost включён."""
+    repo = tmp_path / "repo"
+    briefs = repo / "docs" / "superpowers" / "briefs"
+    briefs.mkdir(parents=True)
+    (repo / ".review.yml").write_text(
+        "solve_task:\n  brief_token_cost: true\n", encoding="utf-8"
+    )
+    brief = briefs / "2026-01-01-PRI-1-x.md"
+    brief.write_text("# Brief — PRI-1\n\n## Task\nдетали\n", encoding="utf-8")
+    return brief
+
+
+def test_has_block_detects_token_header():
+    assert bc.has_block("# Brief\n\n## Токены (этап solve-task)\nМодель: m\n") is True
+    assert bc.has_block("# Brief\n\n## Task\n") is False
+
+
+def test_run_writes_block_on_first_write(tmp_path):
+    brief = _brief_setup(tmp_path)
+    payload = {
+        "tool_input": {"file_path": str(brief)},
+        "transcript_path": _transcript(tmp_path, 1),
+    }
+
+    assert bc.run(payload) == 0
+    assert bc.HEADER in brief.read_text(encoding="utf-8")
+
+
+def test_run_is_noop_when_block_already_present(tmp_path):
+    """Печать: повторная правка брифа не расширяет окно и не меняет цифру."""
+    brief = _brief_setup(tmp_path)
+    first = {
+        "tool_input": {"file_path": str(brief)},
+        "transcript_path": _transcript(tmp_path, 1),
+    }
+    bc.run(first)
+    sealed = brief.read_text(encoding="utf-8")
+
+    # В транскрипте прибавилось ходов — старое поведение раздуло бы число.
+    second = {
+        "tool_input": {"file_path": str(brief)},
+        "transcript_path": _transcript(tmp_path, 5),
+    }
+    assert bc.run(second) == 0
+
+    assert brief.read_text(encoding="utf-8") == sealed

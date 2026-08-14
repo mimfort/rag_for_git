@@ -67,6 +67,11 @@ def render_block(by_model: dict, sidechain: dict | None = None) -> str:
     return "\n".join(lines)
 
 
+def has_block(text: str) -> bool:
+    """True, если бриф уже содержит блок токенов (замер запечатан)."""
+    return any(line.strip() == HEADER for line in text.splitlines())
+
+
 def upsert_block(text: str, block: str) -> str:
     """Заменить существующий блок по HEADER либо дописать в конец. Идемпотентно."""
     block = block.rstrip("\n")
@@ -267,14 +272,19 @@ def run(payload: dict) -> int:
         lines = _read_jsonl(payload.get("transcript_path") or "")
         if not lines:
             return 0
+        brief = _read_text(file_path)
+        if brief is None:
+            return 0
+        # Печать: блок описывает завершённый этап сборки контекста, то есть окно
+        # ДО первой записи брифа. Пересчёт при повторной правке файла втянул бы
+        # в число всё, что произошло после (брейншторм, план, реализация).
+        if has_block(brief):
+            return 0
         start = find_window_start(lines)
         if start < 0:
             return 0
         by_model, sidechain = aggregate_usage(lines, start)
         if not by_model and not sidechain:
-            return 0
-        brief = _read_text(file_path)
-        if brief is None:
             return 0
         _write_text(file_path, upsert_block(brief, render_block(by_model, sidechain)))
     except Exception:
