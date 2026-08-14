@@ -188,10 +188,15 @@ lets planning and review phases reuse session-less reviewer tools when the base 
 
 > **Reviewer grounding (plan/review, optional, fail-open).** Run
 > `reviewer status /path/to/repo --branch main --json` first. When `drift == 0`, prefer
-> `search_codebase` for cross-file facts and use `callers`, `related_symbols`, `definition`, or
-> `implementations` only for central symbols. The base index does not see uncommitted edits, so
-> read changed files from disk. If reviewer or the index is unavailable, fall back to local
-> search/read tools instead of blocking.
+> `search_codebase` for cross-file facts and use `callers`, `related_symbols`, `definition`,
+> `implementations`, or `family` only for central symbols. The base index does not see
+> uncommitted edits, so read changed files from disk. If reviewer or the index is unavailable,
+> fall back to local search/read tools instead of blocking.
+
+- `family(repo, node_id, branch)` — the family of look-alike symbols ("who else is
+  like this"): inheritance plus structural contract match. For roll-out tasks
+  ("add a field to every provider"), where one file found is a representative of a
+  family of N.
 
 ## How it works
 
@@ -563,7 +568,7 @@ The server-side flow is **store-first**:
 2. Skills call `get_task(key, project=...)`; linked tasks/PRs/code come from task context tools.
 3. Client models never enumerate the provider directly and never send credentials.
 
-The MCP server currently exposes **40 tools**, including the native-subtask batch operation.
+The MCP server currently exposes **41 tools**, including the native-subtask batch operation.
 
 Legacy aliases remain **legacy metadata for older clients** for one compatibility window:
 `TASK_BOARD_API_KEY → YOUGILE_API_KEY` and

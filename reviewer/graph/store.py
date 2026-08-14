@@ -108,9 +108,10 @@ class GraphStore:
     def implementations_detailed(self, repo: str, node_ids: list[str], *,
                                  branch: str = "") -> list[dict]:
         """Реализации/наследники символов — направленные входящие IMPLEMENTS.
-        Класс → его подклассы; метод → его override-ы (SCIP эмитит и то, и то).
+        Класс → его подклассы; метод → его override-ы.
         Элементы: {"id": <node_id>, "rel": "IMPLEMENTS"}, упорядочены по id.
-        Точны после полного `reviewer index` с SCIP (см. инвариант графа)."""
+        Наследование классов эмитит tree-sitter (SCIP теряет его у
+        forward-referenced классов), override-ы методов — SCIP."""
         records, _, _ = self._driver.execute_query(
             "UNWIND $ids AS sid "
             "MATCH (c:Symbol {repo: $repo, branch: $branch})-[:IMPLEMENTS]->"

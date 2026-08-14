@@ -191,10 +191,15 @@ base index.
 
 > **Грунтовка reviewer (план/ревью, опционально, fail-open).** Сначала запустите
 > `reviewer status /path/to/repo --branch main --json`. При `drift == 0` используйте
-> `search_codebase` для кросс-файловых фактов, а `callers`, `related_symbols`, `definition` или
-> `implementations` — только для центральных символов. Base index не видит незакоммиченные правки,
-> поэтому изменённые файлы читайте с диска. Если reviewer или индекс недоступен, откатитесь к
-> локальным search/read tools и не блокируйте работу.
+> `search_codebase` для кросс-файловых фактов, а `callers`, `related_symbols`, `definition`,
+> `implementations` или `family` — только для центральных символов. Base index не видит
+> незакоммиченные правки, поэтому изменённые файлы читайте с диска. Если reviewer или индекс
+> недоступен, откатитесь к локальным search/read tools и не блокируйте работу.
+
+- `family(repo, node_id, branch)` — семейство однотипных символов («кто ещё такой
+  же»): наследование + структурное соответствие контракту. Для задач-развёрток
+  («добавить поле во все провайдеры»), где один найденный файл — представитель
+  семейства из N.
 
 ## Как это работает
 
@@ -569,7 +574,7 @@ Server-side workflow — **store-first**:
    context tools.
 3. Client models не перечисляют provider напрямую и не передают credentials.
 
-MCP server сейчас предоставляет **40 tools**, включая batch-операцию нативных подзадач.
+MCP server сейчас предоставляет **41 tools**, включая batch-операцию нативных подзадач.
 
 Legacy aliases остаются как **legacy metadata for older clients** на одно compatibility window:
 `TASK_BOARD_API_KEY → YOUGILE_API_KEY` и

@@ -110,6 +110,26 @@ MCP-сессия (PreparedReview + ToolContext) живёт в процессе `
   - **SCIP** (`scip-python`, npm `@sourcegraph/scip-python`) — точный type-aware граф, рёбра CALLS и IMPLEMENTS, требует `scip-python` в PATH. Индексация выполняется через временный git worktree на `ref` (`add_worktree`/`remove_worktree` в `gitutil.py`).
   - **tree-sitter** (`graph/builder.py`) — быстрый fallback без внешних зависимостей, только CALLS по имени.
   - Режим `auto` (по умолчанию): если `scip-python` найден в PATH — SCIP, иначе tree-sitter. При `backend=scip` сбой пробрасывается; при `auto` — откат на tree-sitter с `log.warning`. Команда `reviewer index` полностью перестраивает граф (clear + upsert), чтобы рёбра разных бэкендов не смешивались.
+- **Наследование классов в графе приходит из tree-sitter, а не из SCIP (PRI-251).**
+  scip-python 0.6.6 не эмитит `SymbolInformation` для класса, упомянутого в файле
+  ВЫШЕ своего определения, — а значит и `si.relationships` у такого класса нет,
+  читать нечего. В этот провал попадают все 11 адаптеров досок: каждый
+  регистрируется в `provider_spec()`, объявленной до класса. Измерено на
+  репозитории: из 185 классов с `SymbolInformation` forward-referenced — 0, из 14
+  без неё — 13. Поэтому `reviewer/graph/inherit.py` извлекает `class X(Y)`
+  синтаксически, а `build_with_scip` сливает эти рёбра с рёбрами SCIP
+  (дедупликация). SCIP остаётся источником точных `CALLS` и метод-уровневых
+  `IMPLEMENTS`. Дефект upstream закреплён integration-тестом: если новая версия
+  scip-python начнёт эмитить символ, тест покраснеет.
+- **Семейство символов (`family`) — не то же, что `implementations`.**
+  `implementations` отвечает «кто наследует X» по рёбрам графа. `family` отвечает
+  «кто ещё такой же» и добавляет второй сигнал — структурное покрытие набора
+  методов контракта с учётом унаследованных. Он нужен потому, что `typing.Protocol`
+  (`TaskBoardProvider`, `VCSProvider`) рёбер наследования не даёт ни при каком
+  бэкенде: структурная типизация не выражается рёбрами. На этом репозитории
+  структурный сигнал находит все 11 адаптеров (включая три легаси без общей базы)
+  и оба VCS-провайдера, без ложных срабатываний. Пустой ответ при существующем
+  семействе запрещён: `implementations` в этом случае явно отсылает к `family`.
 - **Voyage free tier = 3 RPM / 10K TPM.** TPM — главный блокер: полный `reviewer index` большого репо упирается в лимит и троттлится; есть retry/backoff (`index/_retry.py`). Ревью одного PR (overlay + query-эмбеддинги) в лимит укладывается.
 - **`.review.yml` берётся из целевой (base) ветки**, не из PR — PR не может ослабить собственное ревью.
 - **Реестр досок и `task_board`.** `BoardProviderRegistry` — единственная точка расширения: каждый зарегистрированный immutable `BoardProviderSpec` описывает factory, credential schema, setup/validation metadata и runtime options. Generic MCP, `SyncService`, `Settings` и installer не ветвятся по provider type. `.review.yml` целевой ветки выбирает зарегистрированный `task_board.type`, `project`, generic `create_target`/`done_target` и non-secret `options`; пустой `task_board:` выключает доску для репо. Новая форма имеет приоритет над legacy mapping (`done_column`/`done_state` → `done_target`, `status_field` → `options.status_field`) в течение одного compatibility-релиза. Креды приходят только из server-side env через `ProviderCredentialSource`; `board_config()` и MCP ошибки их не возвращают. См. `docs/board-providers.md`.

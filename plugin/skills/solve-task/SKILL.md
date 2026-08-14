@@ -209,11 +209,19 @@ or the execution strategy chosen in the startup survey (inline / subagent / lite
      `include_tests=False`) returns deduplicated, line-numbered, test-free snippets — expand only the
      few symbols central to the task (feed graph tools the code node_ids, not test-exemplar ones), and cite
      `path:line` from the line-numbered snippets directly (no re-Read needed for grounding).
-     For OO/registry/dispatch tasks («add a new provider / handler»), prefer directed
-     `implementations(node_id)` (incoming IMPLEMENTS — who subclasses/overrides X) over the
-     undirected `related_symbols`, which mixes callers/tests/implements. A class node → its
-     subclasses; a method node → its overrides. Accurate after a full `reviewer index` with SCIP;
-     fail-soft `(implementations не найдены)` is non-fatal — continue.
+     For OO/registry/dispatch tasks («add a new provider / handler») and for any
+     task that smells like a roll-out («add a field to every provider»), call
+     `family(node_id)` on the symbols central to the task. It answers «who else is
+     like this» from two signals — inheritance and structural contract match — and
+     always says which fired, so an empty answer is never mistaken for «no family
+     exists». Prefer it over the undirected `related_symbols`, which mixes
+     callers/tests/implements.
+     A family is the unit the brief must carry: when `family` returns N members,
+     the brief names all N, not the one member retrieval happened to surface. This
+     is a structural signal, not a textual one — do not try to infer roll-out tasks
+     from the wording of the description.
+     `implementations(node_id)` remains the directed «who subclasses X» query.
+     Fail-soft notes are non-fatal — continue.
      Pass the same `branch` you pass to `search_codebase`.
      Fail-open: a `(граф недоступен)` / `(нет связей)` / `(вызовов не найдено)` note is non-fatal — continue.
    - **Lazy PR diff (optional).** `get_task_context` surfaces a task and its PRs (id form

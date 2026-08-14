@@ -123,10 +123,11 @@ def test_solve_task_records_brief_model_marker():
 
 
 def test_solve_task_hints_implementations_for_oo():
-    """OO/registry-хинт: directed implementations для наследников/реализаций."""
+    """OO/registry-хинт: family (inheritance + structural match) и directed implementations."""
     text = SKILL_PATH.read_text(encoding="utf-8")
     assert "implementations" in text          # тул назван в шаге graph-deepening
-    assert "IMPLEMENTS" in text or "наслед" in text  # смысл directed-обхода
+    assert "family" in text                   # PRI-251: family — предпочтительный тул для rollout-задач
+    assert "inheritance" in text or "IMPLEMENTS" in text or "наслед" in text  # смысл directed-обхода
 
 
 def test_solve_task_uses_only_generic_board_metadata():
