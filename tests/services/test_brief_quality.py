@@ -153,3 +153,28 @@ def test_latest_brief_wins_on_duplicate_keys(tmp_path):
 def test_key_match_is_case_insensitive(tmp_path):
     clone = _clone(tmp_path, name="2026-08-14-pri-999-lower.md")
     assert find_brief(clone, "PRI-999") is not None
+
+
+def test_key_match_respects_token_boundary(tmp_path):
+    """PRI-99 не должен совпасть с брифом PRI-999: ошибка была бы тихой."""
+    clone = _clone(tmp_path, name="2026-08-14-PRI-999-test.md")
+    assert find_brief(clone, "PRI-99") is None
+    assert find_brief(clone, "PRI-999") is not None
+
+
+def test_brief_in_broken_encoding_is_unreadable(tmp_path):
+    """Бриф не в UTF-8 → status, а не исключение наружу."""
+    briefs = tmp_path / BRIEFS_DIR
+    briefs.mkdir(parents=True, exist_ok=True)
+    (briefs / "2026-08-14-PRI-998-cp1251.md").write_bytes(
+        "# Brief — PRI-998\n\n## Relevant code\n- `reviewer/web/api.py:1` — путь\n".encode(
+            "cp1251"
+        )
+        + b"\xff\xfe\xfa"
+    )
+    result = measure(
+        task_key="PRI-998", clone_path=str(tmp_path),
+        changed_paths=["reviewer/web/api.py"], changed_status={"reviewer/web/api.py": "modified"},
+    )
+    assert result.status == "brief_unreadable"
+    assert result.brief_path == f"{BRIEFS_DIR}/2026-08-14-PRI-998-cp1251.md"

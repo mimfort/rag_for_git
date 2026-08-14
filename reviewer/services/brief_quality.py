@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import logging
 import pathlib
+import re
 from dataclasses import dataclass, field
 
 from reviewer.metrics.brief_quality import briefs, classify, recall
@@ -53,15 +54,21 @@ def find_brief(clone_path: str | None, task_key: str) -> pathlib.Path | None:
     Совпадение по ключу регистронезависимо: имена брифов пишутся и как PRI-249,
     и как pri-249. При нескольких файлах берётся лексикографически последний —
     имя начинается с даты, поэтому это самый свежий бриф задачи.
+
+    Ключ ищется по границе токена, а не подстрокой: `PRI-24` не должен
+    совпадать с брифом `PRI-249`. Такая ошибка тихая — измерение вышло бы
+    успешным, но посчитанным по чужому брифу.
     """
     if not clone_path or not task_key:
         return None
     directory = pathlib.Path(clone_path) / BRIEFS_DIR
     if not directory.is_dir():
         return None
-    needle = task_key.lower()
+    pattern = re.compile(
+        rf"(?<![A-Za-z0-9]){re.escape(task_key)}(?![A-Za-z0-9])", re.IGNORECASE
+    )
     matches = sorted(
-        path for path in directory.glob("*.md") if needle in path.name.lower()
+        path for path in directory.glob("*.md") if pattern.search(path.name)
     )
     return matches[-1] if matches else None
 
@@ -88,7 +95,9 @@ def measure(
     relative = f"{BRIEFS_DIR}/{brief.name}"
     try:
         text = brief.read_text(encoding="utf-8")
-    except OSError:
+    except (OSError, UnicodeError):
+        # UnicodeDecodeError — подкласс ValueError, не OSError: бриф в чужой
+        # кодировке иначе уронил бы вызывающий publish-поток.
         log.warning("Не удалось прочитать бриф %s", relative, exc_info=True)
         return BriefQualityMeasurement(
             status=STATUS_BRIEF_UNREADABLE, task_key=task_key, brief_path=relative
