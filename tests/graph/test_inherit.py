@@ -58,8 +58,22 @@ def test_local_base_wins_over_global_name_collision():
     assert ("pkg/local.py#Child", "IMPLEMENTS", "pkg/other.py#Base") not in edges
 
 
+def test_global_fallback_resolves_base_without_import():
+    """База без импорта резолвится глобально по простому имени.
+
+    Последний шаг приоритета — сознательное приближение: без него терялось бы
+    наследование при импорте, который резолвер модулей не разбирает.
+    """
+    files = {
+        "pkg/base.py": "class Base:\n    pass\n",
+        "pkg/adapter.py": "class Child(Base):\n    pass\n",
+    }
+    _, edges = build_graph_from_files(files)
+    assert ("pkg/adapter.py#Child", "IMPLEMENTS", "pkg/base.py#Base") in edges
+
+
 def test_unresolvable_base_yields_no_edge():
-    """База из непроиндексированного модуля рёбер не даёт (без догадок)."""
+    """База, не совпавшая ни с одним индексированным символом, ребра не даёт."""
     files = {
         "pkg/adapter.py": "from httpx import Client\n\n\nclass Adapter(Client):\n    pass\n",
     }

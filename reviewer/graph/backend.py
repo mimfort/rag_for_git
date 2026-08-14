@@ -72,6 +72,8 @@ def build_with_scip(repo: str, ref: str, src_by_path: dict[str, str]) -> tuple[s
     (в этот провал попадают все адаптеры досок), поэтому рёбра ``IMPLEMENTS``
     класс→база добираются tree-sitter'ом и сливаются с рёбрами SCIP.
     SCIP остаётся источником точных ``CALLS`` и метод-уровневых ``IMPLEMENTS``.
+    Цена — второй проход tree-sitter по всем файлам поверх прохода SCIP; он
+    чисто CPU-шный (ни сети, ни квот) и на порядок дешевле самого scip-python.
 
     :raises Exception: при любой ошибке (subprocess, parse и т.д.)
     """
