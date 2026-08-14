@@ -214,8 +214,9 @@ PR → prepare_review → base + overlay retrieval → skill analysis
 - **Overlay.** Changed PR files use an ephemeral `pr:N` ref. Retrieval takes unchanged files from
   base and changed files from overlay.
 - **Code graph.** Neo4j nodes use `node_id = path#fqn`, where `fqn` is the fully qualified name.
-  SCIP, an external type-aware code indexer, provides `CALLS` and `IMPLEMENTS`; `auto` falls back
-  to tree-sitter `CALLS` when SCIP is unavailable.
+  SCIP, an external type-aware code indexer, provides `CALLS` and method-level `IMPLEMENTS`; `auto`
+  falls back to tree-sitter `CALLS` plus class-level `IMPLEMENTS` (from syntax) when SCIP is
+  unavailable.
 - **Grounded publishing.** Findings must quote real changed code. GitHub suggestions are emitted
   only when the replacement is safely applyable on the RIGHT side of the diff.
 - **Idempotency.** Hidden fingerprints prevent reposting the same finding. Overlay/session cleanup
@@ -900,8 +901,8 @@ errors are reported without preventing the process from starting where fail-soft
 ### Known limitations
 
 - Python is the supported analysis language; SCIP gives the most accurate graph.
-- Without SCIP, tree-sitter provides a useful but name-based `CALLS` graph and no precise
-  `IMPLEMENTS` coverage.
+- Without SCIP, tree-sitter provides a useful but name-based `CALLS` graph plus class-level
+  `IMPLEMENTS` from syntax; method-level override `IMPLEMENTS` coverage stays SCIP-only.
 - GitHub permits inline comments only on commentable diff lines; other findings appear in summary.
 - Full indexing can hit Voyage free-tier limits; updates are incremental and reuse embeddings.
 - The base index is branch-scoped and blind to uncommitted working-tree changes.

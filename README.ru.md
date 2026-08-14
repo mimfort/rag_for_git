@@ -217,8 +217,9 @@ PR → prepare_review → base + overlay retrieval → skill analysis
 - **Overlay.** Изменённые файлы PR используют эфемерный ref `pr:N`. Retrieval берёт неизменённые
   файлы из base, а изменённые — из overlay.
 - **Code graph.** Узлы Neo4j используют `node_id = path#fqn`, где `fqn` — fully qualified name.
-  SCIP, внешний type-aware индексатор кода, даёт `CALLS` и `IMPLEMENTS`; режим `auto`
-  откатывается к tree-sitter `CALLS`, когда SCIP недоступен.
+  SCIP, внешний type-aware индексатор кода, даёт `CALLS` и метод-уровневый `IMPLEMENTS`; режим
+  `auto` откатывается к tree-sitter `CALLS` и class-level `IMPLEMENTS` из синтаксиса, когда SCIP
+  недоступен.
 - **Grounded publishing.** Finding обязан цитировать реальный изменённый код. GitHub suggestion
   создаётся только для безопасной замены в RIGHT-части диффа.
 - **Idempotency.** Скрытые fingerprint не дают повторно опубликовать тот же finding. Overlay и
@@ -890,7 +891,8 @@ REVIEWER_WEB_PORT=8080 REVIEWER_WEB_PUBLISH_PORT=18000 \
 ### Известные ограничения
 
 - Поддерживаемый язык анализа — Python; наиболее точный graph даёт SCIP.
-- Без SCIP tree-sitter строит полезный, но name-based `CALLS` graph без точного `IMPLEMENTS`.
+- Без SCIP tree-sitter строит полезный, но name-based `CALLS` graph плюс class-level `IMPLEMENTS`
+  из синтаксиса; метод-уровневый override `IMPLEMENTS` остаётся только за SCIP.
 - GitHub принимает inline-комментарии только на commentable diff lines; остальные findings идут в
   summary.
 - Полная индексация может упереться в free-tier limits Voyage; updates incremental и повторно
