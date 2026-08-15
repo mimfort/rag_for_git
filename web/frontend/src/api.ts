@@ -144,8 +144,17 @@ export interface TraceStep {
   created_at: string
 }
 
+export interface StageBreakdown {
+  stage: string
+  steps: number
+  args_bytes: number
+  result_bytes: number
+  cost: number | null
+}
+
 export interface TraceResponse {
   steps: TraceStep[]
+  by_stage: StageBreakdown[]
 }
 
 export async function getTrace(id: number): Promise<TraceResponse> {

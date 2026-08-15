@@ -117,14 +117,17 @@ def make_router(history: ReviewHistory, settings: Settings | None = None) -> API
 
     @router.get("/api/runs/{run_id}/trace")
     def get_trace(run_id: int) -> JSONResponse:
-        """Пошаговый трейс прогона, упорядоченный по seq.
+        """Пошаговый трейс прогона, упорядоченный по seq, плюс разрез по стадиям.
 
         Загружается по требованию (отдельно от /api/runs/{run_id}, т.к. трейс крупный).
         Возвращает пустой список для прогонов без трейса (старые прогоны).
+        ``by_stage`` объединяет число шагов/payload из трейса с расходом из
+        usage.by_stage прогона — см. ReviewHistory.stage_breakdown.
         """
         try:
             steps = history.get_trace(run_id)
-            return JSONResponse({"steps": steps})
+            by_stage = history.stage_breakdown(run_id)
+            return JSONResponse({"steps": steps, "by_stage": by_stage})
         except Exception as exc:
             log.error("Ошибка при получении трейса прогона %s: %s", run_id, exc, exc_info=True)
             raise HTTPException(status_code=500, detail="Внутренняя ошибка сервера") from exc

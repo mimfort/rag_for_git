@@ -588,6 +588,13 @@ provider credentials. Актуальные matrix, target discovery, options, se
 `reviewer serve` открывает историю ревью и traces через optional web extra. Summary depth, top-k
 threshold, graph backend и retrieval ceilings меняют cost/recall; сначала используйте defaults.
 
+Учёт расхода ревью идёт по двум независимым каналам. Клиентский `PreToolUse`-хук плагина
+(`plugin/hooks/review_cost.py`) читает транскрипт сессии Claude Code на клиенте и пишет sidecar с
+расходом по стадиям; `publish_review` читает его на сервере, взвешивая бакеты токенов (свежий
+input, output, cache write, cache read), а не суммируя сырые токены. Пошаговый трейс тул-вызовов
+(`review_steps`, страница трейса прогона) сервер пишет сам, независимо от хука. `total_cost` и
+разрез по стадиям — взвешенные условные единицы, не доллары.
+
 ## Справочник CLI
 
 | Цель | Команды |

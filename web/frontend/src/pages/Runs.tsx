@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { fetchRuns, type Run } from '../api'
-import { fmtCost, fmtDatetime, fmtDuration } from '../utils'
+import { fmtDatetime, fmtDuration, fmtUnits } from '../utils'
 
 const LIMIT = 50
 
@@ -150,7 +150,7 @@ export default function Runs() {
                       {fmtDuration(run.duration_ms)}
                     </td>
                     <td className="td-mono" style={{ color: 'var(--amber)' }}>
-                      {fmtCost(run.total_cost)}
+                      {fmtUnits(run.total_cost)}
                     </td>
                   </tr>
                 ))}

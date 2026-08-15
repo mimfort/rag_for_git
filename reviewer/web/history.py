@@ -17,6 +17,69 @@ log = logging.getLogger(__name__)
 
 _SCHEMA = Path(__file__).with_name("schema.sql").read_text(encoding="utf-8")
 
+# Тариф бакетов относительно input-токена (спайк PRI-246) — тот же, что в
+# plugin/hooks/_transcript.py (клиентский хук) и eval/solve_task_metrics/cost.py
+# (офлайн-метрика). Единица результата — условные единицы, НЕ доллары.
+_STAGE_COST_WEIGHTS = {"fresh_in": 1.0, "output": 5.0, "cache_write": 1.25, "cache_read": 0.1}
+
+
+def aggregate_stages(steps: list) -> list:
+    """Разрез трейса по стадиям: число шагов и размеры payload.
+
+    Токенов и стоимости здесь нет: сервер не видит LLM-вызовов. Расход по
+    стадиям приходит отдельным каналом — из usage.by_stage прогона
+    (см. merge_stage_costs).
+    """
+    order: list = []
+    acc: dict = {}
+    for step in steps:
+        stage = step.get("stage") or "unknown"
+        row = acc.get(stage)
+        if row is None:
+            row = {"stage": stage, "steps": 0, "args_bytes": 0, "result_bytes": 0}
+            acc[stage] = row
+            order.append(stage)
+        row["steps"] += 1
+        calls = step.get("tool_calls") or []
+        for call in calls:
+            if not isinstance(call, dict):
+                continue
+            row["args_bytes"] += int(call.get("args_bytes") or 0)
+            row["result_bytes"] += int(call.get("result_bytes") or 0)
+    return [acc[s] for s in order]
+
+
+def _weigh_bucket(bucket: dict) -> float:
+    """Взвешенная стоимость бакета токенов в условных единицах."""
+    return round(
+        sum(_STAGE_COST_WEIGHTS[k] * float(bucket.get(k) or 0) for k in _STAGE_COST_WEIGHTS), 6
+    )
+
+
+def merge_stage_costs(rows: list, usage_by_stage: dict | None) -> list:
+    """Слить разрез трейса (aggregate_stages) с расходом по стадиям (usage.by_stage).
+
+    Множества стадий пересекаются, но не совпадают: серверный трейс знает
+    analyze/verify/synthesize/client, клиентский хук — более мелкие стадии
+    (orchestrator/risk/blast_radius/...). Результат — объединение: строка,
+    видимая только одной стороне, не теряется. У стадии без данных о расходе
+    ``cost`` — ``None``, а не 0: пустая ячейка честнее нуля.
+    """
+    by_stage = usage_by_stage or {}
+    acc = {r["stage"]: dict(r) for r in rows}
+    order = [r["stage"] for r in rows]
+    for stage in by_stage:
+        if stage not in acc:
+            acc[stage] = {"stage": stage, "steps": 0, "args_bytes": 0, "result_bytes": 0}
+            order.append(stage)
+    result = []
+    for stage in order:
+        row = dict(acc[stage])
+        bucket = by_stage.get(stage)
+        row["cost"] = _weigh_bucket(bucket) if bucket else None
+        result.append(row)
+    return result
+
 
 class ReviewHistory:
     """Персистирует историю прогонов ревью и предоставляет API для её чтения.
@@ -301,6 +364,33 @@ class ReviewHistory:
         except Exception as exc:  # noqa: BLE001
             log.warning("Не удалось получить трейс прогона %s: %s", run_id, exc)
             return []
+
+    def _usage_by_stage(self, run_id: int) -> dict:
+        """Бакет usage.by_stage прогона (fail-soft: ошибка/отсутствие → {})."""
+        try:
+            sql = "SELECT usage FROM review_runs WHERE id = %(run_id)s"
+            with self._connect() as conn:
+                row = conn.execute(sql, {"run_id": run_id}).fetchone()
+            if not row or not row[0]:
+                return {}
+            usage = row[0]
+            if isinstance(usage, str):
+                usage = json.loads(usage)
+            return (usage or {}).get("by_stage") or {}
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Не удалось получить usage.by_stage прогона %s: %s", run_id, exc)
+            return {}
+
+    def stage_breakdown(self, run_id: int) -> list[dict]:
+        """Разрез трейса по стадиям, объединённый с расходом из usage.by_stage.
+
+        Steps/payload — из серверного трейса (review_steps), cost — из
+        usage.by_stage прогона (снят клиентским хуком в sidecar, см.
+        reviewer/services/cost_sidecar.py). Каналы разные и множества стадий
+        не совпадают, поэтому строится объединение (merge_stage_costs).
+        """
+        rows = aggregate_stages(self.get_trace(run_id))
+        return merge_stage_costs(rows, self._usage_by_stage(run_id))
 
     def days_since_last_run(self, repo: str) -> int | None:
         """Вернуть количество дней с последнего прогона для репозитория.

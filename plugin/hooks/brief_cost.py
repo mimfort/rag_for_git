@@ -11,6 +11,23 @@ import re
 import sys
 import tempfile
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+try:
+    # noqa: F401 — BASE_DIR_MARKER/message_text ре-экспортируются как публичное API
+    from _transcript import (  # noqa: E402,F401
+        BASE_DIR_MARKER, aggregate_usage, message_text as _message_text,
+        read_jsonl as _read_jsonl,
+    )
+    from _transcript import find_window_start as _find_window_start  # noqa: E402
+except ImportError:
+    # fail-open: недоступный/битый общий модуль не должен ронять хук с traceback
+    # и ненулевым exit code — весь функционал ниже становится тихим no-op'ом.
+    BASE_DIR_MARKER = None
+    aggregate_usage = None
+    _message_text = None
+    _read_jsonl = None
+    _find_window_start = None
+
 HEADER = "## Токены (этап solve-task)"
 
 
@@ -96,67 +113,11 @@ def upsert_block(text: str, block: str) -> str:
 
 
 SKILL_MARKER = "skills/solve-task"
-BASE_DIR_MARKER = "Base directory for this skill:"
-
-
-def _message_text(line: dict) -> str:
-    """Текст сообщения: message.content как строка или список блоков {text}."""
-    content = (line.get("message") or {}).get("content")
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        parts = [
-            b["text"] for b in content
-            if isinstance(b, dict) and isinstance(b.get("text"), str)
-        ]
-        return "\n".join(parts)
-    return ""
 
 
 def find_window_start(lines: list) -> int:
     """Индекс последнего user-сообщения с маркерами solve-task; -1 если нет."""
-    start = -1
-    for i, line in enumerate(lines):
-        if line.get("type") != "user":
-            continue
-        text = _message_text(line)
-        if BASE_DIR_MARKER in text and SKILL_MARKER in text:
-            start = i
-    return start
-
-
-def aggregate_usage(lines: list, start_idx: int) -> tuple[dict, dict]:
-    """Сумма 4 бакетов токенов по model для assistant-ходов после start_idx.
-
-    Returns:
-        (main_by_model, sidechain_by_model). Sidechain включает только
-        assistant-ходы с isSidechain=True.
-    """
-    def _add(bucket: dict, usage: dict) -> None:
-        bucket["fresh_in"] += int(usage.get("input_tokens") or 0)
-        bucket["output"] += int(usage.get("output_tokens") or 0)
-        bucket["cache_write"] += int(usage.get("cache_creation_input_tokens") or 0)
-        bucket["cache_read"] += int(usage.get("cache_read_input_tokens") or 0)
-
-    by_model: dict = {}
-    sidechain: dict = {}
-    for line in lines[start_idx + 1:]:
-        if line.get("type") != "assistant":
-            continue
-        message = line.get("message") or {}
-        usage = message.get("usage") or {}
-        model = message.get("model") or "unknown"
-        if line.get("isSidechain"):
-            bucket = sidechain.setdefault(
-                model, {"fresh_in": 0, "output": 0, "cache_write": 0, "cache_read": 0})
-        else:
-            bucket = by_model.setdefault(
-                model, {"fresh_in": 0, "output": 0, "cache_write": 0, "cache_read": 0})
-        _add(bucket, usage)
-    return (
-        {m: b for m, b in by_model.items() if any(b.values())},
-        {m: b for m, b in sidechain.items() if any(b.values())},
-    )
+    return _find_window_start(lines, SKILL_MARKER)
 
 
 def read_flag(text) -> bool:
@@ -222,23 +183,6 @@ def _read_text(path):
         return None
 
 
-def _read_jsonl(path) -> list:
-    rows: list = []
-    try:
-        with open(path, encoding="utf-8") as handle:
-            for line in handle:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    rows.append(json.loads(line))
-                except ValueError:
-                    continue
-    except OSError:
-        return []
-    return rows
-
-
 def _write_text(path, text) -> None:
     directory = os.path.dirname(path) or "."
     fd, tmp = tempfile.mkstemp(dir=directory, suffix=".tmp")
@@ -257,6 +201,9 @@ def _write_text(path, text) -> None:
 def run(payload: dict) -> int:
     """Оркестрация хука. Всегда возвращает 0 (fail-open)."""
     try:
+        if _read_jsonl is None:
+            # _transcript недоступен/битый (см. импорт выше) — тихий no-op.
+            return 0
         if os.environ.get("BRIEF_COST_DEBUG"):
             sys.stderr.write("brief_cost payload keys: " + ",".join(sorted(payload)) + "\n")
         file_path = (payload.get("tool_input") or {}).get("file_path") or ""

@@ -678,3 +678,77 @@ def test_brief_quality_no_measurement_is_separate():
     assert data["trend"] == []
     assert data["aggregate"]["n_measured"] == 0
     assert data["no_measurement_by_status"] == {"no_brief": 1}
+
+
+# ---------------------------------------------------------------------------
+# Разрез трейса по стадиям (PRI-247, задача 5)
+# ---------------------------------------------------------------------------
+
+def test_stage_breakdown_groups_steps_and_bytes():
+    steps = [
+        {"stage": "analyze", "tool_calls": [{"args_bytes": 10, "result_bytes": 100}]},
+        {"stage": "analyze", "tool_calls": [{"args_bytes": 5, "result_bytes": 50}]},
+        {"stage": "verify", "tool_calls": [{"args_bytes": 1, "result_bytes": 2}]},
+        {"stage": "client", "tool_calls": None},
+    ]
+    from reviewer.web.history import aggregate_stages
+    rows = aggregate_stages(steps)
+    by_stage = {r["stage"]: r for r in rows}
+    assert by_stage["analyze"] == {
+        "stage": "analyze", "steps": 2, "args_bytes": 15, "result_bytes": 150}
+    assert by_stage["verify"]["steps"] == 1
+    assert by_stage["client"] == {
+        "stage": "client", "steps": 1, "args_bytes": 0, "result_bytes": 0}
+
+
+def test_stage_breakdown_of_empty_trace_is_empty():
+    from reviewer.web.history import aggregate_stages
+    assert aggregate_stages([]) == []
+
+
+def test_merge_stage_costs_without_usage_leaves_cost_none():
+    """Прогон без usage.by_stage (старый прогон / упавший хук) — cost всюду None."""
+    from reviewer.web.history import aggregate_stages, merge_stage_costs
+
+    steps = [{"stage": "analyze", "tool_calls": [{"args_bytes": 10, "result_bytes": 20}]}]
+    rows = aggregate_stages(steps)
+
+    merged = merge_stage_costs(rows, None)
+    assert merged == [
+        {"stage": "analyze", "steps": 1, "args_bytes": 10, "result_bytes": 20, "cost": None}
+    ]
+
+    merged_empty_dict = merge_stage_costs(rows, {})
+    assert merged_empty_dict[0]["cost"] is None
+
+
+def test_merge_stage_costs_with_usage_weighs_and_unions_stages():
+    """Прогон с usage.by_stage: расход взвешивается, множества стадий объединяются."""
+    from reviewer.web.history import aggregate_stages, merge_stage_costs
+
+    steps = [
+        {"stage": "analyze", "tool_calls": [{"args_bytes": 10, "result_bytes": 20}]},
+        {"stage": "client", "tool_calls": None},
+    ]
+    rows = aggregate_stages(steps)
+    usage_by_stage = {
+        # Совпадает со стадией трейса — расход должен взвеситься.
+        "analyze": {"fresh_in": 100, "output": 100, "cache_write": 100, "cache_read": 100},
+        # Есть только у хука (не у серверного трейса) — должна появиться отдельной строкой.
+        "orchestrator": {"fresh_in": 50, "output": 0, "cache_write": 0, "cache_read": 0},
+    }
+
+    merged = merge_stage_costs(rows, usage_by_stage)
+    by_stage = {r["stage"]: r for r in merged}
+
+    # 100×1 + 100×5 + 100×1.25 + 100×0.1 = 735 — веса из брифа приёмки (критерий 6).
+    assert by_stage["analyze"]["cost"] == pytest.approx(735.0)
+    assert by_stage["analyze"]["steps"] == 1
+
+    # "client" есть только в трейсе — cost неизвестен, а не 0.
+    assert by_stage["client"]["cost"] is None
+
+    # "orchestrator" есть только в usage.by_stage — появляется с нулевыми steps/bytes.
+    assert by_stage["orchestrator"] == {
+        "stage": "orchestrator", "steps": 0, "args_bytes": 0, "result_bytes": 0, "cost": 50.0,
+    }

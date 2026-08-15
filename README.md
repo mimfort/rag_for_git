@@ -583,6 +583,14 @@ provider matrix, target discovery, options, setup, and credential rotation.
 top-k threshold, graph backend, and retrieval ceilings change cost/recall trade-offs; start with
 defaults and tune only after observing real misses or excessive context.
 
+Review cost accounting uses two independent channels. The plugin's `PreToolUse` hook
+(`plugin/hooks/review_cost.py`) reads the Claude Code session transcript client-side and writes a
+per-stage token usage sidecar that `publish_review` reads server-side, weighting token buckets
+(fresh input, output, cache write, cache read) rather than summing raw token counts. The step-by-step
+tool-call trace (`review_steps`, shown on the run's trace page) is recorded entirely server-side and
+independently of the hook. `total_cost` and the per-stage breakdown are weighted, unitless scores —
+not dollar amounts.
+
 ## CLI reference
 
 | Goal | Commands |

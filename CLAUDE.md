@@ -297,6 +297,28 @@ MCP-сессия (PreparedReview + ToolContext) живёт в процессе `
   `reviewer/mcp/service.py`), а `json.dumps` ответа экранировал кавычки и фрейм `File "…"`
   переставал совпадать — поэтому текст собирается обходом строковых значений. Дедуп по сигнатуре
   живёт в файле в tempdir: каждый вызов хука — отдельный процесс, in-memory здесь бесполезен.
+- **Расход ревью снимает клиентский хук, не сервер (PRI-247).** MCP-сервер видит только
+  свои тул-вызовы, а не LLM-ходы оркестратора/субагентов — токены и стоимость ему взять неоткуда.
+  Их снимает `PreToolUse`-хук плагина `plugin/hooks/review_cost.py` (stdlib-only, системный
+  python3, без пакета `reviewer`): парсит транскрипт сессии Claude Code, взвешивает бакеты токенов
+  (`fresh_in×1`, `output×5`, `cache_write×1.25`, `cache_read×0.1` — тариф из спайка PRI-246,
+  условные единицы, не доллары) и пишет sidecar JSON по пути `sidecar_path(repo, pr)` =
+  `tempfile.gettempdir()/reviewer-review-cost/<repo>-<pr>.json`. `publish_review` читает и удаляет
+  sidecar через `reviewer/services/cost_sidecar.py::read_cost_sidecar`. Путь и формула веса
+  **дублируются буквально** между хуком (`plugin/hooks/_transcript.py`), сервером
+  (`cost_sidecar.py`/`reviewer/web/history.py`) и офлайн-эвалом
+  (`eval/solve_task_metrics/cost.py`) — хук не может импортировать пакет `reviewer`, поэтому
+  единого источника правды нет; совпадение пути и всех трёх словарей весов закреплено guard-тестом
+  (`tests/hooks/test_review_cost.py`). Слияние с явными аргументами `model`/`usage`/`total_cost`
+  публикации — **пофайловое**, не «всё или ничего»: `merge_metadata` берёт из sidecar только те
+  поля, что явно не переданы, так что CLI, отдающий `model`, но не расход, не теряет sidecar-данные.
+  Канал файловый и неработоспособен при удалённом MCP (хук и `reviewer-mcp` не делят файловую
+  систему) — это штатный случай «sidecar отсутствует», ревью публикуется без метаданных расхода.
+  Пошаговый трейс тул-вызовов (`review_steps`, стадии `analyze`/`verify`/`synthesize`/`client`) —
+  отдельный, чисто серверный канал; веб-админка (`GET /api/runs/{id}/trace`) сливает оба канала в
+  `by_stage` через объединение множеств стадий (`reviewer/web/history.py::merge_stage_costs`) —
+  стадии хука (`orchestrator`/`risk`/`blast_radius`/...) и стадии трейса пересекаются, но не
+  совпадают; у стадии без данных о расходе `cost` — `null`, не 0.
 
 ## Соглашения
 
