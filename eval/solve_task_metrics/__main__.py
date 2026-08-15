@@ -9,7 +9,7 @@ import datetime as dt
 import pathlib
 import sys
 
-from . import endtoend, forecast, ground_truth, history, report, snapshot as snapshot_mod
+from . import endtoend, forecast, ground_truth, history, report, snapshot as snapshot_mod, steps
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 BRIEFS_DIR = REPO_ROOT / "docs" / "superpowers" / "briefs"
@@ -136,6 +136,27 @@ def cmd_forecast(args) -> int:
     return 0
 
 
+def cmd_steps(_args) -> int:
+    """Разбивка взвешенной цены solve-task по под-шагам (baseline PRI-248)."""
+    per_task = steps.scan_steps(TRANSCRIPTS_ROOT)
+    if not per_task:
+        print("Транскриптов solve-task не найдено")
+        return 1
+    totals = {s: {k: 0.0 for k in steps.BUCKET_KEYS} for s in steps.STEPS}
+    for by_step in per_task.values():
+        for step, buckets in by_step.items():
+            for key in steps.BUCKET_KEYS:
+                totals[step][key] += buckets[key]
+    shares = steps.weighted_shares(totals)
+    print(f"Задач измерено: {len(per_task)}")
+    for step in steps.STEPS:
+        print(f"  {step:<10} {shares[step] * 100:5.1f}%  "
+              f"(cache_write {totals[step]['cache_write']:.0f})")
+    consolidated = shares["preflight"] + shares["gather"]
+    print(f"Доля преflight+gather: {consolidated * 100:.1f}%")
+    return 0
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(
         prog="python -m eval.solve_task_metrics",
@@ -163,6 +184,9 @@ def main(argv=None) -> int:
         action="store_true",
         help="печатать только изменившиеся метрики",
     )
+    subparsers.add_parser(
+        "steps", help="разбивка взвешенной цены solve-task по под-шагам (baseline PRI-248)"
+    )
     forecast_parser = subparsers.add_parser(
         "forecast", help="прогноз core-recall с разбросом"
     )
@@ -179,6 +203,8 @@ def main(argv=None) -> int:
         return cmd_stats(args)
     if args.command == "forecast":
         return cmd_forecast(args)
+    if args.command == "steps":
+        return cmd_steps(args)
     return cmd_compare(args)
 
 
