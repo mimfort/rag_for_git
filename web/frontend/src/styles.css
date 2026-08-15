@@ -893,6 +893,39 @@ td {
   animation: fadeUp 0.4s ease both;
 }
 
+.stage-breakdown-table {
+  width: 100%;
+  border-collapse: collapse;
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  border: 1px solid var(--border);
+  background: var(--bg-surface);
+  font-size: 12px;
+}
+
+.stage-breakdown-table th,
+.stage-breakdown-table td {
+  padding: 8px 14px;
+  text-align: left;
+}
+
+.stage-breakdown-table th {
+  background: var(--bg-elevated);
+  color: var(--text-muted);
+  font-weight: 500;
+  border-bottom: 1px solid var(--border);
+}
+
+.stage-breakdown-table td {
+  border-bottom: 1px solid var(--border);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+}
+
+.stage-breakdown-table tr:last-child td {
+  border-bottom: none;
+}
+
 .trace-stage-section {
   border-radius: var(--radius-lg);
   overflow: hidden;

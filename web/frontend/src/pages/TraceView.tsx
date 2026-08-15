@@ -1,16 +1,37 @@
 import { useState, useEffect } from 'react'
-import { getTrace, type TraceStep, type ToolCallEntry } from '../api'
+import { getTrace, type TraceStep, type ToolCallEntry, type StageBreakdown } from '../api'
 import { fmtCost } from '../utils'
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
+// Стадии двух каналов пересекаются, но не совпадают: серверный трейс знает
+// analyze/verify/synthesize/client, клиентский хук (usage.by_stage) — более
+// мелкие стадии окна ревью. Один словарь на оба источника.
 const STAGE_LABELS: Record<string, string> = {
-  analyze:    'Анализ',
-  verify:     'Верификация',
-  synthesize: 'Синтез',
+  analyze:        'Анализ',
+  verify:         'Верификация',
+  synthesize:     'Синтез',
+  client:         'Клиент',
+  orchestrator:   'Оркестратор',
+  risk:           'Риски',
+  blast_radius:   'Радиус поражения',
+  requirements:   'Требования',
+  performance:    'Производительность',
+  maintainability:'Поддерживаемость',
+  subagent:       'Субагент',
 }
 
-const STAGE_ORDER = ['analyze', 'verify', 'synthesize']
+const STAGE_ORDER = [
+  'analyze', 'verify', 'synthesize', 'client', 'orchestrator',
+  'risk', 'blast_radius', 'requirements', 'performance', 'maintainability', 'subagent',
+]
+
+function sortStages<T>(map: Map<string, T>): string[] {
+  return [
+    ...STAGE_ORDER.filter(s => map.has(s)),
+    ...[...map.keys()].filter(s => !STAGE_ORDER.includes(s)),
+  ]
+}
 
 function stageBarClass(stage: string) {
   if (stage === 'analyze')    return 'trace-stage-bar trace-stage-bar-analyze'
@@ -261,10 +282,50 @@ function StageSection({ stage, steps }: { stage: string; steps: TraceStep[] }) {
   )
 }
 
+function fmtKb(bytes: number): string {
+  return (bytes / 1024).toLocaleString('ru-RU', { maximumFractionDigits: 1 })
+}
+
+/** Разрез трейса по стадиям: шаги/payload — из серверного трейса, расход —
+ *  из usage.by_stage (клиентский хук). Стадия без данных о расходе — прочерк,
+ *  а не 0: пустая ячейка честнее нуля. */
+function StageBreakdownTable({ rows }: { rows: StageBreakdown[] }) {
+  if (rows.length === 0) return null
+  const order = sortStages(new Map(rows.map(r => [r.stage, r])))
+  return (
+    <table className="stage-breakdown-table">
+      <thead>
+        <tr>
+          <th>Стадия</th>
+          <th>Шагов</th>
+          <th>Отдано, КБ</th>
+          <th>Получено, КБ</th>
+          <th>Расход, усл. ед.</th>
+        </tr>
+      </thead>
+      <tbody>
+        {order.map(stage => {
+          const r = rows.find(row => row.stage === stage)!
+          return (
+            <tr key={stage}>
+              <td>{STAGE_LABELS[stage] ?? stage}</td>
+              <td>{r.steps}</td>
+              <td>{fmtKb(r.args_bytes)}</td>
+              <td>{fmtKb(r.result_bytes)}</td>
+              <td>{r.cost != null ? r.cost.toLocaleString('ru-RU', { maximumFractionDigits: 2 }) : '—'}</td>
+            </tr>
+          )
+        })}
+      </tbody>
+    </table>
+  )
+}
+
 // ─── Main TraceView ──────────────────────────────────────────────────────────
 
 export default function TraceView({ runId }: { runId: number }) {
   const [steps, setSteps]   = useState<TraceStep[] | null>(null)
+  const [byStage, setByStage] = useState<StageBreakdown[]>([])
   const [loading, setLoading] = useState(true)
   const [error,   setError]   = useState<string | null>(null)
 
@@ -272,7 +333,7 @@ export default function TraceView({ runId }: { runId: number }) {
     setLoading(true)
     setError(null)
     getTrace(runId)
-      .then(r => setSteps(r.steps))
+      .then(r => { setSteps(r.steps); setByStage(r.by_stage ?? []) })
       .catch((e: Error) => {
         // 404 → trace simply not available (no REVIEW_TRACE or old run)
         if (e.message.includes('404') || e.message.toLowerCase().includes('not found')) {
@@ -324,13 +385,11 @@ export default function TraceView({ runId }: { runId: number }) {
   }
 
   // Sort stages: known order first, then rest
-  const sortedStages = [
-    ...STAGE_ORDER.filter(s => stageMap.has(s)),
-    ...[...stageMap.keys()].filter(s => !STAGE_ORDER.includes(s)),
-  ]
+  const sortedStages = sortStages(stageMap)
 
   return (
     <div className="trace-root">
+      <StageBreakdownTable rows={byStage} />
       {sortedStages.map(stage => (
         <StageSection key={stage} stage={stage} steps={stageMap.get(stage)!} />
       ))}

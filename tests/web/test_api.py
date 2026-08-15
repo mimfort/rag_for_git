@@ -176,6 +176,14 @@ class FakeHistory:
             return _FAKE_TRACE_STEPS
         return []
 
+    def stage_breakdown(self, run_id: int) -> list[dict]:
+        from reviewer.web.history import aggregate_stages, merge_stage_costs
+        if run_id != 1:
+            return []
+        usage_by_stage = {"analyze": {"fresh_in": 100, "output": 0,
+                                       "cache_write": 0, "cache_read": 0}}
+        return merge_stage_costs(aggregate_stages(_FAKE_TRACE_STEPS), usage_by_stage)
+
     def stats(self, days: int = 30) -> dict:
         return _FAKE_STATS
 
@@ -419,6 +427,24 @@ def test_get_trace_empty_for_unknown_run(client):
     assert resp.status_code == 200
     data = resp.json()
     assert data["steps"] == []
+
+
+def test_get_trace_contains_stage_breakdown(client):
+    """Ответ трейса содержит разрез by_stage: шаги/payload + расход по стадиям."""
+    resp = client.get("/api/runs/1/trace")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "by_stage" in data
+    by_stage = {r["stage"]: r for r in data["by_stage"]}
+    assert by_stage["analyze"]["steps"] == 2
+    assert by_stage["analyze"]["cost"] is not None
+
+
+def test_get_trace_stage_breakdown_empty_for_unknown_run(client):
+    """Прогон без трейса — by_stage пустой список, а не ошибка."""
+    resp = client.get("/api/runs/999/trace")
+    assert resp.status_code == 200
+    assert resp.json()["by_stage"] == []
 
 
 # ---------------------------------------------------------------------------
