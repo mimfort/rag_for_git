@@ -16,7 +16,7 @@ log = logging.getLogger(__name__)
 
 
 def create_server(service: MCPReviewService) -> FastMCP:
-    """Создать и вернуть сконфигурированный FastMCP-сервер с 40 тулами.
+    """Создать и вернуть сконфигурированный FastMCP-сервер с 42 тулами.
 
     Все тулы — обычные def (sync), а не async: сервис не потокобезопасен
     и рассчитан на последовательное исполнение sync-тулов FastMCP в event loop.
@@ -346,6 +346,20 @@ def create_server(service: MCPReviewService) -> FastMCP:
         top_k — optional override of the result ceiling; None → ceiling from
         .review.yml/default. Coverage is adaptive (reranker cliff cutoff)."""
         return service.search_codebase(repo, query, top_k, branch, include_tests)
+
+    @mcp.tool()
+    def prepare_task_context(repo: str, key: str, branch: str | None = None,
+                             path: str | None = None,
+                             warm_board: bool = True) -> dict:
+        """Everything /solve-task needs to write a brief, in one call (no PR session).
+        Returns {preflight, task_board, task, related{linked,similar}, subsystems,
+        code, test_exemplars, gaps, warnings}. repo is "owner/name"; key is a board
+        task key or a free-text description (board-less). branch defaults to the
+        primary tracked branch. warm_board=True runs an incremental board sync first.
+        Never raises on a missing source: an unreachable board, a down Neo4j or a
+        missing index yield a partial payload with entries in `gaps`. Relevance
+        filtering and brief assembly stay with the caller."""
+        return service.prepare_task_context(repo, key, branch, path, warm_board)
 
     @mcp.tool()
     def related_symbols(repo: str, node_id: str, branch: str | None = None) -> str:

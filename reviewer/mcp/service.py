@@ -23,6 +23,7 @@ from reviewer.config.provider_credentials import ProviderCredentialSource
 from reviewer.config.settings import Settings
 from reviewer.config.task_board import migrate_legacy_board_args, normalize_task_sync_filter
 from reviewer.index.refs import base_ref
+from reviewer.mcp import task_context
 from reviewer.mcp.schemas import FindingIn, SummaryFragmentIn, VerdictIn
 from reviewer.mcp.session_serde import from_payload, to_payload
 from reviewer.mcp.session_store import SessionStore
@@ -1793,6 +1794,30 @@ class MCPReviewService:
             return "(ничего не найдено)"
         return pack.as_context(line_numbers=True) or "(ничего не найдено)"
 
+    def prepare_task_context(self, repo: str, key: str, branch: str | None = None,
+                             path: str | None = None,
+                             warm_board: bool = True) -> dict:
+        """Единый контекст задачи для solve-task: преflight + сбор, один вызов.
+
+        Свёртка 8-12 детерминированных тул-раундов скилла. Ни один сбой
+        источника не прерывает сборку: недоступная доска, лежачий Neo4j,
+        отсутствующий индекс дают частичный payload с записями в `gaps`.
+        path — необязательный override пути к клону; по умолчанию клон
+        резолвится из таблицы `repo_clone` (PRI-235), поэтому клиенту не нужно
+        запускать `reviewer status` отдельным процессом.
+        """
+        rb = self._resolve_repo_branch(repo, branch)
+        if isinstance(rb, str):
+            payload = {section: None for section in task_context.SECTIONS}
+            payload["gaps"] = [task_context.gap("repo", rb.strip("()"))]
+            payload["warnings"] = []
+            return payload
+        normalized_repo, resolved = rb
+        deps = _TaskContextDeps(self, path)
+        return task_context.build_task_context(
+            deps, repo=normalized_repo, key=key, branch=resolved,
+            warm_board=warm_board)
+
     def related_symbols(self, repo: str, node_id: str,
                         branch: str | None = None) -> str:
         """Соседи символа по графу (calls/implements/tests) без PR-сессии.
@@ -3450,3 +3475,63 @@ def _format_pr_diff(files: list[ChangedFile]) -> str:
     if len(out) > _PR_DIFF_MAX_CHARS:
         out = out[:_PR_DIFF_MAX_CHARS] + "\n… (truncated)"
     return out
+
+
+class _TaskContextDeps:
+    """Источники секций prepare_task_context поверх живых компонентов сервиса.
+
+    Отдельный класс, а не замыкания: он и есть та поверхность, которую
+    подменяет фейк в юнит-тестах модуля сборки.
+    """
+
+    def __init__(self, service: "MCPReviewService", path: str | None):
+        self._service = service
+        self._path = path
+
+    def _clone_path(self, repo: str) -> str:
+        return self._path or self._service._repo_clone_path(repo) or ""
+
+    def preflight(self, repo: str, branch: str) -> dict:
+        from reviewer.services.status import build_status_report
+        components = self._service.components
+        report = build_status_report(
+            components.store, components.graph, repo, [branch],
+            self._clone_path(repo),
+            summary_store=getattr(components, "summary_store", None))
+        status = report.branches[0]
+        return {
+            "branch": status.branch,
+            "indexed_sha": status.indexed_sha,
+            "drift": status.drift,
+            "summaries": status.summaries,
+            "chunks": status.chunks,
+            "graph_nodes": status.graph_nodes,
+        }
+
+    def task_board(self, repo: str, branch: str) -> dict | None:
+        policy, _meta = self._service._resolve_policy(repo, branch)
+        board = getattr(policy, "task_board", None)
+        if not board:
+            return None
+        return dict(board)
+
+    def warm_board(self, repo: str, branch: str) -> dict:
+        return self._service.sync_board(repo=repo, branch=branch, purge_orphaned=False)
+
+    def task(self, key: str, project: str | None) -> dict | None:
+        return self._service.get_task(key, project=project)
+
+    def linked(self, key: str, project: str | None) -> str:
+        return self._service.get_task_context(key, project=project)
+
+    def similar(self, query: str, project: str | None) -> str:
+        return self._service.search_tasks(query, project=project)
+
+    def subsystems(self, repo: str, branch: str, query: str) -> dict:
+        return self._service.get_subsystem_summaries(repo, branch, None, query, None)
+
+    def code(self, repo: str, branch: str, query: str) -> str:
+        return self._service.search_codebase(repo, query, None, branch, False)
+
+    def test_exemplars(self, repo: str, branch: str, query: str) -> str:
+        return self._service.search_codebase(repo, query, None, branch, True)

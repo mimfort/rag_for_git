@@ -168,3 +168,38 @@ def test_every_failure_still_returns_all_sections():
     for section in task_context.SECTIONS:
         assert section in payload
     assert len(payload["gaps"]) >= 8
+
+
+def test_service_method_resolves_branch_and_delegates(monkeypatch):
+    """Метод сервиса резолвит (repo, branch) и отдаёт payload модуля."""
+    from reviewer.mcp import service as service_mod
+
+    captured = {}
+
+    def fake_build(deps, *, repo, key, branch, warm_board):
+        captured.update(repo=repo, key=key, branch=branch, warm_board=warm_board)
+        return {"preflight": {"branch": branch}, "gaps": []}
+
+    monkeypatch.setattr(service_mod.task_context, "build_task_context", fake_build)
+
+    svc = service_mod.MCPReviewService.__new__(service_mod.MCPReviewService)
+    monkeypatch.setattr(
+        service_mod.MCPReviewService, "_resolve_repo_branch",
+        lambda self, repo, branch: ("owner/name", "dev"))
+    payload = svc.prepare_task_context("owner/name", "PRI-248", branch="dev")
+    assert captured["repo"] == "owner/name"
+    assert captured["branch"] == "dev"
+    assert payload["preflight"]["branch"] == "dev"
+
+
+def test_service_method_returns_gap_on_bad_repo(monkeypatch):
+    """Нерезолвящийся repo/branch — не исключение, а payload с пробелом."""
+    from reviewer.mcp import service as service_mod
+
+    svc = service_mod.MCPReviewService.__new__(service_mod.MCPReviewService)
+    monkeypatch.setattr(
+        service_mod.MCPReviewService, "_resolve_repo_branch",
+        lambda self, repo, branch: "(repo не задан: передайте repo или задайте DEFAULT_REPO)")
+    payload = svc.prepare_task_context("", "PRI-248")
+    assert payload["task_board"] is None
+    assert any(g["section"] == "repo" for g in payload["gaps"])
