@@ -18,7 +18,10 @@ jobs:
       - name: HOL Plugin Scanner
         uses: hashgraph-online/ai-plugin-scanner-action@8f0a503ca2a70c1968a9a883e11fdff5737b7909  # v1
         with:
-          plugin_dir: "."
+          # Сканируем сам плагин, а не весь репозиторий: при plugin_dir "." в скан
+          # попадали eval-репорты, и энтропийная эвристика принимала имена файлов
+          # планов в markdown-таблицах за секреты (high → падение по fail_on_severity).
+          plugin_dir: "plugin"
           mode: scan
           min_score: 80
           fail_on_severity: high
