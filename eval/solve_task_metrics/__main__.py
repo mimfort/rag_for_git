@@ -136,24 +136,48 @@ def cmd_forecast(args) -> int:
     return 0
 
 
+def _print_scope(label: str, totals: dict, shares: dict) -> None:
+    print(label)
+    for step in steps.STEPS:
+        print(f"  {step:<10} {shares[step] * 100:5.1f}%  "
+              f"(cache_write {totals[step]['cache_write']:.0f})")
+
+
 def cmd_steps(_args) -> int:
     """Разбивка взвешенной цены solve-task по под-шагам (baseline PRI-248)."""
     per_task = steps.scan_steps(TRANSCRIPTS_ROOT)
     if not per_task:
         print("Транскриптов solve-task не найдено")
         return 1
-    totals = {s: {k: 0.0 for k in steps.BUCKET_KEYS} for s in steps.STEPS}
-    for by_step in per_task.values():
-        for step, buckets in by_step.items():
-            for key in steps.BUCKET_KEYS:
-                totals[step][key] += buckets[key]
-    shares = steps.weighted_shares(totals)
+    totals = {
+        scope: {s: {k: 0.0 for k in steps.BUCKET_KEYS} for s in steps.STEPS}
+        for scope in steps.SCOPES
+    }
+    for entry in per_task.values():
+        for scope in steps.SCOPES:
+            for step, buckets in entry[scope].items():
+                for key in steps.BUCKET_KEYS:
+                    totals[scope][step][key] += buckets[key]
+    phase_shares = steps.weighted_shares(totals["phase"])
+    session_shares = steps.weighted_shares(totals["session"])
+
     print(f"Задач измерено: {len(per_task)}")
-    for step in steps.STEPS:
-        print(f"  {step:<10} {shares[step] * 100:5.1f}%  "
-              f"(cache_write {totals[step]['cache_write']:.0f})")
-    consolidated = shares["preflight"] + shares["gather"]
-    print(f"Доля преflight+gather: {consolidated * 100:.1f}%")
+    print()
+    _print_scope(
+        "По фазе сборки брифа (до первой записи под docs/superpowers/briefs/, основная метрика):",
+        totals["phase"], phase_shares,
+    )
+    phase_consolidated = phase_shares["preflight"] + phase_shares["gather"]
+    print(f"Доля preflight+gather (фаза брифа): {phase_consolidated * 100:.1f}%")
+    print(f"Доля unattributed внутри фазы (other, нераспознанный классификатором расход): "
+          f"{phase_shares['other'] * 100:.1f}%")
+    print()
+    _print_scope(
+        "По всей сессии (включая всё после записи брифа — для сопоставимости с PRI-246):",
+        totals["session"], session_shares,
+    )
+    session_consolidated = session_shares["preflight"] + session_shares["gather"]
+    print(f"Доля preflight+gather (вся сессия): {session_consolidated * 100:.1f}%")
     return 0
 
 

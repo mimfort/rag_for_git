@@ -1,4 +1,6 @@
 """Офлайн-атрибуция расхода solve-task по под-шагам (PRI-248, фаза 1)."""
+import json
+
 from eval.solve_task_metrics import steps
 
 
@@ -73,3 +75,60 @@ def test_weighted_shares_zero_cost_is_zero_not_crash():
 
 def test_scan_steps_missing_root_is_empty(tmp_path):
     assert steps.scan_steps(tmp_path / "nope") == {}
+
+
+def _brief_write(usage=None):
+    line = _assistant(["Write"], usage or {})
+    line["message"]["content"][0]["input"] = {
+        "file_path": "/repo/docs/superpowers/briefs/2026-08-15-PRI-248-x.md"
+    }
+    return line
+
+
+def test_brief_window_end_narrows_to_brief_write():
+    lines = [
+        {"type": "user", "message": {"content": "Base directory for this skill: skills/solve-task PRI-1"}},
+        _assistant(["mcp__reviewer__search_codebase"], {}),
+        _brief_write(),
+        _assistant(["mcp__reviewer__search_codebase"], {"output_tokens": 999}),
+    ]
+    assert steps.brief_window_end(lines, 0, len(lines)) == 3
+
+
+def test_brief_window_end_no_write_stays_full_end():
+    lines = [
+        {"type": "user", "message": {"content": "Base directory for this skill: skills/solve-task PRI-1"}},
+        _assistant(["mcp__reviewer__search_codebase"], {}),
+    ]
+    assert steps.brief_window_end(lines, 0, len(lines)) == len(lines)
+
+
+def test_brief_window_end_ignores_write_outside_briefs():
+    line = _assistant(["Write"], {})
+    line["message"]["content"][0]["input"] = {"file_path": "/repo/README.md"}
+    lines = [
+        {"type": "user", "message": {"content": "Base directory for this skill: skills/solve-task PRI-1"}},
+        line,
+    ]
+    assert steps.brief_window_end(lines, 0, len(lines)) == len(lines)
+
+
+def test_scan_steps_phase_scope_excludes_post_brief_activity(tmp_path):
+    start_text = (
+        "Base directory for this skill: skills/solve-task\n"
+        "`PRI-9` is either:\n- a task key (e.g. `PRI-4`), or\n- free text"
+    )
+    lines = [
+        {"type": "user", "message": {"content": start_text}},
+        _assistant(["mcp__reviewer__search_codebase"], {"cache_creation_input_tokens": 100}),
+        _brief_write(),
+        _assistant(["mcp__reviewer__search_codebase"], {"cache_creation_input_tokens": 5000}),
+    ]
+    session_dir = tmp_path / "proj"
+    session_dir.mkdir()
+    transcript = session_dir / "s1.jsonl"
+    transcript.write_text("\n".join(json.dumps(line) for line in lines), encoding="utf-8")
+    result = steps.scan_steps(tmp_path)
+    entry = result["PRI-9"]
+    assert entry["phase"]["gather"]["cache_write"] == 100.0
+    assert entry["session"]["gather"]["cache_write"] == 5100.0
