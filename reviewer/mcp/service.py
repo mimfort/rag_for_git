@@ -3033,11 +3033,18 @@ class MCPReviewService:
 
         # 6) История (fail-soft) и очистка overlay/сессии (ВСЕГДА).
         dropped_by_gate = len(parsed) - len(kept)
+        # PRI-247: расход окна ревью снимает клиентский хук в sidecar; явные
+        # аргументы клиента приоритетнее — по каждому полю отдельно.
+        from reviewer.services.cost_sidecar import merge_metadata, read_cost_sidecar
+        merged = merge_metadata(
+            {"model": model, "usage": usage, "total_cost": total_cost},
+            read_cost_sidecar(repo, pr),
+        )
         metadata = _RunMetadata(
-            model=model,
+            model=merged["model"],
             model_verify=model_verify,
-            usage=usage,
-            total_cost=total_cost,
+            usage=merged["usage"],
+            total_cost=merged["total_cost"],
             started_at=started_at,
             steps=steps,
         )

@@ -134,6 +134,19 @@ def test_broken_payload_is_noop(tmp_path, monkeypatch):
     assert review_cost.run({"tool_input": {"repo": "owner/name"}}) == 0
 
 
+def test_sidecar_path_matches_server_side_formula(tmp_path, monkeypatch):
+    """Формула пути продублирована в хуке и на сервере — они обязаны совпадать."""
+    import tempfile as _tempfile
+
+    from reviewer.services import cost_sidecar
+
+    monkeypatch.setattr(review_cost.tempfile, "gettempdir", lambda: str(tmp_path))
+    monkeypatch.setattr(_tempfile, "gettempdir", lambda: str(tmp_path))
+    for repo, pr in (("owner/name", 7), ("o/r", 1), ("a/b-c", 42)):
+        assert review_cost.sidecar_path(repo, pr) == cost_sidecar.sidecar_path(repo, pr)
+    assert review_cost.SIDECAR_VERSION == cost_sidecar.SIDECAR_VERSION
+
+
 def test_stage_markers_cover_every_reference_prompt():
     """Guard: новый reference-промпт обязан получить строку в STAGE_MARKERS."""
     refs = Path(__file__).resolve().parents[2] / "plugin" / "skills" / "review-pr" / "references"

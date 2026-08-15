@@ -9,7 +9,10 @@ publish_review в .published; фейковая history собирает прог
 """
 from __future__ import annotations
 
+import json
+import tempfile
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from reviewer.config.settings import Settings
@@ -701,3 +704,63 @@ def test_publish_dry_run_does_not_measure(_ov, _ch, monkeypatch, tmp_path) -> No
     _submit_then_publish(svc, "o/r", 7, [RAW], dry_run=True, task_key="PRI-999")
 
     assert history.brief_quality == []
+
+
+# ---------------------------------------------------------------------------
+# PRI-247: расход окна ревью из sidecar
+# ---------------------------------------------------------------------------
+
+def _write_sidecar(tmp_path, *, repo="o/r", pr=7, **over):
+    """Sidecar в подменённом tempdir; возвращает путь к файлу."""
+    from reviewer.services import cost_sidecar
+    data = {"version": 1, "repo": repo, "pr": pr, "model": "claude-opus-5",
+            "usage": {"by_model": {"claude-opus-5": {"output": 5}}},
+            "total_cost": 42.5,
+            "written_at": datetime.now(timezone.utc).isoformat()}
+    data.update(over)
+    path = Path(cost_sidecar.sidecar_path(repo, pr))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data), encoding="utf-8")
+    return path
+
+
+@patch("reviewer.services.review_service.chunk_python", side_effect=_fake_chunk)
+@patch("reviewer.services.review_service.build_overlay")
+def test_publish_fills_cost_from_sidecar(_ov, _ch, monkeypatch, tmp_path) -> None:
+    """PRI-247: клиент расход не передал — он берётся из sidecar и файл исчезает."""
+    monkeypatch.setattr(tempfile, "gettempdir", lambda: str(tmp_path))
+    path = _write_sidecar(tmp_path)
+    svc, _, history = _make_mcp_service_with_publish()
+    svc.prepare_review("o/r", 7)
+    _submit_then_publish(svc, "o/r", 7, [RAW], dry_run=True)
+    run = history.runs[0]
+    assert run["model"] == "claude-opus-5"
+    assert float(run["total_cost"]) == 42.5
+    assert run["usage"]["by_model"]["claude-opus-5"]["output"] == 5
+    assert not path.exists()
+
+
+@patch("reviewer.services.review_service.chunk_python", side_effect=_fake_chunk)
+@patch("reviewer.services.review_service.build_overlay")
+def test_explicit_client_metadata_wins_over_sidecar(_ov, _ch, monkeypatch, tmp_path) -> None:
+    """Явная model клиента приоритетнее, но расход всё равно подхватывается из sidecar."""
+    monkeypatch.setattr(tempfile, "gettempdir", lambda: str(tmp_path))
+    _write_sidecar(tmp_path)
+    svc, _, history = _make_mcp_service_with_publish()
+    svc.prepare_review("o/r", 7)
+    _submit_then_publish(svc, "o/r", 7, [RAW], dry_run=True, model="explicit-model")
+    run = history.runs[0]
+    assert run["model"] == "explicit-model"
+    assert float(run["total_cost"]) == 42.5
+
+
+@patch("reviewer.services.review_service.chunk_python", side_effect=_fake_chunk)
+@patch("reviewer.services.review_service.build_overlay")
+def test_publish_without_sidecar_still_works(_ov, _ch, monkeypatch, tmp_path) -> None:
+    """Fail-open: sidecar нет — ревью публикуется, поля расхода пусты."""
+    monkeypatch.setattr(tempfile, "gettempdir", lambda: str(tmp_path))
+    svc, _, history = _make_mcp_service_with_publish()
+    svc.prepare_review("o/r", 7)
+    report = _submit_then_publish(svc, "o/r", 7, [RAW], dry_run=True)
+    assert report["run_id"] is not None
+    assert history.runs[0]["total_cost"] is None
