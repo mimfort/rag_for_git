@@ -9,8 +9,14 @@
 import re
 from pathlib import Path
 
+from .test_assembled_prompts import assemble
+
 ROOT = Path(__file__).resolve().parents[2]
-SKILL_PATH = ROOT / "plugin" / "skills" / "solve-task" / "SKILL.md"
+
+
+def _solve() -> str:
+    return assemble("solve-task/SKILL.md")
+
 
 STEP5_RE = re.compile(
     r"^5\. \*\*Hand off to development\.\*\*(.*?)^## Failure handling", re.S | re.M
@@ -18,7 +24,7 @@ STEP5_RE = re.compile(
 
 
 def test_solve_task_brief_spec_present():
-    text = SKILL_PATH.read_text(encoding="utf-8")
+    text = _solve()
     assert "# Brief —" in text                 # скелет-шаблон brief
     assert "No fixed ceilings" in text          # адаптивный колпак (PRI-202, не «≤N»)
     assert "bounded server-side" in text        # ретрив уже ограничен cliff/rails
@@ -27,14 +33,14 @@ def test_solve_task_brief_spec_present():
 
 
 def test_solve_task_passes_project_scope():
-    text = SKILL_PATH.read_text(encoding="utf-8")
+    text = _solve()
     assert "project=" in text
     assert "task_board.project" in text
 
 
 def test_solve_task_persists_brief():
     """PRI-163: шаг персиста брифа в docs/superpowers/briefs/ + ссылка на путь в хендоффе."""
-    text = SKILL_PATH.read_text(encoding="utf-8")
+    text = _solve()
     assert "docs/superpowers/briefs/" in text   # целевой путь персиста
     assert "Persist the brief" in text          # шаг персиста присутствует
     assert "file path" in text                  # хендофф ссылается на путь к файлу
@@ -43,7 +49,7 @@ def test_solve_task_persists_brief():
 
 def test_solve_task_dedupes_related_sources():
     """PRI-164(b): «Related work» дедупится по ключу между linked и similar."""
-    text = SKILL_PATH.read_text(encoding="utf-8")
+    text = _solve()
     assert "Dedup related sources by key" in text   # явный шаг дедупа
     assert "linked ∪ similar" in text               # оба источника, слитые
     assert "canonical task key" in text             # дедуп по каноническому ключу
@@ -51,7 +57,7 @@ def test_solve_task_dedupes_related_sources():
 
 def test_solve_task_handles_thin_criteria_without_provider_playbook():
     """Тонкие критерии fail-open остаются пустыми, не включая provider-specific чтение."""
-    text = SKILL_PATH.read_text(encoding="utf-8")
+    text = _solve()
     section = re.search(r"\*\*Thin criteria.*?(?=\n\s*- \*\*Miss\*\*)", text, re.DOTALL)
     assert section
     assert "(?i)(критери|приёмк|acceptance)" in section.group()
@@ -62,21 +68,21 @@ def test_solve_task_handles_thin_criteria_without_provider_playbook():
 
 def test_solve_task_includes_test_exemplars():
     """PRI-162: solve-task подмешивает тест-образцы (include_tests) для TDD-хендоффа."""
-    text = SKILL_PATH.read_text(encoding="utf-8")
+    text = _solve()
     assert "include_tests=True" in text     # тест-ретрив в шаге 3
     assert "Test exemplars" in text         # секция скелета брифа
 
 
 def test_solve_task_lazy_expansion_present():
     """PRI-202: ленивый перевызов search_codebase с большим top_k под cliff/rails-хвост."""
-    text = SKILL_PATH.read_text(encoding="utf-8")
+    text = _solve()
     assert "Lazy expansion (no user prompt)" in text  # шаг присутствует, без интеррапта
     assert "top_k=" in text                           # перевызов с большим потолком
 
 
 def test_solve_task_warns_on_existing_artifacts():
     """PRI-176: solve-task проверяет существующие briefs/specs/plans и предупреждает, не блокируя."""
-    text = SKILL_PATH.read_text(encoding="utf-8")
+    text = _solve()
     assert "*-<KEY>-*.md" in text               # glob без даты
     assert "docs/superpowers/specs/" in text    # проверка спек
     assert "docs/superpowers/plans/" in text    # проверка планов
@@ -89,7 +95,7 @@ def test_solve_task_warns_on_existing_artifacts():
 def test_solve_task_asks_brief_model_choice():
     """PRI-208: тир модели для сборки брифа спрашивается — требование живо, но с PRI-243
     переехало из Step 1.5 в панель стартового опроса (Step 0 `0. **Startup survey.**`)."""
-    text = SKILL_PATH.read_text(encoding="utf-8")
+    text = _solve()
     assert "0. **Startup survey.**" in text, "нет стартовой панели опроса (Step 0)"
     assert "**Brief model tier**" in text, (
         "нет вопроса о тире модели для брифа в стартовой панели"
@@ -105,7 +111,7 @@ def test_solve_task_asks_brief_model_choice():
 
 def test_solve_task_dispatches_brief_subagent_on_chosen_model():
     """Путь A: шаги 2–4 диспатчатся сабагентом на выбранной модели; путь B — inline-фолбэк."""
-    text = SKILL_PATH.read_text(encoding="utf-8")
+    text = _solve()
     assert "dispatch a subagent on the chosen model" in text, (
         "нет диспатча сабагента на выбранной модели (путь A)"
     )
@@ -116,7 +122,7 @@ def test_solve_task_dispatches_brief_subagent_on_chosen_model():
 
 def test_solve_task_records_brief_model_marker():
     """Оркестратор дописывает в бриф строку-маркер «Собран на: …»."""
-    text = SKILL_PATH.read_text(encoding="utf-8")
+    text = _solve()
     assert "Собран на" in text, (
         "нет строки-маркера «Собран на: <tier/модель>» (наблюдаемость выбора)"
     )
@@ -124,14 +130,14 @@ def test_solve_task_records_brief_model_marker():
 
 def test_solve_task_hints_implementations_for_oo():
     """OO/registry-хинт: family (inheritance + structural match) и directed implementations."""
-    text = SKILL_PATH.read_text(encoding="utf-8")
+    text = _solve()
     assert "implementations" in text          # тул назван в шаге graph-deepening
     assert "family" in text                   # PRI-251: family — предпочтительный тул для rollout-задач
     assert "inheritance" in text or "IMPLEMENTS" in text or "наслед" in text  # смысл directed-обхода
 
 
 def test_solve_task_uses_only_generic_board_metadata():
-    text = SKILL_PATH.read_text(encoding="utf-8").lower()
+    text = _solve().lower()
     for token in ("create_target", "done_target", "options", "targets", "required_for", "choices"):
         assert token in text
     for forbidden in ("yougile", "youtrack", "done_column", "done_state", "status_field", "api_key"):
@@ -146,7 +152,7 @@ def test_solve_task_step5_asks_for_brief_link_not_verbatim_constraints():
     `docs/superpowers/briefs/` встречаются в SKILL.md многократно (шаги 0, 4),
     поэтому whole-file-ассерт остался бы зелёным даже при удалённом шаге 5.
     """
-    text = SKILL_PATH.read_text(encoding="utf-8")
+    text = _solve()
     m = STEP5_RE.search(text)
     assert m, "Step 5 (hand off) не найден — заголовок шага переименован"
     step5 = m.group(1)

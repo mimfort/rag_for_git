@@ -6,9 +6,14 @@
 import re
 from pathlib import Path
 
+from .test_assembled_prompts import assemble
+
 ROOT = Path(__file__).resolve().parents[2]
-SKILL = ROOT / "plugin" / "skills" / "solve-task" / "SKILL.md"
 PROFILE = ROOT / "plugin" / "skills" / "_profiles" / "execution-lite.md"
+
+
+def _solve() -> str:
+    return assemble("solve-task/SKILL.md")
 
 
 def test_lite_profile_exists():
@@ -52,13 +57,13 @@ def test_lite_profile_has_no_own_machinery():
 
 def _survey_section() -> str:
     """Вырезать подпункт 0 Шага 0 — от заголовка опроса до пункта freshness."""
-    text = SKILL.read_text(encoding="utf-8")
+    text = _solve()
     start = text.index("0. **Startup survey.**")
     return text[start:text.index("1. **Base-index freshness.**", start)]
 
 
 def test_startup_survey_runs_before_preflight_checks():
-    text = SKILL.read_text(encoding="utf-8")
+    text = _solve()
     assert text.index("0. **Startup survey.**") < text.index("1. **Base-index freshness.**")
     assert text.index("0. **Startup survey.**") < text.index("3. **Warm the task corpus.**")
 
@@ -107,40 +112,40 @@ def test_survey_defaults_pin_the_whole_triple():
 def test_auto_permission_mode_shortcut_removed():
     # Правило «в auto permission mode тир выбирается молча» удалено: панель
     # показывается всегда, кроме headless/non-interactive.
-    text = SKILL.read_text(encoding="utf-8")
+    text = _solve()
     assert "auto permission mode" not in text
     assert "auto-permission mode" not in text
     assert "1.5. **Choose the brief model" not in text
 
 
 def test_brief_building_unit_points_at_the_survey():
-    text = SKILL.read_text(encoding="utf-8")
+    text = _solve()
     assert "chosen in Step 1.5" not in text
     assert "Step 0 startup survey" in text
 
 
 def test_full_auto_suppresses_preflight_questions():
-    text = SKILL.read_text(encoding="utf-8")
+    text = _solve()
     assert "In `full-auto`, do not ask" in text
     assert "recommended option" in text
 
 
 def _run_state_section() -> str:
     """Вырезать подраздел персиста выбора — от его заголовка до хендоффа."""
-    text = SKILL.read_text(encoding="utf-8")
+    text = _solve()
     start = text.index("**Persist the run state")
     return text[start:text.index("5. **Hand off to development.**", start)]
 
 
 def _brief_persist_section() -> str:
     """Вырезать подраздел персиста брифа — он не должен нести режим."""
-    text = SKILL.read_text(encoding="utf-8")
+    text = _solve()
     start = text.index("**Persist the brief (survivability).**")
     return text[start:text.index("**Persist the run state", start)]
 
 
 def _handoff_section() -> str:
-    text = SKILL.read_text(encoding="utf-8")
+    text = _solve()
     start = text.index("5. **Hand off to development.**")
     return text[start:text.index("## Failure handling", start)]
 

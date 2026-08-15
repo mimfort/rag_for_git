@@ -6,13 +6,19 @@ solve-task — блокирующий Step 0 Preflight (drift → подтвер
 """
 from pathlib import Path
 
+from .test_assembled_prompts import assemble
+
 ROOT = Path(__file__).resolve().parents[2]
 SOLVE = ROOT / "plugin" / "skills" / "solve-task" / "SKILL.md"
 ASK = ROOT / "plugin" / "skills" / "ask" / "SKILL.md"
 
 
+def _solve() -> str:
+    return assemble("solve-task/SKILL.md")
+
+
 def test_solve_task_has_preflight():
-    text = SOLVE.read_text(encoding="utf-8")
+    text = _solve()
     assert "Preflight" in text                              # Step 0 добавлен
     assert "reviewer status" in text and "--json" in text   # читает машиночитаемый статус
     assert "drift" in text                                  # проверяет дрейф
@@ -30,14 +36,14 @@ def test_ask_has_warn_only_freshness():
 
 
 def test_solve_task_preflight_passes_board_type():
-    text = SOLVE.read_text(encoding="utf-8")
+    text = _solve()
     # preflight sync_board должен передавать board_type из task_board.type
     assert "board_type" in text
 
 
 def _summary_warmth_section() -> str:
     """Вырезать пункт 4 preflight'а solve-task — от заголовка до блока Decisions."""
-    text = SOLVE.read_text(encoding="utf-8")
+    text = _solve()
     start = text.index("4. **Summary warmth.**")
     return text[start:text.index("Decisions:", start)]
 
