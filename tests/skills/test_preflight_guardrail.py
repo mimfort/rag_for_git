@@ -66,3 +66,15 @@ def test_solve_task_keeps_three_warmth_options():
     assert "Прогреть сейчас" in section
     assert "Прогрею сам" in section
     assert "Пропустить" in section
+
+
+def test_solve_task_core_is_small_and_uses_references():
+    """Ядро скилла разгружено: детали живут в references/, ядро их включает."""
+    raw = SOLVE.read_text(encoding="utf-8")
+    assert len(raw.splitlines()) <= 130, "ядро SKILL.md снова разрослось"
+    assert "<!-- include: solve-task/references/" in raw
+
+
+def test_solve_task_calls_prepare_task_context():
+    text = _solve()
+    assert "prepare_task_context(" in text
