@@ -23,6 +23,23 @@ def test_classify_gather_tools():
     assert steps.classify_turn(_assistant(["mcp__reviewer__get_subsystem_summaries"], {})) == "gather"
 
 
+def test_classify_prepare_task_context_is_preflight():
+    """PRI-248: один вызов сворачивает preflight+gather раунды, бакет — по
+    точке в пайплайне (Step 0 "Startup: survey + Preflight"), см. STEP_TOOLS."""
+    assert steps.classify_turn(_assistant(["mcp__reviewer__prepare_task_context"], {})) == "preflight"
+
+
+def test_sticky_attribution_prepare_task_context_switches_to_preflight():
+    lines = [
+        {"type": "user", "message": {"content": "Base directory for this skill: skills/solve-task PRI-1"}},
+        _assistant(["mcp__reviewer__prepare_task_context"], {"cache_creation_input_tokens": 10}),
+        _assistant(["Glob"], {"cache_creation_input_tokens": 5}),
+    ]
+    by_step = steps.attribute_window_sticky(lines, 0, len(lines))
+    assert by_step["preflight"]["cache_write"] == 15.0
+    assert by_step["startup"]["cache_write"] == 0.0
+
+
 def test_classify_brief_write():
     line = _assistant(["Write"], {})
     line["message"]["content"][0]["input"] = {

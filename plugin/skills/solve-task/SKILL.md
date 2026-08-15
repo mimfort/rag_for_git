@@ -30,7 +30,9 @@ or the execution strategy chosen in the startup survey (inline / subagent / lite
    repo explicitly disables the board.
 
    **Call `prepare_task_context(repo, key, branch, warm_board=True)` once here** — pass the
-   resolved `key` when `$ARGUMENTS` matches `key_pattern`, else board-less (`key=None`). It folds
+   resolved `key` when `$ARGUMENTS` matches `key_pattern`, else board-less: pass the user's
+   formulation verbatim as `key` (the tool's `key` parameter is required and accepts free text
+   when no board key matches). It folds
    the manual round trips below into one deterministic call and returns a single payload:
    `preflight` (branch, indexed_sha, drift, summaries, chunks, graph_nodes — feeds Step 0.1/0.4
    below), `task_board`/`task` (feeds Step 2), `related`/`subsystems`/`code`/`test_exemplars`
@@ -50,9 +52,10 @@ or the execution strategy chosen in the startup survey (inline / subagent / lite
 **Brief-building unit (Steps 2–4) runs on the chosen model.** Steps 2–4 (identify → gather → distill
 → persist) are non-interactive; run them on the model chosen in the Step 0 startup survey. Dispatch
 a subagent on the chosen model when a per-subagent model override is available (session-less tools +
-`Read`/`Bash`/`Glob`/`Write` to persist the brief); otherwise build the brief inline. Details, the
-existing-artifacts pre-dispatch warn, the `Собран на:` marker line and the fail-open fallback are in
-`references/brief-format.md` below.
+`Read`/`Bash`/`Glob`/`Write` to persist the brief), passing the Step 0 `prepare_task_context` payload
+into its dispatch prompt so it does not re-call `prepare_task_context` or the tools it already
+replaced; otherwise build the brief inline. Details, the existing-artifacts pre-dispatch warn, the
+`Собран на:` marker line and the fail-open fallback are in `references/brief-format.md` below.
 
 2. **Identify the task.**
    - If `$ARGUMENTS` matches the board's `key_pattern`:

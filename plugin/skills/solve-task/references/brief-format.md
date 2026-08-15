@@ -6,6 +6,15 @@
      `get_subsystem_summaries`, `get_task_context`, `search_tasks`, the graph tools, `get_pr_diff`) plus
      the harness `Read`/`Bash`/`Glob`/`Write` (to persist the brief). The subagent returns the brief file
      path and a short summary (kept / dropped).
+     **Pass the Step 0 `prepare_task_context` payload into the dispatch prompt verbatim** (or as an
+     attached/inlined JSON blob) — the payload lives in the orchestrator's context, not the
+     subagent's, and Steps 2–4 are written to consume `payload.task` / `payload.related` /
+     `payload.subsystems` / `payload.code` / `payload.test_exemplars` / `payload.gaps`. The subagent
+     must NOT call `prepare_task_context` again and must NOT re-call the tools it already replaced
+     (`get_task`, `get_task_context`, `search_tasks`, `search_codebase`, `get_subsystem_summaries`)
+     except through the documented per-section fallback conditions (payload section absent/empty
+     without a matching `gaps` entry, or `prepare_task_context` itself unavailable) — otherwise the
+     consolidation into one call is undone and every tool is paid for twice.
    - **Path B — per-subagent model override unavailable** (some CLIs): build the brief **inline** on the
      session model, or offer the escape-hatch «switch model / run it yourself» in the spirit of the
      preflight «Прогрею сам» option (Step 0.4). Note in the report that the brief was built inline.

@@ -20,6 +20,14 @@ STEP_TOOLS = {
     "sync_board": "preflight",
     "get_board_config": "preflight",
     "get_board_targets": "preflight",
+    # prepare_task_context сворачивает и preflight-раунды (board warm-up ==
+    # sync_board), и gather-раунды (get_task/search_codebase/related_symbols/
+    # get_subsystem_summaries/...) в один вызов Step 0 (PRI-248). Разбить один
+    # вызов на две стадии нечем — он относится к точке, где стоит в пайплайне:
+    # Step 0 "Startup: survey + Preflight", до Step 2-4 (identify/gather/distill).
+    # Так же промаркирован STATUS_MARKER ("reviewer status") — оба тула проверяют
+    # готовность/собирают контекст ДО того, как начинается собственно gather.
+    "prepare_task_context": "preflight",
     "get_task": "gather",
     "get_task_context": "gather",
     "search_tasks": "gather",
