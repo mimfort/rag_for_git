@@ -21,7 +21,7 @@
 - Миграций БД в задаче нет: новые данные кладутся в существующие колонки (`tool_calls` JSONB, `usage` JSONB, `total_cost`).
 - Язык кода проекта — русский: комментарии, докстринги, сообщения.
 - Unit-тесты без Postgres/Neo4j/сети; всё остальное — `@pytest.mark.integration`.
-- Любая правка содержимого `plugin/` требует прогона `update_codex_plugin_manifest.py` (Task 5), иначе install-тесты краснеют.
+- Любая правка содержимого `plugin/` требует прогона `scripts/update_codex_plugin_manifest.py` (Task 5), иначе install-тесты краснеют.
 - Коммиты — Conventional Commits на русском, без self-attribution.
 
 ---
@@ -1209,7 +1209,7 @@ git commit -m "feat(mcp): стадии и размер payload в серверн
 **Files:**
 - Modify: `reviewer/web/history.py` (новый метод `stage_breakdown`), `reviewer/web/api.py:118-127` (поле `by_stage` в ответе trace), `web/frontend/src/api.ts` (тип), `web/frontend/src/pages/TraceView.tsx` (таблица разреза), `plugin/skills/review-pr/SKILL.md` (~строка 127), `README.md`, `README.ru.md`, `CLAUDE.md`
 - Test: `tests/web/test_history.py`, `tests/web/test_api.py` (дополнить)
-- Run: `update_codex_plugin_manifest.py`
+- Run: `scripts/update_codex_plugin_manifest.py`
 
 **Interfaces:**
 - Consumes: формат шага из Task 4 (`tool_calls[0].args_bytes` / `result_bytes`), `usage.by_stage` из Task 2/3.
@@ -1317,7 +1317,7 @@ Expected: PASS; сборка фронта без ошибок TypeScript
 
 - [ ] **Step 8: Пересобрать codex-манифесты**
 
-Run: `.venv/bin/python update_codex_plugin_manifest.py && .venv/bin/pytest -q`
+Run: `.venv/bin/python scripts/update_codex_plugin_manifest.py && .venv/bin/pytest -q`
 Expected: манифесты обновлены; полный unit-прогон зелёный (install-тесты в том числе)
 
 - [ ] **Step 9: Коммит**
