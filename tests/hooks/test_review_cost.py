@@ -1,0 +1,143 @@
+import json
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "plugin" / "hooks"))
+
+import review_cost  # noqa: E402
+
+
+def _assistant(model, usage, sidechain=False, extra=None):
+    line = {"type": "assistant", "isSidechain": sidechain,
+            "message": {"model": model, "usage": usage}}
+    line.update(extra or {})
+    return line
+
+
+def _prepare_call(repo, pr):
+    return {"type": "assistant", "message": {"model": "opus", "usage": {}, "content": [
+        {"type": "tool_use", "name": "mcp__reviewer__prepare_review",
+         "input": {"repo": repo, "pr": pr}}]}}
+
+
+def _sidechain_prompt(text):
+    return {"type": "user", "isSidechain": True, "message": {"content": text}}
+
+
+def _payload(tmp_path, lines, repo="owner/name", pr=7):
+    transcript = tmp_path / "t.jsonl"
+    transcript.write_text("".join(json.dumps(x) + "\n" for x in lines), encoding="utf-8")
+    return {"transcript_path": str(transcript), "session_id": "s1",
+            "tool_name": "mcp__reviewer__publish_review",
+            "tool_input": {"repo": repo, "pr": pr, "summary": "s"}}
+
+
+def test_sidecar_path_is_deterministic_from_repo_and_pr():
+    first = review_cost.sidecar_path("owner/name", 7)
+    assert first == review_cost.sidecar_path("owner/name", 7)
+    assert first != review_cost.sidecar_path("owner/name", 8)
+    assert Path(first).name == "owner_name-7.json"
+
+
+def test_window_starts_at_prepare_review_of_same_pr(tmp_path, monkeypatch):
+    monkeypatch.setattr(review_cost.tempfile, "gettempdir", lambda: str(tmp_path))
+    lines = [
+        _assistant("opus", {"output_tokens": 1000}),          # до окна — не считается
+        _prepare_call("owner/name", 7),
+        _assistant("opus", {"output_tokens": 4}),             # в окне
+    ]
+    review_cost.run(_payload(tmp_path, lines))
+    data = json.loads(Path(review_cost.sidecar_path("owner/name", 7)).read_text(encoding="utf-8"))
+    assert data["usage"]["by_model"]["opus"]["output"] == 4
+
+
+def test_window_ignores_prepare_of_another_pr(tmp_path, monkeypatch):
+    monkeypatch.setattr(review_cost.tempfile, "gettempdir", lambda: str(tmp_path))
+    lines = [
+        _prepare_call("owner/name", 99),
+        _assistant("opus", {"output_tokens": 3}),
+        _prepare_call("owner/name", 7),
+        _assistant("opus", {"output_tokens": 5}),
+    ]
+    review_cost.run(_payload(tmp_path, lines))
+    data = json.loads(Path(review_cost.sidecar_path("owner/name", 7)).read_text(encoding="utf-8"))
+    assert data["usage"]["by_model"]["opus"]["output"] == 5
+
+
+def test_falls_back_to_skill_marker_when_no_prepare(tmp_path, monkeypatch):
+    monkeypatch.setattr(review_cost.tempfile, "gettempdir", lambda: str(tmp_path))
+    lines = [
+        {"type": "user", "message": {"content":
+            "Base directory for this skill: /x/skills/review-pr"}},
+        _assistant("opus", {"output_tokens": 6}),
+    ]
+    review_cost.run(_payload(tmp_path, lines))
+    data = json.loads(Path(review_cost.sidecar_path("owner/name", 7)).read_text(encoding="utf-8"))
+    assert data["usage"]["by_model"]["opus"]["output"] == 6
+
+
+def test_no_window_writes_no_sidecar(tmp_path, monkeypatch):
+    monkeypatch.setattr(review_cost.tempfile, "gettempdir", lambda: str(tmp_path))
+    review_cost.run(_payload(tmp_path, [_assistant("opus", {"output_tokens": 6})]))
+    assert not Path(review_cost.sidecar_path("owner/name", 7)).exists()
+
+
+def test_sidechain_attributed_to_stage_by_reference_marker(tmp_path, monkeypatch):
+    monkeypatch.setattr(review_cost.tempfile, "gettempdir", lambda: str(tmp_path))
+    lines = [
+        _prepare_call("owner/name", 7),
+        _sidechain_prompt("follow references/verify-prompt.md exactly"),
+        _assistant("sonnet", {"output_tokens": 10}, sidechain=True),
+        _sidechain_prompt("follow references/analyze-prompt.md exactly"),
+        _assistant("sonnet", {"output_tokens": 20}, sidechain=True),
+        _assistant("opus", {"output_tokens": 1}),
+    ]
+    review_cost.run(_payload(tmp_path, lines))
+    data = json.loads(Path(review_cost.sidecar_path("owner/name", 7)).read_text(encoding="utf-8"))
+    by_stage = data["usage"]["by_stage"]
+    assert by_stage["verify"]["output"] == 10
+    assert by_stage["analyze"]["output"] == 20
+    assert by_stage["orchestrator"]["output"] == 1
+
+
+def test_unrecognised_sidechain_goes_to_subagent_stage(tmp_path, monkeypatch):
+    monkeypatch.setattr(review_cost.tempfile, "gettempdir", lambda: str(tmp_path))
+    lines = [
+        _prepare_call("owner/name", 7),
+        _sidechain_prompt("do something unlabelled"),
+        _assistant("sonnet", {"output_tokens": 9}, sidechain=True),
+    ]
+    review_cost.run(_payload(tmp_path, lines))
+    data = json.loads(Path(review_cost.sidecar_path("owner/name", 7)).read_text(encoding="utf-8"))
+    assert data["usage"]["by_stage"]["subagent"]["output"] == 9
+
+
+def test_total_cost_is_weighted_not_summed(tmp_path, monkeypatch):
+    monkeypatch.setattr(review_cost.tempfile, "gettempdir", lambda: str(tmp_path))
+    lines = [
+        _prepare_call("owner/name", 7),
+        _assistant("opus", {"input_tokens": 100, "output_tokens": 100,
+                            "cache_creation_input_tokens": 100,
+                            "cache_read_input_tokens": 100}),
+    ]
+    review_cost.run(_payload(tmp_path, lines))
+    data = json.loads(Path(review_cost.sidecar_path("owner/name", 7)).read_text(encoding="utf-8"))
+    assert data["total_cost"] == 735.0        # не 400 — веса, а не сумма
+    assert data["model"] == "opus"
+    assert data["transcript_source"] == "payload"
+    assert data["version"] == 1
+
+
+def test_broken_payload_is_noop(tmp_path, monkeypatch):
+    monkeypatch.setattr(review_cost.tempfile, "gettempdir", lambda: str(tmp_path))
+    assert review_cost.run({}) == 0
+    assert review_cost.run({"tool_input": {"repo": "owner/name"}}) == 0
+
+
+def test_stage_markers_cover_every_reference_prompt():
+    """Guard: новый reference-промпт обязан получить строку в STAGE_MARKERS."""
+    refs = Path(__file__).resolve().parents[2] / "plugin" / "skills" / "review-pr" / "references"
+    for prompt in sorted(refs.glob("*-prompt.md")):
+        assert any(prompt.name in marker for marker in review_cost.STAGE_MARKERS), (
+            f"{prompt.name} не описан в review_cost.STAGE_MARKERS"
+        )
