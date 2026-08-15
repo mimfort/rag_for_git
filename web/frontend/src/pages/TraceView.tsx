@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { getTrace, type TraceStep, type ToolCallEntry, type StageBreakdown } from '../api'
-import { fmtCost } from '../utils'
+import { fmtUnits } from '../utils'
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -115,7 +115,7 @@ function LlmCallStep({ step }: { step: TraceStep }) {
             <span className="step-tokens">{step.tokens.toLocaleString('ru-RU')} tok</span>
           )}
           {step.cost != null && step.cost > 0 && (
-            <span className="step-cost">{fmtCost(step.cost)}</span>
+            <span className="step-cost">{fmtUnits(step.cost)}</span>
           )}
           <span className="step-expand-icon" style={open ? { transform: 'rotate(180deg)' } : {}}>▾</span>
         </div>
@@ -266,7 +266,7 @@ function StageSection({ stage, steps }: { stage: string; steps: TraceStep[] }) {
             <span style={{ marginRight: 12 }}>{totalTokens.toLocaleString('ru-RU')} tok</span>
           )}
           {totalCost > 0 && (
-            <span style={{ color: 'var(--amber)' }}>{fmtCost(totalCost)}</span>
+            <span style={{ color: 'var(--amber)' }}>{fmtUnits(totalCost)}</span>
           )}
         </div>
         <span className={`trace-chevron${open ? ' open' : ''}`}>▶</span>
@@ -293,6 +293,7 @@ function StageBreakdownTable({ rows }: { rows: StageBreakdown[] }) {
   if (rows.length === 0) return null
   const order = sortStages(new Map(rows.map(r => [r.stage, r])))
   return (
+    <>
     <table className="stage-breakdown-table">
       <thead>
         <tr>
@@ -318,6 +319,12 @@ function StageBreakdownTable({ rows }: { rows: StageBreakdown[] }) {
         })}
       </tbody>
     </table>
+    <p className="stage-breakdown-note">
+      «Шагов» считается по серверным тул-вызовам, «Расход» — по клиентским стадиям транскрипта.
+      Это два независимых канала, поэтому населения строк не совпадают: у стадии могут быть шаги
+      без расхода и расход без шагов.
+    </p>
+    </>
   )
 }
 

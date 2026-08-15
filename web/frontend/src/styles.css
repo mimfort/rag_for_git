@@ -926,6 +926,13 @@ td {
   border-bottom: none;
 }
 
+.stage-breakdown-note {
+  margin: 6px 2px 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
 .trace-stage-section {
   border-radius: var(--radius-lg);
   overflow: hidden;
