@@ -35,6 +35,11 @@ STEP_TOOLS = {
 BRIEFS_MARKER = "docs/superpowers/briefs/"
 STATUS_MARKER = "reviewer status"
 STEPS = ("preflight", "gather", "brief", "other")
+# Липкая модель добавляет "startup" — ходы до первого распознанного вызова
+# (опрос пользователя, раскачка скилла); "other" в этой модели не заполняется
+# вовсе (см. attribute_window_sticky), но остаётся в кортеже для единообразия
+# формы с STEPS и на случай будущего расширения.
+STICKY_STEPS = ("startup", "preflight", "gather", "brief", "other")
 
 
 def _tool_calls(line: dict) -> list:
@@ -104,6 +109,38 @@ def attribute_window(lines: list, start: int, end: int) -> dict:
     return by_step
 
 
+def attribute_window_sticky(lines: list, start: int, end: int) -> dict:
+    """Бакеты токенов по «липкой» стадии — модель состояния, не точечный факт.
+
+    Цена (особенно cache_write) платится за весь накопленный промпт хода, а не
+    только за тот, что вызвал распознанный тул: ход, который рассуждает между
+    двумя вызовами gather-тулов, или читает файл через Read, логически всё ещё
+    внутри текущей стадии. Точечная `attribute_window` относит такие ходы в
+    "other" и системно занижает каждую стадию. Здесь стадия переключается
+    только распознанным вызовом (тем же условием, что в `classify_turn`) и
+    держится, пока не встретится следующий распознанный вызов; ходы до первого
+    распознанного вызова — стадия "startup". "other" в этой модели не
+    заполняется: switch происходит только на нераспознанном "other" никогда, а
+    единственная стадия "по умолчанию" до первого переключения — "startup".
+    Верхняя оценка стадии (в противовес нижней оценке точечной модели).
+    """
+    by_step = {step: {key: 0.0 for key in BUCKET_KEYS} for step in STICKY_STEPS}
+    current = "startup"
+    for line in lines[start + 1 : end]:
+        if line.get("type") != "assistant":
+            continue
+        turn_class = classify_turn(line)
+        if turn_class != "other":
+            current = turn_class
+        usage = (line.get("message") or {}).get("usage") or {}
+        bucket = by_step[current]
+        bucket["fresh_in"] += float(usage.get("input_tokens") or 0)
+        bucket["output"] += float(usage.get("output_tokens") or 0)
+        bucket["cache_write"] += float(usage.get("cache_creation_input_tokens") or 0)
+        bucket["cache_read"] += float(usage.get("cache_read_input_tokens") or 0)
+    return by_step
+
+
 def weighted_shares(by_step: dict) -> dict:
     """Доли взвешенной цены по под-шагам. Нулевая цена → нулевые доли."""
     values = {step: weighted(buckets) for step, buckets in by_step.items()}
@@ -114,10 +151,18 @@ def weighted_shares(by_step: dict) -> dict:
 
 
 SCOPES = ("phase", "session")
+MODELS = ("pointwise", "sticky")
+_MODEL_STEPS = {"pointwise": STEPS, "sticky": STICKY_STEPS}
 
 
 def _empty_scoped_slot() -> dict:
-    return {scope: {step: {b: 0.0 for b in BUCKET_KEYS} for step in STEPS} for scope in SCOPES}
+    return {
+        scope: {
+            model: {step: {b: 0.0 for b in BUCKET_KEYS} for step in _MODEL_STEPS[model]}
+            for model in MODELS
+        }
+        for scope in SCOPES
+    }
 
 
 def scan_steps(root: pathlib.Path) -> dict:
@@ -126,7 +171,10 @@ def scan_steps(root: pathlib.Path) -> dict:
     Каждая задача даёт два скоупа: "phase" — только фаза сборки брифа
     (окно сужено `brief_window_end`, это основная метрика PRI-248) и
     "session" — вся сессия до следующего вызова solve-task/конца транскрипта
-    (старая метрика, сохранена для сопоставимости с PRI-246).
+    (старая метрика, сохранена для сопоставимости с PRI-246). Внутри каждого
+    скоупа — две модели атрибуции: "pointwise" (точечная, по факту распознанного
+    вызова — нижняя оценка стадии) и "sticky" (липкая, по активной стадии между
+    переключениями — верхняя оценка).
     """
     result: dict = {}
     if not root.exists():
@@ -141,7 +189,10 @@ def scan_steps(root: pathlib.Path) -> dict:
             slot = result.setdefault(key, _empty_scoped_slot())
             phase_end = brief_window_end(lines, start, end)
             for scope, scope_end in (("phase", phase_end), ("session", end)):
-                for step, buckets in attribute_window(lines, start, scope_end).items():
-                    for bucket_key in BUCKET_KEYS:
-                        slot[scope][step][bucket_key] += buckets[bucket_key]
+                pointwise = attribute_window(lines, start, scope_end)
+                sticky = attribute_window_sticky(lines, start, scope_end)
+                for model, by_step in (("pointwise", pointwise), ("sticky", sticky)):
+                    for step, buckets in by_step.items():
+                        for bucket_key in BUCKET_KEYS:
+                            slot[scope][model][step][bucket_key] += buckets[bucket_key]
     return result

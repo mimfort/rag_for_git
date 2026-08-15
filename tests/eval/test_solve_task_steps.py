@@ -130,5 +130,39 @@ def test_scan_steps_phase_scope_excludes_post_brief_activity(tmp_path):
     transcript.write_text("\n".join(json.dumps(line) for line in lines), encoding="utf-8")
     result = steps.scan_steps(tmp_path)
     entry = result["PRI-9"]
-    assert entry["phase"]["gather"]["cache_write"] == 100.0
-    assert entry["session"]["gather"]["cache_write"] == 5100.0
+    assert entry["phase"]["pointwise"]["gather"]["cache_write"] == 100.0
+    assert entry["session"]["pointwise"]["gather"]["cache_write"] == 5100.0
+
+
+def test_sticky_attribution_carries_through_untagged_turns():
+    lines = [
+        {"type": "user", "message": {"content": "Base directory for this skill: skills/solve-task PRI-1"}},
+        _assistant(["mcp__reviewer__search_codebase"], {"cache_creation_input_tokens": 100}),
+        _assistant(["Glob"], {"cache_creation_input_tokens": 50}),
+        _assistant(["mcp__reviewer__search_tasks"], {"cache_creation_input_tokens": 200}),
+    ]
+    by_step = steps.attribute_window_sticky(lines, 0, len(lines))
+    assert by_step["gather"]["cache_write"] == 350.0
+    assert by_step["startup"]["cache_write"] == 0.0
+
+
+def test_sticky_attribution_turns_before_first_call_are_startup():
+    lines = [
+        {"type": "user", "message": {"content": "Base directory for this skill: skills/solve-task PRI-1"}},
+        _assistant(["Glob"], {"cache_creation_input_tokens": 30}),
+        _assistant(["mcp__reviewer__sync_board"], {"cache_creation_input_tokens": 10}),
+    ]
+    by_step = steps.attribute_window_sticky(lines, 0, len(lines))
+    assert by_step["startup"]["cache_write"] == 30.0
+    assert by_step["preflight"]["cache_write"] == 10.0
+
+
+def test_sticky_attribution_switches_on_the_tagged_turn_itself():
+    lines = [
+        {"type": "user", "message": {"content": "Base directory for this skill: skills/solve-task PRI-1"}},
+        _assistant(["mcp__reviewer__sync_board"], {"cache_creation_input_tokens": 10}),
+        _assistant(["mcp__reviewer__search_codebase"], {"cache_creation_input_tokens": 20}),
+    ]
+    by_step = steps.attribute_window_sticky(lines, 0, len(lines))
+    assert by_step["preflight"]["cache_write"] == 10.0
+    assert by_step["gather"]["cache_write"] == 20.0

@@ -136,9 +136,9 @@ def cmd_forecast(args) -> int:
     return 0
 
 
-def _print_scope(label: str, totals: dict, shares: dict) -> None:
+def _print_model(label: str, model_steps: tuple, totals: dict, shares: dict) -> None:
     print(label)
-    for step in steps.STEPS:
+    for step in model_steps:
         print(f"  {step:<10} {shares[step] * 100:5.1f}%  "
               f"(cache_write {totals[step]['cache_write']:.0f})")
 
@@ -150,34 +150,53 @@ def cmd_steps(_args) -> int:
         print("Транскриптов solve-task не найдено")
         return 1
     totals = {
-        scope: {s: {k: 0.0 for k in steps.BUCKET_KEYS} for s in steps.STEPS}
+        scope: {
+            "pointwise": {s: {k: 0.0 for k in steps.BUCKET_KEYS} for s in steps.STEPS},
+            "sticky": {s: {k: 0.0 for k in steps.BUCKET_KEYS} for s in steps.STICKY_STEPS},
+        }
         for scope in steps.SCOPES
     }
     for entry in per_task.values():
         for scope in steps.SCOPES:
-            for step, buckets in entry[scope].items():
-                for key in steps.BUCKET_KEYS:
-                    totals[scope][step][key] += buckets[key]
-    phase_shares = steps.weighted_shares(totals["phase"])
-    session_shares = steps.weighted_shares(totals["session"])
+            for model in steps.MODELS:
+                for step, buckets in entry[scope][model].items():
+                    for key in steps.BUCKET_KEYS:
+                        totals[scope][model][step][key] += buckets[key]
+
+    phase_point_shares = steps.weighted_shares(totals["phase"]["pointwise"])
+    phase_sticky_shares = steps.weighted_shares(totals["phase"]["sticky"])
+    session_point_shares = steps.weighted_shares(totals["session"]["pointwise"])
 
     print(f"Задач измерено: {len(per_task)}")
     print()
-    _print_scope(
-        "По фазе сборки брифа (до первой записи под docs/superpowers/briefs/, основная метрика):",
-        totals["phase"], phase_shares,
+    _print_model(
+        "По фазе сборки брифа — точечная модель (по факту вызова тула, нижняя оценка стадии):",
+        steps.STEPS, totals["phase"]["pointwise"], phase_point_shares,
     )
-    phase_consolidated = phase_shares["preflight"] + phase_shares["gather"]
-    print(f"Доля preflight+gather (фаза брифа): {phase_consolidated * 100:.1f}%")
-    print(f"Доля unattributed внутри фазы (other, нераспознанный классификатором расход): "
-          f"{phase_shares['other'] * 100:.1f}%")
+    point_consolidated = phase_point_shares["preflight"] + phase_point_shares["gather"]
+    print(f"Точечная: preflight+gather (фаза брифа): {point_consolidated * 100:.1f}%")
+    print(f"Точечная: unattributed внутри фазы (other, нераспознанный классификатором расход): "
+          f"{phase_point_shares['other'] * 100:.1f}%")
     print()
-    _print_scope(
-        "По всей сессии (включая всё после записи брифа — для сопоставимости с PRI-246):",
-        totals["session"], session_shares,
+    _print_model(
+        "По фазе сборки брифа — липкая модель (по активной стадии между переключениями, "
+        "верхняя оценка стадии):",
+        steps.STICKY_STEPS, totals["phase"]["sticky"], phase_sticky_shares,
     )
-    session_consolidated = session_shares["preflight"] + session_shares["gather"]
-    print(f"Доля preflight+gather (вся сессия): {session_consolidated * 100:.1f}%")
+    sticky_consolidated = phase_sticky_shares["preflight"] + phase_sticky_shares["gather"]
+    print(f"Липкая: preflight+gather (фаза брифа): {sticky_consolidated * 100:.1f}%")
+    print(f"Липкая: startup (фаза брифа): {phase_sticky_shares['startup'] * 100:.1f}%")
+    print()
+    print("Истина между точечной (нижняя оценка) и липкой (верхняя оценка) моделями — "
+          "ни одна не выбрана как единственно верная.")
+    print()
+    _print_model(
+        "По всей сессии — точечная модель (включая всё после записи брифа, "
+        "для сопоставимости с PRI-246):",
+        steps.STEPS, totals["session"]["pointwise"], session_point_shares,
+    )
+    session_consolidated = session_point_shares["preflight"] + session_point_shares["gather"]
+    print(f"Точечная: preflight+gather (вся сессия): {session_consolidated * 100:.1f}%")
     return 0
 
 
