@@ -88,3 +88,39 @@ CREATE TABLE IF NOT EXISTS review_steps (
 );
 
 CREATE INDEX IF NOT EXISTS review_steps_run_id_seq ON review_steps (run_id, seq);
+
+-- Качество ретрива под бриф solve-task (PRI-249): одна строка на прогон ревью.
+-- status отделяет «нет точки измерения» от нулевого recall: у задачи, чей diff
+-- состоит только из тестов и доков, качество ретрива по ядру не определено, и
+-- подмешивать её нулём в медиану значит систематически занижать метрику.
+-- Множества путей хранятся, потому что офлайн-baseline посчитан по ЗАДАЧЕ
+-- (объединение всех её PR), а онлайн видит по одному PR: без них task-level
+-- число было бы посчитано другой линейкой и несравнимо с «до».
+CREATE TABLE IF NOT EXISTS brief_quality (
+    id                  BIGSERIAL   PRIMARY KEY,
+    run_id              BIGINT      NOT NULL
+                            REFERENCES review_runs (id) ON DELETE CASCADE,
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+    repo                TEXT        NOT NULL,
+    pr_number           INT         NOT NULL,
+    task_key            TEXT,
+    head_sha            TEXT,
+    status              TEXT        NOT NULL,   -- measured | no_task_key | no_brief
+                                                -- | brief_unreadable | empty_core_denominator
+    brief_path          TEXT,
+    expected            INT         NOT NULL DEFAULT 0,
+    expected_core       INT         NOT NULL DEFAULT 0,
+    predicted           INT         NOT NULL DEFAULT 0,
+    hit_core            INT         NOT NULL DEFAULT 0,
+    core_recall         REAL,                   -- NULL = нет точки измерения
+    raw_recall          REAL,
+    precision           REAL,
+    misses              JSONB       NOT NULL DEFAULT '{}'::jsonb,
+    predicted_paths     JSONB       NOT NULL DEFAULT '[]'::jsonb,
+    expected_core_paths JSONB       NOT NULL DEFAULT '[]'::jsonb,
+    hit_core_paths      JSONB       NOT NULL DEFAULT '[]'::jsonb
+);
+
+CREATE INDEX IF NOT EXISTS brief_quality_repo_created_at
+    ON brief_quality (repo, created_at DESC);
+CREATE INDEX IF NOT EXISTS brief_quality_task_key ON brief_quality (task_key);

@@ -566,3 +566,189 @@ def test_days_since_last_run():
     history.record_run(run, _sample_findings())
     assert history.days_since_last_run(run["repo"]) == 0
     assert history.days_since_last_run("nonexistent/repo") is None
+
+
+# ---------------------------------------------------------------------------
+# PRI-249: качество брифа solve-task
+# ---------------------------------------------------------------------------
+
+
+def test_record_brief_quality_fail_soft_without_db():
+    """Недоступная БД не роняет запись метрики — возвращается None.
+
+    Соединение мокается (как в остальных fail-soft тестах файла), а не
+    подставляется реальный битый DSN: unit-гвард сессии (``tests/conftest.py``)
+    блокирует создание ``ConnectionPool`` в любом unit-тесте, поэтому
+    имитируем именно сбой соединения, а не обходим гвард.
+    """
+    from reviewer.services.brief_quality import BriefQualityMeasurement
+    from reviewer.web.history import ReviewHistory
+
+    history = ReviewHistory("postgresql://nobody@127.0.0.1:1/none")
+    with patch.object(history, "_connect", side_effect=OSError("database unavailable")):
+        assert history.record_brief_quality(
+            1, "owner/repo", 42, "deadbeef",
+            BriefQualityMeasurement(status="measured", task_key="PRI-999"),
+        ) is None
+
+
+def test_brief_quality_trend_fail_soft_without_db():
+    """Недоступная БД отдаёт пустой, но валидный по форме ответ."""
+    from reviewer.web.history import ReviewHistory
+
+    history = ReviewHistory("postgresql://nobody@127.0.0.1:1/none")
+    with patch.object(history, "_connect", side_effect=OSError("database unavailable")):
+        data = history.brief_quality_trend(days=30)
+    assert data["trend"] == []
+    assert data["aggregate"]["n_measured"] == 0
+    assert data["misses"] == []
+
+
+@pytest.mark.integration
+def test_brief_quality_roundtrip_and_task_union():
+    """Два PR одной задачи объединяются в одну точку — как в офлайн-харнессе.
+
+    repo уникален на прогон: таблица истории живёт между запусками, и фильтр по
+    репозиторию — единственный способ изолировать выборку теста от чужих строк.
+    """
+    import uuid
+
+    from reviewer.metrics.brief_quality.recall import BULK_CORE_THRESHOLD
+    from reviewer.services.brief_quality import BriefQualityMeasurement
+
+    repo = f"pri249/union-{uuid.uuid4().hex[:8]}"
+    history = ReviewHistory(Settings().pg_dsn)
+    history.init_schema()
+    run_a = history.record_run({**_sample_run(), "pr_number": 900001}, [])
+    run_b = history.record_run({**_sample_run(), "pr_number": 900002}, [])
+
+    history.record_brief_quality(
+        run_a, repo, 1, "sha1",
+        BriefQualityMeasurement(
+            status="measured", task_key="PRI-999", brief_path="docs/superpowers/briefs/b.md",
+            expected=2, expected_core=2, predicted=2, hit_core=1,
+            core_recall=0.5, raw_recall=0.5, precision=0.5,
+            misses={"tests/": 1},
+            predicted_paths=("reviewer/a.py", "reviewer/b.py"),
+            expected_core_paths=("reviewer/a.py", "reviewer/c.py"),
+            hit_core_paths=("reviewer/a.py",),
+        ),
+    )
+    history.record_brief_quality(
+        run_b, repo, 2, "sha2",
+        BriefQualityMeasurement(
+            status="measured", task_key="PRI-999", brief_path="docs/superpowers/briefs/b.md",
+            expected=1, expected_core=1, predicted=2, hit_core=1,
+            core_recall=1.0, raw_recall=1.0, precision=0.5,
+            misses={"docs/": 2},
+            predicted_paths=("reviewer/a.py", "reviewer/b.py"),
+            expected_core_paths=("reviewer/b.py",),
+            hit_core_paths=("reviewer/b.py",),
+        ),
+    )
+
+    data = history.brief_quality_trend(days=30, repo=repo)
+    assert len(data["trend"]) == 1                      # обе строки — одна задача
+    point = data["trend"][0]
+    assert point["task_key"] == "PRI-999"
+    assert point["expected_core"] == 3                  # union {a, c} ∪ {b}
+    assert point["hit_core"] == 2                       # union {a} ∪ {b}
+    assert point["core_recall"] == pytest.approx(2 / 3)
+    assert data["aggregate"]["n_measured"] == 1
+    assert data["bulk_threshold"] == BULK_CORE_THRESHOLD
+    assert {m["category"]: m["count"] for m in data["misses"]} == {"tests/": 1, "docs/": 2}
+
+
+@pytest.mark.integration
+def test_brief_quality_no_measurement_is_separate():
+    """status != measured считается отдельно и не мешается в медиану."""
+    import uuid
+
+    from reviewer.services.brief_quality import BriefQualityMeasurement
+
+    repo = f"pri249/nomeasure-{uuid.uuid4().hex[:8]}"
+    history = ReviewHistory(Settings().pg_dsn)
+    history.init_schema()
+    run = history.record_run({**_sample_run(), "pr_number": 900003}, [])
+    history.record_brief_quality(
+        run, repo, 3, "sha3",
+        BriefQualityMeasurement(status="no_brief", task_key="PRI-777"),
+    )
+    data = history.brief_quality_trend(days=30, repo=repo)
+    assert data["trend"] == []
+    assert data["aggregate"]["n_measured"] == 0
+    assert data["no_measurement_by_status"] == {"no_brief": 1}
+
+
+# ---------------------------------------------------------------------------
+# Разрез трейса по стадиям (PRI-247, задача 5)
+# ---------------------------------------------------------------------------
+
+def test_stage_breakdown_groups_steps_and_bytes():
+    steps = [
+        {"stage": "analyze", "tool_calls": [{"args_bytes": 10, "result_bytes": 100}]},
+        {"stage": "analyze", "tool_calls": [{"args_bytes": 5, "result_bytes": 50}]},
+        {"stage": "verify", "tool_calls": [{"args_bytes": 1, "result_bytes": 2}]},
+        {"stage": "client", "tool_calls": None},
+    ]
+    from reviewer.web.history import aggregate_stages
+    rows = aggregate_stages(steps)
+    by_stage = {r["stage"]: r for r in rows}
+    assert by_stage["analyze"] == {
+        "stage": "analyze", "steps": 2, "args_bytes": 15, "result_bytes": 150}
+    assert by_stage["verify"]["steps"] == 1
+    assert by_stage["client"] == {
+        "stage": "client", "steps": 1, "args_bytes": 0, "result_bytes": 0}
+
+
+def test_stage_breakdown_of_empty_trace_is_empty():
+    from reviewer.web.history import aggregate_stages
+    assert aggregate_stages([]) == []
+
+
+def test_merge_stage_costs_without_usage_leaves_cost_none():
+    """Прогон без usage.by_stage (старый прогон / упавший хук) — cost всюду None."""
+    from reviewer.web.history import aggregate_stages, merge_stage_costs
+
+    steps = [{"stage": "analyze", "tool_calls": [{"args_bytes": 10, "result_bytes": 20}]}]
+    rows = aggregate_stages(steps)
+
+    merged = merge_stage_costs(rows, None)
+    assert merged == [
+        {"stage": "analyze", "steps": 1, "args_bytes": 10, "result_bytes": 20, "cost": None}
+    ]
+
+    merged_empty_dict = merge_stage_costs(rows, {})
+    assert merged_empty_dict[0]["cost"] is None
+
+
+def test_merge_stage_costs_with_usage_weighs_and_unions_stages():
+    """Прогон с usage.by_stage: расход взвешивается, множества стадий объединяются."""
+    from reviewer.web.history import aggregate_stages, merge_stage_costs
+
+    steps = [
+        {"stage": "analyze", "tool_calls": [{"args_bytes": 10, "result_bytes": 20}]},
+        {"stage": "client", "tool_calls": None},
+    ]
+    rows = aggregate_stages(steps)
+    usage_by_stage = {
+        # Совпадает со стадией трейса — расход должен взвеситься.
+        "analyze": {"fresh_in": 100, "output": 100, "cache_write": 100, "cache_read": 100},
+        # Есть только у хука (не у серверного трейса) — должна появиться отдельной строкой.
+        "orchestrator": {"fresh_in": 50, "output": 0, "cache_write": 0, "cache_read": 0},
+    }
+
+    merged = merge_stage_costs(rows, usage_by_stage)
+    by_stage = {r["stage"]: r for r in merged}
+
+    # 100×1 + 100×5 + 100×1.25 + 100×0.1 = 735 — веса из брифа приёмки (критерий 6).
+    assert by_stage["analyze"]["cost"] == pytest.approx(735.0)
+    assert by_stage["analyze"]["steps"] == 1
+
+    # "client" есть только в трейсе — cost неизвестен, а не 0.
+    assert by_stage["client"]["cost"] is None
+
+    # "orchestrator" есть только в usage.by_stage — появляется с нулевыми steps/bytes.
+    assert by_stage["orchestrator"] == {
+        "stage": "orchestrator", "steps": 0, "args_bytes": 0, "result_bytes": 0, "cost": 50.0,
+    }

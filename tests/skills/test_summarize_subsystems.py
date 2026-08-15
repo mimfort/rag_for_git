@@ -107,21 +107,23 @@ def test_skill_prune_passes_exact_list_snapshot_and_defers_rejection():
 
 def test_skill_uses_incremental_file_summary_protocol():
     text = _assembled_skill()
+    normalized = " ".join(text.split())
     assert "get_subsystem_summary_work" in text
     assert "stale == true OR bootstrap == true" in text
     assert "added_files + changed_files" in text
-    assert "one file-summary job" in text
-    assert "must not read unchanged" in text.lower()
+    assert "one file-summary job" in normalized
+    assert "must not read unchanged" in normalized.lower()
     assert "reused_fragments" in text
     assert "moved_files" in text
 
 
 def test_skill_composes_only_from_ordered_fragment_texts():
     text = _assembled_skill()
+    normalized = " ".join(text.split())
     assert "ordered reused/moved/new fragment texts" in text
     assert "composer must not call `Read`" in text
     assert "source-code claims absent from the fragments" in text
-    assert "file prompt must name only its own path" in text
+    assert "batch prompt must name only its own paths" in normalized
 
 
 def test_skill_persists_new_fragments_and_defers_races():
@@ -230,15 +232,72 @@ def test_skill_orchestrator_supplies_fingerprints():
     )
 
 
-def test_skill_rejects_file_job_path_mismatch():
-    """PRI-237: path — единственное поле job'а, участвующее в join; рассинхрон не персистится."""
+def test_skill_batch_keeps_path_mismatch_rejection():
+    """PRI-245: отбраковка чужого path переживает батчинг — единицей становится порция."""
     step = _file_job_step()
-    assert "returns a `path` outside the pending list" in step, (
-        "шаг 5.2 не описывает рассинхрон path"
+    assert "outside its batch" in step
+    assert "re-dispatch that batch" in step
+    assert "increment `raced`" in step
+    assert "discard that batch's results" in step
+    assert "on a second mismatch count the cluster as deferred" in step
+    assert "persist nothing for it" in step
+
+
+def test_skill_file_job_reads_skeletons_not_source():
+    """PRI-245: вход фрагмента — скелет, а не исходник через harness-Read."""
+    step = _file_job_step()
+    assert "get_file_skeletons(repo, paths, branch)" in step, (
+        "шаг 5.2 не переведён на скелеты"
     )
-    assert "discard that result and re-dispatch the job" in step, (
-        "шаг 5.2 не предписывает отбросить результат и перевызвать job"
+    assert "no harness `Read` of a source file" in step, (
+        "шаг 5.2 не запрещает harness-Read по исходнику"
     )
-    assert "on a second mismatch count the cluster as deferred" in step, (
-        "шаг 5.2 не переводит кластер в deferred при повторном рассинхроне"
+    assert "no `read_file`" in step, "шаг 5.2 не запрещает PR-сессионный read_file"
+
+
+def test_skill_file_job_rejects_note_or_truncated_skeleton():
+    """PRI-245 финальное ревью: усечённый/отсутствующий скелет не должен молча
+    стать «валидной» сводкой — job обязан отбраковать такой путь как deferred."""
+    step = _file_job_step()
+    assert "starts with `(`" in step, (
+        "шаг 5.2 не запрещает суммаризацию скелета-ноты (значение, начинающееся с `(`)"
+    )
+    assert "`(…усечено)`" in step, (
+        "шаг 5.2 не упоминает точный маркер усечения скелета"
+    )
+    assert "not source" in step
+    assert "count it toward `deferred`" in step
+
+
+def test_skill_batches_file_jobs():
+    """PRI-245: один субагент на порцию путей, а не на файл."""
+    step = _file_job_step()
+    assert "batches of at most 15 paths" in step, "порция не описана или без потолка"
+    assert "one file-summary job per batch" in step
+    assert "a **single** `get_file_skeletons(repo, paths, branch)` call" in step, (
+        "не сказано, что скелеты берутся одним вызовом на порцию"
+    )
+
+
+def test_skill_preflight_names_clustering_filter_as_layout_component():
+    text = _assembled_skill()
+    normalized = " ".join(text.split())
+    assert "summary_paths.ignore" in normalized, (
+        "preflight не называет фильтр кластеризации компонентом layout policy"
+    )
+
+
+def test_common_tool_usage_lists_get_file_skeletons():
+    text = _assembled_skill()
+    assert "get_file_skeletons(repo, paths, branch?)" in text
+
+
+def test_skill_truncation_marker_matches_code():
+    """PRI-245: маркер усечения скелета в шаге 5.2 должен дословно совпадать с
+    reviewer/mcp/service.py — иначе job перестанет распознавать усечённый скелет."""
+    from reviewer.mcp.service import _SKELETON_TRUNCATION_MARKER
+
+    step = _file_job_step()
+    assert f"`{_SKELETON_TRUNCATION_MARKER}`" in step, (
+        "маркер усечения скелета в скилле разошёлся с reviewer/mcp/service.py"
     )

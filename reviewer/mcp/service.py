@@ -23,6 +23,7 @@ from reviewer.config.provider_credentials import ProviderCredentialSource
 from reviewer.config.settings import Settings
 from reviewer.config.task_board import migrate_legacy_board_args, normalize_task_sync_filter
 from reviewer.index.refs import base_ref
+from reviewer.mcp import task_context
 from reviewer.mcp.schemas import FindingIn, SummaryFragmentIn, VerdictIn
 from reviewer.mcp.session_serde import from_payload, to_payload
 from reviewer.mcp.session_store import SessionStore
@@ -84,6 +85,62 @@ WALKTHROUGH_MARKER = "<!-- ai-walkthrough -->"
 # неограниченного роста при длинных прогонах с большим числом tool calls.
 _MAX_SESSION_STEPS = 1000
 
+# PRI-247: стадия шага выводится из имени тула — серверный канал трейса
+# работает в любом CLI, без клиентских хуков.
+TOOL_STAGES = {
+    "search_code": "analyze",
+    "read_file": "analyze",
+    "get_definition": "analyze",
+    "find_callers": "analyze",
+    "get_related_symbols": "analyze",
+    "get_changed_file_diff": "analyze",
+    "get_impact": "analyze",
+    "get_candidate_findings": "verify",
+    "submit_verdicts": "verify",
+    "submit_findings": "synthesize",
+}
+
+
+def build_step(seq: int, name: str, args: dict, result) -> dict:
+    """Строка review_steps для одного тул-вызова PR-сессии.
+
+    Размеры payload кладём в существующий tool_calls JSONB — новых колонок и
+    миграции не требуется. tokens/cost не заполняем: сервер не видит LLM-вызовов.
+    """
+    import json as _json
+    text = result[:500] if isinstance(result, str) else None
+    try:
+        args_bytes = len(_json.dumps(args, ensure_ascii=False).encode("utf-8"))
+    except (TypeError, ValueError):
+        args_bytes = 0
+    result_bytes = len(result.encode("utf-8")) if isinstance(result, str) else 0
+    return {
+        "stage": TOOL_STAGES.get(name, "analyze"),
+        "unit": args.get("path") or args.get("node_id") or args.get("symbol") or "",
+        "seq": seq,
+        "kind": "tool_call",
+        "name": name,
+        "text": text,
+        "tool_calls": [{
+            "name": name, "args": args,
+            "args_bytes": args_bytes, "result_bytes": result_bytes,
+        }],
+    }
+
+
+def normalize_client_step(step: dict) -> dict:
+    """Клиентский шаг с пустыми stage/kind получает явные дефолты.
+
+    Замер PRI-247 показал шаги с заполненным name, но пустыми stage/kind —
+    в стадийной агрегации они падали в безымянное ведро.
+    """
+    out = dict(step)
+    if not out.get("stage"):
+        out["stage"] = "client"
+    if not out.get("kind"):
+        out["kind"] = "client_step"
+    return out
+
 # PRI-212: DB-touch живости сессии (SessionStore.touch) — не чаще раза в
 # _TOUCH_INTERVAL_S. Тулы зовутся LLM-темпом; при TTL в часах минутная
 # гранулярность ничего не теряет и убирает бессмысленно частые UPDATE.
@@ -91,6 +148,18 @@ _TOUCH_INTERVAL_S = 60
 _SUBTASK_RECOVERY_WARNING = (
     "subtask operation failed; durable recovery used a safe fallback"
 )
+
+# PRI-245: get_file_skeletons — капы batch-тула без PR-сессии.
+_MAX_SKELETON_PATHS = 25      # путей на один вызов get_file_skeletons
+# Кап защищает контекст, но не должен срабатывать на штатных файлах: самый
+# большой скелет в этом репозитории (tests/install/test_codex_install.py) —
+# 485 строк, у reviewer/mcp/service.py — 399 (капа 400 не хватало впритык).
+# 2000 даёт >4x запас над текущим максимумом.
+_MAX_SKELETON_LINES = 2000
+# Маркер усечения скелета: дословно совпадает с текстом, на который опирается
+# правило шага 5.2 в plugin/skills/summarize-subsystems/SKILL.md (guard-тест
+# tests/skills/test_summarize_subsystems.py держит их в связке).
+_SKELETON_TRUNCATION_MARKER = "(…усечено)"
 
 
 @dataclass
@@ -381,17 +450,10 @@ class MCPReviewService:
         tools = {t.name: t for t in make_tools(s.ctx)}
         result = tools[name].invoke(args)
         if len(s.steps) < _MAX_SESSION_STEPS:
-            # PRI-209: сервер не знает реальных затрат токенов на tool call
-            # (LLM-вызовы происходят в клиенте), поэтому tokens/cost не пишем.
-            s.steps.append({
-                "stage": "analyze",
-                "unit": args.get("path") or args.get("node_id") or args.get("symbol") or "",
-                "seq": len(s.steps),
-                "kind": "tool_call",
-                "name": name,
-                "text": result[:500] if isinstance(result, str) else None,
-                "tool_calls": [{"name": name, "args": args}],
-            })
+            # PRI-209/PRI-247: сервер не знает реальных затрат токенов на tool
+            # call (LLM-вызовы происходят в клиенте), поэтому tokens/cost не
+            # пишем — только стадию и размеры payload.
+            s.steps.append(build_step(len(s.steps), name, args, result))
         return result
 
     def search_code(self, repo: str, pr: int, query: str) -> str:
@@ -1620,7 +1682,7 @@ class MCPReviewService:
                 vcs_fetch_factory=vcs_fetch_factory,
             )
             # strict_committed=False намеренно: у _resolve_policy четыре
-            # потребителя, и три из них (_resolve_summary_depth,
+            # потребителя, и три из них (_resolve_summary_layout,
             # _resolve_summary_topk_threshold, _resolve_context_limits) уже
             # обёрнуты в собственный fail-soft с откатом на env-дефолты.
             # Строгий режим здесь заставил бы их молча потерять
@@ -1643,8 +1705,24 @@ class MCPReviewService:
                 except Exception:
                     log.warning("_resolve_policy: не удалось закрыть VCS", exc_info=True)
 
-    def _resolve_summary_depth(self, repo: str, branch: str) -> tuple[int, dict[str, int], str]:
-        """Резолв глубины кластеризации сводок с сохранением fail-soft env-дефолта."""
+    def _resolve_summary_layout(
+        self, repo: str, branch: str
+    ) -> tuple[int, dict[str, int], list[str], str]:
+        """Резолв layout-политики сводок: глубина, overrides, ignore-фильтр, источник.
+
+        ``ignore`` возвращается уже нормализованным ``normalize_summary_paths_ignore``
+        (страп пробелов/'/', дедуп, сортировка) — так обе точки применения
+        фильтра (``_summary_state`` через ``canonicalize_layout`` и
+        ``_current_subsystem_hashes`` напрямую) видят одно и то же значение;
+        двойная нормализация идемпотентна.
+
+        Fail-soft: при сбое резолва политики — env-глубина и ДЕФОЛТНЫЙ фильтр,
+        а не пустой. Пустой фильтр при сбое молча вернул бы тестовые кластеры
+        и сделал бы стоимость прохода недетерминированной.
+        """
+        from reviewer.graph.summaries import normalize_summary_paths_ignore
+        from reviewer.policy.policy import DEFAULT_SUMMARY_PATHS_IGNORE
+
         default = self.settings.summary_cluster_depth
         try:
             policy, meta = self._resolve_policy(repo, branch)
@@ -1652,10 +1730,20 @@ class MCPReviewService:
                 "summary_cluster_depth",
                 meta.sources.get("summary_cluster_depth_overrides", "env"),
             )
-            return policy.summary_cluster_depth, policy.summary_cluster_depth_overrides, source
+            return (
+                policy.summary_cluster_depth,
+                policy.summary_cluster_depth_overrides,
+                normalize_summary_paths_ignore(policy.summary_paths_ignore),
+                source,
+            )
         except Exception:
-            log.warning("_resolve_summary_depth: fail-soft → env-дефолт")
-            return default, {}, "env"
+            log.warning("_resolve_summary_layout: fail-soft → env-дефолт")
+            return (
+                default,
+                {},
+                normalize_summary_paths_ignore(DEFAULT_SUMMARY_PATHS_IGNORE),
+                "env",
+            )
 
     def _resolve_summary_topk_threshold(self, repo: str, branch: str) -> tuple[int, str]:
         """Резолв порога масштаба приора сводок с сохранением env-дефолта."""
@@ -1706,6 +1794,30 @@ class MCPReviewService:
             return "(ничего не найдено)"
         return pack.as_context(line_numbers=True) or "(ничего не найдено)"
 
+    def prepare_task_context(self, repo: str, key: str, branch: str | None = None,
+                             path: str | None = None,
+                             warm_board: bool = True) -> dict:
+        """Единый контекст задачи для solve-task: преflight + сбор, один вызов.
+
+        Свёртка 8-12 детерминированных тул-раундов скилла. Ни один сбой
+        источника не прерывает сборку: недоступная доска, лежачий Neo4j,
+        отсутствующий индекс дают частичный payload с записями в `gaps`.
+        path — необязательный override пути к клону; по умолчанию клон
+        резолвится из таблицы `repo_clone` (PRI-235), поэтому клиенту не нужно
+        запускать `reviewer status` отдельным процессом.
+        """
+        rb = self._resolve_repo_branch(repo, branch)
+        if isinstance(rb, str):
+            payload = {section: None for section in task_context.SECTIONS}
+            payload["gaps"] = [task_context.gap("repo", rb.strip("()"))]
+            payload["warnings"] = []
+            return payload
+        normalized_repo, resolved = rb
+        deps = _TaskContextDeps(self, path)
+        return task_context.build_task_context(
+            deps, repo=normalized_repo, key=key, branch=resolved,
+            warm_board=warm_board)
+
     def related_symbols(self, repo: str, node_id: str,
                         branch: str | None = None) -> str:
         """Соседи символа по графу (calls/implements/tests) без PR-сессии.
@@ -1755,7 +1867,9 @@ class MCPReviewService:
         """Кто реализует/наследует символ node_id ('path#fqn') — входящие
         IMPLEMENTS, без PR-сессии. Класс → подклассы; метод → override-ы.
         На элемент: file:line + строка определения + [IMPLEMENTS].
-        Точны после полного `reviewer index` с SCIP."""
+        Наследование классов приходит из tree-sitter (SCIP теряет его у
+        forward-referenced классов); метод-уровневые override-ы — из SCIP.
+        Пустой ответ при существующем семействе помечен явно (см. тул family)."""
         rb = self._resolve_repo_branch(repo, branch)
         if isinstance(rb, str):
             return rb
@@ -1769,10 +1883,209 @@ class MCPReviewService:
         except Exception:
             log.warning("implementations: сбой графа", exc_info=True)
             return "(implementations не найдены)"
+        if not found:
+            # Семейство считается только на узле-классе (fqn без точки):
+            # для узла-метода _compute_family всё равно тянет ВСЕ классы
+            # репо/ветки, а override без наследников — самый частый исход
+            # этого тула, платить за него на каждом вызове нельзя (Minor 9).
+            fqn = node_id.partition("#")[2]
+            size = 0
+            if "." not in fqn:
+                try:
+                    family = self._compute_family(repo, node_id, resolved)
+                    size = len(family.members)
+                except Exception:
+                    log.warning("implementations: подсчёт семейства не удался", exc_info=True)
+                    size = 0
+            return self._implementations_empty_message(size)
         return format_neighbors(
             found, store=self.components.store, repo=repo, branch=resolved,
             overlay_ref=None, changed_paths=[], empty_msg="(implementations не найдены)",
             cap=cl.graph.callers_topk)
+
+    def family(self, repo: str, node_id: str,
+               branch: str | None = None) -> str:
+        """Семейство однотипных символов: «кто ещё такой же» для node_id.
+
+        Два сигнала: наследование (подклассы и сиблинги по IMPLEMENTS) и
+        структурное соответствие контракту (полное покрытие набора методов
+        с учётом унаследованных — так находятся реализации typing.Protocol,
+        у которых рёбер наследования нет и быть не может).
+
+        Ответ всегда называет сработавшие сигналы: молчаливая пустота
+        неотличима от «семейства нет» и потому запрещена.
+        """
+        rb = self._resolve_repo_branch(repo, branch)
+        if isinstance(rb, str):
+            return rb
+        repo, resolved = rb
+        if self.components.graph is None:
+            return "(граф недоступен)"
+        cl = self._resolve_context_limits(repo, resolved)
+        try:
+            result = self._compute_family(repo, node_id, resolved)
+        except Exception:
+            log.warning("family: сбой графа", exc_info=True)
+            return "(семейство не определено: сбой графа)"
+        members = self._family_order(result.members)
+        header = self._family_header(result)
+        if not result.members:
+            return header
+        body = format_neighbors(
+            [{"id": m, "rel": "FAMILY"} for m in members],
+            store=self.components.store, repo=repo, branch=resolved,
+            overlay_ref=None, changed_paths=[],
+            empty_msg="(семейство пусто)", cap=cl.graph.callers_topk)
+        return f"{header}\n{body}"
+
+    def _compute_family(self, repo: str, node_id: str, branch: str):
+        """Собрать семейство узла из обоих сигналов.
+
+        inheritance = прямые наследники узла (входящие ``IMPLEMENTS``) ∪
+        сиблинги — остальные наследники баз узла (исходящие ``IMPLEMENTS`` из
+        узла, затем входящие в каждую базу). Без сиблингов узел-представитель
+        семейства (то, что реально даёт ретрив — ``asana.py#AsanaBoard``, а
+        не ``base.py#TaskBoardProvider``) отдавал бы пустой сигнал: у
+        конкретного адаптера наследников нет, они есть только у контракта.
+
+        Цена: ``class_members`` и ``bases_of(list(own))`` тянут ВСЕ классы
+        репо/ветки — структурное сопоставление по определению глобально,
+        кандидатом может быть любой класс. Отсюда же дополнительные вызовы
+        ``implementations_detailed`` на пустом ответе ``implementations``:
+        тот считает прямых наследников сам, а сюда приходит за семейством.
+        Все запросы дешевле любого обращения к Voyage и на порядок дешевле
+        полноты ответа, ради которой задача и делалась; кэш не вводится, пока
+        не появится замер, его оправдывающий.
+        """
+        from reviewer.graph.family import (
+            contract_too_thin,
+            effective_methods,
+            merge_signals,
+            structural_matches,
+        )
+
+        graph = self.components.graph
+        inheritance = [n["id"] for n in graph.implementations_detailed(
+            repo, [node_id], branch=branch)]
+        node_bases = graph.bases_of(repo, [node_id], branch=branch).get(node_id, [])
+        if node_bases:
+            siblings = [n["id"] for n in graph.implementations_detailed(
+                repo, node_bases, branch=branch) if n["id"] != node_id]
+            inheritance = sorted(set(inheritance) | set(siblings))
+        own = graph.class_members(repo, branch=branch)
+        bases = graph.bases_of(repo, list(own), branch=branch)
+        contract_methods = effective_methods(node_id, own, bases)
+        structural_skipped = contract_too_thin(contract_methods)
+        if structural_skipped:
+            structural: list[str] = []
+        else:
+            candidates = {
+                cls: effective_methods(cls, own, bases) for cls in own
+            }
+            structural = structural_matches(node_id, contract_methods, candidates)
+        return merge_signals(node_id, inheritance, structural,
+                             structural_skipped=structural_skipped)
+
+    @staticmethod
+    def _family_order(members: list[str]) -> list[str]:
+        """Продовые члены вперёд, тестовые дубли — в хвост.
+
+        Тестовые фейки реализуют тот же контракт и потому структурно
+        неотличимы от продовых: на живом графе ``TaskBoardProvider`` дал
+        11 адаптеров и 11 тестовых дублей. Отбрасывать их нельзя (они
+        законные члены семейства, и по ним видно, как контракт мокают),
+        но при обрезке по cap первыми должны выживать продовые.
+        """
+        from reviewer.retrieval.retriever import _is_test_path
+
+        prod = [m for m in members if not _is_test_path(m.partition("#")[0])]
+        tests = [m for m in members if _is_test_path(m.partition("#")[0])]
+        return prod + tests
+
+    @classmethod
+    def _family_header(cls, result) -> str:
+        """Шапка ответа: сигналы, полнота и доля тестовых дублей.
+
+        ``result.complete is False`` не только про пустой ответ — тот же
+        флаг стоит, когда структурный сигнал сознательно не применялся
+        (тонкий контракт, см. ``contract_too_thin``); в этом случае членов
+        не быть не может, но шапка обязана назвать причину неполноты явно.
+        """
+        if not result.members:
+            return f"(семейство не найдено; {result.note})"
+        signals = ", ".join(result.signals)
+        from reviewer.retrieval.retriever import _is_test_path
+
+        n_tests = sum(1 for m in result.members
+                      if _is_test_path(m.partition("#")[0]))
+        suffix = f"; из них тестовых дублей: {n_tests}" if n_tests else ""
+        incomplete = f"; {result.note}" if not result.complete and result.note else ""
+        return (f"// семейство из {len(result.members)} членов "
+                f"(сигналы: {signals}{suffix}){incomplete}")
+
+    @staticmethod
+    def _implementations_empty_message(family_size: int) -> str:
+        """Сообщение при отсутствии прямых наследников.
+
+        Если семейство всё же существует, молчать нельзя: пустой ответ
+        неотличим от «семейства нет» и уводит агента в ложный вывод.
+        """
+        if family_size > 0:
+            return (f"(прямых наследников нет, но семейство из {family_size} "
+                    f"членов существует — получить его: тул family)")
+        return "(implementations не найдены)"
+
+    def get_file_skeletons(
+        self, repo: str, paths: list[str], branch: str | None = None
+    ) -> dict[str, str]:
+        """AST-скелеты проиндексированных файлов пачкой (PRI-245), без PR-сессии.
+
+        Источник — чанки base-индекса ветки, то есть ровно тот материал, из
+        которого считается skeleton_hash: файловый job сводок читает то же, что
+        инвалидирует его результат. Ключ ответа есть у КАЖДОГО запрошенного
+        пути — отсутствие, пустой скелет и превышение капа возвращаются нотой,
+        а не молчаливым пропуском.
+        """
+        from reviewer.index.chunker import file_skeleton_lines
+
+        requested = [str(p) for p in (paths or []) if p]
+        if not requested:
+            return {}
+        accepted = requested[:_MAX_SKELETON_PATHS]
+        overflow = requested[_MAX_SKELETON_PATHS:]
+        out = {
+            path: f"(превышен лимит путей на вызов: {_MAX_SKELETON_PATHS})"
+            for path in overflow
+        }
+        rb = self._resolve_repo_branch(repo, branch)
+        if isinstance(rb, str):
+            return {**out, **{path: rb for path in accepted}}
+        repo, resolved = rb
+        try:
+            rows = self.components.store.fetch_chunks_at_paths(
+                repo, resolved, accepted
+            )
+        except Exception:
+            log.warning("get_file_skeletons: сбой чтения чанков", exc_info=True)
+            return {**out, **{p: "(чтение скелета недоступно)" for p in accepted}}
+        grouped: dict[str, list[tuple[int, str]]] = {}
+        for path, start_line, text in rows:
+            grouped.setdefault(path, []).append((start_line, text))
+        for path in accepted:
+            chunks = grouped.get(path)
+            if not chunks:
+                out[path] = f"(файл не найден в индексе: {path})"
+                continue
+            skeleton = file_skeleton_lines(chunks)
+            if not skeleton:
+                out[path] = "(нет определений для скелета)"
+                continue
+            capped = len(skeleton) > _MAX_SKELETON_LINES
+            body = "\n".join(
+                f"{n}|{text}" for n, text in skeleton[:_MAX_SKELETON_LINES]
+            )
+            out[path] = f"{body}\n{_SKELETON_TRUNCATION_MARKER}" if capped else body
+        return out
 
     def definition(self, repo: str, symbol: str,
                    branch: str | None = None) -> str:
@@ -1816,18 +2129,20 @@ class MCPReviewService:
             compute_file_fingerprints,
             compute_layout_token,
         )
+        from reviewer.index.pathfilter import is_ignored
 
         raw = self.components.store.list_base_members(repo, branch)
         if not raw:
-            resolved_depth = (
-                self.settings.summary_cluster_depth
-                if depth is None
-                else depth
-            )
+            resolved_depth, _, ignore, policy_source = self._resolve_summary_layout(
+                repo, branch)
+            if depth is None:
+                depth_source = policy_source
+            else:
+                resolved_depth, depth_source = depth, "arg"
             return _SummaryState(
                 depth=resolved_depth,
-                layout_token=compute_layout_token(resolved_depth, {}),
-                depth_source="env" if depth is None else "arg",
+                layout_token=compute_layout_token(resolved_depth, {}, ignore),
+                depth_source=depth_source,
                 members=[],
                 clusters=[],
                 file_fingerprints={},
@@ -1835,15 +2150,17 @@ class MCPReviewService:
                 completed_depth=None,
                 completed_layout=None,
             )
+        resolved_depth, policy_overrides, ignore, policy_source = (
+            self._resolve_summary_layout(repo, branch)
+        )
         if depth is None:
-            resolved_depth, overrides, depth_source = self._resolve_summary_depth(
-                repo, branch
-            )
+            overrides, depth_source = policy_overrides, policy_source
         else:
             resolved_depth, overrides, depth_source = depth, {}, "arg"
-        overrides, layout_token = canonicalize_layout(
+        overrides, ignore, layout_token = canonicalize_layout(
             resolved_depth,
             overrides,
+            ignore,
         )
         members = [
             Member(
@@ -1854,6 +2171,7 @@ class MCPReviewService:
                 skeleton_hash=skeleton_hash,
             )
             for path, symbol, content_hash, start_line, skeleton_hash in raw
+            if not is_ignored(path, ignore)
         ]
         graph = self.components.graph
         in_degree_fn = (
@@ -2380,11 +2698,13 @@ class MCPReviewService:
         self, repo: str, branch: str
     ) -> dict[str, str] | None:
         from reviewer.graph.summaries import Member, build_clusters
+        from reviewer.index.pathfilter import is_ignored
 
         try:
             raw = self.components.store.list_base_members(repo, branch)
             if not raw:
                 return None
+            depth, overrides, ignore, _ = self._resolve_summary_layout(repo, branch)
             members = [
                 Member(
                     node_id=f"{path}#{symbol}",
@@ -2394,8 +2714,8 @@ class MCPReviewService:
                     skeleton_hash=skeleton_hash,
                 )
                 for path, symbol, content_hash, start_line, skeleton_hash in raw
+                if not is_ignored(path, ignore)
             ]
-            depth, overrides, _ = self._resolve_summary_depth(repo, branch)
             clusters = build_clusters(
                 members,
                 None,
@@ -2623,7 +2943,10 @@ class MCPReviewService:
             fid = f"f{s._seq}"
             s.candidates[fid] = Finding.from_in(fi)
             ids.append(fid)
-        return {"accepted": len(ids), "ids": ids}
+        result = {"accepted": len(ids), "ids": ids}
+        if len(s.steps) < _MAX_SESSION_STEPS:
+            s.steps.append(build_step(len(s.steps), "submit_findings", {"count": len(findings)}, result))
+        return result
 
     def get_candidate_findings(self, repo: str, pr: int) -> str:
         """Вернуть накопленных кандидатов с id для verify (JSON-строка)."""
@@ -2637,7 +2960,10 @@ class MCPReviewService:
              "severity": f.severity, "message": f.message, "code_quote": f.code_quote}
             for fid, f in s.candidates.items()
         ]
-        return json.dumps({"candidates": items}, ensure_ascii=False, indent=2)
+        result = json.dumps({"candidates": items}, ensure_ascii=False, indent=2)
+        if len(s.steps) < _MAX_SESSION_STEPS:
+            s.steps.append(build_step(len(s.steps), "get_candidate_findings", {}, result))
+        return result
 
     def submit_verdicts(self, repo: str, pr: int, verdicts: list[dict]) -> dict:
         """Принять вердикты verify в сессию (PRI-156). id вне candidates →
@@ -2656,7 +2982,10 @@ class MCPReviewService:
             if v.reason:
                 s.verdict_reasons[v.id] = v.reason
             recorded += 1
-        return {"recorded": recorded, "unknown_ids": unknown}
+        result = {"recorded": recorded, "unknown_ids": unknown}
+        if len(s.steps) < _MAX_SESSION_STEPS:
+            s.steps.append(build_step(len(s.steps), "submit_verdicts", {"count": len(verdicts)}, result))
+        return result
 
     def publish_review(
         self,
@@ -2787,11 +3116,18 @@ class MCPReviewService:
 
         # 6) История (fail-soft) и очистка overlay/сессии (ВСЕГДА).
         dropped_by_gate = len(parsed) - len(kept)
+        # PRI-247: расход окна ревью снимает клиентский хук в sidecar; явные
+        # аргументы клиента приоритетнее — по каждому полю отдельно.
+        from reviewer.services.cost_sidecar import merge_metadata, read_cost_sidecar
+        merged = merge_metadata(
+            {"model": model, "usage": usage, "total_cost": total_cost},
+            read_cost_sidecar(repo, pr),
+        )
         metadata = _RunMetadata(
-            model=model,
+            model=merged["model"],
             model_verify=model_verify,
-            usage=usage,
-            total_cost=total_cost,
+            usage=merged["usage"],
+            total_cost=merged["total_cost"],
             started_at=started_at,
             steps=steps,
         )
@@ -2804,6 +3140,11 @@ class MCPReviewService:
             parsed=parsed,
             kept=kept,
         )
+        # 6b) Качество ретрива под бриф solve-task (PRI-249) — только по факту
+        # реальной публикации: dry_run и сбой постинга точкой измерения не являются.
+        if not dry_run and posted and run_id is not None:
+            self._record_brief_quality(repo, pr, p, run_id, task_key)
+
         self._cleanup(repo, pr)
 
         return {
@@ -2841,6 +3182,41 @@ class MCPReviewService:
             log.warning("post_pr_walkthrough: сбой постинга", exc_info=True)
             return {"posted": False, "reason": f"{type(e).__name__}: {e}"}
         return {"posted": True, "pr": pr}
+
+    def _record_brief_quality(
+        self,
+        repo: str,
+        pr: int,
+        p: PreparedReview,
+        run_id: int,
+        task_key: str | None,
+    ) -> None:
+        """Посчитать и сохранить качество брифа solve-task (PRI-249).
+
+        Полностью fail-soft: метрика — наблюдение за самим reviewer, и ни один
+        её сбой не смеет повлиять на результат ревью. Ключ задачи берётся из
+        аргумента publish_review, иначе из уже отрезолвленного task_keys.primary.
+        """
+        try:
+            from reviewer.services import brief_quality
+
+            key = task_key
+            if not key and p.task_keys:
+                key = p.task_keys.get("primary")
+            measurement = brief_quality.measure(
+                task_key=key,
+                clone_path=self._repo_clone_path(repo),
+                changed_paths=p.changed_paths,
+                changed_status=p.changed_status,
+            )
+            history = self._review_service._ensure_history()
+            if history is None:
+                return
+            history.record_brief_quality(
+                run_id, repo, pr, p.prq.head_sha, measurement
+            )
+        except Exception:  # noqa: BLE001 — наблюдаемость не роняет ревью
+            log.warning("Не удалось посчитать качество брифа для %s pr:%s", repo, pr, exc_info=True)
 
     def _record_history(
         self,
@@ -2905,7 +3281,7 @@ class MCPReviewService:
                 client_steps = []
             elif len(client_steps) > max_client:
                 client_steps = client_steps[-max_client:]
-            all_steps = session.steps + client_steps
+            all_steps = session.steps + [normalize_client_step(x) for x in client_steps]
             if all_steps:
                 # Не мутируем шаги клиента/сессии — копируем перед нормализацией seq.
                 all_steps = [{**step, "seq": i} for i, step in enumerate(all_steps)]
@@ -3099,3 +3475,63 @@ def _format_pr_diff(files: list[ChangedFile]) -> str:
     if len(out) > _PR_DIFF_MAX_CHARS:
         out = out[:_PR_DIFF_MAX_CHARS] + "\n… (truncated)"
     return out
+
+
+class _TaskContextDeps:
+    """Источники секций prepare_task_context поверх живых компонентов сервиса.
+
+    Отдельный класс, а не замыкания: он и есть та поверхность, которую
+    подменяет фейк в юнит-тестах модуля сборки.
+    """
+
+    def __init__(self, service: "MCPReviewService", path: str | None):
+        self._service = service
+        self._path = path
+
+    def _clone_path(self, repo: str) -> str:
+        return self._path or self._service._repo_clone_path(repo) or ""
+
+    def preflight(self, repo: str, branch: str) -> dict:
+        from reviewer.services.status import build_status_report
+        components = self._service.components
+        report = build_status_report(
+            components.store, components.graph, repo, [branch],
+            self._clone_path(repo),
+            summary_store=getattr(components, "summary_store", None))
+        status = report.branches[0]
+        return {
+            "branch": status.branch,
+            "indexed_sha": status.indexed_sha,
+            "drift": status.drift,
+            "summaries": status.summaries,
+            "chunks": status.chunks,
+            "graph_nodes": status.graph_nodes,
+        }
+
+    def task_board(self, repo: str, branch: str) -> dict | None:
+        policy, _meta = self._service._resolve_policy(repo, branch)
+        board = getattr(policy, "task_board", None)
+        if not board:
+            return None
+        return dict(board)
+
+    def warm_board(self, repo: str, branch: str) -> dict:
+        return self._service.sync_board(repo=repo, branch=branch, purge_orphaned=False)
+
+    def task(self, key: str, project: str | None) -> dict | None:
+        return self._service.get_task(key, project=project)
+
+    def linked(self, key: str, project: str | None) -> str:
+        return self._service.get_task_context(key, project=project)
+
+    def similar(self, query: str, project: str | None) -> str:
+        return self._service.search_tasks(query, project=project)
+
+    def subsystems(self, repo: str, branch: str, query: str) -> dict:
+        return self._service.get_subsystem_summaries(repo, branch, None, query, None)
+
+    def code(self, repo: str, branch: str, query: str) -> str:
+        return self._service.search_codebase(repo, query, None, branch, False)
+
+    def test_exemplars(self, repo: str, branch: str, query: str) -> str:
+        return self._service.search_codebase(repo, query, None, branch, True)

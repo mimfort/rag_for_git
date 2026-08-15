@@ -1,8 +1,14 @@
-/** Форматирование $ — $0.0001 для микрозатрат, иначе $X.XXXX */
-export function fmtCost(v: number): string {
-  if (v === 0) return '$0.0000'
-  if (v < 0.0001) return `$${v.toExponential(2)}`
-  return `$${v.toFixed(4)}`
+/**
+ * Расход в УСЛОВНЫХ ЕДИНИЦАХ (input-token equivalent), без знака валюты.
+ *
+ * `total_cost` заполняется взвешенными бакетами токенов
+ * (`fresh_in×1 + output×5 + cache_write×1.25 + cache_read×0.1`, PRI-246/PRI-247),
+ * а не долларами: колонка не переименована, честность держится подписью в админке.
+ */
+export function fmtUnits(v: number): string {
+  if (!v) return '0'
+  if (v < 1) return v.toFixed(4)
+  return Math.round(v).toLocaleString('ru-RU')
 }
 
 /** Форматирование длительности мс → «1m 23s» / «12.3s» / «456ms» */

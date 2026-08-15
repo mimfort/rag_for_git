@@ -211,6 +211,40 @@ class ChunkStore:
             )
             conn.commit()
 
+    def get_graph_edge_counts(self, repo: str, ref: str) -> dict[str, int] | None:
+        """Счётчики рёбер графа предыдущего прогона для ref, или None.
+
+        None означает «сравнивать не с чем»: записи нет, либо индекс построен
+        версией без этой колонки/таблицы — как и в get_index_meta, отсутствие
+        схемы не вправе ронять индексацию."""
+        import psycopg.errors
+        try:
+            with self._connect() as conn:
+                row = conn.execute(
+                    "SELECT graph_edges FROM index_meta WHERE repo=%s AND ref=%s",
+                    (repo, ref),
+                ).fetchone()
+        except (psycopg.errors.UndefinedTable, psycopg.errors.UndefinedColumn):
+            return None
+        return row[0] if row and row[0] else None
+
+    def set_graph_edge_counts(self, repo: str, ref: str, counts: dict[str, int]) -> None:
+        """Записать счётчики рёбер графа для ref.
+
+        Отдельно от set_index_meta: SHA известен до построения графа, счётчики —
+        только после. Строка к этому моменту уже создана set_index_meta."""
+        from psycopg.types.json import Json
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO index_meta (repo, ref, sha, graph_edges, updated_at)
+                VALUES (%s, %s, '', %s, now())
+                ON CONFLICT (repo, ref) DO UPDATE SET graph_edges = EXCLUDED.graph_edges
+                """,
+                (repo, ref, Json(counts)),
+            )
+            conn.commit()
+
     def get_repo_vcs(self, repo: str) -> tuple[str, str] | None:
         """Платформа VCS репо: (provider, base_url) или None.
 
@@ -309,6 +343,24 @@ class ChunkStore:
                 "SELECT path, symbol_fqn, content_hash, start_line, text FROM chunks "
                 "WHERE repo=%s AND ref=%s", (repo, base_ref(branch))).fetchall()
         return [(p, s, h, sl, symbol_skeleton_hash(t)) for p, s, h, sl, t in rows]
+
+    def fetch_chunks_at_paths(self, repo: str, branch: str, paths: list[str]
+                              ) -> list[tuple[str, int, str]]:
+        """(path, start_line, text) чанков base-индекса ветки для заданных путей.
+
+        Дешевле list_base_members: не тянет весь индекс и не считает
+        skeleton_hash — нужен только текст запрошенных файлов (PRI-245).
+        """
+        from reviewer.index.refs import base_ref
+        if not paths:
+            return []
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT path, start_line, text FROM chunks "
+                "WHERE repo=%s AND ref=%s AND path = ANY(%s) "
+                "ORDER BY path, start_line",
+                (repo, base_ref(branch), list(paths))).fetchall()
+        return [(p, sl, t) for p, sl, t in rows]
 
     def list_refs(self, repo: str) -> list[str]:
         """Отсортированный список distinct ref репо (для поиска overlay)."""

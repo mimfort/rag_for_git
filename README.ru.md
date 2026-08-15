@@ -191,10 +191,15 @@ base index.
 
 > **Грунтовка reviewer (план/ревью, опционально, fail-open).** Сначала запустите
 > `reviewer status /path/to/repo --branch main --json`. При `drift == 0` используйте
-> `search_codebase` для кросс-файловых фактов, а `callers`, `related_symbols`, `definition` или
-> `implementations` — только для центральных символов. Base index не видит незакоммиченные правки,
-> поэтому изменённые файлы читайте с диска. Если reviewer или индекс недоступен, откатитесь к
-> локальным search/read tools и не блокируйте работу.
+> `search_codebase` для кросс-файловых фактов, а `callers`, `related_symbols`, `definition`,
+> `implementations` или `family` — только для центральных символов. Base index не видит
+> незакоммиченные правки, поэтому изменённые файлы читайте с диска. Если reviewer или индекс
+> недоступен, откатитесь к локальным search/read tools и не блокируйте работу.
+
+- `family(repo, node_id, branch)` — семейство однотипных символов («кто ещё такой
+  же»): наследование + структурное соответствие контракту. Для задач-развёрток
+  («добавить поле во все провайдеры»), где один найденный файл — представитель
+  семейства из N.
 
 ## Как это работает
 
@@ -212,8 +217,9 @@ PR → prepare_review → base + overlay retrieval → skill analysis
 - **Overlay.** Изменённые файлы PR используют эфемерный ref `pr:N`. Retrieval берёт неизменённые
   файлы из base, а изменённые — из overlay.
 - **Code graph.** Узлы Neo4j используют `node_id = path#fqn`, где `fqn` — fully qualified name.
-  SCIP, внешний type-aware индексатор кода, даёт `CALLS` и `IMPLEMENTS`; режим `auto`
-  откатывается к tree-sitter `CALLS`, когда SCIP недоступен.
+  SCIP, внешний type-aware индексатор кода, даёт `CALLS` и метод-уровневый `IMPLEMENTS`; режим
+  `auto` откатывается к tree-sitter `CALLS` и class-level `IMPLEMENTS` из синтаксиса, когда SCIP
+  недоступен.
 - **Grounded publishing.** Finding обязан цитировать реальный изменённый код. GitHub suggestion
   создаётся только для безопасной замены в RIGHT-части диффа.
 - **Idempotency.** Скрытые fingerprint не дают повторно опубликовать тот же finding. Overlay и
@@ -453,6 +459,11 @@ paths:
 summary_cluster_depth: 2
 summary_topk_threshold: 20
 
+summary_paths:
+  ignore:
+    - tests
+    - test
+
 context_limits:
   search_codebase:
     floor: 4
@@ -460,6 +471,10 @@ context_limits:
   graph:
     hops: 1
 ```
+
+`summary_paths.ignore` фильтрует только состав кластеризации сводок подсистем — в отличие от
+`paths.ignore`, он не влияет на индексацию и ревью PR. Дефолт `["tests", "test"]`; env-слоя нет
+(как у `context_limits`), явный пустой список выключает фильтр.
 
 ### Слоистая политика репозитория
 
@@ -560,7 +575,7 @@ Server-side workflow — **store-first**:
    context tools.
 3. Client models не перечисляют provider напрямую и не передают credentials.
 
-MCP server сейчас предоставляет **39 tools**, включая batch-операцию нативных подзадач.
+MCP server сейчас предоставляет **42 tools**, включая batch-операцию нативных подзадач.
 
 Legacy aliases остаются как **legacy metadata for older clients** на одно compatibility window:
 `TASK_BOARD_API_KEY → YOUGILE_API_KEY` и
@@ -572,6 +587,13 @@ provider credentials. Актуальные matrix, target discovery, options, se
 
 `reviewer serve` открывает историю ревью и traces через optional web extra. Summary depth, top-k
 threshold, graph backend и retrieval ceilings меняют cost/recall; сначала используйте defaults.
+
+Учёт расхода ревью идёт по двум независимым каналам. Клиентский `PreToolUse`-хук плагина
+(`plugin/hooks/review_cost.py`) читает транскрипт сессии Claude Code на клиенте и пишет sidecar с
+расходом по стадиям; `publish_review` читает его на сервере, взвешивая бакеты токенов (свежий
+input, output, cache write, cache read), а не суммируя сырые токены. Пошаговый трейс тул-вызовов
+(`review_steps`, страница трейса прогона) сервер пишет сам, независимо от хука. `total_cost` и
+разрез по стадиям — взвешенные условные единицы, не доллары.
 
 ## Справочник CLI
 
@@ -607,6 +629,13 @@ threshold, graph backend и retrieval ceilings меняют cost/recall; сна�
 - **Нужно:** reviewer MCP; board context опционален, pipeline продолжает board-less.
 - **Чтение/запись:** читает task/code context и пишет один brief в `docs/superpowers/briefs/`.
 - **Результат:** компактный brief для brainstorming; реализация идёт в следующих skills.
+- **Сбор контекста:** один серверный вызов `prepare_task_context` заменяет прежнюю цепочку
+  `reviewer status` → `sync_board` → `get_task` → `search_*` — preflight, прогрев доски, сама
+  задача, связанные/похожие задачи, релевантные подсистемы и код приходят одним payload'ом.
+  Fail-open семантика сохранена: то, что недоступно (устаревший индекс, доска не настроена, пустой
+  поиск), отражается по-секционно в `gaps`, а не обрывает скилл. Графовые расширения
+  (`get_related_symbols`, `callers`, `implementations`, `family`, …) и `get_pr_diff` остаются
+  отдельными вызовами по суждению LLM — они зависят от того, что найдёт brief.
 - **Стартовый опрос:** одна панель `AskUserQuestion` до всех остальных шагов спрашивает три вещи —
   тир модели для брифа (`cheap`/`mid`/`premium`), режим взаимодействия и стратегию исполнения.
   Нет ответа или headless-прогон — применяются дефолты `mid` / `normal` / `subagent`, пайплайн не
@@ -762,7 +791,9 @@ threshold, graph backend и retrieval ceilings меняют cost/recall; сна�
 - **Когда:** построить architectural prior для Q&A и PR walkthrough.
 - **Вызов:** `/rag-reviewer:summarize-subsystems`.
 - **Нужно:** свежий base index, code graph, reviewer MCP и подтверждённый cluster depth.
-- **Чтение/запись:** читает symbols кластеров и пишет grounded summaries в summary store.
+- **Чтение/запись:** читает скелеты только добавленных/изменённых файлов через
+  `get_file_skeletons` (вход job'а — скелет, а не исходник), батчами до 15 путей на job, и пишет
+  grounded summaries в summary store.
 - **Результат:** fresh/pruned summaries с отчётом deferred и orphans.
 - **Объём ответа:** перечисление кластеров идёт в сжатом режиме с пагинацией
   (`compact=True`, `offset`/`limit`): метаданные и счётчики `added`/`changed`/`removed`/`moved`,
@@ -835,6 +866,15 @@ cd web/frontend && npm install && npm run build && cd ../..
 reviewer serve
 ```
 
+Страница **Quality** показывает динамику онлайн-метрики качества брифа solve-task по задачам:
+медиану core-recall (precision показан по задачам линией на графике, отдельной медианы у него нет),
+bulk-подвыборку (задачи с `expected_core >= 10`, порог `BULK_CORE_THRESHOLD`) с горизонталью
+офлайн-базы для сравнения «до/после», и разбивку промахов по таксономии. Источник данных — таблица
+`brief_quality`, которая пополняется при каждом реальном `publish_review` (пишет
+`MCPReviewService`, не отдельный процесс). Если бриф задачи не найден или в нём вовсе нет секции
+`## Relevant code` — измерение пропускается: точка не появляется на графике вместо нуля или
+ошибки. Присутствующая, но пустая секция — не пропуск, а валидное измерение с `predicted = 0`.
+
 В контейнерном сценарии внутренний listen-port отделён от опубликованного loopback-порта. Образ
 собирается один раз, оба порта выбираются при запуске (`database` замените на доступный из
 контейнера Postgres host):
@@ -874,7 +914,8 @@ REVIEWER_WEB_PORT=8080 REVIEWER_WEB_PUBLISH_PORT=18000 \
 ### Известные ограничения
 
 - Поддерживаемый язык анализа — Python; наиболее точный graph даёт SCIP.
-- Без SCIP tree-sitter строит полезный, но name-based `CALLS` graph без точного `IMPLEMENTS`.
+- Без SCIP tree-sitter строит полезный, но name-based `CALLS` graph плюс class-level `IMPLEMENTS`
+  из синтаксиса; метод-уровневый override `IMPLEMENTS` остаётся только за SCIP.
 - GitHub принимает inline-комментарии только на commentable diff lines; остальные findings идут в
   summary.
 - Полная индексация может упереться в free-tier limits Voyage; updates incremental и повторно
@@ -916,6 +957,26 @@ docker compose --profile test rm -sfv paradedb-test neo4j-test
 
 Не используйте `docker compose --profile test down -v`: test и development services входят в один
 Compose project, поэтому команда может удалить development volumes.
+
+### Метрики этапа solve-task (офлайн)
+
+Офлайн-харнесс считает цену этапа и качество ретрива по накопленному корпусу
+брифов (`docs/superpowers/briefs/`), хранит историю срезов и умеет сравнивать
+прогоны. Не требует Postgres, Neo4j и сети — только локальный git.
+
+```bash
+python -m eval.solve_task_metrics snapshot            # пересчитать метрики, сохранить срез, обновить отчёт
+python -m eval.solve_task_metrics stats --last 10     # тренд последних срезов таблицей, без пересчёта
+python -m eval.solve_task_metrics compare --back 1    # дельты последнего среза против среза N шагов назад
+python -m eval.solve_task_metrics forecast            # прогноз core-recall с разбросом
+```
+
+Цена считается во взвешенных input-эквивалентах (`output ×5`, `cache-write ×1.25`,
+`cache-read ×0.1`); сырая сумма токенов показывается только справочно — она не
+пропорциональна стоимости. Качество — core-recall на суженном знаменателе;
+задачи без файлов ядра в diff'е учитываются как «нет точки измерения», а не как
+нулевой recall. Срезы лежат в `eval/solve_task_metrics_history.jsonl`, отчёт —
+в `eval/solve_task_metrics_report.md`.
 
 | Область | Ответственность |
 |---|---|

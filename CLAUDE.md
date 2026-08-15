@@ -89,7 +89,7 @@ MCP-сессия (PreparedReview + ToolContext) живёт в процессе `
 | `reviewer/graph/` | `builder` (tree-sitter call-graph) · `scip` (парсер SCIP) · `backend` (оркестратор бэкенда: SCIP / tree-sitter) · `store` (Neo4j) |
 | `reviewer/retrieval/` | `Retriever`: гибрид (RRF) + graph-expansion + Voyage rerank → `ContextPack` |
 | `reviewer/llm/` | `_retry.py` (retry/backoff для Voyage) |
-| `reviewer/tools/` | инструменты MCP-агента PR-сессии (`search_code`, `get_related_symbols`, `read_file`, `get_definition`, `find_callers`, `get_changed_file_diff`); session-less варианты для Q&A — `search_codebase`/`related_symbols`/`callers`/`definition`/`implementations` в `mcp/service.py` |
+| `reviewer/tools/` | инструменты MCP-агента PR-сессии (`search_code`, `get_related_symbols`, `read_file`, `get_definition`, `find_callers`, `get_changed_file_diff`); session-less варианты для Q&A — `search_codebase`/`related_symbols`/`callers`/`definition`/`implementations`/`family` в `mcp/service.py` |
 | `reviewer/agent/` | `state` (ReviewUnit) · `assemble` · `dedup` |
 | `reviewer/mcp/` | `MCPReviewService` — сервисный слой MCP (prepare/tools/publish/history) |
 | `reviewer/services/` | `ReviewService.prepare` — подготовка PR (ingest + overlay + policy + units) |
@@ -108,14 +108,54 @@ MCP-сессия (PreparedReview + ToolContext) живёт в процессе `
 - **ParadeDB слушает host-порт 5433**, а не 5432 (на машине разработчика 5432 занят нативным Postgres). `PG_DSN` по умолчанию указывает на 5433.
 - **Граф кода — два бэкенда.** Оркестратор `graph/backend.py` выбирает бэкенд через `GRAPH_BACKEND` (auto|scip|treesitter):
   - **SCIP** (`scip-python`, npm `@sourcegraph/scip-python`) — точный type-aware граф, рёбра CALLS и IMPLEMENTS, требует `scip-python` в PATH. Индексация выполняется через временный git worktree на `ref` (`add_worktree`/`remove_worktree` в `gitutil.py`).
-  - **tree-sitter** (`graph/builder.py`) — быстрый fallback без внешних зависимостей, только CALLS по имени.
+  - **tree-sitter** (`graph/builder.py`) — быстрый fallback без внешних зависимостей: `CALLS` по имени и class-level `IMPLEMENTS` из синтаксиса (PRI-251, см. ниже); метод-уровневых `IMPLEMENTS` не даёт.
   - Режим `auto` (по умолчанию): если `scip-python` найден в PATH — SCIP, иначе tree-sitter. При `backend=scip` сбой пробрасывается; при `auto` — откат на tree-sitter с `log.warning`. Команда `reviewer index` полностью перестраивает граф (clear + upsert), чтобы рёбра разных бэкендов не смешивались.
+- **Наследование классов в графе приходит из tree-sitter, а не из SCIP (PRI-251).**
+  scip-python 0.6.6 не эмитит `SymbolInformation` для класса, упомянутого в файле
+  ВЫШЕ своего определения, — а значит и `si.relationships` у такого класса нет,
+  читать нечего. В этот провал попадают все 11 адаптеров досок: каждый
+  регистрируется в `provider_spec()`, объявленной до класса. Измерено на
+  репозитории: из 185 классов с `SymbolInformation` forward-referenced — 0, из 14
+  без неё — 13. Поэтому `reviewer/graph/inherit.py` извлекает `class X(Y)`
+  синтаксически, а `build_with_scip` сливает эти рёбра с рёбрами SCIP
+  (дедупликация). SCIP остаётся источником точных `CALLS` и метод-уровневых
+  `IMPLEMENTS`. Дефект upstream закреплён integration-тестом: если новая версия
+  scip-python начнёт эмитить символ, тест покраснеет.
+- **`local N`-символы SCIP файл-скоупные, и глобальная карта давала фикцию (PRI-252).**
+  Идентификатор `local <N>` в index.scip уникален только внутри своего документа:
+  `local 0` в `reviewer/app.py` и `local 0` в `tests/web/test_pool.py` — один и тот
+  же ключ. `parse_scip` до PRI-252 клал все definition-символы в общий
+  `symbol_to_node`, документы перетирали друг друга, и ссылка на локальное имя в
+  одном файле резолвилась в определение из другого. Измерено на этом репозитории:
+  14942 фиктивных ребра `reviewer/* → tests/*` из 30254 CALLS — 49 %. Теперь
+  `local`-символы резолвятся в пределах своего документа (`_is_local` в
+  `graph/scip.py`); внутрифайловые рёбра при этом сохраняются.
+  Побочное следствие того же дефекта — число рёбер зависело от окружения запуска
+  `scip-python`: worktree своего окружения не имеет, pyright резолвит типы по
+  окружению вызывающего процесса, и чем хуже резолв, тем больше символов остаются
+  `local`. На одном коммите `.venv` проекта давал 30254 CALLS, системный python —
+  32832, `uvx` — 34158, каждое значение детерминировано в своём условии. После
+  фикса остаточное расхождение — 0.5 % (17776 против 17683); поэтому детектор
+  просадки (`graph/metrics.py`) сравнивает с порогом 10 %, а не на равенство.
+- **Семейство символов (`family`) — не то же, что `implementations`.**
+  `implementations` отвечает «кто наследует X» по рёбрам графа. `family` отвечает
+  «кто ещё такой же» и добавляет второй сигнал — структурное покрытие набора
+  методов контракта с учётом унаследованных. Он нужен потому, что `typing.Protocol`
+  (`TaskBoardProvider`, `VCSProvider`) рёбер наследования не даёт ни при каком
+  бэкенде: структурная типизация не выражается рёбрами. На этом репозитории
+  структурный сигнал находит все 11 адаптеров (включая три легаси без общей базы)
+  и оба VCS-провайдера, без ложных срабатываний. Пустой ответ при существующем
+  семействе запрещён: `implementations` в этом случае явно отсылает к `family`.
+  Структурный сигнал не считается вовсе при контракте меньше `MIN_CONTRACT_METHODS`
+  (3 не-dunder метода) — на тонком контракте (0-2 значимых метода) совпадение имён
+  ничего не значит, а ложных срабатываний было бы больше, чем пользы. Пропуск
+  сигнала не тихий: он называется в шапке ответа (`family.py::FamilyResult.note`).
 - **Voyage free tier = 3 RPM / 10K TPM.** TPM — главный блокер: полный `reviewer index` большого репо упирается в лимит и троттлится; есть retry/backoff (`index/_retry.py`). Ревью одного PR (overlay + query-эмбеддинги) в лимит укладывается.
 - **`.review.yml` берётся из целевой (base) ветки**, не из PR — PR не может ослабить собственное ревью.
 - **Реестр досок и `task_board`.** `BoardProviderRegistry` — единственная точка расширения: каждый зарегистрированный immutable `BoardProviderSpec` описывает factory, credential schema, setup/validation metadata и runtime options. Generic MCP, `SyncService`, `Settings` и installer не ветвятся по provider type. `.review.yml` целевой ветки выбирает зарегистрированный `task_board.type`, `project`, generic `create_target`/`done_target` и non-secret `options`; пустой `task_board:` выключает доску для репо. Новая форма имеет приоритет над legacy mapping (`done_column`/`done_state` → `done_target`, `status_field` → `options.status_field`) в течение одного compatibility-релиза. Креды приходят только из server-side env через `ProviderCredentialSource`; `board_config()` и MCP ошибки их не возвращают. См. `docs/board-providers.md`.
 - **Одиннадцать зарегистрированных типов досок** (PRI-217): `yougile`, `youtrack`, `jira`, `github`, `trello`, `linear`, `clickup`, `asana`, `yandex_tracker`, `kaiten`, `weeek`. Новые адаптеры строятся на общем транспорте — `boards/restbase.py` (`RestBoardBase`: lifecycle клиента, вымарывание секретов, разделение read/write), `boards/pagination.py` (offset / page / cursor / `Link`-заголовок), `boards/graphql.py` (`GraphQLClient` для Linear), `boards/yfm.py` (YFM → markdown для Yandex Tracker); retry, `Retry-After` и категоризация статусов остаются в `BoardHttpClient`, провайдер добавляет лишь `rate_limit_hint`. **Долг:** три исходных адаптера (`yougile`, `youtrack`, `jira`) старше этого слоя и держат свою httpx-обвязку — ретрофит сознательно вне скоупа. Ключи: нативные у `linear`/`yandex_tracker`, у остальных синтезируются из option `key_prefix` (нативный id — в `RawTask.board_id`/`aliases`). OAuth loopback не поддерживается нигде (плагин работает в headless-CLI и по SSH) — только PAT/API-ключ и `help_url`.
 - **Болк-синк задач — server-side ETL, не LLM (`sync_board`).** Скил `sync-tasks` — тонкий триггер generic lifecycle: `sync_board(..., board_type, provider_options)` резолвит зарегистрированный тип, проверяет безопасную credential schema, создаёт provider с immutable options и гарантированно вызывает `close()`. `reviewer-mcp` перечисляет доску по REST за полным `TaskBoardProvider` контрактом, нормализует в `TaskBrief` и индексирует через `TaskService.index_batch`; LLM не перечисляет доску и не передаёт текст задач → O(1) токенов. Watermark ключуется `ref="tasks:<type>:<board>"`; повторный синк трогает ~0 задач, а `--limit` отключает purge и продвижение курсора. Задачи глобальны (таблица `tasks` и граф `:Task` без repo-скоупа), но синк и выдача скоупятся `task_board.project`; клиент передаёт этот project, сервер repo-агностичен.
-- **SHA base-индекса** хранится в таблице `index_meta` (пишется при `reviewer index`). При каждом `prepare_review` (MCP) SHA сравнивается с `base_sha` PR и при расхождении автоматически досинхронизируются чанки изменившихся файлов через GitHub compare API. Граф (Neo4j) **также** инкрементально досинхронизируется в этом шаге (tree-sitter, repo-scoped, входящие `CALLS`-рёбра сохраняются, fail-soft). Полная точность (рёбра `IMPLEMENTS` + все `CALLS`) восстанавливается ручным `reviewer index` с SCIP.
+- **SHA base-индекса** хранится в таблице `index_meta` (пишется при `reviewer index`). При каждом `prepare_review` (MCP) SHA сравнивается с `base_sha` PR и при расхождении автоматически досинхронизируются чанки изменившихся файлов через GitHub compare API. Граф (Neo4j) **также** инкрементально досинхронизируется в этом шаге (tree-sitter, repo-scoped, входящие `CALLS`/`IMPLEMENTS`-рёбра сохраняются, исходящие переустанавливаются, fail-soft). Class-level `IMPLEMENTS` (PRI-251) self-heal восстанавливает и тогда, когда база наследования лежит в НЕизменённом файле: перед пересборкой берётся дешёвый снимок уже существующих в графе символов (`GraphStore.all_node_ids`) и подмешивается как дополнительный источник резолвинга — только для баз наследования, не для `CALLS` (`services/graph_sync.py`). Дыра остаётся один случай — базы нет в графе вовсе (репозиторий никогда не индексировался целиком, либо и база, и наследник появляются в одном PR, а база при этом сама не входит в изменённые self-heal'ом файлы); полная точность метод-уровневых `IMPLEMENTS` (SCIP) восстанавливается только ручным `reviewer index`.
 - **Мульти-бранч base-индекс.** Отслеживаемые ветки репозитория резолвятся слоями (`reviewer/config/branches.py::resolve_repo_branches`): домашний per-repo файл `home:repos/<owner>/<name>.yml` → домашний глобальный `home:review.yml` → env `REVIEW_BRANCHES` (CSV, первая — первичная) → `["main"]`; `RepoBranches.source` показывает, какой слой сработал (`reviewer config show` печатает эффективные ветки и источник). Каждая отслеживаемая ветка имеет изолированный base-индекс: в Postgres `ref="base:<branch>"` (overlay PR остаётся `pr:N`), в Neo4j `:Symbol{repo, branch, id}` (составная уникальность `(repo, branch, id)`). PR ревьюится против индекса своей целевой ветки (`prq.base_ref`); PR в ветку вне списка ревью **пропускает** (`prepare_review` → `{"status":"skipped",...}`). `reviewer index --ref <branch>` строит индекс ветки; `reviewer search --branch <branch>` ищет по нему. Эмбеддинги переиспользуются между ветками по `content_hash` (экономия Voyage). Ветка-агностичные операции (CLI search, solve-task) идут по первичной ветке или текущей git-ветке клона. Миграция legacy env-данных в домашний слой: `reviewer config migrate` (per-repo) или `reviewer migrate-branches` (один раз после апгрейда).
 - **Сбой чтения коммиченного `.review.yml` не обнуляет домашние слои.** `resolve_policy_data`
   (`reviewer/config/layers.py`) читает коммиченный слой fail-soft: сбой доставки (сеть, токен, 404 —
@@ -163,6 +203,19 @@ MCP-сессия (PreparedReview + ToolContext) живёт в процессе `
   неизменённые файлы: пути delta-списков в нём не дублируются, полный состав =
   `files ∪ added_files ∪ changed_files ∪ moved_files`. Пагинация не считается override'ом —
   полный проход требует лишь дойти до `has_more == false`.
+- **Фильтр кластеризации сводок (`summary_paths.ignore`, PRI-245).** Отдельный от `paths.ignore`
+  слой: `paths.ignore` управляет индексацией и ревью, а этот ключ — только кластеризацией сводок.
+  Дефолт `("tests", "test")`; env-слоя нет (как у `context_limits`), явный пустой список
+  выключает фильтр. Применяется при сборке members ДО `build_clusters` в обеих точках —
+  `_summary_state` и `_current_subsystem_hashes`; расхождение наборов сделало бы каждую сводку
+  вечно stale. Входит в payload `layout_token`, поэтому включение/выключение запускает полный
+  пересбор и штатный `prune_subsystem_summaries` собирает осиротевшие `tests/*`.
+- **Вход файлового job сводок — скелет, а не исходник (PRI-245).** `skeleton_hash` считается по
+  тексту символа-чанка, поэтому «читать ровно то, что инвалидирует» достижимо только чтением из
+  чанков: session-less тул `get_file_skeletons(repo, paths, branch)` собирает скелет файла как
+  объединение скелетов его чанков. Цена — module-level docstring в чанки не попадает и в скелет
+  не войдёт. `read_file` остаётся тулом PR-сессии и session-less аналога не имеет. Job'ы
+  батчатся по 15 путей — один субагент на порцию, а не на файл.
 - **Overlay удаляется автоматически** (`store.delete_ref("pr:N")`) — после `publish_review` эфемерный
   ref не остаётся в Postgres. При сбое prepare также чистится (fail-soft). Но если ревью **брошено**
   между `prepare_review` и `publish_review` (пользователь отменил, оркестрирующая LLM-сессия упала),
@@ -178,6 +231,25 @@ MCP-сессия (PreparedReview + ToolContext) живёт в процессе `
   («не знаю живых» ≠ «живых нет»). Гарантию даёт только сервер: скилл `review-pr` — это промпт,
   а не `try/finally`.
 - **Наблюдаемость (`reviewer/web/`)**: каждый `publish_review` пишет в Postgres итоги прогона (`review_runs`/`review_findings`, гейт `REVIEW_HISTORY`) — fail-soft. Веб-админка (FastAPI `reviewer serve`) читает **ту же** БД.
+- **Онлайн-метрика качества брифа solve-task (PRI-249).** По факту реальной публикации ревью
+  (`publish_review`, только `posted and not dry_run`) пути секции `## Relevant code` брифа задачи
+  сопоставляются с фактическим diff'ом PR и пишутся в таблицу `brief_quality` рядом с историей
+  прогонов. Три вещи в этом неочевидны. Во-первых, **знаменатель — не весь diff**: считается
+  core-recall по ядру (`reviewer/**/*.py`, `plugin/**` не-`.md`, корневые `*.py`) И только по
+  файлам, существовавшим до PR; сырой recall на том же корпусе давал медиану 15 % против 67 %
+  у core (спайк PRI-246), то есть был метрикой размера diff'а, а не качества ретрива.
+  «Существовал до PR» берётся из `PreparedReview.changed_status`, git при съёме не вызывается.
+  Во-вторых, **пустое ядро — это `status='empty_core_denominator'` и `core_recall IS NULL`, а не
+  ноль**: у задачи, чей diff состоит из тестов и доков, качество ретрива по ядру не определено
+  (в спайке таких 10 из 45). В-третьих, **строка хранит множества путей, а не только счётчики**:
+  офлайн-baseline посчитан по задаче (объединение всех её PR), онлайн видит по одному PR, и без
+  union'а на чтении task-level число было бы посчитано другой линейкой, чем точка «до»
+  (`bulk_core_recall_median ≈ 0.373`, `bulk_n_measured = 4`) — то есть отложенный критерий
+  PRI-251 остался бы незакрытым. Расчётное ядро одно на офлайн и онлайн:
+  `reviewer/metrics/brief_quality/`, а `eval/solve_task_metrics/{classify,recall,briefs}.py` —
+  ре-экспорт (guard-тест ловит возврат второй копии). Гейт — общий `REVIEW_HISTORY`; своего
+  ключа у метрики нет. Мержа PR метрика не видит: вебхука в системе нет, и правки после ревью
+  в неё не попадают — сознательное сужение.
 - **Полная воронка находок в `review_findings` (outcome/reject_reason).** `review_findings` персистит **каждого кандидата**, а не только опубликованных: колонка `outcome` — терминальный исход одного из 6 состояний (`published_inline`/`published_summary`/`verify_rejected`/`gate_dropped`/`deduped`/`already_posted`), `reject_reason` — причина отсева (текст верификатора при `verify_rejected` через `VerdictIn.reason`; сработавшее правило политики через `ReviewPolicy.gate_reason` при `gate_dropped`; иначе `NULL`). Учёт — чистый юнит `reviewer/agent/outcomes.py::account_outcomes`, инвариант `len(rows) == len(candidates)` (сумма по 6 исходам = числу кандидатов). **`deduped`-разность считается по IDENTITY (`id()`), не по fingerprint**: точный дубль имеет тот же fingerprint, что выживший (`dedup_findings` возвращает те же объекты), поэтому fingerprint-diff недосчитал бы схлопнутые. `outcome` — новое поле-истина; старые `is_real`/`published`/`inline` заполняются как прежде (обратная совместимость). Миграция аддитивна/идемпотентна (`ADD COLUMN IF NOT EXISTS` + best-effort бэкфилл). При `status='error'` строки хранят намеченный `outcome`, но `published=False`.
 - **MCP-сессия живёт в процессе сервера** между `prepare_review` и `publish_review` одного PR: `_Session(prepared, ctx)` в `MCPReviewService._sessions`. При повторном `prepare_review` для того же (repo, pr) сессия перезаписывается, старый VCS-провайдер закрывается (fail-soft).
 - **Плагин** находится в `plugin/` в корне репозитория — это корень Claude Code-плагина для скилла `/rag-reviewer:review-pr`.
@@ -225,6 +297,28 @@ MCP-сессия (PreparedReview + ToolContext) живёт в процессе `
   `reviewer/mcp/service.py`), а `json.dumps` ответа экранировал кавычки и фрейм `File "…"`
   переставал совпадать — поэтому текст собирается обходом строковых значений. Дедуп по сигнатуре
   живёт в файле в tempdir: каждый вызов хука — отдельный процесс, in-memory здесь бесполезен.
+- **Расход ревью снимает клиентский хук, не сервер (PRI-247).** MCP-сервер видит только
+  свои тул-вызовы, а не LLM-ходы оркестратора/субагентов — токены и стоимость ему взять неоткуда.
+  Их снимает `PreToolUse`-хук плагина `plugin/hooks/review_cost.py` (stdlib-only, системный
+  python3, без пакета `reviewer`): парсит транскрипт сессии Claude Code, взвешивает бакеты токенов
+  (`fresh_in×1`, `output×5`, `cache_write×1.25`, `cache_read×0.1` — тариф из спайка PRI-246,
+  условные единицы, не доллары) и пишет sidecar JSON по пути `sidecar_path(repo, pr)` =
+  `tempfile.gettempdir()/reviewer-review-cost/<repo>-<pr>.json`. `publish_review` читает и удаляет
+  sidecar через `reviewer/services/cost_sidecar.py::read_cost_sidecar`. Путь и формула веса
+  **дублируются буквально** между хуком (`plugin/hooks/_transcript.py`), сервером
+  (`cost_sidecar.py`/`reviewer/web/history.py`) и офлайн-эвалом
+  (`eval/solve_task_metrics/cost.py`) — хук не может импортировать пакет `reviewer`, поэтому
+  единого источника правды нет; совпадение пути и всех трёх словарей весов закреплено guard-тестом
+  (`tests/hooks/test_review_cost.py`). Слияние с явными аргументами `model`/`usage`/`total_cost`
+  публикации — **пофайловое**, не «всё или ничего»: `merge_metadata` берёт из sidecar только те
+  поля, что явно не переданы, так что CLI, отдающий `model`, но не расход, не теряет sidecar-данные.
+  Канал файловый и неработоспособен при удалённом MCP (хук и `reviewer-mcp` не делят файловую
+  систему) — это штатный случай «sidecar отсутствует», ревью публикуется без метаданных расхода.
+  Пошаговый трейс тул-вызовов (`review_steps`, стадии `analyze`/`verify`/`synthesize`/`client`) —
+  отдельный, чисто серверный канал; веб-админка (`GET /api/runs/{id}/trace`) сливает оба канала в
+  `by_stage` через объединение множеств стадий (`reviewer/web/history.py::merge_stage_costs`) —
+  стадии хука (`orchestrator`/`risk`/`blast_radius`/...) и стадии трейса пересекаются, но не
+  совпадают; у стадии без данных о расходе `cost` — `null`, не 0.
 
 ## Соглашения
 
@@ -237,7 +331,8 @@ MCP-сессия (PreparedReview + ToolContext) живёт в процессе `
 свеж (`reviewer status --json` -> `drift == 0`), предпочитай session-less тулы reviewer
 голому grep для кросс-файловых фактов: `search_codebase` (релевантный код), `callers`
 (blast-radius сигнатуры, которую собираешься менять), `related_symbols`, `definition`,
-`implementations`. Точечно — пропускай мелкие/знакомые правки и файлы, уже в контексте (Voyage 3 RPM / 10K TPM).
+`implementations`, `family` (кто ещё такой же — наследники/сиблинги/структурные реализации
+контракта). Точечно — пропускай мелкие/знакомые правки и файлы, уже в контексте (Voyage 3 RPM / 10K TPM).
 Base-индекс отслеживает целевую ветку, не рабочее дерево: грунтовка надёжна для существующего
 кода, но слепа к символам, только что правленным локально — их проверяй через Read. Если
 reviewer недоступен или индекс устарел — откат в grep/Read.

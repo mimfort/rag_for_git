@@ -1,9 +1,14 @@
 """Guardrail: скилл finish-task — тонкий триггер server-side тула finish_task."""
 from pathlib import Path
 
+from .test_assembled_prompts import assemble
+
 ROOT = Path(__file__).resolve().parents[2]
 SKILL = ROOT / "plugin" / "skills" / "finish-task" / "SKILL.md"
-SOLVE = ROOT / "plugin" / "skills" / "solve-task" / "SKILL.md"
+
+
+def _solve() -> str:
+    return assemble("solve-task/SKILL.md")
 
 
 def test_finish_task_calls_write_tool_and_resyncs():
@@ -26,7 +31,7 @@ def test_finish_task_resolves_key_and_pr():
 
 
 def test_solve_task_points_to_finish_task():
-    assert "finish-task" in SOLVE.read_text(encoding="utf-8")
+    assert "finish-task" in _solve()
 
 
 def test_finish_task_reads_generic_done_target_and_options():

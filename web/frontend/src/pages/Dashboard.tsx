@@ -4,7 +4,7 @@ import {
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from 'recharts'
 import { fetchStats, type Stats } from '../api'
-import { fmtCost, fmtDate, fmtNum, fmtPct } from '../utils'
+import { fmtDate, fmtNum, fmtPct, fmtUnits } from '../utils'
 
 const PERIODS = [
   { label: '7 дн', value: 7 },
@@ -126,15 +126,15 @@ export default function Dashboard() {
               animDelay="0.05s"
             />
             <KpiCard
-              label="Суммарно $"
-              value={fmtCost(stats.total_cost)}
+              label="Суммарно, усл. ед."
+              value={fmtUnits(stats.total_cost)}
               sub="общие затраты"
               accent="var(--amber)"
               animDelay="0.10s"
             />
             <KpiCard
-              label="$/прогон"
-              value={fmtCost(stats.avg_cost_per_run)}
+              label="Усл. ед./прогон"
+              value={fmtUnits(stats.avg_cost_per_run)}
               sub="среднее"
               accent="var(--amber)"
               animDelay="0.15s"
@@ -158,7 +158,7 @@ export default function Dashboard() {
           <div className="charts-grid">
             {/* Cost over time */}
             <div className="chart-card anim-1">
-              <div className="chart-title">Стоимость ($)</div>
+              <div className="chart-title">Расход (усл. ед.)</div>
               <ResponsiveContainer width="100%" height={190}>
                 <AreaChart data={stats.cost_over_time} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
                   <defs>
@@ -169,9 +169,9 @@ export default function Dashboard() {
                   </defs>
                   <CartesianGrid strokeDasharray="0" vertical={false} />
                   <XAxis dataKey="date" tickFormatter={fmtDate} tick={{ fontSize: 10 }} axisLine={false} tickLine={false} />
-                  <YAxis tickFormatter={(v: number) => `$${v.toFixed(3)}`} tick={{ fontSize: 10 }} width={54} axisLine={false} tickLine={false} />
+                  <YAxis tickFormatter={(v: number) => fmtUnits(v)} tick={{ fontSize: 10 }} width={54} axisLine={false} tickLine={false} />
                   <Tooltip
-                    formatter={(v: number) => [fmtCost(v), 'Стоимость']}
+                    formatter={(v: number) => [fmtUnits(v), 'Расход, усл. ед.']}
                     labelFormatter={(l: string) => fmtDate(l)}
                     contentStyle={tooltipStyle}
                     labelStyle={{ color: 'rgba(255,255,255,0.4)', marginBottom: 4 }}

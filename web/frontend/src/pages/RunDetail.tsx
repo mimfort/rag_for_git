@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { fetchRun, type RunDetail as RunDetailType, type Finding, type UsageStage } from '../api'
-import { fmtCost, fmtDatetime, fmtDuration, shortSha } from '../utils'
+import { fmtDatetime, fmtDuration, fmtUnits, shortSha } from '../utils'
 import TraceView from './TraceView'
 
 // ─── Badges & mini-components ────────────────────────────────────────────────
@@ -90,7 +90,7 @@ function UsageTable({ usage, totalCost }: { usage: Record<string, UsageStage>; t
                 {s.cache_read_tokens.toLocaleString('ru-RU')}
               </td>
               <td className="td-mono" style={{ color: 'var(--amber)' }}>
-                {fmtCost(s.cost)}
+                {fmtUnits(s.cost)}
               </td>
             </tr>
           ))}
@@ -100,7 +100,7 @@ function UsageTable({ usage, totalCost }: { usage: Record<string, UsageStage>; t
             <td className="td-mono">{totals.input_tokens.toLocaleString('ru-RU')}</td>
             <td className="td-mono">{totals.output_tokens.toLocaleString('ru-RU')}</td>
             <td className="td-mono">{totals.cache_read_tokens.toLocaleString('ru-RU')}</td>
-            <td className="td-mono">{fmtCost(totalCost)}</td>
+            <td className="td-mono">{fmtUnits(totalCost)}</td>
           </tr>
         </tbody>
       </table>
@@ -312,9 +312,9 @@ export default function RunDetail() {
             <span className="meta-value">{run.comments_inline} inline, {run.comments_summary} в сводке</span>
           </div>
           <div className="detail-meta-item">
-            <span className="meta-label">Итого $</span>
+            <span className="meta-label">Итого, усл. ед.</span>
             <span className="meta-value" style={{ color: 'var(--amber)' }}>
-              {fmtCost(run.total_cost)}
+              {fmtUnits(run.total_cost)}
             </span>
           </div>
         </div>

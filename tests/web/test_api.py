@@ -135,6 +135,20 @@ _FAKE_TRACE_STEPS = [
 ]
 
 
+_FAKE_QUALITY = {
+    "trend": [
+        {"date": _NOW, "task_key": "PRI-999", "prs": [1], "expected_core": 12,
+         "predicted": 6, "hit_core": 5, "core_recall": 0.4167, "precision": 0.83},
+    ],
+    "aggregate": {"n_measured": 1, "no_measurement": 2, "core_recall_median": 0.4167,
+                  "core_recall_mean": 0.4167, "denominator_median": 12},
+    "bulk": {"n_measured": 1, "core_recall_median": 0.4167},
+    "misses": [{"category": "tests/", "count": 3}],
+    "bulk_threshold": 10,
+    "no_measurement_by_status": {"no_brief": 2},
+}
+
+
 class FakeHistory:
     """Фейковый ReviewHistory для тестов без БД."""
 
@@ -162,6 +176,14 @@ class FakeHistory:
             return _FAKE_TRACE_STEPS
         return []
 
+    def stage_breakdown(self, run_id: int) -> list[dict]:
+        from reviewer.web.history import aggregate_stages, merge_stage_costs
+        if run_id != 1:
+            return []
+        usage_by_stage = {"analyze": {"fresh_in": 100, "output": 0,
+                                       "cache_write": 0, "cache_read": 0}}
+        return merge_stage_costs(aggregate_stages(_FAKE_TRACE_STEPS), usage_by_stage)
+
     def stats(self, days: int = 30) -> dict:
         return _FAKE_STATS
 
@@ -169,6 +191,9 @@ class FakeHistory:
         if any(r["repo"] == repo for r in self.list_runs(repo=repo)):
             return 0
         return None
+
+    def brief_quality_trend(self, days: int = 90, repo: str | None = None) -> dict:
+        return _FAKE_QUALITY
 
 
 # ---------------------------------------------------------------------------
@@ -191,6 +216,20 @@ def client_with_auth() -> TestClient:
     router = make_router(FakeHistory(), settings)
     app.include_router(router)
     return TestClient(app)
+
+
+def test_quality_endpoint_returns_trend(client):
+    """GET /api/quality отдаёт динамику метрики качества брифа."""
+    response = client.get("/api/quality?days=90")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["trend"][0]["task_key"] == "PRI-999"
+    assert body["bulk_threshold"] == 10
+
+
+def test_quality_endpoint_validates_days(client):
+    """days вне диапазона 1..365 отклоняется валидацией FastAPI."""
+    assert client.get("/api/quality?days=0").status_code == 422
 
 
 # ---------------------------------------------------------------------------
@@ -388,6 +427,24 @@ def test_get_trace_empty_for_unknown_run(client):
     assert resp.status_code == 200
     data = resp.json()
     assert data["steps"] == []
+
+
+def test_get_trace_contains_stage_breakdown(client):
+    """Ответ трейса содержит разрез by_stage: шаги/payload + расход по стадиям."""
+    resp = client.get("/api/runs/1/trace")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "by_stage" in data
+    by_stage = {r["stage"]: r for r in data["by_stage"]}
+    assert by_stage["analyze"]["steps"] == 2
+    assert by_stage["analyze"]["cost"] is not None
+
+
+def test_get_trace_stage_breakdown_empty_for_unknown_run(client):
+    """Прогон без трейса — by_stage пустой список, а не ошибка."""
+    resp = client.get("/api/runs/999/trace")
+    assert resp.status_code == 200
+    assert resp.json()["by_stage"] == []
 
 
 # ---------------------------------------------------------------------------

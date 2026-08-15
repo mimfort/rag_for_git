@@ -2,6 +2,7 @@ import { BrowserRouter, Routes, Route, NavLink } from 'react-router-dom'
 import Dashboard from './pages/Dashboard'
 import Runs from './pages/Runs'
 import RunDetail from './pages/RunDetail'
+import Quality from './pages/Quality'
 import './styles.css'
 
 export default function App() {
@@ -24,6 +25,9 @@ export default function App() {
             <NavLink to="/runs" className={({ isActive }) => isActive ? 'nav-link active' : 'nav-link'}>
               Прогоны
             </NavLink>
+            <NavLink to="/quality" className={({ isActive }) => isActive ? 'nav-link active' : 'nav-link'}>
+              Качество
+            </NavLink>
           </nav>
 
           <div className="header-status">
@@ -37,6 +41,7 @@ export default function App() {
             <Route path="/" element={<Dashboard />} />
             <Route path="/runs" element={<Runs />} />
             <Route path="/runs/:id" element={<RunDetail />} />
+            <Route path="/quality" element={<Quality />} />
           </Routes>
         </main>
       </div>

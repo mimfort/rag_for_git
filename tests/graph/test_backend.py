@@ -116,3 +116,59 @@ def test_build_code_graph_explicit_scip_raises_on_error(monkeypatch):
 
     with pytest.raises(RuntimeError, match="scip сломан"):
         _backend.build_code_graph(".", "HEAD", [], {}, backend="scip")
+
+
+# ---------------------------------------------------------------------------
+# build_with_scip — слияние с наследованием из tree-sitter
+# ---------------------------------------------------------------------------
+
+def test_scip_branch_merges_tree_sitter_inheritance(monkeypatch):
+    """build_with_scip добавляет наследование из синтаксиса к рёбрам SCIP.
+
+    SCIP теряет наследование forward-referenced класса; слияние это чинит,
+    не трогая CALLS.
+    """
+    from reviewer.graph import backend
+
+    src = {
+        "pkg/base.py": "class RestBase:\n    pass\n",
+        "pkg/adapter.py": (
+            "from pkg.base import RestBase\n\n\n"
+            "def spec():\n    return Adapter\n\n\n"
+            "class Adapter(RestBase):\n    pass\n"
+        ),
+    }
+    # SCIP «прислал» только CALLS — ровно как на реальном репозитории.
+    monkeypatch.setattr(backend, "add_worktree", lambda repo, ref: "/tmp/wt")
+    monkeypatch.setattr(backend, "remove_worktree", lambda repo, path: None)
+    monkeypatch.setattr(backend, "run_scip_python", lambda wt: b"")
+    monkeypatch.setattr(
+        backend, "graph_from_scip_bytes",
+        lambda data, chunks: ({"pkg/adapter.py#spec"},
+                              [("pkg/adapter.py#spec", "CALLS", "pkg/base.py#RestBase")]),
+    )
+
+    nodes, edges = backend.build_with_scip("/repo", "dev", src)
+
+    assert ("pkg/adapter.py#Adapter", "IMPLEMENTS", "pkg/base.py#RestBase") in edges
+    assert ("pkg/adapter.py#spec", "CALLS", "pkg/base.py#RestBase") in edges
+
+
+def test_scip_branch_deduplicates_inheritance_edges(monkeypatch):
+    """Если SCIP уже прислал ребро наследования, дубликата не возникает."""
+    from reviewer.graph import backend
+
+    src = {
+        "pkg/base.py": "class RestBase:\n    pass\n",
+        "pkg/adapter.py": "from pkg.base import RestBase\n\n\nclass Adapter(RestBase):\n    pass\n",
+    }
+    edge = ("pkg/adapter.py#Adapter", "IMPLEMENTS", "pkg/base.py#RestBase")
+    monkeypatch.setattr(backend, "add_worktree", lambda repo, ref: "/tmp/wt")
+    monkeypatch.setattr(backend, "remove_worktree", lambda repo, path: None)
+    monkeypatch.setattr(backend, "run_scip_python", lambda wt: b"")
+    monkeypatch.setattr(backend, "graph_from_scip_bytes",
+                        lambda data, chunks: (set(), [edge]))
+
+    _, edges = backend.build_with_scip("/repo", "dev", src)
+
+    assert edges.count(edge) == 1

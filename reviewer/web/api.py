@@ -31,6 +31,7 @@ def make_router(history: ReviewHistory, settings: Settings | None = None) -> API
         GET /api/runs/{run_id}/trace — трейс прогона.
         GET /api/stats           — агрегированная статистика.
         GET /api/runs/gap        — дней с последнего прогона по репо.
+        GET /api/quality         — динамика качества брифа solve-task.
     """
     settings = settings or Settings()
 
@@ -116,14 +117,17 @@ def make_router(history: ReviewHistory, settings: Settings | None = None) -> API
 
     @router.get("/api/runs/{run_id}/trace")
     def get_trace(run_id: int) -> JSONResponse:
-        """Пошаговый трейс прогона, упорядоченный по seq.
+        """Пошаговый трейс прогона, упорядоченный по seq, плюс разрез по стадиям.
 
         Загружается по требованию (отдельно от /api/runs/{run_id}, т.к. трейс крупный).
         Возвращает пустой список для прогонов без трейса (старые прогоны).
+        ``by_stage`` объединяет число шагов/payload из трейса с расходом из
+        usage.by_stage прогона — см. ReviewHistory.stage_breakdown.
         """
         try:
             steps = history.get_trace(run_id)
-            return JSONResponse({"steps": steps})
+            by_stage = history.stage_breakdown(run_id)
+            return JSONResponse({"steps": steps, "by_stage": by_stage})
         except Exception as exc:
             log.error("Ошибка при получении трейса прогона %s: %s", run_id, exc, exc_info=True)
             raise HTTPException(status_code=500, detail="Внутренняя ошибка сервера") from exc
@@ -138,6 +142,23 @@ def make_router(history: ReviewHistory, settings: Settings | None = None) -> API
             return JSONResponse(data)
         except Exception as exc:
             log.error("Ошибка при получении статистики: %s", exc, exc_info=True)
+            raise HTTPException(status_code=500, detail="Внутренняя ошибка сервера") from exc
+
+    @router.get("/api/quality")
+    def get_brief_quality(
+        days: int = Query(default=90, ge=1, le=365, description="Окно в днях"),
+        repo: str | None = Query(default=None, description="Фильтр по репозиторию"),
+    ) -> JSONResponse:
+        """Динамика качества ретрива под бриф solve-task (PRI-249).
+
+        Точки агрегированы по задаче, а не по PR: так число совпадает с
+        методикой офлайн-харнесса, чей baseline служит точкой «до».
+        """
+        try:
+            data = history.brief_quality_trend(days=days, repo=repo)
+            return JSONResponse(data)
+        except Exception as exc:
+            log.error("Ошибка при получении качества брифов: %s", exc, exc_info=True)
             raise HTTPException(status_code=500, detail="Внутренняя ошибка сервера") from exc
 
     return router

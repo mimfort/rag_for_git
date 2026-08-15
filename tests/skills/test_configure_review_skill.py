@@ -21,15 +21,19 @@ def test_skill_instructs_russian_output():
     assert "Always answer the user in Russian" in text
 
 
-def test_skill_scope_is_the_four_context_keys():
+def test_skill_scope_is_the_five_context_keys():
     text = SKILL.read_text(encoding="utf-8")
     for key in (
         "summary_cluster_depth",
         "summary_cluster_depth_overrides",
         "summary_topk_threshold",
-        "paths.ignore",
+        "summary_paths.ignore",
     ):
         assert key in text, f"скилл не упоминает ключ {key}"
+    # Backtick-anchored: без этого `summary_paths.ignore` удовлетворяет подстроку
+    # "paths.ignore" сам по себе, и удаление отдельного `paths.ignore` из скилла
+    # осталось бы незамеченным.
+    assert "`paths.ignore`" in text, "скилл не упоминает ключ `paths.ignore`"
 
 
 def test_skill_scans_tracked_only_no_fs_walk():

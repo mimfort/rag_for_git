@@ -108,9 +108,10 @@ class GraphStore:
     def implementations_detailed(self, repo: str, node_ids: list[str], *,
                                  branch: str = "") -> list[dict]:
         """Реализации/наследники символов — направленные входящие IMPLEMENTS.
-        Класс → его подклассы; метод → его override-ы (SCIP эмитит и то, и то).
+        Класс → его подклассы; метод → его override-ы.
         Элементы: {"id": <node_id>, "rel": "IMPLEMENTS"}, упорядочены по id.
-        Точны после полного `reviewer index` с SCIP (см. инвариант графа)."""
+        Наследование классов эмитит tree-sitter (SCIP теряет его у
+        forward-referenced классов), override-ы методов — SCIP."""
         records, _, _ = self._driver.execute_query(
             "UNWIND $ids AS sid "
             "MATCH (c:Symbol {repo: $repo, branch: $branch})-[:IMPLEMENTS]->"
@@ -118,6 +119,54 @@ class GraphStore:
             "RETURN DISTINCT c.id AS id ORDER BY id",
             ids=list(node_ids), repo=repo, branch=branch)
         return [{"id": r["id"], "rel": "IMPLEMENTS"} for r in records]
+
+    def bases_of(self, repo: str, node_ids: list[str], *,
+                 branch: str = "") -> dict[str, list[str]]:
+        """Базы символов — ИСХОДЯЩИЕ IMPLEMENTS (класс → его базы).
+
+        Обратное направление к :meth:`implementations_detailed`; нужно для
+        подсчёта унаследованных методов при структурном сопоставлении.
+        """
+        if not node_ids:
+            return {}
+        records, _, _ = self._driver.execute_query(
+            "UNWIND $ids AS sid "
+            "MATCH (s:Symbol {repo: $repo, branch: $branch, id: sid})-[:IMPLEMENTS]->"
+            "(b:Symbol {repo: $repo, branch: $branch}) "
+            "RETURN sid AS id, collect(DISTINCT b.id) AS bases",
+            ids=list(node_ids), repo=repo, branch=branch)
+        return {r["id"]: sorted(r["bases"]) for r in records}
+
+    def class_members(self, repo: str, *, branch: str = "") -> dict[str, set[str]]:
+        """Собственные методы каждого класса: {'path#Class': {'m1', 'm2'}}.
+
+        Класс и его члены различаются формой node_id: 'path#Class' против
+        'path#Class.method'. Вложенные уровни глубже одного не учитываются —
+        в этом репозитории их нет.
+
+        Форма node_id — единственный доступный признак: у ``:Symbol`` нет
+        свойства ``kind``. Поэтому вложенный класс ('path#Outer.Inner') попадёт
+        в набор ``Outer`` как метод 'Inner'. Различить их можно было бы только
+        миграцией схемы графа; на практике семейство узла-контракта от этого
+        лишь сужается на один искусственный метод (полное покрытие становится
+        строже), а вложенных классов в репозитории нет.
+        """
+        records, _, _ = self._driver.execute_query(
+            "MATCH (s:Symbol {repo: $repo, branch: $branch}) "
+            "WHERE split(s.id, '#')[1] CONTAINS '.' "
+            "RETURN s.id AS id",
+            repo=repo, branch=branch)
+        out: dict[str, set[str]] = {}
+        for r in records:
+            node_id = r["id"]
+            path, _, fqn = node_id.partition("#")
+            if "." not in fqn:
+                continue
+            cls, _, method = fqn.rpartition(".")
+            if "." in cls:
+                continue
+            out.setdefault(f"{path}#{cls}", set()).add(method)
+        return out
 
     def expand_detailed(self, repo: str, node_ids: list[str], hops: int = 2, *,
                         branch: str = "") -> list[dict]:
@@ -197,6 +246,37 @@ class GraphStore:
             "UNWIND $ids AS id "
             "MATCH (s:Symbol {repo: $repo, branch: $branch, id: id})-[r:CALLS]->() DELETE r",
             ids=list(ids), repo=repo, branch=branch)
+
+    def delete_outgoing_implements(self, repo: str, ids: list[str], *, branch: str = "") -> None:
+        """Снести только ИСХОДЯЩИЕ IMPLEMENTS у символов (входящие сохраняются).
+
+        Симметрично :meth:`delete_outgoing_calls`: тот же инвариант self-heal —
+        входящие рёбра от неизменённых файлов не трогаем, свежие исходящие
+        переустанавливает вызывающий (:func:`reviewer.services.graph_sync.patch_graph_incremental`)
+        после этого вызова. Без него смена базы класса (``class X(A)`` →
+        ``class X(B)``) в PR оставляла бы в графе фантомное ``X IMPLEMENTS A``
+        навсегда — до ручного ``reviewer index``.
+        """
+        if not ids:
+            return
+        self._driver.execute_query(
+            "UNWIND $ids AS id "
+            "MATCH (s:Symbol {repo: $repo, branch: $branch, id: id})-[r:IMPLEMENTS]->() DELETE r",
+            ids=list(ids), repo=repo, branch=branch)
+
+    def all_node_ids(self, repo: str, *, branch: str = "") -> set[str]:
+        """Все node_id символов (repo, branch) — только идентификаторы, без свойств.
+
+        Дёшево (один индексный скан, никаких обходов рёбер). Нужен self-heal
+        инкрементального парса (:mod:`reviewer.services.graph_sync`) как
+        источник резолвинга баз наследования из НЕизменённых файлов — тех,
+        что не попадают в ``changed_sources`` и потому не видны локальному
+        парсеру.
+        """
+        records, _, _ = self._driver.execute_query(
+            "MATCH (s:Symbol {repo: $repo, branch: $branch}) RETURN s.id AS id",
+            repo=repo, branch=branch)
+        return {r["id"] for r in records}
 
     def count_nodes(self, repo: str, branch: str = "") -> int:
         """Число :Symbol-узлов в (repo, branch)."""

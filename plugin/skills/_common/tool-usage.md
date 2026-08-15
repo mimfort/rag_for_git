@@ -28,3 +28,8 @@ Tool discipline (shared):
 - `callers(repo, node_id, branch?)` — direct callers (impact);
 - `definition(repo, symbol, branch?)` — where a symbol is defined.
 - `implementations(repo, node_id, branch?)` — directed subclasses/overrides (incoming IMPLEMENTS).
+- `family(repo, node_id, branch?)` — "who else is like this": subclasses/siblings by inheritance
+  plus structural contract coverage (finds `typing.Protocol` implementers, which have no
+  inheritance edges); a non-empty answer always names which signals fired.
+- `get_file_skeletons(repo, paths, branch?)` — AST skeletons of indexed files, a batch of paths
+  per call; built from indexed chunks, so it matches what a summary's freshness hash sees.

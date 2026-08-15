@@ -548,6 +548,7 @@ def test_policy_to_public_data_excludes_settings_secrets_and_unknown_yaml() -> N
         "enabled_only",
         "severity_threshold",
         "paths",
+        "summary_paths",
         "max_comments",
         "min_confidence",
         "output_language",

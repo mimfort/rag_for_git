@@ -56,16 +56,33 @@ Into `CHANGELOG.md`, directly under the intro block, in Russian, following the e
 
 Omit empty rubrics. Rules that make the notes worth reading:
 
-- **Group by meaning, not by commit.** Fifteen commits that built one feature are one bullet.
+- **Group by meaning, not by commit** — but grouping means one *heading* per feature, not one
+  *sentence*. Fifteen commits that built one feature become one bullet with sub-bullets, never a
+  single line that mentions the feature exists.
+- **Never swallow an enumerable surface.** If the change introduces named things the user will
+  choose between or type — modes, strategies, flags, commands, config keys, statuses — every name
+  goes into the notes, each with what it does and when to pick it. "Added a start-up prompt for
+  mode and strategy" is a failed note: the reader still does not know that `full-auto` and `lite`
+  exist. This is the single most common way these notes go wrong; check for it before publishing.
 - **Lead with the capability, not the module.** "Поднять инфраструктуру одной командой" beats
   "feat(cli): команды reviewer start и reviewer stop".
 - **Say what it changes for the reader.** A fix names the symptom that disappears; a feature names
-  the thing that was previously impossible or manual.
+  the thing that was previously impossible or manual. State the cost or caveat where one exists —
+  when a mode is a bad idea, say so in the note rather than letting the reader discover it.
+- **Read the spec, not just the commits.** A feature built from a `docs/superpowers/specs/` design
+  has its full surface listed there; commit subjects show only the construction order. If a spec
+  exists and you did not open it, you are guessing at what shipped.
 - **Skip pure noise** — manifest rebuilds, `uv.lock`, version bumps, internal test fixups — unless
   it changes something observable.
 - **Breaking changes get their own rubric** with the exact migration step.
-- 2–6 bullets for a normal release. If you cannot fill that, the release is small — say so plainly
+- Length follows the release: one bullet per user-visible change, sub-bullets for its named parts.
+  A release with three features and a rich one among them runs long, and that is correct — the
+  budget is "no filler", not "no detail". If there is genuinely little to say, say it plainly
   instead of padding.
+
+Before showing the draft, re-read it against the diff and ask: could a reader who only saw these
+notes use every new thing this release added? If a name appears in the code but not in the notes,
+put it back.
 
 ## 5. Show the draft and STOP
 

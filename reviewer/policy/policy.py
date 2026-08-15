@@ -12,6 +12,11 @@ from reviewer.policy.context_limits import ContextLimits
 
 _SEV = {"low": 0, "medium": 1, "high": 2, "critical": 3}
 
+# Дефолтный фильтр кластеризации сводок (PRI-245): тестовые деревья бесполезны
+# как высокоуровневый приор, но дают около двух третей объёма работы. Голые
+# имена — is_ignored ловит и сам каталог, и всё поддерево, но не reviewer/testing.py.
+DEFAULT_SUMMARY_PATHS_IGNORE: tuple[str, ...] = ("tests", "test")
+
 
 @dataclass
 class ReviewPolicy:
@@ -31,6 +36,27 @@ class ReviewPolicy:
         default_factory=dict)             # per-prefix depth из .review.yml (PRI-161)
     context_limits: ContextLimits = field(default_factory=ContextLimits)  # PRI-202, только из .review.yml
     bug_reports: bool = True                                     # канал репорта багов reviewer (PRI-239)
+    summary_paths_ignore: list[str] = field(
+        default_factory=lambda: list(DEFAULT_SUMMARY_PATHS_IGNORE)
+    )   # фильтр кластеризации сводок; НЕ влияет на индекс ревью (PRI-245)
+
+    @staticmethod
+    def _summary_paths_ignore(data: Mapping[str, object]) -> list[str] | None:
+        """Явный список из слоя или None, если ключ не задан/пуст (→ дефолт).
+
+        Присутствующий непустой (в т.ч. явный `[]`) ключ заменяет дефолт целиком,
+        поэтому `ignore: []` выключает фильтр. Но `ignore:` без значения — это
+        YAML `None`, а не явный пустой список: как и у соседнего `paths`
+        (см. `load_data`), он не должен молча выключать фильтр — только
+        откатываться на дефолт.
+        """
+        raw = data.get("summary_paths")
+        if not isinstance(raw, Mapping) or "ignore" not in raw:
+            return None
+        value = raw["ignore"]
+        if value is None:
+            return None
+        return [str(item) for item in value]
 
     @staticmethod
     def _normalized_task_board(raw) -> tuple[dict | None, list[str]]:
@@ -49,6 +75,7 @@ class ReviewPolicy:
             sev = "low"
         task_board, task_board_warnings = cls._normalized_task_board(
             data.get("task_board"))
+        summary_paths_ignore = cls._summary_paths_ignore(data)
         return cls(
             categories=data.get("categories", {}),
             severity_threshold=sev,
@@ -65,6 +92,11 @@ class ReviewPolicy:
                 data.get("summary_cluster_depth_overrides", {}) or {}),
             context_limits=ContextLimits.from_review_yaml(data),
             bug_reports=bool(data.get("bug_reports", True)),
+            summary_paths_ignore=(
+                list(DEFAULT_SUMMARY_PATHS_IGNORE)
+                if summary_paths_ignore is None
+                else summary_paths_ignore
+            ),
         )
 
     @classmethod
@@ -126,6 +158,9 @@ class ReviewPolicy:
             policy.context_limits = ContextLimits.from_review_yaml(data)
         if "bug_reports" in data:
             policy.bug_reports = bool(data["bug_reports"])
+        summary_paths_ignore = cls._summary_paths_ignore(data)
+        if summary_paths_ignore is not None:
+            policy.summary_paths_ignore = summary_paths_ignore
         return policy
 
     @classmethod
