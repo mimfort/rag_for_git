@@ -1,6 +1,6 @@
-   **Brief-building unit (Steps 2–4) runs on the chosen model — expanded.** Steps 2–4 (identify →
-   gather → distill → persist) are non-interactive; run them on the model chosen in the Step 0
-   startup survey:
+   **Brief-building unit — details (continues the summary given before Step 2).** These are the two
+   paths, the pre-dispatch warn, the completion marker and the fail-open fallback referenced there —
+   not a new instruction to dispatch again from here.
    - **Path A — per-subagent model override available:** **dispatch a subagent on the chosen model** to
      execute Steps 2–4, giving it the reviewer session-less tools (`get_task`, `search_codebase`,
      `get_subsystem_summaries`, `get_task_context`, `search_tasks`, the graph tools, `get_pr_diff`) plus

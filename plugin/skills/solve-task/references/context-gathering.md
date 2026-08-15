@@ -1,21 +1,31 @@
-   - **Subsystem prior (architectural map).** Call
+   - **Subsystem prior (architectural map).** Use `payload.subsystems` from the Step 0
+     `prepare_task_context` call — already the top-k relevant subsystems by proximity to the task
+     (top-k vs all is server-side; PRI-167) for the same `branch` as `search_codebase`. Call
      `get_subsystem_summaries(repo, branch, query="<task title>. <first lines of description>")`
-     → top-k relevant subsystems by proximity (top-k vs all is server-side; PRI-167).
-     Use the same `branch` as `search_codebase`. Fail-open: an empty list / a `(… недоступно)`
-     note / an error is non-fatal — omit the `## Subsystems` brief section and note the gap.
-     The summary is only a prior — every `path:line` in the brief still comes from
+     directly only as a fallback: when `payload.subsystems` is absent/empty without a matching
+     `gaps` entry, or when `prepare_task_context` itself is unavailable. Fail-open: an empty list /
+     a `(… недоступно)` note / an error is non-fatal — omit the `## Subsystems` brief section and
+     note the gap. The summary is only a prior — every `path:line` in the brief still comes from
      `search_codebase` snippets, never from the summary text.
    - **Project scope.** Pass `project=<task_board.project>` (from Step 1; empty = unscoped) to
      `get_task`, `get_task_context`, and `search_tasks` so only this repo's project surfaces (PRI-170).
-   - If you have a task key: `get_task_context(key, project=<task_board.project>)` → linked tasks, their PRs, and the code those PRs
-     touched.
-   - `search_tasks("<title>. <first lines of description>", project=<task_board.project>)` → semantically similar tasks from the
-     reviewer store. Use their indexed fields only; if detail is missing, record that task-context gap.
+   - **Linked tasks.** Use `payload.related.linked` from the Step 0 `prepare_task_context` call when
+     you have a task key — linked tasks, their PRs, and the code those PRs touched. Call
+     `get_task_context(key, project=<task_board.project>)` directly only as a fallback: when
+     `payload.related.linked` is absent/empty without a matching `gaps` entry, or when
+     `prepare_task_context` itself is unavailable.
+   - **Similar tasks.** Use `payload.related.similar` from the same call — semantically similar
+     tasks from the reviewer store. Call `search_tasks("<title>. <first lines of description>",
+     project=<task_board.project>)` directly only as a fallback: when `payload.related.similar` is
+     absent/empty without a matching `gaps` entry, or when `prepare_task_context` itself is
+     unavailable. Use indexed fields only; if detail is missing, record that task-context gap.
    - **Related work = linked ∪ similar.** The «Related work» brief section draws from two sources —
      `get_task_context` (linked) and `search_tasks` (similar). They overlap; the Step 4 filter
      deduplicates them by key before the cap.
-   - `search_codebase("<task description>")` → relevant existing code (files/symbols to touch or
-     mimic).
+   - **Relevant code.** Use `payload.code` from the Step 0 `prepare_task_context` call — relevant
+     existing code (files/symbols to touch or mimic). Call `search_codebase("<task description>")`
+     directly only as a fallback: when `payload.code` is absent/empty without a matching `gaps`
+     entry, or when `prepare_task_context` itself is unavailable.
    - **Stale summary handling.** If a returned summary has `stale: true`, keep it only as a weak prior, do not use it for structural
      claims, and prefix its `## Subsystems` line with `[stale]`. `stale: null` is unknown freshness and
      gets no marker. For `stale: true`, either omit the item or use exactly this line shape:
@@ -26,9 +36,12 @@
    - **Lazy expansion (no user prompt).** If a tool's output ends with a cliff/rails note reporting a
      high-scoring tail beyond the cut AND the task looks broad, you MAY re-call the tool once with a
      higher ceiling (pass `top_k=<bigger>`), then merge. Do this silently — never pause to ask the user.
-   - **Test exemplars (optional — when `search_codebase` surfaced concrete symbols).** One extra
+   - **Test exemplars (optional — when `search_codebase`/`payload.code` surfaced concrete symbols).**
+     Use `payload.test_exemplars` from the Step 0 `prepare_task_context` call when present. Call
      `search_codebase("<how the task's area is tested — fixtures/mocks for the feature>", include_tests=True)`
-     on the same `branch` — a targeted *test* query (how the area is tested), not the code query with
+     on the same `branch` directly only as a fallback: when `payload.test_exemplars` is
+     absent/empty without a matching `gaps` entry, or when `prepare_task_context` itself is
+     unavailable — a targeted *test* query (how the area is tested), not the code query with
      the flag flipped, so it surfaces the testing pattern the TDD hand-off should mimic. Snippets are
      line-numbered like the code retrieval → cite `path:line` directly. Apply the same Step 4 adaptive
      relevance filter (every directly-informing test file/symbol, no fixed cap). Fail-open: no tests

@@ -56,10 +56,14 @@ existing-artifacts pre-dispatch warn, the `Собран на:` marker line and t
 
 2. **Identify the task.**
    - If `$ARGUMENTS` matches the board's `key_pattern`:
-     1. **Store-first.** Call reviewer `get_task(key, project=<task_board.project>)` — it returns the task's own normalized
-        content (`{key, aliases[], title, description, criteria[], status, url}`) from the reviewer
-        store, which the preflight `sync_board` (step 0.3) just refreshed.
-        - **Hit** (a task object with a `key`): use it directly as the `TaskBrief`. The task is
+     1. **Store-first.** Use `payload.task` from the Step 0 `prepare_task_context` call — it already
+        carries the task's own normalized content (`{key, aliases[], title, description, criteria[],
+        status, url}`) from the reviewer store, refreshed by that call's board warm-up. Call reviewer
+        `get_task(key, project=<task_board.project>)` directly only as a fallback: when
+        `payload.task` is empty without a matching `gaps` entry explaining why, or when
+        `prepare_task_context` itself is unavailable — it returns the same normalized shape.
+        - **Hit** (a task object with a `key`, from `payload.task` or the fallback `get_task` call):
+          use it directly as the `TaskBrief`. The task is
           already indexed (the preflight sync persisted it) — do NOT call `index_task`. Note in the
           brief that the task data came from the reviewer store (after sync).
           - **Thin criteria (optional, fail-open).** The store can return `criteria=[]`; requirements
@@ -73,9 +77,9 @@ existing-artifacts pre-dispatch warn, the `Собран на:` marker line and t
         - **Miss** AND no board: board-less — treat `$ARGUMENTS` as the task description.
    - Otherwise: treat `$ARGUMENTS` as the task description; do not perform external task reads.
 
-   Store-first cuts the double-fetch: the preflight `sync_board` already pulled the whole board into
-   the reviewer store, and a miss gets one generic incremental sync/retry (fewer LLM tokens and no
-   provider-specific client dependency).
+   Store-first cuts the double-fetch: `prepare_task_context`'s board warm-up already pulled the whole
+   board into the reviewer store, and a miss gets one generic incremental sync/retry (fewer LLM
+   tokens and no provider-specific client dependency).
 
 3. **Gather context (best-effort, fail-open).** Any tool returning a "(… unavailable)" / "(ничего не
    найдено)" note or an error is non-fatal — continue. Details (subsystem prior, project scope,

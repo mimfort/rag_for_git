@@ -31,20 +31,33 @@
 
    1. **Base-index freshness.** Read `drift` from `preflight.drift` in the `prepare_task_context`
       payload fetched above — the same field `uvx --from rag-reviewer reviewer status <path>
-      --branch <branch> --json` would report; fall back to running that command directly if the
-      `preflight` section is missing (older MCP deploy). For that branch:
+      --branch <branch> --json` would report. Two distinct cases, do not conflate them:
+      - `prepare_task_context` itself is unavailable (the tool is not registered on an older MCP
+        deploy, or the call raised entirely) → fall back to running
+        `uvx --from rag-reviewer reviewer status <path> --branch <branch> --json` directly and
+        read `drift` from its output instead.
+      - the call succeeded but `preflight` in the payload is `None` (a `gaps` entry explains why —
+        e.g. Postgres/Neo4j unreachable) → do **not** retry via `reviewer status`: it goes through
+        the same status-building code and would fail the same way. Treat this exactly like
+        `drift == null` below.
+
+      For that branch:
       - `drift == 0` → continue;
       - `drift > 0` → tell the user (in Russian) «индекс отстаёт на N коммитов» and **ask for
         confirmation**: reindex now? **Yes** → delegate to `rag-reviewer:sync-codebase`
         (`--path <path> --ref <branch>`), which reindexes and reports problems, then continue;
         **No** → continue on the stale index and record the gap under **Constraints / open
         questions** in the brief;
-      - `drift == null` (no clone / no index record) → do not block; note it in the brief.
+      - `drift == null` (no clone / no index record, or `preflight` is `None` per above) →
+        do not block; note it in the brief.
    2. **Problem report — in the style of `sync-codebase`.** If `reviewer status` fails (Postgres /
       reviewer MCP / Neo4j unreachable, no index, or `uvx` missing): tell the user (in Russian)
       what is missing and the command to fix it. **Fail-open** — never abort; continue on the
       stale/unknown index.
-   3. **Warm the task corpus.** Call
+   3. **Warm the task corpus.** Already warmed inside `prepare_task_context(..., warm_board=True)`
+      above — do NOT call `sync_board` again when that warm-up succeeded. Call it directly only as
+      a fallback: when `gaps`/`warnings` carries an entry saying the board warm-up did not happen,
+      or when `prepare_task_context` itself is unavailable.
       `sync_board(board=<task_board.project or null>, board_type=<task_board.type or null>,
       provider_options=<task_board.options or {}>, limit=null, purge_orphaned=false)` —
       the resolved `task_board.type`, `task_board.project`, and `task_board.options` from this
@@ -58,8 +71,9 @@
    4. **Summary warmth.** Read `summaries` from `preflight.summaries` in the same `prepare_task_context`
       payload — the Step 0.1 status payload used for freshness above —
       do NOT probe the summaries tool here. Skip this check if `drift == null` (no index at all —
-      summaries can't exist). If Step 0.1 produced no payload at all (the fail-open path in Step
-      0.2), treat that the same as the key being absent below.
+      summaries can't exist); per Step 0.1, `preflight` being `None` already counts as
+      `drift == null`, so a `None` `preflight` skips this check too — do not probe the legacy
+      summaries tool for that case either (same underlying failure, same code path).
       - `summaries > 0` → silently continue (no message needed — summaries are warm).
       - `summaries == 0` (summaries not built yet) → tell the user (in Russian): «Сводки подсистем
         не построены — архитектурный приор будет пустым. Как поступим?» and present **three
@@ -72,11 +86,13 @@
            and verify `preflight.summaries > 0`, then continue.
         3. «Пропустить» → note in brief under **Constraints**: «сводки подсистем не построены;
            `rag-reviewer:summarize-subsystems` не запускался». Continue without them.
-      - `summaries` is `null`, or the key is absent (deploy older than this field) → fall back to
-        the legacy probe: call `get_subsystem_summaries(repo, branch)` and use the returned count
-        with the same three options; unlike the main path, this fallback's option 2 re-verifies by
-        repeating the same legacy probe rather than re-reading the status payload. An error from
-        the probe counts as 0 and adds the error detail to option 3's Constraints note.
+      - `preflight` is not `None` (drift is known — this is NOT the skipped case above) but
+        `summaries` inside it is `null`, or the key is absent (deploy older than this field) → fall
+        back to the legacy probe: call `get_subsystem_summaries(repo, branch)` and use the returned
+        count with the same three options; unlike the main path, this fallback's option 2
+        re-verifies by repeating the same legacy probe rather than re-reading the status payload.
+        An error from the probe counts as 0 and adds the error detail to option 3's Constraints
+        note.
 
    Decisions: stale → confirmation, never auto (Voyage free tier is 3 RPM / 10K TPM); failures →
    reported like `sync-codebase`; `sync_board` runs incrementally at start; summaries missing →
