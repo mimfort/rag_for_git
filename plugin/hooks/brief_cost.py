@@ -12,10 +12,21 @@ import sys
 import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from _transcript import (  # noqa: E402,F401 (BASE_DIR_MARKER/message_text — публичный ре-экспорт)
-    BASE_DIR_MARKER, aggregate_usage, message_text as _message_text, read_jsonl as _read_jsonl,
-)
-from _transcript import find_window_start as _find_window_start  # noqa: E402
+try:
+    # noqa: F401 — BASE_DIR_MARKER/message_text ре-экспортируются как публичное API
+    from _transcript import (  # noqa: E402,F401
+        BASE_DIR_MARKER, aggregate_usage, message_text as _message_text,
+        read_jsonl as _read_jsonl,
+    )
+    from _transcript import find_window_start as _find_window_start  # noqa: E402
+except ImportError:
+    # fail-open: недоступный/битый общий модуль не должен ронять хук с traceback
+    # и ненулевым exit code — весь функционал ниже становится тихим no-op'ом.
+    BASE_DIR_MARKER = None
+    aggregate_usage = None
+    _message_text = None
+    _read_jsonl = None
+    _find_window_start = None
 
 HEADER = "## Токены (этап solve-task)"
 
@@ -190,6 +201,9 @@ def _write_text(path, text) -> None:
 def run(payload: dict) -> int:
     """Оркестрация хука. Всегда возвращает 0 (fail-open)."""
     try:
+        if _read_jsonl is None:
+            # _transcript недоступен/битый (см. импорт выше) — тихий no-op.
+            return 0
         if os.environ.get("BRIEF_COST_DEBUG"):
             sys.stderr.write("brief_cost payload keys: " + ",".join(sorted(payload)) + "\n")
         file_path = (payload.get("tool_input") or {}).get("file_path") or ""
