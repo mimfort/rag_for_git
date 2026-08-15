@@ -1,12 +1,14 @@
    - **Subsystem prior (architectural map).** Use `payload.subsystems` from the Step 0
      `prepare_task_context` call — already the top-k relevant subsystems by proximity to the task
-     (top-k vs all is server-side; PRI-167) for the same `branch` as `search_codebase`. Call
+     (top-k vs all is server-side; PRI-167) for the same `branch` as `search_codebase`. An empty
+     `payload.subsystems` is a normal outcome (summaries not warmed, or no cluster close enough) —
+     do NOT call `get_subsystem_summaries` again for a merely empty list. Call
      `get_subsystem_summaries(repo, branch, query="<task title>. <first lines of description>")`
-     directly only as a fallback: when `payload.subsystems` is absent/empty without a matching
-     `gaps` entry, or when `prepare_task_context` itself is unavailable. Fail-open: an empty list /
-     a `(… недоступно)` note / an error is non-fatal — omit the `## Subsystems` brief section and
-     note the gap. The summary is only a prior — every `path:line` in the brief still comes from
-     `search_codebase` snippets, never from the summary text.
+     directly only as a fallback: when `gaps` carries an entry with `section == "subsystems"` (a
+     real failure), or when `prepare_task_context` itself is unavailable. Fail-open either way: an
+     empty/absent `payload.subsystems` (no `gaps` entry) or a genuine failure (with one) both omit
+     the `## Subsystems` brief section — note the gap only when one exists. The summary is only a
+     prior — every `path:line` in the brief still comes from `search_codebase` snippets, never from the summary text.
    - **Project scope.** Pass `project=<task_board.project>` (from Step 1; empty = unscoped) to
      `get_task`, `get_task_context`, and `search_tasks` so only this repo's project surfaces (PRI-170).
    - **Linked tasks.** Use `payload.related.linked` from the Step 0 `prepare_task_context` call when
