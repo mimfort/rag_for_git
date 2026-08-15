@@ -87,18 +87,42 @@ def _stage_of(text: str) -> str:
 def aggregate_by_stage(lines: list, start_idx: int) -> dict:
     """Бакеты токенов по стадиям окна.
 
-    Ходы главного агента → 'orchestrator'. Sidechain-ходы наследуют стадию
-    последнего sidechain-промпта: он и несёт маркер reference-файла.
+    Ходы главного агента → 'orchestrator'. Sidechain-ходы атрибутируются
+    ПО ЦЕПОЧКЕ: стадию несёт первый промпт цепочки (в нём маркер
+    reference-файла), все потомки наследуют её по ``parentUuid``. Так
+    параллельные субагенты `review-pr` (веерный запуск, чередующиеся строки
+    транскрипта) не перемешивают стадии.
+
+    Два подводных камня формата транскрипта:
+
+    * результат тула — тоже строка ``type == "user"``, но её content целиком
+      состоит из блоков ``tool_result``, а текста на верхнем уровне нет.
+      Такая строка стадию не задаёт (иначе после первого же тул-вызова
+      субагента расход уезжал бы в безымянное ведро ``subagent``);
+    * строки старого формата ``uuid``/``parentUuid`` не несут — тогда
+      деградируем до прежнего последовательного поведения.
     """
     by_stage: dict = {}
-    current = "subagent"
+    stage_by_uuid: dict = {}
+    current = "subagent"  # фолбэк для формата без uuid
     for line in lines[start_idx + 1:]:
-        if line.get("isSidechain") and line.get("type") == "user":
-            current = _stage_of(message_text(line))
-            continue
+        if line.get("isSidechain"):
+            uuid = line.get("uuid")
+            stage = stage_by_uuid.get(line.get("parentUuid"))
+            if stage is None:
+                text = message_text(line).strip()
+                if line.get("type") == "user" and text:
+                    # корень цепочки: стадию задаёт первый промпт субагента
+                    stage = _stage_of(text)
+                    current = stage
+                else:
+                    stage = current if uuid is None else "subagent"
+            if uuid is not None:
+                stage_by_uuid[uuid] = stage
+        else:
+            stage = "orchestrator"
         if line.get("type") != "assistant":
             continue
-        stage = current if line.get("isSidechain") else "orchestrator"
         usage = (line.get("message") or {}).get("usage") or {}
         bucket = by_stage.setdefault(stage, empty_bucket())
         bucket["fresh_in"] += int(usage.get("input_tokens") or 0)

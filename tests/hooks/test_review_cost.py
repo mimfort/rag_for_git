@@ -112,6 +112,64 @@ def test_unrecognised_sidechain_goes_to_subagent_stage(tmp_path, monkeypatch):
     assert data["usage"]["by_stage"]["subagent"]["output"] == 9
 
 
+def _tool_result(uuid=None, parent=None):
+    """Результат тула: type=user, sidechain, текста на верхнем уровне нет."""
+    line = {"type": "user", "isSidechain": True, "message": {"content": [
+        {"type": "tool_result", "tool_use_id": "t1", "content": "ok"}]}}
+    if uuid is not None:
+        line["uuid"] = uuid
+    if parent is not None:
+        line["parentUuid"] = parent
+    return line
+
+
+def test_tool_result_does_not_reset_stage(tmp_path, monkeypatch):
+    """Реальная форма транскрипта: между ходами субагента лежит tool_result."""
+    monkeypatch.setattr(review_cost.tempfile, "gettempdir", lambda: str(tmp_path))
+    lines = [
+        _prepare_call("owner/name", 7),
+        _sidechain_prompt("follow references/analyze-prompt.md exactly"),
+        _assistant("sonnet", {"output_tokens": 10}, sidechain=True),
+        _tool_result(),
+        _assistant("sonnet", {"output_tokens": 20}, sidechain=True),
+    ]
+    review_cost.run(_payload(tmp_path, lines))
+    data = json.loads(Path(review_cost.sidecar_path("owner/name", 7)).read_text(encoding="utf-8"))
+    by_stage = data["usage"]["by_stage"]
+    assert by_stage["analyze"]["output"] == 30
+    assert "subagent" not in by_stage
+
+
+def test_parallel_chains_do_not_mix_stages(tmp_path, monkeypatch):
+    """Две параллельные цепочки чередуются в транскрипте — стадии не смешиваются."""
+    monkeypatch.setattr(review_cost.tempfile, "gettempdir", lambda: str(tmp_path))
+    root_a = dict(_sidechain_prompt("follow references/analyze-prompt.md exactly"),
+                  uuid="a0", parentUuid="main")
+    root_v = dict(_sidechain_prompt("follow references/verify-prompt.md exactly"),
+                  uuid="v0", parentUuid="main")
+    lines = [
+        _prepare_call("owner/name", 7),
+        root_a,
+        root_v,
+        _assistant("sonnet", {"output_tokens": 10}, sidechain=True,
+                   extra={"uuid": "a1", "parentUuid": "a0"}),
+        _assistant("sonnet", {"output_tokens": 100}, sidechain=True,
+                   extra={"uuid": "v1", "parentUuid": "v0"}),
+        _tool_result(uuid="a2", parent="a1"),
+        _tool_result(uuid="v2", parent="v1"),
+        _assistant("sonnet", {"output_tokens": 5}, sidechain=True,
+                   extra={"uuid": "a3", "parentUuid": "a2"}),
+        _assistant("sonnet", {"output_tokens": 50}, sidechain=True,
+                   extra={"uuid": "v3", "parentUuid": "v2"}),
+    ]
+    review_cost.run(_payload(tmp_path, lines))
+    data = json.loads(Path(review_cost.sidecar_path("owner/name", 7)).read_text(encoding="utf-8"))
+    by_stage = data["usage"]["by_stage"]
+    assert by_stage["analyze"]["output"] == 15
+    assert by_stage["verify"]["output"] == 150
+    assert "subagent" not in by_stage
+
+
 def test_total_cost_is_weighted_not_summed(tmp_path, monkeypatch):
     monkeypatch.setattr(review_cost.tempfile, "gettempdir", lambda: str(tmp_path))
     lines = [
@@ -145,6 +203,21 @@ def test_sidecar_path_matches_server_side_formula(tmp_path, monkeypatch):
     for repo, pr in (("owner/name", 7), ("o/r", 1), ("a/b-c", 42)):
         assert review_cost.sidecar_path(repo, pr) == cost_sidecar.sidecar_path(repo, pr)
     assert review_cost.SIDECAR_VERSION == cost_sidecar.SIDECAR_VERSION
+
+
+def test_weight_formula_matches_every_copy():
+    """Веса бакетов продублированы в трёх местах — они обязаны совпадать.
+
+    Хук не может импортировать пакет ``reviewer`` (системный python3), поэтому
+    единственный источник правды невозможен; расхождение ловится тестом.
+    """
+    import _transcript  # noqa: E402  (plugin/hooks на sys.path)
+
+    from eval.solve_task_metrics.cost import WEIGHTS as EVAL_WEIGHTS
+    from reviewer.web.history import _STAGE_COST_WEIGHTS
+
+    assert _transcript.WEIGHTS == _STAGE_COST_WEIGHTS
+    assert _transcript.WEIGHTS == EVAL_WEIGHTS
 
 
 def test_stage_markers_cover_every_reference_prompt():
