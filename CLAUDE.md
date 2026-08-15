@@ -305,9 +305,11 @@ MCP-сессия (PreparedReview + ToolContext) живёт в процессе `
   условные единицы, не доллары) и пишет sidecar JSON по пути `sidecar_path(repo, pr)` =
   `tempfile.gettempdir()/reviewer-review-cost/<repo>-<pr>.json`. `publish_review` читает и удаляет
   sidecar через `reviewer/services/cost_sidecar.py::read_cost_sidecar`. Путь и формула веса
-  **дублируются буквально** между хуком (`plugin/hooks/_transcript.py`) и сервером
-  (`cost_sidecar.py`/`reviewer/web/history.py`) — хук не может импортировать пакет `reviewer`,
-  совпадение закреплено guard-тестом. Слияние с явными аргументами `model`/`usage`/`total_cost`
+  **дублируются буквально** между хуком (`plugin/hooks/_transcript.py`), сервером
+  (`cost_sidecar.py`/`reviewer/web/history.py`) и офлайн-эвалом
+  (`eval/solve_task_metrics/cost.py`) — хук не может импортировать пакет `reviewer`, поэтому
+  единого источника правды нет; совпадение пути и всех трёх словарей весов закреплено guard-тестом
+  (`tests/hooks/test_review_cost.py`). Слияние с явными аргументами `model`/`usage`/`total_cost`
   публикации — **пофайловое**, не «всё или ничего»: `merge_metadata` берёт из sidecar только те
   поля, что явно не переданы, так что CLI, отдающий `model`, но не расход, не теряет sidecar-данные.
   Канал файловый и неработоспособен при удалённом MCP (хук и `reviewer-mcp` не делят файловую
