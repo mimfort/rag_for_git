@@ -231,6 +231,25 @@ MCP-сессия (PreparedReview + ToolContext) живёт в процессе `
   («не знаю живых» ≠ «живых нет»). Гарантию даёт только сервер: скилл `review-pr` — это промпт,
   а не `try/finally`.
 - **Наблюдаемость (`reviewer/web/`)**: каждый `publish_review` пишет в Postgres итоги прогона (`review_runs`/`review_findings`, гейт `REVIEW_HISTORY`) — fail-soft. Веб-админка (FastAPI `reviewer serve`) читает **ту же** БД.
+- **Онлайн-метрика качества брифа solve-task (PRI-249).** По факту реальной публикации ревью
+  (`publish_review`, только `posted and not dry_run`) пути секции `## Relevant code` брифа задачи
+  сопоставляются с фактическим diff'ом PR и пишутся в таблицу `brief_quality` рядом с историей
+  прогонов. Три вещи в этом неочевидны. Во-первых, **знаменатель — не весь diff**: считается
+  core-recall по ядру (`reviewer/**/*.py`, `plugin/**` не-`.md`, корневые `*.py`) И только по
+  файлам, существовавшим до PR; сырой recall на том же корпусе давал медиану 15 % против 67 %
+  у core (спайк PRI-246), то есть был метрикой размера diff'а, а не качества ретрива.
+  «Существовал до PR» берётся из `PreparedReview.changed_status`, git при съёме не вызывается.
+  Во-вторых, **пустое ядро — это `status='empty_core_denominator'` и `core_recall IS NULL`, а не
+  ноль**: у задачи, чей diff состоит из тестов и доков, качество ретрива по ядру не определено
+  (в спайке таких 10 из 45). В-третьих, **строка хранит множества путей, а не только счётчики**:
+  офлайн-baseline посчитан по задаче (объединение всех её PR), онлайн видит по одному PR, и без
+  union'а на чтении task-level число было бы посчитано другой линейкой, чем точка «до»
+  (`bulk_core_recall_median ≈ 0.373`, `bulk_n_measured = 4`) — то есть отложенный критерий
+  PRI-251 остался бы незакрытым. Расчётное ядро одно на офлайн и онлайн:
+  `reviewer/metrics/brief_quality/`, а `eval/solve_task_metrics/{classify,recall,briefs}.py` —
+  ре-экспорт (guard-тест ловит возврат второй копии). Гейт — общий `REVIEW_HISTORY`; своего
+  ключа у метрики нет. Мержа PR метрика не видит: вебхука в системе нет, и правки после ревью
+  в неё не попадают — сознательное сужение.
 - **Полная воронка находок в `review_findings` (outcome/reject_reason).** `review_findings` персистит **каждого кандидата**, а не только опубликованных: колонка `outcome` — терминальный исход одного из 6 состояний (`published_inline`/`published_summary`/`verify_rejected`/`gate_dropped`/`deduped`/`already_posted`), `reject_reason` — причина отсева (текст верификатора при `verify_rejected` через `VerdictIn.reason`; сработавшее правило политики через `ReviewPolicy.gate_reason` при `gate_dropped`; иначе `NULL`). Учёт — чистый юнит `reviewer/agent/outcomes.py::account_outcomes`, инвариант `len(rows) == len(candidates)` (сумма по 6 исходам = числу кандидатов). **`deduped`-разность считается по IDENTITY (`id()`), не по fingerprint**: точный дубль имеет тот же fingerprint, что выживший (`dedup_findings` возвращает те же объекты), поэтому fingerprint-diff недосчитал бы схлопнутые. `outcome` — новое поле-истина; старые `is_real`/`published`/`inline` заполняются как прежде (обратная совместимость). Миграция аддитивна/идемпотентна (`ADD COLUMN IF NOT EXISTS` + best-effort бэкфилл). При `status='error'` строки хранят намеченный `outcome`, но `published=False`.
 - **MCP-сессия живёт в процессе сервера** между `prepare_review` и `publish_review` одного PR: `_Session(prepared, ctx)` в `MCPReviewService._sessions`. При повторном `prepare_review` для того же (repo, pr) сессия перезаписывается, старый VCS-провайдер закрывается (fail-soft).
 - **Плагин** находится в `plugin/` в корне репозитория — это корень Claude Code-плагина для скилла `/rag-reviewer:review-pr`.

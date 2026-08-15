@@ -3050,6 +3050,11 @@ class MCPReviewService:
             parsed=parsed,
             kept=kept,
         )
+        # 6b) Качество ретрива под бриф solve-task (PRI-249) — только по факту
+        # реальной публикации: dry_run и сбой постинга точкой измерения не являются.
+        if not dry_run and posted and run_id is not None:
+            self._record_brief_quality(repo, pr, p, run_id, task_key)
+
         self._cleanup(repo, pr)
 
         return {
@@ -3087,6 +3092,41 @@ class MCPReviewService:
             log.warning("post_pr_walkthrough: сбой постинга", exc_info=True)
             return {"posted": False, "reason": f"{type(e).__name__}: {e}"}
         return {"posted": True, "pr": pr}
+
+    def _record_brief_quality(
+        self,
+        repo: str,
+        pr: int,
+        p: PreparedReview,
+        run_id: int,
+        task_key: str | None,
+    ) -> None:
+        """Посчитать и сохранить качество брифа solve-task (PRI-249).
+
+        Полностью fail-soft: метрика — наблюдение за самим reviewer, и ни один
+        её сбой не смеет повлиять на результат ревью. Ключ задачи берётся из
+        аргумента publish_review, иначе из уже отрезолвленного task_keys.primary.
+        """
+        try:
+            from reviewer.services import brief_quality
+
+            key = task_key
+            if not key and p.task_keys:
+                key = p.task_keys.get("primary")
+            measurement = brief_quality.measure(
+                task_key=key,
+                clone_path=self._repo_clone_path(repo),
+                changed_paths=p.changed_paths,
+                changed_status=p.changed_status,
+            )
+            history = self._review_service._ensure_history()
+            if history is None:
+                return
+            history.record_brief_quality(
+                run_id, repo, pr, p.prq.head_sha, measurement
+            )
+        except Exception:  # noqa: BLE001 — наблюдаемость не роняет ревью
+            log.warning("Не удалось посчитать качество брифа для %s pr:%s", repo, pr, exc_info=True)
 
     def _record_history(
         self,

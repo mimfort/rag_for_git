@@ -1,7 +1,7 @@
 """Unit-тесты core-recall и состояния «нет точки измерения»."""
 import pytest
 
-from eval.solve_task_metrics import recall
+from reviewer.metrics.brief_quality import recall
 
 
 def test_evaluate_task_core_recall():

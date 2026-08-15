@@ -151,3 +151,42 @@ export interface TraceResponse {
 export async function getTrace(id: number): Promise<TraceResponse> {
   return apiFetch<TraceResponse>(`/api/runs/${id}/trace`)
 }
+
+// ─── Качество брифа solve-task (PRI-249) ──────────────────────────────────────
+
+export interface QualityPoint {
+  date: string
+  task_key: string
+  prs: number[]
+  expected_core: number
+  predicted: number
+  hit_core: number
+  core_recall: number | null
+  precision: number | null
+}
+
+export interface QualityAggregate {
+  n_measured: number
+  no_measurement: number
+  core_recall_median: number | null
+  core_recall_mean: number | null
+  denominator_median: number | null
+}
+
+export interface MissPoint {
+  category: string
+  count: number
+}
+
+export interface Quality {
+  trend: QualityPoint[]
+  aggregate: QualityAggregate
+  bulk: { n_measured: number; core_recall_median: number | null }
+  misses: MissPoint[]
+  bulk_threshold: number
+  no_measurement_by_status: Record<string, number>
+}
+
+export async function fetchQuality(days: number): Promise<Quality> {
+  return apiFetch<Quality>(`/api/quality?days=${days}`)
+}
