@@ -629,6 +629,13 @@ input, output, cache write, cache read), а не суммируя сырые т�
 - **Нужно:** reviewer MCP; board context опционален, pipeline продолжает board-less.
 - **Чтение/запись:** читает task/code context и пишет один brief в `docs/superpowers/briefs/`.
 - **Результат:** компактный brief для brainstorming; реализация идёт в следующих skills.
+- **Сбор контекста:** один серверный вызов `prepare_task_context` заменяет прежнюю цепочку
+  `reviewer status` → `sync_board` → `get_task` → `search_*` — preflight, прогрев доски, сама
+  задача, связанные/похожие задачи, релевантные подсистемы и код приходят одним payload'ом.
+  Fail-open семантика сохранена: то, что недоступно (устаревший индекс, доска не настроена, пустой
+  поиск), отражается по-секционно в `gaps`, а не обрывает скилл. Графовые расширения
+  (`get_related_symbols`, `callers`, `implementations`, `family`, …) и `get_pr_diff` остаются
+  отдельными вызовами по суждению LLM — они зависят от того, что найдёт brief.
 - **Стартовый опрос:** одна панель `AskUserQuestion` до всех остальных шагов спрашивает три вещи —
   тир модели для брифа (`cheap`/`mid`/`premium`), режим взаимодействия и стратегию исполнения.
   Нет ответа или headless-прогон — применяются дефолты `mid` / `normal` / `subagent`, пайплайн не

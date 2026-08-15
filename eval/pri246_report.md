@@ -274,3 +274,78 @@ preflight/gather (даже чисто reasoning-ход между двумя в�
 решение по порогу не принимается автоматически — план продолжается без блокировки, обе
 модели зафиксированы здесь для решения пользователя/team-lead о том, как читать эту
 неопределённость.
+
+## После (отложено)
+
+**Живой замер офлайн-анализатором отложен до деплоя.** `eval/solve_task_metrics/steps.py`
+атрибутирует ходы по транскриптам реальных сессий Claude Code под `~/.claude/projects`.
+`prepare_task_context` реализован и зарегистрирован только в этой ветке
+(`feat/pri-248-prepare-task-context`) — до публикации пакета (PyPI) и перезапуска
+`reviewer-mcp` с новым тулом ни одна сессия solve-task физически не могла его вызвать, а
+значит транскрипта с новым путём не существует. Прогон анализатора из этой ветки увидел бы
+ровно тот же корпус, что и раздел «Baseline по под-шагам (PRI-248)» выше (старый,
+до-консолидационный путь), и был бы не замером «после», а повторным замером «до» —
+подмена результата под видом нового прогона.
+
+**Воспроизводимая команда для замера после деплоя:**
+
+```bash
+.venv/bin/python -m eval.solve_task_metrics steps
+```
+
+Прогнать её нужно после того, как: (1) пакет с `prepare_task_context` опубликован и
+`reviewer-mcp` переразвёрнут с новой версией; (2) накопилось хотя бы несколько реальных
+прогонов `solve-task` через новый путь (звучит символично, но методика та же, что у
+baseline — офлайн-атрибуция по накопленным транскриптам, не синтетический прогон).
+
+**Baseline «до», с которым сравнивать** (дословно из раздела «Baseline по под-шагам
+(PRI-248)» выше, 26 задач):
+
+- Фаза сборки брифа, точечная модель (нижняя оценка): `preflight` 1.8%, `gather` 2.1%,
+  `brief` 1.1%, `other` 95.0% → **preflight+gather = 3.9%**.
+- Фаза сборки брифа, липкая модель (верхняя оценка): `startup` 10.4%, `preflight` 39.8%,
+  `gather` 48.7%, `brief` 1.1%, `other` 0.0% → **preflight+gather = 88.5%**.
+- Вся сессия, точечная модель (для сопоставимости с PRI-246): **preflight+gather = 1.6%**.
+
+После деплоя и накопления новых транскриптов сравнивать те же три числа по той же команде;
+ожидаемое направление — снижение доли `preflight`+`gather` (точечная модель) и снижение
+абсолютного `cache_write` в этих бакетах, поскольку один вызов `prepare_task_context`
+заменяет несколько раздельных ходов, каждый из которых прежде платил cache-write за заново
+записываемый накопленный промпт (см. вывод §6 по `prepare_task_context` выше).
+
+### Статическая оценка эффекта (обязательные тул-раунды до/после)
+
+Замер по тексту `plugin/skills/solve-task/SKILL.md` (+ `references/*.md` на HEAD) против
+того же скилла на коммите `46e515d` (`git show 46e515d:plugin/skills/solve-task/SKILL.md` —
+до PRI-248, единый файл на 430 строк, ссылок ещё не было). Считаются только вызовы,
+которые скилл предписывает делать **безусловно** на типичном happy path (доска настроена,
+`$ARGUMENTS` — валидный ключ задачи, `prepare_task_context`/зависимые тулы отвечают без
+ошибок) — фолбэк-ветки (`payload.task` пуст → `get_task`; `payload.subsystems` пуст →
+`get_subsystem_summaries`; и т.п.) и опциональные вызовы по суждению LLM (test exemplars,
+graph deepening, lazy PR diff, lazy expansion) не считаются.
+
+**До (`46e515d`) — 7 безусловных тул-раундов до этапа «Distill» (Step 4):**
+
+1. Step 0.1 — `reviewer status <path> --branch <branch> --json` (CLI-вызов, freshness).
+2. Step 0.3 — `sync_board(...)` (прогрев корпуса задач).
+3. Step 2 — `get_task(key, project=...)` (store-first identify).
+4. Step 3 — `get_subsystem_summaries(repo, branch, query=...)` (subsystem prior).
+5. Step 3 — `get_task_context(key, project=...)` (linked tasks).
+6. Step 3 — `search_tasks("<title>. <description>", project=...)` (similar tasks).
+7. Step 3 — `search_codebase("<task description>")` (relevant code).
+
+**После (HEAD) — 1 безусловный тул-раунд до этапа «Distill» (Step 4):**
+
+1. Step 0 — `prepare_task_context(repo, key, branch, warm_board=True)` — единственный
+   обязательный вызов; он возвращает `preflight`, `task_board`/`task`,
+   `related.linked`/`related.similar`, `subsystems`, `code`, `test_exemplars` и `gaps` одним
+   payload'ом. Все семь пунктов из списка «До» либо читаются из этого payload без
+   дополнительного вызова, либо становятся именно фолбэк-веткой (см.
+   `references/preflight.md` Step 0.3, `references/context-gathering.md` — каждый источник
+   явно помечен «Call `<tool>` directly only as a fallback: when `payload.X` is
+   absent/empty without a matching `gaps` entry»).
+
+**Итог: 7 → 1, сокращение на 6 обязательных тул-раундов на happy path** (−86%). Число
+согласуется с направлением, которое покажет живой замер после деплоя: каждый убранный
+раунд — это отдельный ход, который прежде платил cache-write за заново записываемый
+накопленный промпт (§3.1/§6 этого отчёта), и консолидация целится именно в этот бакет.

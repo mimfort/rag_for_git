@@ -625,6 +625,13 @@ namespaced skills with `$rag-reviewer:...`.
 - **Needs:** reviewer MCP; board context is optional and the pipeline continues board-less.
 - **Reads/writes:** reads task/code context and writes one brief under `docs/superpowers/briefs/`.
 - **Result:** a compact brief handed to brainstorming; implementation happens in later skills.
+- **Context gathering:** one server-side call, `prepare_task_context`, replaces the former
+  `reviewer status` → `sync_board` → `get_task` → `search_*` chain — preflight, board warm-up, the
+  task itself, linked/similar tasks, relevant subsystems, and code all come back in a single
+  payload. Fail-open semantics are preserved: anything unavailable (stale index, missing board,
+  empty search) is reported per-section in `gaps` instead of aborting the skill. Graph expansions
+  (`get_related_symbols`, `callers`, `implementations`, `family`, …) and `get_pr_diff` stay
+  separate calls made at the LLM's discretion, since they depend on what the brief turns up.
 - **Startup survey:** one `AskUserQuestion` panel asks three things before anything else — the
   brief model tier (`cheap`/`mid`/`premium`), the interaction mode, and the execution strategy.
   No answer, or a headless run, applies the defaults `mid` / `normal` / `subagent` without
