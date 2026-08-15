@@ -84,6 +84,62 @@ WALKTHROUGH_MARKER = "<!-- ai-walkthrough -->"
 # неограниченного роста при длинных прогонах с большим числом tool calls.
 _MAX_SESSION_STEPS = 1000
 
+# PRI-247: стадия шага выводится из имени тула — серверный канал трейса
+# работает в любом CLI, без клиентских хуков.
+TOOL_STAGES = {
+    "search_code": "analyze",
+    "read_file": "analyze",
+    "get_definition": "analyze",
+    "find_callers": "analyze",
+    "get_related_symbols": "analyze",
+    "get_changed_file_diff": "analyze",
+    "get_impact": "analyze",
+    "get_candidate_findings": "verify",
+    "submit_verdicts": "verify",
+    "submit_findings": "synthesize",
+}
+
+
+def build_step(seq: int, name: str, args: dict, result) -> dict:
+    """Строка review_steps для одного тул-вызова PR-сессии.
+
+    Размеры payload кладём в существующий tool_calls JSONB — новых колонок и
+    миграции не требуется. tokens/cost не заполняем: сервер не видит LLM-вызовов.
+    """
+    import json as _json
+    text = result[:500] if isinstance(result, str) else None
+    try:
+        args_bytes = len(_json.dumps(args, ensure_ascii=False).encode("utf-8"))
+    except (TypeError, ValueError):
+        args_bytes = 0
+    result_bytes = len(result.encode("utf-8")) if isinstance(result, str) else 0
+    return {
+        "stage": TOOL_STAGES.get(name, "analyze"),
+        "unit": args.get("path") or args.get("node_id") or args.get("symbol") or "",
+        "seq": seq,
+        "kind": "tool_call",
+        "name": name,
+        "text": text,
+        "tool_calls": [{
+            "name": name, "args": args,
+            "args_bytes": args_bytes, "result_bytes": result_bytes,
+        }],
+    }
+
+
+def normalize_client_step(step: dict) -> dict:
+    """Клиентский шаг с пустыми stage/kind получает явные дефолты.
+
+    Замер PRI-247 показал шаги с заполненным name, но пустыми stage/kind —
+    в стадийной агрегации они падали в безымянное ведро.
+    """
+    out = dict(step)
+    if not out.get("stage"):
+        out["stage"] = "client"
+    if not out.get("kind"):
+        out["kind"] = "client_step"
+    return out
+
 # PRI-212: DB-touch живости сессии (SessionStore.touch) — не чаще раза в
 # _TOUCH_INTERVAL_S. Тулы зовутся LLM-темпом; при TTL в часах минутная
 # гранулярность ничего не теряет и убирает бессмысленно частые UPDATE.
@@ -393,17 +449,10 @@ class MCPReviewService:
         tools = {t.name: t for t in make_tools(s.ctx)}
         result = tools[name].invoke(args)
         if len(s.steps) < _MAX_SESSION_STEPS:
-            # PRI-209: сервер не знает реальных затрат токенов на tool call
-            # (LLM-вызовы происходят в клиенте), поэтому tokens/cost не пишем.
-            s.steps.append({
-                "stage": "analyze",
-                "unit": args.get("path") or args.get("node_id") or args.get("symbol") or "",
-                "seq": len(s.steps),
-                "kind": "tool_call",
-                "name": name,
-                "text": result[:500] if isinstance(result, str) else None,
-                "tool_calls": [{"name": name, "args": args}],
-            })
+            # PRI-209/PRI-247: сервер не знает реальных затрат токенов на tool
+            # call (LLM-вызовы происходят в клиенте), поэтому tokens/cost не
+            # пишем — только стадию и размеры payload.
+            s.steps.append(build_step(len(s.steps), name, args, result))
         return result
 
     def search_code(self, repo: str, pr: int, query: str) -> str:
@@ -2869,7 +2918,10 @@ class MCPReviewService:
             fid = f"f{s._seq}"
             s.candidates[fid] = Finding.from_in(fi)
             ids.append(fid)
-        return {"accepted": len(ids), "ids": ids}
+        result = {"accepted": len(ids), "ids": ids}
+        if len(s.steps) < _MAX_SESSION_STEPS:
+            s.steps.append(build_step(len(s.steps), "submit_findings", {"count": len(findings)}, result))
+        return result
 
     def get_candidate_findings(self, repo: str, pr: int) -> str:
         """Вернуть накопленных кандидатов с id для verify (JSON-строка)."""
@@ -2883,7 +2935,10 @@ class MCPReviewService:
              "severity": f.severity, "message": f.message, "code_quote": f.code_quote}
             for fid, f in s.candidates.items()
         ]
-        return json.dumps({"candidates": items}, ensure_ascii=False, indent=2)
+        result = json.dumps({"candidates": items}, ensure_ascii=False, indent=2)
+        if len(s.steps) < _MAX_SESSION_STEPS:
+            s.steps.append(build_step(len(s.steps), "get_candidate_findings", {}, result))
+        return result
 
     def submit_verdicts(self, repo: str, pr: int, verdicts: list[dict]) -> dict:
         """Принять вердикты verify в сессию (PRI-156). id вне candidates →
@@ -2902,7 +2957,10 @@ class MCPReviewService:
             if v.reason:
                 s.verdict_reasons[v.id] = v.reason
             recorded += 1
-        return {"recorded": recorded, "unknown_ids": unknown}
+        result = {"recorded": recorded, "unknown_ids": unknown}
+        if len(s.steps) < _MAX_SESSION_STEPS:
+            s.steps.append(build_step(len(s.steps), "submit_verdicts", {"count": len(verdicts)}, result))
+        return result
 
     def publish_review(
         self,
@@ -3198,7 +3256,7 @@ class MCPReviewService:
                 client_steps = []
             elif len(client_steps) > max_client:
                 client_steps = client_steps[-max_client:]
-            all_steps = session.steps + client_steps
+            all_steps = session.steps + [normalize_client_step(x) for x in client_steps]
             if all_steps:
                 # Не мутируем шаги клиента/сессии — копируем перед нормализацией seq.
                 all_steps = [{**step, "seq": i} for i, step in enumerate(all_steps)]

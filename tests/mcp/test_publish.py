@@ -497,7 +497,14 @@ def test_publish_accepts_metadata_override(_ov, _ch) -> None:
     assert run["usage"] == {"input_tokens": 100, "output_tokens": 50}
     assert run["total_cost"] == 0.00123
     assert run["duration_ms"] >= 0
-    assert history.steps[0] == [{"tool": "step1", "seq": 0}]
+    # PRI-247: submit_findings теперь сам пишет серверный шаг (stage=synthesize);
+    # клиентский шаг идёт следом и получает дефолтные stage/kind.
+    steps = history.steps[0]
+    assert len(steps) == 2
+    assert steps[0]["name"] == "submit_findings"
+    assert steps[0]["stage"] == "synthesize"
+    assert steps[0]["seq"] == 0
+    assert steps[1] == {"tool": "step1", "stage": "client", "kind": "client_step", "seq": 1}
 
 
 @patch("reviewer.services.review_service.chunk_python", side_effect=_fake_chunk)
