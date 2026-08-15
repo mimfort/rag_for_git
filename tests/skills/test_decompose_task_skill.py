@@ -417,7 +417,7 @@ def test_english_readme_documents_full_decompose_safety_flow():
         assert phrase in section
     assert "yougile" not in section
     text = path.read_text(encoding="utf-8")
-    assert re.search(r"\b41\b.{0,80}MCP|MCP.{0,80}\b41\b", text, re.IGNORECASE | re.DOTALL)
+    assert re.search(r"\b42\b.{0,80}MCP|MCP.{0,80}\b42\b", text, re.IGNORECASE | re.DOTALL)
 
 
 def test_russian_readme_documents_full_decompose_safety_flow():
@@ -454,4 +454,4 @@ def test_russian_readme_documents_full_decompose_safety_flow():
         assert phrase in section
     assert "yougile" not in section
     text = path.read_text(encoding="utf-8")
-    assert re.search(r"\b41\b.{0,80}MCP|MCP.{0,80}\b41\b", text, re.IGNORECASE | re.DOTALL)
+    assert re.search(r"\b42\b.{0,80}MCP|MCP.{0,80}\b42\b", text, re.IGNORECASE | re.DOTALL)

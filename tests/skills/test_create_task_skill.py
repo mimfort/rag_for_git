@@ -1,9 +1,14 @@
 """Guardrail: скилл create-task — тонкий триггер server-side тула create_task."""
 from pathlib import Path
 
+from .test_assembled_prompts import assemble
+
 ROOT = Path(__file__).resolve().parents[2]
 SKILL = ROOT / "plugin" / "skills" / "create-task" / "SKILL.md"
-SOLVE = ROOT / "plugin" / "skills" / "solve-task" / "SKILL.md"
+
+
+def _solve() -> str:
+    return assemble("solve-task/SKILL.md")
 
 
 def test_create_task_calls_write_tool_and_resyncs():
@@ -43,7 +48,7 @@ def test_create_task_answers_in_russian():
 
 
 def test_solve_task_points_to_create_task():
-    assert "create-task" in SOLVE.read_text(encoding="utf-8")
+    assert "create-task" in _solve()
 
 
 def test_create_task_uses_only_generic_board_metadata():

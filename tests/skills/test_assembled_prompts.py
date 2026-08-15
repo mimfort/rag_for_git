@@ -2,23 +2,25 @@ import re
 from pathlib import Path
 
 SKILLS_DIR = Path(__file__).resolve().parents[2] / "plugin" / "skills"
-_INCLUDE = re.compile(r"<!-- include: (_common/[A-Za-z0-9_-]+\.md) -->")
+_INCLUDE = re.compile(r"<!-- include: ([A-Za-z0-9_\-/]+\.md) -->")
 _PROVIDER_SPECIFIC = re.compile(
     r"(yougile|youtrack|jira)|done_column|done_state|status_field|task_board\.mcp|task-context-",
     re.IGNORECASE,
 )
 
 
-def assemble(rel_path: str) -> str:
+def assemble(rel_path: str, _stack: tuple = ()) -> str:
     """Собрать промпт как оркестратор: подставить содержимое include-маркеров.
 
-    Путь в маркере — относительно plugin/skills/. Резолв нерекурсивный
-    (в _common-файлах маркеров нет).
+    Путь в маркере — относительно plugin/skills/. Резолв рекурсивный:
+    SKILL.md включает references/*.md, те в свою очередь включают _common/*.md.
+    Цикл включений — ошибка сборки, а не бесконечная рекурсия.
     """
+    assert rel_path not in _stack, f"цикл включений: {' -> '.join((*_stack, rel_path))}"
     text = (SKILLS_DIR / rel_path).read_text(encoding="utf-8")
 
     def repl(m: re.Match) -> str:
-        return (SKILLS_DIR / m.group(1)).read_text(encoding="utf-8")
+        return assemble(m.group(1), (*_stack, rel_path))
 
     out = _INCLUDE.sub(repl, text)
     assert not _INCLUDE.search(out), f"неразрешённый include в {rel_path}"
@@ -145,3 +147,35 @@ def test_public_skill_markdown_has_no_provider_specific_board_surface():
 
 def test_no_public_task_context_playbooks_remain():
     assert not list(SKILLS_DIR.rglob("task-context-*.md"))
+
+
+def test_assemble_resolves_nested_reference_includes(tmp_path, monkeypatch):
+    """Маркер может указывать на references/*.md, который сам включает _common/*.md."""
+    import tests.skills.test_assembled_prompts as mod
+
+    root = tmp_path / "skills"
+    (root / "_common").mkdir(parents=True)
+    (root / "demo" / "references").mkdir(parents=True)
+    (root / "_common" / "leaf.md").write_text("ЛИСТ", encoding="utf-8")
+    (root / "demo" / "references" / "mid.md").write_text(
+        "СЕРЕДИНА\n<!-- include: _common/leaf.md -->\n", encoding="utf-8")
+    (root / "demo" / "SKILL.md").write_text(
+        "КОРЕНЬ\n<!-- include: demo/references/mid.md -->\n", encoding="utf-8")
+
+    monkeypatch.setattr(mod, "SKILLS_DIR", root)
+    out = mod.assemble("demo/SKILL.md")
+    assert "КОРЕНЬ" in out and "СЕРЕДИНА" in out and "ЛИСТ" in out
+
+
+def test_assemble_detects_include_cycle(tmp_path, monkeypatch):
+    import pytest
+
+    import tests.skills.test_assembled_prompts as mod
+
+    root = tmp_path / "skills"
+    (root / "demo").mkdir(parents=True)
+    (root / "demo" / "a.md").write_text("<!-- include: demo/b.md -->", encoding="utf-8")
+    (root / "demo" / "b.md").write_text("<!-- include: demo/a.md -->", encoding="utf-8")
+    monkeypatch.setattr(mod, "SKILLS_DIR", root)
+    with pytest.raises(AssertionError, match="цикл"):
+        mod.assemble("demo/a.md")

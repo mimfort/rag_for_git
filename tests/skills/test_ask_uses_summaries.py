@@ -1,5 +1,7 @@
 from pathlib import Path
 
+from .test_assembled_prompts import assemble
+
 ASK = Path(__file__).resolve().parents[2] / "plugin" / "skills" / "ask" / "SKILL.md"
 PRW = Path(__file__).resolve().parents[2] / "plugin" / "skills" / "pr-walkthrough" / "SKILL.md"
 SUMM = Path(__file__).resolve().parents[2] / "plugin" / "skills" / "summarize-subsystems" / "SKILL.md"
@@ -30,23 +32,24 @@ def test_summarize_triggers_embedding_backfill():
     assert "backfill_summary_embeddings" in text
 
 
-SOLVE = Path(__file__).resolve().parents[2] / "plugin" / "skills" / "solve-task" / "SKILL.md"
+def _solve() -> str:
+    return assemble("solve-task/SKILL.md")
 
 
 def test_solve_task_passes_query_to_summaries():
-    text = SOLVE.read_text(encoding="utf-8")
+    text = _solve()
     assert "get_subsystem_summaries(repo, branch, query=" in text
 
 
 def test_solve_task_has_subsystems_brief_section():
-    text = SOLVE.read_text(encoding="utf-8")
+    text = _solve()
     assert "## Subsystems" in text
 
 
 def test_solve_task_marks_summary_prior_only():
     # Приор сводок — только ориентир: grounding (path:line) идёт из search_codebase,
     # а не из текста summary (зеркало ask/SKILL.md). Критерий приёмки PRI-161.
-    text = SOLVE.read_text(encoding="utf-8")
+    text = _solve()
     assert "never from the summary text" in text
 
 

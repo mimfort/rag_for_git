@@ -9,7 +9,7 @@ import datetime as dt
 import pathlib
 import sys
 
-from . import endtoend, forecast, ground_truth, history, report, snapshot as snapshot_mod
+from . import endtoend, forecast, ground_truth, history, report, snapshot as snapshot_mod, steps
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 BRIEFS_DIR = REPO_ROOT / "docs" / "superpowers" / "briefs"
@@ -136,6 +136,70 @@ def cmd_forecast(args) -> int:
     return 0
 
 
+def _print_model(label: str, model_steps: tuple, totals: dict, shares: dict) -> None:
+    print(label)
+    for step in model_steps:
+        print(f"  {step:<10} {shares[step] * 100:5.1f}%  "
+              f"(cache_write {totals[step]['cache_write']:.0f})")
+
+
+def cmd_steps(_args) -> int:
+    """Разбивка взвешенной цены solve-task по под-шагам (baseline PRI-248)."""
+    per_task = steps.scan_steps(TRANSCRIPTS_ROOT)
+    if not per_task:
+        print("Транскриптов solve-task не найдено")
+        return 1
+    totals = {
+        scope: {
+            "pointwise": {s: {k: 0.0 for k in steps.BUCKET_KEYS} for s in steps.STEPS},
+            "sticky": {s: {k: 0.0 for k in steps.BUCKET_KEYS} for s in steps.STICKY_STEPS},
+        }
+        for scope in steps.SCOPES
+    }
+    for entry in per_task.values():
+        for scope in steps.SCOPES:
+            for model in steps.MODELS:
+                for step, buckets in entry[scope][model].items():
+                    for key in steps.BUCKET_KEYS:
+                        totals[scope][model][step][key] += buckets[key]
+
+    phase_point_shares = steps.weighted_shares(totals["phase"]["pointwise"])
+    phase_sticky_shares = steps.weighted_shares(totals["phase"]["sticky"])
+    session_point_shares = steps.weighted_shares(totals["session"]["pointwise"])
+
+    print(f"Задач измерено: {len(per_task)}")
+    print()
+    _print_model(
+        "По фазе сборки брифа — точечная модель (по факту вызова тула, нижняя оценка стадии):",
+        steps.STEPS, totals["phase"]["pointwise"], phase_point_shares,
+    )
+    point_consolidated = phase_point_shares["preflight"] + phase_point_shares["gather"]
+    print(f"Точечная: preflight+gather (фаза брифа): {point_consolidated * 100:.1f}%")
+    print(f"Точечная: unattributed внутри фазы (other, нераспознанный классификатором расход): "
+          f"{phase_point_shares['other'] * 100:.1f}%")
+    print()
+    _print_model(
+        "По фазе сборки брифа — липкая модель (по активной стадии между переключениями, "
+        "верхняя оценка стадии):",
+        steps.STICKY_STEPS, totals["phase"]["sticky"], phase_sticky_shares,
+    )
+    sticky_consolidated = phase_sticky_shares["preflight"] + phase_sticky_shares["gather"]
+    print(f"Липкая: preflight+gather (фаза брифа): {sticky_consolidated * 100:.1f}%")
+    print(f"Липкая: startup (фаза брифа): {phase_sticky_shares['startup'] * 100:.1f}%")
+    print()
+    print("Истина между точечной (нижняя оценка) и липкой (верхняя оценка) моделями — "
+          "ни одна не выбрана как единственно верная.")
+    print()
+    _print_model(
+        "По всей сессии — точечная модель (включая всё после записи брифа, "
+        "для сопоставимости с PRI-246):",
+        steps.STEPS, totals["session"]["pointwise"], session_point_shares,
+    )
+    session_consolidated = session_point_shares["preflight"] + session_point_shares["gather"]
+    print(f"Точечная: preflight+gather (вся сессия): {session_consolidated * 100:.1f}%")
+    return 0
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(
         prog="python -m eval.solve_task_metrics",
@@ -163,6 +227,9 @@ def main(argv=None) -> int:
         action="store_true",
         help="печатать только изменившиеся метрики",
     )
+    subparsers.add_parser(
+        "steps", help="разбивка взвешенной цены solve-task по под-шагам (baseline PRI-248)"
+    )
     forecast_parser = subparsers.add_parser(
         "forecast", help="прогноз core-recall с разбросом"
     )
@@ -179,6 +246,8 @@ def main(argv=None) -> int:
         return cmd_stats(args)
     if args.command == "forecast":
         return cmd_forecast(args)
+    if args.command == "steps":
+        return cmd_steps(args)
     return cmd_compare(args)
 
 

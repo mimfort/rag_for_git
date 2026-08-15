@@ -569,7 +569,7 @@ The server-side flow is **store-first**:
 2. Skills call `get_task(key, project=...)`; linked tasks/PRs/code come from task context tools.
 3. Client models never enumerate the provider directly and never send credentials.
 
-The MCP server currently exposes **41 tools**, including the native-subtask batch operation.
+The MCP server currently exposes **42 tools**, including the native-subtask batch operation.
 
 Legacy aliases remain **legacy metadata for older clients** for one compatibility window:
 `TASK_BOARD_API_KEY → YOUGILE_API_KEY` and
@@ -625,6 +625,13 @@ namespaced skills with `$rag-reviewer:...`.
 - **Needs:** reviewer MCP; board context is optional and the pipeline continues board-less.
 - **Reads/writes:** reads task/code context and writes one brief under `docs/superpowers/briefs/`.
 - **Result:** a compact brief handed to brainstorming; implementation happens in later skills.
+- **Context gathering:** one server-side call, `prepare_task_context`, replaces the former
+  `reviewer status` → `sync_board` → `get_task` → `search_*` chain — preflight, board warm-up, the
+  task itself, linked/similar tasks, relevant subsystems, and code all come back in a single
+  payload. Fail-open semantics are preserved: anything unavailable (stale index, missing board,
+  empty search) is reported per-section in `gaps` instead of aborting the skill. Graph expansions
+  (`get_related_symbols`, `callers`, `implementations`, `family`, …) and `get_pr_diff` stay
+  separate calls made at the LLM's discretion, since they depend on what the brief turns up.
 - **Startup survey:** one `AskUserQuestion` panel asks three things before anything else — the
   brief model tier (`cheap`/`mid`/`premium`), the interaction mode, and the execution strategy.
   No answer, or a headless run, applies the defaults `mid` / `normal` / `subagent` without

@@ -1,5 +1,7 @@
 from pathlib import Path
 
+from .test_assembled_prompts import assemble
+
 ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -43,7 +45,7 @@ def test_readmes_keep_generic_task_key_metadata_in_examples():
 
 
 def test_solve_task_skill_uses_generic_board_setup_hint():
-    text = _read("plugin/skills/solve-task/SKILL.md")
+    text = assemble("solve-task/SKILL.md")
 
     assert "TASK_BOARD_*" not in text
     assert "reviewer init" in text
