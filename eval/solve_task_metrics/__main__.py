@@ -276,6 +276,13 @@ def cmd_replay(args) -> int:
     )
     print(f"Снимок сохранён: {REPLAY_HISTORY_PATH}")
     print(f"Отчёт записан: {REPLAY_REPORT_PATH}")
+    # Ветка и sha индекса печатаются рядом с числом намеренно: прогон по
+    # первичной ветке при работе в другой даёт корректное, но не то число,
+    # и без этой строки его легко принять за baseline своей ветки.
+    print(
+        f"Индекс: {snap['repo']}@{snap['branch']} "
+        f"sha={snap['indexed_sha']} чанков={snap['chunks']}"
+    )
     aggregate = snap["aggregate"]
     print(
         f"core-recall медиана: {aggregate['core_recall_median']}, "
