@@ -972,15 +972,26 @@ Compose project, so that command can remove development volumes.
 
 An offline harness measures the cost of the solve-task stage and retrieval
 quality over the accumulated brief corpus (`docs/superpowers/briefs/`), stores a
-history of snapshots and compares runs. No Postgres, Neo4j or network needed —
-local git only.
+history of snapshots and compares runs. The retrospective commands need no
+Postgres, Neo4j or network — local git only; `replay` is the exception, it needs
+live retrieval.
 
 ```bash
 python -m eval.solve_task_metrics snapshot            # recompute metrics, store a snapshot, refresh the report
 python -m eval.solve_task_metrics stats --last 10     # trend of the latest snapshots as a table, no recompute
 python -m eval.solve_task_metrics compare --back 1    # deltas of the latest snapshot against N steps back
 python -m eval.solve_task_metrics forecast            # core-recall forecast with a spread
+python -m eval.solve_task_metrics replay              # re-run retrieval over the corpus (baseline)
+python -m eval.solve_task_metrics replay --variant limits --set search_codebase.ceiling=25 --baseline last   # A/B against a stored snapshot
 ```
+
+**`replay`** rebuilds the candidate set by calling production retrieval with the
+task text from the store (not the brief text) and compares configuration
+variants: the `eval/replay_report.md` report shows the delta both per aggregate
+and per task, snapshots go to `eval/replay_history.jsonl`. It requires Postgres,
+Neo4j, Voyage and a built base index. The `replay` line is **not comparable** to
+the `snapshot` line: snapshot counts the paths an LLM selected, replay counts the
+whole retrieval output.
 
 Cost is measured in weighted input-equivalents (`output ×5`, `cache-write ×1.25`,
 `cache-read ×0.1`); the raw token sum is shown for reference only — it is not
