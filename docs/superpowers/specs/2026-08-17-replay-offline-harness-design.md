@@ -90,6 +90,7 @@ PRI-253 (ID-307, ID-311, ID-312) непроверяема.
 class RetrievalProvider(Protocol):
     def preflight(self, repo: str, branch: str) -> dict: ...
     def task(self, key: str) -> dict | None: ...
+    def query(self, task: dict | None, key: str) -> str: ...
     def code(self, repo: str, branch: str, query: str, limits: dict | None) -> str: ...
 ```
 
@@ -99,9 +100,11 @@ class RetrievalProvider(Protocol):
 Доска не трогается: `warm_board` в replay не выполняется.
 
 Запрос ретрива строится **той же функцией**, что в проде — `reviewer.mcp.task_context._query`
-(title + первые 8 строк description) и `_test_query`. Копии формулы запроса не заводится: это тот же
-класс дефекта, что PRI-249 запрещает для формул метрики. Функции приватные; `replay.py` их не
-импортирует — импорт живёт в `live.py`, рядом с остальными живыми зависимостями.
+(title + первые 8 строк description). Копии формулы запроса не заводится: это тот же класс дефекта,
+что PRI-249 запрещает для формул метрики. Отсюда и метод `query` в контракте провайдера: `replay.py`
+не имеет права импортировать `reviewer` ни на каком уровне отступа (guard
+`tests/eval/test_live_boundary.py`), поэтому построение запроса живёт в `live.py`, рядом с
+остальными живыми зависимостями.
 
 Компоненты закрываются в `finally` (пул Postgres, драйвер Neo4j).
 
