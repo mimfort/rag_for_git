@@ -17,5 +17,5 @@ def test_both_readmes_document_the_command():
     for name in ("README.md", "README.ru.md"):
         text = (ROOT / name).read_text(encoding="utf-8")
         assert COMMAND in text, f"{name} не документирует команду харнесса"
-        for subcommand in ("snapshot", "stats", "compare", "forecast"):
+        for subcommand in ("snapshot", "stats", "compare", "forecast", "replay"):
             assert f"{COMMAND} {subcommand}" in text, f"{name}: нет {subcommand}"

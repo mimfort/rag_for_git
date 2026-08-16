@@ -962,14 +962,24 @@ Compose project, поэтому команда может удалить develop
 
 Офлайн-харнесс считает цену этапа и качество ретрива по накопленному корпусу
 брифов (`docs/superpowers/briefs/`), хранит историю срезов и умеет сравнивать
-прогоны. Не требует Postgres, Neo4j и сети — только локальный git.
+прогоны. Ретроспективные команды не требуют Postgres, Neo4j и сети — только
+локальный git; исключение — `replay`, которому нужен живой ретрив.
 
 ```bash
 python -m eval.solve_task_metrics snapshot            # пересчитать метрики, сохранить срез, обновить отчёт
 python -m eval.solve_task_metrics stats --last 10     # тренд последних срезов таблицей, без пересчёта
 python -m eval.solve_task_metrics compare --back 1    # дельты последнего среза против среза N шагов назад
 python -m eval.solve_task_metrics forecast            # прогноз core-recall с разбросом
+python -m eval.solve_task_metrics replay              # прогнать ретрив по корпусу заново (baseline)
+python -m eval.solve_task_metrics replay --variant limits --set search_codebase.ceiling=25 --baseline last   # A/B против сохранённого снимка
 ```
+
+**`replay`** заново собирает кандидатов вызовом продакшн-ретрива по тексту задачи
+из стора (а не по тексту брифа) и сравнивает варианты конфигурации: отчёт
+`eval/replay_report.md` показывает дельту и по агрегату, и по каждой задаче,
+снимки — в `eval/replay_history.jsonl`. Требует Postgres, Neo4j, Voyage и
+построенный base-индекс. Линия `replay` **несравнима** с линией `snapshot`:
+snapshot считает пути, отобранные LLM, а replay — всю выдачу ретрива.
 
 Цена считается во взвешенных input-эквивалентах (`output ×5`, `cache-write ×1.25`,
 `cache-read ×0.1`); сырая сумма токенов показывается только справочно — она не
