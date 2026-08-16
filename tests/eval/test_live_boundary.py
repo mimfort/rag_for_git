@@ -75,30 +75,26 @@ def test_merge_overrides_only_the_named_keys():
 
 
 @pytest.mark.integration
-def test_live_replay_smoke():
-    """Живой прогон трёх задач: компоненты собираются, ретрив отдаёт пути."""
-    import datetime as dt
+def test_open_live_wires_and_closes_components():
+    """Проводка живого провайдера: компоненты собираются, preflight отвечает, close не падает.
 
-    from eval.solve_task_metrics import ground_truth, replay, variants
-    from eval.solve_task_metrics.__main__ import BRIEFS_DIR, REPO_ROOT
+    Сквозной прогон с непустой выдачей здесь невозможен принципиально:
+    integration-тесты принудительно направлены на ИЗОЛИРОВАННУЮ тестовую
+    инфраструктуру, где base-индекса нет по построению. Поэтому проверяется
+    именно проводка, а полнота выдачи — ручной приёмкой `replay` на живом
+    деплое (см. финальную приёмку плана PRI-254).
+    """
     from eval.solve_task_metrics.live import open_live
 
-    provider, repo, branch = open_live(None, None)
+    provider, repo, branch = open_live("owner/replay-smoke", "dev")
     try:
-        snap = replay.run_replay(
-            provider=provider,
-            run_git=ground_truth.git_runner(REPO_ROOT),
-            briefs_dir=BRIEFS_DIR,
-            target=variants.ReplayTarget(repo=repo, branch=branch, limits=None),
-            variant_name="baseline",
-            commit="test",
-            taken_at=dt.datetime.now(dt.timezone.utc).isoformat(),
-            limit=3,
-        )
+        # Тестовая БД пустая: схему заводит сам тест (идемпотентно).
+        provider._components.store.init_schema()
+        assert repo == "owner/replay-smoke" and branch == "dev"
+        preflight = provider.preflight(repo, branch)
+        assert set(preflight) >= {"branch", "indexed_sha", "chunks", "graph_nodes"}
+        assert preflight["branch"] == "dev"
+        # Индекса у выдуманного репо нет — это ноль чанков, а не исключение.
+        assert preflight["chunks"] == 0
     finally:
         provider.close()
-
-    assert snap["partial"] is True
-    assert snap["corpus"] == 3
-    assert snap["indexed_sha"]
-    assert any(row["predicted_paths"] for row in snap["tasks"])
