@@ -1797,15 +1797,14 @@ class MCPReviewService:
     def _search_codebase_multi(self, repo: str, queries: list[str],
                                branch: str | None = None,
                                include_tests: bool = False,
-                               augment_paths: list[str] | None = None) -> str:
+                               augment_sources: list | None = None) -> str:
         """Мультизапросный ретрив секций контекста задачи (PRI-255).
 
         Приватный: публичный search_codebase остаётся однозапросным, чтобы
         /ask, грунтовка и ревью PR не меняли поведение.
 
-        augment_paths (PRI-257) — третий источник кандидатов (фактические
-        diff-пути похожих задач); см. search_multi. Co-change как источник
-        снят по итогам приёмки (step8-measurement.md).
+        augment_sources (PRI-257/258) — именованные источники кандидатов со
+        своими квотами; см. search_multi.
         """
         from reviewer.retrieval.multiquery import search_multi
         rb = self._resolve_repo_branch(repo, branch)
@@ -1818,7 +1817,7 @@ class MCPReviewService:
                 self.components.retriever, repo, queries,
                 limits=cl.search_codebase, section_limits=cl.code_section,
                 hops=cl.graph.hops, branch=resolved, include_tests=include_tests,
-                augment_paths=augment_paths)
+                augment_sources=augment_sources)
         except Exception:
             log.warning("_search_codebase_multi: сбой поиска", exc_info=True)
             return "(ничего не найдено)"
@@ -3609,9 +3608,13 @@ class _TaskContextDeps:
         return self._service.get_subsystem_summaries(repo, branch, None, query, None)
 
     def code(self, repo: str, branch: str, queries: list) -> str:
+        from reviewer.retrieval.augment import AugmentSource
+        sources = [AugmentSource(name="similar-diffs",
+                                 paths=self._augment_paths(repo),
+                                 quota=self._service._resolve_context_limits(
+                                     repo, branch).code_section.max_augmented_files)]
         return self._service._search_codebase_multi(
-            repo, queries, branch, False,
-            augment_paths=self._augment_paths(repo))
+            repo, queries, branch, False, augment_sources=sources)
 
     def test_exemplars(self, repo: str, branch: str, queries: list) -> str:
         return self._service._search_codebase_multi(repo, queries, branch, True)

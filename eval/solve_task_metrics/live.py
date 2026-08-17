@@ -127,28 +127,33 @@ class LiveRetrieval:
                    *, similar_paths: bool = False) -> str:
         """Мультизапросная выдача тем же продакшн-путём, что видит сборщик брифа.
 
-        Подмешанный сигнал (PRI-257, только similar-diffs — co-change снят по
-        итогам приёмки) собирается продакшн-объектом _TaskContextDeps: своей
+        Подмешанный сигнал (PRI-257/258, только similar-diffs — co-change снят
+        по итогам приёмки) собирается продакшн-объектом _TaskContextDeps: своей
         копии сборки путей здесь не заводится, иначе replay мерил бы не тот
-        вход, что видит прод.
+        вход, что видит прод. Эффективные лимиты считаются ДО сборки
+        источников (иначе оверрайд --set не доехал бы до квоты и сторона «до»
+        замера совпала бы со стороной «после» — тот же дефект, что чинил
+        PRI-256 для section_limits).
         """
-        augment = None
+        base = limits_to_yaml(self._service._resolve_context_limits(repo, branch))
+        effective = ContextLimits.from_review_yaml(
+            {"context_limits": _merge(base, limits or {})}
+        )
+        sources = []
         if similar_paths:
             from reviewer.mcp.service import _TaskContextDeps
+            from reviewer.retrieval.augment import AugmentSource
             deps = _TaskContextDeps(self._service, None)
             # Хиты похожих задач наполняются вызовом similar; первый подзапрос —
             # это и есть продакшн-запрос задачи целиком (см. _queries).
             deps.similar(queries[0], None)
-            augment = deps._augment_paths(repo)
+            sources.append(AugmentSource(name="similar-diffs", paths=deps._augment_paths(repo),
+                                         quota=effective.code_section.max_augmented_files))
         if not limits:
             return self._service._search_codebase_multi(
                 repo, list(queries), branch, False,
-                augment_paths=augment)
+                augment_sources=sources or None)
         from reviewer.retrieval.multiquery import search_multi
-        base = limits_to_yaml(self._service._resolve_context_limits(repo, branch))
-        effective = ContextLimits.from_review_yaml(
-            {"context_limits": _merge(base, limits)}
-        )
         pack = search_multi(
             self._components.retriever, repo, list(queries),
             limits=effective.search_codebase,
@@ -158,7 +163,7 @@ class LiveRetrieval:
             section_limits=effective.code_section,
             hops=effective.graph.hops,
             branch=branch, include_tests=False,
-            augment_paths=augment,
+            augment_sources=sources or None,
         )
         return pack.as_context(line_numbers=True) or "(ничего не найдено)"
 

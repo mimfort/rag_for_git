@@ -15,6 +15,19 @@ from reviewer import gitutil
 
 
 @dataclass(frozen=True)
+class AugmentSource:
+    """Именованный источник подмешанных путей со своей файловой квотой.
+
+    Имя не косметика: нота видимости секции перечисляет источники поимённо —
+    иначе вклад источников в выдачу неотличим на глаз (и в отчёте replay).
+    """
+
+    name: str
+    paths: list[str] = field(default_factory=list)
+    quota: int = 0
+
+
+@dataclass(frozen=True)
 class AugmentResult:
     """Пути-кандидаты, их происхождение и пробелы сбора."""
 

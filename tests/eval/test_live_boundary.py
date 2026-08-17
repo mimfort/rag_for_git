@@ -131,16 +131,20 @@ def test_code_multi_with_overrides_passes_section_limits(monkeypatch):
 
 
 def test_code_multi_without_flags_passes_no_augment_signals():
-    """Без similar_paths (PRI-257) _search_codebase_multi зовётся ровно как
-    раньше — augment_paths остаётся None."""
+    """Без similar_paths (PRI-257/258) _search_codebase_multi зовётся ровно как
+    раньше — augment_sources остаётся None."""
     from eval.solve_task_metrics.live import LiveRetrieval
 
     class FakeService:
         def _search_codebase_multi(self, repo, queries, branch, include_tests,
-                                   *, augment_paths=None):
+                                   *, augment_sources=None):
             self.calls = getattr(self, "calls", [])
-            self.calls.append((repo, queries, branch, include_tests, augment_paths))
+            self.calls.append((repo, queries, branch, include_tests, augment_sources))
             return "текст"
+
+        def _resolve_context_limits(self, repo, branch):
+            from reviewer.policy.context_limits import ContextLimits
+            return ContextLimits()
 
     service = FakeService()
     provider = LiveRetrieval(object(), object(), service)
@@ -152,7 +156,7 @@ def test_code_multi_without_flags_passes_no_augment_signals():
 
 
 def test_code_multi_similar_paths_flag_uses_production_deps(monkeypatch):
-    """similar_paths=True собирает augment_paths продакшн-объектом _TaskContextDeps."""
+    """similar_paths=True собирает augment_sources продакшн-объектом _TaskContextDeps."""
     from eval.solve_task_metrics.live import LiveRetrieval
     from reviewer.mcp import service as service_mod
 
@@ -170,19 +174,25 @@ def test_code_multi_similar_paths_flag_uses_production_deps(monkeypatch):
 
     class FakeService:
         def _search_codebase_multi(self, repo, queries, branch, include_tests,
-                                   *, augment_paths=None):
-            self.captured = augment_paths
+                                   *, augment_sources=None):
+            self.captured = augment_sources
             return "текст"
+
+        def _resolve_context_limits(self, repo, branch):
+            from reviewer.policy.context_limits import ContextLimits
+            return ContextLimits()
 
     service = FakeService()
     provider = LiveRetrieval(object(), object(), service)
     provider.code_multi("o/n", "dev", ["q1", "q2"], None, similar_paths=True)
 
-    assert service.captured == ["a.py"]
+    assert len(service.captured) == 1
+    assert service.captured[0].name == "similar-diffs"
+    assert service.captured[0].paths == ["a.py"]
 
 
 def test_code_multi_with_overrides_forwards_augment_signals(monkeypatch):
-    """Оверрайды лимитов не глушат augment_paths — он доезжает до search_multi."""
+    """Оверрайды лимитов не глушат augment_sources — он доезжает до search_multi."""
     from reviewer.policy.context_limits import ContextLimits
     from reviewer.retrieval import multiquery
 
@@ -224,7 +234,10 @@ def test_code_multi_with_overrides_forwards_augment_signals(monkeypatch):
     provider.code_multi("o/n", "dev", ["q"], {"code_section": {"max_files": 4}},
                         similar_paths=True)
 
-    assert captured["augment_paths"] == ["a.py"]
+    sources = captured["augment_sources"]
+    assert len(sources) == 1
+    assert sources[0].name == "similar-diffs"
+    assert sources[0].paths == ["a.py"]
     assert "cochange" not in captured
 
 

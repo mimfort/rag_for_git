@@ -354,22 +354,25 @@ def test_search_codebase_multi_passes_code_section_limits(
 
 
 def test_search_codebase_multi_forwards_augment_kwargs() -> None:
-    """_search_codebase_multi (PRI-257) пробрасывает augment_paths в search_multi
-    без изменений — сборка входа остаётся снаружи, в _TaskContextDeps."""
+    """_search_codebase_multi (PRI-257/258) пробрасывает augment_sources в
+    search_multi без изменений — сборка входа остаётся снаружи, в _TaskContextDeps."""
+    from reviewer.retrieval.augment import AugmentSource
+
     s = _settings()
     s.review_branches = "dev"
     components = MagicMock()
     vcs = MagicMock()
     vcs.get_file_at_ref.return_value = None
     svc = MCPReviewService(s, components, vcs_factory=lambda o, n: vcs)
+    sources = [AugmentSource(name="similar-diffs", paths=["a.py"], quota=3)]
 
     with patch("reviewer.retrieval.multiquery.search_multi") as sm:
         sm.return_value.as_context.return_value = "ok"
         svc._search_codebase_multi("o/r", ["q1"], branch="dev",
-                                   augment_paths=["a.py"])
+                                   augment_sources=sources)
 
     call = sm.call_args
-    assert call.kwargs["augment_paths"] == ["a.py"]
+    assert call.kwargs["augment_sources"] == sources
 
 
 def test_search_codebase_multi_defaults_augment_kwargs_to_none() -> None:
@@ -386,4 +389,4 @@ def test_search_codebase_multi_defaults_augment_kwargs_to_none() -> None:
         svc._search_codebase_multi("o/r", ["q1"], branch="dev")
 
     call = sm.call_args
-    assert call.kwargs["augment_paths"] is None
+    assert call.kwargs["augment_sources"] is None
