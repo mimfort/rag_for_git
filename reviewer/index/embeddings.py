@@ -170,3 +170,31 @@ class VoyageEmbedder:
                 self._query_cache.popitem(last=False)
             self._query_cache[text] = vec
             return vec
+
+    def embed_queries(self, texts: list[str]) -> list[list[float]]:
+        """Эмбеддинги нескольких запросов одним батчем через тот же LRU-кэш.
+
+        Мультизапросный ретрив (PRI-255) считает N подзапросов, и N отдельных
+        вызовов упёрлись бы в 3 RPM free tier. Блокировка на время сетевого
+        вызова не держится: под ней только чтение и запись кэша.
+        """
+        if not texts:
+            return []
+        unique = list(dict.fromkeys(texts))
+        with self._lock:
+            cached = {}
+            for text in unique:
+                if text in self._query_cache:
+                    self._query_cache.move_to_end(text)
+                    cached[text] = self._query_cache[text]
+        missing = [text for text in unique if text not in cached]
+        fresh: dict[str, list[float]] = {}
+        if missing:
+            fresh = dict(zip(missing, self._embed(missing, "query")))
+            with self._lock:
+                for text, vec in fresh.items():
+                    if len(self._query_cache) >= self._cache_size:
+                        self._query_cache.popitem(last=False)
+                    self._query_cache[text] = vec
+        merged = {**cached, **fresh}
+        return [merged[text] for text in texts]

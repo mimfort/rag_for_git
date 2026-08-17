@@ -16,6 +16,11 @@ from __future__ import annotations
 import dataclasses
 import logging
 
+from reviewer.index.refs import base_ref
+from reviewer.retrieval.retriever import (
+    ContextPack, _dedupe_overlapping, _is_test_path,
+)
+
 log = logging.getLogger(__name__)
 
 RRF_K = 60
@@ -68,3 +73,82 @@ def cap_block(item, max_chars: int = MAX_BLOCK_CHARS):
     return dataclasses.replace(
         item, text="\n".join(kept),
         end_line=item.start_line + max(len(kept) - 1, 0))
+
+
+def _embed_pairs(embedder, queries: list[str]) -> list[tuple]:
+    """Пары (запрос, вектор) одним батчем; при сбое — только первый подзапрос.
+
+    Откат идёт по первому подзапросу намеренно: он и есть продакшн-запрос
+    целиком, поэтому деградация возвращает сегодняшнее поведение, а не пустоту.
+    """
+    if not queries:
+        return []
+    try:
+        return list(zip(queries, embedder.embed_queries(queries)))
+    except Exception:  # noqa: BLE001 — квота Voyage кончилась, это штатный случай
+        log.warning("multiquery: батч-эмбеддинг недоступен — откат на один запрос",
+                    exc_info=True)
+        try:
+            return [(queries[0], embedder.embed_query(queries[0]))]
+        except Exception:  # noqa: BLE001
+            log.warning("multiquery: эмбеддинг запроса недоступен", exc_info=True)
+            return []
+
+
+def _run(store, repo: str, query: str, qvec, lim, bref: str) -> list:
+    """Один прогон гибрида с ANN-префильтром — тем же, что в search_base."""
+    hits = store.hybrid_search(
+        repo, query_text=query, query_embedding=qvec,
+        overlay_ref="__none__", changed_paths=[],
+        top_k=lim.candidate_pool, candidates=lim.candidate_pool, base_ref=bref)
+    return [h for h in hits
+            if getattr(h, "bm25_hit", False)
+            or (getattr(h, "ann_distance", None) is not None
+                and h.ann_distance <= lim.ann_distance_max)]
+
+
+def _graph_items(retriever, repo: str, merged: list, ceiling: int, hops: int,
+                 branch: str, bref: str, hybrid_ids: set) -> list:
+    """Graph-expansion один раз, от топа слитого списка. Fail-soft."""
+    if retriever.graph is None or not merged:
+        return []
+    try:
+        seeds = [item.node_id for item in merged[:ceiling]]
+        expanded = retriever.graph.expand_detailed(repo, seeds, hops=hops, branch=branch)
+        graph_ids = [row["id"] for row in expanded]
+        fetched = {item.node_id: item for item in retriever.store.fetch_nodes(
+            repo, graph_ids, "__none__", [], base_ref=bref)}
+        return [fetched[node_id] for node_id in graph_ids
+                if node_id in fetched and node_id not in hybrid_ids]
+    except Exception:  # noqa: BLE001
+        log.warning("multiquery: graph-expansion недоступен", exc_info=True)
+        return []
+
+
+def search_multi(retriever, repo: str, queries: list[str], *, limits=None,
+                 hops: int = 1, branch: str = "",
+                 include_tests: bool = False) -> ContextPack:
+    """Мультизапросный ретрив по base-индексу ветки: N прогонов, RRF, обрезка.
+
+    Реранкера и cliff-отсечки здесь нет — финальный ранкер RRF (см. докстринг
+    модуля). Порядок «сначала hybrid, потом graph-only» сохранён из search_base:
+    hybrid приоритетен, граф добавляет разнообразие.
+    """
+    from reviewer.policy.context_limits import CodebaseLimits
+    lim = limits or CodebaseLimits()
+    bref = base_ref(branch)
+    runs: list[list] = []
+    for query, qvec in _embed_pairs(retriever.embedder, list(queries)):
+        try:
+            runs.append(_run(retriever.store, repo, query, qvec, lim, bref))
+        except Exception:  # noqa: BLE001 — сбой одного прогона не роняет сборку
+            log.warning("multiquery: прогон подзапроса не удался", exc_info=True)
+    merged = rrf_merge(runs)
+    hybrid_ids = {item.node_id for item in merged}
+    items = [*merged, *_graph_items(retriever, repo, merged, lim.ceiling, hops,
+                                    branch, bref, hybrid_ids)]
+    if not include_tests:
+        items = [item for item in items if not _is_test_path(item.path)]
+    items = _dedupe_overlapping(items)[:lim.ceiling]
+    return ContextPack(items=[cap_block(item) for item in items],
+                       max_chars=retriever.max_context_chars)

@@ -164,3 +164,23 @@ def test_non_token_errors_are_not_swallowed():
     emb = VoyageEmbedder(client=BrokenClient(), model="voyage-code-3", dim=8)
     with pytest.raises(ValueError, match="upstream is down"):
         emb.embed_documents(["a"])
+
+
+def test_embed_queries_batches_misses_and_reuses_cache():
+    """Один сетевой вызов на все промахи; попадания кэша не эмбеддятся заново."""
+    fake = FakeClient()
+    emb = VoyageEmbedder(client=fake, model="voyage-code-3", dim=8)
+    emb.embed_query("первый")
+    calls_before = len(fake.calls)
+    vectors = emb.embed_queries(["первый", "второй", "третий", "второй"])
+    assert len(vectors) == 4
+    assert vectors[1] == vectors[3]                      # повтор отдаёт тот же вектор
+    assert len(fake.calls) == calls_before + 1           # промахи ушли одним батчем
+    assert fake.calls[-1][0] == ("второй", "третий")     # в батче только промахи, без дублей
+
+
+def test_embed_queries_uses_query_input_type():
+    fake = FakeClient()
+    emb = VoyageEmbedder(client=fake, model="voyage-code-3", dim=8)
+    emb.embed_queries(["запрос"])
+    assert fake.calls[-1][1] == "query"
