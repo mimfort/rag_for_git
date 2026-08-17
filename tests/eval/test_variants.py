@@ -95,3 +95,26 @@ def test_multiquery_variant_passes_subquery_list():
 
 def test_multiquery_is_registered():
     assert "multiquery" in variants.VARIANT_NAMES
+
+
+def test_parse_overrides_accepts_code_section():
+    """Файловый бюджет секции code выразим оверрайдом (PRI-256).
+
+    Без раздела code_section в OVERRIDE_SECTIONS сторону «до» замера PRI-256
+    нечем выразить: прежнюю стену «4 файла» пришлось бы сравнивать с числом из
+    другого прогона, то есть другой линейкой.
+    """
+    assert "code_section" in variants.OVERRIDE_SECTIONS
+    assert variants.parse_overrides(
+        [
+            "code_section.max_files=4",
+            "code_section.max_chunks_per_file=1",
+            "code_section.chars_per_file=2000",
+        ]
+    ) == {
+        "code_section": {
+            "max_files": 4,
+            "max_chunks_per_file": 1,
+            "chars_per_file": 2000,
+        }
+    }

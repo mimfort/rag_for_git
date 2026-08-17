@@ -79,6 +79,57 @@ def test_merge_overrides_only_the_named_keys():
     assert effective.search_codebase.floor == 7     # лимит репо сохранён
 
 
+def test_limits_to_yaml_serializes_code_section():
+    """Раздел code_section переживает сериализацию (PRI-256).
+
+    Без него оверрайд одной секции обнулил бы файловый бюджет до классовых
+    дефолтов — то есть сторона «до» замера молча превратилась бы в «после».
+    """
+    from reviewer.policy.context_limits import CodeSectionLimits, ContextLimits
+
+    from eval.solve_task_metrics.live import limits_to_yaml
+
+    original = ContextLimits(
+        code_section=CodeSectionLimits(max_files=4, chars_per_file=2000)
+    )
+    block = limits_to_yaml(original)
+    assert block["code_section"]["max_files"] == 4
+    assert block["code_section"]["chars_per_file"] == 2000
+    assert ContextLimits.from_review_yaml({"context_limits": block}) == original
+
+
+def test_code_multi_with_overrides_passes_section_limits(monkeypatch):
+    """Оверрайд code_section доезжает до search_multi, а не теряется молча."""
+    from reviewer.policy.context_limits import ContextLimits
+    from reviewer.retrieval import multiquery
+
+    from eval.solve_task_metrics.live import LiveRetrieval
+
+    class FakeService:
+        def _resolve_context_limits(self, repo, branch):
+            return ContextLimits()
+
+    class FakeComponents:
+        retriever = object()
+
+    captured: dict = {}
+
+    def fake_search_multi(retriever, repo, queries, **kwargs):
+        captured.update(kwargs)
+
+        class Pack:
+            def as_context(self, line_numbers=True):
+                return "текст"
+
+        return Pack()
+
+    monkeypatch.setattr(multiquery, "search_multi", fake_search_multi)
+    provider = LiveRetrieval(object(), FakeComponents(), FakeService())
+    provider.code_multi("o/n", "dev", ["q"], {"code_section": {"max_files": 4}})
+
+    assert captured["section_limits"].max_files == 4
+
+
 @pytest.mark.integration
 def test_open_live_wires_and_closes_components():
     """Проводка живого провайдера: компоненты собираются, preflight отвечает, close не падает.
