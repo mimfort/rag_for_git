@@ -128,7 +128,8 @@ augmented (PRI-257, третий фикс по step8-measurement.md, «Трет�
 
 
 def _augment_items(retriever, repo: str, *, augment_paths,
-                   quota: int, bref: str, known_paths: set) -> tuple[list, str | None]:
+                   quota: int, bref: str, known_paths: set,
+                   include_tests: bool = False) -> tuple[list, str | None]:
     """Подмешанные кандидаты: фактические diff-пути похожих задач. Fail-soft.
 
     Co-change как источник снят (PRI-257, приёмка по step8-measurement.md,
@@ -146,6 +147,14 @@ def _augment_items(retriever, repo: str, *, augment_paths,
     предохранителя AUGMENT_FETCH_LIMIT), один запрос fetch_retrieved_at_paths
     решает, у кого есть чанки, и только из реально найденных берутся первые
     quota — в исходном порядке.
+
+    Тестовые пути отсеиваются здесь же, ДО подсчёта квоты, а не постфактум
+    в search_multi (финальное ревью ветки, Important): в отличие от
+    табличного brief_quality.expected_core_paths (уже отфильтрован в
+    measure()), git-фолбэк paths_touched_by_grep отдаёт все файлы матчащих
+    коммитов без core/test-фильтрации. Если tests/test_foo.py стоит в списке
+    раньше reviewer/foo.py, постфактум-фильтр съедал уже выбранный тестовый
+    слот квоты, оставляя 0 подмешанных файлов вместо 1-3 полезных.
     """
     if quota <= 0:
         return [], None
@@ -153,8 +162,11 @@ def _augment_items(retriever, repo: str, *, augment_paths,
     for path in augment_paths or []:
         if len(candidates) >= AUGMENT_FETCH_LIMIT:
             break
-        if path not in known_paths:
-            candidates.setdefault(path, None)
+        if path in known_paths:
+            continue
+        if not include_tests and _is_test_path(path):
+            continue
+        candidates.setdefault(path, None)
     if not candidates:
         return [], None
     try:
@@ -264,9 +276,8 @@ def search_multi(retriever, repo: str, queries: list[str], *, limits=None,
     augmented, note = _augment_items(
         retriever, repo, augment_paths=augment_paths,
         quota=sec.max_augmented_files, bref=bref,
-        known_paths={item.path for item in hybrid_final})
-    if not include_tests:
-        augmented = [item for item in augmented if not _is_test_path(item.path)]
+        known_paths={item.path for item in hybrid_final},
+        include_tests=include_tests)
     # Резерв слотов: augmented — свой путь дедупа не требует (fetch_retrieved_
     # at_paths отдаёт по одному самому широкому чанку на путь, known_paths уже
     # исключил пути итоговой гибридной выдачи), поэтому урезаем hybrid_final

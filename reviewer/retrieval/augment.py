@@ -55,15 +55,19 @@ def collect_similar_task_paths(*, keys, aliases_by_key, history, clone_path,
                     ordered.setdefault(path, None)
         except Exception as exc:  # noqa: BLE001 — источник недоступен, это штатный случай
             gaps.append(f"история прогонов недоступна: {type(exc).__name__}")
-    if not ordered and clone_path:
-        for key in lookup:
-            try:
-                for path in gitutil.paths_touched_by_grep(
-                        clone_path, key, limit=GIT_GREP_COMMITS):
-                    ordered.setdefault(path, None)
-            except Exception as exc:  # noqa: BLE001
-                gaps.append(f"git-история недоступна: {type(exc).__name__}")
-                break
+    if not ordered:
+        if clone_path:
+            for key in lookup:
+                try:
+                    for path in gitutil.paths_touched_by_grep(
+                            clone_path, key, limit=GIT_GREP_COMMITS):
+                        ordered.setdefault(path, None)
+                except Exception as exc:  # noqa: BLE001 — сбой по одному ключу
+                    # не должен лишать шанса остальные алиасы/ключи
+                    gaps.append(f"git-история недоступна: {type(exc).__name__}")
+                    continue
+        else:
+            gaps.append("клон недоступен, git-фолбэк пропущен")
     paths = list(ordered)[:limit]
     return AugmentResult(paths=paths,
                          by_source={"similar_diffs": len(paths)} if paths else {},

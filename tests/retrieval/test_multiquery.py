@@ -521,6 +521,47 @@ def test_augment_note_reports_source_and_quota():
     assert "co-change" not in context
 
 
+def test_augment_quota_skips_test_paths_before_counting_when_tests_excluded():
+    """Финальное ревью ветки, Important: квота не выгорает на тестовых путях.
+
+    include_tests=False — прод-дефолт секции code. Список подмешиваемых путей
+    из git-фолбэка (paths_touched_by_grep) не фильтрует core/test — если
+    tests/test_foo.py стоит раньше reviewer/foo.py, постфактум-фильтр съедал
+    уже занятый тестами слот квоты. Фильтр обязан идти ДО подсчёта квоты:
+    полезные .py-кандидаты из хвоста получают слот, тестовые не подмешиваются
+    вовсе.
+    """
+    store = _FakeStore(
+        {"q0": [_bm25("a.py#f")]},
+        nodes_by_path={
+            "tests/test_x.py": _hit("tests/test_x.py#t"),
+            "tests/test_y.py": _hit("tests/test_y.py#t"),
+            "c.py": _hit("c.py#s"),
+        },
+    )
+    pack = search_multi(
+        _Retriever(store, _FakeEmbedder()), "o/n", ["q0"], limits=CodebaseLimits(),
+        section_limits=CodeSectionLimits(max_augmented_files=1), branch="dev",
+        augment_paths=["tests/test_x.py", "tests/test_y.py", "c.py"])
+    paths = [it.path for it in pack.items]
+    assert "c.py" in paths, "квота досталась не-тестовому кандидату из хвоста"
+    assert "tests/test_x.py" not in paths and "tests/test_y.py" not in paths
+
+
+def test_augment_allows_test_paths_when_include_tests_requested():
+    """Обратный случай: include_tests=True — тестовые пути допустимы к подмешиванию."""
+    store = _FakeStore(
+        {"q0": [_bm25("a.py#f")]},
+        nodes_by_path={"tests/test_x.py": _hit("tests/test_x.py#t")},
+    )
+    pack = search_multi(
+        _Retriever(store, _FakeEmbedder()), "o/n", ["q0"], limits=CodebaseLimits(),
+        section_limits=CodeSectionLimits(max_augmented_files=1), branch="dev",
+        augment_paths=["tests/test_x.py"], include_tests=True)
+    paths = [it.path for it in pack.items]
+    assert "tests/test_x.py" in paths
+
+
 def test_no_augmentation_leaves_note_absent():
     store = _FakeStore({"q0": [_bm25("a.py#f")]})
     pack = search_multi(_Retriever(store, _FakeEmbedder()), "o/n", ["q0"],
