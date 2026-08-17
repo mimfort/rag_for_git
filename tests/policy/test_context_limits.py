@@ -41,6 +41,12 @@ def test_code_section_max_chars_is_derived():
     assert CodeSectionLimits(max_files=20, chars_per_file=600).max_chars == 18000
 
 
+def test_code_section_max_chars_accounts_for_chunks_per_file():
+    """При max_chunks_per_file>1 операционный бюджет вдвое больше — страховка обязана расти тоже."""
+    assert (CodeSectionLimits(max_chunks_per_file=2).max_chars
+            == 12 * 2 * 1300 * 3 // 2)
+
+
 def test_code_section_partial_block_keeps_other_defaults():
     cl = ContextLimits.from_review_yaml(
         {"context_limits": {"code_section": {"max_files": 20}}})
