@@ -699,7 +699,13 @@ def test_search_codebase_rejects_untracked_branch() -> None:
 # ---------------------------------------------------------------------------
 
 def test_search_codebase_multi_delegates_to_search_multi() -> None:
-    """_search_codebase_multi зовёт search_multi с queries, лимитами и include_tests."""
+    """_search_codebase_multi зовёт search_multi с queries, retriever'ом, branch,
+    include_tests и рендерит результат построчно.
+
+    Резолв лимитов из эффективной .review.yml-политики (а не дефолт-константы)
+    закрыт отдельно — test_search_codebase_multi_passes_limits_and_hops в
+    test_context_limits_wiring.py, на недефолтном home-слое.
+    """
     svc = _make_mcp_service()
     with patch("reviewer.retrieval.multiquery.search_multi") as sm:
         sm.return_value.as_context.return_value = "auth.py#logout\nbody"
@@ -709,8 +715,6 @@ def test_search_codebase_multi_delegates_to_search_multi() -> None:
         assert call.args[0] is svc.components.retriever
         assert call.args[1] == "a/b"
         assert call.args[2] == ["q1", "q2"]
-        assert isinstance(call.kwargs["limits"], CodebaseLimits)
-        assert call.kwargs["hops"] == 1
         assert call.kwargs["branch"] == svc.settings.primary_branch()
         assert call.kwargs["include_tests"] is True
         sm.return_value.as_context.assert_called_once_with(line_numbers=True)
