@@ -103,7 +103,7 @@
 |---|---|---|---|---|
 | мелкая (≤10 строк) | 7 | 2 | 1 | 2 |
 | средняя (11-30) | 19 | 11 | 2 | 18 |
-| развёртка (>30) | 30 | 14.0 | 2 | 20 |
+| развёртка (>30) | 30 | 14 | 2 | 20 |
 
 Не константа: 2 против 14 между крайними классами. Предохранитель `MAX_SUBQUERIES = 20`
 срабатывает на самых крупных задачах (макс = 20 ровно).
@@ -139,6 +139,24 @@
 (ID-310 файловая диверсификация, ID-311 diff-пути похожих задач) остаются впереди.
 
 ### Критерий 3 — файлы, найденные только хвостовым подзапросом
+
+Замер воспроизводится так (подкоманды у него нет — разовая проверка, живой Voyage, несколько
+query-эмбеддингов):
+
+```python
+from eval.solve_task_metrics import live
+from eval.solve_task_metrics.context_paths import extract_context_paths
+from reviewer.mcp.subqueries import build_subqueries
+
+provider, repo, branch = live.open_live("mimfort/rag_for_git", "dev")
+with provider:
+    for key in ("PRI-217", "PRI-222"):
+        task = provider.task(key)
+        queries = build_subqueries(task, provider.query(task, key))
+        head = extract_context_paths(provider.code_multi(repo, branch, queries[:1], None))
+        full = extract_context_paths(provider.code_multi(repo, branch, queries, None))
+        print(key, len(queries), sorted(full - head))
+```
 
 Задачи-развёртки, сравнение выдачи по одному `q0` против полного набора подзапросов:
 
