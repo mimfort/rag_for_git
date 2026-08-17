@@ -214,6 +214,11 @@ def _validate_context_limits_layer(value: object) -> bool:
             "hops": _is_int,
             "callers_topk": _is_int,
         },
+        "code_section": {
+            "max_files": _is_int,
+            "max_chunks_per_file": _is_int,
+            "chars_per_file": _is_int,
+        },
     }
     for section, shape in sections.items():
         if section not in value or value[section] is None:
@@ -552,6 +557,14 @@ def _validate_public_policy_data(effective: Mapping[str, object]) -> None:
         ),
         "graph": lambda value: _validate_context_limits(
             value, {"hops": _is_int, "callers_topk": _is_int}
+        ),
+        "code_section": lambda value: _validate_context_limits(
+            value,
+            {
+                "max_files": _is_int,
+                "max_chunks_per_file": _is_int,
+                "chars_per_file": _is_int,
+            },
         ),
     })
     json.dumps(effective, ensure_ascii=False, sort_keys=True, allow_nan=False)
