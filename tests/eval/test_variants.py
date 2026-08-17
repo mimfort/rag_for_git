@@ -97,6 +97,48 @@ def test_multiquery_is_registered():
     assert "multiquery" in variants.VARIANT_NAMES
 
 
+def test_augment_variants_registered():
+    from eval.solve_task_metrics.variants import VARIANT_NAMES, get_variant
+    assert {"similar_paths", "cochange", "augmented"} <= set(VARIANT_NAMES)
+    for name in ("similar_paths", "cochange", "augmented"):
+        assert callable(get_variant(name))
+
+
+class AugmentProvider(FakeProvider):
+    """Провайдер ретрива для вариантов PRI-257: запоминает флаги подмешивания."""
+
+    def code_multi(self, repo, branch, queries, limits, *,
+                   similar_paths=False, cochange=False):
+        self.calls.append((repo, branch, list(queries), limits,
+                           similar_paths, cochange))
+        return self.text
+
+
+def test_similar_paths_variant_enables_only_similar_flag():
+    provider = AugmentProvider(HEADER)
+    task, target = _inputs()
+    assert variants.get_variant("similar_paths")(provider, task, target) == \
+        {"reviewer/a.py"}
+    call = provider.calls[0]
+    assert call[4] is True and call[5] is False
+
+
+def test_cochange_variant_enables_only_cochange_flag():
+    provider = AugmentProvider(HEADER)
+    task, target = _inputs()
+    assert variants.get_variant("cochange")(provider, task, target) == {"reviewer/a.py"}
+    call = provider.calls[0]
+    assert call[4] is False and call[5] is True
+
+
+def test_augmented_variant_enables_both_flags():
+    provider = AugmentProvider(HEADER)
+    task, target = _inputs()
+    assert variants.get_variant("augmented")(provider, task, target) == {"reviewer/a.py"}
+    call = provider.calls[0]
+    assert call[4] is True and call[5] is True
+
+
 def test_parse_overrides_accepts_code_section():
     """Файловый бюджет секции code выразим оверрайдом (PRI-256).
 

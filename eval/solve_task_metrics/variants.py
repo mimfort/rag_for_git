@@ -70,10 +70,41 @@ def _multiquery(provider, task: TaskInput, target: ReplayTarget) -> set:
     return extract_context_paths(text)
 
 
+def _augmented(provider, task: TaskInput, target: ReplayTarget, *,
+               similar: bool, cochange: bool) -> set:
+    """Мультизапрос плюс подмешанные путевые сигналы (PRI-257).
+
+    Рычаги включаются раздельно, потому что критерий приёмки требует мерить
+    дельту каждого: включённые вместе они дали бы одно число на два решения.
+    """
+    queries = build_subqueries(task.task, task.query)
+    text = provider.code_multi(target.repo, target.branch, queries, target.limits,
+                               similar_paths=similar, cochange=cochange)
+    return extract_context_paths(text)
+
+
+def _similar_paths(provider, task: TaskInput, target: ReplayTarget) -> set:
+    """Только diff-пути похожих задач."""
+    return _augmented(provider, task, target, similar=True, cochange=False)
+
+
+def _cochange(provider, task: TaskInput, target: ReplayTarget) -> set:
+    """Только git-со-изменяемость."""
+    return _augmented(provider, task, target, similar=False, cochange=True)
+
+
+def _both(provider, task: TaskInput, target: ReplayTarget) -> set:
+    """Оба сигнала вместе — верхняя оценка совокупного эффекта."""
+    return _augmented(provider, task, target, similar=True, cochange=True)
+
+
 _REGISTRY = {
     "baseline": _baseline,
     "limits": _limits,
     "multiquery": _multiquery,
+    "similar_paths": _similar_paths,
+    "cochange": _cochange,
+    "augmented": _both,
 }
 
 VARIANT_NAMES = tuple(_REGISTRY)

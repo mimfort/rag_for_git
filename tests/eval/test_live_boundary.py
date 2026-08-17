@@ -130,6 +130,144 @@ def test_code_multi_with_overrides_passes_section_limits(monkeypatch):
     assert captured["section_limits"].max_files == 4
 
 
+def test_code_multi_without_flags_passes_no_augment_signals():
+    """Без similar_paths/cochange (PRI-257) _search_codebase_multi зовётся
+    ровно как раньше — augment_paths/cochange остаются None."""
+    from eval.solve_task_metrics.live import LiveRetrieval
+
+    class FakeService:
+        def _search_codebase_multi(self, repo, queries, branch, include_tests,
+                                   *, augment_paths=None, cochange=None):
+            self.calls = getattr(self, "calls", [])
+            self.calls.append((repo, queries, branch, include_tests,
+                               augment_paths, cochange))
+            return "текст"
+
+    service = FakeService()
+    provider = LiveRetrieval(object(), object(), service)
+    out = provider.code_multi("o/n", "dev", ["q"], None)
+
+    assert out == "текст"
+    call = service.calls[0]
+    assert call == ("o/n", ["q"], "dev", False, None, None)
+
+
+def test_code_multi_similar_paths_flag_uses_production_deps(monkeypatch):
+    """similar_paths=True собирает augment_paths продакшн-объектом _TaskContextDeps."""
+    from eval.solve_task_metrics.live import LiveRetrieval
+    from reviewer.mcp import service as service_mod
+
+    class FakeDeps:
+        def __init__(self, service, path):
+            self.similar_calls: list = []
+
+        def similar(self, query, project):
+            self.similar_calls.append((query, project))
+
+        def _augment_paths(self, repo):
+            return ["a.py"]
+
+        def _cochange(self, repo):  # не должен вызываться при cochange=False
+            raise AssertionError("_cochange не должен звонить без флага cochange")
+
+    monkeypatch.setattr(service_mod, "_TaskContextDeps", FakeDeps)
+
+    class FakeService:
+        def _search_codebase_multi(self, repo, queries, branch, include_tests,
+                                   *, augment_paths=None, cochange=None):
+            self.captured = (augment_paths, cochange)
+            return "текст"
+
+    service = FakeService()
+    provider = LiveRetrieval(object(), object(), service)
+    provider.code_multi("o/n", "dev", ["q1", "q2"], None, similar_paths=True)
+
+    assert service.captured == (["a.py"], None)
+
+
+def test_code_multi_cochange_flag_uses_production_deps(monkeypatch):
+    """cochange=True собирает co-change callable продакшн-объектом _TaskContextDeps."""
+    from eval.solve_task_metrics.live import LiveRetrieval
+    from reviewer.mcp import service as service_mod
+
+    def _cochange_fn(seeds):
+        return ["c.py"]
+
+    class FakeDeps:
+        def __init__(self, service, path):
+            pass
+
+        def similar(self, query, project):  # не должен звонить без флага similar_paths
+            raise AssertionError("similar не должен звонить без флага similar_paths")
+
+        def _cochange(self, repo):
+            return _cochange_fn
+
+    monkeypatch.setattr(service_mod, "_TaskContextDeps", FakeDeps)
+
+    class FakeService:
+        def _search_codebase_multi(self, repo, queries, branch, include_tests,
+                                   *, augment_paths=None, cochange=None):
+            self.captured = (augment_paths, cochange)
+            return "текст"
+
+    service = FakeService()
+    provider = LiveRetrieval(object(), object(), service)
+    provider.code_multi("o/n", "dev", ["q1"], None, cochange=True)
+
+    assert service.captured == (None, _cochange_fn)
+
+
+def test_code_multi_with_overrides_forwards_augment_signals(monkeypatch):
+    """Оверрайды лимитов не глушат augment_paths/cochange — они доезжают до search_multi."""
+    from reviewer.policy.context_limits import ContextLimits
+    from reviewer.retrieval import multiquery
+
+    from eval.solve_task_metrics.live import LiveRetrieval
+    from reviewer.mcp import service as service_mod
+
+    class FakeDeps:
+        def __init__(self, service, path):
+            pass
+
+        def similar(self, query, project):
+            pass
+
+        def _augment_paths(self, repo):
+            return ["a.py"]
+
+        def _cochange(self, repo):
+            return None
+
+    monkeypatch.setattr(service_mod, "_TaskContextDeps", FakeDeps)
+
+    class FakeService:
+        def _resolve_context_limits(self, repo, branch):
+            return ContextLimits()
+
+    class FakeComponents:
+        retriever = object()
+
+    captured: dict = {}
+
+    def fake_search_multi(retriever, repo, queries, **kwargs):
+        captured.update(kwargs)
+
+        class Pack:
+            def as_context(self, line_numbers=True):
+                return "текст"
+
+        return Pack()
+
+    monkeypatch.setattr(multiquery, "search_multi", fake_search_multi)
+    provider = LiveRetrieval(object(), FakeComponents(), FakeService())
+    provider.code_multi("o/n", "dev", ["q"], {"code_section": {"max_files": 4}},
+                        similar_paths=True)
+
+    assert captured["augment_paths"] == ["a.py"]
+    assert captured["cochange"] is None
+
+
 @pytest.mark.integration
 def test_open_live_wires_and_closes_components():
     """Проводка живого провайдера: компоненты собираются, preflight отвечает, close не падает.
