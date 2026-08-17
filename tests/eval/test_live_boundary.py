@@ -21,7 +21,10 @@ IMPORT_RE = re.compile(
 
 # Ре-экспорты расчётного ядра (PRI-249) — не живые зависимости: чистые функции
 # без ввода-вывода. Плюс live.py, который и есть объявленное исключение.
-ALLOWED = {"briefs.py", "classify.py", "recall.py", "live.py"}
+# variants.py и subquery_stats.py (PRI-255) импортируют reviewer.mcp.subqueries —
+# тоже чистую функцию без сети/БД: формула подзапросов производна от текста
+# задачи, не от живой инфраструктуры.
+ALLOWED = {"briefs.py", "classify.py", "recall.py", "live.py", "variants.py", "subquery_stats.py"}
 
 
 def test_only_live_module_imports_reviewer():

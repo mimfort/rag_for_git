@@ -122,6 +122,22 @@ class LiveRetrieval:
         )
         return pack.as_context(line_numbers=True) or "(ничего не найдено)"
 
+    def code_multi(self, repo: str, branch: str, queries: list, limits: dict | None) -> str:
+        """Мультизапросная выдача тем же продакшн-путём, что видит сборщик брифа."""
+        if not limits:
+            return self._service._search_codebase_multi(repo, list(queries), branch, False)
+        from reviewer.retrieval.multiquery import search_multi
+        base = limits_to_yaml(self._service._resolve_context_limits(repo, branch))
+        effective = ContextLimits.from_review_yaml(
+            {"context_limits": _merge(base, limits)}
+        )
+        pack = search_multi(
+            self._components.retriever, repo, list(queries),
+            limits=effective.search_codebase, hops=effective.graph.hops,
+            branch=branch, include_tests=False,
+        )
+        return pack.as_context(line_numbers=True) or "(ничего не найдено)"
+
 
 def open_live(repo: str | None = None, branch: str | None = None) -> tuple:
     """Собрать живой провайдер и вернуть (provider, repo, branch).

@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from reviewer.mcp.subqueries import build_subqueries
+
 from .context_paths import extract_context_paths
 
 # Разделы блока context_limits, которые разрешено оверрайдить: форма совпадает
@@ -57,9 +59,21 @@ def _limits(provider, task: TaskInput, target: ReplayTarget) -> set:
     return _paths(provider, task, target, target.limits)
 
 
+def _multiquery(provider, task: TaskInput, target: ReplayTarget) -> set:
+    """Мультизапрос по структуре и сущностям задачи с RRF-слиянием (PRI-255).
+
+    Набор подзапросов строится ПРОДАКШН-функцией: своей копии формулы здесь
+    не заводится, иначе replay мерил бы не тот вход, что видит прод.
+    """
+    queries = build_subqueries(task.task, task.query)
+    text = provider.code_multi(target.repo, target.branch, queries, target.limits)
+    return extract_context_paths(text)
+
+
 _REGISTRY = {
     "baseline": _baseline,
     "limits": _limits,
+    "multiquery": _multiquery,
 }
 
 VARIANT_NAMES = tuple(_REGISTRY)
