@@ -339,6 +339,21 @@ def test_augmented_do_not_displace_hybrid_when_budget_is_full():
         "при полном бюджете max_files подмешанные вытесняются гибридом"
 
 
+def test_augmented_paths_not_found_in_store_leave_no_trace():
+    """augment_paths непуст, но стор ничего не нашёл по этим путям — нет ни ноты, ни файлов.
+
+    Требуемый путь не проиндексирован в base (или ещё не догнал base-индекс);
+    _augment_items уже фильтрует пустой fetched, но факт нужно закрепить тестом
+    на уровне search_multi (PRI-257, добор ревью task 3)."""
+    store = _FakeStore({"q0": [_bm25("a.py#f")]}, nodes_by_path={})
+    pack = search_multi(
+        _Retriever(store, _FakeEmbedder()), "o/n", ["q0"], limits=CodebaseLimits(),
+        section_limits=CodeSectionLimits(max_augmented_files=3), branch="dev",
+        augment_paths=["x.py"])
+    assert pack.augment_note is None
+    assert "x.py" not in {it.path for it in pack.items}
+
+
 def test_augment_note_reports_sources_and_quota():
     store = _FakeStore({"q0": [_bm25("a.py#f")]},
                        nodes_by_path={"x.py": _hit("x.py#s"), "c.py": _hit("c.py#s")})
