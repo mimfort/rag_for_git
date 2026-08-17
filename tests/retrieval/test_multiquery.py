@@ -1,7 +1,9 @@
 """RRF-слияние выдач подзапросов и обрезка блока рендера (PRI-255)."""
 from reviewer.index.store import Retrieved
-from reviewer.policy.context_limits import CodebaseLimits
-from reviewer.retrieval.multiquery import MAX_BLOCK_CHARS, cap_block, rrf_merge, search_multi
+from reviewer.policy.context_limits import CodebaseLimits, CodeSectionLimits
+from reviewer.retrieval.multiquery import (
+    cap_block, diversify_by_file, rrf_merge, search_multi,
+)
 
 
 def _hit(node_id: str, start_line: int = 1, end_line: int = 2, text: str = "body"):
@@ -42,14 +44,14 @@ def test_empty_runs_yield_empty_result():
 
 def test_short_block_is_untouched():
     item = _hit("a.py#f", 10, 11, "one\ntwo")
-    assert cap_block(item) is item
+    assert cap_block(item, 2000) is item
 
 
 def test_long_block_is_cut_on_line_boundary_with_honest_end_line():
     body = "\n".join(f"строка {i}" * 20 for i in range(200))
     item = _hit("a.py#f", start_line=100, end_line=299, text=body)
-    capped = cap_block(item)
-    assert len(capped.text) <= MAX_BLOCK_CHARS
+    capped = cap_block(item, 2000)
+    assert len(capped.text) <= 2000
     assert capped.text.splitlines() == item.text.splitlines()[: len(capped.text.splitlines())]
     assert capped.end_line == 100 + len(capped.text.splitlines()) - 1
     assert capped.end_line < 299
@@ -57,7 +59,7 @@ def test_long_block_is_cut_on_line_boundary_with_honest_end_line():
 
 def test_cap_block_does_not_mutate_source():
     item = _hit("a.py#f", 1, 400, "x" * 5000)
-    cap_block(item)
+    cap_block(item, 2000)
     assert len(item.text) == 5000
 
 
@@ -181,13 +183,13 @@ def test_ann_prefilter_drops_distant_non_lexical_hit():
     assert {it.path for it in pack.items} == {"a.py"}
 
 
-def test_ceiling_caps_merged_output():
+def test_file_budget_caps_distinct_files():
+    """Выдачу режет файловый бюджет секции, а не чанковый ceiling общего поиска."""
     hits = [_bm25(f"f{i}.py#s") for i in range(40)]
     store = _FakeStore({"q0": hits})
-    limits = CodebaseLimits(ceiling=5)
     pack = search_multi(_Retriever(store, _FakeEmbedder()), "o/n", ["q0"],
-                        limits=limits, branch="dev")
-    assert len(pack.items) == 5
+                        limits=CodebaseLimits(ceiling=5), branch="dev")
+    assert len({it.path for it in pack.items}) == 12, "дефолт max_files, а не ceiling=5"
 
 
 def test_blocks_are_capped_before_render():
@@ -230,3 +232,57 @@ def test_duplicate_queries_are_deduplicated_preserving_order():
     assert embedder.batches == [["z", "a"]], "дубль не уходит в батч эмбеддера повторно"
     assert store.queries == ["z", "a"], "дубль не даёт второй прогон гибрида"
     assert {it.path for it in pack.items} == {"a.py", "b.py"}
+
+
+def test_diversify_keeps_one_chunk_per_file_by_default():
+    items = [_hit("a.py#f1"), _hit("a.py#f2"), _hit("b.py#g")]
+    kept = diversify_by_file(items, max_files=10, max_chunks_per_file=1)
+    assert [it.node_id for it in kept] == ["a.py#f1", "b.py#g"]
+
+
+def test_diversify_allows_several_chunks_when_configured():
+    items = [_hit("a.py#f1"), _hit("a.py#f2"), _hit("a.py#f3")]
+    kept = diversify_by_file(items, max_files=10, max_chunks_per_file=2)
+    assert [it.node_id for it in kept] == ["a.py#f1", "a.py#f2"]
+
+
+def test_diversify_caps_distinct_files_and_keeps_input_order():
+    items = [_hit(f"f{i}.py#s") for i in range(10)]
+    kept = diversify_by_file(items, max_files=3, max_chunks_per_file=1)
+    assert [it.path for it in kept] == ["f0.py", "f1.py", "f2.py"]
+
+
+def test_diversify_degenerate_values_do_not_crash():
+    items = [_hit("a.py#f"), _hit("b.py#g")]
+    assert diversify_by_file(items, max_files=0, max_chunks_per_file=1) == []
+    assert diversify_by_file([], max_files=5, max_chunks_per_file=1) == []
+
+
+def test_graph_only_tail_yields_to_hybrid_files():
+    """Приоритет входного порядка: hybrid-файлы занимают бюджет раньше graph-only."""
+    graph_node = _hit("graph.py#z")
+    store = _FakeStore({"q0": [_bm25("hyb.py#a")]},
+                       nodes_by_id={"graph.py#z": graph_node})
+    retriever = _Retriever(store, _FakeEmbedder(), graph=_FakeGraph(["graph.py#z"]))
+    pack = search_multi(retriever, "o/n", ["q0"], limits=CodebaseLimits(),
+                        section_limits=CodeSectionLimits(max_files=1), branch="dev")
+    assert [it.path for it in pack.items] == ["hyb.py"]
+
+
+def test_section_budget_fits_selected_files_without_truncation():
+    """Производный бюджет обязан вмещать то, что отобрано: среза строки нет."""
+    body = "\n".join("y" * 80 for _ in range(60))
+    store = _FakeStore({"q0": [_bm25(f"f{i}.py#s", text=body) for i in range(12)]})
+    pack = search_multi(_Retriever(store, _FakeEmbedder()), "o/n", ["q0"],
+                        limits=CodebaseLimits(), branch="dev")
+    context = pack.as_context(line_numbers=True)
+    assert "[...truncated]" not in context
+    assert len({it.path for it in pack.items}) == 12
+
+
+def test_section_budget_ignores_retriever_max_context_chars():
+    """Бюджет секции отдельный: max_context_chars ретривера на неё не влияет."""
+    store = _FakeStore({"q0": [_bm25("a.py#f")]})
+    pack = search_multi(_Retriever(store, _FakeEmbedder(), max_context_chars=100),
+                        "o/n", ["q0"], limits=CodebaseLimits(), branch="dev")
+    assert pack.max_chars == CodeSectionLimits().max_chars
