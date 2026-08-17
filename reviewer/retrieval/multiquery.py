@@ -152,7 +152,10 @@ def search_multi(retriever, repo: str, queries: list[str], *, limits=None,
     hybrid приоритетен, граф добавляет разнообразие.
 
     Бюджет выдачи файловый (PRI-256): не более section_limits.max_files
-    различных путей, символьный потолок производный — max_files × chars_per_file.
+    различных путей. Операционный бюджет символов — max_files ×
+    max_chunks_per_file × chars_per_file (его держит cap_block на ИСХОДНОМ
+    тексте блока); section_limits.max_chars — лишь страховочный потолок после
+    рендера.
     """
     from reviewer.policy.context_limits import CodebaseLimits, CodeSectionLimits
     lim = limits or CodebaseLimits()

@@ -93,6 +93,7 @@ context_limits:
   # graph: обход кода от топ-хитов (related_symbols / callers).
   graph:
     hops: 1                 # глубина обхода графа от топ-хитов
+    callers_topk: 25        # cap callers на узел
   # code_section: бюджет секции code контекста задачи (PRI-256). Единица
   # бюджета — ФАЙЛ, а не чанк: в бриф уходят строки «path:line — почему»,
   # поэтому 12 файлов там дешевле, чем 4 тела символов. Бюджет независим
@@ -106,4 +107,3 @@ context_limits:
     max_files: 12            # различных файлов в секции code
     max_chunks_per_file: 1   # чанков на один файл
     chars_per_file: 1300     # доля символов на файл (операционный бюджет — на исходный текст блока)
-    callers_topk: 25        # cap callers на узел
