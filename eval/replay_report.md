@@ -1,22 +1,22 @@
 # Replay-метрики ретрива solve-task
 
-Прогон от 2026-08-17T15:09:03.748736+00:00, репозиторий `mimfort/rag_for_git`, ветка `dev`.
+Прогон от 2026-08-17T15:32:46.529484+00:00, репозиторий `mimfort/rag_for_git`, ветка `dev`.
 
 ## Идентичность прогона
 
 - **до**: вариант `multiquery`, коммит `cdb9e609a47494160a3243cfeb8b5db665d754b6`, indexed_sha `951e791246db4577a3913d07b75001bc32ff9969`, корпус 58
-- **после**: вариант `similar_paths`, коммит `428ad261629caa65897c5b7fad0679950b24aa0a`, indexed_sha `951e791246db4577a3913d07b75001bc32ff9969`, корпус 58
+- **после**: вариант `similar_paths`, коммит `066912cf004ff56ab0b360170bfc96cdffd8f5b8`, indexed_sha `951e791246db4577a3913d07b75001bc32ff9969`, корпус 58
 
 > **Стороны различаются не только вариантом:**
 
-> - коммит сторон различается (cdb9e609a47494160a3243cfeb8b5db665d754b6 против 428ad261629caa65897c5b7fad0679950b24aa0a): ground truth мог измениться
+> - коммит сторон различается (cdb9e609a47494160a3243cfeb8b5db665d754b6 против 066912cf004ff56ab0b360170bfc96cdffd8f5b8): ground truth мог измениться
 
 ## Агрегат
 
 | Метрика | до | после | Δ |
 |---|---|---|---|
 | core-recall (медиана) | 0.5 | 0.75 | +0.25 |
-| core-recall (среднее) | 0.5282 | 0.6656 | +0.1374 |
+| core-recall (среднее) | 0.5282 | 0.668 | +0.1398 |
 | core-recall bulk (ядро ≥ 10) | 0.373 | 0.3944 | +0.02143 |
 | bulk N | 4 | 4 | +0 |
 | precision (медиана) | 0.25 | 0.3333 | +0.08333 |
@@ -39,7 +39,7 @@
 | Ключ | Статус | до | после | Δ | приобретено | потеряно |
 |---|---|---|---|---|---|---|
 | PRI-211 | measured | 0 | 1 | +1 | `reviewer/index/store.py` | `reviewer/entrypoints/mcp_server.py` |
-| PRI-238 | measured | 0 | 0.6667 | +0.6667 | `reviewer/entrypoints/mcp_server.py`, `reviewer/mcp/service.py` | `reviewer/graph/scip.py`, `reviewer/tasks/boards/linear.py` |
+| PRI-238 | measured | 0 | 0.6667 | +0.6667 | `reviewer/entrypoints/mcp_server.py`, `reviewer/mcp/service.py`, `reviewer/tasks/graph.py` | `reviewer/graph/scip.py`, `reviewer/tasks/boards/linear.py`, `reviewer/tasks/boards/yandex_tracker.py` |
 | PRI-228 | measured | 0.5 | 1 | +0.5 | `reviewer/app.py`, `reviewer/install.py` | `reviewer/index/store.py`, `reviewer/web/history.py` |
 | PRI-256 | measured | 0.4 | 0.8 | +0.4 | `reviewer/config/layers.py`, `reviewer/mcp/service.py` | `reviewer/index/store.py`, `reviewer/web/history.py` |
 | PRI-245 | measured | 0.2222 | 0.5556 | +0.3333 | `reviewer/config/layers.py`, `reviewer/entrypoints/mcp_server.py`, `reviewer/index/store.py` | `reviewer/config/committed.py`, `reviewer/entrypoints/cli.py`, `reviewer/index/summary_store.py` |
@@ -48,19 +48,22 @@
 | PRI-255 | measured | 0.6667 | 1 | +0.3333 | `reviewer/mcp/service.py` | `reviewer/graph/metrics.py` |
 | PRI-202 | measured | 0.3333 | 0.6667 | +0.3333 | `reviewer/index/reranker.py`, `reviewer/index/store.py`, `reviewer/mcp/session_serde.py` | `reviewer/app.py`, `reviewer/config/branches.py`, `reviewer/index/embeddings.py` |
 | PRI-248 | measured | 0 | 0.3333 | +0.3333 | `reviewer/entrypoints/mcp_server.py` | `reviewer/launcher/app.py` |
+| PRI-196 | measured | 0.5 | 0.8 | +0.3 | `reviewer/app.py`, `reviewer/config/settings.py`, `reviewer/entrypoints/mcp_server.py` | `reviewer/mcp/service.py`, `reviewer/tasks/boards/jira.py`, `reviewer/tasks/boards/linear.py` |
 | PRI-217 | measured | 0 | 0.25 | +0.25 | `reviewer/tasks/boards/graphql.py`, `reviewer/tasks/boards/http.py` | `reviewer/tasks/boards/yougile.py`, `reviewer/tasks/boards/youtrack.py` |
 | PRI-221 | measured | 0.5556 | 0.7778 | +0.2222 | `reviewer/mcp/service.py`, `reviewer/web/history.py` | `reviewer/install.py`, `reviewer/policy/context_limits.py` |
-| PRI-196 | measured | 0.5 | 0.7 | +0.2 | `reviewer/app.py`, `reviewer/config/settings.py` | `reviewer/tasks/boards/jira.py`, `reviewer/tasks/boards/linear.py` |
 | PRI-247 | measured | 0.5 | 0.6667 | +0.1667 | `reviewer/web/api.py` | `reviewer/graph/builder.py` |
 | PRI-251 | measured | 0.1429 | 0.2857 | +0.1429 | `reviewer/entrypoints/mcp_server.py` | `reviewer/tasks/boards/weeek.py` |
 | PRI-213 | measured | 0.7143 | 0.8571 | +0.1429 | `reviewer/tasks/sync.py` | `reviewer/tasks/boards/weeek.py` |
 | PRI-223 | measured | 0.32 | 0.4 | +0.08 | `reviewer/install.py`, `reviewer/tasks/boards/asana.py`, `reviewer/tasks/boards/clickup.py` | `reviewer/config/layers.py`, `reviewer/config/provider_access.py`, `reviewer/tasks/boards/adf.py` |
+| PRI-203 | empty_core_denominator | — | — | — | `reviewer/services/status.py` | `reviewer/app.py` |
 | PRI-208 | empty_core_denominator | — | — | — | `reviewer/policy/policy.py` | `reviewer/tools/code_tools.py` |
+| PRI-212 | measured | 1 | 1 | +0 | `reviewer/config/settings.py`, `reviewer/mcp/session_serde.py` | `reviewer/gitutil.py`, `reviewer/services/review_service.py` |
 | PRI-172 | measured | 0 | 0 | +0 | `plugin/hooks/brief_post_write.py` | — |
 | PRI-218 | measured | 1 | 1 | +0 | `reviewer/launcher/catalog.py`, `reviewer/launcher/models.py` | `reviewer/launcher/command.py`, `reviewer/tasks/taskdoc.py` |
+| PRI-178 | measured | 1 | 1 | +0 | `reviewer/index/reranker.py` | `reviewer/tools/code_tools.py` |
 | PRI-234 | measured | 1 | 1 | +0 | `reviewer/config/fetch_errors.py` | `reviewer/tasks/boards/base.py` |
 | PRI-236 | measured | 1 | 1 | +0 | `reviewer/config/layers.py` | `reviewer/tasks/boards/base.py` |
-| _и ещё 36_ | без изменений | — | — | — | — | — |
+| _и ещё 33_ | без изменений | — | — | — | — | — |
 
 ## Оговорка
 
@@ -304,6 +307,11 @@ for i, name in enumerate(("символов до", "символов после"
 
 **Дельта измерена против `multiquery`, а не против `baseline`.** Сторона «до» — уже улучшенный
 PRI-255/256 путь; выигрыш +0.25 медианы получен поверх него.
+
+Контрольный прогон после фикса финального ревью (перенос фильтра тестовых путей внутрь квоты,
+коммит `066912c`) повторил числа в точности: медиана 0.75, bulk 0.3944 на том же `indexed_sha`.
+Совпадение ожидаемо — на этом корпусе квота ни разу не выгорала на тестовых путях; фикс закрывает
+случай, который корпус не содержит, а не меняет измеренный эффект.
 
 ### Процедура воспроизведения
 
