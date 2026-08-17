@@ -1,5 +1,9 @@
 # PRI-258 — Разворот кластеров subsystems в файлы-кандидаты: план реализации
 
+> **План исполнен полностью, включая gate-задачу Task 8 — и по её отрицательному вердикту рычаг
+> снят** (коммит `393cc77`, ветка выпиливания предусмотрена самим Task 8 Step 4). Task 9
+> (документация рычага) не исполнялась. Числа — раздел «Приёмка PRI-258» в `eval/replay_report.md`.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Подмешивать в секцию `code` контекста задачи файлы релевантных кластеров сводок
