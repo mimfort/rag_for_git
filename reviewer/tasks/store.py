@@ -73,6 +73,7 @@ class TaskHit:
     title: str
     status: str | None
     score: float
+    aliases: list[str] = field(default_factory=list)
 
 
 class TaskStore:
@@ -269,9 +270,9 @@ class TaskStore:
             SELECT id, 1.0/(60+rank) AS s FROM bm25
             UNION ALL SELECT id, 1.0/(60+rank) AS s FROM ann
         )
-        SELECT t.key, t.title, t.status, SUM(r.s) AS score
+        SELECT t.key, t.title, t.status, t.aliases, SUM(r.s) AS score
         FROM rrf r JOIN tasks t USING (id)
-        GROUP BY t.id, t.key, t.title, t.status
+        GROUP BY t.id, t.key, t.title, t.status, t.aliases
         ORDER BY score DESC LIMIT %(k)s
         """
         params = {"q": _bm25_query(query_text), "vec": Vector(query_embedding),
@@ -280,5 +281,5 @@ class TaskStore:
             params["project"] = project
         with self._connect() as conn:
             rows = conn.execute(sql, params).fetchall()
-        return [TaskHit(key=k, title=t, status=s, score=float(sc))
-                for (k, t, s, sc) in rows]
+        return [TaskHit(key=k, title=t, status=s, score=float(sc), aliases=list(a or []))
+                for (k, t, s, a, sc) in rows]

@@ -110,6 +110,8 @@ def build_task_context(deps, *, repo: str, key: str, branch: str,
     payload["code"] = _safe(
         payload, "code", lambda: deps.code(repo, branch, _queries(task, key)), "",
         "поиск по коду недоступен")
+    for reason in getattr(deps, "augment_gaps", []) or []:
+        payload["gaps"].append(gap("code.augment", reason))
     payload["test_exemplars"] = _safe(
         payload, "test_exemplars",
         lambda: deps.test_exemplars(repo, branch, _test_queries(task, key)), "",

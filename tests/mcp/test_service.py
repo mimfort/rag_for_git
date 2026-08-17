@@ -14,6 +14,8 @@ import pytest
 from reviewer.config.settings import Settings
 from reviewer.mcp.service import MCPReviewService
 from reviewer.policy.context_limits import CodebaseLimits
+from reviewer.retrieval.augment import AugmentResult
+from reviewer.tasks.store import TaskHit
 from reviewer.vcs.base import (
     ChangedFile,
     PullRequest,
@@ -745,6 +747,9 @@ def test_task_context_deps_code_passes_include_tests_false() -> None:
 
     Перепутанный позиционный аргумент незаметен для FakeDeps-тестов task_context —
     там подменяется весь слой deps. Тест ловит именно проводку внутри service.py.
+
+    augment_paths (PRI-257) идёт kwarg: без предшествующего similar()
+    _similar_hits пуст, поэтому augment_paths=[] — как и раньше до PRI-257.
     """
     from reviewer.mcp.service import _TaskContextDeps
 
@@ -754,9 +759,90 @@ def test_task_context_deps_code_passes_include_tests_false() -> None:
 
     result = deps.code("o/r", "dev", ["q1", "q2"])
 
-    fake_service._search_codebase_multi.assert_called_once_with(
-        "o/r", ["q1", "q2"], "dev", False)
+    call = fake_service._search_codebase_multi.call_args
+    assert call.args == ("o/r", ["q1", "q2"], "dev", False)
+    assert call.kwargs["augment_paths"] == []
     assert result == "code-out"
+
+
+def test_task_context_deps_similar_stores_hits_and_renders_once() -> None:
+    """_TaskContextDeps.similar делает один поиск (search_hits) и рендерит его же результат.
+
+    Второй вызов означал бы второй embed_query — лишний расход квоты Voyage.
+    """
+    from reviewer.mcp.service import _TaskContextDeps
+
+    fake_service = MagicMock()
+    hits = [TaskHit(key="ID-311", title="T", status="open", score=0.02,
+                    aliases=["PRI-257"])]
+    fake_service.components.task_service.search_hits.return_value = hits
+    fake_service.components.task_service.render_hits.return_value = "1. ID-311 ..."
+    deps = _TaskContextDeps(fake_service, None)
+
+    result = deps.similar("query", "PRI")
+
+    fake_service.components.task_service.search_hits.assert_called_once_with(
+        "query", project="PRI")
+    fake_service.components.task_service.render_hits.assert_called_once_with(hits)
+    assert result == "1. ID-311 ..."
+    assert deps._similar_hits == hits
+
+
+def test_task_context_deps_code_augments_from_similar_hits_with_aliases() -> None:
+    """code() подмешивает пути похожих задач, ключуя по канону И по алиасам хита."""
+    from reviewer.mcp.service import _TaskContextDeps
+
+    fake_service = MagicMock()
+    fake_service._repo_clone_path.return_value = "/clone"
+    fake_service.components.task_service.search_hits.return_value = [
+        TaskHit(key="ID-311", title="T", status="open", score=0.02,
+               aliases=["PRI-257"]),
+    ]
+    fake_service.components.task_service.render_hits.return_value = "1. ID-311 ..."
+    fake_service._search_codebase_multi.return_value = "code-out"
+    deps = _TaskContextDeps(fake_service, None)
+
+    deps.similar("query", "PRI")
+    with patch("reviewer.retrieval.augment.collect_similar_task_paths") as collect:
+        collect.return_value = AugmentResult(paths=["a.py"], gaps=[])
+        deps.code("o/r", "dev", ["q1"])
+
+    call_kwargs = collect.call_args.kwargs
+    assert call_kwargs["keys"] == ["ID-311"]
+    assert call_kwargs["aliases_by_key"] == {"ID-311": ["PRI-257"]}
+
+
+def test_task_context_deps_augment_paths_empty_without_similar_call() -> None:
+    """Без предшествующего similar() подмешивание не запускается — нет хитов."""
+    from reviewer.mcp.service import _TaskContextDeps
+
+    fake_service = MagicMock()
+    deps = _TaskContextDeps(fake_service, None)
+
+    assert deps._augment_paths("o/r") == []
+    assert deps.augment_gaps == []
+
+
+def test_task_context_deps_history_failure_is_a_gap_not_an_exception() -> None:
+    """Сбой _ensure_history не роняет сборку — пробел копится в augment_gaps."""
+    from reviewer.mcp.service import _TaskContextDeps
+
+    fake_service = MagicMock()
+    fake_service._review_service._ensure_history.side_effect = RuntimeError("no pg")
+    fake_service.components.task_service.search_hits.return_value = [
+        TaskHit(key="ID-311", title="T", status="open", score=0.02),
+    ]
+    fake_service.components.task_service.render_hits.return_value = "1. ID-311 ..."
+    deps = _TaskContextDeps(fake_service, None)
+    deps.similar("query", "PRI")
+
+    with patch("reviewer.retrieval.augment.collect_similar_task_paths") as collect:
+        collect.return_value = AugmentResult()
+        paths = deps._augment_paths("o/r")
+
+    assert paths == []
+    assert any("история прогонов недоступна" in g for g in deps.augment_gaps)
+    assert collect.call_args.kwargs["history"] is None
 
 
 def test_task_context_deps_test_exemplars_passes_include_tests_true() -> None:

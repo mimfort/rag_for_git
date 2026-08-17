@@ -70,10 +70,25 @@ def _multiquery(provider, task: TaskInput, target: ReplayTarget) -> set:
     return extract_context_paths(text)
 
 
+def _similar_paths(provider, task: TaskInput, target: ReplayTarget) -> set:
+    """Мультизапрос плюс подмешанные diff-пути похожих задач (PRI-257).
+
+    Co-change как второй рычаг снят по итогам приёмки (12 % точность,
+    просадка bulk, ноль вклада поверх similar-diffs) — см.
+    .superpowers/sdd/2026-08-17-pri-257-augmented-candidates/
+    step8-measurement.md, «Вердикт по критерию приёмки 1».
+    """
+    queries = build_subqueries(task.task, task.query)
+    text = provider.code_multi(target.repo, target.branch, queries, target.limits,
+                               similar_paths=True)
+    return extract_context_paths(text)
+
+
 _REGISTRY = {
     "baseline": _baseline,
     "limits": _limits,
     "multiquery": _multiquery,
+    "similar_paths": _similar_paths,
 }
 
 VARIANT_NAMES = tuple(_REGISTRY)

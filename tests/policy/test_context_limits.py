@@ -61,3 +61,12 @@ def test_code_section_is_independent_of_search_codebase():
         {"context_limits": {"search_codebase": {"ceiling": 30}}})
     assert cl.search_codebase.ceiling == 30
     assert cl.code_section == CodeSectionLimits()
+
+
+def test_code_section_augmented_quota_default_and_override():
+    from reviewer.policy.context_limits import CodeSectionLimits, ContextLimits
+    assert CodeSectionLimits().max_augmented_files == 3
+    limits = ContextLimits.from_review_yaml(
+        {"context_limits": {"code_section": {"max_augmented_files": 5}}})
+    assert limits.code_section.max_augmented_files == 5
+    assert limits.code_section.max_files == 12, "прочие ключи остаются дефолтными"

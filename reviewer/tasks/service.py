@@ -315,20 +315,33 @@ class TaskService:
                     warnings.append(f"graph {m['key']}: {type(e).__name__}: {e}")
         return {"meta_refreshed": len(metas), "warnings": warnings}
 
-    def search_tasks(self, query: str, top_k: int | None = None,
-                     project: str | None = None) -> str:
-        """Похожие задачи (RRF, без реранкера) с рельсой ceiling (PRI-202).
+    def search_hits(self, query: str, top_k: int | None = None,
+                    project: str | None = None) -> list | None:
+        """Структурные хиты похожих задач (PRI-257).
 
-        top_k — override потолка (None → дефолт-константа). Фетчим больше кандидатов,
-        возвращаем ≤ceiling, при хвосте дописываем заметку. Пусто/сбой → нота.
+        Отдельный метод, потому что подмешивание diff-путей ключуется по
+        hit.key и hit.aliases: парсить их regex'ом из человекочитаемого
+        рендера search_tasks значило бы завязаться на формат сообщения.
+
+        None и [] различаются намеренно: прежний search_tasks отдавал разные
+        ноты на «источник недоступен» и «ничего не найдено», и схлопывание их
+        в пустой список было бы регрессией контракта. None — сбой, [] — пусто.
         """
         from reviewer.policy.context_limits import TasksLimits
         ceiling = top_k or TasksLimits.ceiling
         try:
             vec = self._embedder.embed_query(query)
-            hits = self._store.search(query, vec, top_k=max(ceiling * 3, 30), project=project)
+            return self._store.search(query, vec, top_k=max(ceiling * 3, 30),
+                                      project=project)
         except Exception:
-            log.warning("search_tasks: сбой поиска по запросу %r", query, exc_info=True)
+            log.warning("search_hits: сбой поиска по запросу %r", query, exc_info=True)
+            return None
+
+    def render_hits(self, hits: list | None, top_k: int | None = None) -> str:
+        """Рендер хитов в формат search_tasks. Формат не менялся с PRI-202."""
+        from reviewer.policy.context_limits import TasksLimits
+        ceiling = top_k or TasksLimits.ceiling
+        if hits is None:
             return "(task search unavailable)"
         if not hits:
             return "(no similar tasks found)"
@@ -343,6 +356,15 @@ class TaskService:
             lines.append(f"— показано {ceiling} из {total} (рельса ceiling). "
                          f"Перевызови с большим ceiling для остальных.")
         return "\n".join(lines)
+
+    def search_tasks(self, query: str, top_k: int | None = None,
+                     project: str | None = None) -> str:
+        """Похожие задачи (RRF, без реранкера) с рельсой ceiling (PRI-202).
+
+        Композиция search_hits + render_hits: изменился только способ
+        получения, не формат (PRI-257).
+        """
+        return self.render_hits(self.search_hits(query, top_k, project=project), top_k)
 
     def get_task_context(self, key: str, project: str | None = None) -> str:
         """Граф-контекст задачи: связанные задачи → их PR → код. Деградация → нота."""

@@ -1796,11 +1796,16 @@ class MCPReviewService:
 
     def _search_codebase_multi(self, repo: str, queries: list[str],
                                branch: str | None = None,
-                               include_tests: bool = False) -> str:
+                               include_tests: bool = False,
+                               augment_paths: list[str] | None = None) -> str:
         """Мультизапросный ретрив секций контекста задачи (PRI-255).
 
         Приватный: публичный search_codebase остаётся однозапросным, чтобы
         /ask, грунтовка и ревью PR не меняли поведение.
+
+        augment_paths (PRI-257) — третий источник кандидатов (фактические
+        diff-пути похожих задач); см. search_multi. Co-change как источник
+        снят по итогам приёмки (step8-measurement.md).
         """
         from reviewer.retrieval.multiquery import search_multi
         rb = self._resolve_repo_branch(repo, branch)
@@ -1812,7 +1817,8 @@ class MCPReviewService:
             pack = search_multi(
                 self.components.retriever, repo, queries,
                 limits=cl.search_codebase, section_limits=cl.code_section,
-                hops=cl.graph.hops, branch=resolved, include_tests=include_tests)
+                hops=cl.graph.hops, branch=resolved, include_tests=include_tests,
+                augment_paths=augment_paths)
         except Exception:
             log.warning("_search_codebase_multi: сбой поиска", exc_info=True)
             return "(ничего не найдено)"
@@ -3501,6 +3507,10 @@ def _format_pr_diff(files: list[ChangedFile]) -> str:
     return out
 
 
+AUGMENT_LOOKUP_LIMIT = 20
+"""Сколько путей источник отдаёт ДО квоты: квота режет позже, в search_multi (PRI-257)."""
+
+
 class _TaskContextDeps:
     """Источники секций prepare_task_context поверх живых компонентов сервиса.
 
@@ -3511,6 +3521,8 @@ class _TaskContextDeps:
     def __init__(self, service: "MCPReviewService", path: str | None):
         self._service = service
         self._path = path
+        self._similar_hits: list = []
+        self.augment_gaps: list[str] = []
 
     def _clone_path(self, repo: str) -> str:
         return self._path or self._service._repo_clone_path(repo) or ""
@@ -3549,13 +3561,57 @@ class _TaskContextDeps:
         return self._service.get_task_context(key, project=project)
 
     def similar(self, query: str, project: str | None) -> str:
-        return self._service.search_tasks(query, project=project)
+        """Похожие задачи. Побочно запоминает структурные хиты для секции code.
+
+        Хиты берутся из ОДНОГО поиска: второй вызов означал бы второй
+        embed_query и лишний расход квоты Voyage (3 RPM / 10K TPM). Порядок
+        вызовов (similar до code) закреплён тестом build_task_context.
+        """
+        service = self._service.components.task_service
+        hits = service.search_hits(query, project=project)
+        self._similar_hits = list(hits or [])
+        return service.render_hits(hits)
+
+    def _augment_paths(self, repo: str) -> list[str]:
+        """Фактические diff-пути похожих задач. Пробелы копятся в augment_gaps.
+
+        Обёрнуто целиком: сбой сигнала подмешивания не должен обнулять всю
+        секцию code (поиск по коду) через общий _safe в task_context.py —
+        только сам сигнал.
+        """
+        from reviewer.retrieval.augment import collect_similar_task_paths
+        if not self._similar_hits:
+            return []
+        try:
+            keys = [hit.key for hit in self._similar_hits]
+            aliases = {hit.key: list(getattr(hit, "aliases", []) or [])
+                      for hit in self._similar_hits}
+            history = None
+            try:
+                history = self._service._review_service._ensure_history()
+            except Exception as exc:  # noqa: BLE001 — история недоступна, штатный случай
+                reason = f"история прогонов недоступна: {type(exc).__name__}"
+                log.warning("_TaskContextDeps._augment_paths: %s", reason, exc_info=True)
+                self.augment_gaps.append(reason)
+            result = collect_similar_task_paths(
+                keys=keys, aliases_by_key=aliases, history=history,
+                clone_path=self._clone_path(repo), limit=AUGMENT_LOOKUP_LIMIT)
+            for reason in result.gaps:
+                log.warning("_TaskContextDeps._augment_paths: %s", reason)
+            self.augment_gaps.extend(result.gaps)
+            return result.paths
+        except Exception:  # noqa: BLE001 — источник подмешивания недоступен целиком
+            log.warning("_TaskContextDeps._augment_paths: сбой сбора путей", exc_info=True)
+            self.augment_gaps.append("подмешивание путей похожих задач недоступно")
+            return []
 
     def subsystems(self, repo: str, branch: str, query: str) -> dict:
         return self._service.get_subsystem_summaries(repo, branch, None, query, None)
 
     def code(self, repo: str, branch: str, queries: list) -> str:
-        return self._service._search_codebase_multi(repo, queries, branch, False)
+        return self._service._search_codebase_multi(
+            repo, queries, branch, False,
+            augment_paths=self._augment_paths(repo))
 
     def test_exemplars(self, repo: str, branch: str, queries: list) -> str:
         return self._service._search_codebase_multi(repo, queries, branch, True)

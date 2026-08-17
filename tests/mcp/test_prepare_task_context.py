@@ -254,3 +254,47 @@ def test_test_queries_first_element_has_test_prefix_over_production_query():
     task = {"title": "T", "description": "D"}
     first = task_context._test_queries(task, "PRI-1")[0]
     assert first == f"как тестируется: {task_context._query(task, 'PRI-1')}"
+
+
+# ---------------------------------------------------------------------------
+# Тесты Task 4 (PRI-257): проводка augmented-сигналов в build_task_context
+# ---------------------------------------------------------------------------
+
+def test_similar_runs_before_code_so_hits_are_available():
+    """Порядок вызовов — контракт: ключи секции code берутся из хитов similar."""
+    deps = FakeDeps()
+    task_context.build_task_context(deps, repo="o/n", key="ID-311", branch="dev",
+                                    warm_board=False)
+    assert deps.calls.index("similar") < deps.calls.index("code")
+
+
+def test_augment_gaps_are_copied_into_payload():
+    deps = FakeDeps()
+    deps.augment_gaps = ["git-история недоступна: CalledProcessError"]
+    payload = task_context.build_task_context(deps, repo="o/n", key="ID-311",
+                                              branch="dev", warm_board=False)
+    assert payload["code"], "сбой подмешивания не обнуляет секцию"
+    assert {"section": "code.augment",
+            "reason": "git-история недоступна: CalledProcessError"} in payload["gaps"]
+
+
+def test_deps_without_augment_gaps_attribute_still_work():
+    """Старый провайдер секций (без нового поля) не должен падать."""
+    payload = task_context.build_task_context(FakeDeps(), repo="o/n", key="ID-311",
+                                              branch="dev", warm_board=False)
+    assert payload["gaps"] == []
+
+
+def test_similar_section_text_is_unchanged_by_augmentation():
+    """related.similar остаётся тем же текстом независимо от пробелов подмешивания в code.
+
+    Брифовский вариант этого теста опирается на несуществующую фикстуру
+    fake_deps_factory/deps.expected_similar_text (в репозитории её нет —
+    ни conftest.py, ни такого поля у FakeDeps). Проверяем тот же инвариант
+    напрямую: текст related.similar не зависит от augment_gaps секции code.
+    """
+    deps = FakeDeps()
+    deps.augment_gaps = ["git-история недоступна: CalledProcessError"]
+    payload = task_context.build_task_context(deps, repo="o/n", key="ID-311",
+                                              branch="dev", warm_board=False)
+    assert payload["related"]["similar"] == "1. ID-300 ..."

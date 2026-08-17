@@ -537,6 +537,35 @@ class ChunkStore:
                           start_line=sl, end_line=el, text=t, score=0.0)
                 for (p, f, k, sl, el, t) in rows]
 
+    def fetch_retrieved_at_paths(self, repo, paths, *, base_ref="base",
+                                 limit_per_path: int = 1):
+        """Чанки base-индекса по ПУТЯМ (а не по node_id) — вход подмешанных путей.
+
+        Симметричен fetch_nodes, но ключ — путь: сигнал PRI-257 знает файл, а не
+        символ. На путь отдаётся limit_per_path самых широких чанков: ниже по
+        потоку _dedupe_overlapping оставляет охватывающий символ, и узкий метод
+        вместо класса обеднил бы выдачу ещё до дедупа.
+        """
+        if not paths:
+            return []
+        sql = """
+        SELECT path, symbol_fqn, kind, start_line, end_line, text FROM (
+            SELECT c.*, ROW_NUMBER() OVER (
+                PARTITION BY c.path ORDER BY (c.end_line - c.start_line) DESC, c.start_line
+            ) AS rn
+            FROM chunks c
+            WHERE c.repo=%(repo)s AND c.ref=%(base)s AND c.path = ANY(%(paths)s)
+        ) ranked
+        WHERE rn <= %(per_path)s
+        """
+        params = {"repo": repo, "base": base_ref, "paths": list(paths),
+                  "per_path": limit_per_path}
+        with self._connect() as conn:
+            rows = conn.execute(sql, params).fetchall()
+        return [Retrieved(node_id=f"{p}#{f}", path=p, symbol_fqn=f, kind=k,
+                          start_line=sl, end_line=el, text=t, score=0.0)
+                for (p, f, k, sl, el, t) in rows]
+
     def fetch_nodes_at(self, repo, node_ids, ref):
         """Текст чанков по КОНКРЕТНОМУ ref (без слияния base/overlay).
 

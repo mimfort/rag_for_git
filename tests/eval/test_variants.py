@@ -97,6 +97,36 @@ def test_multiquery_is_registered():
     assert "multiquery" in variants.VARIANT_NAMES
 
 
+def test_augment_variants_registered():
+    from eval.solve_task_metrics.variants import VARIANT_NAMES, get_variant
+    assert "similar_paths" in set(VARIANT_NAMES)
+    assert callable(get_variant("similar_paths"))
+
+
+def test_cochange_and_augmented_variants_are_not_registered():
+    """Co-change снят по итогам приёмки (step8-measurement.md) — реестр их не знает."""
+    from eval.solve_task_metrics.variants import VARIANT_NAMES
+    assert "cochange" not in VARIANT_NAMES
+    assert "augmented" not in VARIANT_NAMES
+
+
+class AugmentProvider(FakeProvider):
+    """Провайдер ретрива для варианта similar_paths (PRI-257): запоминает флаг."""
+
+    def code_multi(self, repo, branch, queries, limits, *, similar_paths=False):
+        self.calls.append((repo, branch, list(queries), limits, similar_paths))
+        return self.text
+
+
+def test_similar_paths_variant_enables_similar_flag():
+    provider = AugmentProvider(HEADER)
+    task, target = _inputs()
+    assert variants.get_variant("similar_paths")(provider, task, target) == \
+        {"reviewer/a.py"}
+    call = provider.calls[0]
+    assert call[4] is True
+
+
 def test_parse_overrides_accepts_code_section():
     """Файловый бюджет секции code выразим оверрайдом (PRI-256).
 

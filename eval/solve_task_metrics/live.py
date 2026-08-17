@@ -123,10 +123,27 @@ class LiveRetrieval:
         )
         return pack.as_context(line_numbers=True) or "(ничего не найдено)"
 
-    def code_multi(self, repo: str, branch: str, queries: list, limits: dict | None) -> str:
-        """Мультизапросная выдача тем же продакшн-путём, что видит сборщик брифа."""
+    def code_multi(self, repo: str, branch: str, queries: list, limits: dict | None,
+                   *, similar_paths: bool = False) -> str:
+        """Мультизапросная выдача тем же продакшн-путём, что видит сборщик брифа.
+
+        Подмешанный сигнал (PRI-257, только similar-diffs — co-change снят по
+        итогам приёмки) собирается продакшн-объектом _TaskContextDeps: своей
+        копии сборки путей здесь не заводится, иначе replay мерил бы не тот
+        вход, что видит прод.
+        """
+        augment = None
+        if similar_paths:
+            from reviewer.mcp.service import _TaskContextDeps
+            deps = _TaskContextDeps(self._service, None)
+            # Хиты похожих задач наполняются вызовом similar; первый подзапрос —
+            # это и есть продакшн-запрос задачи целиком (см. _queries).
+            deps.similar(queries[0], None)
+            augment = deps._augment_paths(repo)
         if not limits:
-            return self._service._search_codebase_multi(repo, list(queries), branch, False)
+            return self._service._search_codebase_multi(
+                repo, list(queries), branch, False,
+                augment_paths=augment)
         from reviewer.retrieval.multiquery import search_multi
         base = limits_to_yaml(self._service._resolve_context_limits(repo, branch))
         effective = ContextLimits.from_review_yaml(
@@ -141,6 +158,7 @@ class LiveRetrieval:
             section_limits=effective.code_section,
             hops=effective.graph.hops,
             branch=branch, include_tests=False,
+            augment_paths=augment,
         )
         return pack.as_context(line_numbers=True) or "(ничего не найдено)"
 
