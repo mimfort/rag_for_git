@@ -2760,6 +2760,16 @@ class MCPReviewService:
             )
             return None
 
+    @staticmethod
+    def _without_members(summaries: list[dict]) -> list[dict]:
+        """Убрать состав кластера из LLM-выдачи: там он чистый расход токенов.
+
+        Читатель состава — разворот кластеров в файлы-кандидаты (PRI-258), он
+        ходит в стор напрямую. Путь по cluster_key поле отдаёт как прежде.
+        """
+        return [{k: v for k, v in summary.items() if k != "member_node_ids"}
+                for summary in summaries]
+
     def _annotate_summary_staleness(
         self, repo: str, branch: str, summaries: list[dict]
     ) -> list[dict]:
@@ -2803,11 +2813,13 @@ class MCPReviewService:
                 qvec = self.components.embedder.embed_query(query)
                 summaries = store.search_summaries(repo, resolved, qvec, top_k or 8)
                 return {
-                    "summaries": [{**summary, "stale": None} for summary in summaries]
+                    "summaries": self._without_members(
+                        [{**summary, "stale": None} for summary in summaries])
                 }
         summaries = store.get_summaries(repo, resolved)
         return {
-            "summaries": self._annotate_summary_staleness(repo, resolved, summaries)
+            "summaries": self._without_members(
+                self._annotate_summary_staleness(repo, resolved, summaries))
         }
 
     def prune_subsystem_summaries(
