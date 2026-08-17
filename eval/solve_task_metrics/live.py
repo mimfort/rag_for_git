@@ -124,13 +124,14 @@ class LiveRetrieval:
         return pack.as_context(line_numbers=True) or "(ничего не найдено)"
 
     def code_multi(self, repo: str, branch: str, queries: list, limits: dict | None,
-                   *, similar_paths: bool = False) -> str:
+                   *, similar_paths: bool = False, subsystem_paths: bool = False) -> str:
         """Мультизапросная выдача тем же продакшн-путём, что видит сборщик брифа.
 
-        Подмешанный сигнал (PRI-257/258, только similar-diffs — co-change снят
-        по итогам приёмки) собирается продакшн-объектом _TaskContextDeps: своей
-        копии сборки путей здесь не заводится, иначе replay мерил бы не тот
-        вход, что видит прод. Эффективные лимиты считаются ДО сборки
+        Подмешанный сигнал (PRI-257/258: similar-diffs и разворот кластеров
+        сводок subsystems — co-change снят по итогам приёмки) собирается
+        продакшн-объектом _TaskContextDeps/функцией collect_subsystem_paths:
+        своей копии сборки путей здесь не заводится, иначе replay мерил бы не
+        тот вход, что видит прод. Эффективные лимиты считаются ДО сборки
         источников (иначе оверрайд --set не доехал бы до квоты и сторона «до»
         замера совпала бы со стороной «после» — тот же дефект, что чинил
         PRI-256 для section_limits).
@@ -149,6 +150,16 @@ class LiveRetrieval:
             deps.similar(queries[0], None)
             sources.append(AugmentSource(name="similar-diffs", paths=deps._augment_paths(repo),
                                          quota=effective.code_section.max_augmented_files))
+        if subsystem_paths:
+            from reviewer.mcp.service import SUBSYSTEM_LOOKUP_LIMIT
+            from reviewer.retrieval.augment import AugmentSource, collect_subsystem_paths
+            result = collect_subsystem_paths(
+                summary_store=getattr(self._components, "summary_store", None),
+                embedder=self._components.embedder,
+                repo=repo, branch=branch, query=queries[0] if queries else "",
+                limit=SUBSYSTEM_LOOKUP_LIMIT)
+            sources.append(AugmentSource(name="subsystems", paths=result.paths,
+                                         quota=effective.code_section.max_subsystem_files))
         if not limits:
             return self._service._search_codebase_multi(
                 repo, list(queries), branch, False,

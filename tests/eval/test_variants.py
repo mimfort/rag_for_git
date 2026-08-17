@@ -12,9 +12,17 @@ class FakeProvider:
     def __init__(self, text: str = ""):
         self.text = text
         self.calls: list = []
+        self.multi_calls: list = []
 
     def code(self, repo: str, branch: str, query: str, limits):
         self.calls.append((repo, branch, query, limits))
+        return self.text
+
+    def code_multi(self, repo, branch, queries, limits, *,
+                   similar_paths=False, subsystem_paths=False):
+        self.multi_calls.append({"queries": list(queries), "limits": limits,
+                                 "similar_paths": similar_paths,
+                                 "subsystem_paths": subsystem_paths})
         return self.text
 
 
@@ -125,6 +133,22 @@ def test_similar_paths_variant_enables_similar_flag():
         {"reviewer/a.py"}
     call = provider.calls[0]
     assert call[4] is True
+
+
+def test_subsystem_paths_variant_requests_only_subsystem_source():
+    provider = FakeProvider(HEADER)
+    task, target = _inputs()
+    assert variants.get_variant("subsystem_paths")(provider, task, target) == {"reviewer/a.py"}
+    assert provider.multi_calls[-1]["subsystem_paths"] is True
+    assert provider.multi_calls[-1]["similar_paths"] is False
+
+
+def test_combined_variant_requests_both_sources():
+    provider = FakeProvider(HEADER)
+    task, target = _inputs()
+    variants.get_variant("similar_paths+subsystem_paths")(provider, task, target)
+    assert provider.multi_calls[-1]["similar_paths"] is True
+    assert provider.multi_calls[-1]["subsystem_paths"] is True
 
 
 def test_parse_overrides_accepts_code_section():

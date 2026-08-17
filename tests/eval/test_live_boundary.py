@@ -241,6 +241,87 @@ def test_code_multi_with_overrides_forwards_augment_signals(monkeypatch):
     assert "cochange" not in captured
 
 
+def test_code_multi_subsystem_flag_passes_named_source(monkeypatch):
+    """subsystem_paths=True собирает источник продакшн-функцией collect_subsystem_paths."""
+    from reviewer.policy.context_limits import CodeSectionLimits
+    from reviewer.retrieval import augment as augment_mod
+
+    from eval.solve_task_metrics.live import LiveRetrieval
+
+    monkeypatch.setattr(
+        augment_mod, "collect_subsystem_paths",
+        lambda **kwargs: augment_mod.AugmentResult(paths=["reviewer/x.py"]))
+
+    class FakeService:
+        def _search_codebase_multi(self, repo, queries, branch, include_tests,
+                                   *, augment_sources=None):
+            self.captured = augment_sources
+            return "текст"
+
+        def _resolve_context_limits(self, repo, branch):
+            from reviewer.policy.context_limits import ContextLimits
+            return ContextLimits()
+
+    class FakeComponents:
+        summary_store = object()
+        embedder = object()
+
+    service = FakeService()
+    provider = LiveRetrieval(object(), FakeComponents(), service)
+    provider.code_multi("o/n", "dev", ["q1"], None, subsystem_paths=True)
+
+    assert [s.name for s in service.captured] == ["subsystems"]
+    assert service.captured[0].paths == ["reviewer/x.py"]
+    assert service.captured[0].quota == CodeSectionLimits().max_subsystem_files
+
+
+def test_code_multi_subsystem_flag_forwards_quota_override(monkeypatch):
+    """Оверрайд code_section.max_subsystem_files доезжает до источника subsystems,
+
+    а не теряется — по образцу test_code_multi_with_overrides_forwards_augment_signals.
+    """
+    from reviewer.policy.context_limits import ContextLimits
+    from reviewer.retrieval import augment as augment_mod
+    from reviewer.retrieval import multiquery
+
+    from eval.solve_task_metrics.live import LiveRetrieval
+
+    monkeypatch.setattr(
+        augment_mod, "collect_subsystem_paths",
+        lambda **kwargs: augment_mod.AugmentResult(paths=["reviewer/x.py"]))
+
+    class FakeService:
+        def _resolve_context_limits(self, repo, branch):
+            return ContextLimits()
+
+    class FakeComponents:
+        retriever = object()
+        summary_store = object()
+        embedder = object()
+
+    captured: dict = {}
+
+    def fake_search_multi(retriever, repo, queries, **kwargs):
+        captured.update(kwargs)
+
+        class Pack:
+            def as_context(self, line_numbers=True):
+                return "текст"
+
+        return Pack()
+
+    monkeypatch.setattr(multiquery, "search_multi", fake_search_multi)
+    provider = LiveRetrieval(object(), FakeComponents(), FakeService())
+    provider.code_multi("o/n", "dev", ["q"],
+                        {"code_section": {"max_subsystem_files": 1}},
+                        subsystem_paths=True)
+
+    sources = captured["augment_sources"]
+    assert len(sources) == 1
+    assert sources[0].name == "subsystems"
+    assert sources[0].quota == 1
+
+
 @pytest.mark.integration
 def test_open_live_wires_and_closes_components():
     """Проводка живого провайдера: компоненты собираются, preflight отвечает, close не падает.
