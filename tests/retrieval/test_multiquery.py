@@ -256,6 +256,27 @@ def test_diversify_degenerate_values_do_not_crash():
     items = [_hit("a.py#f"), _hit("b.py#g")]
     assert diversify_by_file(items, max_files=0, max_chunks_per_file=1) == []
     assert diversify_by_file([], max_files=5, max_chunks_per_file=1) == []
+    assert diversify_by_file(items, max_files=5, max_chunks_per_file=0) == []
+
+
+def test_dedupe_runs_before_diversify_keeps_enclosing_class():
+    """Обязательный порядок (PRI-256): _dedupe_overlapping ДО diversify_by_file.
+
+    Метод ранжирован выше своего охватывающего класса (лучший ранг в
+    единственном прогоне), но при max_chunks_per_file=1 в выдаче обязан
+    выжить класс — он же самый широкий чанк. Если diversify отработает
+    первым, он оставит только метод (первый в порядке по рангу) и класс
+    уже некому будет вытеснить его при дедупе.
+    """
+    method = _hit("a.py#Cls.method", start_line=40, end_line=55, text="method body")
+    method.bm25_hit = True
+    cls = _hit("a.py#Cls", start_line=10, end_line=90, text="class body")
+    cls.bm25_hit = True
+    store = _FakeStore({"q0": [method, cls]})  # метод первым — выше ранг в RRF
+    pack = search_multi(_Retriever(store, _FakeEmbedder()), "o/n", ["q0"],
+                        limits=CodebaseLimits(), branch="dev")
+    assert [it.node_id for it in pack.items] == ["a.py#Cls"], \
+        "дедуп вложенных чанков обязан идти раньше файловой диверсификации"
 
 
 def test_graph_only_tail_yields_to_hybrid_files():
