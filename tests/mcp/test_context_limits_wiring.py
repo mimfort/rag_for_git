@@ -288,3 +288,23 @@ def test_search_codebase_passes_limits_and_topk_override() -> None:
     assert retr.calls[0]["ceiling_override"] == 40
     assert isinstance(retr.calls[0]["limits"], CodebaseLimits)
     assert retr.calls[0]["hops"] == 1
+
+
+def test_search_codebase_multi_passes_limits_and_hops() -> None:
+    """_search_codebase_multi (PRI-255) резолвит те же ContextLimits, что search_codebase,
+    и пробрасывает limits/hops в search_multi — эффективная .review.yml-политика
+    доезжает и до мультизапросного пути секций code/test_exemplars."""
+    s = _settings()
+    s.review_branches = "dev"          # branch="dev" должна быть отслеживаемой
+    components = MagicMock()
+    vcs = MagicMock()
+    vcs.get_file_at_ref.return_value = None    # нет .review.yml → дефолт-лимиты
+    svc = MCPReviewService(s, components, vcs_factory=lambda o, n: vcs)
+
+    with patch("reviewer.retrieval.multiquery.search_multi") as sm:
+        sm.return_value.as_context.return_value = "ok"
+        svc._search_codebase_multi("o/r", ["q1", "q2"], branch="dev")
+
+    call = sm.call_args
+    assert isinstance(call.kwargs["limits"], CodebaseLimits)
+    assert call.kwargs["hops"] == 1

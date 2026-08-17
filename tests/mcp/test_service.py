@@ -695,6 +695,82 @@ def test_search_codebase_rejects_untracked_branch() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Тесты _search_codebase_multi (PRI-255) — мультизапросный близнец search_codebase
+# ---------------------------------------------------------------------------
+
+def test_search_codebase_multi_delegates_to_search_multi() -> None:
+    """_search_codebase_multi зовёт search_multi с queries, лимитами и include_tests."""
+    svc = _make_mcp_service()
+    with patch("reviewer.retrieval.multiquery.search_multi") as sm:
+        sm.return_value.as_context.return_value = "auth.py#logout\nbody"
+        out = svc._search_codebase_multi("a/b", ["q1", "q2"], include_tests=True)
+        assert "auth.py#logout" in out
+        call = sm.call_args
+        assert call.args[0] is svc.components.retriever
+        assert call.args[1] == "a/b"
+        assert call.args[2] == ["q1", "q2"]
+        assert isinstance(call.kwargs["limits"], CodebaseLimits)
+        assert call.kwargs["hops"] == 1
+        assert call.kwargs["branch"] == svc.settings.primary_branch()
+        assert call.kwargs["include_tests"] is True
+        sm.return_value.as_context.assert_called_once_with(line_numbers=True)
+
+
+def test_search_codebase_multi_empty_or_error_returns_note() -> None:
+    """Пустой результат или сбой search_multi → '(ничего не найдено)'."""
+    svc = _make_mcp_service()
+    with patch("reviewer.retrieval.multiquery.search_multi") as sm:
+        sm.return_value.as_context.return_value = ""
+        assert svc._search_codebase_multi("a/b", ["x"]) == "(ничего не найдено)"
+        sm.side_effect = RuntimeError("pg down")
+        assert svc._search_codebase_multi("a/b", ["x"]) == "(ничего не найдено)"
+
+
+def test_search_codebase_multi_rejects_untracked_branch() -> None:
+    """Ветка не отслеживается репозиторием → понятная заметка, search_multi не зовётся."""
+    svc = _make_mcp_service()
+    with patch("reviewer.retrieval.multiquery.search_multi") as sm:
+        out = svc._search_codebase_multi("a/b", ["x"], branch="release/v9")
+        assert "release/v9" in out
+        assert "не отслеживается" in out
+        sm.assert_not_called()
+
+
+def test_task_context_deps_code_passes_include_tests_false() -> None:
+    """_TaskContextDeps.code зовёт _search_codebase_multi с include_tests=False.
+
+    Перепутанный позиционный аргумент незаметен для FakeDeps-тестов task_context —
+    там подменяется весь слой deps. Тест ловит именно проводку внутри service.py.
+    """
+    from reviewer.mcp.service import _TaskContextDeps
+
+    fake_service = MagicMock()
+    fake_service._search_codebase_multi.return_value = "code-out"
+    deps = _TaskContextDeps(fake_service, None)
+
+    result = deps.code("o/r", "dev", ["q1", "q2"])
+
+    fake_service._search_codebase_multi.assert_called_once_with(
+        "o/r", ["q1", "q2"], "dev", False)
+    assert result == "code-out"
+
+
+def test_task_context_deps_test_exemplars_passes_include_tests_true() -> None:
+    """_TaskContextDeps.test_exemplars зовёт _search_codebase_multi с include_tests=True."""
+    from reviewer.mcp.service import _TaskContextDeps
+
+    fake_service = MagicMock()
+    fake_service._search_codebase_multi.return_value = "tests-out"
+    deps = _TaskContextDeps(fake_service, None)
+
+    result = deps.test_exemplars("o/r", "dev", ["q1", "q2"])
+
+    fake_service._search_codebase_multi.assert_called_once_with(
+        "o/r", ["q1", "q2"], "dev", True)
+    assert result == "tests-out"
+
+
+# ---------------------------------------------------------------------------
 # Тесты Task 2: session-less методы related_symbols/callers/definition
 # ---------------------------------------------------------------------------
 

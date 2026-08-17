@@ -249,6 +249,8 @@ def test_board_less_task_degenerates_to_single_query():
     assert seen["code"] == ["добавить эндпоинт логаута"]
 
 
-def test_test_queries_first_element_matches_single_test_query():
+def test_test_queries_first_element_has_test_prefix_over_production_query():
+    """Первый элемент _test_queries — продакшн-запрос с префиксом "как тестируется: "."""
     task = {"title": "T", "description": "D"}
-    assert task_context._test_queries(task, "PRI-1")[0] == task_context._test_query(task, "PRI-1")
+    first = task_context._test_queries(task, "PRI-1")[0]
+    assert first == f"как тестируется: {task_context._query(task, 'PRI-1')}"

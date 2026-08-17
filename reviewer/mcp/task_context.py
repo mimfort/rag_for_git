@@ -52,11 +52,6 @@ def _query(task: dict | None, key: str) -> str:
     return f"{title}. {head}".strip(". ").strip() or key
 
 
-def _test_query(task: dict | None, key: str) -> str:
-    """Целевой запрос про тесты области, а не код-запрос с флагом."""
-    return f"как тестируется: {_query(task, key)}"
-
-
 def _queries(task: dict | None, key: str) -> list[str]:
     """Набор подзапросов секции code: продакшн-запрос плюс структура задачи.
 
@@ -67,7 +62,7 @@ def _queries(task: dict | None, key: str) -> list[str]:
 
 
 def _test_queries(task: dict | None, key: str) -> list[str]:
-    """Те же подзапросы, но про тесты области — префиксом, как _test_query."""
+    """Те же подзапросы, но про тесты области — префиксом "как тестируется: "."""
     return [f"как тестируется: {query}" for query in _queries(task, key)]
 
 
