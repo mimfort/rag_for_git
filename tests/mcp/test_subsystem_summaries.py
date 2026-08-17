@@ -7,6 +7,7 @@ import pytest
 
 from reviewer.config.settings import Settings
 from reviewer.mcp.service import MCPReviewService
+from reviewer.services.summary_fragments import _GENERATION
 
 
 def _settings() -> Settings:
@@ -70,7 +71,7 @@ def _two_cluster_generation_state(
                 "summary": title,
                 "provenance": {
                     "_reviewer": {
-                        "generation": "summary-fragment-v1",
+                        "generation": _GENERATION,
                         "layout_token": compute_layout_token(fragment_depth, {}),
                         "depth": fragment_depth,
                     }
@@ -870,7 +871,7 @@ def test_index_subsystem_summary_commits_bundle_before_embedding_with_hash_cas()
                 "provenance": {
                     "generator": "test",
                         "_reviewer": {
-                            "generation": "summary-fragment-v2",
+                            "generation": _GENERATION,
                             "layout_token": compute_layout_token(2, {}),
                             "depth": 2,
                         },

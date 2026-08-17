@@ -20,6 +20,7 @@ from reviewer.config.settings import Settings
 from reviewer.graph.summaries import compute_layout_token
 from reviewer.index.store import ChunkStore
 from reviewer.index.summary_store import SummaryStore
+from reviewer.services.summary_fragments import _GENERATION
 
 pytestmark = pytest.mark.integration
 
@@ -28,9 +29,12 @@ LAYOUT_TOKEN = compute_layout_token(2, {})
 
 
 def _generation_provenance() -> dict:
+    # generation берётся из продакшн-константы, а не литералом: bump поколения
+    # (PRI-245 сменил v1 → v2) молча ронял здесь два сценария, потому что
+    # integration-набор не гоняется обычным `pytest -q`.
     return {
         "_reviewer": {
-            "generation": "summary-fragment-v1",
+            "generation": _GENERATION,
             "layout_token": LAYOUT_TOKEN,
             "depth": 2,
         }
