@@ -351,3 +351,44 @@ def test_search_codebase_multi_passes_code_section_limits(
     assert call.kwargs["section_limits"].max_files == 5
     assert call.kwargs["section_limits"].chars_per_file == 400
     assert call.kwargs["section_limits"].max_chunks_per_file == 1   # дефолт сохранён
+
+
+def test_search_codebase_multi_forwards_augment_kwargs() -> None:
+    """_search_codebase_multi (PRI-257) пробрасывает augment_paths/cochange в search_multi
+    без изменений — сборка входа остаётся снаружи, в _TaskContextDeps."""
+    s = _settings()
+    s.review_branches = "dev"
+    components = MagicMock()
+    vcs = MagicMock()
+    vcs.get_file_at_ref.return_value = None
+    svc = MCPReviewService(s, components, vcs_factory=lambda o, n: vcs)
+
+    def _cochange(seeds):
+        return ["c.py"]
+
+    with patch("reviewer.retrieval.multiquery.search_multi") as sm:
+        sm.return_value.as_context.return_value = "ok"
+        svc._search_codebase_multi("o/r", ["q1"], branch="dev",
+                                   augment_paths=["a.py"], cochange=_cochange)
+
+    call = sm.call_args
+    assert call.kwargs["augment_paths"] == ["a.py"]
+    assert call.kwargs["cochange"] is _cochange
+
+
+def test_search_codebase_multi_defaults_augment_kwargs_to_none() -> None:
+    """test_exemplars и прочие вызовы без augment-сигнала не передают их вовсе."""
+    s = _settings()
+    s.review_branches = "dev"
+    components = MagicMock()
+    vcs = MagicMock()
+    vcs.get_file_at_ref.return_value = None
+    svc = MCPReviewService(s, components, vcs_factory=lambda o, n: vcs)
+
+    with patch("reviewer.retrieval.multiquery.search_multi") as sm:
+        sm.return_value.as_context.return_value = "ok"
+        svc._search_codebase_multi("o/r", ["q1"], branch="dev")
+
+    call = sm.call_args
+    assert call.kwargs["augment_paths"] is None
+    assert call.kwargs["cochange"] is None
