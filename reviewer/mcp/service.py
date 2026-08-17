@@ -3521,6 +3521,9 @@ def _format_pr_diff(files: list[ChangedFile]) -> str:
 AUGMENT_LOOKUP_LIMIT = 20
 """Сколько путей источник отдаёт ДО квоты: квота режет позже, в search_multi (PRI-257)."""
 
+SUBSYSTEM_LOOKUP_LIMIT = 40
+"""Сколько путей разворот отдаёт ДО квоты: квота режет позже, в search_multi (PRI-258)."""
+
 
 class _TaskContextDeps:
     """Источники секций prepare_task_context поверх живых компонентов сервиса.
@@ -3619,12 +3622,39 @@ class _TaskContextDeps:
     def subsystems(self, repo: str, branch: str, query: str) -> dict:
         return self._service.get_subsystem_summaries(repo, branch, None, query, None)
 
+    def _subsystem_paths(self, repo: str, branch: str, query: str) -> list[str]:
+        """Файлы релевантных кластеров сводок. Пробелы копятся в augment_gaps.
+
+        Обёрнуто целиком по образцу _augment_paths: сбой сигнала подмешивания
+        не должен обнулять всю секцию code через общий _safe в task_context.py.
+        """
+        from reviewer.retrieval.augment import collect_subsystem_paths
+        try:
+            result = collect_subsystem_paths(
+                summary_store=getattr(self._service.components, "summary_store", None),
+                embedder=self._service.components.embedder,
+                repo=repo, branch=branch, query=query, limit=SUBSYSTEM_LOOKUP_LIMIT)
+            for reason in result.gaps:
+                log.warning("_TaskContextDeps._subsystem_paths: %s", reason)
+            self.augment_gaps.extend(result.gaps)
+            return result.paths
+        except Exception:  # noqa: BLE001 — источник разворота недоступен целиком
+            log.warning("_TaskContextDeps._subsystem_paths: сбой разворота кластеров",
+                        exc_info=True)
+            self.augment_gaps.append("разворот кластеров подсистем недоступен")
+            return []
+
     def code(self, repo: str, branch: str, queries: list) -> str:
         from reviewer.retrieval.augment import AugmentSource
-        sources = [AugmentSource(name="similar-diffs",
-                                 paths=self._augment_paths(repo),
-                                 quota=self._service._resolve_context_limits(
-                                     repo, branch).code_section.max_augmented_files)]
+        query = queries[0] if queries else ""
+        section = self._service._resolve_context_limits(repo, branch).code_section
+        sources = [
+            AugmentSource(name="similar-diffs", paths=self._augment_paths(repo),
+                         quota=section.max_augmented_files),
+            AugmentSource(name="subsystems",
+                         paths=self._subsystem_paths(repo, branch, query),
+                         quota=section.max_subsystem_files),
+        ]
         return self._service._search_codebase_multi(
             repo, queries, branch, False, augment_sources=sources)
 
