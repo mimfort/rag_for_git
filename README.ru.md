@@ -470,11 +470,23 @@ context_limits:
     ceiling: 15
   graph:
     hops: 1
+  code_section:
+    max_files: 12
+    max_chunks_per_file: 1
+    chars_per_file: 1300
 ```
 
 `summary_paths.ignore` фильтрует только состав кластеризации сводок подсистем — в отличие от
 `paths.ignore`, он не влияет на индексацию и ревью PR. Дефолт `["tests", "test"]`; env-слоя нет
 (как у `context_limits`), явный пустой список выключает фильтр.
+
+`context_limits` состоит из четырёх подсекций: `search_codebase` (гибрид + graph-expansion +
+Voyage rerank для `/ask`, грунтовки и ревью PR), `search_tasks` (RRF-only отбор задач), `graph`
+(глубина обхода от топ-хитов) и `code_section` — файловый бюджет секции `code` контекста задачи
+(PRI-256). Единица бюджета `code_section` — файл, а не чанк: `max_files` × `max_chunks_per_file`
+чанков на файл при `chars_per_file` символов каждый. Символьный потолок секции отдельным ключом
+не задаётся — он производный: операционный бюджет равен `max_files × max_chunks_per_file ×
+chars_per_file`, а страховочный потолок после рендера — `max_files × chars_per_file × 3 // 2`.
 
 ### Слоистая политика репозитория
 

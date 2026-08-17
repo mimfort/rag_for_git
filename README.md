@@ -464,11 +464,24 @@ context_limits:
     ceiling: 15
   graph:
     hops: 1
+  code_section:
+    max_files: 12
+    max_chunks_per_file: 1
+    chars_per_file: 1300
 ```
 
 `summary_paths.ignore` only filters which files feed subsystem-summary clustering — unlike
 `paths.ignore`, it does not affect indexing or PR review. Default is `["tests", "test"]`; there
 is no env layer (like `context_limits`), and an explicit empty list disables the filter.
+
+`context_limits` has four subsections: `search_codebase` (hybrid + graph-expansion + Voyage
+rerank for `/ask`, priming, and PR review), `search_tasks` (RRF-only task retrieval), `graph`
+(traversal depth from top hits), and `code_section` — the file budget for the task context's
+`code` section (PRI-256). `code_section`'s budget unit is a file, not a chunk: `max_files` ×
+`max_chunks_per_file` chunks per file, at `chars_per_file` characters each. The section's
+character cap is not a separate key — it is derived: the operational budget is
+`max_files × max_chunks_per_file × chars_per_file`, while the post-render safety cap is
+`max_files × chars_per_file × 3 // 2`.
 
 ### Layered repository policy
 
