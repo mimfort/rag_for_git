@@ -601,6 +601,7 @@ def test_build_config_report_accepts_code_section(tmp_path: Path) -> None:
         "max_chunks_per_file": 1,
         "chars_per_file": 600,
         "max_augmented_files": 3,
+        "max_subsystem_files": 2,
     }
 
 
