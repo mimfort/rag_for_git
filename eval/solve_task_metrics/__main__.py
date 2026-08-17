@@ -20,6 +20,7 @@ from . import (
     report,
     snapshot as snapshot_mod,
     steps,
+    subquery_stats,
     variants,
 )
 
@@ -295,6 +296,21 @@ def cmd_replay(args) -> int:
     return 0
 
 
+def cmd_subqueries(args) -> int:
+    """Распределение числа подзапросов по корпусу (PRI-255, критерий 1)."""
+    from . import live  # ленивый импорт: живые зависимости только здесь
+
+    provider, repo, branch = live.open_live(args.repo, args.branch)
+    with provider:
+        rows = []
+        for key in replay_mod.corpus_keys(BRIEFS_DIR):
+            task = provider.task(key)
+            rows.append((key, task, provider.query(task, key)))
+    print(f"Корпус: {len(rows)} задач, репозиторий {repo}@{branch}")
+    print(subquery_stats.render(rows))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Собрать парсер CLI (выделено, чтобы разбор аргументов тестировался)."""
     parser = argparse.ArgumentParser(
@@ -370,6 +386,16 @@ def build_parser() -> argparse.ArgumentParser:
     replay_parser.add_argument(
         "--branch", default=None, help="ветка; по умолчанию первичная"
     )
+    subqueries_parser = subparsers.add_parser(
+        "subqueries",
+        help="распределение числа подзапросов ретрива по размеру задачи",
+    )
+    subqueries_parser.add_argument(
+        "--repo", default=None, help="owner/name; по умолчанию DEFAULT_REPO"
+    )
+    subqueries_parser.add_argument(
+        "--branch", default=None, help="ветка; по умолчанию первичная"
+    )
     return parser
 
 
@@ -385,6 +411,8 @@ def main(argv=None) -> int:
         return cmd_steps(args)
     if args.command == "replay":
         return cmd_replay(args)
+    if args.command == "subqueries":
+        return cmd_subqueries(args)
     return cmd_compare(args)
 
 

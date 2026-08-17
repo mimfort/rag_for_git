@@ -1,7 +1,9 @@
 """Граница живых зависимостей харнесса (PRI-254).
 
-reviewer импортирует ТОЛЬКО live.py: остальные модули обязаны оставаться
-импортируемыми и тестируемыми без Postgres, Neo4j и Voyage.
+Живые зависимости reviewer тянет только `live.py`: остальные модули обязаны
+оставаться импортируемыми и тестируемыми без Postgres, Neo4j и Voyage. Импорт
+самого пакета `reviewer` разрешён и перечисленным в `ALLOWED` модулям — но лишь
+для чистых функций без ввода-вывода (см. комментарий у списка).
 """
 from __future__ import annotations
 
@@ -21,7 +23,10 @@ IMPORT_RE = re.compile(
 
 # Ре-экспорты расчётного ядра (PRI-249) — не живые зависимости: чистые функции
 # без ввода-вывода. Плюс live.py, который и есть объявленное исключение.
-ALLOWED = {"briefs.py", "classify.py", "recall.py", "live.py"}
+# variants.py и subquery_stats.py (PRI-255) импортируют reviewer.mcp.subqueries —
+# тоже чистую функцию без сети/БД: формула подзапросов производна от текста
+# задачи, не от живой инфраструктуры.
+ALLOWED = {"briefs.py", "classify.py", "recall.py", "live.py", "variants.py", "subquery_stats.py"}
 
 
 def test_only_live_module_imports_reviewer():

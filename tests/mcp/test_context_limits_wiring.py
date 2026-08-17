@@ -288,3 +288,34 @@ def test_search_codebase_passes_limits_and_topk_override() -> None:
     assert retr.calls[0]["ceiling_override"] == 40
     assert isinstance(retr.calls[0]["limits"], CodebaseLimits)
     assert retr.calls[0]["hops"] == 1
+
+
+def test_search_codebase_multi_passes_limits_and_hops(
+    isolated_xdg_config_home,
+) -> None:
+    """_search_codebase_multi (PRI-255) пробрасывает в search_multi лимиты,
+    резолвленные из эффективной .review.yml-политики — не дефолт-константы.
+
+    Значения в домашнем слое НЕ совпадают с дефолтами (ceiling=15, hops=1),
+    иначе тест не отличил бы резолв политики от захардкоженных CodebaseLimits().
+    """
+    path = isolated_xdg_config_home / "rag-reviewer/repos/o/r.yml"
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        "context_limits: {graph: {hops: 2}, search_codebase: {ceiling: 7}}\n",
+        encoding="utf-8")
+    s = _settings()
+    s.review_branches = "dev"          # branch="dev" должна быть отслеживаемой
+    components = MagicMock()
+    vcs = MagicMock()
+    vcs.get_file_at_ref.return_value = None    # нет committed .review.yml
+    svc = MCPReviewService(s, components, vcs_factory=lambda o, n: vcs)
+
+    with patch("reviewer.retrieval.multiquery.search_multi") as sm:
+        sm.return_value.as_context.return_value = "ok"
+        svc._search_codebase_multi("o/r", ["q1", "q2"], branch="dev")
+
+    call = sm.call_args
+    assert isinstance(call.kwargs["limits"], CodebaseLimits)
+    assert call.kwargs["limits"].ceiling == 7
+    assert call.kwargs["hops"] == 2

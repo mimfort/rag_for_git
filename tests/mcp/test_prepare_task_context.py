@@ -41,10 +41,10 @@ class FakeDeps:
     def subsystems(self, repo, branch, query):
         return self._result("subsystems", {"summaries": [{"cluster_key": "reviewer/mcp"}]})
 
-    def code(self, repo, branch, query):
+    def code(self, repo, branch, queries):
         return self._result("code", "reviewer/mcp/service.py#X (service.py:1-10)")
 
-    def test_exemplars(self, repo, branch, query):
+    def test_exemplars(self, repo, branch, queries):
         return self._result("test_exemplars", "tests/mcp/test_x.py#y")
 
 
@@ -148,14 +148,14 @@ def test_board_less_query_falls_back_to_user_formulation():
     captured = {}
 
     class CapturingDeps(FakeDeps):
-        def code(self, repo, branch, query):
-            captured["query"] = query
+        def code(self, repo, branch, queries):
+            captured["queries"] = queries
             return "snippet"
 
     task_context.build_task_context(
         CapturingDeps(task=None), repo="o/n", key="добавить logout endpoint",
         branch="dev", warm_board=False)
-    assert captured["query"] == "добавить logout endpoint"
+    assert captured["queries"] == ["добавить logout endpoint"]
 
 
 def test_every_failure_still_returns_all_sections():
@@ -203,3 +203,54 @@ def test_service_method_returns_gap_on_bad_repo(monkeypatch):
     payload = svc.prepare_task_context("", "PRI-248")
     assert payload["task_board"] is None
     assert any(g["section"] == "repo" for g in payload["gaps"])
+
+
+def test_code_section_receives_subquery_list():
+    """Секция code ищется набором подзапросов, а не одной строкой."""
+    seen = {}
+
+    class Deps(FakeDeps):
+        def code(self, repo, branch, queries):
+            seen["code"] = queries
+            return "reviewer/a.py#f (reviewer/a.py:1-3)"
+
+        def test_exemplars(self, repo, branch, queries):
+            seen["tests"] = queries
+            return "tests/test_a.py#t"
+
+    task_context.build_task_context(
+        Deps(task={"key": "ID-1", "title": "T",
+                   "description": "## Что сделать\n\n1. первый пункт\n2. второй пункт\n"}),
+        repo="o/n", key="PRI-255", branch="dev", warm_board=False)
+
+    assert isinstance(seen["code"], list)
+    assert seen["code"][0] == task_context._query(
+        {"key": "ID-1", "title": "T",
+         "description": "## Что сделать\n\n1. первый пункт\n2. второй пункт\n"}, "PRI-255")
+    assert any("второй пункт" in q for q in seen["code"])
+    assert all(q.startswith("как тестируется: ") for q in seen["tests"])
+
+
+def test_board_less_task_degenerates_to_single_query():
+    """Без задачи в сторе набор равен одному запросу — поведение как прежде."""
+    seen = {}
+
+    class Deps(FakeDeps):
+        def code(self, repo, branch, queries):
+            seen["code"] = queries
+            return ""
+
+        def test_exemplars(self, repo, branch, queries):
+            return ""
+
+    task_context.build_task_context(Deps(task=None), repo="o/n",
+                                    key="добавить эндпоинт логаута",
+                                    branch="dev", warm_board=False)
+    assert seen["code"] == ["добавить эндпоинт логаута"]
+
+
+def test_test_queries_first_element_has_test_prefix_over_production_query():
+    """Первый элемент _test_queries — продакшн-запрос с префиксом "как тестируется: "."""
+    task = {"title": "T", "description": "D"}
+    first = task_context._test_queries(task, "PRI-1")[0]
+    assert first == f"как тестируется: {task_context._query(task, 'PRI-1')}"

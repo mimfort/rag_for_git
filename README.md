@@ -632,6 +632,16 @@ namespaced skills with `$rag-reviewer:...`.
   empty search) is reported per-section in `gaps` instead of aborting the skill. Graph expansions
   (`get_related_symbols`, `callers`, `implementations`, `family`, …) and `get_pr_diff` stay
   separate calls made at the LLM's discretion, since they depend on what the brief turns up.
+- **Multi-query retrieval for `code`:** the `code` and `test_exemplars` sections are searched with a
+  *set* of subqueries, not one query over the whole task text. Subqueries are extracted
+  deterministically (`reviewer/mcp/subqueries.py`: list items under "what to do"/"acceptance"
+  headings, plus a pool of technical identifiers), capped at 20, embedded in a single Voyage batch,
+  run through hybrid search one by one, and merged with RRF. RRF is the *final* ranker here — no
+  reranker and no cliff cutoff, because the cliff scored against that same multi-topic query and
+  collapsed the output to the floor. Each block's text is trimmed on a line boundary to
+  `MAX_BLOCK_CHARS`, so one huge chunk cannot burn the whole render budget. The public
+  `search_codebase` tool stays single-query and unchanged, as does `Retriever.search_base`; the
+  `subsystems` section still gets one query.
 - **Startup survey:** one `AskUserQuestion` panel asks three things before anything else — the
   brief model tier (`cheap`/`mid`/`premium`), the interaction mode, and the execution strategy.
   No answer, or a headless run, applies the defaults `mid` / `normal` / `subagent` without

@@ -1794,6 +1794,30 @@ class MCPReviewService:
             return "(ничего не найдено)"
         return pack.as_context(line_numbers=True) or "(ничего не найдено)"
 
+    def _search_codebase_multi(self, repo: str, queries: list[str],
+                               branch: str | None = None,
+                               include_tests: bool = False) -> str:
+        """Мультизапросный ретрив секций контекста задачи (PRI-255).
+
+        Приватный: публичный search_codebase остаётся однозапросным, чтобы
+        /ask, грунтовка и ревью PR не меняли поведение.
+        """
+        from reviewer.retrieval.multiquery import search_multi
+        rb = self._resolve_repo_branch(repo, branch)
+        if isinstance(rb, str):
+            return rb
+        repo, resolved = rb
+        cl = self._resolve_context_limits(repo, resolved)
+        try:
+            pack = search_multi(
+                self.components.retriever, repo, queries,
+                limits=cl.search_codebase, hops=cl.graph.hops,
+                branch=resolved, include_tests=include_tests)
+        except Exception:
+            log.warning("_search_codebase_multi: сбой поиска", exc_info=True)
+            return "(ничего не найдено)"
+        return pack.as_context(line_numbers=True) or "(ничего не найдено)"
+
     def prepare_task_context(self, repo: str, key: str, branch: str | None = None,
                              path: str | None = None,
                              warm_board: bool = True) -> dict:
@@ -3530,8 +3554,8 @@ class _TaskContextDeps:
     def subsystems(self, repo: str, branch: str, query: str) -> dict:
         return self._service.get_subsystem_summaries(repo, branch, None, query, None)
 
-    def code(self, repo: str, branch: str, query: str) -> str:
-        return self._service.search_codebase(repo, query, None, branch, False)
+    def code(self, repo: str, branch: str, queries: list) -> str:
+        return self._service._search_codebase_multi(repo, queries, branch, False)
 
-    def test_exemplars(self, repo: str, branch: str, query: str) -> str:
-        return self._service.search_codebase(repo, query, None, branch, True)
+    def test_exemplars(self, repo: str, branch: str, queries: list) -> str:
+        return self._service._search_codebase_multi(repo, queries, branch, True)

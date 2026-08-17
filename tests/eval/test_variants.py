@@ -70,3 +70,28 @@ def test_parse_overrides_empty_is_none():
 def test_parse_overrides_rejects_malformed(bad):
     with pytest.raises(variants.BadOverride):
         variants.parse_overrides([bad])
+
+
+def test_multiquery_variant_passes_subquery_list():
+    """Вариант зовёт code_multi продакшн-набором подзапросов, а не одной строкой."""
+    class MultiProvider(FakeProvider):
+        def code_multi(self, repo, branch, queries, limits):
+            self.calls.append((repo, branch, list(queries), limits))
+            return HEADER
+
+    provider = MultiProvider(HEADER)
+    task = variants.TaskInput(
+        key="PRI-1",
+        task={"title": "T", "description": "## Что сделать\n\n1. первый\n2. хвостовой\n"},
+        query="q")
+    target = variants.ReplayTarget(repo="o/n", branch="dev", limits=None)
+
+    assert variants.get_variant("multiquery")(provider, task, target) == {"reviewer/a.py"}
+    _repo, _branch, queries, limits = provider.calls[0]
+    assert queries[0] == "q", "продакшн-запрос идёт первым"
+    assert any("хвостовой" in q for q in queries)
+    assert limits is None
+
+
+def test_multiquery_is_registered():
+    assert "multiquery" in variants.VARIANT_NAMES
