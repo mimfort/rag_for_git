@@ -482,7 +482,7 @@ up to `max_files` files, each contributing up to `max_chunks_per_file` chunks of
 characters. The section's
 character cap is not a separate key — it is derived: the operational budget is
 `max_files × max_chunks_per_file × chars_per_file`, while the post-render safety cap is
-`max_files × chars_per_file × 3 // 2`.
+`max_files × max_chunks_per_file × chars_per_file × 3 // 2`.
 
 ### Layered repository policy
 

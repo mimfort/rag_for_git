@@ -487,7 +487,8 @@ Voyage rerank для `/ask`, грунтовки и ревью PR), `search_tasks
 файлов, из каждого — не более `max_chunks_per_file` чанков по `chars_per_file` символов. Символьный
 потолок секции отдельным ключом
 не задаётся — он производный: операционный бюджет равен `max_files × max_chunks_per_file ×
-chars_per_file`, а страховочный потолок после рендера — `max_files × chars_per_file × 3 // 2`.
+chars_per_file`, а страховочный потолок после рендера — `max_files × max_chunks_per_file ×
+chars_per_file × 3 // 2`.
 
 ### Слоистая политика репозитория
 
