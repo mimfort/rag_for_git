@@ -12,9 +12,11 @@ class FakeClient:
     def __init__(self): self.calls = []
     def embed(self, texts, model, input_type, output_dimension):
         self.calls.append((tuple(texts), input_type))
-        # Вектор зависит от текста (не константа), иначе перепутанное сопоставление
-        # текст↔вектор в кэширующих методах прошло бы тест незамеченным.
-        return FakeResp([[float(sum(ord(c) for c in t))] * output_dimension for t in texts])
+        # Вектор зависит от текста и от позиции символов (не просто суммы кодов),
+        # иначе перепутанное сопоставление текст↔вектор в кэширующих методах
+        # прошло бы тест незамеченным — например, анаграммы дали бы одинаковый вектор.
+        return FakeResp([[float(sum((i + 1) * ord(c) for i, c in enumerate(t)))]
+                         * output_dimension for t in texts])
 
 def test_embed_documents_batches_and_uses_document_input_type():
     fake = FakeClient()

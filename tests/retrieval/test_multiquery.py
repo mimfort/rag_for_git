@@ -221,10 +221,12 @@ def test_graph_expansion_failure_is_fail_soft():
 
 
 def test_duplicate_queries_are_deduplicated_preserving_order():
+    # "z" > "a" по сортировке: вход намеренно не отсортирован, чтобы пришпилить
+    # именно dict.fromkeys-семантику (первое вхождение), а не sorted(set(...)).
     embedder = _FakeEmbedder()
-    store = _FakeStore({"q0": [_bm25("a.py#f")], "q1": [_bm25("b.py#g")]})
-    pack = search_multi(_Retriever(store, embedder), "o/n", ["q0", "q1", "q0"],
+    store = _FakeStore({"z": [_bm25("a.py#f")], "a": [_bm25("b.py#g")]})
+    pack = search_multi(_Retriever(store, embedder), "o/n", ["z", "a", "z"],
                         limits=CodebaseLimits(), branch="dev")
-    assert embedder.batches == [["q0", "q1"]], "дубль не уходит в батч эмбеддера повторно"
-    assert store.queries == ["q0", "q1"], "дубль не даёт второй прогон гибрида"
+    assert embedder.batches == [["z", "a"]], "дубль не уходит в батч эмбеддера повторно"
+    assert store.queries == ["z", "a"], "дубль не даёт второй прогон гибрида"
     assert {it.path for it in pack.items} == {"a.py", "b.py"}
