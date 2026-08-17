@@ -93,33 +93,6 @@ def remove_worktree(repo: str, path: str) -> None:
     shutil.rmtree(os.path.dirname(path), ignore_errors=True)
 
 
-def commit_file_sets(repo: str, *, limit: int) -> list[set[str]]:
-    """Последние ``limit`` коммитов как список множеств затронутых файлов.
-
-    Один процесс git на весь запрос. Pathspec намеренно НЕ передаётся: с ним
-    `--name-only` отдал бы только совпавшие пути, а со-изменяемость требует
-    полного состава коммита. Fail-soft: не git-репо или сбой — пустой список.
-    """
-    try:
-        out = _git(repo, "log", f"-n{limit}", "--name-only", "--no-merges",
-                   "--pretty=format:%x00")
-    except (OSError, subprocess.CalledProcessError):
-        return []
-    sets: list[set[str]] = []
-    current: set[str] = set()
-    for line in out.splitlines():
-        if line.startswith("\0"):
-            if current:
-                sets.append(current)
-            current = set()
-            continue
-        if line:
-            current.add(line)
-    if current:
-        sets.append(current)
-    return sets
-
-
 def paths_touched_by_grep(repo: str, pattern: str, *, limit: int) -> list[str]:
     """Пути коммитов, чьё сообщение содержит ``pattern`` (ключ задачи).
 

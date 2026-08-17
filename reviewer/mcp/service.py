@@ -1797,15 +1797,15 @@ class MCPReviewService:
     def _search_codebase_multi(self, repo: str, queries: list[str],
                                branch: str | None = None,
                                include_tests: bool = False,
-                               augment_paths: list[str] | None = None,
-                               cochange=None) -> str:
+                               augment_paths: list[str] | None = None) -> str:
         """Мультизапросный ретрив секций контекста задачи (PRI-255).
 
         Приватный: публичный search_codebase остаётся однозапросным, чтобы
         /ask, грунтовка и ревью PR не меняли поведение.
 
-        augment_paths/cochange (PRI-257) — третий источник кандидатов
-        (диффы похожих задач, git-со-изменяемость); см. search_multi.
+        augment_paths (PRI-257) — третий источник кандидатов (фактические
+        diff-пути похожих задач); см. search_multi. Co-change как источник
+        снят по итогам приёмки (step8-measurement.md).
         """
         from reviewer.retrieval.multiquery import search_multi
         rb = self._resolve_repo_branch(repo, branch)
@@ -1818,7 +1818,7 @@ class MCPReviewService:
                 self.components.retriever, repo, queries,
                 limits=cl.search_codebase, section_limits=cl.code_section,
                 hops=cl.graph.hops, branch=resolved, include_tests=include_tests,
-                augment_paths=augment_paths, cochange=cochange)
+                augment_paths=augment_paths)
         except Exception:
             log.warning("_search_codebase_multi: сбой поиска", exc_info=True)
             return "(ничего не найдено)"
@@ -3605,47 +3605,13 @@ class _TaskContextDeps:
             self.augment_gaps.append("подмешивание путей похожих задач недоступно")
             return []
 
-    def _cochange(self, repo: str):
-        """Callable seeds → co-change пути; None, если клона нет.
-
-        Fail-soft на этом уровне, а не только внутри _augment_items
-        (multiquery.py, задача 3): у search_multi нет доступа к augment_gaps,
-        поэтому сбой git здесь обязан сам дать и log.warning, и gap —
-        симметрично источнику «diff-пути похожих задач».
-        """
-        from reviewer.retrieval.augment import (
-            COCHANGE_COMMITS, MIN_COCHANGE, rank_cochanged,
-        )
-        from reviewer import gitutil
-        try:
-            clone = self._clone_path(repo)
-        except Exception:  # noqa: BLE001
-            log.warning("_TaskContextDeps._cochange: клон недоступен", exc_info=True)
-            self.augment_gaps.append("co-change недоступен: клон репозитория недоступен")
-            return None
-        if not clone:
-            return None
-
-        def _fn(seeds: list[str]) -> list[str]:
-            try:
-                commits = gitutil.commit_file_sets(clone, limit=COCHANGE_COMMITS)
-                return rank_cochanged(commits, set(seeds), min_count=MIN_COCHANGE,
-                                      limit=AUGMENT_LOOKUP_LIMIT)
-            except Exception as exc:  # noqa: BLE001 — git-история недоступна, штатный случай
-                reason = f"co-change недоступен: {type(exc).__name__}"
-                log.warning("_TaskContextDeps._cochange: %s", reason, exc_info=True)
-                self.augment_gaps.append(reason)
-                return []
-
-        return _fn
-
     def subsystems(self, repo: str, branch: str, query: str) -> dict:
         return self._service.get_subsystem_summaries(repo, branch, None, query, None)
 
     def code(self, repo: str, branch: str, queries: list) -> str:
         return self._service._search_codebase_multi(
             repo, queries, branch, False,
-            augment_paths=self._augment_paths(repo), cochange=self._cochange(repo))
+            augment_paths=self._augment_paths(repo))
 
     def test_exemplars(self, repo: str, branch: str, queries: list) -> str:
         return self._service._search_codebase_multi(repo, queries, branch, True)

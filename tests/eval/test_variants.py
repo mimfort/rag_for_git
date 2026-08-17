@@ -99,44 +99,32 @@ def test_multiquery_is_registered():
 
 def test_augment_variants_registered():
     from eval.solve_task_metrics.variants import VARIANT_NAMES, get_variant
-    assert {"similar_paths", "cochange", "augmented"} <= set(VARIANT_NAMES)
-    for name in ("similar_paths", "cochange", "augmented"):
-        assert callable(get_variant(name))
+    assert "similar_paths" in set(VARIANT_NAMES)
+    assert callable(get_variant("similar_paths"))
+
+
+def test_cochange_and_augmented_variants_are_not_registered():
+    """Co-change снят по итогам приёмки (step8-measurement.md) — реестр их не знает."""
+    from eval.solve_task_metrics.variants import VARIANT_NAMES
+    assert "cochange" not in VARIANT_NAMES
+    assert "augmented" not in VARIANT_NAMES
 
 
 class AugmentProvider(FakeProvider):
-    """Провайдер ретрива для вариантов PRI-257: запоминает флаги подмешивания."""
+    """Провайдер ретрива для варианта similar_paths (PRI-257): запоминает флаг."""
 
-    def code_multi(self, repo, branch, queries, limits, *,
-                   similar_paths=False, cochange=False):
-        self.calls.append((repo, branch, list(queries), limits,
-                           similar_paths, cochange))
+    def code_multi(self, repo, branch, queries, limits, *, similar_paths=False):
+        self.calls.append((repo, branch, list(queries), limits, similar_paths))
         return self.text
 
 
-def test_similar_paths_variant_enables_only_similar_flag():
+def test_similar_paths_variant_enables_similar_flag():
     provider = AugmentProvider(HEADER)
     task, target = _inputs()
     assert variants.get_variant("similar_paths")(provider, task, target) == \
         {"reviewer/a.py"}
     call = provider.calls[0]
-    assert call[4] is True and call[5] is False
-
-
-def test_cochange_variant_enables_only_cochange_flag():
-    provider = AugmentProvider(HEADER)
-    task, target = _inputs()
-    assert variants.get_variant("cochange")(provider, task, target) == {"reviewer/a.py"}
-    call = provider.calls[0]
-    assert call[4] is False and call[5] is True
-
-
-def test_augmented_variant_enables_both_flags():
-    provider = AugmentProvider(HEADER)
-    task, target = _inputs()
-    assert variants.get_variant("augmented")(provider, task, target) == {"reviewer/a.py"}
-    call = provider.calls[0]
-    assert call[4] is True and call[5] is True
+    assert call[4] is True
 
 
 def test_parse_overrides_accepts_code_section():

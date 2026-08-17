@@ -1,46 +1,16 @@
-"""Подсчёт co-change и сборка путей-кандидатов (PRI-257)."""
-from reviewer.retrieval.augment import AugmentResult, collect_similar_task_paths, rank_cochanged
+"""Сборка путей-кандидатов из фактических диффов похожих задач (PRI-257).
 
-
-def test_cochanged_ranks_by_cooccurrence_count():
-    commits = [
-        {"reviewer/a.py", "reviewer/b.py"},
-        {"reviewer/a.py", "reviewer/b.py"},
-        {"reviewer/a.py", "reviewer/c.py"},
-    ]
-    assert rank_cochanged(commits, {"reviewer/a.py"}, min_count=2, limit=10) == [
-        "reviewer/b.py"
-    ]
-
-
-def test_cochanged_excludes_seeds_themselves():
-    commits = [{"reviewer/a.py", "reviewer/b.py"}] * 3
-    ranked = rank_cochanged(commits, {"reviewer/a.py"}, min_count=2, limit=10)
-    assert "reviewer/a.py" not in ranked
-
-
-def test_cochanged_respects_min_count_and_limit():
-    commits = [
-        {"reviewer/a.py", "reviewer/b.py"},
-        {"reviewer/a.py", "reviewer/c.py"},
-        {"reviewer/a.py", "reviewer/c.py"},
-        {"reviewer/a.py", "reviewer/d.py"},
-        {"reviewer/a.py", "reviewer/d.py"},
-    ]
-    assert rank_cochanged(commits, {"reviewer/a.py"}, min_count=2, limit=1) == [
-        "reviewer/c.py"
-    ], "порядок при равном счёте — по пути, лимит режет хвост"
-
-
-def test_cochanged_without_seeds_or_commits_is_empty():
-    assert rank_cochanged([], {"reviewer/a.py"}, min_count=2, limit=5) == []
-    assert rank_cochanged([{"reviewer/a.py"}], set(), min_count=2, limit=5) == []
+Co-change (rank_cochanged/commit_file_sets) снят по итогам приёмки — см.
+.superpowers/sdd/2026-08-17-pri-257-augmented-candidates/step8-measurement.md,
+«Вердикт по критерию приёмки 1».
+"""
+from reviewer.retrieval.augment import AugmentResult, collect_similar_task_paths
 
 
 def test_augment_result_is_immutable_value():
-    result = AugmentResult(paths=["reviewer/a.py"], by_source={"cochange": 1}, gaps=[])
+    result = AugmentResult(paths=["reviewer/a.py"], by_source={"similar_diffs": 1}, gaps=[])
     assert result.paths == ["reviewer/a.py"]
-    assert result.by_source["cochange"] == 1
+    assert result.by_source["similar_diffs"] == 1
     assert result.gaps == []
 
 

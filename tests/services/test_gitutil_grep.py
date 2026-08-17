@@ -1,9 +1,9 @@
-"""git-примитивы co-change на настоящем репозитории (PRI-257)."""
+"""git-фолбэк similar-diffs по сообщениям коммитов на настоящем репозитории (PRI-257)."""
 import subprocess
 
 import pytest
 
-from reviewer.gitutil import commit_file_sets, paths_touched_by_grep
+from reviewer.gitutil import paths_touched_by_grep
 
 
 def _run(repo, *args):
@@ -23,15 +23,6 @@ def _commit(repo, message, files):
         (repo / name).write_text(body, encoding="utf-8")
     _run(repo, "add", "-A")
     _run(repo, "commit", "-q", "-m", message)
-
-
-@pytest.mark.integration
-def test_commit_file_sets_groups_files_per_commit(repo):
-    _commit(repo, "первый", {"a.py": "1", "b.py": "1"})
-    _commit(repo, "второй", {"c.py": "1"})
-    sets = commit_file_sets(str(repo), limit=10)
-    assert {"c.py"} in sets
-    assert {"a.py", "b.py"} in sets
 
 
 @pytest.mark.integration
@@ -58,5 +49,4 @@ def test_paths_touched_by_grep_matches_merge_commit_branch_name(repo):
 
 @pytest.mark.integration
 def test_non_git_path_is_fail_soft(tmp_path):
-    assert commit_file_sets(str(tmp_path / "нет"), limit=10) == []
     assert paths_touched_by_grep(str(tmp_path / "нет"), "PRI-1", limit=10) == []

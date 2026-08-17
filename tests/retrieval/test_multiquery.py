@@ -490,23 +490,6 @@ def test_augment_quota_not_fully_used_when_fewer_chunked_candidates_exist():
     assert "подмешано 1" in pack.as_context(), "нота считает фактически найденное, не квоту"
 
 
-def test_augment_priority_similar_diffs_before_cochange_with_abundant_chunks():
-    """При избытке кандидатов с чанками similar-diffs занимает квоту раньше co-change."""
-    store = _FakeStore(
-        {"q0": [_bm25("a.py#f")]},
-        nodes_by_path={
-            "s1.py": _hit("s1.py#s"), "s2.py": _hit("s2.py#s"), "c1.py": _hit("c1.py#s"),
-        },
-    )
-    pack = search_multi(
-        _Retriever(store, _FakeEmbedder()), "o/n", ["q0"], limits=CodebaseLimits(),
-        section_limits=CodeSectionLimits(max_augmented_files=2), branch="dev",
-        augment_paths=["s1.py", "s2.py"], cochange=lambda seeds: ["c1.py"])
-    context = pack.as_context()
-    assert "similar-diffs 2" in context and "co-change 0" in context, \
-        "similar-diffs занимает квоту раньше co-change при избытке кандидатов"
-
-
 class _FailingFetchStore(_FakeStore):
     def fetch_retrieved_at_paths(self, repo, paths, *, base_ref, limit_per_path=1):
         raise RuntimeError("стор недоступен")
@@ -523,36 +506,19 @@ def test_augment_store_fetch_failure_is_fail_soft():
     assert [it.path for it in pack.items] == ["a.py"]
 
 
-def test_augment_note_reports_sources_and_quota():
+def test_augment_note_reports_source_and_quota():
+    """Co-change снят (PRI-257, приёмка по step8-measurement.md) — нота больше не
+    разбивает подмешанное по источникам, только similar-diffs и квота."""
     store = _FakeStore({"q0": [_bm25("a.py#f")]},
-                       nodes_by_path={"x.py": _hit("x.py#s"), "c.py": _hit("c.py#s")})
+                       nodes_by_path={"x.py": _hit("x.py#s")})
     pack = search_multi(
         _Retriever(store, _FakeEmbedder()), "o/n", ["q0"], limits=CodebaseLimits(),
         section_limits=CodeSectionLimits(max_augmented_files=3), branch="dev",
-        augment_paths=["x.py"], cochange=lambda seeds: ["c.py"])
+        augment_paths=["x.py"])
     context = pack.as_context()
-    assert "подмешано 2" in context
-    assert "similar-diffs 1" in context and "co-change 1" in context
-
-
-def test_cochange_receives_hybrid_paths_as_seeds():
-    seen: list = []
-    store = _FakeStore({"q0": [_bm25("a.py#f")]}, nodes_by_path={"c.py": _hit("c.py#s")})
-    search_multi(_Retriever(store, _FakeEmbedder()), "o/n", ["q0"],
-                 limits=CodebaseLimits(), branch="dev",
-                 cochange=lambda seeds: seen.append(list(seeds)) or ["c.py"])
-    assert seen == [["a.py"]], "seeds co-change — пути гибридной выдачи"
-
-
-def test_augment_failure_is_fail_soft():
-    def boom(seeds):
-        raise RuntimeError("git недоступен")
-
-    store = _FakeStore({"q0": [_bm25("a.py#f")]})
-    pack = search_multi(_Retriever(store, _FakeEmbedder()), "o/n", ["q0"],
-                        limits=CodebaseLimits(), branch="dev", cochange=boom)
-    assert [it.path for it in pack.items] == ["a.py"]
-    assert pack.augment_note is None
+    assert "подмешано 1" in context
+    assert "similar-diffs" in context and "квота 3" in context
+    assert "co-change" not in context
 
 
 def test_no_augmentation_leaves_note_absent():

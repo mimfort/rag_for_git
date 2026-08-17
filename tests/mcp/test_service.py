@@ -748,7 +748,7 @@ def test_task_context_deps_code_passes_include_tests_false() -> None:
     Перепутанный позиционный аргумент незаметен для FakeDeps-тестов task_context —
     там подменяется весь слой deps. Тест ловит именно проводку внутри service.py.
 
-    augment_paths/cochange (PRI-257) идут kwargs: без предшествующего similar()
+    augment_paths (PRI-257) идёт kwarg: без предшествующего similar()
     _similar_hits пуст, поэтому augment_paths=[] — как и раньше до PRI-257.
     """
     from reviewer.mcp.service import _TaskContextDeps
@@ -762,7 +762,6 @@ def test_task_context_deps_code_passes_include_tests_false() -> None:
     call = fake_service._search_codebase_multi.call_args
     assert call.args == ("o/r", ["q1", "q2"], "dev", False)
     assert call.kwargs["augment_paths"] == []
-    assert callable(call.kwargs["cochange"])
     assert result == "code-out"
 
 
@@ -844,54 +843,6 @@ def test_task_context_deps_history_failure_is_a_gap_not_an_exception() -> None:
     assert paths == []
     assert any("история прогонов недоступна" in g for g in deps.augment_gaps)
     assert collect.call_args.kwargs["history"] is None
-
-
-def test_task_context_deps_cochange_failure_is_a_gap_not_an_exception() -> None:
-    """Сбой co-change (git недоступен) — тоже gap, а не тихий лог (PRI-257 review fix)."""
-    from reviewer.mcp.service import _TaskContextDeps
-
-    fake_service = MagicMock()
-    fake_service._repo_clone_path.return_value = "/clone"
-    deps = _TaskContextDeps(fake_service, None)
-
-    cochange = deps._cochange("o/r")
-    with patch("reviewer.gitutil.commit_file_sets") as commit_file_sets:
-        commit_file_sets.side_effect = RuntimeError("git недоступен")
-        result = cochange(["a.py"])
-
-    assert result == []
-    assert any("co-change" in g for g in deps.augment_gaps)
-
-
-def test_task_context_deps_cochange_clone_failure_is_a_gap() -> None:
-    """Сбой резолва клона для co-change тоже копится в augment_gaps, не только логируется."""
-    from reviewer.mcp.service import _TaskContextDeps
-
-    fake_service = MagicMock()
-    fake_service._repo_clone_path.side_effect = RuntimeError("нет доступа")
-    deps = _TaskContextDeps(fake_service, None)
-
-    cochange = deps._cochange("o/r")
-
-    assert cochange is None
-    assert any("co-change" in g for g in deps.augment_gaps)
-
-
-def test_task_context_deps_cochange_success_leaves_no_gap() -> None:
-    """Happy path co-change не пишет ложный gap."""
-    from reviewer.mcp.service import _TaskContextDeps
-
-    fake_service = MagicMock()
-    fake_service._repo_clone_path.return_value = "/clone"
-    deps = _TaskContextDeps(fake_service, None)
-
-    cochange = deps._cochange("o/r")
-    with patch("reviewer.gitutil.commit_file_sets") as commit_file_sets:
-        commit_file_sets.return_value = [{"a.py", "c.py"}, {"a.py", "c.py"}]
-        result = cochange(["a.py"])
-
-    assert result == ["c.py"]
-    assert deps.augment_gaps == []
 
 
 def test_task_context_deps_test_exemplars_passes_include_tests_true() -> None:

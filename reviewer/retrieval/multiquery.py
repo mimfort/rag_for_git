@@ -127,41 +127,34 @@ augmented (PRI-257, третий фикс по step8-measurement.md, «Трет�
 """
 
 
-def _augment_items(retriever, repo: str, merged: list, *, augment_paths, cochange,
+def _augment_items(retriever, repo: str, *, augment_paths,
                    quota: int, bref: str, known_paths: set) -> tuple[list, str | None]:
-    """Подмешанные кандидаты: пути похожих задач и co-change. Fail-soft.
+    """Подмешанные кандидаты: фактические diff-пути похожих задач. Fail-soft.
+
+    Co-change как источник снят (PRI-257, приёмка по step8-measurement.md,
+    «Вердикт по критерию приёмки 1»): 4 попадания в ядро на 34 подмешанных
+    пути (12 %), просадка bulk, одна вытесненная core-задача — и поверх
+    similar-diffs сигнал не добавлял ничего измеримого. similar-diffs,
+    напротив, покрывает (28/35 попаданий, +0.25 к медиане core-recall).
 
     Квота считает ФАЙЛЫ, реально подмешанные в выдачу, а не рассмотренных
-    кандидатов: списки путей часто открываются непроиндексированными файлами
+    кандидатов: список путей часто открывается непроиндексированными файлами
     (docs/*, *.jsonl, README, CLAUDE.md — чанки есть только у .py), и урезание
     списка кандидатов до quota ДО похода в стор выжигало квоту на путях,
     которые физически не могли попасть в выдачу, оставляя .py-кандидатов из
-    хвоста без единого шанса. Поэтому сначала собираются ВСЕ кандидаты обоих
-    источников (до предохранителя AUGMENT_LOOKUP_LIMIT), один запрос
-    fetch_retrieved_at_paths решает, у кого есть чанки, и только из реально
-    найденных берутся первые quota — в исходном порядке источников.
-
-    Приоритет — similar-diffs: путь, который задача уже реально правила,
-    сильнее статистики со-изменяемости.
+    хвоста без единого шанса. Поэтому сначала собираются ВСЕ кандидаты (до
+    предохранителя AUGMENT_LOOKUP_LIMIT), один запрос fetch_retrieved_at_paths
+    решает, у кого есть чанки, и только из реально найденных берутся первые
+    quota — в исходном порядке.
     """
     if quota <= 0:
         return [], None
-    candidates: dict[str, str] = {}
+    candidates: dict[str, None] = {}
     for path in augment_paths or []:
         if len(candidates) >= AUGMENT_LOOKUP_LIMIT:
             break
         if path not in known_paths:
-            candidates.setdefault(path, "similar-diffs")
-    if cochange is not None and len(candidates) < AUGMENT_LOOKUP_LIMIT:
-        try:
-            seeds = list(dict.fromkeys(item.path for item in merged))
-            for path in cochange(seeds):
-                if len(candidates) >= AUGMENT_LOOKUP_LIMIT:
-                    break
-                if path not in known_paths:
-                    candidates.setdefault(path, "co-change")
-        except Exception:  # noqa: BLE001 — git или история недоступны, это штатный случай
-            log.warning("multiquery: co-change недоступен", exc_info=True)
+            candidates.setdefault(path, None)
     if not candidates:
         return [], None
     try:
@@ -170,19 +163,15 @@ def _augment_items(retriever, repo: str, merged: list, *, augment_paths, cochang
     except Exception:  # noqa: BLE001
         log.warning("multiquery: выборка подмешанных путей недоступна", exc_info=True)
         return [], None
-    counts = {"similar-diffs": 0, "co-change": 0}
     items = []
-    for path, source in candidates.items():
+    for path in candidates:
         if len(items) >= quota:
             break
         if path in fetched:
             items.append(fetched[path])
-            counts[source] += 1
     if not items:
         return [], None
-    note = (f"— подмешано {len(items)} файлов: "
-            f"similar-diffs {counts['similar-diffs']}, "
-            f"co-change {counts['co-change']} (квота {quota})")
+    note = f"— подмешано {len(items)} файлов: similar-diffs (квота {quota})"
     return items, note
 
 
@@ -211,8 +200,7 @@ def diversify_by_file(items: list, *, max_files: int, max_chunks_per_file: int) 
 
 def search_multi(retriever, repo: str, queries: list[str], *, limits=None,
                  section_limits=None, hops: int = 1, branch: str = "",
-                 include_tests: bool = False, augment_paths=None,
-                 cochange=None) -> ContextPack:
+                 include_tests: bool = False, augment_paths=None) -> ContextPack:
     """Мультизапросный ретрив по base-индексу ветки: N прогонов, RRF, обрезка.
 
     Реранкера и cliff-отсечки здесь нет — финальный ранкер RRF (см. докстринг
@@ -226,19 +214,22 @@ def search_multi(retriever, repo: str, queries: list[str], *, limits=None,
     рендера.
 
     Третий источник (PRI-257) — подмешанные пути: фактические диффы похожих
-    задач и git-со-изменяемость. max_augmented_files — РЕЗЕРВ файловых слотов
-    внутри max_files, а не потолок на остаток: augmented гарантированно
-    получает до max_augmented_files слотов (по факту найденных кандидатов),
-    гибрид+graph делят max_files минус фактически занятый резерв (не минус
-    номинальную квоту — без кандидатов гибрид получает бюджет целиком).
+    задач (augment_paths). max_augmented_files — РЕЗЕРВ файловых слотов внутри
+    max_files, а не потолок на остаток: augmented гарантированно получает до
+    max_augmented_files слотов (по факту найденных кандидатов), гибрид+graph
+    делят max_files минус фактически занятый резерв (не минус номинальную
+    квоту — без кандидатов гибрид получает бюджет целиком).
 
     known_paths для augmented считается по ИТОГОВОЙ гибридной выдаче
     (после dedupe+diversify на полном max_files), а не по сырому пулу
     (merged+graph, десятки путей): кандидат, которого гибрид нашёл, но
     ранжировал слишком низко для попадания в max_files, из пула исключался
     как «уже известный» — хотя именно такие файлы (низкий ранг гибрида,
-    высокая ценность сигнала) рычаг обязан промоутить. Смотри разбор обоих
-    механизмов (потолок-на-остаток и сырой-пул) — см.
+    высокая ценность сигнала) рычаг обязан промоутить.
+
+    Второй источник — git-со-изменяемость (co-change) — снят по итогам
+    приёмки (12 % точность, просадка bulk, ноль вклада поверх similar-diffs).
+    Полный разбор всех механизмов бюджета и приёмки — см.
     .superpowers/sdd/2026-08-17-pri-257-augmented-candidates/
     step8-measurement.md.
     """
@@ -271,7 +262,7 @@ def search_multi(retriever, repo: str, queries: list[str], *, limits=None,
                                      max_files=sec.max_files,
                                      max_chunks_per_file=sec.max_chunks_per_file)
     augmented, note = _augment_items(
-        retriever, repo, merged, augment_paths=augment_paths, cochange=cochange,
+        retriever, repo, augment_paths=augment_paths,
         quota=sec.max_augmented_files, bref=bref,
         known_paths={item.path for item in hybrid_final})
     if not include_tests:
