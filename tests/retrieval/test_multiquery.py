@@ -329,14 +329,62 @@ def test_augmented_paths_appended_after_hybrid_and_capped_by_quota():
     assert paths[1:] == ["x.py", "y.py"], "квота режет третий подмешанный файл"
 
 
-def test_augmented_do_not_displace_hybrid_when_budget_is_full():
-    hits = [_bm25(f"f{i}.py#s") for i in range(12)]
+def test_augmented_gets_reserved_slots_even_when_hybrid_overflows_budget():
+    """PRI-257 (добор по step8-measurement.md): резерв, а не потолок на остаток.
+
+    До фикса augmented — последний источник в списке, и diversify_by_file
+    отдавал ему слот только если гибрид не успевал заполнить max_files сам:
+    на 42 живых задачах это душило сигнал до 0-1 файла из выдачи. Теперь
+    augmented получает свою квоту ГАРАНТИРОВАННО, гибрид — max_files минус
+    фактически занятый резерв.
+    """
+    hits = [_bm25(f"f{i}.py#s") for i in range(20)]
+    store = _FakeStore(
+        {"q0": hits},
+        nodes_by_path={
+            "x.py": _hit("x.py#s"), "y.py": _hit("y.py#s"), "z.py": _hit("z.py#s"),
+        },
+    )
+    pack = search_multi(
+        _Retriever(store, _FakeEmbedder()), "o/n", ["q0"], limits=CodebaseLimits(),
+        section_limits=CodeSectionLimits(max_augmented_files=3), branch="dev",
+        augment_paths=["x.py", "y.py", "z.py"])
+    paths = [it.path for it in pack.items]
+    assert {"x.py", "y.py", "z.py"} <= set(paths), \
+        "все 3 подмешанных файла в выдаче, несмотря на переполненный гибридом бюджет"
+    assert len(paths) == CodeSectionLimits().max_files, \
+        "общий файловый бюджет секции не превышен"
+
+
+def test_hybrid_gets_full_budget_without_augmented_candidates():
+    """Регресс-проверка: без augmented-кандидатов гибрид получает ПОЛНЫЙ max_files.
+
+    Резерв не должен вычитаться из бюджета гибрида, когда подмешивать нечего —
+    иначе задачи без путевого сигнала потеряли бы файлы просто так.
+    """
+    hits = [_bm25(f"f{i}.py#s") for i in range(20)]
+    store = _FakeStore({"q0": hits})
+    pack = search_multi(_Retriever(store, _FakeEmbedder()), "o/n", ["q0"],
+                        limits=CodebaseLimits(), branch="dev")
+    assert len({it.path for it in pack.items}) == CodeSectionLimits().max_files
+
+
+def test_hybrid_budget_reduced_only_by_actually_used_augmented_slots():
+    """Квота 3, но стор находит только 1 путь — резерв фактический (1), не номинальный (3).
+
+    Требование: «гибрид и graph-only делят max_files минус фактически занятый
+    резерв (не минус номинальную квоту)».
+    """
+    hits = [_bm25(f"f{i}.py#s") for i in range(20)]
     store = _FakeStore({"q0": hits}, nodes_by_path={"x.py": _hit("x.py#s")})
     pack = search_multi(
         _Retriever(store, _FakeEmbedder()), "o/n", ["q0"], limits=CodebaseLimits(),
-        section_limits=CodeSectionLimits(), branch="dev", augment_paths=["x.py"])
-    assert "x.py" not in {it.path for it in pack.items}, \
-        "при полном бюджете max_files подмешанные вытесняются гибридом"
+        section_limits=CodeSectionLimits(max_augmented_files=3), branch="dev",
+        augment_paths=["x.py", "нет-в-сторе.py", "тоже-нет.py"])
+    paths = [it.path for it in pack.items]
+    assert "x.py" in paths
+    assert len(paths) == CodeSectionLimits().max_files, \
+        "резерв фактический (1 найденный путь), а не номинальные 3 из квоты"
 
 
 def test_augmented_paths_not_found_in_store_leave_no_trace():
