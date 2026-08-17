@@ -124,12 +124,15 @@ def test_skill_has_complete_deterministic_context_limit_presets():
     for field in (
         "floor", "ceiling", "ratio", "abs_floor", "candidate_pool", "ann_distance_max",
         "search_tasks", "hops", "callers_topk",
+        "code_section", "max_files", "max_chunks_per_file", "chars_per_file",
     ):
         assert field in presets.group()
     for expected in ("tiny-util", "3 / 8", "standard", "4 / 15", "large / monorepo", "4 / 25"):
         assert expected in presets.group()
     for expected in ("< 150", "150–800", "800+", "3 / 10", "4 / 14"):
         assert expected in presets.group()
+    for expected in ("max_files: 12", "max_chunks_per_file: 1", "chars_per_file: 1300"):
+        assert expected in presets.group(), f"скилл не задаёт дефолт {expected} для code_section"
 
 
 def test_skill_suggests_rebuilds_without_running():

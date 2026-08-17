@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, patch
 
 from reviewer.config.settings import Settings
 from reviewer.mcp.service import MCPReviewService
-from reviewer.policy.context_limits import CodebaseLimits, ContextLimits
+from reviewer.policy.context_limits import CodebaseLimits, CodeSectionLimits, ContextLimits
 
 
 def _settings() -> Settings:
@@ -319,3 +319,35 @@ def test_search_codebase_multi_passes_limits_and_hops(
     assert isinstance(call.kwargs["limits"], CodebaseLimits)
     assert call.kwargs["limits"].ceiling == 7
     assert call.kwargs["hops"] == 2
+
+
+def test_search_codebase_multi_passes_code_section_limits(
+    isolated_xdg_config_home,
+) -> None:
+    """_search_codebase_multi (PRI-256) пробрасывает в search_multi файловый
+    бюджет секции, резолвленный из эффективной .review.yml-политики.
+
+    Значения в домашнем слое НЕ совпадают с дефолтами (12/1/1300), иначе тест
+    не отличил бы честный резолв политики от захардкоженного CodeSectionLimits().
+    """
+    path = isolated_xdg_config_home / "rag-reviewer/repos/o/r.yml"
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        "context_limits: {code_section: {max_files: 5, chars_per_file: 400}}\n",
+        encoding="utf-8")
+    s = _settings()
+    s.review_branches = "dev"
+    components = MagicMock()
+    vcs = MagicMock()
+    vcs.get_file_at_ref.return_value = None
+    svc = MCPReviewService(s, components, vcs_factory=lambda o, n: vcs)
+
+    with patch("reviewer.retrieval.multiquery.search_multi") as sm:
+        sm.return_value.as_context.return_value = "ok"
+        svc._search_codebase_multi("o/r", ["q1"], branch="dev")
+
+    call = sm.call_args
+    assert isinstance(call.kwargs["section_limits"], CodeSectionLimits)
+    assert call.kwargs["section_limits"].max_files == 5
+    assert call.kwargs["section_limits"].chars_per_file == 400
+    assert call.kwargs["section_limits"].max_chunks_per_file == 1   # дефолт сохранён

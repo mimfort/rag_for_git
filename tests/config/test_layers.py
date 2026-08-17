@@ -580,6 +580,58 @@ def test_build_config_report_marks_policy_defaults_as_env() -> None:
     assert report["warnings"] == ["safe warning"]
 
 
+def test_build_config_report_accepts_code_section(tmp_path: Path) -> None:
+    """PRI-256: подсекция code_section — часть whitelist'а context_limits.
+
+    Регрессия: добавление 4-й подсекции (code_section) в CodeSectionLimits ломало
+    build_config_report, потому что валидатор публичной формы политики знал только про
+    3 старые подсекции (search_codebase/search_tasks/graph) и требовал точного
+    совпадения набора ключей.
+    """
+    report = build_config_report(
+        "O/R",
+        "main",
+        Settings(_env_file=None),
+        {"context_limits": {"code_section": {"max_files": 20, "chars_per_file": 600}}},
+        ResolutionMeta({}, {}, ()),
+    )
+
+    assert report["effective"]["context_limits"]["code_section"] == {
+        "max_files": 20,
+        "max_chunks_per_file": 1,
+        "chars_per_file": 600,
+    }
+
+
+def test_build_config_report_rejects_invalid_code_section(tmp_path: Path) -> None:
+    with pytest.raises(HomeConfigError) as captured:
+        build_config_report(
+            "O/R",
+            "main",
+            Settings(_env_file=None),
+            {"context_limits": {"code_section": {"max_files": "много"}}},
+            ResolutionMeta({}, {}, ()),
+        )
+
+    assert "недопустимые значения" in str(captured.value)
+
+
+def test_resolve_policy_data_quarantines_invalid_home_code_section(tmp_path: Path) -> None:
+    """Слой resolve_policy_data (_validate_context_limits_layer) тоже знает про code_section:
+    невалидное значение в домашнем слое карантинится, а не проходит как валидное."""
+    _write(
+        tmp_path / "review.yml",
+        "context_limits: {code_section: {max_files: not-an-int}}\n",
+    )
+
+    data, meta = resolve_policy_data(
+        "o/r", "main", lambda ref: None, config_root=tmp_path
+    )
+
+    assert "context_limits" not in data
+    assert any(item.layer == "home:review.yml" for item in meta.skipped)
+
+
 def test_migrate_does_not_clobber_destination_created_during_publish(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

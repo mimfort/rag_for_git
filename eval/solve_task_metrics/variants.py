@@ -15,7 +15,7 @@ from .context_paths import extract_context_paths
 # Разделы блока context_limits, которые разрешено оверрайдить: форма совпадает
 # с .review.yml, поэтому свёртка идёт существующим ContextLimits.from_review_yaml
 # и второго парсера лимитов в проекте не появляется.
-OVERRIDE_SECTIONS = ("search_codebase", "search_tasks", "graph")
+OVERRIDE_SECTIONS = ("search_codebase", "search_tasks", "graph", "code_section")
 
 
 class UnknownVariant(ValueError):

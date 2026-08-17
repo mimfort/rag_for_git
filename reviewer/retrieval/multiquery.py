@@ -26,15 +26,6 @@ log = logging.getLogger(__name__)
 RRF_K = 60
 """Константа RRF — та же, что в store.hybrid_search и TaskStore.search."""
 
-MAX_BLOCK_CHARS = 2000
-"""Потолок символов на блок выдачи — четверть бюджета max_tool_result_chars.
-
-Без него один чанк-класс на 400 строк выжигает весь символьный бюджет
-as_context (text[:8000]), и остальные файлы до сборщика брифа не доезжают.
-Файловые квоты и диверсификация — не здесь, это ID-310.
-"""
-
-
 def rrf_merge(runs: list[list], k: int = RRF_K) -> list:
     """Слить выдачи подзапросов: score(node) = Σ 1/(k + rank_в_прогоне).
 
@@ -53,13 +44,16 @@ def rrf_merge(runs: list[list], k: int = RRF_K) -> list:
             for node_id in ordered]
 
 
-def cap_block(item, max_chars: int = MAX_BLOCK_CHARS):
+def cap_block(item, max_chars: int):
     """Обрезать текст блока по границе строк, поправив end_line.
 
     Границу строк держим не ради красоты: as_context нумерует строки от
     start_line, а extract_context_paths требует в заголовке диапазон
     ':\\d+-\\d+'. Обрезка по середине строки сделала бы заголовок ложью, а
     усечение уже в as_context — вовсе съело бы заголовок и потеряло путь.
+
+    Бюджет приходит из политики (CodeSectionLimits.chars_per_file), а не из
+    модульной константы: доля на файл — часть файлового бюджета секции.
     """
     if len(item.text) <= max_chars:
         return item
@@ -125,17 +119,47 @@ def _graph_items(retriever, repo: str, merged: list, ceiling: int, hops: int,
         return []
 
 
+def diversify_by_file(items: list, *, max_files: int, max_chunks_per_file: int) -> list:
+    """Оставить не более max_chunks_per_file чанков на путь и не более max_files путей.
+
+    Идёт по входному порядку и порядок выживших не меняет, поэтому приоритет
+    «сначала hybrid, потом graph-only» и ранг RRF внутри файла сохраняются.
+
+    Зовётся строго ПОСЛЕ _dedupe_overlapping: тот оставляет самый широкий чанк
+    из вложенных, и обратный порядок удержал бы вложенный метод, выбросив
+    охватывающий класс, — то есть ухудшил бы выдачу, а не улучшил.
+    """
+    per_file: dict[str, int] = {}
+    kept: list = []
+    for item in items:
+        taken = per_file.get(item.path, 0)
+        if taken >= max_chunks_per_file:
+            continue
+        if taken == 0 and len(per_file) >= max_files:
+            continue
+        per_file[item.path] = taken + 1
+        kept.append(item)
+    return kept
+
+
 def search_multi(retriever, repo: str, queries: list[str], *, limits=None,
-                 hops: int = 1, branch: str = "",
+                 section_limits=None, hops: int = 1, branch: str = "",
                  include_tests: bool = False) -> ContextPack:
     """Мультизапросный ретрив по base-индексу ветки: N прогонов, RRF, обрезка.
 
     Реранкера и cliff-отсечки здесь нет — финальный ранкер RRF (см. докстринг
     модуля). Порядок «сначала hybrid, потом graph-only» сохранён из search_base:
     hybrid приоритетен, граф добавляет разнообразие.
+
+    Бюджет выдачи файловый (PRI-256): не более section_limits.max_files
+    различных путей. Операционный бюджет символов — max_files ×
+    max_chunks_per_file × chars_per_file (его держит cap_block на ИСХОДНОМ
+    тексте блока); section_limits.max_chars — лишь страховочный потолок после
+    рендера.
     """
-    from reviewer.policy.context_limits import CodebaseLimits
+    from reviewer.policy.context_limits import CodebaseLimits, CodeSectionLimits
     lim = limits or CodebaseLimits()
+    sec = section_limits or CodeSectionLimits()
     bref = base_ref(branch)
     # Дедуп на входе: search_multi — функция общего вида (зовётся и из эвала со
     # своими списками), а не только из build_subqueries, который уже дедуплицирует.
@@ -154,6 +178,8 @@ def search_multi(retriever, repo: str, queries: list[str], *, limits=None,
                                     branch, bref, hybrid_ids)]
     if not include_tests:
         items = [item for item in items if not _is_test_path(item.path)]
-    items = _dedupe_overlapping(items)[:lim.ceiling]
-    return ContextPack(items=[cap_block(item) for item in items],
-                       max_chars=retriever.max_context_chars)
+    items = diversify_by_file(_dedupe_overlapping(items),
+                              max_files=sec.max_files,
+                              max_chunks_per_file=sec.max_chunks_per_file)
+    return ContextPack(items=[cap_block(item, sec.chars_per_file) for item in items],
+                       max_chars=sec.max_chars)

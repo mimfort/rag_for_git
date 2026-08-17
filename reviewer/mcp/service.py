@@ -1811,8 +1811,8 @@ class MCPReviewService:
         try:
             pack = search_multi(
                 self.components.retriever, repo, queries,
-                limits=cl.search_codebase, hops=cl.graph.hops,
-                branch=resolved, include_tests=include_tests)
+                limits=cl.search_codebase, section_limits=cl.code_section,
+                hops=cl.graph.hops, branch=resolved, include_tests=include_tests)
         except Exception:
             log.warning("_search_codebase_multi: сбой поиска", exc_info=True)
             return "(ничего не найдено)"

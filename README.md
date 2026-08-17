@@ -464,11 +464,25 @@ context_limits:
     ceiling: 15
   graph:
     hops: 1
+  code_section:
+    max_files: 12
+    max_chunks_per_file: 1
+    chars_per_file: 1300
 ```
 
 `summary_paths.ignore` only filters which files feed subsystem-summary clustering — unlike
 `paths.ignore`, it does not affect indexing or PR review. Default is `["tests", "test"]`; there
 is no env layer (like `context_limits`), and an explicit empty list disables the filter.
+
+`context_limits` has four subsections: `search_codebase` (hybrid + graph-expansion + Voyage
+rerank for `/ask`, priming, and PR review), `search_tasks` (RRF-only task retrieval), `graph`
+(traversal depth from top hits), and `code_section` — the file budget for the task context's
+`code` section (PRI-256). `code_section`'s budget unit is a file, not a chunk: the section holds
+up to `max_files` files, each contributing up to `max_chunks_per_file` chunks of `chars_per_file`
+characters. The section's
+character cap is not a separate key — it is derived: the operational budget is
+`max_files × max_chunks_per_file × chars_per_file`, while the post-render safety cap is
+`max_files × max_chunks_per_file × chars_per_file × 3 // 2`.
 
 ### Layered repository policy
 
@@ -638,10 +652,12 @@ namespaced skills with `$rag-reviewer:...`.
   headings, plus a pool of technical identifiers), capped at 20, embedded in a single Voyage batch,
   run through hybrid search one by one, and merged with RRF. RRF is the *final* ranker here — no
   reranker and no cliff cutoff, because the cliff scored against that same multi-topic query and
-  collapsed the output to the floor. Each block's text is trimmed on a line boundary to
-  `MAX_BLOCK_CHARS`, so one huge chunk cannot burn the whole render budget. The public
-  `search_codebase` tool stays single-query and unchanged, as does `Retriever.search_base`; the
-  `subsystems` section still gets one query.
+  collapsed the output to the floor. Each block's text is trimmed on a line boundary so one huge
+  chunk cannot burn the whole render budget; the trim uses the per-file file budget
+  (`CodeSectionLimits.chars_per_file`, PRI-256) rather than a standalone module constant — the
+  earlier `MAX_BLOCK_CHARS` constant was removed once the file budget took over that role. The
+  public `search_codebase` tool stays single-query and unchanged, as does `Retriever.search_base`;
+  the `subsystems` section still gets one query.
 - **Startup survey:** one `AskUserQuestion` panel asks three things before anything else — the
   brief model tier (`cheap`/`mid`/`premium`), the interaction mode, and the execution strategy.
   No answer, or a headless run, applies the defaults `mid` / `normal` / `subagent` without

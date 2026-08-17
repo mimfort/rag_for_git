@@ -28,10 +28,40 @@ class GraphLimits:
 
 
 @dataclass(frozen=True)
+class CodeSectionLimits:
+    """Бюджет секции code контекста задачи (PRI-256). Единица бюджета — файл.
+
+    Отдельный от CodebaseLimits намеренно: тот обслуживает публичный
+    search_codebase, /ask и грунтовку, где единица бюджета — чанк, а потолок
+    связан с квотой реранкера. Смешение двух шкал в одном dataclass сделало бы
+    невыразимым «бюджет секции, независимый от чанкового потолка».
+    """
+    max_files: int = 12          # различных файлов в секции
+    max_chunks_per_file: int = 1  # чанков на один файл
+    chars_per_file: int = 1300   # доля символов на файл (операционный бюджет — на исходный текст блока)
+
+    @property
+    def max_chars(self) -> int:
+        """Страховочный потолок ПОСЛЕ рендера, а не операционный бюджет.
+
+        Операционный бюджет секции — max_files × max_chunks_per_file ×
+        chars_per_file: именно он делает объём линейным по числу файлов.
+        Множитель 3/2 здесь — принятый запас, а не выведенная величина:
+        измеренные накладные рендера (префиксы номеров строк ~10 %, заголовки
+        блоков ~4 %) лишь показывают, что запаса хватает, в том числе на
+        страховочный случай, когда cap_block удерживает первую строку целиком,
+        даже если она длиннее лимита. Без запаса срез в as_context вернул бы
+        ровно тот дефект, который файловый бюджет убирает.
+        """
+        return self.max_files * self.max_chunks_per_file * self.chars_per_file * 3 // 2
+
+
+@dataclass(frozen=True)
 class ContextLimits:
     search_codebase: CodebaseLimits = field(default_factory=CodebaseLimits)
     search_tasks: TasksLimits = field(default_factory=TasksLimits)
     graph: GraphLimits = field(default_factory=GraphLimits)
+    code_section: CodeSectionLimits = field(default_factory=CodeSectionLimits)
 
     @classmethod
     def from_review_yaml(cls, data: dict | None) -> "ContextLimits":
@@ -40,6 +70,7 @@ class ContextLimits:
         cb = block.get("search_codebase") or {}
         st = block.get("search_tasks") or {}
         gr = block.get("graph") or {}
+        cs = block.get("code_section") or {}
         return cls(
             search_codebase=CodebaseLimits(
                 floor=int(cb.get("floor", CodebaseLimits.floor)),
@@ -57,5 +88,12 @@ class ContextLimits:
             graph=GraphLimits(
                 hops=int(gr.get("hops", GraphLimits.hops)),
                 callers_topk=int(gr.get("callers_topk", GraphLimits.callers_topk)),
+            ),
+            code_section=CodeSectionLimits(
+                max_files=int(cs.get("max_files", CodeSectionLimits.max_files)),
+                max_chunks_per_file=int(
+                    cs.get("max_chunks_per_file", CodeSectionLimits.max_chunks_per_file)),
+                chars_per_file=int(
+                    cs.get("chars_per_file", CodeSectionLimits.chars_per_file)),
             ),
         )

@@ -31,6 +31,7 @@ def limits_to_yaml(limits: ContextLimits) -> dict:
         "search_codebase": asdict(limits.search_codebase),
         "search_tasks": asdict(limits.search_tasks),
         "graph": asdict(limits.graph),
+        "code_section": asdict(limits.code_section),
     }
 
 
@@ -133,7 +134,12 @@ class LiveRetrieval:
         )
         pack = search_multi(
             self._components.retriever, repo, list(queries),
-            limits=effective.search_codebase, hops=effective.graph.hops,
+            limits=effective.search_codebase,
+            # Файловый бюджет секции (PRI-256) передаётся явно: без него оверрайд
+            # code_section игнорировался бы молча и сторона «до» замера совпала
+            # бы со стороной «после».
+            section_limits=effective.code_section,
+            hops=effective.graph.hops,
             branch=branch, include_tests=False,
         )
         return pack.as_context(line_numbers=True) or "(ничего не найдено)"
