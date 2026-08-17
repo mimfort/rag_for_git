@@ -327,12 +327,12 @@ def test_two_sources_get_separate_quotas_and_named_note():
         section_limits=CodeSectionLimits(), branch="dev",
         augment_sources=[
             AugmentSource(name="similar-diffs", paths=["x.py", "y.py"], quota=1),
-            AugmentSource(name="subsystems", paths=["s1.py", "s2.py"], quota=1),
+            AugmentSource(name="second-source", paths=["s1.py", "s2.py"], quota=1),
         ])
     paths = [it.path for it in pack.items]
     assert paths == ["a.py", "x.py", "s1.py"], "по одному файлу из каждого источника, гибрид первым"
     assert pack.augment_note == (
-        "— подмешано 2 файлов: similar-diffs 1 (квота 1), subsystems 1 (квота 1)")
+        "— подмешано 2 файлов: similar-diffs 1 (квота 1), second-source 1 (квота 1)")
 
 
 def test_second_source_does_not_repeat_path_taken_by_first():
@@ -345,13 +345,13 @@ def test_second_source_does_not_repeat_path_taken_by_first():
         section_limits=CodeSectionLimits(), branch="dev",
         augment_sources=[
             AugmentSource(name="similar-diffs", paths=["x.py"], quota=2),
-            AugmentSource(name="subsystems", paths=["x.py", "y.py"], quota=2),
+            AugmentSource(name="second-source", paths=["x.py", "y.py"], quota=2),
         ])
     paths = [it.path for it in pack.items]
     assert paths.count("x.py") == 1, "путь первого источника второму не достаётся"
     assert "y.py" in paths
     assert pack.augment_note == (
-        "— подмешано 2 файлов: similar-diffs 1 (квота 2), subsystems 1 (квота 2)")
+        "— подмешано 2 файлов: similar-diffs 1 (квота 2), second-source 1 (квота 2)")
 
 
 def test_augmented_paths_appended_after_hybrid_and_capped_by_quota():
@@ -635,7 +635,7 @@ def test_augmented_candidates_ordered_by_raw_pool_rank():
         _Retriever(store, _FakeEmbedder()), "o/n", ["q0"], limits=CodebaseLimits(),
         section_limits=CodeSectionLimits(max_augmented_files=0),
         branch="dev",
-        augment_sources=[AugmentSource(name="subsystems",
+        augment_sources=[AugmentSource(name="second-source",
                                        paths=["never.py", "late.py"], quota=1)])
     paths = [it.path for it in pack.items]
     assert "late.py" in paths, "низко ранжированный гибридом файл приоритетнее ненайденного"
