@@ -90,6 +90,7 @@ class ContextPack:
     max_tokens: int = 0
     tail_meta: object = None        # TailMeta | None (PRI-202); ленивая заметка о хвосте
     degraded_reason: DegradedReason | None = None
+    augment_note: str | None = None   # PRI-257: сколько файлов подмешано и откуда
 
     def as_context(self, line_numbers: bool = False) -> str:
         parts = []
@@ -117,6 +118,8 @@ class ContextPack:
         degraded_note = _format_degraded_note(self.degraded_reason)
         if degraded_note:
             text = f"{text}\n\n{degraded_note}" if text else degraded_note
+        if self.augment_note:
+            text = f"{text}\n\n{self.augment_note}" if text else self.augment_note
         return text
 
 

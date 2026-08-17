@@ -119,6 +119,49 @@ def _graph_items(retriever, repo: str, merged: list, ceiling: int, hops: int,
         return []
 
 
+def _augment_items(retriever, repo: str, merged: list, *, augment_paths, cochange,
+                   quota: int, bref: str, known_paths: set) -> tuple[list, str | None]:
+    """Подмешанные кандидаты: пути похожих задач и co-change. Fail-soft.
+
+    Квота общая на оба источника, приоритет — similar-diffs: путь, который
+    задача уже реально правила, сильнее статистики со-изменяемости.
+    """
+    if quota <= 0:
+        return [], None
+    counts = {"similar-diffs": 0, "co-change": 0}
+    ordered: dict[str, str] = {}
+    for path in augment_paths or []:
+        if path not in known_paths and len(ordered) < quota:
+            ordered.setdefault(path, "similar-diffs")
+    if cochange is not None and len(ordered) < quota:
+        try:
+            seeds = list(dict.fromkeys(item.path for item in merged))
+            for path in cochange(seeds):
+                if path not in known_paths and path not in ordered and len(ordered) < quota:
+                    ordered[path] = "co-change"
+        except Exception:  # noqa: BLE001 — git или история недоступны, это штатный случай
+            log.warning("multiquery: co-change недоступен", exc_info=True)
+    if not ordered:
+        return [], None
+    try:
+        fetched = {item.path: item for item in retriever.store.fetch_retrieved_at_paths(
+            repo, list(ordered), base_ref=bref)}
+    except Exception:  # noqa: BLE001
+        log.warning("multiquery: выборка подмешанных путей недоступна", exc_info=True)
+        return [], None
+    items = []
+    for path, source in ordered.items():
+        if path in fetched:
+            items.append(fetched[path])
+            counts[source] += 1
+    if not items:
+        return [], None
+    note = (f"— подмешано {len(items)} файлов: "
+            f"similar-diffs {counts['similar-diffs']}, "
+            f"co-change {counts['co-change']} (квота {quota})")
+    return items, note
+
+
 def diversify_by_file(items: list, *, max_files: int, max_chunks_per_file: int) -> list:
     """Оставить не более max_chunks_per_file чанков на путь и не более max_files путей.
 
@@ -144,7 +187,8 @@ def diversify_by_file(items: list, *, max_files: int, max_chunks_per_file: int) 
 
 def search_multi(retriever, repo: str, queries: list[str], *, limits=None,
                  section_limits=None, hops: int = 1, branch: str = "",
-                 include_tests: bool = False) -> ContextPack:
+                 include_tests: bool = False, augment_paths=None,
+                 cochange=None) -> ContextPack:
     """Мультизапросный ретрив по base-индексу ветки: N прогонов, RRF, обрезка.
 
     Реранкера и cliff-отсечки здесь нет — финальный ранкер RRF (см. докстринг
@@ -156,6 +200,11 @@ def search_multi(retriever, repo: str, queries: list[str], *, limits=None,
     max_chunks_per_file × chars_per_file (его держит cap_block на ИСХОДНОМ
     тексте блока); section_limits.max_chars — лишь страховочный потолок после
     рендера.
+
+    Третий источник (PRI-257) — подмешанные пути: фактические диффы похожих
+    задач и git-со-изменяемость. Идёт последним, поэтому при полном файловом
+    бюджете вытесняется гибридом естественно; квота max_augmented_files
+    страхует обратный случай — бедную гибридную выдачу.
     """
     from reviewer.policy.context_limits import CodebaseLimits, CodeSectionLimits
     lim = limits or CodebaseLimits()
@@ -176,10 +225,15 @@ def search_multi(retriever, repo: str, queries: list[str], *, limits=None,
     hybrid_ids = {item.node_id for item in merged}
     items = [*merged, *_graph_items(retriever, repo, merged, lim.ceiling, hops,
                                     branch, bref, hybrid_ids)]
+    augmented, note = _augment_items(
+        retriever, repo, merged, augment_paths=augment_paths, cochange=cochange,
+        quota=sec.max_augmented_files, bref=bref,
+        known_paths={item.path for item in items})
+    items = [*items, *augmented]
     if not include_tests:
         items = [item for item in items if not _is_test_path(item.path)]
     items = diversify_by_file(_dedupe_overlapping(items),
                               max_files=sec.max_files,
                               max_chunks_per_file=sec.max_chunks_per_file)
     return ContextPack(items=[cap_block(item, sec.chars_per_file) for item in items],
-                       max_chars=sec.max_chars)
+                       max_chars=sec.max_chars, augment_note=note)

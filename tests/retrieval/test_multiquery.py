@@ -82,10 +82,11 @@ class _FakeEmbedder:
 
 class _FakeStore:
     def __init__(self, by_query: dict, fail_for: str | None = None,
-                 nodes_by_id: dict | None = None):
+                 nodes_by_id: dict | None = None, nodes_by_path: dict | None = None):
         self._by_query = by_query
         self._fail_for = fail_for
         self._nodes_by_id = nodes_by_id or {}
+        self._nodes_by_path = nodes_by_path or {}
         self.queries: list = []
 
     def hybrid_search(self, repo, *, query_text, query_embedding, overlay_ref,
@@ -98,6 +99,9 @@ class _FakeStore:
     def fetch_nodes(self, repo, node_ids, overlay_ref, changed_paths, *, base_ref="base"):
         return [self._nodes_by_id[node_id] for node_id in node_ids
                 if node_id in self._nodes_by_id]
+
+    def fetch_retrieved_at_paths(self, repo, paths, *, base_ref, limit_per_path=1):
+        return [self._nodes_by_path[p] for p in paths if p in self._nodes_by_path]
 
 
 class _FakeGraph:
@@ -307,3 +311,69 @@ def test_section_budget_ignores_retriever_max_context_chars():
     pack = search_multi(_Retriever(store, _FakeEmbedder(), max_context_chars=100),
                         "o/n", ["q0"], limits=CodebaseLimits(), branch="dev")
     assert pack.max_chars == CodeSectionLimits().max_chars
+
+
+def test_augmented_paths_appended_after_hybrid_and_capped_by_quota():
+    store = _FakeStore(
+        {"q0": [_bm25("a.py#f")]},
+        nodes_by_path={
+            "x.py": _hit("x.py#s"), "y.py": _hit("y.py#s"), "z.py": _hit("z.py#s"),
+        },
+    )
+    pack = search_multi(
+        _Retriever(store, _FakeEmbedder()), "o/n", ["q0"], limits=CodebaseLimits(),
+        section_limits=CodeSectionLimits(max_augmented_files=2), branch="dev",
+        augment_paths=["x.py", "y.py", "z.py"])
+    paths = [it.path for it in pack.items]
+    assert paths[0] == "a.py", "гибрид остаётся первым"
+    assert paths[1:] == ["x.py", "y.py"], "квота режет третий подмешанный файл"
+
+
+def test_augmented_do_not_displace_hybrid_when_budget_is_full():
+    hits = [_bm25(f"f{i}.py#s") for i in range(12)]
+    store = _FakeStore({"q0": hits}, nodes_by_path={"x.py": _hit("x.py#s")})
+    pack = search_multi(
+        _Retriever(store, _FakeEmbedder()), "o/n", ["q0"], limits=CodebaseLimits(),
+        section_limits=CodeSectionLimits(), branch="dev", augment_paths=["x.py"])
+    assert "x.py" not in {it.path for it in pack.items}, \
+        "при полном бюджете max_files подмешанные вытесняются гибридом"
+
+
+def test_augment_note_reports_sources_and_quota():
+    store = _FakeStore({"q0": [_bm25("a.py#f")]},
+                       nodes_by_path={"x.py": _hit("x.py#s"), "c.py": _hit("c.py#s")})
+    pack = search_multi(
+        _Retriever(store, _FakeEmbedder()), "o/n", ["q0"], limits=CodebaseLimits(),
+        section_limits=CodeSectionLimits(max_augmented_files=3), branch="dev",
+        augment_paths=["x.py"], cochange=lambda seeds: ["c.py"])
+    context = pack.as_context()
+    assert "подмешано 2" in context
+    assert "similar-diffs 1" in context and "co-change 1" in context
+
+
+def test_cochange_receives_hybrid_paths_as_seeds():
+    seen: list = []
+    store = _FakeStore({"q0": [_bm25("a.py#f")]}, nodes_by_path={"c.py": _hit("c.py#s")})
+    search_multi(_Retriever(store, _FakeEmbedder()), "o/n", ["q0"],
+                 limits=CodebaseLimits(), branch="dev",
+                 cochange=lambda seeds: seen.append(list(seeds)) or ["c.py"])
+    assert seen == [["a.py"]], "seeds co-change — пути гибридной выдачи"
+
+
+def test_augment_failure_is_fail_soft():
+    def boom(seeds):
+        raise RuntimeError("git недоступен")
+
+    store = _FakeStore({"q0": [_bm25("a.py#f")]})
+    pack = search_multi(_Retriever(store, _FakeEmbedder()), "o/n", ["q0"],
+                        limits=CodebaseLimits(), branch="dev", cochange=boom)
+    assert [it.path for it in pack.items] == ["a.py"]
+    assert pack.augment_note is None
+
+
+def test_no_augmentation_leaves_note_absent():
+    store = _FakeStore({"q0": [_bm25("a.py#f")]})
+    pack = search_multi(_Retriever(store, _FakeEmbedder()), "o/n", ["q0"],
+                        limits=CodebaseLimits(), branch="dev")
+    assert pack.augment_note is None
+    assert "подмешано" not in pack.as_context()

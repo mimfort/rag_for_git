@@ -39,6 +39,7 @@ class CodeSectionLimits:
     max_files: int = 12          # различных файлов в секции
     max_chunks_per_file: int = 1  # чанков на один файл
     chars_per_file: int = 1300   # доля символов на файл (операционный бюджет — на исходный текст блока)
+    max_augmented_files: int = 3  # сколько файлов секции может занять подмешанный сигнал (PRI-257)
 
     @property
     def max_chars(self) -> int:
@@ -95,5 +96,7 @@ class ContextLimits:
                     cs.get("max_chunks_per_file", CodeSectionLimits.max_chunks_per_file)),
                 chars_per_file=int(
                     cs.get("chars_per_file", CodeSectionLimits.chars_per_file)),
+                max_augmented_files=int(
+                    cs.get("max_augmented_files", CodeSectionLimits.max_augmented_files)),
             ),
         )

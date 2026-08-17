@@ -218,6 +218,7 @@ def _validate_context_limits_layer(value: object) -> bool:
             "max_files": _is_int,
             "max_chunks_per_file": _is_int,
             "chars_per_file": _is_int,
+            "max_augmented_files": _is_int,
         },
     }
     for section, shape in sections.items():
@@ -564,6 +565,7 @@ def _validate_public_policy_data(effective: Mapping[str, object]) -> None:
                 "max_files": _is_int,
                 "max_chunks_per_file": _is_int,
                 "chars_per_file": _is_int,
+                "max_augmented_files": _is_int,
             },
         ),
     })
