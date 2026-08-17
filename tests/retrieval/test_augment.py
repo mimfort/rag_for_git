@@ -4,8 +4,7 @@ Co-change (rank_cochanged/commit_file_sets) снят по итогам приё�
 .superpowers/sdd/2026-08-17-pri-257-augmented-candidates/step8-measurement.md,
 «Вердикт по критерию приёмки 1».
 """
-from reviewer.retrieval.augment import (AugmentResult, collect_similar_task_paths,
-                                        collect_subsystem_paths)
+from reviewer.retrieval.augment import AugmentResult, collect_similar_task_paths
 
 
 def test_augment_result_is_immutable_value():
@@ -100,77 +99,3 @@ def test_missing_clone_records_a_gap_instead_of_silent_empty_result():
         keys=["PRI-1"], aliases_by_key={}, history=None, clone_path="", limit=10)
     assert result.paths == []
     assert any("клон недоступен" in gap for gap in result.gaps)
-
-
-class _FakeSubsystemSummaryStore:
-    def __init__(self, rows=None, fail=False):
-        self._rows = rows or []
-        self._fail = fail
-        self.calls: list = []
-
-    def search_summaries(self, repo, branch, query_embedding, top_k):
-        self.calls.append((repo, branch, top_k))
-        if self._fail:
-            raise RuntimeError("Postgres недоступен")
-        return list(self._rows)
-
-
-class _FakeSubsystemEmbedder:
-    def __init__(self, fail=False):
-        self._fail = fail
-
-    def embed_query(self, text):
-        if self._fail:
-            raise RuntimeError("нет квоты")
-        return [0.1] * 8
-
-
-def test_subsystem_paths_are_cluster_members_without_symbol_part():
-    store = _FakeSubsystemSummaryStore([
-        {"cluster_key": "reviewer/retrieval",
-         "member_node_ids": ["reviewer/retrieval/a.py#A", "reviewer/retrieval/a.py#B",
-                             "reviewer/retrieval/b.py#C"]},
-    ])
-    result = collect_subsystem_paths(
-        summary_store=store, embedder=_FakeSubsystemEmbedder(), repo="o/n", branch="dev",
-        query="q", limit=10)
-    assert result.paths == ["reviewer/retrieval/a.py", "reviewer/retrieval/b.py"], \
-        "path#fqn срезан до пути, дубли схлопнуты с сохранением порядка"
-    assert result.by_source["subsystems"] == 2
-    assert store.calls == [("o/n", "dev", 3)], "свой ANN top-N, а не выдача секции subsystems"
-
-
-def test_subsystem_paths_are_empty_when_summaries_are_cold():
-    result = collect_subsystem_paths(
-        summary_store=_FakeSubsystemSummaryStore([]), embedder=_FakeSubsystemEmbedder(),
-        repo="o/n", branch="dev", query="q", limit=10)
-    assert result.paths == []
-    assert any("сводки" in gap for gap in result.gaps)
-
-
-def test_subsystem_paths_survive_store_failure_with_gap():
-    result = collect_subsystem_paths(
-        summary_store=_FakeSubsystemSummaryStore(fail=True), embedder=_FakeSubsystemEmbedder(),
-        repo="o/n", branch="dev", query="q", limit=10)
-    assert result.paths == []
-    assert any("сводки подсистем недоступны" in gap for gap in result.gaps)
-
-
-def test_subsystem_paths_survive_embedder_failure_with_gap():
-    result = collect_subsystem_paths(
-        summary_store=_FakeSubsystemSummaryStore(
-            [{"cluster_key": "x", "member_node_ids": ["x/a.py#A"]}]),
-        embedder=_FakeSubsystemEmbedder(fail=True), repo="o/n", branch="dev", query="q",
-        limit=10)
-    assert result.paths == []
-    assert any("эмбеддинг" in gap for gap in result.gaps)
-
-
-def test_subsystem_paths_respect_limit():
-    store = _FakeSubsystemSummaryStore([
-        {"cluster_key": "c", "member_node_ids": [f"c/f{i}.py#S" for i in range(30)]},
-    ])
-    result = collect_subsystem_paths(
-        summary_store=store, embedder=_FakeSubsystemEmbedder(), repo="o/n", branch="dev",
-        query="q", limit=5)
-    assert len(result.paths) == 5

@@ -748,11 +748,8 @@ def test_task_context_deps_code_passes_include_tests_false() -> None:
     Перепутанный позиционный аргумент незаметен для FakeDeps-тестов task_context —
     там подменяется весь слой deps. Тест ловит именно проводку внутри service.py.
 
-    augment_sources (PRI-257/258) идёт kwarg: без предшествующего similar()
-    _similar_hits пуст, поэтому источник similar-diffs несёт пустой paths=[] —
-    как и раньше (до PRI-258 — augment_paths=[]). Второй источник (subsystems,
-    PRI-258) на MagicMock-компонентах сводок падает на нетерпимом to-list —
-    _subsystem_paths ловит сбой сам и тоже несёт пустой paths=[].
+    augment_sources (PRI-257) идёт kwarg: без предшествующего similar() _similar_hits
+    пуст, поэтому источник несёт пустой augment_paths=[].
     """
     from reviewer.mcp.service import _TaskContextDeps
 
@@ -765,15 +762,11 @@ def test_task_context_deps_code_passes_include_tests_false() -> None:
     call = fake_service._search_codebase_multi.call_args
     assert call.args == ("o/r", ["q1", "q2"], "dev", False)
     sources = call.kwargs["augment_sources"]
-    assert len(sources) == 2
+    assert len(sources) == 1
     assert sources[0].name == "similar-diffs"
     assert sources[0].paths == []
     assert sources[0].quota == (
         fake_service._resolve_context_limits.return_value.code_section.max_augmented_files)
-    assert sources[1].name == "subsystems"
-    assert sources[1].paths == []
-    assert sources[1].quota == (
-        fake_service._resolve_context_limits.return_value.code_section.max_subsystem_files)
     assert result == "code-out"
 
 
@@ -855,75 +848,6 @@ def test_task_context_deps_history_failure_is_a_gap_not_an_exception() -> None:
     assert paths == []
     assert any("история прогонов недоступна" in g for g in deps.augment_gaps)
     assert collect.call_args.kwargs["history"] is None
-
-
-def test_task_context_deps_subsystem_paths_cold_summaries_is_a_gap_not_an_exception() -> None:
-    """Критерий приёмки 2 PRI-258 на слое Task 5: _subsystem_paths не бросает
-
-    на холодных/недоступных сводках, отдаёт пустой список и доносит причину
-    до deps.augment_gaps (а не только не падает) — по образцу
-    test_task_context_deps_history_failure_is_a_gap_not_an_exception.
-    """
-    from reviewer.mcp.service import _TaskContextDeps
-
-    fake_service = MagicMock()
-    deps = _TaskContextDeps(fake_service, None)
-
-    with patch("reviewer.retrieval.augment.collect_subsystem_paths") as collect:
-        collect.return_value = AugmentResult(
-            gaps=["сводки подсистем не построены — разворот кластеров пропущен"])
-        paths = deps._subsystem_paths("o/n", "dev", "q")
-
-    assert paths == []
-    assert any("сводки подсистем не построены" in g for g in deps.augment_gaps)
-
-
-def test_task_context_deps_subsystem_paths_survives_source_exception() -> None:
-    """Сбой самого источника (не только его gaps) целиком гасится: не бросает наружу,
-
-    отдаёт [] и пишет обобщённый пробел — сборка секции code не должна упасть
-    из-за second-source failure.
-    """
-    from reviewer.mcp.service import _TaskContextDeps
-
-    fake_service = MagicMock()
-    deps = _TaskContextDeps(fake_service, None)
-
-    with patch("reviewer.retrieval.augment.collect_subsystem_paths") as collect:
-        collect.side_effect = RuntimeError("voyage недоступен")
-        paths = deps._subsystem_paths("o/n", "dev", "q")
-
-    assert paths == []
-    assert any("разворот кластеров подсистем недоступен" in g for g in deps.augment_gaps)
-
-
-def test_task_context_code_passes_two_named_augment_sources() -> None:
-    """code() отдаёт два источника: similar-diffs первым (он точнее), subsystems вторым.
-
-    Брифовский вариант этого теста опирается на несуществующий хелпер
-    _svc_with_fakes и вызов deps.subsystems() перед deps.code() (в репозитории
-    subsystems() не влияет на состояние deps — сигнал сборки не от него, а от
-    similar()). Проверяем тот же инвариант — порядок источников и квоту второго —
-    через фейк-сервис в стиле остальных тестов файла.
-    """
-    from reviewer.mcp.service import _TaskContextDeps
-
-    fake_service = MagicMock()
-    captured = {}
-
-    def _fake_multi(repo, queries, branch, include_tests, augment_sources=None):
-        captured["sources"] = augment_sources
-        return "ok"
-
-    fake_service._search_codebase_multi.side_effect = _fake_multi
-    deps = _TaskContextDeps(fake_service, None)
-
-    deps.code("o/n", "dev", ["q"])
-
-    assert [s.name for s in captured["sources"]] == ["similar-diffs", "subsystems"], \
-        "similar-diffs первым: он измеренно точнее"
-    assert captured["sources"][1].quota == (
-        fake_service._resolve_context_limits.return_value.code_section.max_subsystem_files)
 
 
 def test_task_context_deps_test_exemplars_passes_include_tests_true() -> None:

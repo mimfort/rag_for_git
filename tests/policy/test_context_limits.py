@@ -70,11 +70,3 @@ def test_code_section_augmented_quota_default_and_override():
         {"context_limits": {"code_section": {"max_augmented_files": 5}}})
     assert limits.code_section.max_augmented_files == 5
     assert limits.code_section.max_files == 12, "прочие ключи остаются дефолтными"
-
-
-def test_max_subsystem_files_default_and_override():
-    assert CodeSectionLimits().max_subsystem_files == 2
-    limits = ContextLimits.from_review_yaml(
-        {"context_limits": {"code_section": {"max_subsystem_files": 0}}})
-    assert limits.code_section.max_subsystem_files == 0
-    assert limits.code_section.max_augmented_files == 3, "резервы источников независимы"

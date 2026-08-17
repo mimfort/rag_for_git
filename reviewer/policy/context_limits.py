@@ -36,17 +36,15 @@ class CodeSectionLimits:
     связан с квотой реранкера. Смешение двух шкал в одном dataclass сделало бы
     невыразимым «бюджет секции, независимый от чанкового потолка».
 
-    Резервы источников подмешивания независимы (max_augmented_files,
-    max_subsystem_files): вклад каждого чисто измерим, и рычаг снимается
-    одним значением ключа — общий делённый резерв смешал бы их в замере.
-    Суммарный резерв верхнего предохранителя не имеет: политика доверяет
-    оператору, симметрично search_codebase.ceiling.
+    Резерв источника подмешивания (max_augmented_files) независим: вклад чисто
+    измерим, и рычаг снимается одним значением ключа. Суммарный резерв
+    верхнего предохранителя не имеет: политика доверяет оператору, симметрично
+    search_codebase.ceiling.
     """
     max_files: int = 12          # различных файлов в секции
     max_chunks_per_file: int = 1  # чанков на один файл
     chars_per_file: int = 1300   # доля символов на файл (операционный бюджет — на исходный текст блока)
     max_augmented_files: int = 3  # сколько файлов секции может занять подмешанный сигнал (PRI-257)
-    max_subsystem_files: int = 2  # резерв под разворот кластеров subsystems (PRI-258)
 
     @property
     def max_chars(self) -> int:
@@ -105,7 +103,5 @@ class ContextLimits:
                     cs.get("chars_per_file", CodeSectionLimits.chars_per_file)),
                 max_augmented_files=int(
                     cs.get("max_augmented_files", CodeSectionLimits.max_augmented_files)),
-                max_subsystem_files=int(
-                    cs.get("max_subsystem_files", CodeSectionLimits.max_subsystem_files)),
             ),
         )

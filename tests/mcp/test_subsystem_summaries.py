@@ -1044,29 +1044,6 @@ def test_get_subsystem_summaries_empty_base_has_unknown_freshness():
     assert summary["stale"] is None
 
 
-def test_list_paths_hide_member_node_ids_but_cluster_key_path_keeps_them():
-    c = MagicMock()
-    c.store.list_base_members.return_value = []
-    c.summary_store.count_summaries.return_value = 0
-    c.summary_store.get_summaries.return_value = [
-        {"cluster_key": "reviewer/index", "title": "Индекс", "summary": "...",
-         "member_node_ids": ["reviewer/index/a.py#A"], "source_hash": "h",
-         "updated_at": "2026-06-23T00:00:00+00:00"}]
-    c.summary_store.get_summary.return_value = {
-        "cluster_key": "reviewer/index", "title": "Индекс", "summary": "...",
-        "member_node_ids": ["reviewer/index/a.py#A"], "source_hash": "h",
-        "updated_at": "2026-06-23T00:00:00+00:00"}
-    svc = _svc(c)
-
-    listed = svc.get_subsystem_summaries("o/n", "dev")
-    assert "member_node_ids" not in listed["summaries"][0], \
-        "состав кластеров не льётся в LLM-выдачу секции subsystems"
-
-    single = svc.get_subsystem_summaries("o/n", "dev", "reviewer/index")
-    assert single["summary"]["member_node_ids"] == ["reviewer/index/a.py#A"], \
-        "путь по cluster_key поведение не меняет (обратная совместимость)"
-
-
 def test_get_subsystem_summaries_derivation_failure_is_unknown():
     c = MagicMock()
     c.summary_store.get_summaries.return_value = [{

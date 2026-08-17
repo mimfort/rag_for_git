@@ -423,16 +423,14 @@ class SummaryStore:
         try:
             with self._connect() as conn:
                 rows = conn.execute(
-                    "SELECT cluster_key, title, summary, member_node_ids, source_hash, updated_at "
-                    "FROM subsystem_summaries "
+                    "SELECT cluster_key, title, summary, source_hash, updated_at FROM subsystem_summaries "
                     "WHERE repo=%s AND branch=%s ORDER BY cluster_key",
                     (repo, branch)).fetchall()
         except psycopg.errors.UndefinedTable:
             return []
-        return [{"cluster_key": k, "title": t, "summary": s,
-                 "member_node_ids": list(m or []), "source_hash": h,
+        return [{"cluster_key": k, "title": t, "summary": s, "source_hash": h,
                  "updated_at": u.isoformat()}
-                for k, t, s, m, h, u in rows]
+                for k, t, s, h, u in rows]
 
     def get_summary(self, repo: str, branch: str, cluster_key: str) -> dict | None:
         try:
@@ -451,26 +449,20 @@ class SummaryStore:
 
     def search_summaries(self, repo: str, branch: str, query_embedding: list[float],
                          top_k: int) -> list[dict]:
-        """ANN-поиск (cosine) по сводкам с эмбеддингом — приор по близости (PRI-167).
-
-        Состав кластера (`member_node_ids`) отдаётся вместе со сводкой — его читает
-        разворот кластеров в файлы-кандидаты (PRI-258); в LLM-выдачу секции
-        `subsystems` он не попадает, там его вырезает `get_subsystem_summaries`.
-        """
+        """ANN-поиск (cosine) по сводкам с эмбеддингом — приор по близости (PRI-167)."""
         try:
             with self._connect() as conn:
                 rows = conn.execute(
-                    "SELECT cluster_key, title, summary, member_node_ids, source_hash, updated_at "
+                    "SELECT cluster_key, title, summary, source_hash, updated_at "
                     "FROM subsystem_summaries "
                     "WHERE repo=%s AND branch=%s AND embedding IS NOT NULL "
                     "ORDER BY embedding <=> %s LIMIT %s",
                     (repo, branch, Vector(query_embedding), top_k)).fetchall()
         except psycopg.errors.UndefinedTable:
             return []
-        return [{"cluster_key": k, "title": t, "summary": s,
-                 "member_node_ids": list(m or []), "source_hash": h,
+        return [{"cluster_key": k, "title": t, "summary": s, "source_hash": h,
                  "updated_at": u.isoformat()}
-                for k, t, s, m, h, u in rows]
+                for k, t, s, h, u in rows]
 
     def count_summaries(self, repo: str, branch: str) -> int:
         """Число сводок repo/branch — для порога масштаба в query-пути (PRI-167)."""

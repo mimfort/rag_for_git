@@ -84,33 +84,11 @@ def _similar_paths(provider, task: TaskInput, target: ReplayTarget) -> set:
     return extract_context_paths(text)
 
 
-def _subsystem_paths(provider, task: TaskInput, target: ReplayTarget) -> set:
-    """Мультизапрос плюс разворот релевантных кластеров сводок (PRI-258).
-
-    Изолированный вариант: similar-diffs выключен, поэтому дельта относится к
-    развороту, а не к сумме двух рычагов (критерий приёмки 1).
-    """
-    queries = build_subqueries(task.task, task.query)
-    text = provider.code_multi(target.repo, target.branch, queries, target.limits,
-                               subsystem_paths=True)
-    return extract_context_paths(text)
-
-
-def _similar_and_subsystem_paths(provider, task: TaskInput, target: ReplayTarget) -> set:
-    """Оба источника подмешивания — продакшн-конфигурация после мержа PRI-258."""
-    queries = build_subqueries(task.task, task.query)
-    text = provider.code_multi(target.repo, target.branch, queries, target.limits,
-                               similar_paths=True, subsystem_paths=True)
-    return extract_context_paths(text)
-
-
 _REGISTRY = {
     "baseline": _baseline,
     "limits": _limits,
     "multiquery": _multiquery,
     "similar_paths": _similar_paths,
-    "subsystem_paths": _subsystem_paths,
-    "similar_paths+subsystem_paths": _similar_and_subsystem_paths,
 }
 
 VARIANT_NAMES = tuple(_REGISTRY)

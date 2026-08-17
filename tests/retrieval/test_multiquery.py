@@ -633,7 +633,7 @@ def test_augmented_candidates_ordered_by_raw_pool_rank():
     )
     pack = search_multi(
         _Retriever(store, _FakeEmbedder()), "o/n", ["q0"], limits=CodebaseLimits(),
-        section_limits=CodeSectionLimits(max_augmented_files=0, max_subsystem_files=1),
+        section_limits=CodeSectionLimits(max_augmented_files=0),
         branch="dev",
         augment_sources=[AugmentSource(name="subsystems",
                                        paths=["never.py", "late.py"], quota=1)])
