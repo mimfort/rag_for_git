@@ -218,11 +218,14 @@ Map `count_tasks(project)` to `search_tasks` deterministically: `< 150` → `3 /
 **falls back to asking** the user for small/medium/large, then uses the same mapping.
 
 `context_limits.code_section` is the file budget for the task-context `code` section
-(`prepare_task_context`): `max_files: 12`, `max_chunks_per_file: 1`, `chars_per_file: 1300`.
-These three defaults are the same across all three profiles above — there is no measurement
-backing a per-profile split, so do not invent one. The budget unit here is the FILE, not the
-chunk; there is no separate character-cap key, the effective character ceiling is derived from
-these three values. Write it alongside the other real `context_limits` fields:
+(`prepare_task_context`): `max_files: 12`, `max_chunks_per_file: 1`, `chars_per_file: 1300`,
+`max_augmented_files: 3`. These four defaults are the same across all three profiles above —
+there is no measurement backing a per-profile split, so do not invent one. The budget unit here
+is the FILE, not the chunk; there is no separate character-cap key, the effective character
+ceiling is derived from `max_files`/`max_chunks_per_file`/`chars_per_file`. `max_augmented_files`
+(PRI-257) is a RESERVE of file slots inside `max_files` for diff paths mixed in from similar
+tasks (`similar-diffs`, the section's only augmentation source) — not a cap applied to whatever
+the hybrid search leaves over. Write it alongside the other real `context_limits` fields:
 
 ```yaml
 context_limits:
@@ -243,6 +246,7 @@ context_limits:
     max_files: 12
     max_chunks_per_file: 1
     chars_per_file: 1300
+    max_augmented_files: 3
 ```
 
 Preserve every other configuration key and ask for confirmation before writing the assembled draft.

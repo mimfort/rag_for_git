@@ -468,6 +468,7 @@ context_limits:
     max_files: 12
     max_chunks_per_file: 1
     chars_per_file: 1300
+    max_augmented_files: 3
 ```
 
 `summary_paths.ignore` only filters which files feed subsystem-summary clustering — unlike
@@ -483,6 +484,18 @@ characters. The section's
 character cap is not a separate key — it is derived: the operational budget is
 `max_files × max_chunks_per_file × chars_per_file`, while the post-render safety cap is
 `max_files × max_chunks_per_file × chars_per_file × 3 // 2`.
+
+`code_section.max_augmented_files` (default 3, PRI-257) mixes actual diff paths from similar
+tasks into the `code` section — a single source (`similar-diffs`, from the `brief_quality`
+table plus a git-log fallback keyed on the task ID). It is a *reserve* of file slots inside
+`max_files`, not a cap on what's left over: the hybrid retrieval fills its full `max_files`
+budget first, and only against that final output — not the raw retrieval pool — is a candidate
+path judged "already known" (checking against the raw pool would discard exactly the files this
+lever exists to surface). With no augmented candidates, the hybrid keeps the entire budget. A
+co-change (git file-pairs-changed-together) second source was built and measured — 4 core hits on
+34 mixed-in paths, a bulk-recall drop — and removed rather than kept disabled; only similar-diffs
+covers (median core-recall 0.5 → 0.75, precision 0.167 → 0.333, 28 hits on 35 paths). See
+`eval/replay_report.md`, "Приёмка PRI-257".
 
 ### Layered repository policy
 
