@@ -622,3 +622,21 @@ def test_no_augmentation_leaves_note_absent():
                         limits=CodebaseLimits(), branch="dev")
     assert pack.augment_note is None
     assert "подмешано" not in pack.as_context()
+
+
+def test_augmented_candidates_ordered_by_raw_pool_rank():
+    """Файл кластера, найденный гибридом (пусть и низко), идёт раньше ненайденного."""
+    hits = [_bm25(f"f{i}.py#s") for i in range(12)] + [_bm25("late.py#s")]
+    store = _FakeStore(
+        {"q0": hits},
+        nodes_by_path={"late.py": _hit("late.py#s"), "never.py": _hit("never.py#s")},
+    )
+    pack = search_multi(
+        _Retriever(store, _FakeEmbedder()), "o/n", ["q0"], limits=CodebaseLimits(),
+        section_limits=CodeSectionLimits(max_augmented_files=0, max_subsystem_files=1),
+        branch="dev",
+        augment_sources=[AugmentSource(name="subsystems",
+                                       paths=["never.py", "late.py"], quota=1)])
+    paths = [it.path for it in pack.items]
+    assert "late.py" in paths, "низко ранжированный гибридом файл приоритетнее ненайденного"
+    assert "never.py" not in paths

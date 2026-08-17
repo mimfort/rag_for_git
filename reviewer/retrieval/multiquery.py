@@ -128,7 +128,8 @@ augmented (PRI-257, третий фикс по step8-measurement.md, «Трет�
 
 
 def _augment_items(retriever, repo: str, *, sources, bref: str, known_paths: set,
-                   include_tests: bool = False) -> tuple[list, str | None]:
+                   include_tests: bool = False,
+                   rank_by_path: dict | None = None) -> tuple[list, str | None]:
     """Подмешанные кандидаты по именованным источникам. Fail-soft.
 
     Известность НАКОПИТЕЛЬНАЯ: путь, занятый источником выше по списку,
@@ -144,6 +145,12 @@ def _augment_items(retriever, repo: str, *, sources, bref: str, known_paths: set
     Тестовые пути отсеиваются здесь же, ДО подсчёта квоты: git-фолбэк
     similar-diffs и состав кластера отдают файлы без core/test-фильтрации, а
     постфактум-фильтр съедал бы уже выбранный тестовый слот квоты.
+
+    Порядок кандидатов задаётся рангом в СЫРОМ пуле гибрида: путь, который
+    гибрид нашёл, но не поднял до max_files, приоритетнее пути, которого он не
+    нашёл вовсе. Сырой пул здесь определяет ПОРЯДОК, но не известность:
+    известность считается по итоговой выдаче (иначе рычаг терял бы ровно те
+    файлы, которые обязан промоутить, — PRI-257, второй фикс).
     """
     seen = set(known_paths)
     items: list = []
@@ -151,8 +158,11 @@ def _augment_items(retriever, repo: str, *, sources, bref: str, known_paths: set
     for source in sources or []:
         if source.quota <= 0:
             continue
+        ranked = sorted(
+            ((rank_by_path or {}).get(path, len(rank_by_path or {}) + 1), index, path)
+            for index, path in enumerate(dict.fromkeys(source.paths or [])))
         candidates: dict[str, None] = {}
-        for path in source.paths or []:
+        for _rank, _index, path in ranked:
             if len(candidates) >= AUGMENT_FETCH_LIMIT:
                 break
             if path in seen:
@@ -249,6 +259,9 @@ def search_multi(retriever, repo: str, queries: list[str], *, limits=None,
     hybrid_ids = {item.node_id for item in merged}
     items = [*merged, *_graph_items(retriever, repo, merged, lim.ceiling, hops,
                                     branch, bref, hybrid_ids)]
+    rank_by_path: dict[str, int] = {}
+    for rank, item in enumerate(items):
+        rank_by_path.setdefault(item.path, rank)
     if not include_tests:
         items = [item for item in items if not _is_test_path(item.path)]
     # Сначала — полная гибридная выдача на весь бюджет max_files, как если бы
@@ -261,7 +274,7 @@ def search_multi(retriever, repo: str, queries: list[str], *, limits=None,
     augmented, note = _augment_items(
         retriever, repo, sources=augment_sources, bref=bref,
         known_paths={item.path for item in hybrid_final},
-        include_tests=include_tests)
+        include_tests=include_tests, rank_by_path=rank_by_path)
     # Резерв слотов: augmented — свой путь дедупа не требует (fetch_retrieved_
     # at_paths отдаёт по одному самому широкому чанку на путь, known_paths уже
     # исключил пути итоговой гибридной выдачи), поэтому урезаем hybrid_final
