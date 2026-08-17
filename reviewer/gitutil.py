@@ -91,3 +91,54 @@ def remove_worktree(repo: str, path: str) -> None:
     except Exception:
         pass  # worktree мог уже не существовать — не падаем
     shutil.rmtree(os.path.dirname(path), ignore_errors=True)
+
+
+def commit_file_sets(repo: str, *, limit: int) -> list[set[str]]:
+    """Последние ``limit`` коммитов как список множеств затронутых файлов.
+
+    Один процесс git на весь запрос. Pathspec намеренно НЕ передаётся: с ним
+    `--name-only` отдал бы только совпавшие пути, а со-изменяемость требует
+    полного состава коммита. Fail-soft: не git-репо или сбой — пустой список.
+    """
+    try:
+        out = _git(repo, "log", f"-n{limit}", "--name-only", "--no-merges",
+                   "--pretty=format:%x00")
+    except (OSError, subprocess.CalledProcessError):
+        return []
+    sets: list[set[str]] = []
+    current: set[str] = set()
+    for line in out.splitlines():
+        if line.startswith("\0"):
+            if current:
+                sets.append(current)
+            current = set()
+            continue
+        if line:
+            current.add(line)
+    if current:
+        sets.append(current)
+    return sets
+
+
+def paths_touched_by_grep(repo: str, pattern: str, *, limit: int) -> list[str]:
+    """Пути коммитов, чьё сообщение содержит ``pattern`` (ключ задачи).
+
+    Фолбэк к истории прогонов: ключ задачи присутствует в именах веток
+    (feat/pri-256-…), сообщениях merge-коммитов и телах PR. В этом репозитории
+    ключ обычно живёт именно в имени ветки, попадающем в сообщение
+    merge-коммита («Merge pull request #N from owner/feat/PRI-…»), а обычные
+    коммиты его не содержат — поэтому нужен ``--diff-merges=first-parent``:
+    без него `--name-only` для merge-коммита файлов не печатает и фолбэк
+    тихо вернул бы пустой список. Fail-soft.
+    """
+    try:
+        out = _git(repo, "log", f"-n{limit}", "--name-only",
+                   "--diff-merges=first-parent", "--pretty=format:",
+                   "-i", f"--grep={pattern}")
+    except (OSError, subprocess.CalledProcessError):
+        return []
+    seen: dict[str, None] = {}
+    for line in out.splitlines():
+        if line:
+            seen.setdefault(line, None)
+    return list(seen)
