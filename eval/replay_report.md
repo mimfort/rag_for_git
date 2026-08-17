@@ -89,6 +89,7 @@
 ## Оговорка
 
 Линия `replay` и линия `snapshot` **несравнимы напрямую**: snapshot считает пути, которые отобрала LLM из выдачи ретрива, а replay — всю выдачу ретрива. Сравнивать можно только replay с replay.
+
 ## Приёмка PRI-255
 
 Мультизапрос с RRF-слиянием: секция `code` контекста задачи ищется набором подзапросов,
@@ -203,11 +204,11 @@ with provider:
 
 ### Критерий «рост объёма не кратен росту числа файлов»
 
-Число файлов выросло втрое (4 → 12), объём секции — в 2.13 раза (6412 → 13660 символов;
-среднее 6479 → 13408, те же 2.07). Кратного роста нет: доля символов на файл сокращена с
-2000 до 1300, поэтому втрое больше файлов стоят вдвое больше символов. Замер объёма —
-`.superpowers/sdd/2026-08-17-pri-256-file-diversification/pri256-volume.json`, все 57 задач
-корпуса, обе стороны в одном процессе.
+Число файлов выросло втрое (4 → 12), объём секции — в 2.13 раза по медиане (6412 → 13660
+символов; по среднему 6479 → 13408, то есть ×2.07). Кратного роста нет: доля символов на
+файл сокращена с 2000 до 1300, поэтому втрое больше файлов стоят вдвое больше символов.
+Замер объёма — все 57 задач корпуса, обе стороны в одном процессе; он разовый, сырой вывод
+не трекается, воспроизводится сниппетом ниже.
 
 ### Три оговорки, без которых числа читаются неверно
 
@@ -228,6 +229,11 @@ with provider:
 
 ### Процедура воспроизведения
 
+**Прежде чем запускать: `replay` перезаписывает `eval/replay_report.md` целиком** — автоген
+(шапка, идентичность прогона, агрегат, дельта по задачам) затирает и разделы приёмки, включая
+этот. Сохрани файл (`git show HEAD:eval/replay_report.md > /tmp/report.md`) и верни разделы
+приёмки на место после прогона.
+
 Сторона «до» и сторона «после», два прогона подряд (второй берёт первый как baseline):
 
 ```bash
@@ -244,11 +250,16 @@ with provider:
 расход Voyage:
 
 ```python
+import pathlib
+import statistics
+
 from eval.solve_task_metrics import live, replay as replay_mod
+from eval.solve_task_metrics.context_paths import extract_context_paths
 from reviewer.mcp.subqueries import build_subqueries
 
 BEFORE = {"code_section": {"max_files": 4, "max_chunks_per_file": 1,
                            "chars_per_file": 2000}}
+rows = []
 provider, repo, branch = live.open_live("mimfort/rag_for_git", "dev")
 with provider:
     for key in replay_mod.corpus_keys(pathlib.Path("docs/superpowers/briefs")):
@@ -256,7 +267,12 @@ with provider:
         queries = build_subqueries(task, provider.query(task, key))
         before = provider.code_multi(repo, branch, queries, BEFORE)
         after = provider.code_multi(repo, branch, queries, None)
-        print(key, len(before), len(after))
+        rows.append((len(before), len(after),
+                     len(extract_context_paths(before)),
+                     len(extract_context_paths(after))))
+        print(key, rows[-1], flush=True)
+for i, name in enumerate(("символов до", "символов после", "файлов до", "файлов после")):
+    print(name, statistics.median([r[i] for r in rows]))
 ```
 
 Оверрайд `code_section` через `--set` появился вместе с этим замером (PRI-256): без него
