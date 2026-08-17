@@ -3606,7 +3606,13 @@ class _TaskContextDeps:
             return []
 
     def _cochange(self, repo: str):
-        """Callable seeds → co-change пути; None, если клона нет."""
+        """Callable seeds → co-change пути; None, если клона нет.
+
+        Fail-soft на этом уровне, а не только внутри _augment_items
+        (multiquery.py, задача 3): у search_multi нет доступа к augment_gaps,
+        поэтому сбой git здесь обязан сам дать и log.warning, и gap —
+        симметрично источнику «diff-пути похожих задач».
+        """
         from reviewer.retrieval.augment import (
             COCHANGE_COMMITS, MIN_COCHANGE, rank_cochanged,
         )
@@ -3615,14 +3621,21 @@ class _TaskContextDeps:
             clone = self._clone_path(repo)
         except Exception:  # noqa: BLE001
             log.warning("_TaskContextDeps._cochange: клон недоступен", exc_info=True)
+            self.augment_gaps.append("co-change недоступен: клон репозитория недоступен")
             return None
         if not clone:
             return None
 
         def _fn(seeds: list[str]) -> list[str]:
-            commits = gitutil.commit_file_sets(clone, limit=COCHANGE_COMMITS)
-            return rank_cochanged(commits, set(seeds), min_count=MIN_COCHANGE,
-                                  limit=AUGMENT_LOOKUP_LIMIT)
+            try:
+                commits = gitutil.commit_file_sets(clone, limit=COCHANGE_COMMITS)
+                return rank_cochanged(commits, set(seeds), min_count=MIN_COCHANGE,
+                                      limit=AUGMENT_LOOKUP_LIMIT)
+            except Exception as exc:  # noqa: BLE001 — git-история недоступна, штатный случай
+                reason = f"co-change недоступен: {type(exc).__name__}"
+                log.warning("_TaskContextDeps._cochange: %s", reason, exc_info=True)
+                self.augment_gaps.append(reason)
+                return []
 
         return _fn
 
