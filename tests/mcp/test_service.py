@@ -748,8 +748,8 @@ def test_task_context_deps_code_passes_include_tests_false() -> None:
     Перепутанный позиционный аргумент незаметен для FakeDeps-тестов task_context —
     там подменяется весь слой deps. Тест ловит именно проводку внутри service.py.
 
-    augment_paths (PRI-257) идёт kwarg: без предшествующего similar()
-    _similar_hits пуст, поэтому augment_paths=[] — как и раньше до PRI-257.
+    augment_sources (PRI-257) идёт kwarg: без предшествующего similar() _similar_hits
+    пуст, поэтому источник несёт пустой augment_paths=[].
     """
     from reviewer.mcp.service import _TaskContextDeps
 
@@ -761,7 +761,12 @@ def test_task_context_deps_code_passes_include_tests_false() -> None:
 
     call = fake_service._search_codebase_multi.call_args
     assert call.args == ("o/r", ["q1", "q2"], "dev", False)
-    assert call.kwargs["augment_paths"] == []
+    sources = call.kwargs["augment_sources"]
+    assert len(sources) == 1
+    assert sources[0].name == "similar-diffs"
+    assert sources[0].paths == []
+    assert sources[0].quota == (
+        fake_service._resolve_context_limits.return_value.code_section.max_augmented_files)
     assert result == "code-out"
 
 

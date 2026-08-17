@@ -1,5 +1,6 @@
 import reviewer.services.summary_fragments as summary_fragments
 from reviewer.services.summary_fragments import (
+    _GENERATION,
     StoredSummaryFragment,
     build_fragment_delta,
 )
@@ -121,7 +122,7 @@ def test_generation_completion_requires_every_exact_same_cluster_fragment_at_dep
     current = {"a.py": "fp-a", "b.py": "fp-b"}
     stamped = {
         "_reviewer": {
-            "generation": "summary-fragment-v2",
+            "generation": _GENERATION,
             "layout_token": "layout-v2",
             "depth": 2,
         }

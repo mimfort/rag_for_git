@@ -127,64 +127,71 @@ augmented (PRI-257, третий фикс по step8-measurement.md, «Трет�
 """
 
 
-def _augment_items(retriever, repo: str, *, augment_paths,
-                   quota: int, bref: str, known_paths: set,
-                   include_tests: bool = False) -> tuple[list, str | None]:
-    """Подмешанные кандидаты: фактические diff-пути похожих задач. Fail-soft.
+def _augment_items(retriever, repo: str, *, sources, bref: str, known_paths: set,
+                   include_tests: bool = False,
+                   rank_by_path: dict | None = None) -> tuple[list, str | None]:
+    """Подмешанные кандидаты по именованным источникам. Fail-soft.
 
-    Co-change как источник снят (PRI-257, приёмка по step8-measurement.md,
-    «Вердикт по критерию приёмки 1»): 4 попадания в ядро на 34 подмешанных
-    пути (12 %), просадка bulk, одна вытесненная core-задача — и поверх
-    similar-diffs сигнал не добавлял ничего измеримого. similar-diffs,
-    напротив, покрывает (28/35 попаданий, +0.25 к медиане core-recall).
+    Известность НАКОПИТЕЛЬНАЯ: путь, занятый источником выше по списку,
+    следующему уже не достаётся — иначе два источника, знающие один и тот же
+    файл, потратили бы на него две квоты и два файловых слота.
 
     Квота считает ФАЙЛЫ, реально подмешанные в выдачу, а не рассмотренных
-    кандидатов: список путей часто открывается непроиндексированными файлами
+    кандидатов: списки путей часто открываются непроиндексированными файлами
     (docs/*, *.jsonl, README, CLAUDE.md — чанки есть только у .py), и урезание
     списка кандидатов до quota ДО похода в стор выжигало квоту на путях,
-    которые физически не могли попасть в выдачу, оставляя .py-кандидатов из
-    хвоста без единого шанса. Поэтому сначала собираются ВСЕ кандидаты (до
-    предохранителя AUGMENT_FETCH_LIMIT), один запрос fetch_retrieved_at_paths
-    решает, у кого есть чанки, и только из реально найденных берутся первые
-    quota — в исходном порядке.
+    которые физически не могли попасть в выдачу (PRI-257, третий фикс).
 
-    Тестовые пути отсеиваются здесь же, ДО подсчёта квоты, а не постфактум
-    в search_multi (финальное ревью ветки, Important): в отличие от
-    табличного brief_quality.expected_core_paths (уже отфильтрован в
-    measure()), git-фолбэк paths_touched_by_grep отдаёт все файлы матчащих
-    коммитов без core/test-фильтрации. Если tests/test_foo.py стоит в списке
-    раньше reviewer/foo.py, постфактум-фильтр съедал уже выбранный тестовый
-    слот квоты, оставляя 0 подмешанных файлов вместо 1-3 полезных.
+    Тестовые пути отсеиваются здесь же, ДО подсчёта квоты: git-фолбэк
+    similar-diffs отдаёт файлы матчащих коммитов без core/test-фильтрации, а
+    постфактум-фильтр съедал бы уже выбранный тестовый слот квоты.
+
+    Порядок кандидатов задаётся рангом в СЫРОМ пуле гибрида: путь, который
+    гибрид нашёл, но не поднял до max_files, приоритетнее пути, которого он не
+    нашёл вовсе. Сырой пул здесь определяет ПОРЯДОК, но не известность:
+    известность считается по итоговой выдаче (иначе рычаг терял бы ровно те
+    файлы, которые обязан промоутить, — PRI-257, второй фикс).
     """
-    if quota <= 0:
-        return [], None
-    candidates: dict[str, None] = {}
-    for path in augment_paths or []:
-        if len(candidates) >= AUGMENT_FETCH_LIMIT:
-            break
-        if path in known_paths:
+    seen = set(known_paths)
+    items: list = []
+    notes: list[str] = []
+    for source in sources or []:
+        if source.quota <= 0:
             continue
-        if not include_tests and _is_test_path(path):
+        ranked = sorted(
+            ((rank_by_path or {}).get(path, len(rank_by_path or {}) + 1), index, path)
+            for index, path in enumerate(dict.fromkeys(source.paths or [])))
+        candidates: dict[str, None] = {}
+        for _rank, _index, path in ranked:
+            if len(candidates) >= AUGMENT_FETCH_LIMIT:
+                break
+            if path in seen:
+                continue
+            if not include_tests and _is_test_path(path):
+                continue
+            candidates.setdefault(path, None)
+        if not candidates:
             continue
-        candidates.setdefault(path, None)
-    if not candidates:
-        return [], None
-    try:
-        fetched = {item.path: item for item in retriever.store.fetch_retrieved_at_paths(
-            repo, list(candidates), base_ref=bref)}
-    except Exception:  # noqa: BLE001
-        log.warning("multiquery: выборка подмешанных путей недоступна", exc_info=True)
-        return [], None
-    items = []
-    for path in candidates:
-        if len(items) >= quota:
-            break
-        if path in fetched:
-            items.append(fetched[path])
+        try:
+            fetched = {item.path: item for item in retriever.store.fetch_retrieved_at_paths(
+                repo, list(candidates), base_ref=bref)}
+        except Exception:  # noqa: BLE001 — стор недоступен, это штатный случай
+            log.warning("multiquery: выборка подмешанных путей источника %s недоступна",
+                        source.name, exc_info=True)
+            continue
+        taken = 0
+        for path in candidates:
+            if taken >= source.quota:
+                break
+            if path in fetched:
+                items.append(fetched[path])
+                seen.add(path)
+                taken += 1
+        if taken:
+            notes.append(f"{source.name} {taken} (квота {source.quota})")
     if not items:
         return [], None
-    note = f"— подмешано {len(items)} файлов: similar-diffs (квота {quota})"
-    return items, note
+    return items, f"— подмешано {len(items)} файлов: " + ", ".join(notes)
 
 
 def diversify_by_file(items: list, *, max_files: int, max_chunks_per_file: int) -> list:
@@ -212,7 +219,7 @@ def diversify_by_file(items: list, *, max_files: int, max_chunks_per_file: int) 
 
 def search_multi(retriever, repo: str, queries: list[str], *, limits=None,
                  section_limits=None, hops: int = 1, branch: str = "",
-                 include_tests: bool = False, augment_paths=None) -> ContextPack:
+                 include_tests: bool = False, augment_sources=None) -> ContextPack:
     """Мультизапросный ретрив по base-индексу ветки: N прогонов, RRF, обрезка.
 
     Реранкера и cliff-отсечки здесь нет — финальный ранкер RRF (см. докстринг
@@ -225,25 +232,20 @@ def search_multi(retriever, repo: str, queries: list[str], *, limits=None,
     тексте блока); section_limits.max_chars — лишь страховочный потолок после
     рендера.
 
-    Третий источник (PRI-257) — подмешанные пути: фактические диффы похожих
-    задач (augment_paths). max_augmented_files — РЕЗЕРВ файловых слотов внутри
-    max_files, а не потолок на остаток: augmented гарантированно получает до
-    max_augmented_files слотов (по факту найденных кандидатов), гибрид+graph
-    делят max_files минус фактически занятый резерв (не минус номинальную
-    квоту — без кандидатов гибрид получает бюджет целиком).
+    Источники подмешивания приходят списком AugmentSource (обобщение PRI-258):
+    у каждого своё имя и своя файловая квота — РЕЗЕРВ слотов внутри max_files,
+    а не потолок на остаток. Резерв фактический: без найденных кандидатов
+    гибрид получает бюджет целиком. Известность считается по ИТОГОВОЙ гибридной
+    выдаче hybrid_final, а не по сырому пулу: кандидат, которого гибрид нашёл,
+    но ранжировал слишком низко для попадания в max_files, — это и есть тот
+    файл, который рычаг обязан промоутить.
 
-    known_paths для augmented считается по ИТОГОВОЙ гибридной выдаче
-    (после dedupe+diversify на полном max_files), а не по сырому пулу
-    (merged+graph, десятки путей): кандидат, которого гибрид нашёл, но
-    ранжировал слишком низко для попадания в max_files, из пула исключался
-    как «уже известный» — хотя именно такие файлы (низкий ранг гибрида,
-    высокая ценность сигнала) рычаг обязан промоутить.
-
-    Второй источник — git-со-изменяемость (co-change) — снят по итогам
-    приёмки (12 % точность, просадка bulk, ноль вклада поверх similar-diffs).
-    Полный разбор всех механизмов бюджета и приёмки — см.
-    .superpowers/sdd/2026-08-17-pri-257-augmented-candidates/
-    step8-measurement.md.
+    В проде источник ОДИН — similar-diffs (PRI-257). Два других опробованы и
+    сняты по замеру: co-change (PRI-257) и состав кластеров сводок подсистем
+    (PRI-258). Полный разбор всех механик бюджета, каждая из которых поодиночке
+    обнуляла рычаг на живом замере, — см.
+    .superpowers/sdd/2026-08-17-pri-257-augmented-candidates/step8-measurement.md
+    и раздел «Приёмка PRI-258» в eval/replay_report.md.
     """
     from reviewer.policy.context_limits import CodebaseLimits, CodeSectionLimits
     lim = limits or CodebaseLimits()
@@ -264,6 +266,9 @@ def search_multi(retriever, repo: str, queries: list[str], *, limits=None,
     hybrid_ids = {item.node_id for item in merged}
     items = [*merged, *_graph_items(retriever, repo, merged, lim.ceiling, hops,
                                     branch, bref, hybrid_ids)]
+    rank_by_path: dict[str, int] = {}
+    for rank, item in enumerate(items):
+        rank_by_path.setdefault(item.path, rank)
     if not include_tests:
         items = [item for item in items if not _is_test_path(item.path)]
     # Сначала — полная гибридная выдача на весь бюджет max_files, как если бы
@@ -274,10 +279,9 @@ def search_multi(retriever, repo: str, queries: list[str], *, limits=None,
                                      max_files=sec.max_files,
                                      max_chunks_per_file=sec.max_chunks_per_file)
     augmented, note = _augment_items(
-        retriever, repo, augment_paths=augment_paths,
-        quota=sec.max_augmented_files, bref=bref,
+        retriever, repo, sources=augment_sources, bref=bref,
         known_paths={item.path for item in hybrid_final},
-        include_tests=include_tests)
+        include_tests=include_tests, rank_by_path=rank_by_path)
     # Резерв слотов: augmented — свой путь дедупа не требует (fetch_retrieved_
     # at_paths отдаёт по одному самому широкому чанку на путь, known_paths уже
     # исключил пути итоговой гибридной выдачи), поэтому урезаем hybrid_final

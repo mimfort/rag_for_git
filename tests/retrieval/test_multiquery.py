@@ -1,6 +1,7 @@
 """RRF-слияние выдач подзапросов и обрезка блока рендера (PRI-255)."""
 from reviewer.index.store import Retrieved
 from reviewer.policy.context_limits import CodebaseLimits, CodeSectionLimits
+from reviewer.retrieval.augment import AugmentSource
 from reviewer.retrieval.multiquery import (
     cap_block, diversify_by_file, rrf_merge, search_multi,
 )
@@ -313,6 +314,46 @@ def test_section_budget_ignores_retriever_max_context_chars():
     assert pack.max_chars == CodeSectionLimits().max_chars
 
 
+def test_two_sources_get_separate_quotas_and_named_note():
+    store = _FakeStore(
+        {"q0": [_bm25("a.py#f")]},
+        nodes_by_path={
+            "x.py": _hit("x.py#s"), "y.py": _hit("y.py#s"),
+            "s1.py": _hit("s1.py#s"), "s2.py": _hit("s2.py#s"),
+        },
+    )
+    pack = search_multi(
+        _Retriever(store, _FakeEmbedder()), "o/n", ["q0"], limits=CodebaseLimits(),
+        section_limits=CodeSectionLimits(), branch="dev",
+        augment_sources=[
+            AugmentSource(name="similar-diffs", paths=["x.py", "y.py"], quota=1),
+            AugmentSource(name="second-source", paths=["s1.py", "s2.py"], quota=1),
+        ])
+    paths = [it.path for it in pack.items]
+    assert paths == ["a.py", "x.py", "s1.py"], "по одному файлу из каждого источника, гибрид первым"
+    assert pack.augment_note == (
+        "— подмешано 2 файлов: similar-diffs 1 (квота 1), second-source 1 (квота 1)")
+
+
+def test_second_source_does_not_repeat_path_taken_by_first():
+    store = _FakeStore(
+        {"q0": [_bm25("a.py#f")]},
+        nodes_by_path={"x.py": _hit("x.py#s"), "y.py": _hit("y.py#s")},
+    )
+    pack = search_multi(
+        _Retriever(store, _FakeEmbedder()), "o/n", ["q0"], limits=CodebaseLimits(),
+        section_limits=CodeSectionLimits(), branch="dev",
+        augment_sources=[
+            AugmentSource(name="similar-diffs", paths=["x.py"], quota=2),
+            AugmentSource(name="second-source", paths=["x.py", "y.py"], quota=2),
+        ])
+    paths = [it.path for it in pack.items]
+    assert paths.count("x.py") == 1, "путь первого источника второму не достаётся"
+    assert "y.py" in paths
+    assert pack.augment_note == (
+        "— подмешано 2 файлов: similar-diffs 1 (квота 2), second-source 1 (квота 2)")
+
+
 def test_augmented_paths_appended_after_hybrid_and_capped_by_quota():
     store = _FakeStore(
         {"q0": [_bm25("a.py#f")]},
@@ -322,8 +363,9 @@ def test_augmented_paths_appended_after_hybrid_and_capped_by_quota():
     )
     pack = search_multi(
         _Retriever(store, _FakeEmbedder()), "o/n", ["q0"], limits=CodebaseLimits(),
-        section_limits=CodeSectionLimits(max_augmented_files=2), branch="dev",
-        augment_paths=["x.py", "y.py", "z.py"])
+        section_limits=CodeSectionLimits(), branch="dev",
+        augment_sources=[AugmentSource(name="similar-diffs",
+                                       paths=["x.py", "y.py", "z.py"], quota=2)])
     paths = [it.path for it in pack.items]
     assert paths[0] == "a.py", "гибрид остаётся первым"
     assert paths[1:] == ["x.py", "y.py"], "квота режет третий подмешанный файл"
@@ -347,8 +389,9 @@ def test_augmented_gets_reserved_slots_even_when_hybrid_overflows_budget():
     )
     pack = search_multi(
         _Retriever(store, _FakeEmbedder()), "o/n", ["q0"], limits=CodebaseLimits(),
-        section_limits=CodeSectionLimits(max_augmented_files=3), branch="dev",
-        augment_paths=["x.py", "y.py", "z.py"])
+        section_limits=CodeSectionLimits(), branch="dev",
+        augment_sources=[AugmentSource(name="similar-diffs",
+                                       paths=["x.py", "y.py", "z.py"], quota=3)])
     paths = [it.path for it in pack.items]
     assert {"x.py", "y.py", "z.py"} <= set(paths), \
         "все 3 подмешанных файла в выдаче, несмотря на переполненный гибридом бюджет"
@@ -379,8 +422,10 @@ def test_hybrid_budget_reduced_only_by_actually_used_augmented_slots():
     store = _FakeStore({"q0": hits}, nodes_by_path={"x.py": _hit("x.py#s")})
     pack = search_multi(
         _Retriever(store, _FakeEmbedder()), "o/n", ["q0"], limits=CodebaseLimits(),
-        section_limits=CodeSectionLimits(max_augmented_files=3), branch="dev",
-        augment_paths=["x.py", "нет-в-сторе.py", "тоже-нет.py"])
+        section_limits=CodeSectionLimits(), branch="dev",
+        augment_sources=[AugmentSource(name="similar-diffs",
+                                       paths=["x.py", "нет-в-сторе.py", "тоже-нет.py"],
+                                       quota=3)])
     paths = [it.path for it in pack.items]
     assert "x.py" in paths
     assert len(paths) == CodeSectionLimits().max_files, \
@@ -400,8 +445,8 @@ def test_augmented_promotes_low_ranked_hybrid_candidate_not_final_survivor():
     store = _FakeStore({"q0": hits}, nodes_by_path={"f15.py": _hit("f15.py#s")})
     pack = search_multi(
         _Retriever(store, _FakeEmbedder()), "o/n", ["q0"], limits=CodebaseLimits(),
-        section_limits=CodeSectionLimits(max_augmented_files=1), branch="dev",
-        augment_paths=["f15.py"])
+        section_limits=CodeSectionLimits(), branch="dev",
+        augment_sources=[AugmentSource(name="similar-diffs", paths=["f15.py"], quota=1)])
     paths = [it.path for it in pack.items]
     assert "f15.py" in paths, \
         "низкоранжированный, но найденный гибридом путь промоутится, а не теряется"
@@ -418,8 +463,8 @@ def test_augmented_path_already_in_final_output_is_not_duplicated_or_reserved():
     store = _FakeStore({"q0": hits}, nodes_by_path={"f0.py": _hit("f0.py#other")})
     pack = search_multi(
         _Retriever(store, _FakeEmbedder()), "o/n", ["q0"], limits=CodebaseLimits(),
-        section_limits=CodeSectionLimits(max_augmented_files=3), branch="dev",
-        augment_paths=["f0.py"])
+        section_limits=CodeSectionLimits(), branch="dev",
+        augment_sources=[AugmentSource(name="similar-diffs", paths=["f0.py"], quota=3)])
     paths = [it.path for it in pack.items]
     assert paths.count("f0.py") == 1, "нет дубля"
     assert pack.augment_note is None, "путь уже в выдаче — резерв не тратится, ноты нет"
@@ -434,8 +479,10 @@ def test_promoted_augmented_candidates_respect_quota_and_total_budget():
     )
     pack = search_multi(
         _Retriever(store, _FakeEmbedder()), "o/n", ["q0"], limits=CodebaseLimits(),
-        section_limits=CodeSectionLimits(max_augmented_files=2), branch="dev",
-        augment_paths=["f12.py", "f13.py", "f14.py", "f15.py"])
+        section_limits=CodeSectionLimits(), branch="dev",
+        augment_sources=[AugmentSource(name="similar-diffs",
+                                       paths=["f12.py", "f13.py", "f14.py", "f15.py"],
+                                       quota=2)])
     paths = [it.path for it in pack.items]
     promoted = [p for p in ("f12.py", "f13.py", "f14.py", "f15.py") if p in paths]
     assert len(promoted) == 2, "квота 2 режет остальных кандидатов из хвоста пула"
@@ -451,8 +498,8 @@ def test_augmented_paths_not_found_in_store_leave_no_trace():
     store = _FakeStore({"q0": [_bm25("a.py#f")]}, nodes_by_path={})
     pack = search_multi(
         _Retriever(store, _FakeEmbedder()), "o/n", ["q0"], limits=CodebaseLimits(),
-        section_limits=CodeSectionLimits(max_augmented_files=3), branch="dev",
-        augment_paths=["x.py"])
+        section_limits=CodeSectionLimits(), branch="dev",
+        augment_sources=[AugmentSource(name="similar-diffs", paths=["x.py"], quota=3)])
     assert pack.augment_note is None
     assert "x.py" not in {it.path for it in pack.items}
 
@@ -470,8 +517,10 @@ def test_augment_quota_counts_files_with_chunks_not_candidates_considered():
     )
     pack = search_multi(
         _Retriever(store, _FakeEmbedder()), "o/n", ["q0"], limits=CodebaseLimits(),
-        section_limits=CodeSectionLimits(max_augmented_files=2), branch="dev",
-        augment_paths=["docs/a.md", "docs/b.md", "README.md", "c.py", "d.py"])
+        section_limits=CodeSectionLimits(), branch="dev",
+        augment_sources=[AugmentSource(
+            name="similar-diffs",
+            paths=["docs/a.md", "docs/b.md", "README.md", "c.py", "d.py"], quota=2)])
     paths = [it.path for it in pack.items]
     assert {"c.py", "d.py"} <= set(paths), \
         ".py-кандидаты из хвоста подмешиваются, хотя перед ними стояли бесчанковые пути"
@@ -483,8 +532,9 @@ def test_augment_quota_not_fully_used_when_fewer_chunked_candidates_exist():
     store = _FakeStore({"q0": [_bm25("a.py#f")]}, nodes_by_path={"c.py": _hit("c.py#s")})
     pack = search_multi(
         _Retriever(store, _FakeEmbedder()), "o/n", ["q0"], limits=CodebaseLimits(),
-        section_limits=CodeSectionLimits(max_augmented_files=3), branch="dev",
-        augment_paths=["docs/a.md", "docs/b.md", "c.py"])
+        section_limits=CodeSectionLimits(), branch="dev",
+        augment_sources=[AugmentSource(name="similar-diffs",
+                                       paths=["docs/a.md", "docs/b.md", "c.py"], quota=3)])
     paths = [it.path for it in pack.items]
     assert "c.py" in paths
     assert "подмешано 1" in pack.as_context(), "нота считает фактически найденное, не квоту"
@@ -500,8 +550,8 @@ def test_augment_store_fetch_failure_is_fail_soft():
     store = _FailingFetchStore({"q0": [_bm25("a.py#f")]})
     pack = search_multi(
         _Retriever(store, _FakeEmbedder()), "o/n", ["q0"], limits=CodebaseLimits(),
-        section_limits=CodeSectionLimits(max_augmented_files=2), branch="dev",
-        augment_paths=["x.py"])
+        section_limits=CodeSectionLimits(), branch="dev",
+        augment_sources=[AugmentSource(name="similar-diffs", paths=["x.py"], quota=2)])
     assert pack.augment_note is None
     assert [it.path for it in pack.items] == ["a.py"]
 
@@ -513,8 +563,8 @@ def test_augment_note_reports_source_and_quota():
                        nodes_by_path={"x.py": _hit("x.py#s")})
     pack = search_multi(
         _Retriever(store, _FakeEmbedder()), "o/n", ["q0"], limits=CodebaseLimits(),
-        section_limits=CodeSectionLimits(max_augmented_files=3), branch="dev",
-        augment_paths=["x.py"])
+        section_limits=CodeSectionLimits(), branch="dev",
+        augment_sources=[AugmentSource(name="similar-diffs", paths=["x.py"], quota=3)])
     context = pack.as_context()
     assert "подмешано 1" in context
     assert "similar-diffs" in context and "квота 3" in context
@@ -541,8 +591,10 @@ def test_augment_quota_skips_test_paths_before_counting_when_tests_excluded():
     )
     pack = search_multi(
         _Retriever(store, _FakeEmbedder()), "o/n", ["q0"], limits=CodebaseLimits(),
-        section_limits=CodeSectionLimits(max_augmented_files=1), branch="dev",
-        augment_paths=["tests/test_x.py", "tests/test_y.py", "c.py"])
+        section_limits=CodeSectionLimits(), branch="dev",
+        augment_sources=[AugmentSource(
+            name="similar-diffs",
+            paths=["tests/test_x.py", "tests/test_y.py", "c.py"], quota=1)])
     paths = [it.path for it in pack.items]
     assert "c.py" in paths, "квота досталась не-тестовому кандидату из хвоста"
     assert "tests/test_x.py" not in paths and "tests/test_y.py" not in paths
@@ -556,8 +608,10 @@ def test_augment_allows_test_paths_when_include_tests_requested():
     )
     pack = search_multi(
         _Retriever(store, _FakeEmbedder()), "o/n", ["q0"], limits=CodebaseLimits(),
-        section_limits=CodeSectionLimits(max_augmented_files=1), branch="dev",
-        augment_paths=["tests/test_x.py"], include_tests=True)
+        section_limits=CodeSectionLimits(), branch="dev",
+        augment_sources=[AugmentSource(name="similar-diffs",
+                                       paths=["tests/test_x.py"], quota=1)],
+        include_tests=True)
     paths = [it.path for it in pack.items]
     assert "tests/test_x.py" in paths
 
@@ -568,3 +622,21 @@ def test_no_augmentation_leaves_note_absent():
                         limits=CodebaseLimits(), branch="dev")
     assert pack.augment_note is None
     assert "подмешано" not in pack.as_context()
+
+
+def test_augmented_candidates_ordered_by_raw_pool_rank():
+    """Файл кластера, найденный гибридом (пусть и низко), идёт раньше ненайденного."""
+    hits = [_bm25(f"f{i}.py#s") for i in range(12)] + [_bm25("late.py#s")]
+    store = _FakeStore(
+        {"q0": hits},
+        nodes_by_path={"late.py": _hit("late.py#s"), "never.py": _hit("never.py#s")},
+    )
+    pack = search_multi(
+        _Retriever(store, _FakeEmbedder()), "o/n", ["q0"], limits=CodebaseLimits(),
+        section_limits=CodeSectionLimits(max_augmented_files=0),
+        branch="dev",
+        augment_sources=[AugmentSource(name="second-source",
+                                       paths=["never.py", "late.py"], quota=1)])
+    paths = [it.path for it in pack.items]
+    assert "late.py" in paths, "низко ранжированный гибридом файл приоритетнее ненайденного"
+    assert "never.py" not in paths
