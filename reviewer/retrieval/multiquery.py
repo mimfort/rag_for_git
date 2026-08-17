@@ -119,7 +119,7 @@ def _graph_items(retriever, repo: str, merged: list, ceiling: int, hops: int,
         return []
 
 
-AUGMENT_LOOKUP_LIMIT = 40
+AUGMENT_FETCH_LIMIT = 40
 """Потолок числа кандидатов, рассматриваемых в одном запросе к стору при отборе
 augmented (PRI-257, третий фикс по step8-measurement.md, «Третий замер») — это
 предохранитель на размер запроса fetch_retrieved_at_paths, а не бюджет выдачи:
@@ -143,7 +143,7 @@ def _augment_items(retriever, repo: str, *, augment_paths,
     списка кандидатов до quota ДО похода в стор выжигало квоту на путях,
     которые физически не могли попасть в выдачу, оставляя .py-кандидатов из
     хвоста без единого шанса. Поэтому сначала собираются ВСЕ кандидаты (до
-    предохранителя AUGMENT_LOOKUP_LIMIT), один запрос fetch_retrieved_at_paths
+    предохранителя AUGMENT_FETCH_LIMIT), один запрос fetch_retrieved_at_paths
     решает, у кого есть чанки, и только из реально найденных берутся первые
     quota — в исходном порядке.
     """
@@ -151,7 +151,7 @@ def _augment_items(retriever, repo: str, *, augment_paths,
         return [], None
     candidates: dict[str, None] = {}
     for path in augment_paths or []:
-        if len(candidates) >= AUGMENT_LOOKUP_LIMIT:
+        if len(candidates) >= AUGMENT_FETCH_LIMIT:
             break
         if path not in known_paths:
             candidates.setdefault(path, None)
