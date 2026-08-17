@@ -84,7 +84,7 @@ def _embed_pairs(embedder, queries: list[str]) -> list[tuple]:
     if not queries:
         return []
     try:
-        return list(zip(queries, embedder.embed_queries(queries)))
+        return list(zip(queries, embedder.embed_queries(queries), strict=True))
     except Exception:  # noqa: BLE001 — квота Voyage кончилась, это штатный случай
         log.warning("multiquery: батч-эмбеддинг недоступен — откат на один запрос",
                     exc_info=True)
@@ -137,8 +137,13 @@ def search_multi(retriever, repo: str, queries: list[str], *, limits=None,
     from reviewer.policy.context_limits import CodebaseLimits
     lim = limits or CodebaseLimits()
     bref = base_ref(branch)
+    # Дедуп на входе: search_multi — функция общего вида (зовётся и из эвала со
+    # своими списками), а не только из build_subqueries, который уже дедуплицирует.
+    # Порядок сохраняем — первый подзапрос обязан остаться первым (важно для
+    # отката _embed_pairs при сбое батча).
+    deduped_queries = list(dict.fromkeys(queries))
     runs: list[list] = []
-    for query, qvec in _embed_pairs(retriever.embedder, list(queries)):
+    for query, qvec in _embed_pairs(retriever.embedder, deduped_queries):
         try:
             runs.append(_run(retriever.store, repo, query, qvec, lim, bref))
         except Exception:  # noqa: BLE001 — сбой одного прогона не роняет сборку

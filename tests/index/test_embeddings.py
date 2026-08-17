@@ -12,7 +12,9 @@ class FakeClient:
     def __init__(self): self.calls = []
     def embed(self, texts, model, input_type, output_dimension):
         self.calls.append((tuple(texts), input_type))
-        return FakeResp([[0.1] * output_dimension for _ in texts])
+        # Вектор зависит от текста (не константа), иначе перепутанное сопоставление
+        # текст↔вектор в кэширующих методах прошло бы тест незамеченным.
+        return FakeResp([[float(sum(ord(c) for c in t))] * output_dimension for t in texts])
 
 def test_embed_documents_batches_and_uses_document_input_type():
     fake = FakeClient()
@@ -170,11 +172,13 @@ def test_embed_queries_batches_misses_and_reuses_cache():
     """Один сетевой вызов на все промахи; попадания кэша не эмбеддятся заново."""
     fake = FakeClient()
     emb = VoyageEmbedder(client=fake, model="voyage-code-3", dim=8)
-    emb.embed_query("первый")
+    first_vec = emb.embed_query("первый")
     calls_before = len(fake.calls)
     vectors = emb.embed_queries(["первый", "второй", "третий", "второй"])
     assert len(vectors) == 4
-    assert vectors[1] == vectors[3]                      # повтор отдаёт тот же вектор
+    assert vectors[0] == first_vec, "закэшированный текст отдаёт свой вектор, а не чужой"
+    assert vectors[1] == vectors[3], "повтор в списке отдаёт тот же вектор"
+    assert vectors[1] != vectors[0], "разным текстам сопоставлены разные векторы (не подгонка)"
     assert len(fake.calls) == calls_before + 1           # промахи ушли одним батчем
     assert fake.calls[-1][0] == ("второй", "третий")     # в батче только промахи, без дублей
 

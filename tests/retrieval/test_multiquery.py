@@ -79,9 +79,11 @@ class _FakeEmbedder:
 
 
 class _FakeStore:
-    def __init__(self, by_query: dict, fail_for: str | None = None):
+    def __init__(self, by_query: dict, fail_for: str | None = None,
+                 nodes_by_id: dict | None = None):
         self._by_query = by_query
         self._fail_for = fail_for
+        self._nodes_by_id = nodes_by_id or {}
         self.queries: list = []
 
     def hybrid_search(self, repo, *, query_text, query_embedding, overlay_ref,
@@ -92,7 +94,21 @@ class _FakeStore:
         return list(self._by_query.get(query_text, []))
 
     def fetch_nodes(self, repo, node_ids, overlay_ref, changed_paths, *, base_ref="base"):
-        return []
+        return [self._nodes_by_id[node_id] for node_id in node_ids
+                if node_id in self._nodes_by_id]
+
+
+class _FakeGraph:
+    def __init__(self, nodes: list[str] | None = None, fail: bool = False):
+        self._nodes = nodes or []
+        self._fail = fail
+        self.calls: list = []
+
+    def expand_detailed(self, repo, seeds, hops, branch):
+        self.calls.append(list(seeds))
+        if self._fail:
+            raise RuntimeError("граф недоступен")
+        return [{"id": node_id} for node_id in self._nodes]
 
 
 class _Retriever:
@@ -182,3 +198,33 @@ def test_blocks_are_capped_before_render():
     context = pack.as_context(line_numbers=True)
     assert "b.py" in context, "второй файл не вытеснен большим блоком"
     assert "[...truncated]" not in context
+
+
+def test_graph_only_hit_appended_after_hybrid_without_duplicating():
+    store = _FakeStore(
+        {"q0": [_bm25("a.py#f")]},
+        nodes_by_id={"a.py#f": _hit("a.py#f"), "c.py#h": _hit("c.py#h")},
+    )
+    graph = _FakeGraph(nodes=["a.py#f", "c.py#h"])  # a.py#f уже в hybrid — не задваивается
+    pack = search_multi(_Retriever(store, _FakeEmbedder(), graph=graph), "o/n", ["q0"],
+                        limits=CodebaseLimits(), branch="dev")
+    assert [it.node_id for it in pack.items] == ["a.py#f", "c.py#h"], \
+        "graph-only идёт после hybrid, без дублей уже найденного"
+
+
+def test_graph_expansion_failure_is_fail_soft():
+    store = _FakeStore({"q0": [_bm25("a.py#f")]})
+    graph = _FakeGraph(fail=True)
+    pack = search_multi(_Retriever(store, _FakeEmbedder(), graph=graph), "o/n", ["q0"],
+                        limits=CodebaseLimits(), branch="dev")
+    assert {it.path for it in pack.items} == {"a.py"}, "сбой графа не роняет сборку"
+
+
+def test_duplicate_queries_are_deduplicated_preserving_order():
+    embedder = _FakeEmbedder()
+    store = _FakeStore({"q0": [_bm25("a.py#f")], "q1": [_bm25("b.py#g")]})
+    pack = search_multi(_Retriever(store, embedder), "o/n", ["q0", "q1", "q0"],
+                        limits=CodebaseLimits(), branch="dev")
+    assert embedder.batches == [["q0", "q1"]], "дубль не уходит в батч эмбеддера повторно"
+    assert store.queries == ["q0", "q1"], "дубль не даёт второй прогон гибрида"
+    assert {it.path for it in pack.items} == {"a.py", "b.py"}

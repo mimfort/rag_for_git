@@ -190,7 +190,7 @@ class VoyageEmbedder:
         missing = [text for text in unique if text not in cached]
         fresh: dict[str, list[float]] = {}
         if missing:
-            fresh = dict(zip(missing, self._embed(missing, "query")))
+            fresh = dict(zip(missing, self._embed(missing, "query"), strict=True))
             with self._lock:
                 for text, vec in fresh.items():
                     if len(self._query_cache) >= self._cache_size:
