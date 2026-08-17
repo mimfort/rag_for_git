@@ -1,30 +1,34 @@
 # Replay-метрики ретрива solve-task
 
-Прогон от 2026-08-17T11:34:44.755800+00:00, репозиторий `mimfort/rag_for_git`, ветка `dev`.
+Прогон от 2026-08-17T15:09:03.748736+00:00, репозиторий `mimfort/rag_for_git`, ветка `dev`.
 
 ## Идентичность прогона
 
-- **до**: вариант `multiquery`, параметры `{'code_section': {'max_files': 4, 'max_chunks_per_file': 1, 'chars_per_file': 2000}}`, коммит `25a7aa93d6061602e976e60000c57c11b09c1eee`, indexed_sha `7d66a08baa462be1a2edde216dfbdc66a27fa68f`, корпус 57
-- **после**: вариант `multiquery`, коммит `25a7aa93d6061602e976e60000c57c11b09c1eee`, indexed_sha `7d66a08baa462be1a2edde216dfbdc66a27fa68f`, корпус 57
+- **до**: вариант `multiquery`, коммит `cdb9e609a47494160a3243cfeb8b5db665d754b6`, indexed_sha `951e791246db4577a3913d07b75001bc32ff9969`, корпус 58
+- **после**: вариант `similar_paths`, коммит `428ad261629caa65897c5b7fad0679950b24aa0a`, indexed_sha `951e791246db4577a3913d07b75001bc32ff9969`, корпус 58
+
+> **Стороны различаются не только вариантом:**
+
+> - коммит сторон различается (cdb9e609a47494160a3243cfeb8b5db665d754b6 против 428ad261629caa65897c5b7fad0679950b24aa0a): ground truth мог измениться
 
 ## Агрегат
 
 | Метрика | до | после | Δ |
 |---|---|---|---|
-| core-recall (медиана) | 0.2857 | 0.5 | +0.2143 |
-| core-recall (среднее) | 0.3355 | 0.5242 | +0.1887 |
-| core-recall bulk (ядро ≥ 10) | 0.1911 | 0.3544 | +0.1633 |
+| core-recall (медиана) | 0.5 | 0.75 | +0.25 |
+| core-recall (среднее) | 0.5282 | 0.6656 | +0.1374 |
+| core-recall bulk (ядро ≥ 10) | 0.373 | 0.3944 | +0.02143 |
 | bulk N | 4 | 4 | +0 |
-| precision (медиана) | 0.5 | 0.25 | -0.25 |
-| предсказано файлов (медиана) | 4 | 12 | +8 |
-| задач измерено | 41 | 41 | +0 |
+| precision (медиана) | 0.25 | 0.3333 | +0.08333 |
+| предсказано файлов (медиана) | 12 | 12 | +0 |
+| задач измерено | 42 | 42 | +0 |
 | без точки измерения | 0 | 0 | +0 |
 
 ## Статусы задач
 
 | Статус | Задач |
 |---|---|
-| measured | 41 |
+| measured | 42 |
 | empty_core_denominator | 10 |
 | no_ground_truth | 6 |
 | task_not_in_store | 0 |
@@ -34,62 +38,33 @@
 
 | Ключ | Статус | до | после | Δ | приобретено | потеряно |
 |---|---|---|---|---|---|---|
-| PRI-218 | measured | 0 | 1 | +1 | `reviewer/compose_lifecycle.py`, `reviewer/entrypoints/cli.py`, `reviewer/launcher/command.py`, `reviewer/launcher/controller.py`, `reviewer/tasks/taskdoc.py`, `reviewer/versioning.py`, `reviewer/web/history.py`, `scripts/verify_launcher_distribution.py` | — |
-| PRI-252 | measured | 0 | 0.6667 | +0.6667 | `reviewer/config/committed.py`, `reviewer/entrypoints/cli.py`, `reviewer/graph/scip.py`, `reviewer/graph/store.py`, `reviewer/install.py`, `reviewer/services/brief_quality.py`, `reviewer/tasks/boards/youtrack.py`, `reviewer/tasks/service.py` | — |
-| PRI-207 | measured | 0.5 | 1 | +0.5 | `reviewer/entrypoints/mcp_server.py`, `reviewer/mcp/service.py`, `reviewer/mcp/task_context.py`, `reviewer/policy/policy.py`, `reviewer/tasks/boards/weeek.py`, `reviewer/tasks/boards/yougile.py`, `reviewer/tasks/boards/youtrack.py`, `reviewer/tasks/store.py` | — |
-| PRI-210 | measured | 0.5 | 1 | +0.5 | `reviewer/config/settings.py`, `reviewer/graph/store.py`, `reviewer/index/struct_diff.py`, `reviewer/install.py`, `reviewer/install_claude.py`, `reviewer/mcp/service.py`, `scripts/verify_launcher_distribution.py` | — |
-| PRI-236 | measured | 0.5 | 1 | +0.5 | `reviewer/config/settings.py`, `reviewer/entrypoints/mcp_server.py`, `reviewer/graph/family.py`, `reviewer/graph/store.py`, `reviewer/index/embeddings.py`, `reviewer/index/store.py`, `reviewer/install.py`, `reviewer/tasks/boards/kaiten.py` | — |
-| PRI-250 | measured | 0 | 0.5 | +0.5 | `plugin/hooks/_transcript.py`, `plugin/hooks/brief_cost.py`, `reviewer/agent/assemble.py`, `reviewer/entrypoints/mcp_server.py`, `reviewer/mcp/service.py`, `reviewer/metrics/brief_quality/briefs.py`, `reviewer/metrics/brief_quality/recall.py`, `reviewer/web/history.py` | — |
-| PRI-213 | measured | 0.2857 | 0.7143 | +0.4286 | `reviewer/config/settings.py`, `reviewer/config/task_board.py`, `reviewer/entrypoints/mcp_server.py`, `reviewer/mcp/service.py`, `reviewer/tasks/boards/asana.py`, `reviewer/tasks/boards/kaiten.py`, `reviewer/tasks/boards/yandex_tracker.py`, `reviewer/tasks/boards/youtrack.py` | — |
-| PRI-205 | measured | 0.6 | 1 | +0.4 | `reviewer/config/task_board.py`, `reviewer/entrypoints/mcp_server.py`, `reviewer/mcp/service.py`, `reviewer/policy/policy.py`, `reviewer/tasks/boards/kaiten.py`, `reviewer/tasks/boards/weeek.py`, `reviewer/tasks/boards/yandex_tracker.py` | — |
-| PRI-221 | measured | 0.2222 | 0.5556 | +0.3333 | `reviewer/config/committed.py`, `reviewer/config/settings.py`, `reviewer/graph/scip.py`, `reviewer/install.py`, `reviewer/mcp/session_serde.py`, `reviewer/metrics/brief_quality/classify.py`, `reviewer/policy/policy.py`, `reviewer/services/repo_id.py` | — |
-| PRI-249 | measured | 0 | 0.3333 | +0.3333 | `reviewer/agent/assemble.py`, `reviewer/entrypoints/cli.py`, `reviewer/entrypoints/mcp_server.py`, `reviewer/index/store.py`, `reviewer/metrics/brief_quality/briefs.py`, `reviewer/services/review_service.py`, `reviewer/web/app.py`, `reviewer/web/history.py` | — |
-| PRI-255 | measured | 0.3333 | 0.6667 | +0.3333 | `reviewer/graph/metrics.py`, `reviewer/graph/store.py`, `reviewer/index/embeddings.py`, `reviewer/index/store.py`, `reviewer/retrieval/multiquery.py`, `reviewer/retrieval/retriever.py`, `reviewer/tasks/boards/attachments.py`, `reviewer/web/history.py` | — |
-| PRI-179 | measured | 0.5 | 0.75 | +0.25 | `reviewer/app.py`, `reviewer/entrypoints/cli.py`, `reviewer/entrypoints/mcp_server.py`, `reviewer/gitutil.py`, `reviewer/graph/builder.py`, `reviewer/graph/family.py`, `reviewer/graph/inherit.py`, `reviewer/graph/scip.py` | — |
-| PRI-134 | measured | 0.5 | 0.75 | +0.25 | `reviewer/agent/state.py`, `reviewer/config/layers.py`, `reviewer/graph/family.py`, `reviewer/index/embeddings.py`, `reviewer/mcp/session_serde.py`, `reviewer/services/gc.py`, `reviewer/tasks/boards/attachments.py`, `reviewer/tasks/boards/clickup.py` | — |
-| PRI-234 | measured | 0.75 | 1 | +0.25 | `reviewer/compose_lifecycle.py`, `reviewer/config/branches.py`, `reviewer/config/settings.py`, `reviewer/mcp/service.py`, `reviewer/mcp/session_store.py`, `reviewer/metrics/brief_quality/classify.py`, `reviewer/policy/policy.py`, `reviewer/services/brief_quality.py` | — |
-| PRI-235 | measured | 0.75 | 1 | +0.25 | `reviewer/config/onboarding.py`, `reviewer/gitutil.py`, `reviewer/graph/family.py`, `reviewer/install.py`, `reviewer/mcp/service.py`, `reviewer/mcp/task_context.py`, `reviewer/metrics/brief_quality/classify.py`, `reviewer/services/review_service.py` | — |
-| PRI-202 | measured | 0.2222 | 0.4444 | +0.2222 | `reviewer/app.py`, `reviewer/config/layers.py`, `reviewer/graph/family.py`, `reviewer/index/embeddings.py`, `reviewer/mcp/service.py`, `reviewer/policy/policy.py`, `reviewer/services/gc.py`, `reviewer/services/review_service.py` | — |
-| PRI-215 | measured | 0.07143 | 0.2857 | +0.2143 | `reviewer/mcp/service.py`, `reviewer/tasks/boards/asana.py`, `reviewer/tasks/boards/base.py`, `reviewer/tasks/boards/clickup.py`, `reviewer/tasks/boards/kaiten.py`, `reviewer/tasks/boards/registry.py`, `reviewer/tasks/boards/trello.py`, `reviewer/tasks/boards/yougile.py` | — |
-| PRI-196 | measured | 0.3 | 0.5 | +0.2 | `reviewer/mcp/service.py`, `reviewer/tasks/boards/asana.py`, `reviewer/tasks/boards/jira.py`, `reviewer/tasks/boards/linear.py`, `reviewer/tasks/boards/trello.py`, `reviewer/tasks/boards/weeek.py`, `reviewer/tasks/service.py`, `reviewer/tasks/store.py` | — |
-| PRI-225 | measured | 0.2222 | 0.3889 | +0.1667 | `reviewer/config/settings.py`, `reviewer/entrypoints/mcp_server.py`, `reviewer/tasks/boards/github.py`, `reviewer/tasks/graph.py`, `reviewer/tasks/service.py`, `reviewer/tasks/store.py`, `reviewer/tasks/sync_cursor.py`, `reviewer/tasks/sync_filter.py` | — |
-| PRI-247 | measured | 0.3333 | 0.5 | +0.1667 | `plugin/hooks/_transcript.py`, `plugin/hooks/brief_cost.py`, `plugin/hooks/review_cost.py`, `reviewer/entrypoints/mcp_server.py`, `reviewer/graph/builder.py`, `reviewer/services/gc.py`, `reviewer/tasks/boards/base.py`, `scripts/update_codex_plugin_manifest.py` | — |
-| PRI-223 | measured | 0.16 | 0.32 | +0.16 | `reviewer/config/layers.py`, `reviewer/config/onboarding.py`, `reviewer/config/provider_access.py`, `reviewer/config/settings.py`, `reviewer/entrypoints/mcp_server.py`, `reviewer/services/repo_id.py`, `reviewer/tasks/boards/adf.py`, `reviewer/tasks/boards/github.py` | — |
-| PRI-245 | measured | 0.1111 | 0.2222 | +0.1111 | `reviewer/compose_lifecycle.py`, `reviewer/config/committed.py`, `reviewer/entrypoints/cli.py`, `reviewer/graph/backend.py`, `reviewer/graph/summaries.py`, `reviewer/index/summary_store.py`, `reviewer/install.py`, `reviewer/tasks/boards/base.py` | — |
-| PRI-162 | empty_core_denominator | — | — | — | `reviewer/entrypoints/mcp_server.py`, `reviewer/index/chunker.py`, `reviewer/install.py`, `reviewer/install_codex.py`, `reviewer/metrics/brief_quality/recall.py`, `reviewer/retrieval/retriever.py`, `reviewer/services/gc.py`, `reviewer/tasks/taskdoc.py` | — |
-| PRI-164 | empty_core_denominator | — | — | — | `reviewer/app.py`, `reviewer/entrypoints/mcp_server.py`, `reviewer/install.py`, `reviewer/services/brief_quality.py`, `reviewer/tasks/boards/asana.py`, `reviewer/tasks/boards/base.py`, `reviewer/tasks/store.py`, `reviewer/tasks/subtasks.py` | — |
-| PRI-176 | empty_core_denominator | — | — | — | `reviewer/tasks/store.py` | — |
-| PRI-203 | empty_core_denominator | — | — | — | `reviewer/app.py`, `reviewer/config/settings.py`, `reviewer/entrypoints/cli.py`, `reviewer/graph/inherit.py`, `reviewer/install.py`, `reviewer/policy/context_limits.py`, `reviewer/services/gc.py`, `reviewer/tasks/service.py` | — |
-| PRI-206 | empty_core_denominator | — | — | — | `plugin/hooks/reviewer_defect.py`, `reviewer/entrypoints/cli.py`, `reviewer/entrypoints/mcp_server.py`, `reviewer/install.py`, `reviewer/mcp/task_context.py`, `reviewer/retrieval/multiquery.py`, `reviewer/retrieval/retriever.py`, `reviewer/vcs/github.py` | — |
-| PRI-208 | empty_core_denominator | — | — | — | `reviewer/config/committed.py`, `reviewer/config/layers.py`, `reviewer/entrypoints/mcp_server.py`, `reviewer/install_claude.py`, `reviewer/mcp/service.py`, `reviewer/policy/policy.py`, `reviewer/services/review_service.py`, `reviewer/tasks/boards/attachments.py` | — |
-| PRI-211 | measured | 0 | 0 | +0 | `reviewer/entrypoints/mcp_server.py`, `reviewer/mcp/service.py`, `reviewer/metrics/brief_quality/briefs.py`, `reviewer/metrics/brief_quality/classify.py`, `reviewer/services/graph_sync.py`, `reviewer/web/api.py`, `reviewer/web/app.py`, `reviewer/web/history.py` | — |
-| PRI-212 | measured | 1 | 1 | +0 | `plugin/hooks/reviewer_defect.py`, `reviewer/gitutil.py`, `reviewer/index/embeddings.py`, `reviewer/index/reranker.py`, `reviewer/services/review_service.py`, `reviewer/tasks/boards/kaiten.py`, `reviewer/tasks/boards/weeek.py`, `reviewer/web/history.py` | — |
-| PRI-172 | measured | 0 | 0 | +0 | `reviewer/bugreport/sanitize.py`, `reviewer/install_codex.py`, `reviewer/vcs/gitlab.py` | — |
-| PRI-216 | empty_core_denominator | — | — | — | `reviewer/graph/backend.py`, `reviewer/graph/family.py`, `reviewer/launcher/app.py`, `reviewer/launcher/controller.py`, `reviewer/mcp/session_store.py`, `reviewer/tasks/boards/base.py`, `reviewer/tasks/subtask_store.py`, `reviewer/web/history.py` | — |
-| PRI-217 | measured | 0 | 0 | +0 | `reviewer/tasks/boards/asana.py`, `reviewer/tasks/boards/base.py`, `reviewer/tasks/boards/github.py`, `reviewer/tasks/boards/jira.py`, `reviewer/tasks/boards/weeek.py`, `reviewer/tasks/boards/yandex_tracker.py`, `reviewer/tasks/boards/yougile.py`, `reviewer/tasks/boards/youtrack.py` | — |
-| PRI-177 | measured | 0 | 0 | +0 | `reviewer/mcp/service.py`, `reviewer/metrics/brief_quality/classify.py`, `reviewer/policy/policy.py`, `reviewer/tasks/boards/youtrack.py` | — |
-| PRI-219 | measured | 0.5 | 0.5 | +0 | `reviewer/agent/assemble.py`, `reviewer/entrypoints/mcp_server.py`, `reviewer/index/summary_store.py`, `reviewer/install_codex.py`, `reviewer/services/gc.py`, `reviewer/tasks/boards/base.py`, `reviewer/tools/code_tools.py`, `scripts/update_codex_plugin_manifest.py` | — |
-| PRI-220 | empty_core_denominator | — | — | — | `plugin/hooks/reviewer_defect.py`, `reviewer/config/task_board.py`, `reviewer/mcp/task_context.py`, `reviewer/tasks/boards/base.py`, `reviewer/tasks/boards/clickup.py`, `reviewer/tasks/boards/github.py`, `reviewer/tasks/boards/linear.py`, `reviewer/tasks/boards/yougile.py` | — |
-| PRI-178 | measured | 1 | 1 | +0 | `reviewer/entrypoints/cli.py`, `reviewer/entrypoints/mcp_server.py`, `reviewer/index/store.py`, `reviewer/install.py`, `reviewer/mcp/service.py`, `reviewer/retrieval/cliff.py`, `reviewer/tasks/boards/adf.py`, `reviewer/tools/code_tools.py` | — |
-| PRI-227 | measured | 0 | 0 | +0 | `plugin/hooks/brief_post_write.py`, `reviewer/compose_lifecycle.py`, `reviewer/config/task_board.py`, `reviewer/install.py`, `reviewer/launcher/controller.py`, `reviewer/metrics/brief_quality/briefs.py`, `reviewer/tasks/boards/github.py`, `reviewer/tasks/subtasks.py` | — |
-| PRI-222 | measured | 1 | 1 | +0 | `reviewer/bugreport/triage.py`, `reviewer/compose_lifecycle.py`, `reviewer/config/settings.py`, `reviewer/entrypoints/mcp_server.py`, `reviewer/graph/scip.py`, `reviewer/services/repo_id.py`, `reviewer/tasks/boards/github.py`, `reviewer/web/history.py` | — |
-| PRI-228 | measured | 0.5 | 0.5 | +0 | `reviewer/entrypoints/mcp_server.py`, `reviewer/graph/family.py`, `reviewer/index/store.py`, `reviewer/mcp/service.py`, `reviewer/metrics/brief_quality/briefs.py`, `reviewer/retrieval/multiquery.py`, `reviewer/tasks/service.py`, `reviewer/web/history.py` | — |
-| PRI-237 | measured | 0 | 0 | +0 | `plugin/hooks/reviewer_defect.py`, `reviewer/entrypoints/mcp_server.py`, `reviewer/graph/summaries.py`, `reviewer/index/chunker.py`, `reviewer/services/brief_quality.py`, `reviewer/services/summary_fragments.py`, `reviewer/tasks/boards/base.py`, `reviewer/tools/code_tools.py` | — |
-| PRI-238 | measured | 0 | 0 | +0 | `reviewer/graph/scip.py`, `reviewer/install.py`, `reviewer/tasks/boards/linear.py`, `reviewer/tasks/boards/yandex_tracker.py`, `reviewer/tasks/boards/yougile.py`, `reviewer/tasks/boards/youtrack.py`, `reviewer/tasks/pr_backlink.py`, `scripts/update_codex_plugin_manifest.py` | — |
-| PRI-239 | measured | 0.5 | 0.5 | +0 | `plugin/hooks/reviewer_defect.py`, `reviewer/app.py`, `reviewer/bugreport/environment.py`, `reviewer/bugreport/triage.py`, `reviewer/entrypoints/cli.py`, `reviewer/services/gc.py`, `reviewer/tasks/boards/github.py`, `reviewer/web/history.py` | — |
-| PRI-241 | measured | 1 | 1 | +0 | `reviewer/config/settings.py`, `reviewer/graph/family.py`, `reviewer/graph/scip.py`, `reviewer/launcher/app.py`, `reviewer/metrics/brief_quality/briefs.py`, `reviewer/policy/policy.py`, `reviewer/tasks/boards/yougile.py`, `reviewer/web/serve.py` | — |
-| PRI-242 | measured | 0.5 | 0.5 | +0 | `reviewer/config/settings.py`, `reviewer/entrypoints/launcher.py`, `reviewer/entrypoints/mcp_server.py`, `reviewer/graph/store.py`, `reviewer/tasks/boards/base.py`, `reviewer/tasks/boards/linear.py`, `reviewer/update_lifecycle.py`, `scripts/changelog_section.py` | — |
-| PRI-243 | measured | 0 | 0 | +0 | `reviewer/config/committed.py`, `reviewer/graph/backend.py`, `reviewer/index/store.py`, `reviewer/install.py`, `reviewer/mcp/task_context.py`, `reviewer/services/brief_quality.py`, `reviewer/services/gc.py`, `reviewer/services/repo_id.py` | — |
-| PRI-246 | empty_core_denominator | — | — | — | `plugin/hooks/brief_guard.py`, `reviewer/compose_lifecycle.py`, `reviewer/entrypoints/cli.py`, `reviewer/mcp/task_context.py`, `reviewer/metrics/brief_quality/briefs.py`, `reviewer/policy/policy.py`, `reviewer/tasks/boards/base.py`, `reviewer/tasks/boards/youtrack.py` | — |
-| PRI-251 | measured | 0.1429 | 0.1429 | +0 | `reviewer/metrics/brief_quality/classify.py`, `reviewer/metrics/brief_quality/recall.py`, `reviewer/services/brief_quality.py`, `reviewer/tasks/boards/asana.py`, `reviewer/tasks/boards/clickup.py`, `reviewer/tasks/boards/registry.py`, `reviewer/tasks/boards/weeek.py`, `reviewer/web/api.py` | — |
-| PRI-248 | measured | 0 | 0 | +0 | `reviewer/bugreport/environment.py`, `reviewer/install.py`, `reviewer/install_codex.py`, `reviewer/launcher/app.py`, `reviewer/metrics/brief_quality/briefs.py`, `reviewer/retrieval/retriever.py`, `reviewer/tasks/boards/base.py`, `reviewer/tools/code_tools.py` | — |
-| PRI-254 | empty_core_denominator | — | — | — | `reviewer/bugreport/triage.py`, `reviewer/compose_lifecycle.py`, `reviewer/entrypoints/mcp_server.py`, `reviewer/index/chunker.py`, `reviewer/mcp/service.py`, `reviewer/retrieval/retriever.py`, `reviewer/tasks/boards/base.py`, `reviewer/tasks/taskdoc.py` | — |
-| _и ещё 7_ | без изменений | — | — | — | — | — |
+| PRI-211 | measured | 0 | 1 | +1 | `reviewer/index/store.py` | `reviewer/entrypoints/mcp_server.py` |
+| PRI-238 | measured | 0 | 0.6667 | +0.6667 | `reviewer/entrypoints/mcp_server.py`, `reviewer/mcp/service.py` | `reviewer/graph/scip.py`, `reviewer/tasks/boards/linear.py` |
+| PRI-228 | measured | 0.5 | 1 | +0.5 | `reviewer/app.py`, `reviewer/install.py` | `reviewer/index/store.py`, `reviewer/web/history.py` |
+| PRI-256 | measured | 0.4 | 0.8 | +0.4 | `reviewer/config/layers.py`, `reviewer/mcp/service.py` | `reviewer/index/store.py`, `reviewer/web/history.py` |
+| PRI-245 | measured | 0.2222 | 0.5556 | +0.3333 | `reviewer/config/layers.py`, `reviewer/entrypoints/mcp_server.py`, `reviewer/index/store.py` | `reviewer/config/committed.py`, `reviewer/entrypoints/cli.py`, `reviewer/index/summary_store.py` |
+| PRI-249 | measured | 0.6667 | 1 | +0.3333 | `reviewer/web/api.py` | `reviewer/entrypoints/cli.py` |
+| PRI-252 | measured | 0.6667 | 1 | +0.3333 | `reviewer/index/store.py` | `reviewer/config/committed.py` |
+| PRI-255 | measured | 0.6667 | 1 | +0.3333 | `reviewer/mcp/service.py` | `reviewer/graph/metrics.py` |
+| PRI-202 | measured | 0.3333 | 0.6667 | +0.3333 | `reviewer/index/reranker.py`, `reviewer/index/store.py`, `reviewer/mcp/session_serde.py` | `reviewer/app.py`, `reviewer/config/branches.py`, `reviewer/index/embeddings.py` |
+| PRI-248 | measured | 0 | 0.3333 | +0.3333 | `reviewer/entrypoints/mcp_server.py` | `reviewer/launcher/app.py` |
+| PRI-217 | measured | 0 | 0.25 | +0.25 | `reviewer/tasks/boards/graphql.py`, `reviewer/tasks/boards/http.py` | `reviewer/tasks/boards/yougile.py`, `reviewer/tasks/boards/youtrack.py` |
+| PRI-221 | measured | 0.5556 | 0.7778 | +0.2222 | `reviewer/mcp/service.py`, `reviewer/web/history.py` | `reviewer/install.py`, `reviewer/policy/context_limits.py` |
+| PRI-196 | measured | 0.5 | 0.7 | +0.2 | `reviewer/app.py`, `reviewer/config/settings.py` | `reviewer/tasks/boards/jira.py`, `reviewer/tasks/boards/linear.py` |
+| PRI-247 | measured | 0.5 | 0.6667 | +0.1667 | `reviewer/web/api.py` | `reviewer/graph/builder.py` |
+| PRI-251 | measured | 0.1429 | 0.2857 | +0.1429 | `reviewer/entrypoints/mcp_server.py` | `reviewer/tasks/boards/weeek.py` |
+| PRI-213 | measured | 0.7143 | 0.8571 | +0.1429 | `reviewer/tasks/sync.py` | `reviewer/tasks/boards/weeek.py` |
+| PRI-223 | measured | 0.32 | 0.4 | +0.08 | `reviewer/install.py`, `reviewer/tasks/boards/asana.py`, `reviewer/tasks/boards/clickup.py` | `reviewer/config/layers.py`, `reviewer/config/provider_access.py`, `reviewer/tasks/boards/adf.py` |
+| PRI-208 | empty_core_denominator | — | — | — | `reviewer/policy/policy.py` | `reviewer/tools/code_tools.py` |
+| PRI-172 | measured | 0 | 0 | +0 | `plugin/hooks/brief_post_write.py` | — |
+| PRI-218 | measured | 1 | 1 | +0 | `reviewer/launcher/catalog.py`, `reviewer/launcher/models.py` | `reviewer/launcher/command.py`, `reviewer/tasks/taskdoc.py` |
+| PRI-234 | measured | 1 | 1 | +0 | `reviewer/config/fetch_errors.py` | `reviewer/tasks/boards/base.py` |
+| PRI-236 | measured | 1 | 1 | +0 | `reviewer/config/layers.py` | `reviewer/tasks/boards/base.py` |
+| _и ещё 36_ | без изменений | — | — | — | — | — |
 
 ## Оговорка
 
 Линия `replay` и линия `snapshot` **несравнимы напрямую**: snapshot считает пути, которые отобрала LLM из выдачи ретрива, а replay — всю выдачу ретрива. Сравнивать можно только replay с replay.
-
 ## Приёмка PRI-255
 
 Мультизапрос с RRF-слиянием: секция `code` контекста задачи ищется набором подзапросов,
@@ -284,3 +259,58 @@ for i, name in enumerate(("символов до", "символов после"
 Оверрайд `code_section` через `--set` появился вместе с этим замером (PRI-256): без него
 раздел не сериализовался в `limits_to_yaml` и молча терялся в `LiveRetrieval.code_multi`,
 то есть сторону «до» нечем было бы выразить.
+
+## Приёмка PRI-257
+
+Все прогоны — на одном `indexed_sha=951e791`, корпус 42 измеренных задачи, сторона «до» —
+вариант `multiquery`.
+
+### Критерий 1 — дельта по каждому рычагу отдельно
+
+| Вариант | медиана core-recall | Δ | bulk | precision (медиана) |
+|---|---|---|---|---|
+| `multiquery` (до) | 0.5 | — | 0.3730 | 0.167 |
+| `similar_paths` | **0.75** | **+0.25** | 0.3944 | 0.333 |
+| `cochange` | 0.5778 | +0.078 | 0.3544 | 0.250 |
+| `augmented` (оба) | 0.75 | +0.25 | 0.3944 | 0.333 |
+
+Вклад по задачам:
+
+| Рычаг | задач с добавлением | добавлено путей | из них в ядре | вытеснено core | recall вырос / упал |
+|---|---|---|---|---|---|
+| similar-diffs | 22 | 35 | 28 | 1 | 17 / 0 |
+| co-change | 30 | 34 | 4 | 1 | 4 / 1 |
+| оба | 23 | 39 | 29 | 1 | 18 / 0 |
+
+**Вердикт: similar-diffs смержен, co-change снят.** Точность сигнала similar-diffs — 28 попаданий
+на 35 подмешанных путей (80 %), ни одной задачи с падением recall, precision выдачи вырос вдвое:
+подмешивание уплотняет выдачу, а не размывает её. co-change даёт 12 % точности, роняет bulk и
+поверх similar-diffs не добавляет ничего — строки `cochange`/`augmented` в таблице сохранены как
+свидетельство замера, самих вариантов в реестре больше нет.
+
+### Три вещи, без которых числа читаются неверно
+
+**Первые три замера дали ровно ноль, и ни один из них не был свойством сигнала.** Дельта появилась
+только после снятия трёх независимых механизмов, каждый из которых обнулял рычаг в одиночку:
+квота работала потолком на остаток файлового бюджета (гибрид забирал все 12 слотов, augmented
+доставался 0-1); известность кандидата считалась по сырому пулу ретрива, из-за чего выбрасывался
+ровно тот файл, который гибрид нашёл, но ранжировал слишком низко для выдачи, — то есть основной
+случай, ради которого рычаг и делался; квота тратилась на кандидатов до проверки наличия чанков,
+а списки начинаются с `docs/*`, `README`, `*.jsonl`, у которых чанков нет вовсе.
+
+**Табличный источник в этом замере не участвовал.** `brief_quality` на момент прогона пуста
+(0 строк), поэтому весь измеренный эффект даёт git-фолбэк по ключу задачи. С накоплением истории
+прогонов основной источник добавится к измеренному, а не заменит его.
+
+**Дельта измерена против `multiquery`, а не против `baseline`.** Сторона «до» — уже улучшенный
+PRI-255/256 путь; выигрыш +0.25 медианы получен поверх него.
+
+### Процедура воспроизведения
+
+```bash
+.venv/bin/python -m eval.solve_task_metrics replay --variant multiquery --repo mimfort/rag_for_git --branch dev
+.venv/bin/python -m eval.solve_task_metrics replay --variant similar_paths --repo mimfort/rag_for_git --branch dev --baseline multiquery
+```
+
+`replay` перезаписывает этот файл целиком: разделы приёмки прошлых задач восстанавливаются после
+прогона вручную.
