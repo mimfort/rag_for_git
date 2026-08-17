@@ -387,6 +387,61 @@ def test_hybrid_budget_reduced_only_by_actually_used_augmented_slots():
         "резерв фактический (1 найденный путь), а не номинальные 3 из квоты"
 
 
+def test_augmented_promotes_low_ranked_hybrid_candidate_not_final_survivor():
+    """PRI-257 (второй фикс по step8-measurement.md, «Повторный замер после резерва»).
+
+    known_paths для augmented считается по ИТОГОВОЙ гибридной выдаче
+    (после dedupe+diversify), а не по сырому пулу (merged+graph). Кандидат,
+    которого гибрид НАШЁЛ (он есть в пуле из 20), но ранжировал ниже
+    max_files=12 и потому не попал в выдачу, обязан подмешаться — раньше он
+    считался «уже известным» по сырому пулу и молча отбрасывался.
+    """
+    hits = [_bm25(f"f{i}.py#s") for i in range(20)]
+    store = _FakeStore({"q0": hits}, nodes_by_path={"f15.py": _hit("f15.py#s")})
+    pack = search_multi(
+        _Retriever(store, _FakeEmbedder()), "o/n", ["q0"], limits=CodebaseLimits(),
+        section_limits=CodeSectionLimits(max_augmented_files=1), branch="dev",
+        augment_paths=["f15.py"])
+    paths = [it.path for it in pack.items]
+    assert "f15.py" in paths, \
+        "низкоранжированный, но найденный гибридом путь промоутится, а не теряется"
+    assert len(paths) == CodeSectionLimits().max_files
+
+
+def test_augmented_path_already_in_final_output_is_not_duplicated_or_reserved():
+    """Кандидат, реально попавший в итоговую гибридную выдачу — не дублируется.
+
+    known_paths по итоговой выдаче обязан исключать такие пути: иначе резерв
+    тратился бы впустую на файл, который и так уже есть в результате.
+    """
+    hits = [_bm25(f"f{i}.py#s") for i in range(5)]
+    store = _FakeStore({"q0": hits}, nodes_by_path={"f0.py": _hit("f0.py#other")})
+    pack = search_multi(
+        _Retriever(store, _FakeEmbedder()), "o/n", ["q0"], limits=CodebaseLimits(),
+        section_limits=CodeSectionLimits(max_augmented_files=3), branch="dev",
+        augment_paths=["f0.py"])
+    paths = [it.path for it in pack.items]
+    assert paths.count("f0.py") == 1, "нет дубля"
+    assert pack.augment_note is None, "путь уже в выдаче — резерв не тратится, ноты нет"
+
+
+def test_promoted_augmented_candidates_respect_quota_and_total_budget():
+    """Промоутинг из хвоста пула всё равно ограничен квотой и общим max_files."""
+    hits = [_bm25(f"f{i}.py#s") for i in range(20)]
+    store = _FakeStore(
+        {"q0": hits},
+        nodes_by_path={f"f{i}.py": _hit(f"f{i}.py#s") for i in (12, 13, 14, 15)},
+    )
+    pack = search_multi(
+        _Retriever(store, _FakeEmbedder()), "o/n", ["q0"], limits=CodebaseLimits(),
+        section_limits=CodeSectionLimits(max_augmented_files=2), branch="dev",
+        augment_paths=["f12.py", "f13.py", "f14.py", "f15.py"])
+    paths = [it.path for it in pack.items]
+    promoted = [p for p in ("f12.py", "f13.py", "f14.py", "f15.py") if p in paths]
+    assert len(promoted) == 2, "квота 2 режет остальных кандидатов из хвоста пула"
+    assert len(paths) == CodeSectionLimits().max_files
+
+
 def test_augmented_paths_not_found_in_store_leave_no_trace():
     """augment_paths непуст, но стор ничего не нашёл по этим путям — нет ни ноты, ни файлов.
 

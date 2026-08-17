@@ -207,8 +207,15 @@ def search_multi(retriever, repo: str, queries: list[str], *, limits=None,
     получает до max_augmented_files слотов (по факту найденных кандидатов),
     гибрид+graph делят max_files минус фактически занятый резерв (не минус
     номинальную квоту — без кандидатов гибрид получает бюджет целиком).
-    Потолок на остаток душил сигнал до 0-1 слота при полном гибридном
-    бюджете — см. .superpowers/sdd/2026-08-17-pri-257-augmented-candidates/
+
+    known_paths для augmented считается по ИТОГОВОЙ гибридной выдаче
+    (после dedupe+diversify на полном max_files), а не по сырому пулу
+    (merged+graph, десятки путей): кандидат, которого гибрид нашёл, но
+    ранжировал слишком низко для попадания в max_files, из пула исключался
+    как «уже известный» — хотя именно такие файлы (низкий ранг гибрида,
+    высокая ценность сигнала) рычаг обязан промоутить. Смотри разбор обоих
+    механизмов (потолок-на-остаток и сырой-пул) — см.
+    .superpowers/sdd/2026-08-17-pri-257-augmented-candidates/
     step8-measurement.md.
     """
     from reviewer.policy.context_limits import CodebaseLimits, CodeSectionLimits
@@ -230,24 +237,27 @@ def search_multi(retriever, repo: str, queries: list[str], *, limits=None,
     hybrid_ids = {item.node_id for item in merged}
     items = [*merged, *_graph_items(retriever, repo, merged, lim.ceiling, hops,
                                     branch, bref, hybrid_ids)]
+    if not include_tests:
+        items = [item for item in items if not _is_test_path(item.path)]
+    # Сначала — полная гибридная выдача на весь бюджет max_files, как если бы
+    # augmented не существовало вовсе: это и есть тот «итоговый» набор путей,
+    # против которого рычаг проверяет свою новизну (PRI-257, второй фикс по
+    # step8-measurement.md, «Повторный замер после резерва»).
+    hybrid_final = diversify_by_file(_dedupe_overlapping(items),
+                                     max_files=sec.max_files,
+                                     max_chunks_per_file=sec.max_chunks_per_file)
     augmented, note = _augment_items(
         retriever, repo, merged, augment_paths=augment_paths, cochange=cochange,
         quota=sec.max_augmented_files, bref=bref,
-        known_paths={item.path for item in items})
+        known_paths={item.path for item in hybrid_final})
     if not include_tests:
-        items = [item for item in items if not _is_test_path(item.path)]
         augmented = [item for item in augmented if not _is_test_path(item.path)]
-    # Резерв слотов (PRI-257, добор по step8-measurement.md): augmented — свой
-    # путь дедупа не требует (fetch_retrieved_at_paths отдаёт по одному самому
-    # широкому чанку на путь, а known_paths в _augment_items уже исключил пути,
-    # занятые hybrid/graph), поэтому dedupe→diversify идёт только по hybrid+graph,
-    # а augmented подмешивается в бюджет напрямую — гарантированным резервом.
+    # Резерв слотов: augmented — свой путь дедупа не требует (fetch_retrieved_
+    # at_paths отдаёт по одному самому широкому чанку на путь, known_paths уже
+    # исключил пути итоговой гибридной выдачи), поэтому урезаем hybrid_final
+    # ровно на фактически занятый резерв и подмешиваем augmented напрямую.
     reserved = min(len(augmented), sec.max_files)
     augmented = augmented[:reserved]
-    hybrid_budget = sec.max_files - reserved
-    items = diversify_by_file(_dedupe_overlapping(items),
-                              max_files=hybrid_budget,
-                              max_chunks_per_file=sec.max_chunks_per_file)
-    items = [*items, *augmented]
+    items = [*hybrid_final[:sec.max_files - reserved], *augmented]
     return ContextPack(items=[cap_block(item, sec.chars_per_file) for item in items],
                        max_chars=sec.max_chars, augment_note=note)
