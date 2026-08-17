@@ -457,6 +457,72 @@ def test_augmented_paths_not_found_in_store_leave_no_trace():
     assert "x.py" not in {it.path for it in pack.items}
 
 
+def test_augment_quota_counts_files_with_chunks_not_candidates_considered():
+    """PRI-257 (третий фикс по step8-measurement.md, «Третий замер»).
+
+    Первые кандидаты (docs/*, README) физически не имеют чанков — квота не
+    обязана выгорать на них. .py-кандидаты из хвоста списка обязаны
+    подмешаться, если у них есть чанки, ровно в количестве quota.
+    """
+    store = _FakeStore(
+        {"q0": [_bm25("a.py#f")]},
+        nodes_by_path={"c.py": _hit("c.py#s"), "d.py": _hit("d.py#s")},
+    )
+    pack = search_multi(
+        _Retriever(store, _FakeEmbedder()), "o/n", ["q0"], limits=CodebaseLimits(),
+        section_limits=CodeSectionLimits(max_augmented_files=2), branch="dev",
+        augment_paths=["docs/a.md", "docs/b.md", "README.md", "c.py", "d.py"])
+    paths = [it.path for it in pack.items]
+    assert {"c.py", "d.py"} <= set(paths), \
+        ".py-кандидаты из хвоста подмешиваются, хотя перед ними стояли бесчанковые пути"
+    assert "подмешано 2" in pack.as_context()
+
+
+def test_augment_quota_not_fully_used_when_fewer_chunked_candidates_exist():
+    """Кандидатов с чанками меньше квоты — подмешиваются все найденные, нота честная."""
+    store = _FakeStore({"q0": [_bm25("a.py#f")]}, nodes_by_path={"c.py": _hit("c.py#s")})
+    pack = search_multi(
+        _Retriever(store, _FakeEmbedder()), "o/n", ["q0"], limits=CodebaseLimits(),
+        section_limits=CodeSectionLimits(max_augmented_files=3), branch="dev",
+        augment_paths=["docs/a.md", "docs/b.md", "c.py"])
+    paths = [it.path for it in pack.items]
+    assert "c.py" in paths
+    assert "подмешано 1" in pack.as_context(), "нота считает фактически найденное, не квоту"
+
+
+def test_augment_priority_similar_diffs_before_cochange_with_abundant_chunks():
+    """При избытке кандидатов с чанками similar-diffs занимает квоту раньше co-change."""
+    store = _FakeStore(
+        {"q0": [_bm25("a.py#f")]},
+        nodes_by_path={
+            "s1.py": _hit("s1.py#s"), "s2.py": _hit("s2.py#s"), "c1.py": _hit("c1.py#s"),
+        },
+    )
+    pack = search_multi(
+        _Retriever(store, _FakeEmbedder()), "o/n", ["q0"], limits=CodebaseLimits(),
+        section_limits=CodeSectionLimits(max_augmented_files=2), branch="dev",
+        augment_paths=["s1.py", "s2.py"], cochange=lambda seeds: ["c1.py"])
+    context = pack.as_context()
+    assert "similar-diffs 2" in context and "co-change 0" in context, \
+        "similar-diffs занимает квоту раньше co-change при избытке кандидатов"
+
+
+class _FailingFetchStore(_FakeStore):
+    def fetch_retrieved_at_paths(self, repo, paths, *, base_ref, limit_per_path=1):
+        raise RuntimeError("стор недоступен")
+
+
+def test_augment_store_fetch_failure_is_fail_soft():
+    """Сбой fetch_retrieved_at_paths (уже собранный список кандидатов) — не роняет сборку."""
+    store = _FailingFetchStore({"q0": [_bm25("a.py#f")]})
+    pack = search_multi(
+        _Retriever(store, _FakeEmbedder()), "o/n", ["q0"], limits=CodebaseLimits(),
+        section_limits=CodeSectionLimits(max_augmented_files=2), branch="dev",
+        augment_paths=["x.py"])
+    assert pack.augment_note is None
+    assert [it.path for it in pack.items] == ["a.py"]
+
+
 def test_augment_note_reports_sources_and_quota():
     store = _FakeStore({"q0": [_bm25("a.py#f")]},
                        nodes_by_path={"x.py": _hit("x.py#s"), "c.py": _hit("c.py#s")})

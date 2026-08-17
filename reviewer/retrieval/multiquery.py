@@ -119,38 +119,62 @@ def _graph_items(retriever, repo: str, merged: list, ceiling: int, hops: int,
         return []
 
 
+AUGMENT_LOOKUP_LIMIT = 40
+"""Потолок числа кандидатов, рассматриваемых в одном запросе к стору при отборе
+augmented (PRI-257, третий фикс по step8-measurement.md, «Третий замер») — это
+предохранитель на размер запроса fetch_retrieved_at_paths, а не бюджет выдачи:
+бюджет выдачи держит quota, применяемая ПОСЛЕ похода в стор (см. _augment_items).
+"""
+
+
 def _augment_items(retriever, repo: str, merged: list, *, augment_paths, cochange,
                    quota: int, bref: str, known_paths: set) -> tuple[list, str | None]:
     """Подмешанные кандидаты: пути похожих задач и co-change. Fail-soft.
 
-    Квота общая на оба источника, приоритет — similar-diffs: путь, который
-    задача уже реально правила, сильнее статистики со-изменяемости.
+    Квота считает ФАЙЛЫ, реально подмешанные в выдачу, а не рассмотренных
+    кандидатов: списки путей часто открываются непроиндексированными файлами
+    (docs/*, *.jsonl, README, CLAUDE.md — чанки есть только у .py), и урезание
+    списка кандидатов до quota ДО похода в стор выжигало квоту на путях,
+    которые физически не могли попасть в выдачу, оставляя .py-кандидатов из
+    хвоста без единого шанса. Поэтому сначала собираются ВСЕ кандидаты обоих
+    источников (до предохранителя AUGMENT_LOOKUP_LIMIT), один запрос
+    fetch_retrieved_at_paths решает, у кого есть чанки, и только из реально
+    найденных берутся первые quota — в исходном порядке источников.
+
+    Приоритет — similar-diffs: путь, который задача уже реально правила,
+    сильнее статистики со-изменяемости.
     """
     if quota <= 0:
         return [], None
-    counts = {"similar-diffs": 0, "co-change": 0}
-    ordered: dict[str, str] = {}
+    candidates: dict[str, str] = {}
     for path in augment_paths or []:
-        if path not in known_paths and len(ordered) < quota:
-            ordered.setdefault(path, "similar-diffs")
-    if cochange is not None and len(ordered) < quota:
+        if len(candidates) >= AUGMENT_LOOKUP_LIMIT:
+            break
+        if path not in known_paths:
+            candidates.setdefault(path, "similar-diffs")
+    if cochange is not None and len(candidates) < AUGMENT_LOOKUP_LIMIT:
         try:
             seeds = list(dict.fromkeys(item.path for item in merged))
             for path in cochange(seeds):
-                if path not in known_paths and path not in ordered and len(ordered) < quota:
-                    ordered[path] = "co-change"
+                if len(candidates) >= AUGMENT_LOOKUP_LIMIT:
+                    break
+                if path not in known_paths:
+                    candidates.setdefault(path, "co-change")
         except Exception:  # noqa: BLE001 — git или история недоступны, это штатный случай
             log.warning("multiquery: co-change недоступен", exc_info=True)
-    if not ordered:
+    if not candidates:
         return [], None
     try:
         fetched = {item.path: item for item in retriever.store.fetch_retrieved_at_paths(
-            repo, list(ordered), base_ref=bref)}
+            repo, list(candidates), base_ref=bref)}
     except Exception:  # noqa: BLE001
         log.warning("multiquery: выборка подмешанных путей недоступна", exc_info=True)
         return [], None
+    counts = {"similar-diffs": 0, "co-change": 0}
     items = []
-    for path, source in ordered.items():
+    for path, source in candidates.items():
+        if len(items) >= quota:
+            break
         if path in fetched:
             items.append(fetched[path])
             counts[source] += 1
