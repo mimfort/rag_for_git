@@ -298,21 +298,3 @@ def test_similar_section_text_is_unchanged_by_augmentation():
     payload = task_context.build_task_context(deps, repo="o/n", key="ID-311",
                                               branch="dev", warm_board=False)
     assert payload["related"]["similar"] == "1. ID-300 ..."
-
-
-def test_cold_summaries_do_not_break_brief_assembly():
-    """Критерий приёмки 2 PRI-258: сводки не построены → gap, а не сбой сборки."""
-    class _ColdSummaryStore:
-        def search_summaries(self, repo, branch, query_embedding, top_k):
-            return []
-
-    class _StubEmbedder:
-        def embed_query(self, text):
-            return [0.1] * 8
-
-    from reviewer.retrieval.augment import collect_subsystem_paths
-    result = collect_subsystem_paths(
-        summary_store=_ColdSummaryStore(), embedder=_StubEmbedder(), repo="o/n",
-        branch="dev", query="q", limit=2)
-    assert result.paths == []
-    assert result.gaps, "пробел записан"

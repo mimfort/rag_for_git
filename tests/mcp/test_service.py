@@ -857,6 +857,46 @@ def test_task_context_deps_history_failure_is_a_gap_not_an_exception() -> None:
     assert collect.call_args.kwargs["history"] is None
 
 
+def test_task_context_deps_subsystem_paths_cold_summaries_is_a_gap_not_an_exception() -> None:
+    """Критерий приёмки 2 PRI-258 на слое Task 5: _subsystem_paths не бросает
+
+    на холодных/недоступных сводках, отдаёт пустой список и доносит причину
+    до deps.augment_gaps (а не только не падает) — по образцу
+    test_task_context_deps_history_failure_is_a_gap_not_an_exception.
+    """
+    from reviewer.mcp.service import _TaskContextDeps
+
+    fake_service = MagicMock()
+    deps = _TaskContextDeps(fake_service, None)
+
+    with patch("reviewer.retrieval.augment.collect_subsystem_paths") as collect:
+        collect.return_value = AugmentResult(
+            gaps=["сводки подсистем не построены — разворот кластеров пропущен"])
+        paths = deps._subsystem_paths("o/n", "dev", "q")
+
+    assert paths == []
+    assert any("сводки подсистем не построены" in g for g in deps.augment_gaps)
+
+
+def test_task_context_deps_subsystem_paths_survives_source_exception() -> None:
+    """Сбой самого источника (не только его gaps) целиком гасится: не бросает наружу,
+
+    отдаёт [] и пишет обобщённый пробел — сборка секции code не должна упасть
+    из-за second-source failure.
+    """
+    from reviewer.mcp.service import _TaskContextDeps
+
+    fake_service = MagicMock()
+    deps = _TaskContextDeps(fake_service, None)
+
+    with patch("reviewer.retrieval.augment.collect_subsystem_paths") as collect:
+        collect.side_effect = RuntimeError("voyage недоступен")
+        paths = deps._subsystem_paths("o/n", "dev", "q")
+
+    assert paths == []
+    assert any("разворот кластеров подсистем недоступен" in g for g in deps.augment_gaps)
+
+
 def test_task_context_code_passes_two_named_augment_sources() -> None:
     """code() отдаёт два источника: similar-diffs первым (он точнее), subsystems вторым.
 
