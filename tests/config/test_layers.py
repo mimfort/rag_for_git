@@ -44,12 +44,66 @@ def test_layers_replace_top_level_values_and_report_sources(tmp_path: Path) -> N
     )
 
     assert data["paths"] == {"ignore": ["home-repo"]}
-    assert data["context_limits"] == {"search_codebase": {"ceiling": 25}}
+    # context_limits теперь сливается по подсекциям: слой, не высказавшийся о
+    # search_codebase, её не стирает.
+    assert data["context_limits"] == {
+        "graph": {"hops": 2},
+        "search_codebase": {"ceiling": 25},
+    }
     assert data["task_board"] is None
-    assert meta.sources["paths"] == "home:repos/o/r.yml"
+    assert meta.sources["paths.ignore"] == "home:repos/o/r.yml"
     assert meta.sources["max_comments"] == ".review.yml"
-    assert meta.shadowed["paths"] == ("home:review.yml", ".review.yml")
+    assert meta.shadowed["paths.ignore"] == ("home:review.yml", ".review.yml")
     assert meta.shadowed["max_comments"] == ("home:review.yml",)
+
+
+def test_pri259_committed_code_section_pin_survives_partial_home_layer(tmp_path: Path) -> None:
+    """Регресс PRI-259: домашний context_limits без code_section не уносит коммиченный пин."""
+    _write(
+        tmp_path / "repos/o/r.yml",
+        "context_limits: {graph: {hops: 1}, search_codebase: {ceiling: 15}}\n",
+    )
+    committed = (
+        "context_limits:\n"
+        "  code_section: {max_files: 12, chars_per_file: 1300}\n"
+    )
+
+    data, meta = resolve_policy_data(
+        "O/R", "main", lambda ref: committed, config_root=tmp_path
+    )
+
+    limits = data["context_limits"]
+    assert limits["code_section"] == {"max_files": 12, "chars_per_file": 1300}
+    assert limits["graph"] == {"hops": 1}
+    assert meta.sources["context_limits.code_section.max_files"] == ".review.yml"
+    assert meta.sources["context_limits.graph.hops"] == "home:repos/o/r.yml"
+    assert "context_limits" not in meta.shadowed        # верхний ключ больше не затеняется целиком
+
+
+def test_shadowed_names_the_leaf_when_subsection_is_overridden(tmp_path: Path) -> None:
+    _write(tmp_path / "repos/o/r.yml", "context_limits: {code_section: {max_files: 20}}\n")
+    committed = "context_limits: {code_section: {max_files: 12, chars_per_file: 1300}}\n"
+
+    _data, meta = resolve_policy_data(
+        "O/R", "main", lambda ref: committed, config_root=tmp_path
+    )
+
+    assert meta.shadowed["context_limits.code_section.max_files"] == (".review.yml",)
+    assert "context_limits" not in meta.shadowed
+
+
+def test_layer_order_is_unchanged(tmp_path: Path) -> None:
+    """Критерий 4: приоритет источников прежний — домашний per-repo слой последний."""
+    _write(tmp_path / "review.yml", "max_comments: 1\n")
+    _write(tmp_path / "repos/o/r.yml", "max_comments: 3\n")
+
+    data, meta = resolve_policy_data(
+        "O/R", "main", lambda ref: "max_comments: 2\n", config_root=tmp_path
+    )
+
+    assert data["max_comments"] == 3
+    assert meta.sources["max_comments"] == "home:repos/o/r.yml"
+    assert meta.shadowed["max_comments"] == ("home:review.yml", ".review.yml")
 
 
 def test_per_repo_home_task_sync_filters_resolve_independently(tmp_path: Path) -> None:
@@ -246,7 +300,9 @@ def test_categories_null_is_a_valid_home_override(tmp_path: Path) -> None:
 
     assert data["categories"] is None
     assert meta.sources["categories"] == "home:repos/o/r.yml"
-    assert meta.shadowed["categories"] == (".review.yml",)
+    # Коммиченное значение было mapping'ом ({security: false}) — затенённый
+    # лист называется по своему dotted-пути, а не по верхнему ключу.
+    assert meta.shadowed["categories.security"] == (".review.yml",)
     assert meta.warnings == ()
 
 

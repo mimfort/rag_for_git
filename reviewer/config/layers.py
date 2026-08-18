@@ -16,6 +16,7 @@ import tempfile
 
 import yaml
 
+from reviewer.config.deepmerge import merge_layer
 from reviewer.config.fetch_errors import classify_fetch_error
 from reviewer.config.task_board import normalize_task_board_config
 from reviewer.policy.policy import ReviewPolicy
@@ -353,11 +354,7 @@ def resolve_policy_data(
         )
 
     def merge(data: Mapping[str, object], source: str) -> None:
-        for key, value in data.items():
-            if key in sources:
-                shadowed.setdefault(key, []).append(sources[key])
-            merged[key] = value
-            sources[key] = source
+        merge_layer(merged, sources, shadowed, data, source)
 
     def merge_home(path: Path, source: str) -> None:
         try:
@@ -595,6 +592,10 @@ def build_config_report(
     `committed_source` — способ чтения коммиченного слоя (`local`/`vcs`) или
     None, если слой не читался вовсе (PRI-235). Путь к клону в отчёт не
     попадает: диагностике достаточно способа, путь — лишний факт о машине.
+
+    `sources`/`shadowed` листовой гранулярности (PRI-260): ключ — dotted-путь
+    до листа, а не верхний ключ policy, иначе слой, не высказавшийся о
+    подсекции, в отчёте выглядел бы так, будто он её затенил целиком.
     """
     try:
         policy = ReviewPolicy.load_data(settings, data)
@@ -602,7 +603,18 @@ def build_config_report(
         _validate_public_policy_data(effective)
     except (AttributeError, KeyError, OverflowError, RecursionError, TypeError, ValueError):
         raise HomeConfigError("effective policy: недопустимые значения") from None
-    sources = {key: meta.sources.get(key, "env") for key in effective}
+    sources = {
+        path: layer
+        for path, layer in meta.sources.items()
+        if path.split(".", 1)[0] in effective
+    }
+    sources.update({
+        key: "env"
+        for key in effective
+        if not any(
+            path == key or path.startswith(f"{key}.") for path in meta.sources
+        )
+    })
     return {
         "repo": normalize_repo(repo),
         "branch": branch,
@@ -1019,11 +1031,7 @@ def _simulated_repo_layer(
     merged = dict(data)
     sources = dict(meta.sources)
     shadowed = {key: list(value) for key, value in meta.shadowed.items()}
-    for key, value in candidate.items():
-        if key in sources:
-            shadowed.setdefault(key, []).append(sources[key])
-        merged[key] = value
-        sources[key] = source
+    merge_layer(merged, sources, shadowed, candidate, source)
     return merged, ResolutionMeta(
         sources,
         {key: tuple(value) for key, value in shadowed.items()},
