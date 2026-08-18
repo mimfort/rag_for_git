@@ -24,8 +24,10 @@ from reviewer.config.committed import CommittedLayerFetcher, worktree_drift
 from reviewer.config.layers import (
     HomeConfigError,
     build_config_report,
+    leaves_of,
     migrate_repo_config,
     resolve_policy_data,
+    source_of,
 )
 from reviewer.config.onboarding import (
     RepositoryConfigPlan,
@@ -147,27 +149,21 @@ def _branches_report(branches) -> dict[str, object]:
     }
 
 
-def _leaves_of(mapping: Mapping[str, object], key: str) -> dict[str, object]:
-    """Записи листовой диагностики, относящиеся к верхнему ключу ``key``."""
-    prefix = f"{key}."
-    return {
-        path: value
-        for path, value in mapping.items()
-        if path == key or path.startswith(prefix)
-    }
-
-
-def _echo_source_leaves(leaves: Mapping[str, str]) -> None:
+def _echo_source_leaves(sources: Mapping[str, str], key: str) -> None:
     """`source`: одна строка, если все листья указывают на один слой.
 
     Если слои расходятся — общая строка была бы неразличимой ложью
     («какой-то один слой»), поэтому заголовок ``mixed`` и строка на лист.
+    `source_of` — общий с `mcp/service.py` хелпер (`reviewer/config/layers.py`):
+    диагностика верхнего ключа по листовым `sources` не должна дублироваться
+    литералом на каждом потребителе (см. фикс summary_cluster_depth_overrides).
     """
+    leaves = leaves_of(sources, key)
     if not leaves:
         return
-    values = set(leaves.values())
-    if len(values) == 1:
-        click.echo(f"  source: {values.pop()}")
+    resolved = source_of(sources, key)
+    if resolved != "mixed":
+        click.echo(f"  source: {resolved}")
         return
     click.echo("  source: mixed")
     for path in sorted(leaves):
@@ -227,8 +223,8 @@ def _render_config_report(report: Mapping[str, object]) -> None:
         click.echo(
             f"{key}: {json.dumps(effective[key], ensure_ascii=False, sort_keys=True)}"
         )
-        _echo_source_leaves(_leaves_of(sources, key))
-        _echo_shadowed_leaves(key, _leaves_of(shadowed, key))
+        _echo_source_leaves(sources, key)
+        _echo_shadowed_leaves(key, leaves_of(shadowed, key))
     for warning in report["warnings"]:
         click.echo(f"warning: {warning}")
     for item in report.get("skipped") or ():

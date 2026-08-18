@@ -14,6 +14,7 @@ from reviewer.config.layers import (
     migrate_repo_config,
     policy_to_public_data,
     resolve_policy_data,
+    source_of,
 )
 from reviewer.config.settings import Settings
 from reviewer.policy.policy import ReviewPolicy
@@ -22,6 +23,27 @@ from reviewer.policy.policy import ReviewPolicy
 def _write(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
+
+
+def test_source_of_reports_env_single_layer_and_mixed() -> None:
+    """Юнит на общий хелпер `source_of` (PRI-260 фикс-раунд 2)."""
+    assert source_of({}, "context_limits") == "env"
+    assert (
+        source_of({"context_limits.graph.hops": "home:review.yml"}, "context_limits")
+        == "home:review.yml"
+    )
+    assert (
+        source_of(
+            {
+                "context_limits.code_section.max_files": ".review.yml",
+                "context_limits.graph.hops": "home:review.yml",
+            },
+            "context_limits",
+        )
+        == "mixed"
+    )
+    # Атомарный/скалярный случай — путь совпадает с самим ключом.
+    assert source_of({"task_board": ".review.yml"}, "task_board") == ".review.yml"
 
 
 def test_layers_replace_top_level_values_and_report_sources(tmp_path: Path) -> None:

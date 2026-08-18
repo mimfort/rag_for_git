@@ -579,6 +579,37 @@ def _validate_context_limits(
     return True
 
 
+def leaves_of(mapping: Mapping[str, object], key: str) -> dict[str, object]:
+    """Записи листовой диагностики (``sources``/``shadowed``), относящиеся к
+    верхнему ключу ``key``: сам ``key`` (атомарный/скалярный случай) и все
+    ``key.<путь>`` (PRI-260)."""
+    prefix = f"{key}."
+    return {
+        path: value
+        for path, value in mapping.items()
+        if path == key or path.startswith(prefix)
+    }
+
+
+def source_of(sources: Mapping[str, str], key: str) -> str:
+    """Единый источник верхнего ключа ``key`` из листовой карты ``sources``.
+
+    ``"env"`` — под ключом нет ни одной записи; сам слой — все листья ключа
+    указывают на один слой; ``"mixed"`` — слои расходятся. Общий хелпер для
+    диагностических потребителей `meta.sources` по верхнему ключу (`config
+    show`, `_resolve_summary_layout` в `mcp/service.py`) — литеральный
+    дубль этой развёртки на потребителе однажды уже разошёлся с PRI-260
+    (см. "summary_cluster_depth_overrides" в mcp/service.py).
+    """
+    leaves = leaves_of(sources, key)
+    if not leaves:
+        return "env"
+    values = set(leaves.values())
+    if len(values) == 1:
+        return next(iter(values))
+    return "mixed"
+
+
 def build_config_report(
     repo: str,
     branch: str,

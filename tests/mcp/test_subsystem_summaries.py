@@ -1187,6 +1187,27 @@ def test_resolve_summary_depth_no_key_falls_back_to_env():
     assert source == "env"
 
 
+def test_resolve_summary_depth_overrides_only_resolves_layer_source():
+    """PRI-260 фикс-раунд 2: overrides без скалярного depth не должны врать "env".
+
+    До фикса `meta.sources.get("summary_cluster_depth_overrides", "env")` читал
+    источник overrides по верхнему ключу, а после перехода sources на листовые
+    пути (PRI-260) там лежит только "summary_cluster_depth_overrides.<префикс>" —
+    голый .get() всегда мазал мимо и возвращал "env", даже когда overrides
+    заданы слоем.
+    """
+    from reviewer.graph.summaries import normalize_summary_paths_ignore
+    from reviewer.policy.policy import DEFAULT_SUMMARY_PATHS_IGNORE
+
+    svc = _svc_with_vcs(
+        _FakeVCS("summary_cluster_depth_overrides:\n  reviewer/index: 3\n")
+    )
+    depth, overrides, ignore, source = svc._resolve_summary_layout("o/n", "dev")
+    assert overrides == {"reviewer/index": 3}
+    assert ignore == normalize_summary_paths_ignore(DEFAULT_SUMMARY_PATHS_IGNORE)
+    assert source == ".review.yml"
+
+
 def test_resolve_summary_depth_failsoft_on_vcs_error():
     """Ruling 3: fail-soft резолва политики возвращает ДЕФОЛТНЫЙ фильтр, не пустой."""
     from reviewer.graph.summaries import normalize_summary_paths_ignore

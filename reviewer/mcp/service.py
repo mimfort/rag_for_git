@@ -1720,15 +1720,22 @@ class MCPReviewService:
         а не пустой. Пустой фильтр при сбое молча вернул бы тестовые кластеры
         и сделал бы стоимость прохода недетерминированной.
         """
+        from reviewer.config.layers import source_of
         from reviewer.graph.summaries import normalize_summary_paths_ignore
         from reviewer.policy.policy import DEFAULT_SUMMARY_PATHS_IGNORE
 
         default = self.settings.summary_cluster_depth
         try:
             policy, meta = self._resolve_policy(repo, branch)
-            source = meta.sources.get(
-                "summary_cluster_depth",
-                meta.sources.get("summary_cluster_depth_overrides", "env"),
+            # source_of — общий хелпер (reviewer/config/layers.py): meta.sources
+            # листовой гранулярности (PRI-260), "summary_cluster_depth_overrides"
+            # — mapping, и голый .get() по верхнему ключу после PRI-260 всегда
+            # возвращал бы "env", даже когда overrides заданы слоем.
+            depth_source = meta.sources.get("summary_cluster_depth", "env")
+            source = (
+                depth_source
+                if depth_source != "env"
+                else source_of(meta.sources, "summary_cluster_depth_overrides")
             )
             return (
                 policy.summary_cluster_depth,
