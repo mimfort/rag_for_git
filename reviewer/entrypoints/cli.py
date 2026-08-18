@@ -147,6 +147,51 @@ def _branches_report(branches) -> dict[str, object]:
     }
 
 
+def _leaves_of(mapping: Mapping[str, object], key: str) -> dict[str, object]:
+    """Записи листовой диагностики, относящиеся к верхнему ключу ``key``."""
+    prefix = f"{key}."
+    return {
+        path: value
+        for path, value in mapping.items()
+        if path == key or path.startswith(prefix)
+    }
+
+
+def _echo_source_leaves(leaves: Mapping[str, str]) -> None:
+    """`source`: одна строка, если все листья указывают на один слой.
+
+    Если слои расходятся — общая строка была бы неразличимой ложью
+    («какой-то один слой»), поэтому заголовок ``mixed`` и строка на лист.
+    """
+    if not leaves:
+        return
+    values = set(leaves.values())
+    if len(values) == 1:
+        click.echo(f"  source: {values.pop()}")
+        return
+    click.echo("  source: mixed")
+    for path in sorted(leaves):
+        click.echo(f"    {path}: {leaves[path]}")
+
+
+def _echo_shadowed_leaves(key: str, leaves: Mapping[str, list[str]]) -> None:
+    """`shadowed`: одна строка ТОЛЬКО когда затенён сам верхний ключ.
+
+    Два листа одного ключа обычно затенены ОДНИМ слоем — общая свёртка (как у
+    `source`) вернула бы неразличимое `shadowed: .review.yml` и скрыла бы
+    именно то, что PRI-260 делает видимым: какая подсекция затенена, а не
+    затенён ли ключ целиком.
+    """
+    if not leaves:
+        return
+    if set(leaves) == {key}:
+        click.echo(f"  shadowed: {', '.join(leaves[key])}")
+        return
+    click.echo("  shadowed:")
+    for path in sorted(leaves):
+        click.echo(f"    {path}: {', '.join(leaves[path])}")
+
+
 def _render_config_report(report: Mapping[str, object]) -> None:
     branches = report.get("branches")
     if branches:
@@ -175,9 +220,8 @@ def _render_config_report(report: Mapping[str, object]) -> None:
         click.echo(
             f"{key}: {json.dumps(effective[key], ensure_ascii=False, sort_keys=True)}"
         )
-        click.echo(f"  source: {sources[key]}")
-        if key in shadowed:
-            click.echo(f"  shadowed: {', '.join(shadowed[key])}")
+        _echo_source_leaves(_leaves_of(sources, key))
+        _echo_shadowed_leaves(key, _leaves_of(shadowed, key))
     for warning in report["warnings"]:
         click.echo(f"warning: {warning}")
     for item in report.get("skipped") or ():

@@ -16,7 +16,7 @@ import tempfile
 
 import yaml
 
-from reviewer.config.deepmerge import merge_layer
+from reviewer.config.deepmerge import leaf_paths, merge_layer
 from reviewer.config.fetch_errors import classify_fetch_error
 from reviewer.config.task_board import normalize_task_board_config
 from reviewer.policy.policy import ReviewPolicy
@@ -608,13 +608,13 @@ def build_config_report(
         for path, layer in meta.sources.items()
         if path.split(".", 1)[0] in effective
     }
-    sources.update({
-        key: "env"
-        for key in effective
-        if not any(
-            path == key or path.startswith(f"{key}.") for path in meta.sources
-        )
-    })
+    # Фолбэк "env" — на уровне листа, а не верхнего ключа: иначе лист,
+    # заполненный дефолтом ReviewPolicy, оставался бы вовсе без записи, если у
+    # соседнего листа того же ключа источник уже есть (PRI-260). Записи из
+    # meta.sources (setdefault) имеют приоритет над фолбэком.
+    for key in effective:
+        for path in leaf_paths(effective[key], key):
+            sources.setdefault(path, "env")
     return {
         "repo": normalize_repo(repo),
         "branch": branch,
