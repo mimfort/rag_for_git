@@ -144,6 +144,40 @@ def test_config_show_text_leaf_default_gets_env_source_next_to_layer_leaf(
     assert payload["sources"]["context_limits.code_section.max_files"] == "env"
 
 
+def test_config_show_text_atomic_task_board_stays_a_single_source_line(
+    monkeypatch, tmp_path
+):
+    """task_board — атомарный ключ (ATOMIC_KEYS): один слой не даёт mixed.
+
+    До фикса листовой фолбэк "env" раскладывал task_board на подполя
+    (task_board.project, ...) через leaf_paths, не знающий про атомарность, и
+    setdefault подставлял им "env" рядом с реальной записью sources["task_board"]
+    — "config show" врал бы про mixed для ключа, целиком пришедшего из одного слоя.
+    """
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    _install_fake_vcs(
+        monkeypatch, "task_board:\n  project: PRI\n  sync_filter: {max_age_days: 7}\n"
+    )
+
+    result = CliRunner().invoke(
+        cli_mod.cli,
+        ["config", "show", "--repo", "o/r", "--branch", "main"],
+    )
+    result_json = CliRunner().invoke(
+        cli_mod.cli,
+        ["config", "show", "--repo", "o/r", "--branch", "main", "--json"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "  source: .review.yml" in result.output
+    assert "mixed" not in result.output
+
+    assert result_json.exit_code == 0, result_json.output
+    payload = json.loads(result_json.output)
+    assert payload["sources"]["task_board"] == ".review.yml"
+    assert not any(key.startswith("task_board.") for key in payload["sources"])
+
+
 def test_config_show_rejects_malformed_home_yaml_in_strict_mode(
     monkeypatch, tmp_path
 ) -> None:

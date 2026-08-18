@@ -16,7 +16,7 @@ import tempfile
 
 import yaml
 
-from reviewer.config.deepmerge import leaf_paths, merge_layer
+from reviewer.config.deepmerge import ATOMIC_KEYS, leaf_paths, merge_layer
 from reviewer.config.fetch_errors import classify_fetch_error
 from reviewer.config.task_board import normalize_task_board_config
 from reviewer.policy.policy import ReviewPolicy
@@ -596,6 +596,11 @@ def build_config_report(
     `sources`/`shadowed` листовой гранулярности (PRI-260): ключ — dotted-путь
     до листа, а не верхний ключ policy, иначе слой, не высказавшийся о
     подсекции, в отчёте выглядел бы так, будто он её затенил целиком.
+    Записи, отсутствующие в `meta.sources` (ни один слой явно не задал этот
+    лист), получают фолбэк `"env"` — тоже на листовом уровне, кроме ключей из
+    `ATOMIC_KEYS` (`task_board`): те сливаются и читаются как единое целое
+    (`deepmerge.py::_replace`), поэтому и фолбэк для них — одна запись на
+    сам ключ, без разложения на листья.
     """
     try:
         policy = ReviewPolicy.load_data(settings, data)
@@ -611,8 +616,16 @@ def build_config_report(
     # Фолбэк "env" — на уровне листа, а не верхнего ключа: иначе лист,
     # заполненный дефолтом ReviewPolicy, оставался бы вовсе без записи, если у
     # соседнего листа того же ключа источник уже есть (PRI-260). Записи из
-    # meta.sources (setdefault) имеют приоритет над фолбэком.
+    # meta.sources (setdefault) имеют приоритет над фолбэком. Атомарные ключи
+    # (ATOMIC_KEYS, напр. task_board) не раскладываются на листья — сливаются
+    # и читаются как единое целое, поэтому и фолбэк для них один на весь
+    # ключ; иначе `sources` вернул бы task_board.type/.project/... для
+    # ключа, реально пришедшего из одного слоя, и `config show` соврал бы
+    # про mixed.
     for key in effective:
+        if key in ATOMIC_KEYS:
+            sources.setdefault(key, "env")
+            continue
         for path in leaf_paths(effective[key], key):
             sources.setdefault(path, "env")
     return {
