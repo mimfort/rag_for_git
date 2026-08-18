@@ -8,10 +8,14 @@ API хостинга — лишний сетевой вызов там, где �
 """
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 import logging
 import os
 
+import yaml
+
+from reviewer.config.deepmerge import leaf_paths
 from reviewer.gitutil import file_at_ref, remote_url, repo_root, rev_parse
 from reviewer.services.repo_id import derive_repo_from_remote, normalize_repo
 
@@ -19,8 +23,11 @@ log = logging.getLogger(__name__)
 
 POLICY_FILE = ".review.yml"
 
-# Метки способа чтения слоя для диагностики (`config show`).
-SOURCE_LOCAL = "local"
+# Метки способа чтения слоя для диагностики (`config show`). Метка называет
+# ПРОЧИТАННЫЙ ОБЪЕКТ — git-блоб на ref, а не файл в рабочем дереве клона:
+# разница с рабочим деревом (см. `worktree_drift`) должна быть видна уже из
+# самой метки, а не требовать отдельного объяснения.
+SOURCE_LOCAL = "git-blob"
 SOURCE_VCS = "vcs"
 
 
@@ -77,6 +84,11 @@ class CommittedLayerFetcher:
     def clone_available(self) -> bool:
         return self._clone_root is not None
 
+    @property
+    def clone_root(self) -> str | None:
+        """Корень пригодного клона или None. Нужен `config show` для дрейфа."""
+        return self._clone_root
+
     def __call__(self, ref: str) -> str | None:
         root = self._clone_root
         if root is not None and self._ref_present(root, ref):
@@ -102,3 +114,74 @@ class CommittedLayerFetcher:
         except Exception:  # noqa: BLE001 — любой сбой git = «читаем через VCS»
             log.debug("ref %s не резолвится в клоне %s: фолбэк на VCS", ref, root)
             return False
+
+
+@dataclass(frozen=True)
+class DriftReport:
+    """Расхождение рабочего дерева клона с коммиченным `.review.yml` (PRI-260).
+
+    Диагностика, а не источник данных: эффективная политика по-прежнему целиком
+    из коммиченного слоя — иначе PR ослаблял бы собственное ревью правкой
+    своего же конфига.
+    """
+
+    status: str
+    keys: tuple[str, ...] = ()
+
+    def as_dict(self) -> dict[str, object]:
+        return {"status": self.status, "keys": list(self.keys)}
+
+
+def worktree_drift(root: str, ref: str, policy_file: str = POLICY_FILE) -> DriftReport:
+    """Сравнить рабочее дерево клона с коммиченным блобом на ``ref``.
+
+    Сравнение проводится только когда ``ref`` резолвится в тот же коммит, что
+    HEAD клона: при `config show --branch dev` из ветки `feat/...` разница
+    была бы про другую ветку, а не про несохранённую правку. Возвращаются
+    только ключи — значения политики в диагностику не попадают.
+    """
+    try:
+        head = rev_parse(root, "HEAD")
+        target = rev_parse(root, ref)
+        if not head or not target:
+            return DriftReport("unknown")
+        if head != target:
+            return DriftReport("ref_not_head")
+        blob = file_at_ref(root, policy_file, ref)
+        path = os.path.join(root, policy_file)
+        working = None
+        if os.path.isfile(path):
+            with open(path, encoding="utf-8") as handle:
+                working = handle.read()
+        if working is None:
+            return DriftReport("absent_in_worktree" if blob is not None else "clean")
+        if blob is None:
+            return DriftReport("absent_in_blob")
+        if working == blob:
+            return DriftReport("clean")
+        keys = _diverging_keys(blob, working)
+    except Exception:  # noqa: BLE001 — диагностика не должна ронять config show
+        log.debug("дрейф рабочего дерева не вычислен для %s", root, exc_info=True)
+        return DriftReport("unknown")
+    return DriftReport("drifted", keys)
+
+
+def _diverging_keys(blob: str, working: str) -> tuple[str, ...]:
+    """Листовые пути, значения которых различаются между блобом и деревом."""
+    left = yaml.safe_load(blob) or {}
+    right = yaml.safe_load(working) or {}
+    if not isinstance(left, Mapping) or not isinstance(right, Mapping):
+        raise ValueError("policy layer is not a mapping")
+    paths = sorted(set(leaf_paths(left)) | set(leaf_paths(right)))
+    return tuple(path for path in paths if _at(left, path) != _at(right, path))
+
+
+_MISSING = object()
+
+
+def _at(data: object, path: str) -> object:
+    for key in path.split("."):
+        if not isinstance(data, Mapping) or key not in data:
+            return _MISSING
+        data = data[key]
+    return data

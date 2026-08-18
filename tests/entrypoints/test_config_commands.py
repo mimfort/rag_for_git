@@ -435,7 +435,7 @@ def test_config_show_reads_committed_layer_from_local_clone(monkeypatch, tmp_pat
     assert result.exit_code == 0, result.output
     payload = json.loads(result.output)
     assert payload["effective"]["max_comments"] == 11        # слой из клона
-    assert payload["committed_source"] == "local"
+    assert payload["committed_source"] == "git-blob"
     vcs.get_file_at_ref.assert_not_called()                  # ни одного сетевого вызова
 
 
@@ -506,4 +506,46 @@ def test_config_show_text_output_reports_committed_source(monkeypatch, tmp_path)
     )
 
     assert result.exit_code == 0, result.output
-    assert "committed: local" in result.output
+    assert "committed: git-blob" in result.output
+
+
+def test_config_show_warns_about_worktree_drift(monkeypatch, tmp_path):
+    """Правка .review.yml в рабочем дереве названа явно; политика — из блоба."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "home"))
+    clone = _make_local_clone(
+        tmp_path, remote="https://github.com/o/r.git", content="max_comments: 11\n"
+    )
+    (clone / ".review.yml").write_text("max_comments: 22\n", encoding="utf-8")
+    _install_fake_vcs(monkeypatch, "max_comments: 7\n")
+
+    result = CliRunner().invoke(
+        cli_mod.cli,
+        ["config", "show", "--repo", "o/r", "--branch", "main",
+         "--path", str(clone), "--json"],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["effective"]["max_comments"] == 11          # источник прежний — блоб
+    assert payload["committed_source"] == "git-blob"
+    assert payload["worktree_drift"]["status"] == "drifted"
+    assert payload["worktree_drift"]["keys"] == ["max_comments"]
+
+
+def test_config_show_text_prints_drift_warning(monkeypatch, tmp_path):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "home"))
+    clone = _make_local_clone(
+        tmp_path, remote="https://github.com/o/r.git", content="max_comments: 11\n"
+    )
+    (clone / ".review.yml").write_text("max_comments: 22\n", encoding="utf-8")
+    _install_fake_vcs(monkeypatch, "max_comments: 7\n")
+
+    result = CliRunner().invoke(
+        cli_mod.cli,
+        ["config", "show", "--repo", "o/r", "--branch", "main", "--path", str(clone)],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "committed: git-blob" in result.output
+    assert "worktree_drift: drifted" in result.output
+    assert "max_comments" in result.output

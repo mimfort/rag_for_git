@@ -20,7 +20,7 @@ import yaml
 from reviewer.config.settings import Settings
 from reviewer.app import build_components
 from reviewer.config.branches import migrate_repo_branches, resolve_repo_branches
-from reviewer.config.committed import CommittedLayerFetcher
+from reviewer.config.committed import CommittedLayerFetcher, worktree_drift
 from reviewer.config.layers import (
     HomeConfigError,
     build_config_report,
@@ -207,9 +207,16 @@ def _render_config_report(report: Mapping[str, object]) -> None:
         return
     committed_source = report.get("committed_source")
     if committed_source is not None:
-        # Способ чтения коммиченного слоя (PRI-235): local = из клона без сети,
-        # vcs = через API хостинга.
+        # Способ чтения коммиченного слоя (PRI-235): git-blob = коммиченный
+        # объект git из локального клона без сети, vcs = через API хостинга.
         click.echo(f"committed: {committed_source}")
+    drift = report.get("worktree_drift")
+    if isinstance(drift, Mapping) and drift["status"] != "clean":
+        # «Правка есть, но её не видно» — исходный дефект PRI-260, поэтому
+        # молчания здесь быть не должно ни в одном статусе, кроме чистого.
+        click.echo(f"worktree_drift: {drift['status']}")
+        for key in drift["keys"]:
+            click.echo(f"  {key}")
     effective = report["effective"]
     sources = report["sources"]
     shadowed = report["shadowed"]
@@ -332,6 +339,11 @@ def config_show(repo: str, branch: str | None, clone_path: str | None,
                     repo_id, ref, settings, data, meta,
                     committed_source=fetch_committed.source,
                 ))
+                clone_root = fetch_committed.clone_root
+                if clone_root is not None:
+                    payload["worktree_drift"] = worktree_drift(
+                        clone_root, ref
+                    ).as_dict()
             except (HomeConfigError, yaml.YAMLError) as exc:
                 # Тот же санитайзер, что и у остальных config-команд: не эхоить
                 # сырой YAML/normalization payload исключения.
