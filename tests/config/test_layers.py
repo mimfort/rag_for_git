@@ -14,6 +14,7 @@ from reviewer.config.layers import (
     migrate_repo_config,
     policy_to_public_data,
     resolve_policy_data,
+    source_of,
 )
 from reviewer.config.settings import Settings
 from reviewer.policy.policy import ReviewPolicy
@@ -22,6 +23,27 @@ from reviewer.policy.policy import ReviewPolicy
 def _write(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
+
+
+def test_source_of_reports_env_single_layer_and_mixed() -> None:
+    """Юнит на общий хелпер `source_of` (PRI-260 фикс-раунд 2)."""
+    assert source_of({}, "context_limits") == "env"
+    assert (
+        source_of({"context_limits.graph.hops": "home:review.yml"}, "context_limits")
+        == "home:review.yml"
+    )
+    assert (
+        source_of(
+            {
+                "context_limits.code_section.max_files": ".review.yml",
+                "context_limits.graph.hops": "home:review.yml",
+            },
+            "context_limits",
+        )
+        == "mixed"
+    )
+    # Атомарный/скалярный случай — путь совпадает с самим ключом.
+    assert source_of({"task_board": ".review.yml"}, "task_board") == ".review.yml"
 
 
 def test_layers_replace_top_level_values_and_report_sources(tmp_path: Path) -> None:
@@ -44,12 +66,66 @@ def test_layers_replace_top_level_values_and_report_sources(tmp_path: Path) -> N
     )
 
     assert data["paths"] == {"ignore": ["home-repo"]}
-    assert data["context_limits"] == {"search_codebase": {"ceiling": 25}}
+    # context_limits теперь сливается по подсекциям: слой, не высказавшийся о
+    # search_codebase, её не стирает.
+    assert data["context_limits"] == {
+        "graph": {"hops": 2},
+        "search_codebase": {"ceiling": 25},
+    }
     assert data["task_board"] is None
-    assert meta.sources["paths"] == "home:repos/o/r.yml"
+    assert meta.sources["paths.ignore"] == "home:repos/o/r.yml"
     assert meta.sources["max_comments"] == ".review.yml"
-    assert meta.shadowed["paths"] == ("home:review.yml", ".review.yml")
+    assert meta.shadowed["paths.ignore"] == ("home:review.yml", ".review.yml")
     assert meta.shadowed["max_comments"] == ("home:review.yml",)
+
+
+def test_pri259_committed_code_section_pin_survives_partial_home_layer(tmp_path: Path) -> None:
+    """Регресс PRI-259: домашний context_limits без code_section не уносит коммиченный пин."""
+    _write(
+        tmp_path / "repos/o/r.yml",
+        "context_limits: {graph: {hops: 1}, search_codebase: {ceiling: 15}}\n",
+    )
+    committed = (
+        "context_limits:\n"
+        "  code_section: {max_files: 12, chars_per_file: 1300}\n"
+    )
+
+    data, meta = resolve_policy_data(
+        "O/R", "main", lambda ref: committed, config_root=tmp_path
+    )
+
+    limits = data["context_limits"]
+    assert limits["code_section"] == {"max_files": 12, "chars_per_file": 1300}
+    assert limits["graph"] == {"hops": 1}
+    assert meta.sources["context_limits.code_section.max_files"] == ".review.yml"
+    assert meta.sources["context_limits.graph.hops"] == "home:repos/o/r.yml"
+    assert "context_limits" not in meta.shadowed        # верхний ключ больше не затеняется целиком
+
+
+def test_shadowed_names_the_leaf_when_subsection_is_overridden(tmp_path: Path) -> None:
+    _write(tmp_path / "repos/o/r.yml", "context_limits: {code_section: {max_files: 20}}\n")
+    committed = "context_limits: {code_section: {max_files: 12, chars_per_file: 1300}}\n"
+
+    _data, meta = resolve_policy_data(
+        "O/R", "main", lambda ref: committed, config_root=tmp_path
+    )
+
+    assert meta.shadowed["context_limits.code_section.max_files"] == (".review.yml",)
+    assert "context_limits" not in meta.shadowed
+
+
+def test_layer_order_is_unchanged(tmp_path: Path) -> None:
+    """Критерий 4: приоритет источников прежний — домашний per-repo слой последний."""
+    _write(tmp_path / "review.yml", "max_comments: 1\n")
+    _write(tmp_path / "repos/o/r.yml", "max_comments: 3\n")
+
+    data, meta = resolve_policy_data(
+        "O/R", "main", lambda ref: "max_comments: 2\n", config_root=tmp_path
+    )
+
+    assert data["max_comments"] == 3
+    assert meta.sources["max_comments"] == "home:repos/o/r.yml"
+    assert meta.shadowed["max_comments"] == ("home:review.yml", ".review.yml")
 
 
 def test_per_repo_home_task_sync_filters_resolve_independently(tmp_path: Path) -> None:
@@ -246,7 +322,9 @@ def test_categories_null_is_a_valid_home_override(tmp_path: Path) -> None:
 
     assert data["categories"] is None
     assert meta.sources["categories"] == "home:repos/o/r.yml"
-    assert meta.shadowed["categories"] == (".review.yml",)
+    # Коммиченное значение было mapping'ом ({security: false}) — затенённый
+    # лист называется по своему dotted-пути, а не по верхнему ключу.
+    assert meta.shadowed["categories.security"] == (".review.yml",)
     assert meta.warnings == ()
 
 
@@ -1188,4 +1266,59 @@ def test_migration_is_loud_when_committed_layer_cannot_be_read(tmp_path):
     with pytest.raises(HomeConfigError):
         migrate_repo_config(
             "o/r", "main", boom, config_root=tmp_path, settings=Settings(_env_file=None)
+        )
+
+
+def test_key_nulled_by_one_layer_is_not_reported_as_mixed(tmp_path: Path) -> None:
+    """Ключ, о котором слой высказался целиком, имеет один источник.
+
+    `context_limits: null` — высказывание слоя обо ВСЕЙ секции. Раскладывать
+    её эффективное значение (дефолты ReviewPolicy) на листья со источником
+    "env" нельзя: рядом с записью слоя на самом ключе это даёт `source: mixed`
+    для ключа, пришедшего из одного слоя (PRI-260).
+    """
+    _write(tmp_path / "repos/o/r.yml", "context_limits: null\n")
+
+    data, meta = resolve_policy_data(
+        "O/R", "main", lambda ref: "max_comments: 7\n", config_root=tmp_path
+    )
+    report = build_config_report(
+        "O/R", "main", Settings(_env_file=None), data, meta
+    )
+
+    sources = report["sources"]
+    assert sources["context_limits"] == "home:repos/o/r.yml"
+    assert not [key for key in sources if key.startswith("context_limits.")]
+    assert source_of(sources, "context_limits") == "home:repos/o/r.yml"
+
+
+def test_recursive_committed_yaml_is_skipped_as_malformed(tmp_path: Path) -> None:
+    """Самоссылочный якорь в коммиченном слое — дефект слоя, а не крах резолва.
+
+    YAML с рекурсивным alias переживает разбор (PyYAML строит словарь, ссылающийся
+    на себя) и валит RecursionError уже на обходе вложенных mapping'ов. Слой
+    обязан уйти в `skipped` категории malformed, а домашние слои — уцелеть.
+    """
+    _write(tmp_path / "review.yml", "max_comments: 4\n")
+    recursive = "categories: &x\n  b: *x\n"
+
+    data, meta = resolve_policy_data(
+        "O/R", "main", lambda ref: recursive, config_root=tmp_path
+    )
+
+    assert data["max_comments"] == 4                      # домашний слой уцелел
+    assert "categories" not in data                       # частичного слоя не осталось
+    assert [item.category for item in meta.skipped] == ["malformed"]
+    assert meta.skipped[0].layer == ".review.yml"
+
+
+def test_recursive_committed_yaml_is_loud_in_strict_mode(tmp_path: Path) -> None:
+    """В строгом режиме (ревью PR, index) тот же слой обязан быть громким."""
+    with pytest.raises(HomeConfigError):
+        resolve_policy_data(
+            "O/R",
+            "main",
+            lambda ref: "categories: &x\n  b: *x\n",
+            config_root=tmp_path,
+            strict_committed=True,
         )

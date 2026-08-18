@@ -16,6 +16,7 @@ import tempfile
 
 import yaml
 
+from reviewer.config.deepmerge import ATOMIC_KEYS, leaf_paths, merge_layer
 from reviewer.config.fetch_errors import classify_fetch_error
 from reviewer.config.task_board import normalize_task_board_config
 from reviewer.policy.policy import ReviewPolicy
@@ -353,11 +354,7 @@ def resolve_policy_data(
         )
 
     def merge(data: Mapping[str, object], source: str) -> None:
-        for key, value in data.items():
-            if key in sources:
-                shadowed.setdefault(key, []).append(sources[key])
-            merged[key] = value
-            sources[key] = source
+        merge_layer(merged, sources, shadowed, data, source)
 
     def merge_home(path: Path, source: str) -> None:
         try:
@@ -432,6 +429,12 @@ def resolve_policy_data(
             return
         try:
             committed = _read_mapping(text, ".review.yml")
+            # Проба обхода до слияния: рекурсивный YAML (самоссылочный якорь)
+            # переживает разбор и валит RecursionError уже на обходе вложенных
+            # mapping'ов — это тот же дефект слоя, что и битый YAML. Проба, а не
+            # merge внутри try: упавшее на середине слияние оставило бы в
+            # `merged` половину пропускаемого слоя.
+            leaf_paths(committed)
         except (HomeConfigError, RecursionError, UnicodeError):
             fail("malformed", None, None)
             return
@@ -582,6 +585,37 @@ def _validate_context_limits(
     return True
 
 
+def leaves_of(mapping: Mapping[str, object], key: str) -> dict[str, object]:
+    """Записи листовой диагностики (``sources``/``shadowed``), относящиеся к
+    верхнему ключу ``key``: сам ``key`` (атомарный/скалярный случай) и все
+    ``key.<путь>`` (PRI-260)."""
+    prefix = f"{key}."
+    return {
+        path: value
+        for path, value in mapping.items()
+        if path == key or path.startswith(prefix)
+    }
+
+
+def source_of(sources: Mapping[str, str], key: str) -> str:
+    """Единый источник верхнего ключа ``key`` из листовой карты ``sources``.
+
+    ``"env"`` — под ключом нет ни одной записи; сам слой — все листья ключа
+    указывают на один слой; ``"mixed"`` — слои расходятся. Общий хелпер для
+    диагностических потребителей `meta.sources` по верхнему ключу (`config
+    show`, `_resolve_summary_layout` в `mcp/service.py`) — литеральный
+    дубль этой развёртки на потребителе однажды уже разошёлся с PRI-260
+    (см. "summary_cluster_depth_overrides" в mcp/service.py).
+    """
+    leaves = leaves_of(sources, key)
+    if not leaves:
+        return "env"
+    values = set(leaves.values())
+    if len(values) == 1:
+        return next(iter(values))
+    return "mixed"
+
+
 def build_config_report(
     repo: str,
     branch: str,
@@ -592,9 +626,18 @@ def build_config_report(
 ) -> dict[str, object]:
     """Собрать безопасный диагностический отчёт об эффективной policy.
 
-    `committed_source` — способ чтения коммиченного слоя (`local`/`vcs`) или
+    `committed_source` — способ чтения коммиченного слоя (`git-blob`/`vcs`) или
     None, если слой не читался вовсе (PRI-235). Путь к клону в отчёт не
     попадает: диагностике достаточно способа, путь — лишний факт о машине.
+
+    `sources`/`shadowed` листовой гранулярности (PRI-260): ключ — dotted-путь
+    до листа, а не верхний ключ policy, иначе слой, не высказавшийся о
+    подсекции, в отчёте выглядел бы так, будто он её затенил целиком.
+    Записи, отсутствующие в `meta.sources` (ни один слой явно не задал этот
+    лист), получают фолбэк `"env"` — тоже на листовом уровне, кроме ключей из
+    `ATOMIC_KEYS` (`task_board`): те сливаются и читаются как единое целое
+    (`deepmerge.py::_replace`), поэтому и фолбэк для них — одна запись на
+    сам ключ, без разложения на листья.
     """
     try:
         policy = ReviewPolicy.load_data(settings, data)
@@ -602,7 +645,31 @@ def build_config_report(
         _validate_public_policy_data(effective)
     except (AttributeError, KeyError, OverflowError, RecursionError, TypeError, ValueError):
         raise HomeConfigError("effective policy: недопустимые значения") from None
-    sources = {key: meta.sources.get(key, "env") for key in effective}
+    sources = {
+        path: layer
+        for path, layer in meta.sources.items()
+        if path.split(".", 1)[0] in effective
+    }
+    # Фолбэк "env" — на уровне листа, а не верхнего ключа: иначе лист,
+    # заполненный дефолтом ReviewPolicy, оставался бы вовсе без записи, если у
+    # соседнего листа того же ключа источник уже есть (PRI-260). Записи из
+    # meta.sources (setdefault) имеют приоритет над фолбэком. Атомарные ключи
+    # (ATOMIC_KEYS, напр. task_board) не раскладываются на листья — сливаются
+    # и читаются как единое целое, поэтому и фолбэк для них один на весь
+    # ключ; иначе `sources` вернул бы task_board.type/.project/... для
+    # ключа, реально пришедшего из одного слоя, и `config show` соврал бы
+    # про mixed.
+    for key in effective:
+        # Ключ, о котором слой высказался целиком (mapping заменён скаляром или
+        # null), уже атрибутирован записью на самом ключе. Раскладывать его
+        # эффективное значение на листья нельзя: листья дефолта получили бы
+        # "env" рядом с записью слоя, и `config show` соврал бы про mixed на
+        # ключе, пришедшем из одного слоя (PRI-260).
+        if key in ATOMIC_KEYS or key in sources:
+            sources.setdefault(key, "env")
+            continue
+        for path in leaf_paths(effective[key], key):
+            sources.setdefault(path, "env")
     return {
         "repo": normalize_repo(repo),
         "branch": branch,
@@ -1019,11 +1086,7 @@ def _simulated_repo_layer(
     merged = dict(data)
     sources = dict(meta.sources)
     shadowed = {key: list(value) for key, value in meta.shadowed.items()}
-    for key, value in candidate.items():
-        if key in sources:
-            shadowed.setdefault(key, []).append(sources[key])
-        merged[key] = value
-        sources[key] = source
+    merge_layer(merged, sources, shadowed, candidate, source)
     return merged, ResolutionMeta(
         sources,
         {key: tuple(value) for key, value in shadowed.items()},

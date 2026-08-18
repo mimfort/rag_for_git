@@ -168,7 +168,7 @@ def test_resolve_policy_skips_invalid_home_value_without_logging_literal(
         policy, meta = svc._resolve_policy("o/r", "dev")
 
     assert policy.context_limits.graph.hops == 2
-    assert meta.sources["context_limits"] == ".review.yml"
+    assert meta.sources["context_limits.graph.hops"] == ".review.yml"
     assert "home:repos/o/r.yml" in caplog.text
     assert secret not in caplog.text
 
