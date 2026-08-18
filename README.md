@@ -465,9 +465,9 @@ context_limits:
   graph:
     hops: 1
   code_section:
-    max_files: 12
+    max_files: 20
     max_chunks_per_file: 1
-    chars_per_file: 1300
+    chars_per_file: 975
     max_augmented_files: 3
 ```
 
@@ -478,12 +478,16 @@ is no env layer (like `context_limits`), and an explicit empty list disables the
 `context_limits` has four subsections: `search_codebase` (hybrid + graph-expansion + Voyage
 rerank for `/ask`, priming, and PR review), `search_tasks` (RRF-only task retrieval), `graph`
 (traversal depth from top hits), and `code_section` — the file budget for the task context's
-`code` section (PRI-256). `code_section`'s budget unit is a file, not a chunk: the section holds
-up to `max_files` files, each contributing up to `max_chunks_per_file` chunks of `chars_per_file`
-characters. The section's
+`code` section (PRI-256, defaults widened in PRI-259). `code_section`'s budget unit is a file,
+not a chunk: the section holds up to `max_files` files, each contributing up to
+`max_chunks_per_file` chunks of `chars_per_file` characters. The section's
 character cap is not a separate key — it is derived: the operational budget is
 `max_files × max_chunks_per_file × chars_per_file`, while the post-render safety cap is
-`max_files × max_chunks_per_file × chars_per_file × 3 // 2`.
+`max_files × max_chunks_per_file × chars_per_file × 3 // 2`. The default trades width for depth
+(`12 × 1300` → `20 × 975`), growing the operational budget by 25 % (15,600 → 19,500) to raise
+bulk core-recall past the acceptance threshold; `chars_per_file` has a floor of 975 (enough to
+read a symbol's signature plus a few lines of body) because the recall metric only counts paths
+and is blind to fragment depth. See `eval/replay_report.md`, "Приёмка PRI-259".
 
 `code_section.max_augmented_files` (default 3, PRI-257) mixes actual diff paths from similar
 tasks into the `code` section — a single source (`similar-diffs`, from the `brief_quality`

@@ -18,7 +18,7 @@
 - Не трогать: `Retriever.search_base` (`reviewer/retrieval/retriever.py:155-226`), публичный `search_codebase`, `CodebaseLimits`, `reviewer/metrics/brief_quality/`, `reviewer/services/brief_quality.py`, реестр вариантов `eval/solve_task_metrics/variants.py`.
 - Unit-тестам запрещены внешние и localhost-сокеты. Любой тест с реальной сетью/БД обязан иметь `@pytest.mark.integration`.
 - Прогон замера — десятки минут (Voyage free tier 3 RPM / 10K TPM). Запускать в фоне, последовательно, по одному: параллельные прогоны делят одну квоту и растянут оба.
-- Операционный бюджет секции = `max_files × max_chunks_per_file × chars_per_file`. Базовое значение — `12 × 1 × 1300 = 15 600`; в задачах 1–4 оно неизменно.
+- Операционный бюджет секции = `max_files × max_chunks_per_file × chars_per_file`. Базовое значение до задачи 3 — `12 × 1 × 1300 = 15 600`; в задачах 1–2 (измерение) оно неизменно. Задача 3 — единственное место, где оно осознанно меняется: фактически выбранная точка `20 × 1 × 975 = 19 500` (+25 %), а не `16 × 975 = 15 600` (ярус A, порог не взявший).
 - **Пол по глубине: `chars_per_file` ≥ 975.** Метрика core-recall считает пути и слепа к файлам «прочитать, не менять» (контракт, соседний адаптер, образец), полезность которых лежит в содержимом. Сокращение глубины бьёт именно по ним, и замер этой потери не покажет ни одним числом — поэтому пол взят из требования «в блоке читаются сигнатура символа и несколько строк тела», а не из метрики. См. раздел спеки «Чего метрика не видит».
 - **Рост precision не является целью.** Файл-контекст входит в `predicted`, но не в `expected`, поэтому измеренная precision систематически занижена; оптимизация под неё выбрасывала бы ровно тот контекст, ради которого секция существует.
 
@@ -36,7 +36,7 @@
 - Consumes: существующий CLI `eval.solve_task_metrics replay`, индекс `dev@308b86b`.
 - Produces: четыре снимка в `eval/replay_history.jsonl` с `variant` ∈ {`baseline`, `limits`, `multiquery`, `similar_paths`} и одинаковым `indexed_sha`; таблицу их агрегатов в рабочем файле.
 
-- [ ] **Step 1: Убедиться, что индекс тот самый**
+- [x] **Step 1: Убедиться, что индекс тот самый**
 
 ```bash
 uvx --from rag-reviewer reviewer status /Users/aleksejzadoroznyj/PycharmProjects/rag_for_git --branch dev --json
@@ -44,7 +44,7 @@ uvx --from rag-reviewer reviewer status /Users/aleksejzadoroznyj/PycharmProjects
 
 Ожидается: `"drift": 0` и `indexed_sha`, начинающийся на `308b86b`. Если `drift > 0` — **остановиться и сообщить**: кто-то закоммитил в `dev`, и переиндексация сломает сравнимость с уже снятыми числами этой задачи.
 
-- [ ] **Step 2: Прогнать baseline (в фоне)**
+- [x] **Step 2: Прогнать baseline (в фоне)**
 
 ```bash
 .venv/bin/python -m eval.solve_task_metrics replay --variant baseline \
@@ -53,7 +53,7 @@ uvx --from rag-reviewer reviewer status /Users/aleksejzadoroznyj/PycharmProjects
 
 Десятки минут. Троттлинг Voyage с retry/backoff — норма, не сбой.
 
-- [ ] **Step 3: Прогнать limits (в фоне, после завершения Step 2)**
+- [x] **Step 3: Прогнать limits (в фоне, после завершения Step 2)**
 
 ```bash
 .venv/bin/python -m eval.solve_task_metrics replay --variant limits \
@@ -63,21 +63,21 @@ uvx --from rag-reviewer reviewer status /Users/aleksejzadoroznyj/PycharmProjects
 
 Вариант `limits` требует хотя бы один `--set` (иначе CLI откажет). Значения здесь — текущие дефолты: это точка «файловый бюджет включён, но не изменён».
 
-- [ ] **Step 4: Прогнать multiquery (в фоне, после Step 3)**
+- [x] **Step 4: Прогнать multiquery (в фоне, после Step 3)**
 
 ```bash
 .venv/bin/python -m eval.solve_task_metrics replay --variant multiquery \
   --repo mimfort/rag_for_git --branch dev --baseline limits
 ```
 
-- [ ] **Step 5: Прогнать similar_paths (в фоне, после Step 4)**
+- [x] **Step 5: Прогнать similar_paths (в фоне, после Step 4)**
 
 ```bash
 .venv/bin/python -m eval.solve_task_metrics replay --variant similar_paths \
   --repo mimfort/rag_for_git --branch dev --baseline multiquery
 ```
 
-- [ ] **Step 6: Свести числа лестницы в рабочий файл**
+- [x] **Step 6: Свести числа лестницы в рабочий файл**
 
 ```bash
 mkdir -p .superpowers/sdd
@@ -103,7 +103,7 @@ EOF
 
 Построчные значения bulk-задач обязательны: медиана по 5 точкам шумная, и без строк число не читается.
 
-- [ ] **Step 7: Зафиксировать рабочие числа**
+- [x] **Step 7: Зафиксировать рабочие числа**
 
 ```bash
 git add .superpowers/sdd/pri-259-measurements.md 2>/dev/null || true
@@ -126,7 +126,7 @@ git status --short
 - Consumes: снимок `similar_paths` из задачи 1 как сторона «до».
 - Produces: выбранную пару `(max_files=W, chars_per_file=C)` и её агрегаты; строку вердикта в рабочем файле.
 
-- [ ] **Step 1: Ярус A — прогнать `16 × 975` (в фоне)**
+- [x] **Step 1: Ярус A — прогнать `16 × 975` (в фоне)**
 
 ```bash
 .venv/bin/python -m eval.solve_task_metrics replay --variant similar_paths \
@@ -137,7 +137,7 @@ git status --short
 `16 × 1 × 975 = 15 600` — произведение бюджета то же, что у дефолта. Это единственная точка,
 не требующая размена критерия 5.
 
-- [ ] **Step 2: Ярус B — прогнать `20 × 975` и `24 × 975` (в фоне, последовательно, после Step 1)**
+- [x] **Step 2: Ярус B — прогнать `20 × 975` и `24 × 975` (в фоне, последовательно, после Step 1)**
 
 Выполняется **только если** ярус A дал bulk < 0.55. Бюджет здесь растёт: `20 × 975 = 19 500`
 (+25 %), `24 × 975 = 23 400` (+50 %) — это осознанный размен критерия 5, и его цена называется
@@ -153,7 +153,7 @@ git status --short
   --repo mimfort/rag_for_git --branch dev --baseline similar_paths
 ```
 
-- [ ] **Step 3: Справочные прогоны ниже пола глубины (в фоне, после Step 2)**
+- [x] **Step 3: Справочные прогоны ниже пола глубины (в фоне, после Step 2)**
 
 ```bash
 .venv/bin/python -m eval.solve_task_metrics replay --variant similar_paths \
@@ -171,7 +171,7 @@ recall покупает ширина, если платить за неё глу
 это записывается в отчёт как факт, но точкой не становится: потерю, которой она платит, метрика
 не измеряет вовсе.
 
-- [ ] **Step 4: Свести кандидатов и выбрать точку**
+- [x] **Step 4: Свести кандидатов и выбрать точку**
 
 ```bash
 .venv/bin/python - <<'EOF' | tee -a .superpowers/sdd/pri-259-measurements.md
@@ -198,17 +198,21 @@ EOF
 3. иначе из яруса B берётся **минимальный** `max_files`, взявший порог, — размен критерия 5 покупается ровно в том объёме, в каком он нужен;
 4. если порог не взят нигде — точкой становится кандидат с максимальной `bulk_core_recall_median` среди допустимых, и обязательна задача 7 (дожим). Кандидат, у которого `core_recall_median` **ниже**, чем у дефолтной точки, отбрасывается независимо от bulk — критерий 1 требует роста bulk *без падения общей медианы*.
 
-- [ ] **Step 5: Записать вердикт в рабочий файл**
+- [x] **Step 5: Записать вердикт в рабочий файл**
 
 Дописать в `.superpowers/sdd/pri-259-measurements.md` одну строку вида
-`Выбрана точка: ярус A, max_files=16, chars_per_file=975 — bulk 0.XXXX (было 0.3889), медиана 0.XX (было 0.75).`
-Числа — фактические из Step 4, не выдуманные. Если ни один кандидат не берёт порог 0.55 — записать это отдельной строкой; задача 7 (дожим) тогда обязательна.
+`Выбрана точка: ярус A, max_files=16, chars_per_file=975 — bulk 0.XXXX (было 0.4000, прод 12×1300 similar_paths), медиана 0.XX (было 0.75).`
+Числа — фактические из Step 4, не выдуманные; базой для «было» служит сторона `similar_paths` на
+проде `12×1300` (bulk 0.4000), а не bulk ступени `multiquery` (0.3889) — последняя не учитывает
+уже смерженный similar-diffs. Фактически порог взяла точка яруса B `20 × 975` (bulk 0.5833),
+ярус A (`16 × 975`) порог не взял. Если ни один кандидат не берёт порог 0.55 — записать это
+отдельной строкой; задача 7 (дожим) тогда обязательна.
 
 ---
 
 ### Task 3: Новые дефолты `CodeSectionLimits` и инвариант бюджета (критерий 5)
 
-Единственная правка продакшн-кода во всей задаче. Значения берутся из вердикта задачи 2 — в примерах ниже подставлена точка яруса A `16 × 975`; если замер выбрал другую пару, подставить её везде.
+Единственная правка продакшн-кода во всей задаче. Значения берутся из вердикта задачи 2 — в примерах ниже изначально была подставлена точка яруса A `16 × 975` (заглушка на момент написания плана); фактически замер выбрал точку яруса B `20 × 975` (ярус A порог 0.55 не взял, 0.4444 bulk), и именно она смержена в `reviewer/policy/context_limits.py`.
 
 **Files:**
 - Modify: `reviewer/policy/context_limits.py:44-47` (поля `max_files`, `chars_per_file` в `CodeSectionLimits`)
@@ -219,7 +223,7 @@ EOF
 - Consumes: пару `(W, C)` из задачи 2.
 - Produces: `CodeSectionLimits(max_files=W, chars_per_file=C)` как дефолт политики; тест-инвариант `test_code_section_operational_budget_did_not_grow`.
 
-- [ ] **Step 1: Написать падающий тест-инвариант бюджета**
+- [x] **Step 1: Написать падающий тест-инвариант бюджета**
 
 Добавить в `tests/policy/test_context_limits.py`:
 
@@ -239,7 +243,7 @@ def test_code_section_operational_budget_did_not_grow():
     )
 ```
 
-- [ ] **Step 2: Прогнать тест — он должен пройти на старых дефолтах**
+- [x] **Step 2: Прогнать тест — он должен пройти на старых дефолтах**
 
 ```bash
 .venv/bin/pytest tests/policy/test_context_limits.py::test_code_section_operational_budget_did_not_grow -q
@@ -247,12 +251,12 @@ def test_code_section_operational_budget_did_not_grow():
 
 Ожидается: PASS (12 × 1 × 1300 = 15 600 ≤ 15 600). Тест — сторож против будущего роста, а не красный тест TDD: он обязан быть зелёным и до, и после правки дефолтов. Именно это и проверяется на этом шаге.
 
-- [ ] **Step 3: Поменять дефолты**
+- [x] **Step 3: Поменять дефолты**
 
 В `reviewer/policy/context_limits.py`, в `CodeSectionLimits`:
 
 ```python
-    max_files: int = 16          # различных файлов в секции (PRI-259: обмен ширины на глубину)
+    max_files: int = 20          # различных файлов в секции (PRI-259: обмен ширины на глубину; фактически выбрана точка яруса B)
     max_chunks_per_file: int = 1  # чанков на один файл
     chars_per_file: int = 975    # доля символов на файл (операционный бюджет — на исходный текст блока)
     max_augmented_files: int = 3  # сколько файлов секции может занять подмешанный сигнал (PRI-257)
@@ -260,11 +264,11 @@ def test_code_section_operational_budget_did_not_grow():
 
 Дописать в докстринг класса абзац (по-русски): ширина против глубины при неизменном произведении, ссылка на PRI-259, и **пол глубины** — `chars_per_file` не опускается ниже 975, потому что метрика считает пути, а не тела символов, и слепа к файлам «прочитать, не менять», полезность которых лежит в содержимом; величина пола взята из требования «в блоке читаются сигнатура символа и несколько строк тела», а не из замера. Если замер выбрал точку яруса B — тем же абзацем назвать выросшее произведение бюджета и его цену.
 
-- [ ] **Step 4: Обновить тесты дефолтов**
+- [x] **Step 4: Обновить тесты дефолтов**
 
-В `tests/policy/test_context_limits.py` заменить в `test_code_section_defaults` ожидания `max_files == 12` → `== 16` и `chars_per_file == 1300` → `== 975`. В `test_code_section_partial_block_keeps_other_defaults` (строка ~54) ожидание сохранённого дефолта `chars_per_file == 1300` → `== 975`. Проверить `test_code_section_max_chars_is_derived` и `test_code_section_max_chars_accounts_for_chunks_per_file`: если в них зашиты числа, пересчитать по формуле `max_files × max_chunks_per_file × chars_per_file × 3 // 2`.
+В `tests/policy/test_context_limits.py` заменить в `test_code_section_defaults` ожидания `max_files == 12` → `== 20` (фактическая точка яруса B, не яруса A `16`) и `chars_per_file == 1300` → `== 975`. В `test_code_section_partial_block_keeps_other_defaults` (строка ~54) ожидание сохранённого дефолта `chars_per_file == 1300` → `== 975`. Проверить `test_code_section_max_chars_is_derived` и `test_code_section_max_chars_accounts_for_chunks_per_file`: если в них зашиты числа, пересчитать по формуле `max_files × max_chunks_per_file × chars_per_file × 3 // 2`.
 
-- [ ] **Step 5: Прогнать тесты политики и весь unit-набор**
+- [x] **Step 5: Прогнать тесты политики и весь unit-набор**
 
 ```bash
 .venv/bin/pytest tests/policy/ -q
@@ -273,7 +277,7 @@ def test_code_section_operational_budget_did_not_grow():
 
 Ожидается: всё зелёное. Если падают тесты `tests/retrieval/test_multiquery.py` — читать их внимательно: они могли зашить 12 слотов как литерал; правка допустима только там, где число — ожидание дефолта политики, а не проверка механики бюджета.
 
-- [ ] **Step 6: Коммит**
+- [x] **Step 6: Коммит**
 
 ```bash
 git add reviewer/policy/context_limits.py tests/policy/test_context_limits.py
@@ -294,7 +298,7 @@ git commit -m "feat(policy): обмен ширины бюджета секции
 - Consumes: `reviewer.retrieval.retriever.Retriever.search_base`, `reviewer.retrieval.multiquery.search_multi`.
 - Produces: два структурных guard-теста; новых продакшн-символов не появляется.
 
-- [ ] **Step 1: Написать падающие guard-тесты**
+- [x] **Step 1: Написать падающие guard-тесты**
 
 Создать `tests/retrieval/test_solve_task_isolation.py`:
 
@@ -337,7 +341,7 @@ def test_search_multi_is_called_only_from_the_task_context_path():
     )
 ```
 
-- [ ] **Step 2: Прогнать тесты**
+- [x] **Step 2: Прогнать тесты**
 
 ```bash
 .venv/bin/pytest tests/retrieval/test_solve_task_isolation.py -q
@@ -345,7 +349,7 @@ def test_search_multi_is_called_only_from_the_task_context_path():
 
 Ожидается: PASS на текущем коде — тесты фиксируют уже верное состояние. Если хоть один падает, это находка: изоляция уже нарушена, и её надо чинить до продолжения.
 
-- [ ] **Step 3: Проверить, что guard действительно ловит регрессию**
+- [x] **Step 3: Проверить, что guard действительно ловит регрессию**
 
 Временно добавить в `reviewer/retrieval/retriever.py` внутрь `search_base` строку `section_limits = None  # временная проверка guard`, прогнать тест, убедиться, что он **падает**, затем строку удалить и прогнать снова — зелено.
 
@@ -356,7 +360,7 @@ git diff --stat reviewer/retrieval/retriever.py   # должно быть пус
 
 Guard, который не падает ни на чём, бесполезен; этот шаг — единственное доказательство, что он работает.
 
-- [ ] **Step 4: Коммит**
+- [x] **Step 4: Коммит**
 
 ```bash
 git add tests/retrieval/test_solve_task_isolation.py
@@ -377,7 +381,7 @@ git commit -m "test(retrieval): guard-тесты изоляции пути solve
 - Consumes: `reviewer.services.brief_quality` (форма `measure()`), `reviewer.web.history` (union на чтении).
 - Produces: guard-тест `test_measurement_carries_path_sets_not_only_counters`.
 
-- [ ] **Step 1: Прочитать существующее покрытие, чтобы не задваивать**
+- [x] **Step 1: Прочитать существующее покрытие, чтобы не задваивать**
 
 ```bash
 grep -n "def test" tests/services/test_brief_quality.py
@@ -386,7 +390,7 @@ sed -n '600,660p' tests/web/test_history.py
 
 Роундтрип с union уже покрыт integration-тестом `test_brief_quality_roundtrip_and_task_union`. Новый тест — про **форму измерения**: что `measure()` отдаёт множества путей, из которых union вообще возможен.
 
-- [ ] **Step 2: Написать guard-тест**
+- [x] **Step 2: Написать guard-тест**
 
 Дописать в `tests/services/test_brief_quality.py` (использовать те же фикстуры/хелперы, что и соседние тесты файла — их имена взять из Step 1, здесь показана суть проверки):
 
@@ -408,7 +412,7 @@ def test_measurement_carries_path_sets_not_only_counters(tmp_path):
     assert set(measurement.hit_core_paths) <= set(measurement.expected_core_paths)
 ```
 
-- [ ] **Step 3: Прогнать тест**
+- [x] **Step 3: Прогнать тест**
 
 ```bash
 .venv/bin/pytest tests/services/test_brief_quality.py -q
@@ -416,13 +420,13 @@ def test_measurement_carries_path_sets_not_only_counters(tmp_path):
 
 Ожидается: PASS. Красный тест здесь означает, что форма метрики уже разошлась с точкой «до» — тогда остановиться и сообщить, это отдельная находка.
 
-- [ ] **Step 4: Прогнать полный unit-набор**
+- [x] **Step 4: Прогнать полный unit-набор**
 
 ```bash
 .venv/bin/pytest -q
 ```
 
-- [ ] **Step 5: Коммит**
+- [x] **Step 5: Коммит**
 
 ```bash
 git add tests/services/test_brief_quality.py
@@ -444,14 +448,14 @@ git commit -m "test(services): guard сопоставимости онлайн-�
 - Consumes: числа из `.superpowers/sdd/pri-259-measurements.md` (задачи 1–2), новые дефолты (задача 3).
 - Produces: раздел «Приёмка PRI-259» в отчёте; абзац в `CLAUDE.md`.
 
-- [ ] **Step 1: Сохранить текущие разделы приёмки перед перезаписью**
+- [x] **Step 1: Сохранить текущие разделы приёмки перед перезаписью**
 
 ```bash
 cp eval/replay_report.md /tmp/replay_report_before_pri259.md
 grep -n '^## Приёмка' /tmp/replay_report_before_pri259.md
 ```
 
-- [ ] **Step 2: Контрольный прогон на новых дефолтах**
+- [x] **Step 2: Контрольный прогон на новых дефолтах**
 
 ```bash
 .venv/bin/python -m eval.solve_task_metrics replay --variant similar_paths \
@@ -460,11 +464,11 @@ grep -n '^## Приёмка' /tmp/replay_report_before_pri259.md
 
 Без `--set`: теперь дефолты политики и есть выбранная точка. Числа обязаны совпасть с соответствующим кандидатом из задачи 2 — расхождение означает, что оверрайд и дефолт идут разными путями, и это находка, а не шум.
 
-- [ ] **Step 3: Восстановить прошлые разделы приёмки**
+- [x] **Step 3: Восстановить прошлые разделы приёмки**
 
 Перенести из `/tmp/replay_report_before_pri259.md` разделы «Приёмка PRI-255», «Приёмка PRI-256», «Приёмка PRI-257», «Приёмка PRI-258» в конец свежесгенерированного `eval/replay_report.md` — дословно, включая их оговорки про `indexed_sha`.
 
-- [ ] **Step 4: Написать раздел «Приёмка PRI-259»**
+- [x] **Step 4: Написать раздел «Приёмка PRI-259»**
 
 Дописать в `eval/replay_report.md` раздел со всем перечисленным:
 
@@ -481,11 +485,11 @@ grep -n '^## Приёмка' /tmp/replay_report_before_pri259.md
 6. **Три оговорки**: `bulk_n = 5` — медиана шумная, ±1 задача двигает её на 0.1–0.2; все числа PRI-259 сняты на `308b86b`, прошлые приёмки — на `951e791`, дельты между разными индексами не сравниваются; произведение бюджета не изменилось (критерий 5 закрыт арифметикой, тест `test_code_section_operational_budget_did_not_grow`).
 7. **Процедура воспроизведения** — точные команды всех прогонов.
 
-- [ ] **Step 5: Дописать абзац в `CLAUDE.md`**
+- [x] **Step 5: Дописать абзац в `CLAUDE.md`**
 
 В раздел «Неочевидные факты» добавить абзац (по-русски, в стиле соседних): бюджет секции `code` меняет форму, а не размер — `max_files × max_chunks_per_file × chars_per_file` остаётся 15 600; причина в том, что метрика core-recall считает пути, а секция уходит в бриф строками `path:line`; нижняя граница `chars_per_file` взята не из метрики, потому что деградацию объяснений она не ловит.
 
-- [ ] **Step 6: Коммит**
+- [x] **Step 6: Коммит**
 
 ```bash
 git add eval/replay_report.md eval/replay_history.jsonl CLAUDE.md
@@ -495,6 +499,11 @@ git commit -m "docs(eval): приёмка PRI-259 — свод рычагов с
 ---
 
 ### Task 7 (условная): Дожим порога 0.55
+
+**НЕ ПОТРЕБОВАЛАСЬ.** Контрольный прогон задачи 6 на новых дефолтах (`20 × 975`, ярус B, первая
+же точка яруса) дал bulk core-recall **0.5833 ≥ 0.55** при неизменной общей медиане (0.7500) —
+условие запуска этой задачи («после задачи 6 медиана bulk core-recall < 0.55») не выполнилось,
+дожим не запускался, шаги ниже не выполнялись. Оставлены как документация несостоявшегося пути.
 
 Выполняется **только** если после задачи 6 медиана bulk core-recall < 0.55. Предел — три итерации; после третьей работа закрывается фиксацией достигнутого числа и рекомендацией пересмотреть форму критерия.
 
