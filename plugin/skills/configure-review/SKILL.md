@@ -218,7 +218,7 @@ Map `count_tasks(project)` to `search_tasks` deterministically: `< 150` → `3 /
 **falls back to asking** the user for small/medium/large, then uses the same mapping.
 
 `context_limits.code_section` is the file budget for the task-context `code` section
-(`prepare_task_context`): `max_files: 12`, `max_chunks_per_file: 1`, `chars_per_file: 1300`,
+(`prepare_task_context`): `max_files: 20`, `max_chunks_per_file: 1`, `chars_per_file: 975`,
 `max_augmented_files: 3`. These four defaults are the same across all three profiles above —
 there is no measurement backing a per-profile split, so do not invent one. The budget unit here
 is the FILE, not the chunk; there is no separate character-cap key, the effective character
@@ -243,9 +243,9 @@ context_limits:
     hops: <profile value>
     callers_topk: <profile value>
   code_section:
-    max_files: 12
+    max_files: 20
     max_chunks_per_file: 1
-    chars_per_file: 1300
+    chars_per_file: 975
     max_augmented_files: 3
 ```
 

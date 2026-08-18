@@ -471,9 +471,9 @@ context_limits:
   graph:
     hops: 1
   code_section:
-    max_files: 12
+    max_files: 20
     max_chunks_per_file: 1
-    chars_per_file: 1300
+    chars_per_file: 975
     max_augmented_files: 3
 ```
 
@@ -484,12 +484,16 @@ context_limits:
 `context_limits` состоит из четырёх подсекций: `search_codebase` (гибрид + graph-expansion +
 Voyage rerank для `/ask`, грунтовки и ревью PR), `search_tasks` (RRF-only отбор задач), `graph`
 (глубина обхода от топ-хитов) и `code_section` — файловый бюджет секции `code` контекста задачи
-(PRI-256). Единица бюджета `code_section` — файл, а не чанк: секция вмещает не более `max_files`
-файлов, из каждого — не более `max_chunks_per_file` чанков по `chars_per_file` символов. Символьный
-потолок секции отдельным ключом
+(PRI-256, дефолты расширены в PRI-259). Единица бюджета `code_section` — файл, а не чанк: секция
+вмещает не более `max_files` файлов, из каждого — не более `max_chunks_per_file` чанков по
+`chars_per_file` символов. Символьный потолок секции отдельным ключом
 не задаётся — он производный: операционный бюджет равен `max_files × max_chunks_per_file ×
 chars_per_file`, а страховочный потолок после рендера — `max_files × max_chunks_per_file ×
-chars_per_file × 3 // 2`.
+chars_per_file × 3 // 2`. Дефолт меняет форму бюджета в пользу ширины (`12 × 1300` → `20 × 975`),
+операционный бюджет при этом растёт на 25 % (15 600 → 19 500) — цена, которой куплен рост медианы
+bulk core-recall выше порога приёмки; у `chars_per_file` есть пол в 975 символов (сигнатура
+символа плюс несколько строк тела), потому что метрика recall считает пути, а не содержимое, и
+к глубине фрагмента слепа. См. `eval/replay_report.md`, раздел «Приёмка PRI-259».
 
 `code_section.max_augmented_files` (дефолт 3, PRI-257) подмешивает в секцию `code` фактические
 diff-пути похожих задач — один источник (`similar-diffs`, таблица `brief_quality` плюс

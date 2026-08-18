@@ -604,6 +604,61 @@ def test_brief_quality_trend_fail_soft_without_db():
     assert data["misses"] == []
 
 
+def test_brief_quality_trend_unions_paths_not_averages_recall():
+    """Критерий 4 PRI-259 на чтении: task-level recall — union множеств путей, не среднее.
+
+    `test_brief_quality_roundtrip_and_task_union` ниже проверяет то же самое,
+    но помечен `@pytest.mark.integration` и не входит в обычный `pytest -q` —
+    единственный тест на этот путь чтения не выполняется юнит-прогоном. Этот
+    тест мокает `_connect` (as в остальных unit-тестах файла) и проверяет тот
+    же путь `brief_quality_trend`/`by_task` без БД: две строки одной задачи с
+    непересекающимся ядром и попаданиями дают `core_recall`, который различает
+    объединение множеств и усреднение построчных `core_recall`. Построчно
+    recall — 0.5 (1 из {a, b}) и 1.0 (2 из {b, c}); их среднее — 0.75. Union
+    даёт ядро {a, b, c} и попадания {a, b, c} — recall 1.0. Совпадение с 0.75
+    означало бы регресс на построчное усреднение — оно молча делает онлайн-
+    число несопоставимым с точкой «до» (`bulk_core_recall_median ≈ 0.373`,
+    `bulk_n_measured = 4`), посчитанной офлайн через union по задаче.
+    """
+    from datetime import datetime, timezone
+
+    history = ReviewHistory("postgresql://bad:bad@localhost:1/nonexistent")
+    now = datetime.now(timezone.utc)
+
+    class _Result:
+        def __init__(self, rows):
+            self._rows = rows
+
+        def fetchall(self):
+            return self._rows
+
+    class _Conn:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def execute(self, sql, params=None):
+            rows = [
+                (now, "PRI-999", 1, "measured", ["a"], ["a", "b"], ["a"], None),
+                (now, "PRI-999", 2, "measured", ["b", "c"], ["b", "c"], ["b", "c"], None),
+            ]
+            return _Result(rows)
+
+    with patch.object(history, "_connect", return_value=_Conn()):
+        data = history.brief_quality_trend(days=30)
+
+    assert len(data["trend"]) == 1
+    point = data["trend"][0]
+    assert point["expected_core"] == 3          # union {a, b} ∪ {b, c} = {a, b, c}
+    assert point["hit_core"] == 3               # union {a} ∪ {b, c} = {a, b, c}
+    assert point["core_recall"] == pytest.approx(1.0)
+    assert point["core_recall"] != pytest.approx(0.75), (
+        "0.75 — построчное усреднение (0.5, 1.0); допущено регрессом union → average"
+    )
+
+
 @pytest.mark.integration
 def test_brief_quality_roundtrip_and_task_union():
     """Два PR одной задачи объединяются в одну точку — как в офлайн-харнессе.
