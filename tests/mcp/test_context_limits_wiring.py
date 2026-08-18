@@ -327,7 +327,7 @@ def test_search_codebase_multi_passes_code_section_limits(
     """_search_codebase_multi (PRI-256) пробрасывает в search_multi файловый
     бюджет секции, резолвленный из эффективной .review.yml-политики.
 
-    Значения в домашнем слое НЕ совпадают с дефолтами (12/1/1300), иначе тест
+    Значения в домашнем слое НЕ совпадают с дефолтами (20/1/975), иначе тест
     не отличил бы честный резолв политики от захардкоженного CodeSectionLimits().
     """
     path = isolated_xdg_config_home / "rag-reviewer/repos/o/r.yml"
