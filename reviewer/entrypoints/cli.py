@@ -20,7 +20,11 @@ import yaml
 from reviewer.config.settings import Settings
 from reviewer.app import build_components
 from reviewer.config.branches import migrate_repo_branches, resolve_repo_branches
-from reviewer.config.committed import CommittedLayerFetcher, worktree_drift
+from reviewer.config.committed import (
+    SOURCE_LOCAL,
+    CommittedLayerFetcher,
+    worktree_drift,
+)
 from reviewer.config.layers import (
     HomeConfigError,
     build_config_report,
@@ -207,9 +211,11 @@ def _render_config_report(report: Mapping[str, object]) -> None:
         # объект git из локального клона без сети, vcs = через API хостинга.
         click.echo(f"committed: {committed_source}")
     drift = report.get("worktree_drift")
-    if isinstance(drift, Mapping) and drift["status"] != "clean":
+    if isinstance(drift, Mapping) and drift["status"] not in ("clean", "unknown"):
         # «Правка есть, но её не видно» — исходный дефект PRI-260, поэтому
-        # молчания здесь быть не должно ни в одном статусе, кроме чистого.
+        # причина пропуска сравнения (`ref_not_head`, `absent_*`) называется
+        # явно. Молчит только `unknown`: сбой самой диагностики — fail-soft,
+        # и строка о нём сказала бы о состоянии политики ровно ничего.
         click.echo(f"worktree_drift: {drift['status']}")
         for key in drift["keys"]:
             click.echo(f"  {key}")
@@ -336,7 +342,11 @@ def config_show(repo: str, branch: str | None, clone_path: str | None,
                     committed_source=fetch_committed.source,
                 ))
                 clone_root = fetch_committed.clone_root
-                if clone_root is not None:
+                if clone_root is not None and fetch_committed.source == SOURCE_LOCAL:
+                    # Дрейф сравнивает рабочее дерево с тем, что реально
+                    # прочитано. Если слой пришёл через API хостинга (ветка в
+                    # клоне не выкачана), сравнение было бы не про показанную
+                    # эффективную политику.
                     payload["worktree_drift"] = worktree_drift(
                         clone_root, ref
                     ).as_dict()

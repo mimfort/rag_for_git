@@ -15,7 +15,6 @@ import os
 
 import yaml
 
-from reviewer.config.deepmerge import leaf_paths
 from reviewer.gitutil import file_at_ref, remote_url, repo_root, rev_parse
 from reviewer.services.repo_id import derive_repo_from_remote, normalize_repo
 
@@ -163,6 +162,11 @@ def worktree_drift(root: str, ref: str, policy_file: str = POLICY_FILE) -> Drift
     except Exception:  # noqa: BLE001 — диагностика не должна ронять config show
         log.debug("дрейф рабочего дерева не вычислен для %s", root, exc_info=True)
         return DriftReport("unknown")
+    if not keys:
+        # Тексты разошлись, а значения — нет: комментарий или переформатирование
+        # YAML. Предупреждение без единого ключа хуже молчания, поэтому такая
+        # правка дрейфом не считается.
+        return DriftReport("clean")
     return DriftReport("drifted", keys)
 
 
@@ -172,15 +176,32 @@ def _diverging_keys(blob: str, working: str) -> tuple[str, ...]:
     right = yaml.safe_load(working) or {}
     if not isinstance(left, Mapping) or not isinstance(right, Mapping):
         raise ValueError("policy layer is not a mapping")
-    paths = sorted(set(leaf_paths(left)) | set(leaf_paths(right)))
-    return tuple(path for path in paths if _at(left, path) != _at(right, path))
+    paths = sorted(set(_leaf_trails(left)) | set(_leaf_trails(right)))
+    diverging = tuple(trail for trail in paths if _at(left, trail) != _at(right, trail))
+    return tuple(".".join(trail) for trail in diverging)
+
+
+def _leaf_trails(value: object, prefix: tuple[str, ...] = ()) -> list[tuple[str, ...]]:
+    """Пути до листьев кортежами.
+
+    Кортеж, а не строка с точками: YAML-ключ, сам содержащий точку
+    (`overrides: {"a.b": 3}`), при разборе строки распался бы на два сегмента,
+    `_at` не нашёл бы значение ни с одной стороны — и расхождение по такому
+    ключу молча не попало бы в отчёт. Склейка в строку — только на выходе.
+    """
+    if isinstance(value, Mapping) and value:
+        trails: list[tuple[str, ...]] = []
+        for key, child in value.items():
+            trails.extend(_leaf_trails(child, (*prefix, str(key))))
+        return trails
+    return [prefix]
 
 
 _MISSING = object()
 
 
-def _at(data: object, path: str) -> object:
-    for key in path.split("."):
+def _at(data: object, trail: tuple[str, ...]) -> object:
+    for key in trail:
         if not isinstance(data, Mapping) or key not in data:
             return _MISSING
         data = data[key]

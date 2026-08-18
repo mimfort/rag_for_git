@@ -429,6 +429,12 @@ def resolve_policy_data(
             return
         try:
             committed = _read_mapping(text, ".review.yml")
+            # Проба обхода до слияния: рекурсивный YAML (самоссылочный якорь)
+            # переживает разбор и валит RecursionError уже на обходе вложенных
+            # mapping'ов — это тот же дефект слоя, что и битый YAML. Проба, а не
+            # merge внутри try: упавшее на середине слияние оставило бы в
+            # `merged` половину пропускаемого слоя.
+            leaf_paths(committed)
         except (HomeConfigError, RecursionError, UnicodeError):
             fail("malformed", None, None)
             return
@@ -654,7 +660,12 @@ def build_config_report(
     # ключа, реально пришедшего из одного слоя, и `config show` соврал бы
     # про mixed.
     for key in effective:
-        if key in ATOMIC_KEYS:
+        # Ключ, о котором слой высказался целиком (mapping заменён скаляром или
+        # null), уже атрибутирован записью на самом ключе. Раскладывать его
+        # эффективное значение на листья нельзя: листья дефолта получили бы
+        # "env" рядом с записью слоя, и `config show` соврал бы про mixed на
+        # ключе, пришедшем из одного слоя (PRI-260).
+        if key in ATOMIC_KEYS or key in sources:
             sources.setdefault(key, "env")
             continue
         for path in leaf_paths(effective[key], key):

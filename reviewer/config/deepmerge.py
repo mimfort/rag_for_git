@@ -54,27 +54,34 @@ def _merge_mapping(
     prefix: str,
 ) -> None:
     for raw_key, value in data.items():
+        # Ключ нормализуется к строке: пути диагностики строятся по str(key), и
+        # без нормализации `1:` и `"1":` из разных слоёв жили бы в `merged`
+        # порознь, а в `sources`/`shadowed` — под одним путём (ложное затенение).
         key = str(raw_key)
         path = f"{prefix}.{key}" if prefix else key
         top = path.split(".", 1)[0]
-        current = merged.get(raw_key)
+        current = merged.get(key)
         if (
             isinstance(value, Mapping)
+            and value
             and isinstance(current, Mapping)
             and top not in ATOMIC_KEYS
         ):
             child = dict(current)
             _merge_mapping(child, sources, shadowed, value, source, path)
-            merged[raw_key] = child
+            merged[key] = child
             continue
-        _replace(merged, sources, shadowed, raw_key, path, value, source, top)
+        # Пустой mapping рекурсии не даёт: тело цикла не выполнилось бы ни разу,
+        # значение осталось бы прежним, и слой, снимающий секцию целиком, был бы
+        # молча проигнорирован. Он идёт заменой — как и до PRI-260.
+        _replace(merged, sources, shadowed, key, path, value, source, top)
 
 
 def _replace(
     merged: dict[str, object],
     sources: dict[str, str],
     shadowed: dict[str, list[str]],
-    raw_key: object,
+    key: str,
     path: str,
     value: object,
     source: str,
@@ -87,7 +94,7 @@ def _replace(
     """
     for stale in [k for k in sources if k == path or k.startswith(f"{path}.")]:
         shadowed.setdefault(stale, []).append(sources.pop(stale))
-    merged[raw_key] = value
+    merged[key] = value
     if top in ATOMIC_KEYS or not isinstance(value, Mapping):
         sources[path] = source
         return
