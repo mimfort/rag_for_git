@@ -133,7 +133,7 @@ def test_skill_has_complete_deterministic_context_limit_presets():
     for expected in ("< 150", "150–800", "800+", "3 / 10", "4 / 14"):
         assert expected in presets.group()
     for expected in (
-        "max_files: 12", "max_chunks_per_file: 1", "chars_per_file: 1300",
+        "max_files: 20", "max_chunks_per_file: 1", "chars_per_file: 975",
         "max_augmented_files: 3",
     ):
         assert expected in presets.group(), f"скилл не задаёт дефолт {expected} для code_section"

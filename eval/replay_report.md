@@ -1,30 +1,34 @@
 # Replay-метрики ретрива solve-task
 
-Прогон от 2026-08-17T20:35:48.511514+00:00, репозиторий `mimfort/rag_for_git`, ветка `dev`.
+Прогон от 2026-08-18T15:42:18.202562+00:00, репозиторий `mimfort/rag_for_git`, ветка `dev`.
 
 ## Идентичность прогона
 
-- **до**: вариант `similar_paths`, коммит `79e5fafe7570186747dadfbae08f37386e25e12e`, indexed_sha `951e791246db4577a3913d07b75001bc32ff9969`, корпус 59
-- **после**: вариант `similar_paths+subsystem_paths`, коммит `79e5fafe7570186747dadfbae08f37386e25e12e`, indexed_sha `951e791246db4577a3913d07b75001bc32ff9969`, корпус 59
+- **до**: вариант `similar_paths`, параметры `{'code_section': {'max_files': 20, 'chars_per_file': 780}}`, коммит `9fede05387745983b8a4061d09d158b12fa100b5`, indexed_sha `308b86bcbcb39c7e463c8d41ac218e2becf6484d`, корпус 60
+- **после**: вариант `similar_paths`, коммит `12b474e4c3b509b4c75ad3655fdd87bc1e78d4d1`, indexed_sha `308b86bcbcb39c7e463c8d41ac218e2becf6484d`, корпус 60
+
+> **Стороны различаются не только вариантом:**
+
+> - коммит сторон различается (9fede05387745983b8a4061d09d158b12fa100b5 против 12b474e4c3b509b4c75ad3655fdd87bc1e78d4d1): ground truth мог измениться
 
 ## Агрегат
 
 | Метрика | до | после | Δ |
 |---|---|---|---|
-| core-recall (медиана) | 0.75 | 0.6667 | -0.08333 |
-| core-recall (среднее) | 0.6602 | 0.6388 | -0.02144 |
-| core-recall bulk (ядро ≥ 10) | 0.3889 | 0.3333 | -0.05556 |
+| core-recall (медиана) | 0.75 | 0.75 | +0 |
+| core-recall (среднее) | 0.706 | 0.7093 | +0.003247 |
+| core-recall bulk (ядро ≥ 10) | 0.5833 | 0.5833 | +0 |
 | bulk N | 5 | 5 | +0 |
-| precision (медиана) | 0.3333 | 0.3333 | +0 |
-| предсказано файлов (медиана) | 12 | 12 | +0 |
-| задач измерено | 43 | 43 | +0 |
+| precision (медиана) | 0.2071 | 0.225 | +0.01786 |
+| предсказано файлов (медиана) | 20 | 20 | +0 |
+| задач измерено | 44 | 44 | +0 |
 | без точки измерения | 0 | 0 | +0 |
 
 ## Статусы задач
 
 | Статус | Задач |
 |---|---|
-| measured | 43 |
+| measured | 44 |
 | empty_core_denominator | 10 |
 | no_ground_truth | 6 |
 | task_not_in_store | 0 |
@@ -34,53 +38,12 @@
 
 | Ключ | Статус | до | после | Δ | приобретено | потеряно |
 |---|---|---|---|---|---|---|
-| PRI-249 | measured | 1 | 0.6667 | -0.3333 | `reviewer/agent/assemble.py`, `reviewer/services/branch.py` | `reviewer/entrypoints/mcp_server.py`, `reviewer/web/history.py` |
-| PRI-255 | measured | 1 | 0.6667 | -0.3333 | `reviewer/index/_retry.py`, `reviewer/retrieval/cliff.py` | `reviewer/index/embeddings.py`, `reviewer/tasks/boards/attachments.py` |
-| PRI-217 | measured | 0.25 | 0.5 | +0.25 | `reviewer/tasks/boards/markup.py`, `reviewer/tasks/boards/registry.py` | `reviewer/tasks/boards/base.py`, `reviewer/tasks/boards/youtrack.py` |
-| PRI-213 | measured | 0.8571 | 0.7143 | -0.1429 | `reviewer/tasks/boards/jira.py`, `reviewer/tasks/boards/trello.py` | `reviewer/config/settings.py`, `reviewer/mcp/service.py` |
-| PRI-221 | measured | 0.7778 | 0.6667 | -0.1111 | `reviewer/config/fetch_errors.py`, `reviewer/config/provider_access.py` | `reviewer/graph/scip.py`, `reviewer/mcp/session_serde.py` |
-| PRI-196 | measured | 0.8 | 0.7 | -0.1 | `reviewer/tasks/boards/jira.py`, `reviewer/tasks/boards/setup.py` | `reviewer/tasks/boards/trello.py`, `reviewer/tasks/service.py` |
-| PRI-223 | measured | 0.4 | 0.32 | -0.08 | `reviewer/config/fetch_errors.py`, `reviewer/policy/policy.py` | `reviewer/config/onboarding.py`, `reviewer/entrypoints/mcp_server.py` |
-| PRI-215 | measured | 0.3571 | 0.2857 | -0.07143 | `reviewer/tasks/boards/github.py`, `reviewer/tasks/boards/yandex_tracker.py` | `reviewer/entrypoints/cli.py`, `reviewer/tasks/boards/kaiten.py` |
-| PRI-164 | empty_core_denominator | — | — | — | `reviewer/tasks/boards/__init__.py`, `reviewer/tasks/boards/adf.py` | `reviewer/services/brief_quality.py`, `reviewer/tasks/boards/asana.py` |
-| PRI-176 | empty_core_denominator | — | — | — | `plugin/hooks/brief_post_write.py`, `reviewer/tasks/boards/__init__.py` | — |
-| PRI-202 | measured | 0.6667 | 0.6667 | +0 | `reviewer/index/_retry.py`, `reviewer/index/chunker.py` | `reviewer/metrics/brief_quality/classify.py`, `reviewer/services/review_service.py` |
-| PRI-203 | empty_core_denominator | — | — | — | `reviewer/mcp/schemas.py`, `reviewer/mcp/session_serde.py` | `reviewer/config/settings.py`, `reviewer/entrypoints/cli.py` |
-| PRI-205 | measured | 1 | 1 | +0 | `reviewer/tasks/boards/__init__.py`, `reviewer/tasks/boards/adf.py` | `reviewer/policy/policy.py` |
-| PRI-206 | empty_core_denominator | — | — | — | `reviewer/tasks/boards/linear.py`, `reviewer/tasks/boards/youtrack.py` | `reviewer/entrypoints/mcp_server.py`, `reviewer/vcs/github.py` |
-| PRI-207 | measured | 1 | 1 | +0 | `reviewer/tasks/boards/adf.py`, `reviewer/tasks/boards/attachments.py` | `reviewer/mcp/service.py`, `reviewer/policy/policy.py` |
-| PRI-208 | empty_core_denominator | — | — | — | `reviewer/mcp/schemas.py`, `reviewer/mcp/session_serde.py` | `reviewer/config/layers.py`, `reviewer/mcp/service.py` |
-| PRI-210 | measured | 1 | 1 | +0 | `reviewer/app.py`, `reviewer/gitutil.py` | `scripts/verify_launcher_distribution.py` |
-| PRI-179 | measured | 0.75 | 0.75 | +0 | `reviewer/graph/summaries.py`, `reviewer/tools/code_tools.py` | `reviewer/graph/family.py`, `reviewer/graph/scip.py` |
-| PRI-212 | measured | 1 | 1 | +0 | `reviewer/mcp/schemas.py`, `reviewer/services/branch.py` | `plugin/hooks/reviewer_defect.py`, `reviewer/index/reranker.py` |
-| PRI-172 | measured | 0 | 0 | +0 | `plugin/hooks/brief_cost.py`, `reviewer/agent/centrality.py` | — |
-| PRI-173 | measured | 0.75 | 0.75 | +0 | `reviewer/tasks/boards/__init__.py`, `reviewer/tasks/boards/adf.py` | — |
-| PRI-177 | measured | 0 | 0 | +0 | `reviewer/tasks/boards/__init__.py`, `reviewer/tasks/boards/adf.py` | — |
-| PRI-219 | measured | 0.5 | 0.5 | +0 | `reviewer/services/branch.py`, `reviewer/services/repo_id.py` | `reviewer/retrieval/retriever.py`, `reviewer/services/gc.py` |
-| PRI-134 | measured | 0.75 | 0.75 | +0 | `reviewer/config/committed.py`, `reviewer/config/settings.py` | `reviewer/index/embeddings.py`, `reviewer/tasks/boards/clickup.py` |
-| PRI-178 | measured | 1 | 1 | +0 | `reviewer/index/_retry.py`, `reviewer/index/chunker.py` | `reviewer/entrypoints/mcp_server.py`, `reviewer/tasks/boards/adf.py` |
-| PRI-225 | measured | 0.3889 | 0.3889 | +0 | `reviewer/config/branches.py`, `reviewer/tasks/boards/linear.py` | `reviewer/config/settings.py`, `reviewer/tasks/boards/github.py` |
-| PRI-227 | measured | 0 | 0 | +0 | `reviewer/app.py`, `reviewer/gitutil.py` | `reviewer/config/layers.py`, `reviewer/tasks/boards/github.py` |
-| PRI-222 | measured | 1 | 1 | +0 | `reviewer/entrypoints/launcher.py`, `reviewer/web/api.py` | `reviewer/services/repo_id.py`, `reviewer/web/history.py` |
-| PRI-234 | measured | 1 | 1 | +0 | `reviewer/config/onboarding.py`, `reviewer/config/provider_access.py` | `reviewer/compose_lifecycle.py`, `reviewer/services/brief_quality.py` |
-| PRI-228 | measured | 1 | 1 | +0 | `reviewer/index/_retry.py`, `reviewer/index/chunker.py` | `reviewer/entrypoints/mcp_server.py`, `reviewer/retrieval/multiquery.py` |
-| PRI-235 | measured | 1 | 1 | +0 | `reviewer/config/branches.py`, `reviewer/config/fetch_errors.py` | `reviewer/mcp/task_context.py`, `reviewer/tasks/boards/weeek.py` |
-| PRI-236 | measured | 1 | 1 | +0 | `reviewer/install_claude.py`, `reviewer/install_codex.py` | `reviewer/graph/family.py`, `reviewer/graph/store.py` |
-| PRI-237 | measured | 0 | 0 | +0 | `reviewer/agent/assemble.py`, `reviewer/agent/centrality.py` | `reviewer/graph/summaries.py` |
-| PRI-238 | measured | 0.6667 | 0.6667 | +0 | `reviewer/tasks/boards/github.py`, `reviewer/tasks/boards/weeek.py` | `reviewer/install.py`, `reviewer/tasks/pr_backlink.py` |
-| PRI-239 | measured | 0.5 | 0.5 | +0 | `reviewer/tasks/boards/__init__.py`, `reviewer/tasks/boards/adf.py` | `reviewer/app.py`, `reviewer/web/history.py` |
-| PRI-241 | measured | 1 | 1 | +0 | `reviewer/app.py`, `reviewer/gitutil.py` | `reviewer/metrics/brief_quality/briefs.py`, `reviewer/web/serve.py` |
-| PRI-242 | measured | 0.5 | 0.5 | +0 | `reviewer/app.py`, `reviewer/update_lifecycle.py` | `reviewer/graph/store.py`, `scripts/verify_launcher_distribution.py` |
-| PRI-243 | measured | 0 | 0 | +0 | `reviewer/tasks/boards/github.py`, `reviewer/tasks/boards/setup.py` | `reviewer/services/brief_quality.py`, `reviewer/services/repo_id.py` |
-| PRI-246 | empty_core_denominator | — | — | — | `plugin/hooks/brief_post_write.py`, `reviewer/tasks/boards/__init__.py` | `plugin/hooks/brief_guard.py`, `reviewer/tasks/boards/youtrack.py` |
-| PRI-250 | measured | 0.5 | 0.5 | +0 | `plugin/hooks/brief_guard.py`, `reviewer/tasks/boards/asana.py` | `reviewer/agent/assemble.py`, `reviewer/web/api.py` |
-| PRI-251 | measured | 0.2857 | 0.2857 | +0 | `reviewer/agent/assemble.py`, `reviewer/policy/policy.py` | `reviewer/retrieval/retriever.py`, `reviewer/tasks/boards/clickup.py` |
-| PRI-252 | measured | 1 | 1 | +0 | `reviewer/graph/builder.py`, `reviewer/index/refs.py` | `reviewer/graph/store.py`, `reviewer/tasks/boards/youtrack.py` |
-| PRI-247 | measured | 0.6667 | 0.6667 | +0 | `reviewer/install_codex.py`, `reviewer/mcp/schemas.py` | `reviewer/tasks/boards/base.py`, `scripts/update_codex_plugin_manifest.py` |
-| PRI-248 | measured | 0.3333 | 0.3333 | +0 | `reviewer/tasks/boards/__init__.py`, `reviewer/tasks/boards/adf.py` | `reviewer/retrieval/retriever.py`, `reviewer/tools/code_tools.py` |
-| PRI-256 | measured | 0.8 | 0.8 | +0 | `reviewer/index/embeddings.py`, `reviewer/index/store.py` | `reviewer/entrypoints/mcp_server.py`, `reviewer/metrics/brief_quality/recall.py` |
-| PRI-257 | measured | 0.3333 | 0.3333 | +0 | `reviewer/agent/assemble.py`, `reviewer/agent/centrality.py` | `reviewer/bugreport/render.py`, `reviewer/metrics/brief_quality/briefs.py` |
-| _и ещё 13_ | без изменений | — | — | — | — | — |
+| PRI-251 | measured | 0.2857 | 0.4286 | +0.1429 | `reviewer/graph/inherit.py`, `reviewer/mcp/service.py` | `reviewer/install.py`, `reviewer/install_claude.py` |
+| PRI-179 | measured | 0.75 | 0.75 | +0 | `reviewer/services/review_service.py` | — |
+| PRI-212 | measured | 1 | 1 | +0 | `reviewer/tools/code_tools.py` | `reviewer/tasks/boards/asana.py` |
+| PRI-236 | measured | 1 | 1 | +0 | `reviewer/compose_lifecycle.py` | `plugin/hooks/review_cost.py` |
+| PRI-238 | measured | 0.6667 | 0.6667 | +0 | `reviewer/tools/code_tools.py` | `reviewer/tasks/boards/github.py` |
+| _и ещё 55_ | без изменений | — | — | — | — | — |
 
 ## Оговорка
 
@@ -428,3 +391,159 @@ PRI-257. Кластер сводки подсистемы описывает с�
 
 `replay` перезаписывает этот файл целиком: разделы приёмки прошлых задач восстанавливаются после
 прогона вручную.
+
+## Приёмка PRI-259
+
+Свод рычагов секции `code` контекста задачи: отбор окупившихся вариантов из PRI-255/256/257/258
+и дожим порога приёмки «медиана bulk core-recall ≥ 0.55» новым рычагом (обмен ширины бюджета на
+глубину фрагмента). Все числа этого раздела сняты на одном `indexed_sha = 308b86bcbcb39c7e463c8d41ac218e2becf6484d`,
+репо `mimfort/rag_for_git`, ветка `dev`, корпус 44 измеренных задачи (`bulk_n = 5`). Числа разделов
+«Приёмка PRI-255…258» ниже сняты на другом `indexed_sha` (`951e791`) и с этими напрямую не
+сравниваются — только с собой.
+
+### 1. Лестница рычагов
+
+Рычаги вложены (каждый следующий вариант — предыдущий плюс один механизм), поэтому одна лестница
+даёт и дельту каждого рычага отдельно, и их сумму:
+
+| вариант | медиана | bulk | precision (медиана) | предсказано (медиана) | Δ медиана к предыдущей | Δ bulk к предыдущей |
+|---|---|---|---|---|---|---|
+| baseline | 0.2250 | 0.1429 | 1.0 | 2.0 | — | — |
+| limits (явный оверрайд 12×1300 = действовавшие на тот момент дефолты) | 0.2250 | 0.1429 | 1.0 | 2.0 | +0.0000 | +0.0000 |
+| multiquery (PRI-255) | 0.5000 | 0.3889 | 0.25 | 12.0 | +0.2750 | +0.2460 |
+| similar_paths (PRI-257) | 0.7500 | 0.4000 | 0.3333 | 12.0 | +0.2500 | +0.0111 |
+
+Сумма baseline → similar_paths: медиана 0.2250 → 0.7500 (+0.5250), bulk 0.1429 → 0.4000 (+0.2571).
+Тождественность `limits` и `baseline` — не пропущенный шаг, а находка: она доказывает, что тракт
+оверрайдов `--set` идёт тем же кодом, что и продакшн-дефолты (иначе следующие точки этого замера
+не значили бы ничего про прод).
+
+### 2. Кандидаты обмена ширины на глубину (от `similar_paths`)
+
+| точка | бюджет `max_files × max_chunks_per_file × chars_per_file` | медиана | bulk | precision |
+|---|---|---|---|---|
+| прод до задачи, `12×1×1300` | 15 600 | 0.7500 | 0.4000 | 0.3333 |
+| ярус A, `16×1×975` | 15 600 (неизменен) | 0.7639 | 0.4444 | 0.25 |
+| ярус B, `20×1×975` | 19 500 (+25 %) | 0.7500 | 0.5833 | 0.225 |
+| справочно, `20×1×780` (ниже пола глубины) | 15 600 | 0.7500 | 0.5833 | 0.2071 |
+
+Правило выбора (из плана): ярус A порог 0.55 не взял (0.4444 < 0.55); из яруса B берётся минимальный
+`max_files`, взявший порог. `20×975` порог взял (0.5833 ≥ 0.55) — это и есть выбранная точка,
+она же новый дефолт (коммит `12b474e`). `24×975` не прогонялся — точка `20×975` уже взяла порог
+при меньшей ширине, обгонять её нечем. `24×650` не прогонялся по той же причине и потому что он
+ниже пола глубины `chars_per_file ≥ 975`.
+
+### 3. Вердикт по каждому рычагу
+
+| рычаг | статус | число |
+|---|---|---|
+| `multiquery` (PRI-255) | смержен | +0.2750 медиана / +0.2460 bulk (лестница выше) |
+| файловый бюджет (PRI-256) | смержен | сняло стену `8000 ÷ 2000 = 4 файла`; предпосылка для следующих рычагов (число — в разделе «Приёмка PRI-256» этого файла) |
+| `similar-diffs` (PRI-257) | смержен | +0.2500 медиана / +0.0111 bulk (лестница выше) |
+| co-change | снят | 12 % precision, просадка bulk 0.3730 → 0.3544, 0 измеримого вклада поверх `similar-diffs` — раздел «Приёмка PRI-257» ниже |
+| разворот кластеров subsystems (PRI-258) | снят | 2 % precision, bulk 0.3889 → 0.3333, 7 просевших задач против 1 выросшей — раздел «Приёмка PRI-258» ниже |
+| обмен ширины на глубину (PRI-259) | смержен | bulk 0.4000 → 0.5833 (+0.1833), медиана корпуса не упала (0.7500 → 0.7500); цена — операционный бюджет +25 % (15 600 → 19 500) |
+
+Достигнутая медиана bulk core-recall **0.5833** против порога **0.55** — порог взят на первой же
+точке яруса B, вторая-третья итерация дожима (`24×975`, `hops`/`ceiling`, новый источник
+подмешивания) не потребовались.
+
+### 4. Арифметика потолка — построчно по bulk-задачам
+
+Контрольный прогон на новых дефолтах (без единого `--set`, коммит `12b474e`) воспроизводит ярус B
+точно: медиана 0.7500, bulk 0.5833 — см. блок «Идентичность прогона»/«Агрегат» в начале этого
+файла (прогон датирован 2026-08-18T15:42:18Z). Построчно, «было» — прод `12×1300` (предсказано 12),
+«стало» — контрольный прогон на новых дефолтах (предсказано 20):
+
+| задача | ядро | было (попало/ядро) | было recall | стало (попало/ядро) | стало recall |
+|---|---|---|---|---|---|
+| PRI-196 | 10 | 8/10 | 0.800 | 10/10 | 1.0000 |
+| PRI-257 | 12 | 6/12 | 0.500 | 7/12 | 0.5833 |
+| PRI-215 | 14 | 5/14 | 0.357 | 9/14 | 0.6429 |
+| PRI-225 | 18 | 7/18 | 0.389 | 9/18 | 0.5000 |
+| PRI-223 | 25 | 10/25 | 0.400 | 12/25 | 0.4800 |
+
+Медиана bulk 0.4000 → 0.5833. Ни одна из пяти bulk-задач не просела относительно «было». Общая
+медиана корпуса (44 задачи) не изменилась: 0.7500 → 0.7500.
+
+### 5. Чего метрика не видит
+
+Знаменатель core-recall — только файлы, изменённые настоящими PR-мержами задачи. Файл, который
+надо прочитать, но не менять (контракт, соседний адаптер, образец для нового кода), в знаменатель
+не входит: recall он не штрафует, а precision — штрафует (`predicted`, не входя в `expected`,
+считается шумом). Отсюда два вывода этого раздела.
+
+Во-первых, **измеренная precision систематически занижена, и её рост не является целью**: медиана
+precision по ходу лестницы/яруса B падает (0.3333 → 0.225 на выбранной точке). Это не регресс —
+оптимизация под precision выбрасывала бы ровно тот контекст, ради которого секция существует. В
+приёмке PRI-257 рост precision вдвое читался как хороший знак — с точки зрения этого раздела это
+индикатор со смещением, а не самостоятельная цель.
+
+Во-вторых, **справочная точка `20×780` (ниже пола глубины) дала числа, тождественные `20×975`**
+(0.7500/0.5833) при операционном бюджете на 20 % меньше (15 600 против 19 500). Это прямое
+эмпирическое подтверждение слепоты метрики к глубине фрагмента: метрика считает пути, а не
+содержимое блока, поэтому сокращение `chars_per_file` ниже 975 бесплатно по замеру — и оплачено
+ровно тем, чего замер не видит: способностью брифа объяснить, ЗАЧЕМ файл нужен. Точка `20×780`
+отклонена не по числам (по числам она выигрывает у выбранной точки, а не проигрывает), а потому
+что её выигрыш куплен вслепую. Пол `chars_per_file ≥ 975` взят из требования «в блоке читаются
+сигнатура символа и несколько строк тела», а не из метрики — метрика к этому требованию
+чувствительности не имеет.
+
+### 6. Критерии приёмки PRI-259
+
+1. **Медиана bulk core-recall ≥ 0.55 без падения общей медианы корпуса** — ВЗЯТ. bulk 0.4000 →
+   0.5833 (≥ 0.55), общая медиана 0.7500 → 0.7500 (не упала).
+2. **Дельта каждого рычага отдельно и суммой, у каждого смерженного — положительная дельта** —
+   ВЗЯТ. Лестница (раздел 1): `multiquery` +0.2750/+0.2460, `similar_paths` +0.2500/+0.0111, сумма
+   +0.5250/+0.2571 (медиана/bulk); обмен ширины на глубину (раздел 4): bulk +0.1833. Все три
+   смерженных рычага — положительная дельта.
+3. **Ревью PR и `/ask` не затронуты: `search_base` не изменён, покрыто тестом** — ВЗЯТ, тестом.
+   Продакшн-код в этой задаче не менялся (задача документационная); изоляция закрыта guard-тестом
+   `tests/retrieval/test_solve_task_isolation.py` (коммит `41ffcc2`) — проверяет, что
+   `Retriever.search_base` не обращается к `CodeSectionLimits` и что публичный `search_codebase`
+   не проходит через `search_multi`.
+4. **`brief_quality` пишется и сопоставима с точкой «до» (`bulk_core_recall_median ≈ 0.373`,
+   `bulk_n_measured = 4`)** — ВЗЯТ, тестом и не тронуто по коду. Метрика в этой задаче не менялась;
+   сопоставимость формы записи (множества путей, не счётчики, union по задаче на чтении) закрыта
+   guard-тестом `tests/services/test_brief_quality.py` (коммит `9fede05`).
+5. **Токены сборки брифа не выросли** — НАРУШЕН осознанно. Операционный бюджет секции `code`
+   вырос с 15 600 до 19 500 символов (+25 %) на выбранной точке `20×975`. Это прямой размен:
+   критерий 5 оплачивает взятие критерия 1. Ярус A (`16×975`, бюджет неизменен, критерий 5 был бы
+   формально выполнен) порог 0.55 не взял (0.4444 bulk), поэтому неразменянного решения на
+   измеренных данных нет. Арифметика произведения бюджета закрыта тестом
+   `tests/policy/test_context_limits.py::test_code_section_operational_budget_did_not_grow` —
+   тест фиксирует значение произведения, а не его неизменность, то есть честно документирует факт
+   роста, а не маскирует его.
+
+### 7. Три оговорки
+
+- **`bulk_n = 5`** — медиана по пяти точкам шумная, ±1 задача двигает её на 0.1–0.2. Раздел 4
+  печатает построчные значения намеренно: без них число «медиана bulk» не читается.
+- **Разные `indexed_sha` между приёмками.** Все числа этого раздела сняты на `308b86b`; разделы
+  «Приёмка PRI-255…258» ниже сняты на `951e791`. Дельты между разными индексами не сравниваются —
+  каждая приёмка сравнивает только точки внутри своего собственного indexed_sha.
+- **Произведение бюджета не «немного больше» — оно выросло на конкретное число.** 15 600 → 19 500,
+  +25 %. Это размен, закрытый явно в критерии 5 выше, а не побочный эффект, который стоило бы
+  сгладить формулировкой.
+
+### 8. Процедура воспроизведения
+
+```bash
+# Лестница (раздел 1)
+.venv/bin/python -m eval.solve_task_metrics replay --variant baseline --repo mimfort/rag_for_git --branch dev --baseline baseline
+.venv/bin/python -m eval.solve_task_metrics replay --variant baseline --set code_section.max_files=12 --set code_section.chars_per_file=1300 --repo mimfort/rag_for_git --branch dev --baseline baseline
+.venv/bin/python -m eval.solve_task_metrics replay --variant multiquery --repo mimfort/rag_for_git --branch dev --baseline multiquery
+.venv/bin/python -m eval.solve_task_metrics replay --variant similar_paths --repo mimfort/rag_for_git --branch dev --baseline similar_paths
+
+# Кандидаты обмена ширины на глубину (раздел 2)
+.venv/bin/python -m eval.solve_task_metrics replay --variant similar_paths --set code_section.max_files=16 --set code_section.chars_per_file=975 --repo mimfort/rag_for_git --branch dev --baseline similar_paths
+.venv/bin/python -m eval.solve_task_metrics replay --variant similar_paths --set code_section.max_files=20 --set code_section.chars_per_file=975 --repo mimfort/rag_for_git --branch dev --baseline similar_paths
+.venv/bin/python -m eval.solve_task_metrics replay --variant similar_paths --set code_section.max_files=20 --set code_section.chars_per_file=780 --repo mimfort/rag_for_git --branch dev --baseline similar_paths
+
+# Контрольный прогон на новых дефолтах (раздел 4), без единого --set
+.venv/bin/python -m eval.solve_task_metrics replay --variant similar_paths --repo mimfort/rag_for_git --branch dev --baseline similar_paths
+```
+
+`replay` перезаписывает `eval/replay_report.md` целиком: разделы приёмки прошлых задач (включая
+этот) восстанавливаются вручную после каждого следующего прогона — задокументированная процедура,
+см. Task 6 брифа PRI-259.
