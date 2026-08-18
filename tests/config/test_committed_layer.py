@@ -143,16 +143,19 @@ def test_clean_worktree_reports_no_drift(tmp_path):
 
 def test_worktree_edit_names_diverging_leaf_keys_without_values(tmp_path):
     """Правка в рабочем дереве видна по ключам; значения в отчёт не попадают."""
-    root = _make_clone(tmp_path, content="max_comments: 5\ncontext_limits: {graph: {hops: 1}}\n")
+    root = _make_clone(tmp_path, content="max_comments: 4242\ncontext_limits: {graph: {hops: 1}}\n")
     (root / ".review.yml").write_text(
-        "max_comments: 9\ncontext_limits: {graph: {hops: 1}}\n", encoding="utf-8"
+        "max_comments: 7331\ncontext_limits: {graph: {hops: 1}}\n", encoding="utf-8"
     )
 
     report = worktree_drift(str(root), "main")
 
     assert report.status == "drifted"
     assert report.keys == ("max_comments",)
-    assert "9" not in " ".join(report.keys)
+    # Ни одно из двух значений не просочилось НИКУДА в отчёт (не только в keys):
+    # утечка вида keys=("max_comments: 7331",) или лишнее поле упадёт здесь.
+    assert "4242" not in repr(report)
+    assert "7331" not in repr(report)
 
 
 def test_missing_worktree_file_is_its_own_status(tmp_path):
@@ -195,3 +198,30 @@ def test_committed_source_label_names_the_blob(tmp_path):
     assert fetcher("main") == "summary_cluster_depth: 3\n"
     assert fetcher.source == "git-blob"
     assert fetcher.clone_root == str(root)
+
+
+def test_comment_only_worktree_edit_is_not_drift(tmp_path):
+    """Тексты разошлись, значения — нет: предупреждение без ключей хуже молчания."""
+    root = _make_clone(tmp_path, content="max_comments: 5\n")
+    (root / ".review.yml").write_text(
+        "# комментарий, значения те же\nmax_comments:   5\n", encoding="utf-8"
+    )
+
+    report = worktree_drift(str(root), "main")
+
+    assert report == DriftReport("clean", ())
+
+
+def test_drift_is_reported_for_a_key_containing_a_dot(tmp_path):
+    """YAML-ключ с точкой внутри не теряется при разборе пути до листа."""
+    root = _make_clone(
+        tmp_path, content='summary_cluster_depth_overrides: {"a.b": 1}\n'
+    )
+    (root / ".review.yml").write_text(
+        'summary_cluster_depth_overrides: {"a.b": 2}\n', encoding="utf-8"
+    )
+
+    report = worktree_drift(str(root), "main")
+
+    assert report.status == "drifted"
+    assert report.keys == ("summary_cluster_depth_overrides.a.b",)

@@ -1267,3 +1267,58 @@ def test_migration_is_loud_when_committed_layer_cannot_be_read(tmp_path):
         migrate_repo_config(
             "o/r", "main", boom, config_root=tmp_path, settings=Settings(_env_file=None)
         )
+
+
+def test_key_nulled_by_one_layer_is_not_reported_as_mixed(tmp_path: Path) -> None:
+    """Ключ, о котором слой высказался целиком, имеет один источник.
+
+    `context_limits: null` — высказывание слоя обо ВСЕЙ секции. Раскладывать
+    её эффективное значение (дефолты ReviewPolicy) на листья со источником
+    "env" нельзя: рядом с записью слоя на самом ключе это даёт `source: mixed`
+    для ключа, пришедшего из одного слоя (PRI-260).
+    """
+    _write(tmp_path / "repos/o/r.yml", "context_limits: null\n")
+
+    data, meta = resolve_policy_data(
+        "O/R", "main", lambda ref: "max_comments: 7\n", config_root=tmp_path
+    )
+    report = build_config_report(
+        "O/R", "main", Settings(_env_file=None), data, meta
+    )
+
+    sources = report["sources"]
+    assert sources["context_limits"] == "home:repos/o/r.yml"
+    assert not [key for key in sources if key.startswith("context_limits.")]
+    assert source_of(sources, "context_limits") == "home:repos/o/r.yml"
+
+
+def test_recursive_committed_yaml_is_skipped_as_malformed(tmp_path: Path) -> None:
+    """Самоссылочный якорь в коммиченном слое — дефект слоя, а не крах резолва.
+
+    YAML с рекурсивным alias переживает разбор (PyYAML строит словарь, ссылающийся
+    на себя) и валит RecursionError уже на обходе вложенных mapping'ов. Слой
+    обязан уйти в `skipped` категории malformed, а домашние слои — уцелеть.
+    """
+    _write(tmp_path / "review.yml", "max_comments: 4\n")
+    recursive = "categories: &x\n  b: *x\n"
+
+    data, meta = resolve_policy_data(
+        "O/R", "main", lambda ref: recursive, config_root=tmp_path
+    )
+
+    assert data["max_comments"] == 4                      # домашний слой уцелел
+    assert "categories" not in data                       # частичного слоя не осталось
+    assert [item.category for item in meta.skipped] == ["malformed"]
+    assert meta.skipped[0].layer == ".review.yml"
+
+
+def test_recursive_committed_yaml_is_loud_in_strict_mode(tmp_path: Path) -> None:
+    """В строгом режиме (ревью PR, index) тот же слой обязан быть громким."""
+    with pytest.raises(HomeConfigError):
+        resolve_policy_data(
+            "O/R",
+            "main",
+            lambda ref: "categories: &x\n  b: *x\n",
+            config_root=tmp_path,
+            strict_committed=True,
+        )

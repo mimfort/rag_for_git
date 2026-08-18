@@ -499,7 +499,7 @@ covers (median core-recall 0.5 → 0.75, precision 0.167 → 0.333, 28 hits on 3
 
 ### Layered repository policy
 
-Policy is resolved in this exact order; each later source wins for the same top-level key:
+Policy is resolved in this exact order; each later source wins for the same leaf key:
 
 ```text
 ENV
@@ -508,14 +508,25 @@ ENV
   < $XDG_CONFIG_HOME/rag-reviewer/repos/<owner>/<name>.yml
 ```
 
-When `XDG_CONFIG_HOME` is unset, the home root is `~/.config/rag-reviewer`. Merging is only at the
-top level: a later mapping, list, or `null` replaces the complete earlier value; nested mappings
-are not deep-merged. That replacement is **shadowing**. Inspect the effective policy, source for
-each key, and shadowed sources with:
+When `XDG_CONFIG_HOME` is unset, the home root is `~/.config/rag-reviewer`. Merging is **recursive
+over mapping values**: a later layer that says nothing about a subsection does not erase it, so a
+home `context_limits: {graph: {hops: 2}}` keeps the committed `context_limits.code_section` pin.
+Everything else is replaced whole — lists, scalars, an explicit empty mapping, a `null`, and any
+change of type. `task_board` is the single atomic mapping key: it is a coherent contract (`type` +
+`project` + `create_target`/`done_target` + `options`), so a later layer replaces it completely
+rather than per subfield. Replacement of a value that an earlier layer also set is **shadowing**.
+Inspect the effective policy, the source of each key, and shadowed sources with:
 
 ```bash
 reviewer config show --repo group/service --branch main --json
 ```
+
+`sources` and `shadowed` are keyed by the **dotted path to the leaf**
+(`context_limits.code_section.max_files`), not by the top-level policy key — otherwise "the
+subsection was shadowed" is indistinguishable from "there was no subsection". `task_board` and any
+key a layer set as a whole (to a scalar or `null`) keep a single entry on the key itself. In the
+text output a key whose leaves all come from one layer stays a single `source:` line; when layers
+differ the line reads `source: mixed` and is followed by one line per leaf.
 
 The committed layer is fetched at the selected ref, so review/config resolution never reads an
 uncommitted worktree `.review.yml`.
@@ -531,11 +542,22 @@ was taken:
 
 ```bash
 reviewer config show --repo group/service --branch main --path /srv/clones/service
-# committed: local        ← resolved without a single network call
+# committed: git-blob     ← resolved without a single network call
 ```
 
-In JSON the same value is the `committed_source` key (`local` / `vcs`); the clone path itself is
-never printed.
+In JSON the same value is the `committed_source` key (`git-blob` / `vcs`); the clone path itself is
+never printed. The label names the object that was read — the committed git blob at the ref, never
+the file in the clone's working tree.
+
+Because of that distinction, `config show` also reports whether the working tree has drifted away
+from that blob. The `worktree_drift` key (JSON: `{"status": ..., "keys": [...]}`; text: a
+`worktree_drift:` line followed by the diverging keys) is present only when the committed layer was
+actually read from the clone. Statuses: `clean` (no difference in values — a comment-only or
+reformatting edit is not drift), `drifted` (diverging leaf keys are listed, **never their values**),
+`absent_in_worktree`, `absent_in_blob`, `ref_not_head` (the ref does not resolve to the clone's
+HEAD, so no comparison was made), and `unknown` (the diagnostic itself failed; it stays silent in
+the text output). Drift is a warning only: the effective policy still comes entirely from the
+committed blob, and the exit code is unaffected.
 
 To copy a safe committed policy into the repo-specific home
 layer without modifying the committed file, run:

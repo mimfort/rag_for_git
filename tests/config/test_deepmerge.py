@@ -96,3 +96,32 @@ def test_leaf_paths_of_empty_mapping_is_the_mapping_itself():
     assert leaf_paths({"a": {"b": 1}}, "top") == ["top.a.b"]
     assert leaf_paths({}, "top") == ["top"]
     assert leaf_paths(5, "top") == ["top"]
+
+
+def test_empty_mapping_layer_clears_the_section():
+    """Явный пустой mapping — высказывание слоя «секции нет», а не молчание.
+
+    До фикса рекурсия входила в пустой словарь, тело цикла не выполнялось ни
+    разу, и слой пропадал бесследно: ни значения, ни записи в shadowed.
+    """
+    merged, sources, shadowed = _merge(
+        ({"categories": {"sql": True, "security": True}}, ".review.yml"),
+        ({"categories": {}}, "home:repos/o/r.yml"),
+    )
+
+    assert merged["categories"] == {}
+    assert sources["categories"] == "home:repos/o/r.yml"
+    assert shadowed["categories.sql"] == [".review.yml"]
+    assert shadowed["categories.security"] == [".review.yml"]
+
+
+def test_non_string_keys_share_one_namespace_with_diagnostics():
+    """Ключ нормализуется к str: merged и диагностика в одном пространстве."""
+    merged, sources, shadowed = _merge(
+        ({1: {"a": 1}}, "home:review.yml"),
+        ({"1": 2}, ".review.yml"),
+    )
+
+    assert merged == {"1": 2}          # один ключ, а не int-дубль рядом со str
+    assert sources == {"1": ".review.yml"}
+    assert shadowed["1.a"] == ["home:review.yml"]
