@@ -69,3 +69,66 @@ def test_aggregate_of_only_no_measurement_rows():
     assert agg.n_measured == 0
     assert agg.no_measurement == 1
     assert agg.core_recall_median is None
+
+
+def test_context_core_absent_leaves_new_fields_neutral():
+    """Без context_core поведение тождественно доPRI-261: это и есть механизм,
+    которым числа приёмок PRI-255…259 остаются сравнимыми без пересчёта."""
+    row = recall.evaluate_task(
+        "PRI-1", {"reviewer/a.py"}, {"reviewer/a.py"}, {"reviewer/a.py"}
+    )
+    assert row.context_recall is None
+    assert row.union_precision is None
+    assert row.context_core == 0
+    assert row.hit_context == 0
+
+
+def test_context_recall_counts_read_only_files():
+    row = recall.evaluate_task(
+        "PRI-1",
+        predicted={"reviewer/a.py", "reviewer/b.py"},
+        expected={"reviewer/a.py"},
+        expected_core={"reviewer/a.py"},
+        context_core={"reviewer/b.py", "reviewer/c.py"},
+    )
+    assert row.context_core == 2
+    assert row.hit_context == 1
+    assert row.context_recall == 0.5
+
+
+def test_empty_context_denominator_is_none_not_zero():
+    """Пустое контекстное ядро — «нет точки измерения», по образцу
+    empty_core_denominator; ноль занижал бы медиану систематически."""
+    row = recall.evaluate_task(
+        "PRI-1", {"reviewer/a.py"}, {"reviewer/a.py"}, {"reviewer/a.py"},
+        context_core=set(),
+    )
+    assert row.context_recall is None
+
+
+def test_union_precision_is_never_below_old_precision():
+    """Файл, который надо было ПРОЧИТАТЬ, перестаёт считаться шумом.
+    Объединение идёт по expected (все изменённые), а не по expected_core:
+    по одному ядру новая precision могла бы оказаться НИЖЕ старой."""
+    row = recall.evaluate_task(
+        "PRI-1",
+        predicted={"reviewer/a.py", "reviewer/b.py"},
+        expected={"reviewer/a.py", "tests/test_a.py"},
+        expected_core={"reviewer/a.py"},
+        context_core={"reviewer/b.py"},
+    )
+    assert row.precision == 0.5
+    assert row.union_precision == 1.0
+
+
+def test_aggregate_reports_context_medians_and_gaps():
+    rows = [
+        recall.evaluate_task("A", {"reviewer/b.py"}, {"reviewer/a.py"},
+                             {"reviewer/a.py"}, context_core={"reviewer/b.py"}),
+        recall.evaluate_task("B", {"reviewer/a.py"}, {"reviewer/a.py"},
+                             {"reviewer/a.py"}, context_core=set()),
+    ]
+    agg = recall.aggregate(rows)
+    assert agg.context_n_measured == 1
+    assert agg.no_context_measurement == 1
+    assert agg.context_recall_median == 1.0

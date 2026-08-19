@@ -167,6 +167,18 @@ class LiveRetrieval:
         )
         return pack.as_context(line_numbers=True) or "(ничего не найдено)"
 
+    def neighbors(self, repo: str, branch: str, node_ids: list) -> set:
+        """Соседи символов по исходящим CALLS/IMPLEMENTS — обход для ядра (PRI-261).
+
+        Ввод-вывод живёт здесь, а не в reviewer/metrics/brief_quality: тот модуль
+        обязан оставаться чистым, иначе офлайн и онлайн перестают мерить одной
+        линейкой. Отсутствующий граф даёт пустое множество, а не отказ прогона.
+        """
+        graph = self._components.graph
+        if graph is None or not node_ids:
+            return set()
+        return graph.outgoing_neighbors(repo, sorted(node_ids), branch=branch)
+
 
 def open_live(repo: str | None = None, branch: str | None = None) -> tuple:
     """Собрать живой провайдер и вернуть (provider, repo, branch).

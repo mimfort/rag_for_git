@@ -25,8 +25,17 @@ IMPORT_RE = re.compile(
 # без ввода-вывода. Плюс live.py, который и есть объявленное исключение.
 # variants.py и subquery_stats.py (PRI-255) импортируют reviewer.mcp.subqueries —
 # тоже чистую функцию без сети/БД: формула подзапросов производна от текста
-# задачи, не от живой инфраструктуры.
-ALLOWED = {"briefs.py", "classify.py", "recall.py", "live.py", "variants.py", "subquery_stats.py"}
+# задачи, не от живой инфраструктуры. context_core.py (PRI-261) — тот же класс,
+# что classify.py и recall.py: чистый ре-экспорт вывода контекстного ядра, без
+# Postgres/Neo4j/Voyage — обход графа приходит инъекцией, а не живым клиентом.
+# context_seeds.py (PRI-261) — того же класса: оба его импорта reviewer чистые
+# функции без Postgres/Neo4j/Voyage. chunk_python — tree-sitter-разбор в памяти
+# (на тексте, прочитанном инъектированным run_git, а не живым клиентом),
+# is_core_production_path — та же чистая классификация путей, что у classify.py.
+ALLOWED = {
+    "briefs.py", "classify.py", "recall.py", "live.py", "variants.py",
+    "subquery_stats.py", "context_core.py", "context_seeds.py",
+}
 
 
 def test_only_live_module_imports_reviewer():

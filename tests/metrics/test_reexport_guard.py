@@ -8,9 +8,11 @@ from __future__ import annotations
 
 from eval.solve_task_metrics import briefs as eval_briefs
 from eval.solve_task_metrics import classify as eval_classify
+from eval.solve_task_metrics import context_core as eval_context_core
 from eval.solve_task_metrics import recall as eval_recall
 from reviewer.metrics.brief_quality import briefs as prod_briefs
 from reviewer.metrics.brief_quality import classify as prod_classify
+from reviewer.metrics.brief_quality import context_core as prod_context_core
 from reviewer.metrics.brief_quality import recall as prod_recall
 
 
@@ -24,6 +26,8 @@ def test_eval_reexports_production_objects():
     assert eval_recall.BULK_CORE_THRESHOLD == prod_recall.BULK_CORE_THRESHOLD
     assert eval_briefs.extract_section_paths is prod_briefs.extract_section_paths
     assert eval_briefs.extract_task_key is prod_briefs.extract_task_key
+    assert eval_context_core.derive_context_core is prod_context_core.derive_context_core
+    assert eval_context_core.node_paths is prod_context_core.node_paths
 
 
 def test_production_core_does_not_import_eval():

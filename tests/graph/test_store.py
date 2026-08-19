@@ -40,6 +40,40 @@ def test_callers_directed(graph_store):
 
 
 @pytest.mark.integration
+def test_outgoing_neighbors_is_directed(graph_store):
+    """Только исходящие рёбра: контекстное ядро отвечает на вопрос «что читать,
+    чтобы НАПИСАТЬ», а не «кого я сломаю» — это разные вопросы."""
+    graph_store.init_schema()
+    graph_store.clear()
+    graph_store.upsert_nodes("test/repo", ["a.py#g", "a.py#f", "a.py#h"])
+    graph_store.upsert_edges("test/repo", [
+        ("a.py#g", "CALLS", "a.py#f"),
+        ("a.py#h", "CALLS", "a.py#g"),
+    ])
+    out = graph_store.outgoing_neighbors("test/repo", ["a.py#g"])
+    assert out == {"a.py#f"}
+
+
+@pytest.mark.integration
+def test_outgoing_neighbors_includes_implements(graph_store):
+    """IMPLEMENTS идёт наследник→база: соседний адаптер и контракт — ровно тот
+    случай, ради которого метрика заведена."""
+    graph_store.init_schema()
+    graph_store.clear()
+    graph_store.upsert_nodes("test/repo", ["a.py#Child", "b.py#Base"])
+    graph_store.upsert_edges("test/repo", [
+        ("a.py#Child", "IMPLEMENTS", "b.py#Base"),
+    ])
+    out = graph_store.outgoing_neighbors("test/repo", ["a.py#Child"])
+    assert out == {"b.py#Base"}
+
+
+@pytest.mark.integration
+def test_outgoing_neighbors_empty_ids(graph_store):
+    assert graph_store.outgoing_neighbors("test/repo", []) == set()
+
+
+@pytest.mark.integration
 def test_find_symbol_prefers_exact_suffix(graph_store):
     graph_store.init_schema()
     graph_store.clear()
