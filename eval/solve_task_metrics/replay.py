@@ -12,7 +12,7 @@ from __future__ import annotations
 import pathlib
 import statistics
 
-from . import briefs, classify, ground_truth, recall, variants
+from . import briefs, classify, context_core, context_seeds, ground_truth, recall, variants
 
 SCHEMA = 1
 """Версия схемы снимка replay. Растёт при несовместимом изменении формата."""
@@ -22,6 +22,7 @@ STATUS_EMPTY_CORE = "empty_core_denominator"
 STATUS_NO_GROUND_TRUTH = "no_ground_truth"
 STATUS_NO_TASK = "task_not_in_store"
 STATUS_RETRIEVAL_FAILED = "retrieval_failed"
+STATUS_EMPTY_CONTEXT = "empty_context_denominator"
 
 STATUSES = (
     STATUS_MEASURED,
@@ -65,12 +66,18 @@ def _task_row(key: str, status: str, **fields) -> dict:
         "precision": None,
         "predicted_paths": [],
         "expected_core_paths": [],
+        "context_status": STATUS_EMPTY_CONTEXT,
+        "context_core": 0,
+        "hit_context": 0,
+        "context_recall": None,
+        "union_precision": None,
+        "context_core_paths": [],
     }
     row.update(fields)
     return row
 
 
-def _evaluate(key: str, predicted: set, truth, run_git) -> dict:
+def _evaluate(key: str, predicted: set, truth, run_git, context_core_paths: set) -> dict:
     """Посчитать одну задачу той же линейкой, что build_snapshot."""
     existed_cache: dict = {}
 
@@ -86,8 +93,12 @@ def _evaluate(key: str, predicted: set, truth, run_git) -> dict:
         for path in truth.changed
         if classify.is_core_production_path(path) and existed(path)
     }
-    row = recall.evaluate_task(key, predicted, truth.changed, expected_core)
+    row = recall.evaluate_task(
+        key, predicted, truth.changed, expected_core,
+        context_core=context_core_paths,
+    )
     status = STATUS_MEASURED if expected_core else STATUS_EMPTY_CORE
+    context_status = STATUS_MEASURED if context_core_paths else STATUS_EMPTY_CONTEXT
     return _task_row(
         key,
         status,
@@ -100,6 +111,12 @@ def _evaluate(key: str, predicted: set, truth, run_git) -> dict:
         precision=row.precision,
         predicted_paths=sorted(predicted),
         expected_core_paths=sorted(expected_core),
+        context_status=context_status,
+        context_core=row.context_core,
+        hit_context=row.hit_context,
+        context_recall=row.context_recall,
+        union_precision=row.union_precision,
+        context_core_paths=sorted(context_core_paths),
     )
 
 
@@ -147,7 +164,16 @@ def run_replay(
         except Exception:  # noqa: BLE001 — сбой ретрива на задаче не роняет прогон
             rows.append(_task_row(key, STATUS_RETRIEVAL_FAILED))
             continue
-        row = _evaluate(key, predicted, truth, run_git)
+        try:
+            seeds = context_seeds.collect_seeds(truth, run_git)
+            core_now = context_core.derive_context_core(
+                seeds,
+                {p for p in truth.changed if classify.is_core_production_path(p)},
+                lambda ids: provider.neighbors(target.repo, target.branch, ids),
+            )
+        except Exception:  # noqa: BLE001 — недоступный граф не роняет прогон корпуса
+            core_now = set()
+        row = _evaluate(key, predicted, truth, run_git, core_now)
         if task is None:
             # Задача есть в корпусе брифов, но не в сторе: запрос выродился в
             # ключ, поэтому измерение непредставительно и считаться не должно.
@@ -166,6 +192,10 @@ def run_replay(
             core_recall=r["core_recall"],
             raw_recall=r["raw_recall"],
             precision=r["precision"],
+            context_core=r["context_core"],
+            hit_context=r["hit_context"],
+            context_recall=r["context_recall"],
+            union_precision=r["union_precision"],
         )
         for r in measured
     ]
@@ -197,6 +227,10 @@ def run_replay(
             "bulk_n_measured": agg.bulk_n_measured,
             "n_measured": agg.n_measured,
             "no_measurement": agg.no_measurement,
+            "context_recall_median": agg.context_recall_median,
+            "context_n_measured": agg.context_n_measured,
+            "no_context_measurement": agg.no_context_measurement,
+            "union_precision_median": agg.union_precision_median,
             # Медианы уже посчитанных полей строк — не формула метрики, а сводка
             # по ним; расчётное ядро остаётся единственной копией в reviewer/.
             "precision_median": _median(

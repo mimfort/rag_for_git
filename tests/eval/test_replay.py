@@ -23,7 +23,18 @@ def _corpus(tmp_path: pathlib.Path, keys) -> pathlib.Path:
 
 
 class FakeGit:
-    """git-раннер с заранее заданными мержами и составом diff'а."""
+    """git-раннер с заранее заданными мержами и составом diff'а.
+
+    Для сидов контекстного ядра (PRI-261) отдаёт настоящий unified diff с
+    заголовком `@@` и парсибельный Python-источник — иначе `collect_seeds`
+    (через `parse_hunk_ranges`/`chunk_python`) находил бы ноль сидов и тесты
+    контекстного ядра проходили бы вхолостую, ничего не проверяя.
+    """
+
+    # Один и тот же символ на любой core-путь: для сидов важен факт, что
+    # диапазон хунка (1-2) пересекается с диапазоном чанка функции "g".
+    SOURCE = "def g():\n    return 1\n"
+    HUNK = "@@ -0,0 +1,2 @@\n+def g():\n+    return 1\n"
 
     def __init__(self, changed_by_key, missing=()):
         self.changed_by_key = changed_by_key
@@ -35,20 +46,30 @@ class FakeGit:
             if key in self.missing or key not in self.changed_by_key:
                 return ""
             return f"sha{key} Merge pull request #1 from owner/branch\n"
-        if args[0] == "diff":
+        if args[0] == "diff" and "--name-only" in args:
             key = args[-1].removeprefix("sha")
-            return "\n".join(self.changed_by_key[key])
+            return "\n".join(self.changed_by_key.get(key, []))
+        if args[0] == "diff" and "--unified=0" in args:
+            # ["diff", "--unified=0", "sha<key>^1", "sha<key>", "--", path]
+            return self.HUNK
+        if args[0] == "show":
+            # ["show", "sha<key>:<path>"]
+            return self.SOURCE
         if args[0] == "cat-file":
             return ""
         raise AssertionError(f"неожиданный git-вызов: {args}")
 
 
 class FakeProvider:
-    def __init__(self, tasks, paths_by_key, fail=()):
+    def __init__(self, tasks, paths_by_key, fail=(), neighbors=None):
         self.tasks = tasks
         self.paths_by_key = paths_by_key
         self.fail = set(fail)
         self.queries: list = []
+        self._neighbors = neighbors if neighbors is not None else set()
+
+    def neighbors(self, repo, branch, node_ids):
+        return self._neighbors
 
     def preflight(self, repo, branch):
         return {
@@ -81,8 +102,9 @@ def _target():
     return replay.variants.ReplayTarget(repo="o/n", branch="dev", limits=None)
 
 
-def _run(tmp_path, keys, *, tasks, changed, predicted, fail=(), missing=(), limit=None):
-    provider = FakeProvider(tasks, predicted, fail=fail)
+def _run(tmp_path, keys, *, tasks, changed, predicted, fail=(), missing=(), limit=None,
+         neighbors=None):
+    provider = FakeProvider(tasks, predicted, fail=fail, neighbors=neighbors)
     return replay.run_replay(
         provider=provider,
         run_git=FakeGit(changed, missing=missing),
@@ -198,3 +220,59 @@ def test_full_run_is_not_partial_and_records_index_identity(tmp_path):
     assert snap["indexed_sha"] == "abc123"
     assert snap["commit"] == "deadbee"
     assert snap["variant"] == "baseline"
+
+
+def test_context_core_fields_present_in_row(tmp_path):
+    """Контекстное ядро считается рядом с core, своим статусом и своими путями.
+
+    changed={"reviewer/a.py"} даёт через FakeGit реальный сид
+    "reviewer/a.py#g" (настоящий hunk + парсибельный источник, см. FakeGit);
+    провайдер-заглушка отдаёт соседа "reviewer/b.py#g" независимо от того,
+    какие сиды ему передали — это и есть подставной обход графа. derive_context_core
+    вычитает изменённое ядро ("reviewer/a.py") из путей соседей, поэтому
+    непустой результат доказывает, что сиды реально нашлись и дошли до обхода,
+    а не что тест проходит вхолостую.
+    """
+    snap = _run(
+        tmp_path,
+        ["PRI-11"],
+        tasks={"PRI-11": {"title": "PRI-11", "description": ""}},
+        changed={"PRI-11": ["reviewer/a.py"]},
+        predicted={"PRI-11": ["reviewer/a.py"]},
+        neighbors={"reviewer/b.py#g"},
+    )
+    row = snap["tasks"][0]
+    assert row["context_status"] == replay.STATUS_MEASURED
+    assert row["context_core_paths"] == ["reviewer/b.py"]
+    assert row["context_recall"] is not None
+
+
+def test_empty_context_core_is_not_zero_recall(tmp_path):
+    """Пустое контекстное ядро — отдельный статус и None, по образцу
+    empty_core_denominator."""
+    snap = _run(
+        tmp_path,
+        ["PRI-12"],
+        tasks={"PRI-12": {"title": "PRI-12", "description": ""}},
+        changed={"PRI-12": ["reviewer/a.py"]},
+        predicted={"PRI-12": ["reviewer/a.py"]},
+        neighbors=set(),
+    )
+    row = snap["tasks"][0]
+    assert row["context_status"] == replay.STATUS_EMPTY_CONTEXT
+    assert row["context_recall"] is None
+
+
+def test_aggregate_carries_context_medians(tmp_path):
+    snap = _run(
+        tmp_path,
+        ["PRI-13"],
+        tasks={"PRI-13": {"title": "PRI-13", "description": ""}},
+        changed={"PRI-13": ["reviewer/a.py"]},
+        predicted={"PRI-13": ["reviewer/a.py"]},
+        neighbors={"reviewer/b.py#g"},
+    )
+    agg = snap["aggregate"]
+    assert "context_recall_median" in agg
+    assert "union_precision_median" in agg
+    assert agg["context_n_measured"] >= 0

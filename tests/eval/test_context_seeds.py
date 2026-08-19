@@ -74,8 +74,8 @@ def test_seeds_for_merge_survives_git_failure():
 
 
 def test_seeds_for_merge_skips_unparsable_source():
-    """Не-Python или битый файл не роняет прогон."""
+    """Не-Python или битый файл не роняет прогон, сидов при этом нет."""
     def run_git(args):
         return DIFF if args[0] == "diff" else "\x00\x01 not python"
 
-    context_seeds.seeds_for_merge("x", {"reviewer/a.py"}, run_git)
+    assert context_seeds.seeds_for_merge("x", {"reviewer/a.py"}, run_git) == set()
