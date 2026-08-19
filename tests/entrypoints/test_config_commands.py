@@ -54,8 +54,128 @@ def test_config_show_json_reports_effective_sources_and_shadowing(
     payload = json.loads(result.output)
     assert payload["effective"]["max_comments"] == 7
     assert payload["effective"]["paths"]["ignore"] == ["home"]
-    assert payload["sources"]["paths"] == "home:repos/o/r.yml"
-    assert payload["shadowed"]["paths"] == ["home:review.yml", ".review.yml"]
+    assert payload["sources"]["paths.ignore"] == "home:repos/o/r.yml"
+    assert payload["shadowed"]["paths.ignore"] == ["home:review.yml", ".review.yml"]
+
+
+def test_config_show_text_collapses_single_source_key(monkeypatch, tmp_path):
+    """Ключ из одного слоя печатается одной строкой, как до PRI-260."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    _install_fake_vcs(monkeypatch, "max_comments: 7\n")
+
+    result = CliRunner().invoke(
+        cli_mod.cli, ["config", "show", "--repo", "o/r", "--branch", "main"]
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "max_comments: 7" in result.output
+    assert "  source: .review.yml" in result.output
+    assert "mixed" not in result.output
+
+
+def test_config_show_text_reports_mixed_sources_per_leaf(monkeypatch, tmp_path):
+    """Ключ, собранный из двух слоёв, называет слой каждого расходящегося листа."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    home_repo = tmp_path / "rag-reviewer/repos/o/r.yml"
+    home_repo.parent.mkdir(parents=True, exist_ok=True)
+    home_repo.write_text("context_limits: {graph: {hops: 3}}\n", encoding="utf-8")
+    _install_fake_vcs(
+        monkeypatch, "context_limits: {code_section: {max_files: 12}}\n"
+    )
+
+    result = CliRunner().invoke(
+        cli_mod.cli, ["config", "show", "--repo", "o/r", "--branch", "main"]
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "  source: mixed" in result.output
+    assert "    context_limits.code_section.max_files: .review.yml" in result.output
+    assert "    context_limits.graph.hops: home:repos/o/r.yml" in result.output
+
+
+def test_config_show_text_shadowing_names_the_leaf(monkeypatch, tmp_path):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    home_repo = tmp_path / "rag-reviewer/repos/o/r.yml"
+    home_repo.parent.mkdir(parents=True, exist_ok=True)
+    home_repo.write_text(
+        "context_limits: {code_section: {max_files: 20}}\n", encoding="utf-8"
+    )
+    _install_fake_vcs(
+        monkeypatch,
+        "context_limits: {code_section: {max_files: 12, chars_per_file: 1300}}\n",
+    )
+
+    result = CliRunner().invoke(
+        cli_mod.cli, ["config", "show", "--repo", "o/r", "--branch", "main"]
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "  shadowed:" in result.output
+    assert (
+        "    context_limits.code_section.max_files: .review.yml" in result.output
+    )
+
+
+def test_config_show_text_leaf_default_gets_env_source_next_to_layer_leaf(
+    monkeypatch, tmp_path
+):
+    """У ключа с одним листом от слоя соседний лист-дефолт получает источник env.
+
+    Раньше фолбэк "env" навешивался на верхний ключ целиком: если хоть один
+    лист ключа встретился в каком-то слое, ключ считался полностью покрытым, и
+    соседний лист, заполненный дефолтом ReviewPolicy, оставался вовсе без
+    записи в sources. Дефолт должен получить "env" на уровне своего пути.
+    """
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    home_repo = tmp_path / "rag-reviewer/repos/o/r.yml"
+    home_repo.parent.mkdir(parents=True, exist_ok=True)
+    home_repo.write_text("context_limits: {graph: {hops: 3}}\n", encoding="utf-8")
+    _install_fake_vcs(monkeypatch, "max_comments: 7\n")
+
+    result = CliRunner().invoke(
+        cli_mod.cli,
+        ["config", "show", "--repo", "o/r", "--branch", "main", "--json"],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["sources"]["context_limits.graph.hops"] == "home:repos/o/r.yml"
+    # Соседний лист того же ключа не наложен ни одним слоем — дефолт, "env".
+    assert payload["sources"]["context_limits.code_section.max_files"] == "env"
+
+
+def test_config_show_text_atomic_task_board_stays_a_single_source_line(
+    monkeypatch, tmp_path
+):
+    """task_board — атомарный ключ (ATOMIC_KEYS): один слой не даёт mixed.
+
+    До фикса листовой фолбэк "env" раскладывал task_board на подполя
+    (task_board.project, ...) через leaf_paths, не знающий про атомарность, и
+    setdefault подставлял им "env" рядом с реальной записью sources["task_board"]
+    — "config show" врал бы про mixed для ключа, целиком пришедшего из одного слоя.
+    """
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    _install_fake_vcs(
+        monkeypatch, "task_board:\n  project: PRI\n  sync_filter: {max_age_days: 7}\n"
+    )
+
+    result = CliRunner().invoke(
+        cli_mod.cli,
+        ["config", "show", "--repo", "o/r", "--branch", "main"],
+    )
+    result_json = CliRunner().invoke(
+        cli_mod.cli,
+        ["config", "show", "--repo", "o/r", "--branch", "main", "--json"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "  source: .review.yml" in result.output
+    assert "mixed" not in result.output
+
+    assert result_json.exit_code == 0, result_json.output
+    payload = json.loads(result_json.output)
+    assert payload["sources"]["task_board"] == ".review.yml"
+    assert not any(key.startswith("task_board.") for key in payload["sources"])
 
 
 def test_config_show_rejects_malformed_home_yaml_in_strict_mode(
@@ -349,7 +469,7 @@ def test_config_show_reads_committed_layer_from_local_clone(monkeypatch, tmp_pat
     assert result.exit_code == 0, result.output
     payload = json.loads(result.output)
     assert payload["effective"]["max_comments"] == 11        # слой из клона
-    assert payload["committed_source"] == "local"
+    assert payload["committed_source"] == "git-blob"
     vcs.get_file_at_ref.assert_not_called()                  # ни одного сетевого вызова
 
 
@@ -420,4 +540,118 @@ def test_config_show_text_output_reports_committed_source(monkeypatch, tmp_path)
     )
 
     assert result.exit_code == 0, result.output
-    assert "committed: local" in result.output
+    assert "committed: git-blob" in result.output
+
+
+def test_config_show_warns_about_worktree_drift(monkeypatch, tmp_path):
+    """Правка .review.yml в рабочем дереве названа явно; политика — из блоба."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "home"))
+    clone = _make_local_clone(
+        tmp_path, remote="https://github.com/o/r.git", content="max_comments: 11\n"
+    )
+    (clone / ".review.yml").write_text("max_comments: 22\n", encoding="utf-8")
+    _install_fake_vcs(monkeypatch, "max_comments: 7\n")
+
+    result = CliRunner().invoke(
+        cli_mod.cli,
+        ["config", "show", "--repo", "o/r", "--branch", "main",
+         "--path", str(clone), "--json"],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["effective"]["max_comments"] == 11          # источник прежний — блоб
+    assert payload["committed_source"] == "git-blob"
+    assert payload["worktree_drift"]["status"] == "drifted"
+    assert payload["worktree_drift"]["keys"] == ["max_comments"]
+
+
+def test_config_show_text_prints_drift_warning(monkeypatch, tmp_path):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "home"))
+    clone = _make_local_clone(
+        tmp_path, remote="https://github.com/o/r.git", content="max_comments: 11\n"
+    )
+    (clone / ".review.yml").write_text("max_comments: 22\n", encoding="utf-8")
+    _install_fake_vcs(monkeypatch, "max_comments: 7\n")
+
+    result = CliRunner().invoke(
+        cli_mod.cli,
+        ["config", "show", "--repo", "o/r", "--branch", "main", "--path", str(clone)],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "committed: git-blob" in result.output
+    # Ключ обязан стоять В блоке дрейфа: сам по себе `max_comments` печатается
+    # как эффективный ключ в любом прогоне и ничего бы не доказывал.
+    assert "worktree_drift: drifted\n  max_comments" in result.output
+
+
+def test_config_show_skips_drift_when_committed_layer_came_from_vcs(
+    monkeypatch, tmp_path
+):
+    """Ветки нет в клоне → слой прочитан через API; сравнивать не с чем.
+
+    Дрейф сравнивает рабочее дерево с ПРОЧИТАННЫМ блобом. Когда слой пришёл из
+    API хостинга, отчёт о дрейфе был бы не про показанную эффективную политику.
+    """
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "home"))
+    clone = _make_local_clone(
+        tmp_path, remote="https://github.com/o/r.git", content="max_comments: 11\n"
+    )
+    (clone / ".review.yml").write_text("max_comments: 22\n", encoding="utf-8")
+    _install_fake_vcs(monkeypatch, "max_comments: 7\n", branch="main,dev")
+
+    result = CliRunner().invoke(
+        cli_mod.cli,
+        ["config", "show", "--repo", "o/r", "--branch", "dev",
+         "--path", str(clone), "--json"],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["committed_source"] == "vcs"          # ветки dev в клоне нет
+    assert "worktree_drift" not in payload
+
+
+def test_config_show_stays_silent_when_drift_diagnostic_itself_failed(
+    monkeypatch, tmp_path
+):
+    """`unknown` — сбой самой диагностики: строка о нём не говорит ничего."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "home"))
+    clone = _make_local_clone(
+        tmp_path, remote="https://github.com/o/r.git", content="max_comments: 11\n"
+    )
+    (clone / ".review.yml").write_text("max_comments: [unclosed\n", encoding="utf-8")
+    _install_fake_vcs(monkeypatch, "max_comments: 7\n")
+
+    text = CliRunner().invoke(
+        cli_mod.cli,
+        ["config", "show", "--repo", "o/r", "--branch", "main", "--path", str(clone)],
+    )
+    payload = json.loads(CliRunner().invoke(
+        cli_mod.cli,
+        ["config", "show", "--repo", "o/r", "--branch", "main",
+         "--path", str(clone), "--json"],
+    ).output)
+
+    assert text.exit_code == 0, text.output
+    assert payload["worktree_drift"]["status"] == "unknown"   # в JSON статус есть
+    assert "worktree_drift" not in text.output                # в тексте — молчание
+    assert payload["effective"]["max_comments"] == 11         # политика из блоба
+
+
+def test_config_show_text_nulled_key_has_one_source_line(monkeypatch, tmp_path):
+    """Слой, снявший секцию целиком (`null`), не даёт `mixed` (PRI-260)."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    home_repo = tmp_path / "rag-reviewer/repos/o/r.yml"
+    home_repo.parent.mkdir(parents=True, exist_ok=True)
+    home_repo.write_text("context_limits: null\n", encoding="utf-8")
+    _install_fake_vcs(monkeypatch, "max_comments: 7\n")
+
+    result = CliRunner().invoke(
+        cli_mod.cli, ["config", "show", "--repo", "o/r", "--branch", "main"]
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "mixed" not in result.output
+    assert "  source: home:repos/o/r.yml" in result.output

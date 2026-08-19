@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import logging
 
+from reviewer.mcp.subqueries import build_subqueries
+
 log = logging.getLogger(__name__)
 
 SECTIONS = (
@@ -50,9 +52,18 @@ def _query(task: dict | None, key: str) -> str:
     return f"{title}. {head}".strip(". ").strip() or key
 
 
-def _test_query(task: dict | None, key: str) -> str:
-    """Целевой запрос про тесты области, а не код-запрос с флагом."""
-    return f"как тестируется: {_query(task, key)}"
+def _queries(task: dict | None, key: str) -> list[str]:
+    """Набор подзапросов секции code: продакшн-запрос плюс структура задачи.
+
+    Первый элемент — ровно _query(task, key), поэтому на задаче без списков
+    набор вырождается в один запрос и ретрив ведёт себя как раньше.
+    """
+    return build_subqueries(task, _query(task, key))
+
+
+def _test_queries(task: dict | None, key: str) -> list[str]:
+    """Те же подзапросы, но про тесты области — префиксом "как тестируется: "."""
+    return [f"как тестируется: {query}" for query in _queries(task, key)]
 
 
 def build_task_context(deps, *, repo: str, key: str, branch: str,
@@ -97,10 +108,12 @@ def build_task_context(deps, *, repo: str, key: str, branch: str,
         payload, "subsystems", lambda: deps.subsystems(repo, branch, query), None,
         "сводки подсистем недоступны")
     payload["code"] = _safe(
-        payload, "code", lambda: deps.code(repo, branch, query), "",
+        payload, "code", lambda: deps.code(repo, branch, _queries(task, key)), "",
         "поиск по коду недоступен")
+    for reason in getattr(deps, "augment_gaps", []) or []:
+        payload["gaps"].append(gap("code.augment", reason))
     payload["test_exemplars"] = _safe(
         payload, "test_exemplars",
-        lambda: deps.test_exemplars(repo, branch, _test_query(task, key)), "",
+        lambda: deps.test_exemplars(repo, branch, _test_queries(task, key)), "",
         "поиск по тестам недоступен")
     return payload

@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, patch
 
 from reviewer.config.settings import Settings
 from reviewer.mcp.service import MCPReviewService
-from reviewer.policy.context_limits import CodebaseLimits, ContextLimits
+from reviewer.policy.context_limits import CodebaseLimits, CodeSectionLimits, ContextLimits
 
 
 def _settings() -> Settings:
@@ -168,7 +168,7 @@ def test_resolve_policy_skips_invalid_home_value_without_logging_literal(
         policy, meta = svc._resolve_policy("o/r", "dev")
 
     assert policy.context_limits.graph.hops == 2
-    assert meta.sources["context_limits"] == ".review.yml"
+    assert meta.sources["context_limits.graph.hops"] == ".review.yml"
     assert "home:repos/o/r.yml" in caplog.text
     assert secret not in caplog.text
 
@@ -288,3 +288,105 @@ def test_search_codebase_passes_limits_and_topk_override() -> None:
     assert retr.calls[0]["ceiling_override"] == 40
     assert isinstance(retr.calls[0]["limits"], CodebaseLimits)
     assert retr.calls[0]["hops"] == 1
+
+
+def test_search_codebase_multi_passes_limits_and_hops(
+    isolated_xdg_config_home,
+) -> None:
+    """_search_codebase_multi (PRI-255) пробрасывает в search_multi лимиты,
+    резолвленные из эффективной .review.yml-политики — не дефолт-константы.
+
+    Значения в домашнем слое НЕ совпадают с дефолтами (ceiling=15, hops=1),
+    иначе тест не отличил бы резолв политики от захардкоженных CodebaseLimits().
+    """
+    path = isolated_xdg_config_home / "rag-reviewer/repos/o/r.yml"
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        "context_limits: {graph: {hops: 2}, search_codebase: {ceiling: 7}}\n",
+        encoding="utf-8")
+    s = _settings()
+    s.review_branches = "dev"          # branch="dev" должна быть отслеживаемой
+    components = MagicMock()
+    vcs = MagicMock()
+    vcs.get_file_at_ref.return_value = None    # нет committed .review.yml
+    svc = MCPReviewService(s, components, vcs_factory=lambda o, n: vcs)
+
+    with patch("reviewer.retrieval.multiquery.search_multi") as sm:
+        sm.return_value.as_context.return_value = "ok"
+        svc._search_codebase_multi("o/r", ["q1", "q2"], branch="dev")
+
+    call = sm.call_args
+    assert isinstance(call.kwargs["limits"], CodebaseLimits)
+    assert call.kwargs["limits"].ceiling == 7
+    assert call.kwargs["hops"] == 2
+
+
+def test_search_codebase_multi_passes_code_section_limits(
+    isolated_xdg_config_home,
+) -> None:
+    """_search_codebase_multi (PRI-256) пробрасывает в search_multi файловый
+    бюджет секции, резолвленный из эффективной .review.yml-политики.
+
+    Значения в домашнем слое НЕ совпадают с дефолтами (20/1/975), иначе тест
+    не отличил бы честный резолв политики от захардкоженного CodeSectionLimits().
+    """
+    path = isolated_xdg_config_home / "rag-reviewer/repos/o/r.yml"
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        "context_limits: {code_section: {max_files: 5, chars_per_file: 400}}\n",
+        encoding="utf-8")
+    s = _settings()
+    s.review_branches = "dev"
+    components = MagicMock()
+    vcs = MagicMock()
+    vcs.get_file_at_ref.return_value = None
+    svc = MCPReviewService(s, components, vcs_factory=lambda o, n: vcs)
+
+    with patch("reviewer.retrieval.multiquery.search_multi") as sm:
+        sm.return_value.as_context.return_value = "ok"
+        svc._search_codebase_multi("o/r", ["q1"], branch="dev")
+
+    call = sm.call_args
+    assert isinstance(call.kwargs["section_limits"], CodeSectionLimits)
+    assert call.kwargs["section_limits"].max_files == 5
+    assert call.kwargs["section_limits"].chars_per_file == 400
+    assert call.kwargs["section_limits"].max_chunks_per_file == 1   # дефолт сохранён
+
+
+def test_search_codebase_multi_forwards_augment_kwargs() -> None:
+    """_search_codebase_multi (PRI-257/258) пробрасывает augment_sources в
+    search_multi без изменений — сборка входа остаётся снаружи, в _TaskContextDeps."""
+    from reviewer.retrieval.augment import AugmentSource
+
+    s = _settings()
+    s.review_branches = "dev"
+    components = MagicMock()
+    vcs = MagicMock()
+    vcs.get_file_at_ref.return_value = None
+    svc = MCPReviewService(s, components, vcs_factory=lambda o, n: vcs)
+    sources = [AugmentSource(name="similar-diffs", paths=["a.py"], quota=3)]
+
+    with patch("reviewer.retrieval.multiquery.search_multi") as sm:
+        sm.return_value.as_context.return_value = "ok"
+        svc._search_codebase_multi("o/r", ["q1"], branch="dev",
+                                   augment_sources=sources)
+
+    call = sm.call_args
+    assert call.kwargs["augment_sources"] == sources
+
+
+def test_search_codebase_multi_defaults_augment_kwargs_to_none() -> None:
+    """test_exemplars и прочие вызовы без augment-сигнала не передают его вовсе."""
+    s = _settings()
+    s.review_branches = "dev"
+    components = MagicMock()
+    vcs = MagicMock()
+    vcs.get_file_at_ref.return_value = None
+    svc = MCPReviewService(s, components, vcs_factory=lambda o, n: vcs)
+
+    with patch("reviewer.retrieval.multiquery.search_multi") as sm:
+        sm.return_value.as_context.return_value = "ok"
+        svc._search_codebase_multi("o/r", ["q1"], branch="dev")
+
+    call = sm.call_args
+    assert call.kwargs["augment_sources"] is None

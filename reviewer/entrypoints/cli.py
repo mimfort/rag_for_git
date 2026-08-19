@@ -20,12 +20,18 @@ import yaml
 from reviewer.config.settings import Settings
 from reviewer.app import build_components
 from reviewer.config.branches import migrate_repo_branches, resolve_repo_branches
-from reviewer.config.committed import CommittedLayerFetcher
+from reviewer.config.committed import (
+    SOURCE_LOCAL,
+    CommittedLayerFetcher,
+    worktree_drift,
+)
 from reviewer.config.layers import (
     HomeConfigError,
     build_config_report,
+    leaves_of,
     migrate_repo_config,
     resolve_policy_data,
+    source_of,
 )
 from reviewer.config.onboarding import (
     RepositoryConfigPlan,
@@ -147,6 +153,45 @@ def _branches_report(branches) -> dict[str, object]:
     }
 
 
+def _echo_source_leaves(sources: Mapping[str, str], key: str) -> None:
+    """`source`: одна строка, если все листья указывают на один слой.
+
+    Если слои расходятся — общая строка была бы неразличимой ложью
+    («какой-то один слой»), поэтому заголовок ``mixed`` и строка на лист.
+    `source_of` — общий с `mcp/service.py` хелпер (`reviewer/config/layers.py`):
+    диагностика верхнего ключа по листовым `sources` не должна дублироваться
+    литералом на каждом потребителе (см. фикс summary_cluster_depth_overrides).
+    """
+    leaves = leaves_of(sources, key)
+    if not leaves:
+        return
+    resolved = source_of(sources, key)
+    if resolved != "mixed":
+        click.echo(f"  source: {resolved}")
+        return
+    click.echo("  source: mixed")
+    for path in sorted(leaves):
+        click.echo(f"    {path}: {leaves[path]}")
+
+
+def _echo_shadowed_leaves(key: str, leaves: Mapping[str, list[str]]) -> None:
+    """`shadowed`: одна строка ТОЛЬКО когда затенён сам верхний ключ.
+
+    Два листа одного ключа обычно затенены ОДНИМ слоем — общая свёртка (как у
+    `source`) вернула бы неразличимое `shadowed: .review.yml` и скрыла бы
+    именно то, что PRI-260 делает видимым: какая подсекция затенена, а не
+    затенён ли ключ целиком.
+    """
+    if not leaves:
+        return
+    if set(leaves) == {key}:
+        click.echo(f"  shadowed: {', '.join(leaves[key])}")
+        return
+    click.echo("  shadowed:")
+    for path in sorted(leaves):
+        click.echo(f"    {path}: {', '.join(leaves[path])}")
+
+
 def _render_config_report(report: Mapping[str, object]) -> None:
     branches = report.get("branches")
     if branches:
@@ -162,9 +207,18 @@ def _render_config_report(report: Mapping[str, object]) -> None:
         return
     committed_source = report.get("committed_source")
     if committed_source is not None:
-        # Способ чтения коммиченного слоя (PRI-235): local = из клона без сети,
-        # vcs = через API хостинга.
+        # Способ чтения коммиченного слоя (PRI-235): git-blob = коммиченный
+        # объект git из локального клона без сети, vcs = через API хостинга.
         click.echo(f"committed: {committed_source}")
+    drift = report.get("worktree_drift")
+    if isinstance(drift, Mapping) and drift["status"] not in ("clean", "unknown"):
+        # «Правка есть, но её не видно» — исходный дефект PRI-260, поэтому
+        # причина пропуска сравнения (`ref_not_head`, `absent_*`) называется
+        # явно. Молчит только `unknown`: сбой самой диагностики — fail-soft,
+        # и строка о нём сказала бы о состоянии политики ровно ничего.
+        click.echo(f"worktree_drift: {drift['status']}")
+        for key in drift["keys"]:
+            click.echo(f"  {key}")
     effective = report["effective"]
     sources = report["sources"]
     shadowed = report["shadowed"]
@@ -175,9 +229,8 @@ def _render_config_report(report: Mapping[str, object]) -> None:
         click.echo(
             f"{key}: {json.dumps(effective[key], ensure_ascii=False, sort_keys=True)}"
         )
-        click.echo(f"  source: {sources[key]}")
-        if key in shadowed:
-            click.echo(f"  shadowed: {', '.join(shadowed[key])}")
+        _echo_source_leaves(sources, key)
+        _echo_shadowed_leaves(key, leaves_of(shadowed, key))
     for warning in report["warnings"]:
         click.echo(f"warning: {warning}")
     for item in report.get("skipped") or ():
@@ -288,6 +341,15 @@ def config_show(repo: str, branch: str | None, clone_path: str | None,
                     repo_id, ref, settings, data, meta,
                     committed_source=fetch_committed.source,
                 ))
+                clone_root = fetch_committed.clone_root
+                if clone_root is not None and fetch_committed.source == SOURCE_LOCAL:
+                    # Дрейф сравнивает рабочее дерево с тем, что реально
+                    # прочитано. Если слой пришёл через API хостинга (ветка в
+                    # клоне не выкачана), сравнение было бы не про показанную
+                    # эффективную политику.
+                    payload["worktree_drift"] = worktree_drift(
+                        clone_root, ref
+                    ).as_dict()
             except (HomeConfigError, yaml.YAMLError) as exc:
                 # Тот же санитайзер, что и у остальных config-команд: не эхоить
                 # сырой YAML/normalization payload исключения.

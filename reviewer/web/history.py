@@ -690,6 +690,33 @@ class ReviewHistory:
             "no_measurement_by_status": no_measurement,
         }
 
+    def diff_paths_for_tasks(self, keys: list[str],
+                             repo: str | None = None) -> dict[str, list[str]]:
+        """Фактические core-пути диффов задач: task_key → пути (PRI-257).
+
+        Union по всем строкам задачи, как в brief_quality_trend: у задачи может
+        быть несколько PR, и одна строка — это один PR, а не вся задача.
+        Fail-soft: недоступная БД — пустая карта, вызывающий продолжает сборку.
+        """
+        if not keys:
+            return {}
+        sql = """
+        SELECT task_key, expected_core_paths
+        FROM brief_quality
+        WHERE status = 'measured' AND task_key = ANY(%(keys)s)
+          AND (%(repo)s::text IS NULL OR repo = %(repo)s::text)
+        """
+        try:
+            with self._connect() as conn:
+                rows = conn.execute(sql, {"keys": list(keys), "repo": repo}).fetchall()
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Не удалось получить diff-пути задач: %s", exc)
+            return {}
+        out: dict[str, set] = {}
+        for task_key, paths in rows:
+            out.setdefault(task_key, set()).update(paths or [])
+        return {key: sorted(paths) for key, paths in out.items()}
+
 
 # ------------------------------------------------------------------
 # Вспомогательная функция

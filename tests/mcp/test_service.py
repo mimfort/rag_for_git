@@ -14,6 +14,8 @@ import pytest
 from reviewer.config.settings import Settings
 from reviewer.mcp.service import MCPReviewService
 from reviewer.policy.context_limits import CodebaseLimits
+from reviewer.retrieval.augment import AugmentResult
+from reviewer.tasks.store import TaskHit
 from reviewer.vcs.base import (
     ChangedFile,
     PullRequest,
@@ -692,6 +694,175 @@ def test_search_codebase_rejects_untracked_branch() -> None:
     assert "release/v9" in out
     assert "не отслеживается" in out
     svc.components.retriever.search_base.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Тесты _search_codebase_multi (PRI-255) — мультизапросный близнец search_codebase
+# ---------------------------------------------------------------------------
+
+def test_search_codebase_multi_delegates_to_search_multi() -> None:
+    """_search_codebase_multi зовёт search_multi с queries, retriever'ом, branch,
+    include_tests и рендерит результат построчно.
+
+    Резолв лимитов из эффективной .review.yml-политики (а не дефолт-константы)
+    закрыт отдельно — test_search_codebase_multi_passes_limits_and_hops в
+    test_context_limits_wiring.py, на недефолтном home-слое.
+    """
+    svc = _make_mcp_service()
+    with patch("reviewer.retrieval.multiquery.search_multi") as sm:
+        sm.return_value.as_context.return_value = "auth.py#logout\nbody"
+        out = svc._search_codebase_multi("a/b", ["q1", "q2"], include_tests=True)
+        assert "auth.py#logout" in out
+        call = sm.call_args
+        assert call.args[0] is svc.components.retriever
+        assert call.args[1] == "a/b"
+        assert call.args[2] == ["q1", "q2"]
+        assert call.kwargs["branch"] == svc.settings.primary_branch()
+        assert call.kwargs["include_tests"] is True
+        sm.return_value.as_context.assert_called_once_with(line_numbers=True)
+
+
+def test_search_codebase_multi_empty_or_error_returns_note() -> None:
+    """Пустой результат или сбой search_multi → '(ничего не найдено)'."""
+    svc = _make_mcp_service()
+    with patch("reviewer.retrieval.multiquery.search_multi") as sm:
+        sm.return_value.as_context.return_value = ""
+        assert svc._search_codebase_multi("a/b", ["x"]) == "(ничего не найдено)"
+        sm.side_effect = RuntimeError("pg down")
+        assert svc._search_codebase_multi("a/b", ["x"]) == "(ничего не найдено)"
+
+
+def test_search_codebase_multi_rejects_untracked_branch() -> None:
+    """Ветка не отслеживается репозиторием → понятная заметка, search_multi не зовётся."""
+    svc = _make_mcp_service()
+    with patch("reviewer.retrieval.multiquery.search_multi") as sm:
+        out = svc._search_codebase_multi("a/b", ["x"], branch="release/v9")
+        assert "release/v9" in out
+        assert "не отслеживается" in out
+        sm.assert_not_called()
+
+
+def test_task_context_deps_code_passes_include_tests_false() -> None:
+    """_TaskContextDeps.code зовёт _search_codebase_multi с include_tests=False.
+
+    Перепутанный позиционный аргумент незаметен для FakeDeps-тестов task_context —
+    там подменяется весь слой deps. Тест ловит именно проводку внутри service.py.
+
+    augment_sources (PRI-257) идёт kwarg: без предшествующего similar() _similar_hits
+    пуст, поэтому источник несёт пустой augment_paths=[].
+    """
+    from reviewer.mcp.service import _TaskContextDeps
+
+    fake_service = MagicMock()
+    fake_service._search_codebase_multi.return_value = "code-out"
+    deps = _TaskContextDeps(fake_service, None)
+
+    result = deps.code("o/r", "dev", ["q1", "q2"])
+
+    call = fake_service._search_codebase_multi.call_args
+    assert call.args == ("o/r", ["q1", "q2"], "dev", False)
+    sources = call.kwargs["augment_sources"]
+    assert len(sources) == 1
+    assert sources[0].name == "similar-diffs"
+    assert sources[0].paths == []
+    assert sources[0].quota == (
+        fake_service._resolve_context_limits.return_value.code_section.max_augmented_files)
+    assert result == "code-out"
+
+
+def test_task_context_deps_similar_stores_hits_and_renders_once() -> None:
+    """_TaskContextDeps.similar делает один поиск (search_hits) и рендерит его же результат.
+
+    Второй вызов означал бы второй embed_query — лишний расход квоты Voyage.
+    """
+    from reviewer.mcp.service import _TaskContextDeps
+
+    fake_service = MagicMock()
+    hits = [TaskHit(key="ID-311", title="T", status="open", score=0.02,
+                    aliases=["PRI-257"])]
+    fake_service.components.task_service.search_hits.return_value = hits
+    fake_service.components.task_service.render_hits.return_value = "1. ID-311 ..."
+    deps = _TaskContextDeps(fake_service, None)
+
+    result = deps.similar("query", "PRI")
+
+    fake_service.components.task_service.search_hits.assert_called_once_with(
+        "query", project="PRI")
+    fake_service.components.task_service.render_hits.assert_called_once_with(hits)
+    assert result == "1. ID-311 ..."
+    assert deps._similar_hits == hits
+
+
+def test_task_context_deps_code_augments_from_similar_hits_with_aliases() -> None:
+    """code() подмешивает пути похожих задач, ключуя по канону И по алиасам хита."""
+    from reviewer.mcp.service import _TaskContextDeps
+
+    fake_service = MagicMock()
+    fake_service._repo_clone_path.return_value = "/clone"
+    fake_service.components.task_service.search_hits.return_value = [
+        TaskHit(key="ID-311", title="T", status="open", score=0.02,
+               aliases=["PRI-257"]),
+    ]
+    fake_service.components.task_service.render_hits.return_value = "1. ID-311 ..."
+    fake_service._search_codebase_multi.return_value = "code-out"
+    deps = _TaskContextDeps(fake_service, None)
+
+    deps.similar("query", "PRI")
+    with patch("reviewer.retrieval.augment.collect_similar_task_paths") as collect:
+        collect.return_value = AugmentResult(paths=["a.py"], gaps=[])
+        deps.code("o/r", "dev", ["q1"])
+
+    call_kwargs = collect.call_args.kwargs
+    assert call_kwargs["keys"] == ["ID-311"]
+    assert call_kwargs["aliases_by_key"] == {"ID-311": ["PRI-257"]}
+
+
+def test_task_context_deps_augment_paths_empty_without_similar_call() -> None:
+    """Без предшествующего similar() подмешивание не запускается — нет хитов."""
+    from reviewer.mcp.service import _TaskContextDeps
+
+    fake_service = MagicMock()
+    deps = _TaskContextDeps(fake_service, None)
+
+    assert deps._augment_paths("o/r") == []
+    assert deps.augment_gaps == []
+
+
+def test_task_context_deps_history_failure_is_a_gap_not_an_exception() -> None:
+    """Сбой _ensure_history не роняет сборку — пробел копится в augment_gaps."""
+    from reviewer.mcp.service import _TaskContextDeps
+
+    fake_service = MagicMock()
+    fake_service._review_service._ensure_history.side_effect = RuntimeError("no pg")
+    fake_service.components.task_service.search_hits.return_value = [
+        TaskHit(key="ID-311", title="T", status="open", score=0.02),
+    ]
+    fake_service.components.task_service.render_hits.return_value = "1. ID-311 ..."
+    deps = _TaskContextDeps(fake_service, None)
+    deps.similar("query", "PRI")
+
+    with patch("reviewer.retrieval.augment.collect_similar_task_paths") as collect:
+        collect.return_value = AugmentResult()
+        paths = deps._augment_paths("o/r")
+
+    assert paths == []
+    assert any("история прогонов недоступна" in g for g in deps.augment_gaps)
+    assert collect.call_args.kwargs["history"] is None
+
+
+def test_task_context_deps_test_exemplars_passes_include_tests_true() -> None:
+    """_TaskContextDeps.test_exemplars зовёт _search_codebase_multi с include_tests=True."""
+    from reviewer.mcp.service import _TaskContextDeps
+
+    fake_service = MagicMock()
+    fake_service._search_codebase_multi.return_value = "tests-out"
+    deps = _TaskContextDeps(fake_service, None)
+
+    result = deps.test_exemplars("o/r", "dev", ["q1", "q2"])
+
+    fake_service._search_codebase_multi.assert_called_once_with(
+        "o/r", ["q1", "q2"], "dev", True)
+    assert result == "tests-out"
 
 
 # ---------------------------------------------------------------------------

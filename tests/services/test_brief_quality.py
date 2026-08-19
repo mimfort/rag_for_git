@@ -198,6 +198,33 @@ def test_no_brief_on_broken_path_not_raising(tmp_path, monkeypatch):
     assert result.status == "no_brief"
 
 
+def test_measurement_carries_path_sets_not_only_counters(tmp_path):
+    """Критерий 4 PRI-259: строка метрики хранит множества путей.
+
+    Онлайн видит один PR, офлайн-baseline считался по задаче (union всех её
+    PR). Без множеств путей union на чтении невозможен, и task-level число
+    считалось бы другой линейкой, чем точка «до» (bulk_core_recall_median
+    ≈ 0.373, bulk_n_measured = 4) — то есть сопоставимость молча исчезла бы.
+    """
+    clone = _clone(tmp_path)
+    result = measure(
+        task_key="PRI-999",
+        clone_path=clone,
+        changed_paths=["reviewer/mcp/service.py", "reviewer/web/history.py"],
+        changed_status={
+            "reviewer/mcp/service.py": "modified",
+            "reviewer/web/history.py": "modified",
+        },
+    )
+    assert result.status == "measured"
+    assert result.expected_core_paths        # не пусто
+    assert result.hit_core_paths is not None
+    for value in (result.expected_core_paths, result.hit_core_paths):
+        assert not isinstance(value, int), "счётчик вместо множества путей ломает union"
+        assert all(isinstance(path, str) for path in value)
+    assert set(result.hit_core_paths) <= set(result.expected_core_paths)
+
+
 def test_online_matches_offline_formula_on_full_diff(tmp_path):
     """Стык: онлайн (`measure`) и офлайн-формула (`recall.evaluate_task` по
     правилам `eval/solve_task_metrics/snapshot.py`) обязаны считать один и тот

@@ -112,7 +112,7 @@ def test_prepare_uses_home_policy_without_committed_file(monkeypatch, tmp_path):
 
     assert captured["ignore"] == ["vendor"]
     assert prepared.policy.max_comments == 4
-    assert prepared.config_sources["sources"]["paths"] == "home:repos/o/r.yml"
+    assert prepared.config_sources["sources"]["paths.ignore"] == "home:repos/o/r.yml"
     committed_calls = [
         call for call in vcs.get_file_at_ref.call_args_list if call.args[0] == ".review.yml"
     ]

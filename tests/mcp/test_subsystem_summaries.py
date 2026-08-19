@@ -7,6 +7,7 @@ import pytest
 
 from reviewer.config.settings import Settings
 from reviewer.mcp.service import MCPReviewService
+from reviewer.services.summary_fragments import _GENERATION
 
 
 def _settings() -> Settings:
@@ -70,7 +71,7 @@ def _two_cluster_generation_state(
                 "summary": title,
                 "provenance": {
                     "_reviewer": {
-                        "generation": "summary-fragment-v1",
+                        "generation": _GENERATION,
                         "layout_token": compute_layout_token(fragment_depth, {}),
                         "depth": fragment_depth,
                     }
@@ -870,7 +871,7 @@ def test_index_subsystem_summary_commits_bundle_before_embedding_with_hash_cas()
                 "provenance": {
                     "generator": "test",
                         "_reviewer": {
-                            "generation": "summary-fragment-v2",
+                            "generation": _GENERATION,
                             "layout_token": compute_layout_token(2, {}),
                             "depth": 2,
                         },
@@ -1184,6 +1185,27 @@ def test_resolve_summary_depth_no_key_falls_back_to_env():
     assert overrides == {}
     assert ignore == normalize_summary_paths_ignore(DEFAULT_SUMMARY_PATHS_IGNORE)
     assert source == "env"
+
+
+def test_resolve_summary_depth_overrides_only_resolves_layer_source():
+    """PRI-260 фикс-раунд 2: overrides без скалярного depth не должны врать "env".
+
+    До фикса `meta.sources.get("summary_cluster_depth_overrides", "env")` читал
+    источник overrides по верхнему ключу, а после перехода sources на листовые
+    пути (PRI-260) там лежит только "summary_cluster_depth_overrides.<префикс>" —
+    голый .get() всегда мазал мимо и возвращал "env", даже когда overrides
+    заданы слоем.
+    """
+    from reviewer.graph.summaries import normalize_summary_paths_ignore
+    from reviewer.policy.policy import DEFAULT_SUMMARY_PATHS_IGNORE
+
+    svc = _svc_with_vcs(
+        _FakeVCS("summary_cluster_depth_overrides:\n  reviewer/index: 3\n")
+    )
+    depth, overrides, ignore, source = svc._resolve_summary_layout("o/n", "dev")
+    assert overrides == {"reviewer/index": 3}
+    assert ignore == normalize_summary_paths_ignore(DEFAULT_SUMMARY_PATHS_IGNORE)
+    assert source == ".review.yml"
 
 
 def test_resolve_summary_depth_failsoft_on_vcs_error():
