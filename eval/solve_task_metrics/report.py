@@ -85,13 +85,19 @@ def render(snapshot: dict, rows: list) -> str:
         "",
         "## Per-task",
         "",
-        "| Ключ | Бриф | expected | core | predicted | hit | core-recall |",
-        "|---|---|---|---|---|---|---|",
+        "| Ключ | Бриф | expected | core | predicted | hit | core-recall "
+        "| ctx | ctx_hit | ctx_recall | u_prec |",
+        "|---|---|---|---|---|---|---|---|---|---|---|",
     ]
     for row in rows:
+        # context_core/hit_context/context_recall/union_precision (PRI-261) —
+        # офлайн-only: online-снимок (snapshot.py) их пока не считает, поэтому
+        # .get() и прочерк, а не KeyError на существующих строках.
         lines.append(
             f"| {row['key']} | {row['file']} | {row['expected']} | "
             f"{row['expected_core']} | {row['predicted']} | {row['hit_core']} | "
-            f"{_pct(row['core_recall'])} |"
+            f"{_pct(row['core_recall'])} | {_num(row.get('context_core'))} | "
+            f"{_num(row.get('hit_context'))} | {_pct(row.get('context_recall'))} | "
+            f"{_pct(row.get('union_precision'))} |"
         )
     return "\n".join(lines) + "\n"

@@ -8,6 +8,10 @@ AGGREGATE_ROWS = (
     ("core_recall_mean", "core-recall (среднее)"),
     ("bulk_core_recall_median", "core-recall bulk (ядро ≥ 10)"),
     ("bulk_n_measured", "bulk N"),
+    ("context_recall_median", "context-recall (медиана)"),
+    ("context_n_measured", "context измерено"),
+    ("no_context_measurement", "context без точки измерения"),
+    ("union_precision_median", "union-precision (медиана)"),
     ("precision_median", "precision (медиана)"),
     ("predicted_median", "предсказано файлов (медиана)"),
     ("n_measured", "задач измерено"),
@@ -142,13 +146,16 @@ def render(new: dict, old: dict | None = None) -> str:
         lines += [
             "## Задачи",
             "",
-            "| Ключ | Статус | core-recall | предсказано | попало |",
-            "|---|---|---|---|---|",
+            "| Ключ | Статус | core-recall | предсказано | попало "
+            "| ctx | ctx_hit | ctx_recall | u_prec |",
+            "|---|---|---|---|---|---|---|---|---|",
         ]
         for row in new["tasks"]:
             lines.append(
                 f"| {row['key']} | {row['status']} | {_fmt(row.get('core_recall'))} "
-                f"| {row['predicted']} | {row['hit_core']} |"
+                f"| {row['predicted']} | {row['hit_core']} "
+                f"| {_fmt(row.get('context_core'))} | {_fmt(row.get('hit_context'))} "
+                f"| {_fmt(row.get('context_recall'))} | {_fmt(row.get('union_precision'))} |"
             )
         lines.append("")
 
