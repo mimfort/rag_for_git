@@ -28,9 +28,13 @@ IMPORT_RE = re.compile(
 # задачи, не от живой инфраструктуры. context_core.py (PRI-261) — тот же класс,
 # что classify.py и recall.py: чистый ре-экспорт вывода контекстного ядра, без
 # Postgres/Neo4j/Voyage — обход графа приходит инъекцией, а не живым клиентом.
+# context_seeds.py (PRI-261) — того же класса: оба его импорта reviewer чистые
+# функции без Postgres/Neo4j/Voyage. chunk_python — tree-sitter-разбор в памяти
+# (на тексте, прочитанном инъектированным run_git, а не живым клиентом),
+# is_core_production_path — та же чистая классификация путей, что у classify.py.
 ALLOWED = {
     "briefs.py", "classify.py", "recall.py", "live.py", "variants.py",
-    "subquery_stats.py", "context_core.py",
+    "subquery_stats.py", "context_core.py", "context_seeds.py",
 }
 
 
