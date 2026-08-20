@@ -23,6 +23,7 @@ STATUS_NO_GROUND_TRUTH = "no_ground_truth"
 STATUS_NO_TASK = "task_not_in_store"
 STATUS_RETRIEVAL_FAILED = "retrieval_failed"
 STATUS_EMPTY_CONTEXT = "empty_context_denominator"
+STATUS_CONTEXT_FAILED = "context_retrieval_failed"
 
 STATUSES = (
     STATUS_MEASURED,
@@ -31,6 +32,24 @@ STATUSES = (
     STATUS_NO_TASK,
     STATUS_RETRIEVAL_FAILED,
 )
+
+CONTEXT_STATUSES = (
+    STATUS_MEASURED,
+    STATUS_EMPTY_CONTEXT,
+    STATUS_CONTEXT_FAILED,
+)
+
+CONTEXT_EVALUATED_STATUSES = (
+    STATUS_MEASURED,
+    STATUS_EMPTY_CORE,
+    STATUS_NO_TASK,
+)
+"""Статусы задач, у которых обход графа вообще выполнялся.
+
+Задача без ground truth или с упавшим ретривом до обхода не доходит, и её
+дефолтный context_status не должен подмешиваться в счётчики контекста: иначе
+новый блок отчёта врёт с первого дня.
+"""
 
 
 def _median(values: list):
@@ -77,7 +96,8 @@ def _task_row(key: str, status: str, **fields) -> dict:
     return row
 
 
-def _evaluate(key: str, predicted: set, truth, run_git, context_core_paths: set) -> dict:
+def _evaluate(key: str, predicted: set, truth, run_git, context_core_paths: set,
+              context_failed: bool = False) -> dict:
     """Посчитать одну задачу той же линейкой, что build_snapshot."""
     existed_cache: dict = {}
 
@@ -98,7 +118,10 @@ def _evaluate(key: str, predicted: set, truth, run_git, context_core_paths: set)
         context_core=context_core_paths,
     )
     status = STATUS_MEASURED if expected_core else STATUS_EMPTY_CORE
-    context_status = STATUS_MEASURED if context_core_paths else STATUS_EMPTY_CONTEXT
+    if context_failed:
+        context_status = STATUS_CONTEXT_FAILED
+    else:
+        context_status = STATUS_MEASURED if context_core_paths else STATUS_EMPTY_CONTEXT
     return _task_row(
         key,
         status,
@@ -164,6 +187,7 @@ def run_replay(
         except Exception:  # noqa: BLE001 — сбой ретрива на задаче не роняет прогон
             rows.append(_task_row(key, STATUS_RETRIEVAL_FAILED))
             continue
+        context_failed = False
         try:
             seeds = context_seeds.collect_seeds(truth, run_git)
             core_now = context_core.derive_context_core(
@@ -174,7 +198,9 @@ def run_replay(
             )
         except Exception:  # noqa: BLE001 — недоступный граф не роняет прогон корпуса
             core_now = set()
-        row = _evaluate(key, predicted, truth, run_git, core_now)
+            context_failed = True
+        row = _evaluate(key, predicted, truth, run_git, core_now,
+                        context_failed=context_failed)
         if task is None:
             # Задача есть в корпусе брифов, но не в сторе: запрос выродился в
             # ключ, поэтому измерение непредставительно и считаться не должно.
@@ -218,6 +244,14 @@ def run_replay(
         "statuses": {
             status: sum(1 for r in rows if r["status"] == status)
             for status in STATUSES
+        },
+        "context_statuses": {
+            status: sum(
+                1 for r in rows
+                if r["status"] in CONTEXT_EVALUATED_STATUSES
+                and r["context_status"] == status
+            )
+            for status in CONTEXT_STATUSES
         },
         "aggregate": {
             "core_recall_median": agg.core_recall_median,

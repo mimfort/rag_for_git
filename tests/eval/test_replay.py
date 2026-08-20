@@ -265,6 +265,111 @@ def test_empty_context_core_is_not_zero_recall(tmp_path):
     assert row["context_recall"] is None
 
 
+class FailingNeighbours:
+    """Провайдер, у которого падает ровно обход графа (Neo4j недоступен)."""
+
+    def __init__(self, inner):
+        self._inner = inner
+
+    def __getattr__(self, name):
+        return getattr(self._inner, name)
+
+    def neighbors(self, repo, branch, node_ids):
+        raise RuntimeError("граф недоступен")
+
+
+def _run_with_failing_graph(tmp_path, keys, *, tasks, changed, predicted):
+    provider = FailingNeighbours(FakeProvider(tasks, predicted))
+    return replay.run_replay(
+        provider=provider,
+        run_git=FakeGit(changed),
+        briefs_dir=_corpus(tmp_path, keys),
+        target=_target(),
+        variant_name="baseline",
+        commit="deadbee",
+        taken_at="2026-08-17T00:00:00+00:00",
+    )
+
+
+def test_graph_failure_is_named_not_confused_with_empty_core(tmp_path):
+    """Сбой обхода отличим от честно пустого ядра — иначе тонет в штатном шуме."""
+    snap = _run_with_failing_graph(
+        tmp_path,
+        ["PRI-21"],
+        tasks={"PRI-21": {"title": "PRI-21", "description": ""}},
+        changed={"PRI-21": ["reviewer/a.py"]},
+        predicted={"PRI-21": ["reviewer/a.py"]},
+    )
+    row = snap["tasks"][0]
+    assert row["context_status"] == replay.STATUS_CONTEXT_FAILED
+    assert row["context_status"] != replay.STATUS_EMPTY_CONTEXT
+    assert row["context_recall"] is None
+    # прогон корпуса не прерван: задача измерена по core как обычно
+    assert row["status"] == replay.STATUS_MEASURED
+
+
+def test_graph_failure_is_counted_in_context_statuses(tmp_path):
+    snap = _run_with_failing_graph(
+        tmp_path,
+        ["PRI-22"],
+        tasks={"PRI-22": {"title": "PRI-22", "description": ""}},
+        changed={"PRI-22": ["reviewer/a.py"]},
+        predicted={"PRI-22": ["reviewer/a.py"]},
+    )
+    assert snap["context_statuses"][replay.STATUS_CONTEXT_FAILED] == 1
+    assert snap["context_statuses"][replay.STATUS_EMPTY_CONTEXT] == 0
+
+
+def test_context_statuses_count_only_tasks_that_reached_the_traversal(tmp_path):
+    """Задача без ground truth до обхода не доходит и счётчик не подкрашивает."""
+    snap = _run(
+        tmp_path,
+        ["PRI-23"],
+        tasks={"PRI-23": {"title": "PRI-23", "description": ""}},
+        changed={},
+        predicted={},
+        missing=["PRI-23"],
+    )
+    assert snap["tasks"][0]["status"] == replay.STATUS_NO_GROUND_TRUTH
+    assert sum(snap["context_statuses"].values()) == 0
+
+
+def test_context_failure_does_not_move_any_existing_number(tmp_path):
+    """Свойство аддитивности на случайных входах (критерий 3 PRI-265).
+
+    Сторона «до» — обход, честно вернувший пусто; сторона «после» — упавший
+    обход. Ни одно существующее число агрегата и ни один счётчик STATUSES не
+    имеет права разойтись: новый статус добавляет знание, а не меняет метрику.
+
+    Первый ключ набора всегда получает и changed, и predicted безусловно:
+    иначе на наборе, где ни у одного ключа случайно не оказалось ground
+    truth, обе стороны дают нулевой context_statuses и последний ассерт
+    флейкует на равенстве пустых словарей.
+    """
+    import random
+
+    rnd = random.Random(20265)
+    for index in range(25):
+        keys = [f"PRI-{i}" for i in range(1, rnd.randrange(2, 6))]
+        first, rest = keys[0], keys[1:]
+        tasks = {k: {"title": k, "description": ""} for k in keys}
+        changed = {first: ["reviewer/a.py"]}
+        changed.update({k: ["reviewer/a.py"] for k in rest if rnd.random() < 0.8})
+        predicted = {first: ["reviewer/a.py"]}
+        predicted.update({k: ["reviewer/a.py"] for k in rest if rnd.random() < 0.7})
+        empty_dir = tmp_path / f"e{index}"
+        failed_dir = tmp_path / f"f{index}"
+        empty_dir.mkdir()
+        failed_dir.mkdir()
+        empty = _run(empty_dir, keys, tasks=tasks, changed=changed,
+                     predicted=predicted, neighbors=set())
+        failed = _run_with_failing_graph(failed_dir, keys, tasks=tasks,
+                                         changed=changed, predicted=predicted)
+        assert failed["aggregate"] == empty["aggregate"]
+        assert failed["statuses"] == empty["statuses"]
+        assert failed["context_statuses"] != empty["context_statuses"]
+
+
 def test_aggregate_carries_context_medians(tmp_path):
     snap = _run(
         tmp_path,

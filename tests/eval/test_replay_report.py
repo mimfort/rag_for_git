@@ -133,6 +133,27 @@ def test_report_renders_context_columns():
     assert "union_precision" in text or "u_prec" in text
 
 
+def test_report_renders_context_statuses_section():
+    snap = _snap("baseline", [_task("PRI-1", 0.5, ["reviewer/a.py"])], 0.5)
+    snap["context_statuses"] = {
+        "measured": 3,
+        "empty_context_denominator": 16,
+        "context_retrieval_failed": 2,
+    }
+    text = replay_report.render(snap)
+    assert "## Статусы контекста" in text
+    assert "| context_retrieval_failed | 2 |" in text
+
+
+def test_report_without_context_statuses_key_still_renders():
+    """Снимок старого формата ключа не имеет — A/B со старой историей не ломается."""
+    snap = _snap("baseline", [_task("PRI-1", 0.5, ["reviewer/a.py"])], 0.5)
+    assert "context_statuses" not in snap
+    text = replay_report.render(snap)
+    assert "## Статусы контекста" not in text
+    assert "## Статусы задач" in text
+
+
 def test_empty_context_denominator_renders_as_dash_not_zero():
     """None (пустой знаменатель контекста) — это «—», а не «0»: неопределённость
     и ноль различаются на протяжении всей метрики, и таблица не должна их
