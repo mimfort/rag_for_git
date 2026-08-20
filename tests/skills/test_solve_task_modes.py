@@ -109,6 +109,31 @@ def test_survey_defaults_pin_the_whole_triple():
     ), "не найдена строка дефолтов целиком: tier mid, mode normal, strategy subagent"
 
 
+def test_survey_carries_a_verbatim_template():
+    """Шаблон панели дан дословно: пересказ своими словами — то, что и сломалось."""
+    section = _survey_section()
+    assert "verbatim" in section
+    # три header'а панели названы как значения, а не как темы
+    for header in ("Brief model tier", "Interaction mode", "Execution strategy"):
+        assert f"`{header}`" in section
+
+
+def test_survey_forbids_reformulating_and_splitting():
+    section = _survey_section()
+    lowered = section.lower()
+    for ban in ("do not reformulate", "do not split", "do not substitute", "do not omit"):
+        assert ban in lowered, ban
+
+
+def test_survey_requires_self_check_for_missing_questions():
+    """Задал не все три — доспроси немедленно, до предполётных проверок."""
+    section = _survey_section()
+    lowered = section.lower()
+    assert "self-check" in lowered
+    assert "immediately" in lowered
+    assert "before" in lowered
+
+
 def test_auto_permission_mode_shortcut_removed():
     # Правило «в auto permission mode тир выбирается молча» удалено: панель
     # показывается всегда, кроме headless/non-interactive.
