@@ -30,7 +30,19 @@ def manual_tail(existing: str) -> str:
 
 
 def merge(generated: str, existing: str) -> str:
-    """Генерируемая часть + маркер + ручной хвост дословно."""
+    """Генерируемая часть + маркер + ручной хвост дословно.
+
+    Непустой отчёт без маркера отвергается здесь, а не только в
+    `ensure_mergeable`: проверка пути и запись разнесены во времени (маркер
+    может исчезнуть между ними), и функция, тихо возвращающая текст без
+    чужого хвоста, — ровно тот молчаливый обрыв, который модуль чинит.
+    Отказ на этом шаге ничего не стоит: писать всё равно нечего.
+    """
+    if existing.strip() and MARKER not in existing:
+        raise MarkerMissing(
+            "В существующем тексте отчёта нет маркера границы — слияние стёрло бы\n"
+            f"ручные разделы. Ожидаемая строка-маркер:\n{MARKER}"
+        )
     tail = manual_tail(existing)
     head = generated.rstrip("\n")
     if not tail:
@@ -57,6 +69,10 @@ def ensure_mergeable(path: pathlib.Path) -> None:
 
 
 def merge_file(path: pathlib.Path, generated: str) -> str:
-    """Итоговый текст отчёта с сохранённым хвостом. Ничего не пишет."""
+    """Итоговый текст отчёта с сохранённым хвостом. Ничего не пишет.
+
+    Самодостаточен: непустой отчёт без маркера отвергает `merge`, поэтому
+    забытый парный `ensure_mergeable` не оборачивается тихой потерей хвоста.
+    """
     existing = path.read_text(encoding="utf-8") if path.exists() else ""
     return merge(generated, existing)

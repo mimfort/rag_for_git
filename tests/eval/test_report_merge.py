@@ -75,3 +75,19 @@ def test_merge_file_reads_existing_and_returns_without_writing(tmp_path: pathlib
     merged = report_merge.merge_file(path, "# Отчёт\n\nновое\n")
     assert "новое" in merged and MANUAL in merged
     assert path.read_text(encoding="utf-8") == original  # запись — дело вызывающего
+
+
+def test_merge_refuses_marker_less_existing_text():
+    """Отказ вместо тихого обрыва: непустой отчёт без маркера сливать нельзя."""
+    with pytest.raises(report_merge.MarkerMissing):
+        report_merge.merge("# Отчёт\n\nновое\n", "## Приёмка PRI-262\n\nручные числа\n")
+
+
+def test_merge_file_is_self_sufficient_without_paired_ensure_mergeable(
+    tmp_path: pathlib.Path,
+):
+    """Забытый (или обойдённый гонкой) ensure_mergeable не теряет хвост молча."""
+    path = tmp_path / "report.md"
+    path.write_text("# Отчёт\n\nстарое\n\n## Приёмка PRI-262\n\nручные числа\n", encoding="utf-8")
+    with pytest.raises(report_merge.MarkerMissing):
+        report_merge.merge_file(path, "# Отчёт\n\nновое\n")
