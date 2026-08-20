@@ -29,20 +29,40 @@ def node_paths(node_ids: Iterable[str]) -> set:
     return {nid.split("#", 1)[0] for nid in node_ids if "#" in nid}
 
 
+def symbol_name(node_id: str) -> str:
+    """Простое имя символа: последний сегмент fqn у "path#a.b.c" — это "c"."""
+    return node_id.split("#", 1)[1].split(".")[-1] if "#" in node_id else ""
+
+
 def derive_context_core(
     seed_ids: Iterable[str],
     changed_core: Iterable[str],
     traverse: Traversal,
+    allowed_names: set | None = None,
 ) -> set:
     """Контекстное ядро: core-пути соседей сид-символов минус изменённое ядро.
 
     Вычитание обязательно: файл, который задача и читала, и меняла, уже
     посчитан знаменателем core-recall, и в обоих знаменателях сразу он дал бы
     двойной вес.
+
+    ``allowed_names`` — простые имена, вызванные (или унаследованные) на
+    ИЗМЕНЁННЫХ строках диффа (PRI-262). Сосед выживает, только если его имя
+    там названо. Без фильтра нетронутое тело задетой функции отдаёт в ядро
+    своих callee: измеренный отказ PRI-261 — ``config_show()``, чья правка
+    трогала help-текст, а ядро набиралось из существовавших вызовов
+    ``CommittedLayerFetcher``/``resolve_policy_data`` (PRI-236, 0 из 5).
+
+    ``None`` — фильтра нет, поведение тождественно поведению до PRI-262 (аддитивность).
+    Пустое множество — НЕ то же самое: это высказывание «на изменённых строках
+    вызовов нет», и ядро при нём пусто. Слить их значило бы вернуть весь обход
+    ровно там, где сказать нечего.
     """
     seeds = sorted(seed_ids)
     if not seeds:
         return set()
     neighbours = traverse(seeds)
+    if allowed_names is not None:
+        neighbours = {n for n in neighbours if symbol_name(n) in allowed_names}
     paths = {p for p in node_paths(neighbours) if is_core_production_path(p)}
     return paths - set(changed_core)
