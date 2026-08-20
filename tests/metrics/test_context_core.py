@@ -72,3 +72,63 @@ def test_seeds_passed_sorted_for_determinism():
 
     derive_context_core({"b.py#g", "a.py#f"}, set(), traverse)
     assert seen == [["a.py#f", "b.py#g"]]
+
+
+def test_allowed_names_none_keeps_every_neighbour():
+    """Отсутствие фильтра — прежнее поведение до символа (критерий аддитивности)."""
+    def traverse(ids):
+        return {"reviewer/b.py#g", "reviewer/c.py#H.m"}
+
+    assert derive_context_core(
+        ["reviewer/a.py#f"], set(), traverse, allowed_names=None
+    ) == {"reviewer/b.py", "reviewer/c.py"}
+
+
+def test_allowed_names_filters_by_last_fqn_segment():
+    """Сосед выживает, только если его имя вызывалось на ИЗМЕНЁННОЙ строке.
+
+    Это и есть починка сценария god-модулей: нетронутое тело задетой функции
+    больше не тащит своих callee (PRI-236: config_show → CommittedLayerFetcher).
+    """
+    def traverse(ids):
+        return {"reviewer/b.py#g", "reviewer/c.py#H.m", "reviewer/d.py#junk"}
+
+    assert derive_context_core(
+        ["reviewer/a.py#f"], set(), traverse, allowed_names={"g", "m"}
+    ) == {"reviewer/b.py", "reviewer/c.py"}
+
+
+def test_empty_allowed_names_drops_every_neighbour():
+    """Пустое множество — высказывание «на изменённых строках вызовов нет»,
+    а не «фильтра нет»: иначе значимая правка без вызовов вернула бы весь обход."""
+    def traverse(ids):
+        return {"reviewer/b.py#g"}
+
+    assert derive_context_core(
+        ["reviewer/a.py#f"], set(), traverse, allowed_names=set()
+    ) == set()
+
+
+def test_allowed_names_none_matches_unfiltered_on_random_inputs():
+    """Свойство аддитивности: allowed_names=None тождественен прежней формуле.
+
+    Проверяется на случайных входах, как в PRI-261: ни одно существующее число
+    отчёта не имеет права поехать от появления нового параметра.
+    """
+    import random
+
+    rnd = random.Random(20262)
+    files = [f"reviewer/m{i}.py" for i in range(6)] + [f"tests/t{i}.py" for i in range(3)]
+    for _ in range(200):
+        neighbours = {
+            f"{rnd.choice(files)}#{rnd.choice('fgh')}{rnd.randrange(3)}"
+            for _ in range(rnd.randrange(6))
+        }
+        seeds = [f"{rnd.choice(files)}#s{rnd.randrange(3)}" for _ in range(rnd.randrange(3))]
+        changed = {rnd.choice(files) for _ in range(rnd.randrange(3))}
+
+        def traverse(ids, _n=neighbours):
+            return set(_n)
+
+        legacy = derive_context_core(seeds, changed, traverse)
+        assert derive_context_core(seeds, changed, traverse, allowed_names=None) == legacy

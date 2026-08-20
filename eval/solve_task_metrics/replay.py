@@ -167,9 +167,10 @@ def run_replay(
         try:
             seeds = context_seeds.collect_seeds(truth, run_git)
             core_now = context_core.derive_context_core(
-                seeds,
+                seeds.symbols,
                 {p for p in truth.changed if classify.is_core_production_path(p)},
                 lambda ids: provider.neighbors(target.repo, target.branch, ids),
+                allowed_names=seeds.called_names,
             )
         except Exception:  # noqa: BLE001 — недоступный граф не роняет прогон корпуса
             core_now = set()

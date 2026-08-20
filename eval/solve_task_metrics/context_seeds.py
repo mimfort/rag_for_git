@@ -1,4 +1,4 @@
-"""Сид-символы контекстного ядра: что дифф задачи реально трогал (PRI-261).
+"""Сид-символы контекстного ядра: что дифф задачи реально трогал (PRI-261, PRI-262).
 
 Сиды — НЕ все символы изменённых файлов. Замер: сидирование целыми файлами даёт
 медиану 57 новых core-файлов (37 % репозитория, «мусорное ядро»), сидирование
@@ -9,77 +9,277 @@
 диффа относятся к своему коммиту, и наложение их на сегодняшние диапазоны чанков
 попадает не в те символы у любого файла, который с тех пор менялся. С сегодняшним
 графом результат сшивается по имени символа, а не по строке.
+
+PRI-262 сужает гранулярность с чанка до СТРОКИ, потому что ручная сверка PRI-261
+не взяла гейт (41.8 % при пороге 50 %) ровно на двух формах мусора:
+
+1. Хунк, не меняющий исполняемого кода (докстринг, комментарий, help-текст),
+   тащил весь call-граф своей функции. Лечится ``hunk_is_significant``.
+2. Нетронутое тело задетой функции отдавало в ядро своих callee. Лечится
+   ``called_names``: имя обязано прозвучать на ИЗМЕНЁННОЙ строке.
+
+Значимость считается не по позиции, а по содержанию: строка ``help="..."``
+внутри декоратора ЯВЛЯЕТСЯ кодом, и позиционное правило её бы пропустило.
+Сравниваются левый и правый блоки хунка с вымаранными строковыми литералами и
+комментариями — равенство означает, что исполняемого не изменилось ничего.
 """
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass, field
+
+import tree_sitter_python as tspython
+from tree_sitter import Language, Parser
 
 from reviewer.index.chunker import chunk_python
 from reviewer.metrics.brief_quality.classify import is_core_production_path
 
 from . import ground_truth
 
-# '@@ -a,b +c,d @@ [контекст]'. Интересует только правая сторона: сид — символ
-# в состоянии ПОСЛЕ мержа, который сегодняшний граф и знает по имени.
-_HUNK_RE = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
+_PY = Language(tspython.language())
+_PARSER = Parser(_PY)
+
+# '@@ -a,b +c,d @@ [контекст]'.
+_HUNK_RE = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
 
 
-def parse_hunk_ranges(diff_text: str) -> list:
-    """Диапазоны строк правой стороны диффа: [(start, end), ...].
+@dataclass(frozen=True)
+class Hunk:
+    """Один хунк диффа: обе стороны с номерами строк своего коммита."""
+    left_start: int
+    left_len: int
+    right_start: int
+    right_len: int
 
-    Чистое удаление (длина 0) даёт диапазон в одну строку на месте стыка:
-    у удалённого кода иначе не было бы сида вовсе, и задача теряла бы часть
-    знаменателя молча.
-    """
-    ranges: list = []
+    @property
+    def right_range(self) -> tuple:
+        """Диапазон правой стороны; у чистого удаления — строка стыка.
+
+        У удалённого кода иначе не было бы сида вовсе, и задача теряла бы
+        часть знаменателя молча (инвариант PRI-261).
+        """
+        if self.right_len == 0:
+            return (self.right_start, self.right_start)
+        return (self.right_start, self.right_start + self.right_len - 1)
+
+    @property
+    def left_range(self) -> tuple:
+        if self.left_len == 0:
+            return (self.left_start, self.left_start)
+        return (self.left_start, self.left_start + self.left_len - 1)
+
+
+@dataclass(frozen=True)
+class SeedSet:
+    """Сиды задачи: символы обхода и имена, прозвучавшие на изменённых строках."""
+    symbols: set = field(default_factory=set)
+    called_names: set = field(default_factory=set)
+
+    def __or__(self, other: "SeedSet") -> "SeedSet":
+        return SeedSet(self.symbols | other.symbols,
+                       self.called_names | other.called_names)
+
+
+def parse_hunks(diff_text: str) -> list:
+    """Хунки диффа с номерами строк обеих сторон."""
+    hunks: list = []
     for line in (diff_text or "").splitlines():
         match = _HUNK_RE.match(line)
         if not match:
             continue
-        start = int(match.group(1))
-        length = int(match.group(2)) if match.group(2) is not None else 1
-        if length == 0:
-            ranges.append((start, start))
-        else:
-            ranges.append((start, start + length - 1))
-    return ranges
+        hunks.append(Hunk(
+            left_start=int(match.group(1)),
+            left_len=int(match.group(2)) if match.group(2) is not None else 1,
+            right_start=int(match.group(3)),
+            right_len=int(match.group(4)) if match.group(4) is not None else 1,
+        ))
+    return hunks
 
 
-def _symbols_at(path: str, source: str, ranges: list) -> set:
-    """Символы файла, чьи диапазоны пересекаются с изменёнными строками."""
+def parse_hunk_ranges(diff_text: str) -> list:
+    """Диапазоны строк правой стороны диффа: [(start, end), ...]."""
+    return [h.right_range for h in parse_hunks(diff_text)]
+
+
+def _masked_lines(source: str) -> list:
+    """Строки файла с вымаранными строковыми литералами и комментариями.
+
+    Пробелы схлопываются: правка внутри литерала меняет длину строки, и без
+    нормализации две одинаковые по коду строки различались бы отступом.
+
+    У f-строк вымарывается только ``string_content``: выражение в ``{...}`` —
+    настоящий код, и стирать его вместе с текстом значило бы не заметить
+    правку интерполяции.
+    """
+    lines = source.splitlines()
+    if not lines:
+        return []
+    grid = [list(line) for line in lines]
+
+    def blank(node) -> None:
+        (r0, c0), (r1, c1) = node.start_point, node.end_point
+        for row in range(r0, min(r1 + 1, len(grid))):
+            start = c0 if row == r0 else 0
+            end = c1 if row == r1 else len(grid[row])
+            for col in range(start, min(end, len(grid[row]))):
+                grid[row][col] = " "
+
+    def visit(node) -> None:
+        if node.type == "comment":
+            blank(node)
+            return
+        if node.type == "string":
+            contents = [c for c in node.children if c.type == "string_content"]
+            if contents:
+                for child in contents:
+                    blank(child)
+            else:
+                blank(node)
+            for child in node.children:
+                if child.type == "interpolation":
+                    visit(child)
+            return
+        for child in node.children:
+            visit(child)
+
+    try:
+        visit(_PARSER.parse(source.encode("utf-8", "replace")).root_node)
+    except Exception:  # noqa: BLE001 — битый файл не роняет прогон
+        return [" ".join(line.split()) for line in lines]
+    return [" ".join("".join(row).split()) for row in grid]
+
+
+def _block(masked: list, start: int, length: int) -> list:
+    """Непустые нормализованные строки блока (1-based, length может быть 0)."""
+    if length <= 0:
+        return []
+    lo, hi = max(start, 1), min(start + length - 1, len(masked))
+    return [masked[i - 1] for i in range(lo, hi + 1) if masked[i - 1]]
+
+
+def hunk_is_significant(hunk: Hunk, before_masked: list, after_masked: list) -> bool:
+    """Изменил ли хунк исполняемый код.
+
+    Сравниваются вымаранные блоки обеих сторон: если после удаления литералов
+    и комментариев они совпали, изменилось только то, что код не исполняет —
+    докстринг, комментарий, help-текст или форматирование.
+    """
+    left = _block(before_masked, hunk.left_start, hunk.left_len)
+    right = _block(after_masked, hunk.right_start, hunk.right_len)
+    return left != right
+
+
+def _innermost_symbols(path: str, source: str, lines: set) -> set:
+    """Самый внутренний символ, содержащий каждую из строк.
+
+    ``chunk_python`` вкладывает чанки: у метода есть и свой чанк, и чанк класса.
+    Сид по обоим означал бы, что хунк в одном методе god-класса тянет исходящие
+    рёбра всего класса (измеренный отказ PRI-221: 6 осмысленных путей из 30).
+    """
+    if not lines:
+        return set()
     try:
         chunks = chunk_python(path, source.encode("utf-8", "replace"))
     except Exception:  # noqa: BLE001 — не-Python или битый файл не роняет прогон
         return set()
     hits: set = set()
-    for chunk in chunks:
-        for start, end in ranges:
-            if chunk.start_line <= end and chunk.end_line >= start:
-                hits.add(f"{path}#{chunk.symbol_fqn}")
-                break
+    for line in lines:
+        covering = [c for c in chunks if c.start_line <= line <= c.end_line]
+        if covering:
+            best = min(covering, key=lambda c: (c.end_line - c.start_line, c.symbol_fqn))
+            hits.add(f"{path}#{best.symbol_fqn}")
     return hits
 
 
-def seeds_for_merge(sha: str, core_paths: set, run_git) -> set:
-    """Сид-символы одного PR-мержа по его core-путям."""
-    seeds: set = set()
+def _simple_name(node) -> str:
+    """Последний идентификатор выражения: у 'a.b.c' — 'c'."""
+    while node is not None and node.type == "attribute":
+        node = node.child_by_field_name("attribute")
+    return node.text.decode("utf-8", "replace") if node is not None else ""
+
+
+def called_names(source: str, lines: set) -> set:
+    """Имена, вызванные или унаследованные НА изменённых строках.
+
+    Ровно те формы, из которых граф строит рёбра: вызовы (CALLS, включая
+    декораторы) и базы классов (IMPLEMENTS). Идентификаторы вообще брать
+    нельзя: имя локальной переменной пропустило бы в ядро посторонний файл.
+    """
+    if not lines:
+        return set()
+    names: set = set()
+
+    def visit(node) -> None:
+        if node.type == "call":
+            func = node.child_by_field_name("function")
+            if func is not None and func.end_point[0] + 1 in lines:
+                name = _simple_name(func)
+                if name:
+                    names.add(name)
+        elif node.type == "class_definition":
+            supers = node.child_by_field_name("superclasses")
+            if supers is not None:
+                for child in supers.children:
+                    if child.type in ("identifier", "attribute") and \
+                            child.end_point[0] + 1 in lines:
+                        name = _simple_name(child)
+                        if name:
+                            names.add(name)
+        for child in node.children:
+            visit(child)
+
+    try:
+        visit(_PARSER.parse(source.encode("utf-8", "replace")).root_node)
+    except Exception:  # noqa: BLE001
+        return set()
+    return names
+
+
+def _lines_of(rng: tuple) -> set:
+    return set(range(rng[0], rng[1] + 1))
+
+
+def seeds_for_merge(sha: str, core_paths: set, run_git) -> SeedSet:
+    """Сид-символы и имена одного PR-мержа по его core-путям."""
+    result = SeedSet()
     for path in sorted(p for p in core_paths if is_core_production_path(p)):
         try:
             diff = run_git(["diff", "--unified=0", f"{sha}^1", sha, "--", path])
-            source = run_git(["show", f"{sha}:{path}"])
+            after = run_git(["show", f"{sha}:{path}"])
         except ground_truth.GitError:
             # Путь удалён или недостижим на этом коммите: сидов меньше, прогон жив.
             continue
-        ranges = parse_hunk_ranges(diff)
-        if ranges:
-            seeds |= _symbols_at(path, source, ranges)
-    return seeds
+        try:
+            before = run_git(["show", f"{sha}^1:{path}"])
+        except ground_truth.GitError:
+            # Файл создан этим мержем: левой стороны нет, всё добавленное значимо.
+            before = ""
+
+        hunks = parse_hunks(diff)
+        if not hunks:
+            continue
+        before_masked, after_masked = _masked_lines(before), _masked_lines(after)
+
+        right_lines: set = set()
+        left_lines: set = set()
+        for hunk in hunks:
+            if not hunk_is_significant(hunk, before_masked, after_masked):
+                continue
+            right_lines |= _lines_of(hunk.right_range)
+            left_lines |= _lines_of(hunk.left_range)
+
+        result = result | SeedSet(
+            symbols=_innermost_symbols(path, after, right_lines),
+            called_names=called_names(after, right_lines)
+            | called_names(before, left_lines),
+        )
+    return result
 
 
-def collect_seeds(truth, run_git) -> set:
-    """Сид-символы задачи: объединение по всем её настоящим PR-мержам."""
+def collect_seeds(truth, run_git) -> SeedSet:
+    """Сиды задачи: объединение по всем её настоящим PR-мержам."""
     core_paths = {p for p in truth.changed if is_core_production_path(p)}
-    seeds: set = set()
+    result = SeedSet()
     for sha in truth.merge_shas:
-        seeds |= seeds_for_merge(sha, core_paths, run_git)
-    return seeds
+        result = result | seeds_for_merge(sha, core_paths, run_git)
+    return result
