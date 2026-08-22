@@ -252,3 +252,70 @@ def test_inheritance_base_counts_as_called_name():
     )
     assert result.symbols == {"reviewer/a.py#A"}
     assert "Fresh" in result.called_names
+
+
+SIG_SOURCE = '''import functools
+
+@functools.cache
+def f(a: Chunk, b=make_default()) -> Report:
+    helper()
+    return None
+
+
+class C(Base):
+    def m(self, x: Other) -> None:
+        inner()
+'''
+
+
+def test_signature_names_takes_decorator_annotations_defaults_and_return():
+    """Шапка символа: декоратор, аннотация параметра, дефолт, тип возврата."""
+    names = context_seeds.signature_names(SIG_SOURCE, {"reviewer/a.py#f"})
+    assert {"cache", "Chunk", "make_default", "Report"} <= names
+
+
+def test_signature_names_ignores_the_body():
+    """Имя из ТЕЛА символа в шапку не попадает — иначе рычаг возвращает
+    мусор god-модулей, ровно тот, который чинила PRI-262."""
+    names = context_seeds.signature_names(SIG_SOURCE, {"reviewer/a.py#f"})
+    assert "helper" not in names
+
+
+def test_signature_names_takes_class_bases():
+    names = context_seeds.signature_names(SIG_SOURCE, {"reviewer/a.py#C"})
+    assert "Base" in names
+    assert "inner" not in names
+
+
+def test_signature_names_reads_method_signature_by_fqn():
+    names = context_seeds.signature_names(SIG_SOURCE, {"reviewer/a.py#C.m"})
+    assert "Other" in names
+    assert "inner" not in names
+
+
+def test_signature_names_folds_dotted_names_and_skips_parameter_names():
+    """`mod.pkg.Thing` сворачивается до `Thing`; ИМЯ параметра `a` в шапку не
+    попадает — оно локально для функции и ребром графа не выражается.
+    `None` в аннотации возврата — узел `none`, а не идентификатор, поэтому в
+    множество не попадает и он."""
+    source = "def f(a: mod.pkg.Thing) -> None:\n    pass\n"
+    assert context_seeds.signature_names(source, {"reviewer/a.py#f"}) == {"Thing"}
+
+
+def test_signature_names_unknown_symbol_is_empty_not_error():
+    assert context_seeds.signature_names(SIG_SOURCE, {"reviewer/a.py#nope"}) == set()
+
+
+def test_signature_names_broken_source_is_empty_not_error():
+    """Не-Python или битый файл не роняет прогон корпуса."""
+    assert context_seeds.signature_names("{ not python", {"reviewer/a.py#f"}) == set()
+    assert context_seeds.signature_names("", set()) == set()
+
+
+def test_seed_set_union_merges_signature_names():
+    left = context_seeds.SeedSet(symbols={"a#f"}, signature_names={"X"})
+    right = context_seeds.SeedSet(called_names={"g"}, signature_names={"Y"})
+    merged = left | right
+    assert merged.symbols == {"a#f"}
+    assert merged.called_names == {"g"}
+    assert merged.signature_names == {"X", "Y"}

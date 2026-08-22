@@ -84,3 +84,21 @@ def test_repository_reports_carry_the_marker():
     """Оба отчёта репозитория пригодны к слиянию — иначе первый же прогон откажет."""
     for path in (cli.REPLAY_REPORT_PATH, cli.REPORT_PATH):
         assert report_merge.MARKER in path.read_text(encoding="utf-8"), path
+
+
+def test_replay_cli_accepts_context_seeds_flag():
+    """Режим сидов задаётся флагом: правка исходника между сторонами A/B
+    сделала бы сравнение невалидным."""
+    from eval.solve_task_metrics import __main__ as main_mod
+
+    from eval.solve_task_metrics import replay
+
+    parser = main_mod.build_parser()
+    for mode in replay.SEED_MODES:
+        args = parser.parse_args(["replay", "--context-seeds", mode])
+        assert args.context_seeds == mode
+
+    # Дефолт назван константой, а не литералом: он менялся по итогу приёмки
+    # PRI-266, и тест не должен быть вторым местом, где записан выбор.
+    default_args = parser.parse_args(["replay"])
+    assert default_args.context_seeds == replay.SEED_MODE_LINES_SIGNATURE

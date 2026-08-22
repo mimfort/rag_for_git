@@ -105,7 +105,7 @@ def _target():
 
 
 def _run(tmp_path, keys, *, tasks, changed, predicted, fail=(), missing=(), limit=None,
-         neighbors=None):
+         neighbors=None, seed_mode=replay.SEED_MODE_LINES):
     provider = FakeProvider(tasks, predicted, fail=fail, neighbors=neighbors)
     return replay.run_replay(
         provider=provider,
@@ -116,6 +116,7 @@ def _run(tmp_path, keys, *, tasks, changed, predicted, fail=(), missing=(), limi
         commit="deadbee",
         taken_at="2026-08-17T00:00:00+00:00",
         limit=limit,
+        seed_mode=seed_mode,
     )
 
 
@@ -383,3 +384,162 @@ def test_aggregate_carries_context_medians(tmp_path):
     assert "context_recall_median" in agg
     assert "union_precision_median" in agg
     assert agg["context_n_measured"] >= 0
+
+
+def test_seed_mode_lines_is_the_default_and_ignores_signature_names(monkeypatch, tmp_path):
+    """Дефолт тождественен поведению до PRI-266: шапка не участвует."""
+    seen = {}
+
+    def fake_collect(truth, run_git):
+        return replay.context_seeds.SeedSet(
+            symbols={"reviewer/a.py#g"},
+            called_names={"g"},
+            signature_names={"Sig"},
+        )
+
+    def fake_derive(seed_ids, changed_core, traverse, allowed_names=None):
+        seen["allowed"] = allowed_names
+        return set()
+
+    monkeypatch.setattr(replay.context_seeds, "collect_seeds", fake_collect)
+    monkeypatch.setattr(replay.context_core, "derive_context_core", fake_derive)
+    _run(
+        tmp_path,
+        ["PRI-31"],
+        tasks={"PRI-31": {"title": "PRI-31", "description": ""}},
+        changed={"PRI-31": ["reviewer/a.py"]},
+        predicted={"PRI-31": ["reviewer/a.py"]},
+        neighbors=set(),
+    )
+    assert seen["allowed"] == {"g"}
+
+
+def test_seed_mode_signature_unions_both_name_sources(monkeypatch, tmp_path):
+    seen = {}
+
+    def fake_collect(truth, run_git):
+        return replay.context_seeds.SeedSet(
+            symbols={"reviewer/a.py#g"},
+            called_names={"g"},
+            signature_names={"Sig"},
+        )
+
+    def fake_derive(seed_ids, changed_core, traverse, allowed_names=None):
+        seen["allowed"] = allowed_names
+        return set()
+
+    monkeypatch.setattr(replay.context_seeds, "collect_seeds", fake_collect)
+    monkeypatch.setattr(replay.context_core, "derive_context_core", fake_derive)
+    _run(
+        tmp_path,
+        ["PRI-32"],
+        tasks={"PRI-32": {"title": "PRI-32", "description": ""}},
+        changed={"PRI-32": ["reviewer/a.py"]},
+        predicted={"PRI-32": ["reviewer/a.py"]},
+        neighbors=set(),
+        seed_mode=replay.SEED_MODE_LINES_SIGNATURE,
+    )
+    assert seen["allowed"] == {"g", "Sig"}
+
+
+def test_lines_mode_moves_no_existing_number(tmp_path):
+    """Аддитивность: режим по умолчанию оставляет строку прогона побайтово
+    той же, какой она была до PRI-266. Иначе числа приёмок PRI-255…262
+    перестают быть сравнимыми без пересчёта."""
+    kwargs = dict(
+        tasks={"PRI-34": {"title": "PRI-34", "description": ""}},
+        changed={"PRI-34": ["reviewer/a.py"]},
+        predicted={"PRI-34": ["reviewer/a.py"]},
+        neighbors={"reviewer/b.py#g"},
+    )
+    left, right = tmp_path / "a", tmp_path / "b"
+    left.mkdir()
+    right.mkdir()
+    default_row = _run(left, ["PRI-34"], **kwargs)["tasks"][0]
+    explicit_row = _run(
+        right, ["PRI-34"], seed_mode=replay.SEED_MODE_LINES, **kwargs
+    )["tasks"][0]
+    assert default_row == explicit_row
+
+
+def test_snapshot_records_the_seed_mode(tmp_path):
+    """Режим сидов виден в снимке: без него две стороны A/B неразличимы."""
+    snap = _run(
+        tmp_path,
+        ["PRI-33"],
+        tasks={"PRI-33": {"title": "PRI-33", "description": ""}},
+        changed={"PRI-33": ["reviewer/a.py"]},
+        predicted={"PRI-33": ["reviewer/a.py"]},
+        neighbors=set(),
+        seed_mode=replay.SEED_MODE_LINES_SIGNATURE,
+    )
+    assert snap["seed_mode"] == replay.SEED_MODE_LINES_SIGNATURE
+
+
+def test_non_python_core_is_undefined_not_empty(tmp_path):
+    """Ядро целиком не-Python: сидов не могло возникнуть ни при какой
+    настройке фильтра, поэтому знаменатель неопределим, а не пуст."""
+    snap = _run(
+        tmp_path,
+        ["PRI-41"],
+        tasks={"PRI-41": {"title": "PRI-41", "description": ""}},
+        changed={"PRI-41": ["plugin/manifest.json"]},
+        predicted={"PRI-41": ["plugin/manifest.json"]},
+        neighbors=set(),
+    )
+    row = snap["tasks"][0]
+    assert row["context_status"] == replay.STATUS_UNDEFINED_CONTEXT
+    assert row["context_status"] != replay.STATUS_EMPTY_CONTEXT
+    assert row["context_recall"] is None
+
+
+def test_no_core_paths_at_all_is_undefined(tmp_path):
+    """Дифф из тестов и доков: контекстного знаменателя тоже нет."""
+    snap = _run(
+        tmp_path,
+        ["PRI-42"],
+        tasks={"PRI-42": {"title": "PRI-42", "description": ""}},
+        changed={"PRI-42": ["tests/test_x.py", "docs/readme.md"]},
+        predicted={"PRI-42": ["tests/test_x.py"]},
+        neighbors=set(),
+    )
+    assert snap["tasks"][0]["context_status"] == replay.STATUS_UNDEFINED_CONTEXT
+
+
+def test_python_core_with_empty_traversal_stays_empty(tmp_path):
+    """Содержательный ноль остаётся нолём: сиды были, читать нечего."""
+    snap = _run(
+        tmp_path,
+        ["PRI-43"],
+        tasks={"PRI-43": {"title": "PRI-43", "description": ""}},
+        changed={"PRI-43": ["reviewer/a.py"]},
+        predicted={"PRI-43": ["reviewer/a.py"]},
+        neighbors=set(),
+    )
+    assert snap["tasks"][0]["context_status"] == replay.STATUS_EMPTY_CONTEXT
+
+
+def test_undefined_context_is_counted_in_context_statuses(tmp_path):
+    snap = _run(
+        tmp_path,
+        ["PRI-44"],
+        tasks={"PRI-44": {"title": "PRI-44", "description": ""}},
+        changed={"PRI-44": ["plugin/manifest.json"]},
+        predicted={"PRI-44": ["plugin/manifest.json"]},
+        neighbors=set(),
+    )
+    assert snap["context_statuses"][replay.STATUS_UNDEFINED_CONTEXT] == 1
+    assert snap["context_statuses"][replay.STATUS_EMPTY_CONTEXT] == 0
+
+
+def test_graph_failure_wins_over_undefined(tmp_path):
+    """Сбой обхода называется сбоем: молчаливая подмена его на «неопределим»
+    прятала бы недоступный Neo4j в штатном статусе."""
+    snap = _run_with_failing_graph(
+        tmp_path,
+        ["PRI-45"],
+        tasks={"PRI-45": {"title": "PRI-45", "description": ""}},
+        changed={"PRI-45": ["reviewer/a.py"]},
+        predicted={"PRI-45": ["reviewer/a.py"]},
+    )
+    assert snap["tasks"][0]["context_status"] == replay.STATUS_CONTEXT_FAILED
