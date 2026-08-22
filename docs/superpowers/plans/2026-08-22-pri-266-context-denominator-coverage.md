@@ -186,7 +186,11 @@ def test_signature_names_reads_method_signature_by_fqn():
     assert "inner" not in names
 
 
-def test_signature_names_folds_dotted_names_to_last_segment():
+def test_signature_names_folds_dotted_names_and_skips_parameter_names():
+    """`mod.pkg.Thing` сворачивается до `Thing`; ИМЯ параметра `a` в шапку не
+    попадает — оно локально для функции и ребром графа не выражается.
+    `None` в аннотации возврата — узел `none`, а не идентификатор, поэтому в
+    множество не попадает и он."""
     source = "def f(a: mod.pkg.Thing) -> None:\n    pass\n"
     assert context_seeds.signature_names(source, {"reviewer/a.py#f"}) == {"Thing"}
 
@@ -244,17 +248,23 @@ class SeedSet:
 
 ```python
 def _def_node_at(root, start_line: int):
-    """Узел определения (`def`/`class`), начинающийся на данной строке.
+    """Узел определения (`def`/`class`), чей ЧАНК начинается на данной строке.
 
-    Сопоставление по строке начала тела определения, а не по имени: имя может
-    повторяться в файле, а `chunk_python` уже выбрал нужный символ.
+    Сопоставление по строке, а не по имени: имя может повторяться в файле, а
+    `chunk_python` уже выбрал нужный символ. Сравнивается строка охватывающего
+    `decorated_definition`, если он есть: `chunk_python` включает декораторы в
+    `start_line`, а `function_definition` начинается со слова `def`, и без
+    этого ни один декорированный символ не нашёлся бы.
     """
     found = []
 
     def visit(node) -> None:
-        if node.type in ("function_definition", "class_definition") and \
-                node.start_point[0] + 1 == start_line:
-            found.append(node)
+        if node.type in ("function_definition", "class_definition"):
+            parent = node.parent
+            outer = parent if parent is not None and \
+                parent.type == "decorated_definition" else node
+            if outer.start_point[0] + 1 == start_line:
+                found.append(node)
         for child in node.children:
             visit(child)
 
@@ -284,13 +294,33 @@ def _names_in(node) -> set:
     return names
 
 
+def _param_parts(parameters) -> list:
+    """Части параметров, называющие зависимость: аннотации и дефолты.
+
+    ИМЯ параметра не берётся: оно локально для функции, ребром графа не
+    выражается, и в фильтре имён пропустило бы посторонний файл — тот же
+    запрет, по которому `called_names` не берёт голые идентификаторы.
+    """
+    parts = []
+    for child in parameters.children:
+        for field_name in ("type", "value"):
+            node = child.child_by_field_name(field_name)
+            if node is not None:
+                parts.append(node)
+    return parts
+
+
 def _signature_parts(node) -> list:
-    """Части шапки определения: декораторы, параметры, тип возврата, базы."""
+    """Части шапки определения: декораторы, аннотации и дефолты параметров,
+    тип возврата, базы класса."""
     parts = []
     parent = node.parent
     if parent is not None and parent.type == "decorated_definition":
         parts.extend(c for c in parent.children if c.type == "decorator")
-    for field_name in ("parameters", "return_type", "superclasses", "type_parameters"):
+    parameters = node.child_by_field_name("parameters")
+    if parameters is not None:
+        parts.extend(_param_parts(parameters))
+    for field_name in ("return_type", "superclasses"):
         child = node.child_by_field_name(field_name)
         if child is not None:
             parts.append(child)
@@ -450,9 +480,12 @@ def test_lines_mode_moves_no_existing_number(tmp_path):
         predicted={"PRI-34": ["reviewer/a.py"]},
         neighbors={"reviewer/b.py#g"},
     )
-    default_row = _run(tmp_path / "a", ["PRI-34"], **kwargs)["tasks"][0]
+    left, right = tmp_path / "a", tmp_path / "b"
+    left.mkdir()
+    right.mkdir()
+    default_row = _run(left, ["PRI-34"], **kwargs)["tasks"][0]
     explicit_row = _run(
-        tmp_path / "b", ["PRI-34"], seed_mode=replay.SEED_MODE_LINES, **kwargs
+        right, ["PRI-34"], seed_mode=replay.SEED_MODE_LINES, **kwargs
     )["tasks"][0]
     assert default_row == explicit_row
 
