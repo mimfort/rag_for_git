@@ -24,6 +24,7 @@ STATUS_NO_TASK = "task_not_in_store"
 STATUS_RETRIEVAL_FAILED = "retrieval_failed"
 STATUS_EMPTY_CONTEXT = "empty_context_denominator"
 STATUS_CONTEXT_FAILED = "context_retrieval_failed"
+STATUS_UNDEFINED_CONTEXT = "undefined_context_denominator"
 
 STATUSES = (
     STATUS_MEASURED,
@@ -36,6 +37,7 @@ STATUSES = (
 CONTEXT_STATUSES = (
     STATUS_MEASURED,
     STATUS_EMPTY_CONTEXT,
+    STATUS_UNDEFINED_CONTEXT,
     STATUS_CONTEXT_FAILED,
 )
 
@@ -56,6 +58,24 @@ def allowed_names_for(seeds, seed_mode: str) -> set:
     if seed_mode == SEED_MODE_LINES_SIGNATURE:
         return seeds.called_names | seeds.signature_names
     return seeds.called_names
+
+
+def context_denominator_defined(changed_paths) -> bool:
+    """Мог ли обход быть засеян в принципе.
+
+    Сиды строятся через `chunk_python`, а граф хранит символы только для
+    Python. У задачи, чьё изменённое ядро целиком не-Python (или ядра нет
+    вовсе), знаменатель контекста НЕОПРЕДЕЛИМ, а не пуст: «пусто» — это
+    высказывание «читать нечего», и смешивать с ним «мерить нечем» значит
+    считать метрику там, где точки измерения не существует.
+
+    Считается по фактическим путям задачи, а не по результату обхода: иначе
+    неопределимость маскируется пустой выдачей графа.
+    """
+    return any(
+        classify.is_core_production_path(path) and path.endswith(".py")
+        for path in changed_paths
+    )
 
 
 CONTEXT_EVALUATED_STATUSES = (
@@ -139,8 +159,12 @@ def _evaluate(key: str, predicted: set, truth, run_git, context_core_paths: set,
     status = STATUS_MEASURED if expected_core else STATUS_EMPTY_CORE
     if context_failed:
         context_status = STATUS_CONTEXT_FAILED
+    elif context_core_paths:
+        context_status = STATUS_MEASURED
+    elif not context_denominator_defined(truth.changed):
+        context_status = STATUS_UNDEFINED_CONTEXT
     else:
-        context_status = STATUS_MEASURED if context_core_paths else STATUS_EMPTY_CONTEXT
+        context_status = STATUS_EMPTY_CONTEXT
     return _task_row(
         key,
         status,

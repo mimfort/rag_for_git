@@ -165,3 +165,17 @@ def test_empty_context_denominator_renders_as_dash_not_zero():
     row_line = next(line for line in text.splitlines() if line.startswith("| PRI-1"))
     assert "0" not in row_line.split("|")[-3]  # ctx_recall не превратился в 0
     assert "—" in row_line
+
+
+def test_report_renders_undefined_context_status():
+    from eval.solve_task_metrics import replay
+
+    snap = _snapshot_with()
+    snap["context_statuses"] = {
+        replay.STATUS_MEASURED: 2,
+        replay.STATUS_EMPTY_CONTEXT: 1,
+        replay.STATUS_UNDEFINED_CONTEXT: 3,
+        replay.STATUS_CONTEXT_FAILED: 0,
+    }
+    text = replay_report.render(snap, None)
+    assert replay.STATUS_UNDEFINED_CONTEXT in text

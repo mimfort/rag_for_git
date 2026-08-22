@@ -474,3 +474,72 @@ def test_snapshot_records_the_seed_mode(tmp_path):
         seed_mode=replay.SEED_MODE_LINES_SIGNATURE,
     )
     assert snap["seed_mode"] == replay.SEED_MODE_LINES_SIGNATURE
+
+
+def test_non_python_core_is_undefined_not_empty(tmp_path):
+    """Ядро целиком не-Python: сидов не могло возникнуть ни при какой
+    настройке фильтра, поэтому знаменатель неопределим, а не пуст."""
+    snap = _run(
+        tmp_path,
+        ["PRI-41"],
+        tasks={"PRI-41": {"title": "PRI-41", "description": ""}},
+        changed={"PRI-41": ["plugin/manifest.json"]},
+        predicted={"PRI-41": ["plugin/manifest.json"]},
+        neighbors=set(),
+    )
+    row = snap["tasks"][0]
+    assert row["context_status"] == replay.STATUS_UNDEFINED_CONTEXT
+    assert row["context_status"] != replay.STATUS_EMPTY_CONTEXT
+    assert row["context_recall"] is None
+
+
+def test_no_core_paths_at_all_is_undefined(tmp_path):
+    """Дифф из тестов и доков: контекстного знаменателя тоже нет."""
+    snap = _run(
+        tmp_path,
+        ["PRI-42"],
+        tasks={"PRI-42": {"title": "PRI-42", "description": ""}},
+        changed={"PRI-42": ["tests/test_x.py", "docs/readme.md"]},
+        predicted={"PRI-42": ["tests/test_x.py"]},
+        neighbors=set(),
+    )
+    assert snap["tasks"][0]["context_status"] == replay.STATUS_UNDEFINED_CONTEXT
+
+
+def test_python_core_with_empty_traversal_stays_empty(tmp_path):
+    """Содержательный ноль остаётся нолём: сиды были, читать нечего."""
+    snap = _run(
+        tmp_path,
+        ["PRI-43"],
+        tasks={"PRI-43": {"title": "PRI-43", "description": ""}},
+        changed={"PRI-43": ["reviewer/a.py"]},
+        predicted={"PRI-43": ["reviewer/a.py"]},
+        neighbors=set(),
+    )
+    assert snap["tasks"][0]["context_status"] == replay.STATUS_EMPTY_CONTEXT
+
+
+def test_undefined_context_is_counted_in_context_statuses(tmp_path):
+    snap = _run(
+        tmp_path,
+        ["PRI-44"],
+        tasks={"PRI-44": {"title": "PRI-44", "description": ""}},
+        changed={"PRI-44": ["plugin/manifest.json"]},
+        predicted={"PRI-44": ["plugin/manifest.json"]},
+        neighbors=set(),
+    )
+    assert snap["context_statuses"][replay.STATUS_UNDEFINED_CONTEXT] == 1
+    assert snap["context_statuses"][replay.STATUS_EMPTY_CONTEXT] == 0
+
+
+def test_graph_failure_wins_over_undefined(tmp_path):
+    """Сбой обхода называется сбоем: молчаливая подмена его на «неопределим»
+    прятала бы недоступный Neo4j в штатном статусе."""
+    snap = _run_with_failing_graph(
+        tmp_path,
+        ["PRI-45"],
+        tasks={"PRI-45": {"title": "PRI-45", "description": ""}},
+        changed={"PRI-45": ["reviewer/a.py"]},
+        predicted={"PRI-45": ["reviewer/a.py"]},
+    )
+    assert snap["tasks"][0]["context_status"] == replay.STATUS_CONTEXT_FAILED
