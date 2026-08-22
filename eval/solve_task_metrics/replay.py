@@ -196,7 +196,7 @@ def run_replay(
     commit: str,
     taken_at: str,
     limit: int | None = None,
-    seed_mode: str = SEED_MODE_LINES,
+    seed_mode: str = SEED_MODE_LINES_SIGNATURE,
 ) -> dict:
     """Прогнать корпус одним вариантом и вернуть снимок replay.
 

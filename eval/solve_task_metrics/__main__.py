@@ -400,7 +400,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     replay_parser.add_argument(
         "--context-seeds",
-        default=replay_mod.SEED_MODE_LINES,
+        default=replay_mod.SEED_MODE_LINES_SIGNATURE,
         choices=list(replay_mod.SEED_MODES),
         help="источник разрешённых имён контекстного ядра: "
              "lines (по изменённым строкам) или lines+signature (плюс шапки сидов)",

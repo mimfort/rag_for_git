@@ -91,9 +91,14 @@ def test_replay_cli_accepts_context_seeds_flag():
     сделала бы сравнение невалидным."""
     from eval.solve_task_metrics import __main__ as main_mod
 
-    parser = main_mod.build_parser()
-    args = parser.parse_args(["replay", "--context-seeds", "lines+signature"])
-    assert args.context_seeds == "lines+signature"
+    from eval.solve_task_metrics import replay
 
+    parser = main_mod.build_parser()
+    for mode in replay.SEED_MODES:
+        args = parser.parse_args(["replay", "--context-seeds", mode])
+        assert args.context_seeds == mode
+
+    # Дефолт назван константой, а не литералом: он менялся по итогу приёмки
+    # PRI-266, и тест не должен быть вторым местом, где записан выбор.
     default_args = parser.parse_args(["replay"])
-    assert default_args.context_seeds == "lines"
+    assert default_args.context_seeds == replay.SEED_MODE_LINES_SIGNATURE
