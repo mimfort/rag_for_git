@@ -118,3 +118,5 @@
 | PRI-259 | 2026-08-18-PRI-259-lever-selection-and-locality.md | 20 | 2 | 13 | 1 | 50% | — | — | — | — |
 | PRI-260 | 2026-08-18-PRI-260-policy-layer-leaf-shadowing.md | 18 | 4 | 14 | 4 | 100% | — | — | — | — |
 | PRI-261 | 2026-08-19-PRI-261-context-core-denominator.md | 24 | 2 | 12 | 2 | 100% | — | — | — | — |
+
+<!-- generated:end — ниже ручные разделы, прогон их не трогает -->

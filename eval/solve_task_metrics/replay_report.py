@@ -129,6 +129,15 @@ def render(new: dict, old: dict | None = None) -> str:
         lines.append(f"| {status} | {count} |")
     lines.append("")
 
+    context_statuses = new.get("context_statuses")
+    if context_statuses:
+        # Отдельный блок, а не колонка в «Статусах задач»: это другая шкала —
+        # статус ОБХОДА задачи, а не статус её измерения по ядру.
+        lines += ["## Статусы контекста", "", "| Статус | Задач |", "|---|---|"]
+        for status, count in context_statuses.items():
+            lines.append(f"| {status} | {count} |")
+        lines.append("")
+
     if old is not None:
         rows, unchanged = _task_delta_rows(new, old)
         lines += [

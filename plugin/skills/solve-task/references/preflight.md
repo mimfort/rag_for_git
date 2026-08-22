@@ -29,6 +29,20 @@
       user's behalf, per the run-state file of pipeline Step 4. In `normal` and `auto`, ask them as
       written.
 
+      **The panel is fixed, not a theme to improvise on.** Ask these three questions,
+      in one `AskUserQuestion` call, using the headers **verbatim**: `Brief model tier`,
+      `Interaction mode`, `Execution strategy`. Do not reformulate the questions in your
+      own words, do not split them across several panels, do not substitute your own
+      questions for them, and do not omit any of the three — a panel that asks two of
+      them is a violation, not a shortcut. Option wording may be phrased in the user's
+      language, but each option must still state what that value means, per the option
+      texts given above.
+
+      **Self-check.** After the panel returns, verify you actually asked all three. If
+      any is missing, say so plainly and ask the missing ones immediately, in a new
+      panel, before any preflight check runs — the answers govern the preflight
+      questions below, so a late answer governs nothing.
+
    1. **Base-index freshness.** Read `drift` from `preflight.drift` in the `prepare_task_context`
       payload fetched above — the same field `uvx --from rag-reviewer reviewer status <path>
       --branch <branch> --json` would report. Two distinct cases, do not conflate them:
