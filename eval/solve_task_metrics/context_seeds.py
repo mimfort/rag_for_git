@@ -71,13 +71,20 @@ class Hunk:
 
 @dataclass(frozen=True)
 class SeedSet:
-    """Сиды задачи: символы обхода и имена, прозвучавшие на изменённых строках."""
+    """Сиды задачи: символы обхода и имена, разрешающие соседа.
+
+    Имена разделены по источнику, а не слиты в одно поле: вклад шапки символа
+    в покрытие и в точность обязан быть измерен отдельно (критерий 3 PRI-266),
+    и обе стороны замера обязаны сниматься одним и тем же кодом.
+    """
     symbols: set = field(default_factory=set)
     called_names: set = field(default_factory=set)
+    signature_names: set = field(default_factory=set)
 
     def __or__(self, other: "SeedSet") -> "SeedSet":
         return SeedSet(self.symbols | other.symbols,
-                       self.called_names | other.called_names)
+                       self.called_names | other.called_names,
+                       self.signature_names | other.signature_names)
 
 
 def parse_hunks(diff_text: str) -> list:
@@ -235,6 +242,117 @@ def called_names(source: str, lines: set) -> set:
     return names
 
 
+def _def_node_at(root, start_line: int):
+    """Узел определения (`def`/`class`), чей ЧАНК начинается на данной строке.
+
+    Сопоставление по строке, а не по имени: имя может повторяться в файле, а
+    `chunk_python` уже выбрал нужный символ. Сравнивается строка охватывающего
+    `decorated_definition`, если он есть: `chunk_python` включает декораторы в
+    `start_line`, а `function_definition` начинается со слова `def`, и без
+    этого ни один декорированный символ не нашёлся бы.
+    """
+    found = []
+
+    def visit(node) -> None:
+        if node.type in ("function_definition", "class_definition"):
+            parent = node.parent
+            outer = parent if parent is not None and \
+                parent.type == "decorated_definition" else node
+            if outer.start_point[0] + 1 == start_line:
+                found.append(node)
+        for child in node.children:
+            visit(child)
+
+    visit(root)
+    return found[0] if found else None
+
+
+def _names_in(node) -> set:
+    """Простые имена всех идентификаторов и атрибутов поддерева.
+
+    В шапке символа идентификатор — это тип, дефолт или декоратор, то есть
+    ровно та зависимость, которую граф выражает ребром. Запрет `called_names`
+    на голые идентификаторы здесь не нужен: локальных переменных в шапке нет.
+    """
+    names: set = set()
+
+    def visit(child) -> None:
+        if child.type in ("identifier", "attribute"):
+            name = _simple_name(child)
+            if name:
+                names.add(name)
+            return
+        for sub in child.children:
+            visit(sub)
+
+    visit(node)
+    return names
+
+
+def _param_parts(parameters) -> list:
+    """Части параметров, называющие зависимость: аннотации и дефолты.
+
+    ИМЯ параметра не берётся: оно локально для функции, ребром графа не
+    выражается, и в фильтре имён пропустило бы посторонний файл — тот же
+    запрет, по которому `called_names` не берёт голые идентификаторы.
+    """
+    parts = []
+    for child in parameters.children:
+        for field_name in ("type", "value"):
+            node = child.child_by_field_name(field_name)
+            if node is not None:
+                parts.append(node)
+    return parts
+
+
+def _signature_parts(node) -> list:
+    """Части шапки определения: декораторы, аннотации и дефолты параметров,
+    тип возврата, базы класса."""
+    parts = []
+    parent = node.parent
+    if parent is not None and parent.type == "decorated_definition":
+        parts.extend(c for c in parent.children if c.type == "decorator")
+    parameters = node.child_by_field_name("parameters")
+    if parameters is not None:
+        parts.extend(_param_parts(parameters))
+    for field_name in ("return_type", "superclasses"):
+        child = node.child_by_field_name(field_name)
+        if child is not None:
+            parts.append(child)
+    return parts
+
+
+def signature_names(source: str, symbols: set) -> set:
+    """Имена из шапок символов-сидов: декораторы, аннотации, дефолты, базы.
+
+    Второй источник разрешённых имён (PRI-266). Фильтр по именам с изменённых
+    строк не видит зависимость, которую изменённые строки не называют: PRI-251
+    потеряла chunker/models/gitutil, потому что ведущие к ним вызовы лежат на
+    нетронутых строках. Шапка изменённого символа такую зависимость называет.
+
+    Тело символа не читается: оттуда и приходил мусор god-модулей, который
+    чинила PRI-262. Сиды этой функцией не расширяются — только фильтр.
+    """
+    if not symbols or not source:
+        return set()
+    names: set = set()
+    try:
+        chunks = chunk_python("x.py", source.encode("utf-8", "replace"))
+        root = _PARSER.parse(source.encode("utf-8", "replace")).root_node
+    except Exception:  # noqa: BLE001 — не-Python или битый файл не роняет прогон
+        return set()
+    wanted = {sym.split("#", 1)[1] for sym in symbols if "#" in sym}
+    for chunk in chunks:
+        if chunk.symbol_fqn not in wanted:
+            continue
+        node = _def_node_at(root, chunk.start_line)
+        if node is None:
+            continue
+        for part in _signature_parts(node):
+            names |= _names_in(part)
+    return names
+
+
 def _lines_of(rng: tuple) -> set:
     return set(range(rng[0], rng[1] + 1))
 
@@ -268,10 +386,12 @@ def seeds_for_merge(sha: str, core_paths: set, run_git) -> SeedSet:
             right_lines |= _lines_of(hunk.right_range)
             left_lines |= _lines_of(hunk.left_range)
 
+        symbols = _innermost_symbols(path, after, right_lines)
         result = result | SeedSet(
-            symbols=_innermost_symbols(path, after, right_lines),
+            symbols=symbols,
             called_names=called_names(after, right_lines)
             | called_names(before, left_lines),
+            signature_names=signature_names(after, symbols),
         )
     return result
 
