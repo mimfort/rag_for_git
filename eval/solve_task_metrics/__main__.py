@@ -231,7 +231,7 @@ def _replay_side(provider, args, run_git, commit, taken_at, repo, branch,
     snap = replay_mod.run_replay(
         provider=provider, run_git=run_git, briefs_dir=BRIEFS_DIR,
         target=target, variant_name=variant_name, commit=commit,
-        taken_at=taken_at, limit=args.limit,
+        taken_at=taken_at, limit=args.limit, seed_mode=args.context_seeds,
     )
     replay_history.append(REPLAY_HISTORY_PATH, snap)
     return snap
@@ -397,6 +397,13 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=None,
         help="усечь корпус (снимок помечается частичным)",
+    )
+    replay_parser.add_argument(
+        "--context-seeds",
+        default=replay_mod.SEED_MODE_LINES,
+        choices=list(replay_mod.SEED_MODES),
+        help="источник разрешённых имён контекстного ядра: "
+             "lines (по изменённым строкам) или lines+signature (плюс шапки сидов)",
     )
     replay_parser.add_argument(
         "--repo", default=None, help="owner/name; по умолчанию DEFAULT_REPO"

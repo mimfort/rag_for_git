@@ -84,3 +84,16 @@ def test_repository_reports_carry_the_marker():
     """Оба отчёта репозитория пригодны к слиянию — иначе первый же прогон откажет."""
     for path in (cli.REPLAY_REPORT_PATH, cli.REPORT_PATH):
         assert report_merge.MARKER in path.read_text(encoding="utf-8"), path
+
+
+def test_replay_cli_accepts_context_seeds_flag():
+    """Режим сидов задаётся флагом: правка исходника между сторонами A/B
+    сделала бы сравнение невалидным."""
+    from eval.solve_task_metrics import __main__ as main_mod
+
+    parser = main_mod.build_parser()
+    args = parser.parse_args(["replay", "--context-seeds", "lines+signature"])
+    assert args.context_seeds == "lines+signature"
+
+    default_args = parser.parse_args(["replay"])
+    assert default_args.context_seeds == "lines"

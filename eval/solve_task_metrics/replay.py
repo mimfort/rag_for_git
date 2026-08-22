@@ -39,6 +39,25 @@ CONTEXT_STATUSES = (
     STATUS_CONTEXT_FAILED,
 )
 
+SEED_MODE_LINES = "lines"
+SEED_MODE_LINES_SIGNATURE = "lines+signature"
+
+SEED_MODES = (SEED_MODE_LINES, SEED_MODE_LINES_SIGNATURE)
+"""Источник разрешённых имён фильтра (PRI-266).
+
+`lines` — только имена с изменённых строк (поведение PRI-262, дефолт).
+`lines+signature` — плюс имена из шапок символов-сидов. Режим, а не правка
+кода между прогонами: обе стороны A/B обязаны сниматься одним исходником.
+"""
+
+
+def allowed_names_for(seeds, seed_mode: str) -> set:
+    """Разрешённые имена фильтра для выбранного режима сидов."""
+    if seed_mode == SEED_MODE_LINES_SIGNATURE:
+        return seeds.called_names | seeds.signature_names
+    return seeds.called_names
+
+
 CONTEXT_EVALUATED_STATUSES = (
     STATUS_MEASURED,
     STATUS_EMPTY_CORE,
@@ -153,6 +172,7 @@ def run_replay(
     commit: str,
     taken_at: str,
     limit: int | None = None,
+    seed_mode: str = SEED_MODE_LINES,
 ) -> dict:
     """Прогнать корпус одним вариантом и вернуть снимок replay.
 
@@ -194,7 +214,7 @@ def run_replay(
                 seeds.symbols,
                 {p for p in truth.changed if classify.is_core_production_path(p)},
                 lambda ids: provider.neighbors(target.repo, target.branch, ids),
-                allowed_names=seeds.called_names,
+                allowed_names=allowed_names_for(seeds, seed_mode),
             )
         except Exception:  # noqa: BLE001 — недоступный граф не роняет прогон корпуса
             core_now = set()
@@ -233,6 +253,7 @@ def run_replay(
         "taken_at": taken_at,
         "commit": commit,
         "variant": variant_name,
+        "seed_mode": seed_mode,
         "variant_params": target.limits,
         "repo": target.repo,
         "branch": preflight.get("branch", target.branch),

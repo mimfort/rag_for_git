@@ -105,7 +105,7 @@ def _target():
 
 
 def _run(tmp_path, keys, *, tasks, changed, predicted, fail=(), missing=(), limit=None,
-         neighbors=None):
+         neighbors=None, seed_mode=replay.SEED_MODE_LINES):
     provider = FakeProvider(tasks, predicted, fail=fail, neighbors=neighbors)
     return replay.run_replay(
         provider=provider,
@@ -116,6 +116,7 @@ def _run(tmp_path, keys, *, tasks, changed, predicted, fail=(), missing=(), limi
         commit="deadbee",
         taken_at="2026-08-17T00:00:00+00:00",
         limit=limit,
+        seed_mode=seed_mode,
     )
 
 
@@ -383,3 +384,93 @@ def test_aggregate_carries_context_medians(tmp_path):
     assert "context_recall_median" in agg
     assert "union_precision_median" in agg
     assert agg["context_n_measured"] >= 0
+
+
+def test_seed_mode_lines_is_the_default_and_ignores_signature_names(monkeypatch, tmp_path):
+    """Дефолт тождественен поведению до PRI-266: шапка не участвует."""
+    seen = {}
+
+    def fake_collect(truth, run_git):
+        return replay.context_seeds.SeedSet(
+            symbols={"reviewer/a.py#g"},
+            called_names={"g"},
+            signature_names={"Sig"},
+        )
+
+    def fake_derive(seed_ids, changed_core, traverse, allowed_names=None):
+        seen["allowed"] = allowed_names
+        return set()
+
+    monkeypatch.setattr(replay.context_seeds, "collect_seeds", fake_collect)
+    monkeypatch.setattr(replay.context_core, "derive_context_core", fake_derive)
+    _run(
+        tmp_path,
+        ["PRI-31"],
+        tasks={"PRI-31": {"title": "PRI-31", "description": ""}},
+        changed={"PRI-31": ["reviewer/a.py"]},
+        predicted={"PRI-31": ["reviewer/a.py"]},
+        neighbors=set(),
+    )
+    assert seen["allowed"] == {"g"}
+
+
+def test_seed_mode_signature_unions_both_name_sources(monkeypatch, tmp_path):
+    seen = {}
+
+    def fake_collect(truth, run_git):
+        return replay.context_seeds.SeedSet(
+            symbols={"reviewer/a.py#g"},
+            called_names={"g"},
+            signature_names={"Sig"},
+        )
+
+    def fake_derive(seed_ids, changed_core, traverse, allowed_names=None):
+        seen["allowed"] = allowed_names
+        return set()
+
+    monkeypatch.setattr(replay.context_seeds, "collect_seeds", fake_collect)
+    monkeypatch.setattr(replay.context_core, "derive_context_core", fake_derive)
+    _run(
+        tmp_path,
+        ["PRI-32"],
+        tasks={"PRI-32": {"title": "PRI-32", "description": ""}},
+        changed={"PRI-32": ["reviewer/a.py"]},
+        predicted={"PRI-32": ["reviewer/a.py"]},
+        neighbors=set(),
+        seed_mode=replay.SEED_MODE_LINES_SIGNATURE,
+    )
+    assert seen["allowed"] == {"g", "Sig"}
+
+
+def test_lines_mode_moves_no_existing_number(tmp_path):
+    """Аддитивность: режим по умолчанию оставляет строку прогона побайтово
+    той же, какой она была до PRI-266. Иначе числа приёмок PRI-255…262
+    перестают быть сравнимыми без пересчёта."""
+    kwargs = dict(
+        tasks={"PRI-34": {"title": "PRI-34", "description": ""}},
+        changed={"PRI-34": ["reviewer/a.py"]},
+        predicted={"PRI-34": ["reviewer/a.py"]},
+        neighbors={"reviewer/b.py#g"},
+    )
+    left, right = tmp_path / "a", tmp_path / "b"
+    left.mkdir()
+    right.mkdir()
+    default_row = _run(left, ["PRI-34"], **kwargs)["tasks"][0]
+    explicit_row = _run(
+        right, ["PRI-34"], seed_mode=replay.SEED_MODE_LINES, **kwargs
+    )["tasks"][0]
+    assert default_row == explicit_row
+
+
+def test_snapshot_records_the_seed_mode(tmp_path):
+    """Режим сидов виден в снимке: без него две стороны A/B неразличимы."""
+    snap = _run(
+        tmp_path,
+        ["PRI-33"],
+        tasks={"PRI-33": {"title": "PRI-33", "description": ""}},
+        changed={"PRI-33": ["reviewer/a.py"]},
+        predicted={"PRI-33": ["reviewer/a.py"]},
+        neighbors=set(),
+        seed_mode=replay.SEED_MODE_LINES_SIGNATURE,
+    )
+    assert snap["seed_mode"] == replay.SEED_MODE_LINES_SIGNATURE
