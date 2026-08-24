@@ -8,6 +8,8 @@ from pgvector import Vector
 from pgvector.psycopg import register_vector
 from psycopg_pool import ConnectionPool
 
+from reviewer.rrf import RRF_K
+
 _BM25_STRIP = re.compile(r"[^\w\s]")
 
 def _bm25_query(text: str) -> str:
@@ -491,9 +493,9 @@ class ChunkStore:
             ORDER BY embedding <=> %(vec)s LIMIT %(cand)s
         ),
         rrf AS (
-            SELECT id, 1.0/(60+rank) AS s FROM bm25
+            SELECT id, 1.0/(%(rrf_k)s::int + rank) AS s FROM bm25
             UNION ALL
-            SELECT id, 1.0/(60+rank) AS s FROM ann
+            SELECT id, 1.0/(%(rrf_k)s::int + rank) AS s FROM ann
         )
         SELECT c.path, c.symbol_fqn, c.kind, c.start_line, c.end_line, c.text,
                SUM(r.s) AS score,
@@ -507,7 +509,7 @@ class ChunkStore:
         """
         params = {"repo": repo, "q": _bm25_query(query_text), "vec": Vector(query_embedding),
                   "overlay": overlay_ref, "changed": changed_paths,
-                  "cand": candidates, "k": top_k, "base": base_ref}
+                  "cand": candidates, "k": top_k, "base": base_ref, "rrf_k": RRF_K}
         with self._connect() as conn:
             rows = conn.execute(sql, params).fetchall()
         return [Retrieved(node_id=f"{p}#{f}", path=p, symbol_fqn=f, kind=k,
