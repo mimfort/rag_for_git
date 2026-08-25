@@ -24,10 +24,11 @@
       **never block** — the survey must not stop the pipeline under any circumstance.
 
       **The mode governs the preflight questions below.** In `full-auto`, do not ask the
-      confirmations of Steps 0.1 and 0.4 (stale index, missing summaries): take the recommended
-      option in each (reindex; warm the summaries) and record each one as a decision made on the
-      user's behalf, per the run-state file of pipeline Step 4. In `normal` and `auto`, ask them as
-      written.
+      confirmations of Steps 0a., 0.1 and 0.4 (storage unavailable, stale index, missing
+      summaries): take the recommended option in each (`reviewer start` when a `remedy` is
+      available, else continue without the section; reindex; warm the summaries) and record each
+      one as a decision made on the user's behalf, per the run-state file of pipeline Step 4. In
+      `normal` and `auto`, ask them as written.
 
       **The panel is fixed, not a theme to improvise on.** Ask these three questions,
       in one `AskUserQuestion` call, using the headers **verbatim**: `Brief model tier`,
