@@ -7,11 +7,26 @@ from __future__ import annotations
 
 import logging
 
+from reviewer.storage_health import is_storage_unavailable
 from reviewer.tasks.graph import PRRef
 from reviewer.tasks.pr_links import extract_pr_refs
 from reviewer.tasks.store import TaskRow, build_task_text, task_content_hash
 
 log = logging.getLogger(__name__)
+
+_STORAGE_SKIPPED = "store unavailable: пропущено после первого сбоя соединения"
+
+
+def _skipped_result(key: str) -> dict:
+    """Строка результата для задачи, которую не тронули после отказа стора.
+
+    Форма совпадает с веткой ошибки шага 2 — `index_batch` обязан вернуть по
+    строке на каждую входную задачу: `reviewer/mcp/service.py:983` сверяет длину
+    результата с длиной входа и уходит в warning при расхождении.
+    """
+    return {"key": key, "embedded": False, "links_upserted": 0,
+            "links_stored": None, "prs_linked": 0,
+            "warnings": [_STORAGE_SKIPPED], "retry_required": True}
 
 
 def _normalize_links(links: object) -> list[dict]:
@@ -164,12 +179,21 @@ class TaskService:
         to_embed: list[int] = []
         meta_only: list[int] = []
 
+        # Первый же сбой соединения гасит все дальнейшие заходы в пул: иначе
+        # каждая задача добавляет собственный таймаут (47 × 30 с ≈ 23 минуты).
+        storage_down = False
+
         for i, p in enumerate(parsed):
             if p is None:
+                continue
+            if storage_down:
+                results[i] = _skipped_result(p["key"])
                 continue
             try:
                 prev = self._store.existing_hash(p["key"])
             except Exception as e:
+                if is_storage_unavailable(e):
+                    storage_down = True
                 log.warning("index_batch: existing_hash сбой для %s", p["key"], exc_info=True)
                 results[i] = {"key": p["key"], "embedded": False, "links_upserted": 0,
                               "links_stored": None, "prs_linked": 0,
@@ -181,7 +205,7 @@ class TaskService:
         # Шаг 3: один Voyage-вызов для изменившихся задач
         embed_err: str | None = None
         embeddings: dict[int, list[float]] = {}
-        if to_embed:
+        if to_embed and not storage_down:
             try:
                 vecs = self._embedder.embed_documents([parsed[i]["text"] for i in to_embed])
                 embeddings = {i: vecs[idx] for idx, i in enumerate(to_embed)}
@@ -192,6 +216,9 @@ class TaskService:
         # Шаг 4: upsert изменившихся задач (или propagate embed_err)
         for i in to_embed:
             p = parsed[i]
+            if storage_down:
+                results[i] = _skipped_result(p["key"])
+                continue
             warnings: list[str] = []
             embedded = False
             retry_required = False
@@ -208,6 +235,8 @@ class TaskService:
                         links=p["links"]))
                     embedded = True
                 except Exception as e:
+                    if is_storage_unavailable(e):
+                        storage_down = True
                     retry_required = True
                     log.warning("index_batch: сбой store для %s", p["key"], exc_info=True)
                     warnings.append(f"store: {type(e).__name__}: {e}")
@@ -219,12 +248,17 @@ class TaskService:
         # Шаг 5: update_meta для неизменившихся задач
         for i in meta_only:
             p = parsed[i]
+            if storage_down:
+                results[i] = _skipped_result(p["key"])
+                continue
             warnings: list[str] = []
             retry_required = False
             try:
                 self._store.update_meta(p["key"], p["title"], p["status"],
                                         p["url"], p["aliases"], p["project"])
             except Exception as e:
+                if is_storage_unavailable(e):
+                    storage_down = True
                 retry_required = True
                 log.warning("index_batch: сбой update_meta для %s", p["key"], exc_info=True)
                 warnings.append(f"store: {type(e).__name__}: {e}")
@@ -234,6 +268,8 @@ class TaskService:
 
         # Snapshot links обновляется независимо от ветки embed/meta-only.
         for i, p in enumerate(parsed):
+            if storage_down:
+                break
             if (p is None or results[i] is None or not p["links_supplied"]
                     or results[i]["links_stored"] is True):
                 continue
@@ -250,6 +286,8 @@ class TaskService:
         # Шаг 6: граф для всех валидных задач (+ сбор PR-пар для батч-линковки)
         pr_pairs: list[tuple[str, PRRef]] = []
         for i, p in enumerate(parsed):
+            if storage_down:
+                break
             if p is None or results[i] is None:
                 continue
             links_upserted = 0
@@ -275,7 +313,7 @@ class TaskService:
             results[i]["prs_linked"] = prs_linked
 
         # Батчевый MERGE IMPLEMENTED_BY — один запрос вместо N×M round-trip.
-        if pr_pairs and self._graph is not None:
+        if pr_pairs and self._graph is not None and not storage_down:
             try:
                 self._graph.link_prs_batch(pr_pairs)
             except Exception:
@@ -296,12 +334,19 @@ class TaskService:
         if not metas:
             return {"meta_refreshed": 0, "warnings": []}
         warnings: list[str] = []
+        storage_down = False
         try:
             self._store.update_meta_batch(metas)
         except Exception as e:
+            if is_storage_unavailable(e):
+                storage_down = True
             log.warning("refresh_meta_batch: сбой update_meta_batch", exc_info=True)
             warnings.append(f"store: {type(e).__name__}: {e}")
-        if self._graph is None:
+        if storage_down:
+            # Ниже — пер-задачный цикл по графу: на лежащем Neo4j он повторил бы
+            # ту же арифметику для задач ниже watermark.
+            warnings.append(_STORAGE_SKIPPED)
+        elif self._graph is None:
             warnings.append("graph unavailable: task projects not refreshed in graph")
         else:
             for m in metas:

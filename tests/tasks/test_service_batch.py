@@ -1,4 +1,6 @@
 """Unit-тесты для TaskService.index_batch."""
+import psycopg_pool
+
 from reviewer.tasks.service import TaskService
 from reviewer.tasks.store import build_task_text, task_content_hash
 
@@ -386,3 +388,95 @@ def test_refresh_meta_batch_graph_failsoft():
         [{"key": "ID-1", "project": "PRI"}])
     assert res["meta_refreshed"] == 1              # store прошёл, граф — fail-soft
     assert any("graph" in w for w in res["warnings"])
+
+
+class _TimingOutStore(_FakeStore):
+    """Стор, у которого пул не отдаёт соединение: каждый заход — 30 с в проде."""
+
+    def __init__(self):
+        super().__init__()
+        self.existing_hash_calls = 0
+
+    def existing_hash(self, key):
+        self.existing_hash_calls += 1
+        raise psycopg_pool.PoolTimeout("couldn't get a connection after 30.00 sec")
+
+
+def test_first_pool_timeout_stops_further_store_calls():
+    """Критерий 4: число попыток равно одной, а не числу задач."""
+    store, graph, emb = _TimingOutStore(), _FakeGraph(), _FakeEmbedder()
+    tasks = [_brief(f"ID-{n}", f"PRI-{n}", title=f"t{n}", description=f"d{n}", links=[])
+             for n in range(1, 48)]
+    results = TaskService(store, graph, emb).index_batch(tasks)
+
+    assert store.existing_hash_calls == 1
+    assert len(results) == len(tasks)
+    assert all(r["retry_required"] is True for r in results)
+    assert all(r["embedded"] is False for r in results)
+
+
+def test_pool_timeout_skips_voyage_call_entirely():
+    """Писать результат некуда — квоту Voyage (3 RPM / 10K TPM) не тратим."""
+    store, graph, emb = _TimingOutStore(), _FakeGraph(), _FakeEmbedder()
+    tasks = [_brief(f"ID-{n}", f"PRI-{n}", title=f"t{n}", description=f"d{n}", links=[])
+             for n in range(1, 6)]
+    TaskService(store, graph, emb).index_batch(tasks)
+
+    assert emb.doc_calls == []
+
+
+def test_pool_timeout_skips_graph_phase():
+    """Флаг один на оба хранилища: иначе та же арифметика повторится на графе."""
+    store, graph, emb = _TimingOutStore(), _FakeGraph(), _FakeEmbedder()
+    tasks = [_brief(f"ID-{n}", f"PRI-{n}", title=f"t{n}", description=f"d{n}", links=[])
+             for n in range(1, 6)]
+    TaskService(store, graph, emb).index_batch(tasks)
+
+    assert graph.tasks == []
+
+
+def test_result_shape_survives_the_early_exit():
+    """mcp/service.py:983 проверяет длину результата — форма обязана совпадать."""
+    store, graph, emb = _TimingOutStore(), _FakeGraph(), _FakeEmbedder()
+    tasks = [_brief("ID-1", "PRI-1"), _brief("ID-2", "PRI-2", title="t2",
+                                              description="d2", links=[])]
+    results = TaskService(store, graph, emb).index_batch(tasks)
+
+    for result in results:
+        assert set(result) == {"key", "embedded", "links_upserted", "links_stored",
+                               "prs_linked", "warnings", "retry_required"}
+
+
+def test_non_storage_error_still_processes_every_task():
+    """Сбой не-хранилища прежнее пер-задачное поведение не меняет."""
+    class _BrokenStore(_FakeStore):
+        def __init__(self):
+            super().__init__()
+            self.calls = 0
+
+        def existing_hash(self, key):
+            self.calls += 1
+            raise RuntimeError("boom")
+
+    store, graph, emb = _BrokenStore(), _FakeGraph(), _FakeEmbedder()
+    tasks = [_brief(f"ID-{n}", f"PRI-{n}", title=f"t{n}", description=f"d{n}", links=[])
+             for n in range(1, 6)]
+    results = TaskService(store, graph, emb).index_batch(tasks)
+
+    assert store.calls == 5
+    assert len(results) == 5
+
+
+def test_refresh_meta_batch_skips_graph_loop_when_store_is_down():
+    """У refresh_meta_batch свой пер-задачный цикл по графу — он тоже гасится."""
+    class _TimingOutMetaStore(_FakeStore):
+        def update_meta_batch(self, metas):
+            raise psycopg_pool.PoolTimeout("couldn't get a connection after 30.00 sec")
+
+    store, graph, emb = _TimingOutMetaStore(), _FakeGraph(), _FakeEmbedder()
+    metas = [{"key": f"ID-{n}", "title": f"t{n}", "status": "Open",
+              "url": None, "aliases": [], "project": "PRI"} for n in range(1, 48)]
+    result = TaskService(store, graph, emb).refresh_meta_batch(metas)
+
+    assert graph.tasks == []
+    assert result["warnings"]
