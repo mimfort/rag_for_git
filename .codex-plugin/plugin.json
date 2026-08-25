@@ -1,6 +1,6 @@
 {
   "name": "rag-reviewer",
-  "version": "0.6.0+codex.4cdbd0972c5a",
+  "version": "0.6.0+codex.360a4d2c5fcc",
   "description": "Agentic PR review: hybrid RAG + code graph via MCP, review skills for Codex",
   "repository": "https://github.com/mimfort/rag_for_git",
   "license": "MIT",
