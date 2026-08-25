@@ -511,3 +511,26 @@ def test_result_shape_survives_mid_batch_storage_failure():
         assert set(r) == expected_keys
     assert results[0]["embedded"] is True        # первая задача упсертилась успешно
     assert results[1]["retry_required"] is True  # вторая — упёрлась в PoolTimeout
+
+
+def test_storage_down_mid_hash_phase_still_blocks_voyage_call():
+    """Регрессия квоты Voyage: `_TimingOutStore` (падает на КАЖДОМ ключе) не
+    ловит эту дыру — при ней первая же задача летит в except шага 2 и
+    to_embed остаётся пустым независимо от guard'а. Здесь первая задача
+    успешно проходит existing_hash и уходит в to_embed, а вторая валит
+    PoolTimeout и взводит storage_down уже ПОСЛЕ того, как to_embed
+    непуст, — guard шага 3 обязан проверять именно storage_down, а не
+    только пустоту to_embed, иначе Voyage вызывается для уже собранных
+    to_embed-задач при частичной деградации пула."""
+    class _MixedStore(_FakeStore):
+        def existing_hash(self, key):
+            if key == "ID-1":
+                return None  # хэш не совпадёт → задача уходит в to_embed
+            raise psycopg_pool.PoolTimeout("couldn't get a connection after 30.00 sec")
+
+    store, graph, emb = _MixedStore(), _FakeGraph(), _FakeEmbedder()
+    tasks = [_brief("ID-1", "PRI-1", title="t1", description="d1", links=[]),
+             _brief("ID-2", "PRI-2", title="t2", description="d2", links=[])]
+    TaskService(store, graph, emb).index_batch(tasks)
+
+    assert emb.doc_calls == []
