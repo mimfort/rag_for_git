@@ -99,6 +99,31 @@
 `test_deps_without_augment_gaps_attribute_still_work` (`tests/mcp/test_prepare_task_context.py:281`),
 поэтому существующий `FakeDeps` без нового метода продолжает работать.
 
+### Компонент 2b — короткое замыкание секций в `build_task_context`
+
+Быстрого отказа внутри `index_batch` для критерия 1 **недостаточно**, и это главный вывод разбора.
+`build_task_context` собирает девять секций подряд, и store-backed из них — `preflight`,
+`warm_board`, `task`, `related.linked`, `related.similar`, `subsystems`, `code`, `test_exemplars`.
+Каждая делает собственный заход в пул, каждый ждёт свои 30 с. Даже с идеально исправленным
+`index_batch` суммарное время осталось бы порядка 3,5 минут — «десятки минут» превратились бы в
+«минуты», а критерий 1 требует секунд.
+
+Поэтому `build_task_context` получает локальный флаг: первая же секция, чьё исключение
+классифицировано как `storage_unavailable`, взводит его, и все последующие секции **не вызываются
+вовсе**. Каждая пропущенная секция получает свой `default` (как при обычном сбое — payload
+по-прежнему содержит все девять ключей) и запись в `gaps` с тем же `cause="storage_unavailable"`,
+тем же `remedy` и отдельным `reason` «пропущено: хранилище не отвечает». Итоговое время вызова —
+один таймаут пула плюс сетевые операции, не зависящие от стора.
+
+Инвариант `test_every_failure_still_returns_all_sections`
+(`tests/mcp/test_prepare_task_context.py:161`) при этом сохраняется: пропуск заполняет секцию
+дефолтом, а не удаляет ключ.
+
+Замыкание срабатывает только на `storage_unavailable`. Сбой одной секции по любой другой причине
+(`cause="unknown"`) остальные секции не отменяет — сегодняшнее fail-open поведение сохраняется
+буквально, и тесты `test_neo4j_down_empties_linked_only`, `test_no_summaries_marks_gap`,
+`test_board_unreachable_still_builds_payload` остаются зелёными без правок.
+
 ### Компонент 3 — быстрый отказ в `index_batch`
 
 Флаг `storage_down` внутри `reviewer/tasks/service.py::index_batch` (строка 126). Первый сбой, на
@@ -110,6 +135,12 @@
 
 Шаг 3 (единственный вызов Voyage) при взведённом флаге **не выполняется**: писать результат некуда,
 а квота Voyage (3 RPM / 10K TPM) тратится безвозвратно.
+
+Тот же флаг заводится в `TaskService.refresh_meta_batch` (`reviewer/tasks/service.py:285`): его
+`update_meta_batch` — один вызов, но следом идёт **по-задачный** цикл `graph.upsert_task`, который на
+лежащем Neo4j повторил бы ту же арифметику для задач ниже watermark (в измеренном прогоне их было
+75 из 122). Флаг локальный для каждого метода: связывать их через возвращаемое значение значило бы
+менять форму результата публичного тула `index_tasks_batch` ради того, что дешевле решается на месте.
 
 **Длина результата сохраняется.** `index_batch` обязан вернуть по строке на каждую входную задачу:
 `reviewer/mcp/service.py:981-983` (write-through после `create_subtasks`) проверяет
@@ -155,7 +186,7 @@
 
 | Критерий | Проверка |
 |---|---|
-| 1 — отвечает за секунды, в gaps причина и команда | `build_task_context` с `preflight`, бросающим `psycopg.OperationalError`: gap несёт `cause="storage_unavailable"` и `remedy="reviewer start"`; отдельно — тест числа обращений к стору (см. критерий 4) |
+| 1 — отвечает за секунды, в gaps причина и команда | `build_task_context` с `preflight`, бросающим `psycopg.OperationalError`: gap несёт `cause="storage_unavailable"` и `remedy="reviewer start"`; фейковый `deps` подтверждает, что остальные store-секции **не вызывались** (`deps.calls`), при этом все девять ключей payload на месте; отдельно — тест числа обращений к стору (см. критерий 4) |
 | 2 — «не отвечает» ≠ «не построен» | Два теста на одной секции `preflight`: `psycopg.OperationalError` → `cause="storage_unavailable"`; `RuntimeError` → `cause="unknown"`. Развитие существующей пары `test_postgres_down_empties_retrieval_sections:102` / `test_no_index_marks_gap_and_keeps_going:122` |
 | 3 — совет не выдаётся удалённым | `storage_remedy` возвращает `None` для `postgresql://db.example.com/...` и `REMEDY_START` для `127.0.0.1`; существующие `test_infra_commands.py:158,167` остаются зелёными без правок |
 | 4 — число попыток закреплено | Фейковый store (образец — `tests/tasks/test_service_batch.py:14`) считает вызовы `existing_hash` и бросает `psycopg_pool.PoolTimeout` на первом; при N задачах ассерт `calls == 1`, `len(results) == N`, у всех `retry_required is True` |
