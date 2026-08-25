@@ -147,7 +147,12 @@ def build_task_context(deps, *, repo: str, key: str, branch: str,
         if result is not None:
             payload["warnings"].append({"warm_board": result})
     elif warm_board and not board:
-        payload["gaps"].append(gap("warm_board", "доска не настроена"))
+        if state.down:
+            payload["gaps"].append(gap("warm_board", SKIPPED_REASON,
+                                       cause=CAUSE_STORAGE_UNAVAILABLE,
+                                       remedy=state.remedy))
+        else:
+            payload["gaps"].append(gap("warm_board", "доска не настроена"))
 
     task = _safe(payload, "task", lambda: deps.task(key, project), None,
                  "задача не прочитана из стора", state)

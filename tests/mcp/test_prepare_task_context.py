@@ -386,3 +386,27 @@ def test_existing_gaps_keep_section_and_reason():
     entry = next(g for g in payload["gaps"] if g["section"] == "subsystems")
     assert entry["reason"] == "сводки подсистем недоступны"
     assert set(entry) == {"section", "reason", "cause", "remedy"}
+
+
+def test_warm_board_gap_reflects_storage_down_not_misconfigured_board():
+    """Найдено ревью: task_board упал по вине хранилища — warm_board не должен
+
+    лгать «доска не настроена». Дефолт warm_board=True (как в живом MCP-туле):
+    доска, возможно, настроена прекрасно, просто её конфиг не прочитался.
+    """
+    deps = FakeDeps(task_board=psycopg.OperationalError("connection refused"))
+    payload = task_context.build_task_context(
+        deps, repo="o/n", key="PRI-268", branch="dev", warm_board=True)
+    entry = next(g for g in payload["gaps"] if g["section"] == "warm_board")
+    assert entry["cause"] == task_context.CAUSE_STORAGE_UNAVAILABLE
+    assert entry["reason"] == task_context.SKIPPED_REASON
+    assert entry["remedy"] == "reviewer start"
+
+
+def test_warm_board_gap_keeps_misconfigured_reason_without_storage_failure():
+    """Регрессионный якорь: board-less без сбоя хранилища — прежний текст и cause unknown."""
+    payload = task_context.build_task_context(
+        FakeDeps(task_board=None), repo="o/n", key="PRI-268", branch="dev", warm_board=True)
+    entry = next(g for g in payload["gaps"] if g["section"] == "warm_board")
+    assert entry["reason"] == "доска не настроена"
+    assert entry["cause"] == task_context.CAUSE_UNKNOWN
