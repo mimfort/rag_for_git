@@ -243,6 +243,7 @@ class TaskService:
             results[i] = {"key": p["key"], "embedded": embedded,
                           "links_upserted": 0,
                           "links_stored": True if embedded and p["links_supplied"] else None,
+                          "prs_linked": 0,
                           "warnings": warnings, "retry_required": retry_required}
 
         # Шаг 5: update_meta для неизменившихся задач
@@ -264,6 +265,7 @@ class TaskService:
                 warnings.append(f"store: {type(e).__name__}: {e}")
             results[i] = {"key": p["key"], "embedded": False,
                           "links_upserted": 0, "links_stored": None,
+                          "prs_linked": 0,
                           "warnings": warnings, "retry_required": retry_required}
 
         # Snapshot links обновляется независимо от ветки embed/meta-only.

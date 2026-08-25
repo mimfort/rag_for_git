@@ -480,3 +480,34 @@ def test_refresh_meta_batch_skips_graph_loop_when_store_is_down():
 
     assert graph.tasks == []
     assert result["warnings"]
+
+
+def test_result_shape_survives_mid_batch_storage_failure():
+    """Регрессия: обрыв стора НА ВТОРОЙ задаче шага 4 не должен резать форму
+    результата первой задаче. До правки `prs_linked` проставлялся только
+    циклом шага 6, а `if storage_down: break` в нём (ранний выход) обрывает
+    цикл раньше, чем тот дойдёт до уже обработанной первой задачи, — набор
+    ключей результата должен быть полным и одинаковым у ВСЕХ задач пачки,
+    независимо от того, где именно внутри пачки сломался стор."""
+    class _FailsOnSecondUpsert(_FakeStore):
+        def __init__(self):
+            super().__init__()
+            self.upsert_calls = 0
+
+        def upsert_task(self, row):
+            self.upsert_calls += 1
+            if self.upsert_calls == 2:
+                raise psycopg_pool.PoolTimeout("couldn't get a connection after 30.00 sec")
+            super().upsert_task(row)
+
+    store, graph, emb = _FailsOnSecondUpsert(), _FakeGraph(), _FakeEmbedder()
+    tasks = [_brief("ID-1", "PRI-1", title="t1", description="d1", links=[]),
+             _brief("ID-2", "PRI-2", title="t2", description="d2", links=[])]
+    results = TaskService(store, graph, emb).index_batch(tasks)
+
+    expected_keys = {"key", "embedded", "links_upserted", "links_stored",
+                      "prs_linked", "warnings", "retry_required"}
+    for r in results:
+        assert set(r) == expected_keys
+    assert results[0]["embedded"] is True        # первая задача упсертилась успешно
+    assert results[1]["retry_required"] is True  # вторая — упёрлась в PoolTimeout
