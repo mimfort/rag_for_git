@@ -52,6 +52,16 @@ class _StorageState:
         self.down = False
 
 
+def _storage_gap(payload: dict, section: str, reason: str, state: _StorageState) -> None:
+    """Записать в gaps пробел, вызванный недоступностью хранилища.
+
+    Общая точка для трёх мест, различающихся только `reason`: skip- и except-
+    ветки `_safe`, а также `elif warm_board and not board` в build_task_context.
+    """
+    payload["gaps"].append(gap(section, reason, cause=CAUSE_STORAGE_UNAVAILABLE,
+                               remedy=state.remedy))
+
+
 def _safe(payload: dict, section: str, produce, default, reason: str,
           state: _StorageState):
     """Собрать секцию fail-open: сбой → default + запись в gaps.
@@ -61,9 +71,7 @@ def _safe(payload: dict, section: str, produce, default, reason: str,
     ключи `SECTIONS`.
     """
     if state.down:
-        payload["gaps"].append(gap(section, SKIPPED_REASON,
-                                   cause=CAUSE_STORAGE_UNAVAILABLE,
-                                   remedy=state.remedy))
+        _storage_gap(payload, section, SKIPPED_REASON, state)
         return default
     try:
         return produce()
@@ -71,9 +79,7 @@ def _safe(payload: dict, section: str, produce, default, reason: str,
         log.warning("prepare_task_context: секция %s недоступна", section, exc_info=True)
         if is_storage_unavailable(exc):
             state.down = True
-            payload["gaps"].append(gap(section, STORAGE_REASON,
-                                       cause=CAUSE_STORAGE_UNAVAILABLE,
-                                       remedy=state.remedy))
+            _storage_gap(payload, section, STORAGE_REASON, state)
         else:
             payload["gaps"].append(gap(section, reason))
         return default
@@ -148,9 +154,7 @@ def build_task_context(deps, *, repo: str, key: str, branch: str,
             payload["warnings"].append({"warm_board": result})
     elif warm_board and not board:
         if state.down:
-            payload["gaps"].append(gap("warm_board", SKIPPED_REASON,
-                                       cause=CAUSE_STORAGE_UNAVAILABLE,
-                                       remedy=state.remedy))
+            _storage_gap(payload, "warm_board", SKIPPED_REASON, state)
         else:
             payload["gaps"].append(gap("warm_board", "доска не настроена"))
 

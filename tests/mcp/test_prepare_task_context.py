@@ -410,3 +410,23 @@ def test_warm_board_gap_keeps_misconfigured_reason_without_storage_failure():
     entry = next(g for g in payload["gaps"] if g["section"] == "warm_board")
     assert entry["reason"] == "доска не настроена"
     assert entry["cause"] == task_context.CAUSE_UNKNOWN
+
+
+def test_broken_storage_endpoints_source_does_not_break_build():
+    """Найдено ревью: сбой самого источника эндпоинтов (`_remedy`) не должен ронять сборку.
+
+    `storage_endpoints()` может бросить (например, недоступен сам Settings) —
+    `_remedy` обязан поймать, залогировать и отдать remedy=None, а не уронить
+    build_task_context.
+    """
+    class BrokenEndpointsDeps(FakeDeps):
+        def storage_endpoints(self):
+            raise RuntimeError("эндпоинты недоступны")
+
+    deps = BrokenEndpointsDeps(preflight=psycopg.OperationalError("connection refused"))
+    payload = task_context.build_task_context(
+        deps, repo="o/n", key="PRI-268", branch="dev", warm_board=False)
+    assert set(payload) == set(task_context.SECTIONS)
+    entry = next(g for g in payload["gaps"] if g["section"] == "preflight")
+    assert entry["cause"] == task_context.CAUSE_STORAGE_UNAVAILABLE
+    assert entry["remedy"] is None
