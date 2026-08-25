@@ -685,6 +685,15 @@ namespaced skills with `$rag-reviewer:...`.
   empty search) is reported per-section in `gaps` instead of aborting the skill. Graph expansions
   (`get_related_symbols`, `callers`, `implementations`, `family`, …) and `get_pr_diff` stay
   separate calls made at the LLM's discretion, since they depend on what the brief turns up.
+- **A storage outage is a signal, not silence:** when Postgres or Neo4j is unreachable, the first
+  failing section classifies the exception *by type* (`reviewer/storage_health.py` — never by its
+  text, which can carry a DSN with a password) and short-circuits the rest: every remaining section
+  gets its default plus a `gaps` entry, instead of each paying its own 30-second pool timeout. Every
+  `gaps` entry carries `cause` (`storage_unavailable` | `unknown`) and `remedy` (the command that
+  fixes it, or `null` when the storages are remote), so the skill branches on a machine-readable
+  class rather than on prose. The server never starts containers — it names the cure, and
+  `solve-task` asks the user whether to run it. The same flag stops `index_batch` from walking a
+  dead pool task by task and from spending Voyage quota it has nowhere to store.
 - **Multi-query retrieval for `code`:** the `code` and `test_exemplars` sections are searched with a
   *set* of subqueries, not one query over the whole task text. Subqueries are extracted
   deterministically (`reviewer/mcp/subqueries.py`: list items under "what to do"/"acceptance"
