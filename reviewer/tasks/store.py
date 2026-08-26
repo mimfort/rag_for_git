@@ -16,6 +16,8 @@ from pgvector import Vector
 from pgvector.psycopg import register_vector
 from psycopg_pool import ConnectionPool
 
+from reviewer.rrf import RRF_K
+
 _BM25_STRIP = re.compile(r"[^\w\s]")
 _LINKS_MIGRATION_SQL = (
     "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS links "
@@ -267,8 +269,8 @@ class TaskStore:
             ORDER BY embedding <=> %(vec)s LIMIT %(cand)s
         ),
         rrf AS (
-            SELECT id, 1.0/(60+rank) AS s FROM bm25
-            UNION ALL SELECT id, 1.0/(60+rank) AS s FROM ann
+            SELECT id, 1.0/(%(rrf_k)s::int + rank) AS s FROM bm25
+            UNION ALL SELECT id, 1.0/(%(rrf_k)s::int + rank) AS s FROM ann
         )
         SELECT t.key, t.title, t.status, t.aliases, SUM(r.s) AS score
         FROM rrf r JOIN tasks t USING (id)
@@ -276,7 +278,7 @@ class TaskStore:
         ORDER BY score DESC LIMIT %(k)s
         """
         params = {"q": _bm25_query(query_text), "vec": Vector(query_embedding),
-                  "cand": candidates, "k": top_k}
+                  "cand": candidates, "k": top_k, "rrf_k": RRF_K}
         if project:
             params["project"] = project
         with self._connect() as conn:

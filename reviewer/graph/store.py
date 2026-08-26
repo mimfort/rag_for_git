@@ -83,6 +83,26 @@ class GraphStore:
             ids=list(node_ids), repo=repo, branch=branch)
         return {r["id"] for r in records}
 
+    def outgoing_neighbors(self, repo: str, node_ids: list, *,
+                           branch: str = "") -> set:
+        """Соседи по ИСХОДЯЩИМ CALLS/IMPLEMENTS на один хоп (PRI-261).
+
+        Отличие от expand: тот ненаправленный и многохоповый. Здесь направление
+        существенно — контекстное ядро отвечает «что надо прочитать, чтобы
+        написать этот код», то есть вызываемое и наследуемое, а не вызывающее.
+        На замере ненаправленный обход давал 60 файлов медианы против 14.5
+        у направленного, то есть треть репозитория.
+        """
+        if not node_ids:
+            return set()
+        records, _, _ = self._driver.execute_query(
+            "UNWIND $ids AS sid "
+            "MATCH (s:Symbol {repo: $repo, branch: $branch, id: sid})"
+            "-[:CALLS|IMPLEMENTS]->(n:Symbol {repo: $repo, branch: $branch}) "
+            "RETURN DISTINCT n.id AS id",
+            ids=list(node_ids), repo=repo, branch=branch)
+        return {r["id"] for r in records}
+
     def callers(self, repo: str, node_ids: list[str], *, branch: str = "") -> set[str]:
         """Кто вызывает данные символы — направленные входящие CALLS."""
         records, _, _ = self._driver.execute_query(

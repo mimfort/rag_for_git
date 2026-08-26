@@ -1,4 +1,6 @@
 """prepare_task_context: форма payload и посекционный fail-open (PRI-248)."""
+import psycopg
+
 from reviewer.mcp import task_context
 
 
@@ -20,6 +22,9 @@ class FakeDeps:
         return self._result("preflight", {
             "branch": branch, "indexed_sha": "abc", "drift": 0,
             "summaries": 40, "chunks": 7110, "graph_nodes": 7362})
+
+    def storage_endpoints(self):
+        return ("postgresql://u:p@127.0.0.1:5433/reviewer", "bolt://localhost:7687")
 
     def task_board(self, repo, branch):
         return self._result("task_board", {
@@ -274,8 +279,10 @@ def test_augment_gaps_are_copied_into_payload():
     payload = task_context.build_task_context(deps, repo="o/n", key="ID-311",
                                               branch="dev", warm_board=False)
     assert payload["code"], "сбой подмешивания не обнуляет секцию"
-    assert {"section": "code.augment",
-            "reason": "git-история недоступна: CalledProcessError"} in payload["gaps"]
+    entry = next(g for g in payload["gaps"] if g["section"] == "code.augment")
+    assert entry["reason"] == "git-история недоступна: CalledProcessError"
+    assert entry["cause"] == task_context.CAUSE_UNKNOWN
+    assert entry["remedy"] is None
 
 
 def test_deps_without_augment_gaps_attribute_still_work():
@@ -298,3 +305,128 @@ def test_similar_section_text_is_unchanged_by_augmentation():
     payload = task_context.build_task_context(deps, repo="o/n", key="ID-311",
                                               branch="dev", warm_board=False)
     assert payload["related"]["similar"] == "1. ID-300 ..."
+
+
+# ---------------------------------------------------------------------------
+# Тесты Task 2 (PRI-268): класс причины в gaps и короткое замыкание секций
+# ---------------------------------------------------------------------------
+
+def test_storage_failure_names_cause_and_remedy():
+    """Критерий 1: в gaps названы и причина, и команда лечения."""
+    deps = FakeDeps(preflight=psycopg.OperationalError("connection refused"))
+    payload = task_context.build_task_context(
+        deps, repo="o/n", key="PRI-268", branch="dev", warm_board=False)
+    entry = next(g for g in payload["gaps"] if g["section"] == "preflight")
+    assert entry["cause"] == "storage_unavailable"
+    assert entry["remedy"] == "reviewer start"
+
+
+def test_other_failure_keeps_cause_unknown():
+    """Критерий 2: «хранилище не отвечает» и прочий сбой — разные записи."""
+    deps = FakeDeps(preflight=RuntimeError("no index"))
+    payload = task_context.build_task_context(
+        deps, repo="o/n", key="PRI-268", branch="dev", warm_board=False)
+    entry = next(g for g in payload["gaps"] if g["section"] == "preflight")
+    assert entry["cause"] == "unknown"
+    assert entry["remedy"] is None
+
+
+def test_storage_failure_short_circuits_remaining_sections():
+    """Критерий 1: остальные store-секции не вызываются — иначе +30 с каждая."""
+    deps = FakeDeps(preflight=psycopg.OperationalError("connection refused"))
+    payload = task_context.build_task_context(
+        deps, repo="o/n", key="PRI-268", branch="dev", warm_board=False)
+    assert deps.calls == ["preflight"]
+    assert set(payload) == set(task_context.SECTIONS)
+    assert all(g["cause"] == "storage_unavailable" for g in payload["gaps"])
+
+
+def test_short_circuit_does_not_fire_on_other_causes():
+    """Сбой не-хранилища остальные секции не отменяет: fail-open как прежде."""
+    deps = FakeDeps(preflight=RuntimeError("no index"))
+    payload = task_context.build_task_context(
+        deps, repo="o/n", key="PRI-268", branch="dev", warm_board=False)
+    assert "code" in deps.calls
+    assert payload["code"]
+
+
+def test_remote_deploy_gets_cause_without_remedy():
+    """Критерий 3: совет reviewer start не выдаётся удалённым эндпоинтам."""
+    class RemoteDeps(FakeDeps):
+        def storage_endpoints(self):
+            return ("postgresql://u:p@db.example.com:5432/reviewer",
+                    "bolt://neo4j.internal:7687")
+
+    deps = RemoteDeps(preflight=psycopg.OperationalError("connection refused"))
+    payload = task_context.build_task_context(
+        deps, repo="o/n", key="PRI-268", branch="dev", warm_board=False)
+    entry = next(g for g in payload["gaps"] if g["section"] == "preflight")
+    assert entry["cause"] == "storage_unavailable"
+    assert entry["remedy"] is None
+
+
+def test_deps_without_storage_endpoints_still_work():
+    """Провайдер без нового метода не ломает сборку — remedy просто пуст."""
+    class OldDeps(FakeDeps):
+        storage_endpoints = None
+
+    deps = OldDeps(preflight=psycopg.OperationalError("connection refused"))
+    payload = task_context.build_task_context(
+        deps, repo="o/n", key="PRI-268", branch="dev", warm_board=False)
+    entry = next(g for g in payload["gaps"] if g["section"] == "preflight")
+    assert entry["cause"] == "storage_unavailable"
+    assert entry["remedy"] is None
+
+
+def test_existing_gaps_keep_section_and_reason():
+    """Расширение аддитивно: прежние ключи записи на месте."""
+    payload = task_context.build_task_context(
+        FakeDeps(subsystems=RuntimeError("нет сводок")), repo="o/n",
+        key="PRI-268", branch="dev", warm_board=False)
+    entry = next(g for g in payload["gaps"] if g["section"] == "subsystems")
+    assert entry["reason"] == "сводки подсистем недоступны"
+    assert set(entry) == {"section", "reason", "cause", "remedy"}
+
+
+def test_warm_board_gap_reflects_storage_down_not_misconfigured_board():
+    """Найдено ревью: task_board упал по вине хранилища — warm_board не должен
+
+    лгать «доска не настроена». Дефолт warm_board=True (как в живом MCP-туле):
+    доска, возможно, настроена прекрасно, просто её конфиг не прочитался.
+    """
+    deps = FakeDeps(task_board=psycopg.OperationalError("connection refused"))
+    payload = task_context.build_task_context(
+        deps, repo="o/n", key="PRI-268", branch="dev", warm_board=True)
+    entry = next(g for g in payload["gaps"] if g["section"] == "warm_board")
+    assert entry["cause"] == task_context.CAUSE_STORAGE_UNAVAILABLE
+    assert entry["reason"] == task_context.SKIPPED_REASON
+    assert entry["remedy"] == "reviewer start"
+
+
+def test_warm_board_gap_keeps_misconfigured_reason_without_storage_failure():
+    """Регрессионный якорь: board-less без сбоя хранилища — прежний текст и cause unknown."""
+    payload = task_context.build_task_context(
+        FakeDeps(task_board=None), repo="o/n", key="PRI-268", branch="dev", warm_board=True)
+    entry = next(g for g in payload["gaps"] if g["section"] == "warm_board")
+    assert entry["reason"] == "доска не настроена"
+    assert entry["cause"] == task_context.CAUSE_UNKNOWN
+
+
+def test_broken_storage_endpoints_source_does_not_break_build():
+    """Найдено ревью: сбой самого источника эндпоинтов (`_remedy`) не должен ронять сборку.
+
+    `storage_endpoints()` может бросить (например, недоступен сам Settings) —
+    `_remedy` обязан поймать, залогировать и отдать remedy=None, а не уронить
+    build_task_context.
+    """
+    class BrokenEndpointsDeps(FakeDeps):
+        def storage_endpoints(self):
+            raise RuntimeError("эндпоинты недоступны")
+
+    deps = BrokenEndpointsDeps(preflight=psycopg.OperationalError("connection refused"))
+    payload = task_context.build_task_context(
+        deps, repo="o/n", key="PRI-268", branch="dev", warm_board=False)
+    assert set(payload) == set(task_context.SECTIONS)
+    entry = next(g for g in payload["gaps"] if g["section"] == "preflight")
+    assert entry["cause"] == task_context.CAUSE_STORAGE_UNAVAILABLE
+    assert entry["remedy"] is None

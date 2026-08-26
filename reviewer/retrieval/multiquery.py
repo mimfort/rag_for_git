@@ -20,11 +20,9 @@ from reviewer.index.refs import base_ref
 from reviewer.retrieval.retriever import (
     ContextPack, _dedupe_overlapping, _is_test_path,
 )
+from reviewer.rrf import RRF_K
 
 log = logging.getLogger(__name__)
-
-RRF_K = 60
-"""Константа RRF — та же, что в store.hybrid_search и TaskStore.search."""
 
 def rrf_merge(runs: list[list], k: int = RRF_K) -> list:
     """Слить выдачи подзапросов: score(node) = Σ 1/(k + rank_в_прогоне).

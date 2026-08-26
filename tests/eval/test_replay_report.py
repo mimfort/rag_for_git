@@ -4,8 +4,8 @@ from __future__ import annotations
 from eval.solve_task_metrics import replay_report
 
 
-def _task(key, core_recall, predicted_paths, status="measured"):
-    return {
+def _task(key, core_recall, predicted_paths, status="measured", **context):
+    row = {
         "key": key,
         "status": status,
         "expected": 3,
@@ -17,7 +17,15 @@ def _task(key, core_recall, predicted_paths, status="measured"):
         "precision": 0.5,
         "predicted_paths": sorted(predicted_paths),
         "expected_core_paths": ["reviewer/a.py", "reviewer/b.py"],
+        "context_status": "empty_context_denominator",
+        "context_core": 0,
+        "hit_context": 0,
+        "context_recall": None,
+        "union_precision": None,
+        "context_core_paths": [],
     }
+    row.update(context)
+    return row
 
 
 def _snap(variant, tasks, median, **over):
@@ -42,6 +50,10 @@ def _snap(variant, tasks, median, **over):
             "denominator_median": 2.0,
             "bulk_core_recall_median": None,
             "bulk_n_measured": 0,
+            "context_recall_median": None,
+            "context_n_measured": 0,
+            "no_context_measurement": len(tasks),
+            "union_precision_median": None,
             "n_measured": len(tasks),
             "no_measurement": 0,
             "precision_median": 0.5,
@@ -50,6 +62,18 @@ def _snap(variant, tasks, median, **over):
         "tasks": tasks,
     }
     snap.update(over)
+    return snap
+
+
+def _snapshot_with(**agg_overrides):
+    """Минимальный снимок с подменёнными ключами aggregate (не полной заменой).
+
+    `_snap(**over)` делает `snap.update(over)` — верхнеуровневая замена, а не
+    слияние; для точечных ключей aggregate нужен отдельный хелпер, который
+    мержит именно в него.
+    """
+    snap = _snap("baseline", [_task("PRI-1", 0.5, ["reviewer/a.py"])], 0.5)
+    snap["aggregate"].update(agg_overrides)
     return snap
 
 
@@ -94,3 +118,64 @@ def test_index_drift_warning_is_surfaced():
 def test_incomparability_disclaimer_always_present():
     text = replay_report.render(_snap("baseline", [_task("PRI-1", 0.5, ["a.py"])], 0.5))
     assert "snapshot" in text and "несравним" in text
+
+
+def test_report_renders_context_columns():
+    """Контекстные числа видны в отчёте: метрика, которую не печатают,
+    не существует для читателя приёмки."""
+    snap = _snapshot_with(
+        context_recall_median=0.5, union_precision_median=0.8,
+        context_n_measured=3, no_context_measurement=1,
+    )
+    text = replay_report.render(snap)
+    assert "context_recall_median" in text or "ctx_recall" in text
+    assert "0.5" in text
+    assert "union_precision" in text or "u_prec" in text
+
+
+def test_report_renders_context_statuses_section():
+    snap = _snap("baseline", [_task("PRI-1", 0.5, ["reviewer/a.py"])], 0.5)
+    snap["context_statuses"] = {
+        "measured": 3,
+        "empty_context_denominator": 16,
+        "context_retrieval_failed": 2,
+    }
+    text = replay_report.render(snap)
+    assert "## Статусы контекста" in text
+    assert "| context_retrieval_failed | 2 |" in text
+
+
+def test_report_without_context_statuses_key_still_renders():
+    """Снимок старого формата ключа не имеет — A/B со старой историей не ломается."""
+    snap = _snap("baseline", [_task("PRI-1", 0.5, ["reviewer/a.py"])], 0.5)
+    assert "context_statuses" not in snap
+    text = replay_report.render(snap)
+    assert "## Статусы контекста" not in text
+    assert "## Статусы задач" in text
+
+
+def test_empty_context_denominator_renders_as_dash_not_zero():
+    """None (пустой знаменатель контекста) — это «—», а не «0»: неопределённость
+    и ноль различаются на протяжении всей метрики, и таблица не должна их
+    смешивать."""
+    task = _task("PRI-1", 0.5, ["reviewer/a.py"])  # context-поля по дефолту None/0
+    snap = _snap("baseline", [task], 0.5)
+    text = replay_report.render(snap)
+    assert "—" in text
+    row_line = next(line for line in text.splitlines() if line.startswith("| PRI-1"))
+    assert "0" not in row_line.split("|")[-3]  # ctx_recall не превратился в 0
+    assert "—" in row_line
+
+
+def test_report_renders_undefined_context_status():
+    from eval.solve_task_metrics import replay
+
+    snap = _snapshot_with()
+    snap["context_statuses"] = {
+        replay.STATUS_MEASURED: 2,
+        replay.STATUS_EMPTY_CONTEXT: 1,
+        replay.STATUS_UNDEFINED_CONTEXT: 3,
+        replay.STATUS_CONTEXT_FAILED: 0,
+    }
+    text = replay_report.render(snap, None)
+    assert replay.STATUS_UNDEFINED_CONTEXT in text

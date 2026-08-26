@@ -10,7 +10,6 @@ import platform as _platform
 import re
 import shutil as _shutil
 from typing import TYPE_CHECKING
-from urllib.parse import urlsplit
 
 import click
 import httpx
@@ -67,6 +66,7 @@ from reviewer.services.branch import resolve_branch
 from reviewer.services.gc import purge_orphaned_overlays
 from reviewer.services.review_service import ReviewService
 from reviewer.services.status import build_status_report, render_status, render_status_json
+from reviewer.storage_health import is_loopback_endpoint as _is_loopback_endpoint
 from reviewer.tasks.boards.errors import sanitize_provider_text
 from reviewer.update_lifecycle import (
     download_compose,
@@ -808,25 +808,6 @@ def _check_vcs_providers(settings: Settings) -> bool:
             click.echo(f"✗ {label} API: {type(exc).__name__}")
             failed = True
     return failed
-
-
-_LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1", ""})
-
-
-def _is_loopback_endpoint(value: str) -> bool:
-    """Адресован ли DSN/URI локальной машине.
-
-    Нужен, чтобы совет `reviewer start` не показывался деплою с удалёнными
-    хранилищами: там локальный docker-стек ничего не чинит.
-    """
-    try:
-        host = urlsplit(value).hostname
-    except ValueError:
-        return False
-    if host is None:
-        match = re.search(r"host=([^\s]+)", value)
-        host = match.group(1) if match else None
-    return (host or "").lower() in _LOOPBACK_HOSTS
 
 
 def _parse_board_projects(values: tuple[str, ...]) -> dict[str, str]:

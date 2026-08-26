@@ -12,7 +12,7 @@ from __future__ import annotations
 import pathlib
 import statistics
 
-from . import briefs, classify, ground_truth, recall, variants
+from . import briefs, classify, context_core, context_seeds, ground_truth, recall, variants
 
 SCHEMA = 1
 """Версия схемы снимка replay. Растёт при несовместимом изменении формата."""
@@ -22,6 +22,9 @@ STATUS_EMPTY_CORE = "empty_core_denominator"
 STATUS_NO_GROUND_TRUTH = "no_ground_truth"
 STATUS_NO_TASK = "task_not_in_store"
 STATUS_RETRIEVAL_FAILED = "retrieval_failed"
+STATUS_EMPTY_CONTEXT = "empty_context_denominator"
+STATUS_CONTEXT_FAILED = "context_retrieval_failed"
+STATUS_UNDEFINED_CONTEXT = "undefined_context_denominator"
 
 STATUSES = (
     STATUS_MEASURED,
@@ -30,6 +33,62 @@ STATUSES = (
     STATUS_NO_TASK,
     STATUS_RETRIEVAL_FAILED,
 )
+
+CONTEXT_STATUSES = (
+    STATUS_MEASURED,
+    STATUS_EMPTY_CONTEXT,
+    STATUS_UNDEFINED_CONTEXT,
+    STATUS_CONTEXT_FAILED,
+)
+
+SEED_MODE_LINES = "lines"
+SEED_MODE_LINES_SIGNATURE = "lines+signature"
+
+SEED_MODES = (SEED_MODE_LINES, SEED_MODE_LINES_SIGNATURE)
+"""Источник разрешённых имён фильтра (PRI-266).
+
+`lines` — только имена с изменённых строк (поведение PRI-262, дефолт).
+`lines+signature` — плюс имена из шапок символов-сидов. Режим, а не правка
+кода между прогонами: обе стороны A/B обязаны сниматься одним исходником.
+"""
+
+
+def allowed_names_for(seeds, seed_mode: str) -> set:
+    """Разрешённые имена фильтра для выбранного режима сидов."""
+    if seed_mode == SEED_MODE_LINES_SIGNATURE:
+        return seeds.called_names | seeds.signature_names
+    return seeds.called_names
+
+
+def context_denominator_defined(changed_paths) -> bool:
+    """Мог ли обход быть засеян в принципе.
+
+    Сиды строятся через `chunk_python`, а граф хранит символы только для
+    Python. У задачи, чьё изменённое ядро целиком не-Python (или ядра нет
+    вовсе), знаменатель контекста НЕОПРЕДЕЛИМ, а не пуст: «пусто» — это
+    высказывание «читать нечего», и смешивать с ним «мерить нечем» значит
+    считать метрику там, где точки измерения не существует.
+
+    Считается по фактическим путям задачи, а не по результату обхода: иначе
+    неопределимость маскируется пустой выдачей графа.
+    """
+    return any(
+        classify.is_core_production_path(path) and path.endswith(".py")
+        for path in changed_paths
+    )
+
+
+CONTEXT_EVALUATED_STATUSES = (
+    STATUS_MEASURED,
+    STATUS_EMPTY_CORE,
+    STATUS_NO_TASK,
+)
+"""Статусы задач, у которых обход графа вообще выполнялся.
+
+Задача без ground truth или с упавшим ретривом до обхода не доходит, и её
+дефолтный context_status не должен подмешиваться в счётчики контекста: иначе
+новый блок отчёта врёт с первого дня.
+"""
 
 
 def _median(values: list):
@@ -65,12 +124,19 @@ def _task_row(key: str, status: str, **fields) -> dict:
         "precision": None,
         "predicted_paths": [],
         "expected_core_paths": [],
+        "context_status": STATUS_EMPTY_CONTEXT,
+        "context_core": 0,
+        "hit_context": 0,
+        "context_recall": None,
+        "union_precision": None,
+        "context_core_paths": [],
     }
     row.update(fields)
     return row
 
 
-def _evaluate(key: str, predicted: set, truth, run_git) -> dict:
+def _evaluate(key: str, predicted: set, truth, run_git, context_core_paths: set,
+              context_failed: bool = False) -> dict:
     """Посчитать одну задачу той же линейкой, что build_snapshot."""
     existed_cache: dict = {}
 
@@ -86,8 +152,19 @@ def _evaluate(key: str, predicted: set, truth, run_git) -> dict:
         for path in truth.changed
         if classify.is_core_production_path(path) and existed(path)
     }
-    row = recall.evaluate_task(key, predicted, truth.changed, expected_core)
+    row = recall.evaluate_task(
+        key, predicted, truth.changed, expected_core,
+        context_core=context_core_paths,
+    )
     status = STATUS_MEASURED if expected_core else STATUS_EMPTY_CORE
+    if context_failed:
+        context_status = STATUS_CONTEXT_FAILED
+    elif context_core_paths:
+        context_status = STATUS_MEASURED
+    elif not context_denominator_defined(truth.changed):
+        context_status = STATUS_UNDEFINED_CONTEXT
+    else:
+        context_status = STATUS_EMPTY_CONTEXT
     return _task_row(
         key,
         status,
@@ -100,6 +177,12 @@ def _evaluate(key: str, predicted: set, truth, run_git) -> dict:
         precision=row.precision,
         predicted_paths=sorted(predicted),
         expected_core_paths=sorted(expected_core),
+        context_status=context_status,
+        context_core=row.context_core,
+        hit_context=row.hit_context,
+        context_recall=row.context_recall,
+        union_precision=row.union_precision,
+        context_core_paths=sorted(context_core_paths),
     )
 
 
@@ -113,6 +196,7 @@ def run_replay(
     commit: str,
     taken_at: str,
     limit: int | None = None,
+    seed_mode: str = SEED_MODE_LINES_SIGNATURE,
 ) -> dict:
     """Прогнать корпус одним вариантом и вернуть снимок replay.
 
@@ -147,7 +231,20 @@ def run_replay(
         except Exception:  # noqa: BLE001 — сбой ретрива на задаче не роняет прогон
             rows.append(_task_row(key, STATUS_RETRIEVAL_FAILED))
             continue
-        row = _evaluate(key, predicted, truth, run_git)
+        context_failed = False
+        try:
+            seeds = context_seeds.collect_seeds(truth, run_git)
+            core_now = context_core.derive_context_core(
+                seeds.symbols,
+                {p for p in truth.changed if classify.is_core_production_path(p)},
+                lambda ids: provider.neighbors(target.repo, target.branch, ids),
+                allowed_names=allowed_names_for(seeds, seed_mode),
+            )
+        except Exception:  # noqa: BLE001 — недоступный граф не роняет прогон корпуса
+            core_now = set()
+            context_failed = True
+        row = _evaluate(key, predicted, truth, run_git, core_now,
+                        context_failed=context_failed)
         if task is None:
             # Задача есть в корпусе брифов, но не в сторе: запрос выродился в
             # ключ, поэтому измерение непредставительно и считаться не должно.
@@ -166,6 +263,10 @@ def run_replay(
             core_recall=r["core_recall"],
             raw_recall=r["raw_recall"],
             precision=r["precision"],
+            context_core=r["context_core"],
+            hit_context=r["hit_context"],
+            context_recall=r["context_recall"],
+            union_precision=r["union_precision"],
         )
         for r in measured
     ]
@@ -176,6 +277,7 @@ def run_replay(
         "taken_at": taken_at,
         "commit": commit,
         "variant": variant_name,
+        "seed_mode": seed_mode,
         "variant_params": target.limits,
         "repo": target.repo,
         "branch": preflight.get("branch", target.branch),
@@ -188,6 +290,14 @@ def run_replay(
             status: sum(1 for r in rows if r["status"] == status)
             for status in STATUSES
         },
+        "context_statuses": {
+            status: sum(
+                1 for r in rows
+                if r["status"] in CONTEXT_EVALUATED_STATUSES
+                and r["context_status"] == status
+            )
+            for status in CONTEXT_STATUSES
+        },
         "aggregate": {
             "core_recall_median": agg.core_recall_median,
             "core_recall_mean": agg.core_recall_mean,
@@ -197,6 +307,10 @@ def run_replay(
             "bulk_n_measured": agg.bulk_n_measured,
             "n_measured": agg.n_measured,
             "no_measurement": agg.no_measurement,
+            "context_recall_median": agg.context_recall_median,
+            "context_n_measured": agg.context_n_measured,
+            "no_context_measurement": agg.no_context_measurement,
+            "union_precision_median": agg.union_precision_median,
             # Медианы уже посчитанных полей строк — не формула метрики, а сводка
             # по ним; расчётное ядро остаётся единственной копией в reviewer/.
             "precision_median": _median(

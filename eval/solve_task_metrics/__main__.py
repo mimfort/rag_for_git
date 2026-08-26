@@ -18,6 +18,7 @@ from . import (
     replay_history,
     replay_report,
     report,
+    report_merge,
     snapshot as snapshot_mod,
     steps,
     subquery_stats,
@@ -42,6 +43,11 @@ def _head_commit(run_git) -> str:
 
 
 def cmd_snapshot(_args) -> int:
+    try:
+        report_merge.ensure_mergeable(REPORT_PATH)
+    except report_merge.MarkerMissing as error:
+        print(str(error))
+        return 1
     run_git = ground_truth.git_runner(REPO_ROOT)
     taken_at = dt.datetime.now(dt.timezone.utc).isoformat()
     transcripts = endtoend.scan_transcripts(TRANSCRIPTS_ROOT)
@@ -53,7 +59,10 @@ def cmd_snapshot(_args) -> int:
         transcripts=transcripts,
     )
     history.append_snapshot(HISTORY_PATH, snap)
-    REPORT_PATH.write_text(report.render(snap, rows), encoding="utf-8")
+    REPORT_PATH.write_text(
+        report_merge.merge_file(REPORT_PATH, report.render(snap, rows)),
+        encoding="utf-8",
+    )
     print(f"Срез сохранён: {HISTORY_PATH}")
     print(f"Отчёт записан: {REPORT_PATH}")
     print(
@@ -222,7 +231,7 @@ def _replay_side(provider, args, run_git, commit, taken_at, repo, branch,
     snap = replay_mod.run_replay(
         provider=provider, run_git=run_git, briefs_dir=BRIEFS_DIR,
         target=target, variant_name=variant_name, commit=commit,
-        taken_at=taken_at, limit=args.limit,
+        taken_at=taken_at, limit=args.limit, seed_mode=args.context_seeds,
     )
     replay_history.append(REPLAY_HISTORY_PATH, snap)
     return snap
@@ -251,6 +260,12 @@ def cmd_replay(args) -> int:
             print(str(error))
             return 1
 
+    try:
+        report_merge.ensure_mergeable(REPLAY_REPORT_PATH)
+    except report_merge.MarkerMissing as error:
+        print(str(error))
+        return 1
+
     from . import live  # ленивый импорт: живые зависимости только здесь
 
     run_git = ground_truth.git_runner(REPO_ROOT)
@@ -273,7 +288,10 @@ def cmd_replay(args) -> int:
         provider.close()
 
     REPLAY_REPORT_PATH.write_text(
-        replay_report.render(snap, baseline_snap), encoding="utf-8"
+        report_merge.merge_file(
+            REPLAY_REPORT_PATH, replay_report.render(snap, baseline_snap)
+        ),
+        encoding="utf-8",
     )
     print(f"Снимок сохранён: {REPLAY_HISTORY_PATH}")
     print(f"Отчёт записан: {REPLAY_REPORT_PATH}")
@@ -379,6 +397,13 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=None,
         help="усечь корпус (снимок помечается частичным)",
+    )
+    replay_parser.add_argument(
+        "--context-seeds",
+        default=replay_mod.SEED_MODE_LINES_SIGNATURE,
+        choices=list(replay_mod.SEED_MODES),
+        help="источник разрешённых имён контекстного ядра: "
+             "lines (по изменённым строкам) или lines+signature (плюс шапки сидов)",
     )
     replay_parser.add_argument(
         "--repo", default=None, help="owner/name; по умолчанию DEFAULT_REPO"

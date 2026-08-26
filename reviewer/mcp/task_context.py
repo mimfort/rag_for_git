@@ -14,6 +14,9 @@ from __future__ import annotations
 import logging
 
 from reviewer.mcp.subqueries import build_subqueries
+from reviewer.storage_health import (
+    CAUSE_STORAGE_UNAVAILABLE, CAUSE_UNKNOWN, is_storage_unavailable, storage_remedy,
+)
 
 log = logging.getLogger(__name__)
 
@@ -22,19 +25,63 @@ SECTIONS = (
     "code", "test_exemplars", "gaps", "warnings",
 )
 
-
-def gap(section: str, reason: str) -> dict:
-    """Структурная запись о пробеле: секция и причина, без секретов и трейсбека."""
-    return {"section": section, "reason": reason}
+STORAGE_REASON = "хранилище не отвечает"
+SKIPPED_REASON = "пропущено: хранилище не отвечает"
 
 
-def _safe(payload: dict, section: str, produce, default, reason: str):
-    """Собрать секцию fail-open: сбой → default + запись в gaps."""
+def gap(section: str, reason: str, *, cause: str = CAUSE_UNKNOWN,
+        remedy: str | None = None) -> dict:
+    """Структурная запись о пробеле: секция, причина и её класс, без секретов.
+
+    `cause` — машиночитаемый класс причины: скилл и тесты ветвятся по нему, а не
+    по прозе `reason`. `remedy` — команда-лекарство, когда она есть и уместна.
+    """
+    return {"section": section, "reason": reason, "cause": cause, "remedy": remedy}
+
+
+class _StorageState:
+    """Взведён ли флаг «хранилище не отвечает» и какое лекарство называть.
+
+    Флаг живёт на один вызов `build_task_context`: первая же недоступность
+    хранилища отменяет остальные store-секции, иначе каждая добавила бы к
+    времени ответа собственный таймаут пула (30 с × 8 секций).
+    """
+
+    def __init__(self, remedy: str | None) -> None:
+        self.remedy = remedy
+        self.down = False
+
+
+def _storage_gap(payload: dict, section: str, reason: str, state: _StorageState) -> None:
+    """Записать в gaps пробел, вызванный недоступностью хранилища.
+
+    Общая точка для трёх мест, различающихся только `reason`: skip- и except-
+    ветки `_safe`, а также `elif warm_board and not board` в build_task_context.
+    """
+    payload["gaps"].append(gap(section, reason, cause=CAUSE_STORAGE_UNAVAILABLE,
+                               remedy=state.remedy))
+
+
+def _safe(payload: dict, section: str, produce, default, reason: str,
+          state: _StorageState):
+    """Собрать секцию fail-open: сбой → default + запись в gaps.
+
+    При взведённом `state.down` источник не вызывается вовсе — секция получает
+    свой default и запись о пропуске, поэтому payload по-прежнему содержит все
+    ключи `SECTIONS`.
+    """
+    if state.down:
+        _storage_gap(payload, section, SKIPPED_REASON, state)
+        return default
     try:
         return produce()
-    except Exception:  # noqa: BLE001 — источник секции недоступен, это штатный случай
+    except Exception as exc:  # noqa: BLE001 — источник секции недоступен, это штатный случай
         log.warning("prepare_task_context: секция %s недоступна", section, exc_info=True)
-        payload["gaps"].append(gap(section, reason))
+        if is_storage_unavailable(exc):
+            state.down = True
+            _storage_gap(payload, section, STORAGE_REASON, state)
+        else:
+            payload["gaps"].append(gap(section, reason))
         return default
 
 
@@ -66,33 +113,53 @@ def _test_queries(task: dict | None, key: str) -> list[str]:
     return [f"как тестируется: {query}" for query in _queries(task, key)]
 
 
+def _remedy(deps) -> str | None:
+    """Лекарство по эндпоинтам хранилищ, если провайдер умеет их назвать.
+
+    Читается через `getattr`, как `augment_gaps`: модуль намеренно не знает про
+    Settings, а старый провайдер без этого метода обязан продолжать работать.
+    """
+    getter = getattr(deps, "storage_endpoints", None)
+    if not callable(getter):
+        return None
+    try:
+        return storage_remedy(*(getter() or ()))
+    except Exception:  # noqa: BLE001 — источник эндпоинтов недоступен, это не повод падать
+        log.warning("prepare_task_context: эндпоинты хранилищ недоступны", exc_info=True)
+        return None
+
+
 def build_task_context(deps, *, repo: str, key: str, branch: str,
                        warm_board: bool = True) -> dict:
     """Единый payload контекста задачи. Ни один сбой секции не прерывает сборку."""
     payload: dict = {section: None for section in SECTIONS}
     payload["gaps"] = []
     payload["warnings"] = []
+    state = _StorageState(_remedy(deps))
 
     payload["preflight"] = _safe(
         payload, "preflight", lambda: deps.preflight(repo, branch), None,
-        "статус индекса недоступен")
+        "статус индекса недоступен", state)
     board = _safe(
         payload, "task_board", lambda: deps.task_board(repo, branch), None,
-        "конфиг доски не разрешён")
+        "конфиг доски не разрешён", state)
     payload["task_board"] = board
     project = (board or {}).get("project")
 
     if warm_board and board:
         result = _safe(
             payload, "warm_board", lambda: deps.warm_board(repo, branch), None,
-            "прогрев доски не выполнен")
+            "прогрев доски не выполнен", state)
         if result is not None:
             payload["warnings"].append({"warm_board": result})
     elif warm_board and not board:
-        payload["gaps"].append(gap("warm_board", "доска не настроена"))
+        if state.down:
+            _storage_gap(payload, "warm_board", SKIPPED_REASON, state)
+        else:
+            payload["gaps"].append(gap("warm_board", "доска не настроена"))
 
     task = _safe(payload, "task", lambda: deps.task(key, project), None,
-                 "задача не прочитана из стора")
+                 "задача не прочитана из стора", state)
     payload["task"] = task
     if task is None and not any(g["section"] == "task" for g in payload["gaps"]):
         payload["gaps"].append(gap("task", "задачи нет в сторе"))
@@ -100,20 +167,22 @@ def build_task_context(deps, *, repo: str, key: str, branch: str,
     query = _query(task, key)
     payload["related"] = {
         "linked": _safe(payload, "related.linked",
-                        lambda: deps.linked(key, project), "", "граф задач недоступен"),
+                        lambda: deps.linked(key, project), "", "граф задач недоступен",
+                        state),
         "similar": _safe(payload, "related.similar",
-                         lambda: deps.similar(query, project), "", "корпус задач недоступен"),
+                         lambda: deps.similar(query, project), "", "корпус задач недоступен",
+                         state),
     }
     payload["subsystems"] = _safe(
         payload, "subsystems", lambda: deps.subsystems(repo, branch, query), None,
-        "сводки подсистем недоступны")
+        "сводки подсистем недоступны", state)
     payload["code"] = _safe(
         payload, "code", lambda: deps.code(repo, branch, _queries(task, key)), "",
-        "поиск по коду недоступен")
+        "поиск по коду недоступен", state)
     for reason in getattr(deps, "augment_gaps", []) or []:
         payload["gaps"].append(gap("code.augment", reason))
     payload["test_exemplars"] = _safe(
         payload, "test_exemplars",
         lambda: deps.test_exemplars(repo, branch, _test_queries(task, key)), "",
-        "поиск по тестам недоступен")
+        "поиск по тестам недоступен", state)
     return payload
