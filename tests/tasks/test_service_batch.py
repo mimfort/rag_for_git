@@ -1,4 +1,6 @@
 """Unit-тесты для TaskService.index_batch."""
+import psycopg_pool
+
 from reviewer.tasks.service import TaskService
 from reviewer.tasks.store import build_task_text, task_content_hash
 
@@ -386,3 +388,149 @@ def test_refresh_meta_batch_graph_failsoft():
         [{"key": "ID-1", "project": "PRI"}])
     assert res["meta_refreshed"] == 1              # store прошёл, граф — fail-soft
     assert any("graph" in w for w in res["warnings"])
+
+
+class _TimingOutStore(_FakeStore):
+    """Стор, у которого пул не отдаёт соединение: каждый заход — 30 с в проде."""
+
+    def __init__(self):
+        super().__init__()
+        self.existing_hash_calls = 0
+
+    def existing_hash(self, key):
+        self.existing_hash_calls += 1
+        raise psycopg_pool.PoolTimeout("couldn't get a connection after 30.00 sec")
+
+
+def test_first_pool_timeout_stops_further_store_calls():
+    """Критерий 4: число попыток равно одной, а не числу задач."""
+    store, graph, emb = _TimingOutStore(), _FakeGraph(), _FakeEmbedder()
+    tasks = [_brief(f"ID-{n}", f"PRI-{n}", title=f"t{n}", description=f"d{n}", links=[])
+             for n in range(1, 48)]
+    results = TaskService(store, graph, emb).index_batch(tasks)
+
+    assert store.existing_hash_calls == 1
+    assert len(results) == len(tasks)
+    assert all(r["retry_required"] is True for r in results)
+    assert all(r["embedded"] is False for r in results)
+
+
+def test_pool_timeout_skips_voyage_call_entirely():
+    """Писать результат некуда — квоту Voyage (3 RPM / 10K TPM) не тратим."""
+    store, graph, emb = _TimingOutStore(), _FakeGraph(), _FakeEmbedder()
+    tasks = [_brief(f"ID-{n}", f"PRI-{n}", title=f"t{n}", description=f"d{n}", links=[])
+             for n in range(1, 6)]
+    TaskService(store, graph, emb).index_batch(tasks)
+
+    assert emb.doc_calls == []
+
+
+def test_pool_timeout_skips_graph_phase():
+    """Флаг один на оба хранилища: иначе та же арифметика повторится на графе."""
+    store, graph, emb = _TimingOutStore(), _FakeGraph(), _FakeEmbedder()
+    tasks = [_brief(f"ID-{n}", f"PRI-{n}", title=f"t{n}", description=f"d{n}", links=[])
+             for n in range(1, 6)]
+    TaskService(store, graph, emb).index_batch(tasks)
+
+    assert graph.tasks == []
+
+
+def test_result_shape_survives_the_early_exit():
+    """mcp/service.py:983 проверяет длину результата — форма обязана совпадать."""
+    store, graph, emb = _TimingOutStore(), _FakeGraph(), _FakeEmbedder()
+    tasks = [_brief("ID-1", "PRI-1"), _brief("ID-2", "PRI-2", title="t2",
+                                              description="d2", links=[])]
+    results = TaskService(store, graph, emb).index_batch(tasks)
+
+    for result in results:
+        assert set(result) == {"key", "embedded", "links_upserted", "links_stored",
+                               "prs_linked", "warnings", "retry_required"}
+
+
+def test_non_storage_error_still_processes_every_task():
+    """Сбой не-хранилища прежнее пер-задачное поведение не меняет."""
+    class _BrokenStore(_FakeStore):
+        def __init__(self):
+            super().__init__()
+            self.calls = 0
+
+        def existing_hash(self, key):
+            self.calls += 1
+            raise RuntimeError("boom")
+
+    store, graph, emb = _BrokenStore(), _FakeGraph(), _FakeEmbedder()
+    tasks = [_brief(f"ID-{n}", f"PRI-{n}", title=f"t{n}", description=f"d{n}", links=[])
+             for n in range(1, 6)]
+    results = TaskService(store, graph, emb).index_batch(tasks)
+
+    assert store.calls == 5
+    assert len(results) == 5
+
+
+def test_refresh_meta_batch_skips_graph_loop_when_store_is_down():
+    """У refresh_meta_batch свой пер-задачный цикл по графу — он тоже гасится."""
+    class _TimingOutMetaStore(_FakeStore):
+        def update_meta_batch(self, metas):
+            raise psycopg_pool.PoolTimeout("couldn't get a connection after 30.00 sec")
+
+    store, graph, emb = _TimingOutMetaStore(), _FakeGraph(), _FakeEmbedder()
+    metas = [{"key": f"ID-{n}", "title": f"t{n}", "status": "Open",
+              "url": None, "aliases": [], "project": "PRI"} for n in range(1, 48)]
+    result = TaskService(store, graph, emb).refresh_meta_batch(metas)
+
+    assert graph.tasks == []
+    assert result["warnings"]
+
+
+def test_result_shape_survives_mid_batch_storage_failure():
+    """Регрессия: обрыв стора НА ВТОРОЙ задаче шага 4 не должен резать форму
+    результата первой задаче. До правки `prs_linked` проставлялся только
+    циклом шага 6, а `if storage_down: break` в нём (ранний выход) обрывает
+    цикл раньше, чем тот дойдёт до уже обработанной первой задачи, — набор
+    ключей результата должен быть полным и одинаковым у ВСЕХ задач пачки,
+    независимо от того, где именно внутри пачки сломался стор."""
+    class _FailsOnSecondUpsert(_FakeStore):
+        def __init__(self):
+            super().__init__()
+            self.upsert_calls = 0
+
+        def upsert_task(self, row):
+            self.upsert_calls += 1
+            if self.upsert_calls == 2:
+                raise psycopg_pool.PoolTimeout("couldn't get a connection after 30.00 sec")
+            super().upsert_task(row)
+
+    store, graph, emb = _FailsOnSecondUpsert(), _FakeGraph(), _FakeEmbedder()
+    tasks = [_brief("ID-1", "PRI-1", title="t1", description="d1", links=[]),
+             _brief("ID-2", "PRI-2", title="t2", description="d2", links=[])]
+    results = TaskService(store, graph, emb).index_batch(tasks)
+
+    expected_keys = {"key", "embedded", "links_upserted", "links_stored",
+                      "prs_linked", "warnings", "retry_required"}
+    for r in results:
+        assert set(r) == expected_keys
+    assert results[0]["embedded"] is True        # первая задача упсертилась успешно
+    assert results[1]["retry_required"] is True  # вторая — упёрлась в PoolTimeout
+
+
+def test_storage_down_mid_hash_phase_still_blocks_voyage_call():
+    """Регрессия квоты Voyage: `_TimingOutStore` (падает на КАЖДОМ ключе) не
+    ловит эту дыру — при ней первая же задача летит в except шага 2 и
+    to_embed остаётся пустым независимо от guard'а. Здесь первая задача
+    успешно проходит existing_hash и уходит в to_embed, а вторая валит
+    PoolTimeout и взводит storage_down уже ПОСЛЕ того, как to_embed
+    непуст, — guard шага 3 обязан проверять именно storage_down, а не
+    только пустоту to_embed, иначе Voyage вызывается для уже собранных
+    to_embed-задач при частичной деградации пула."""
+    class _MixedStore(_FakeStore):
+        def existing_hash(self, key):
+            if key == "ID-1":
+                return None  # хэш не совпадёт → задача уходит в to_embed
+            raise psycopg_pool.PoolTimeout("couldn't get a connection after 30.00 sec")
+
+    store, graph, emb = _MixedStore(), _FakeGraph(), _FakeEmbedder()
+    tasks = [_brief("ID-1", "PRI-1", title="t1", description="d1", links=[]),
+             _brief("ID-2", "PRI-2", title="t2", description="d2", links=[])]
+    TaskService(store, graph, emb).index_batch(tasks)
+
+    assert emb.doc_calls == []

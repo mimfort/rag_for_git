@@ -3550,6 +3550,15 @@ class _TaskContextDeps:
             "graph_nodes": status.graph_nodes,
         }
 
+    def storage_endpoints(self) -> tuple[str, ...]:
+        """Эндпоинты хранилищ для решения об уместности совета `reviewer start`.
+
+        Settings доступен здесь законно: модуль сборки контекста про него не
+        знает намеренно и получает уже готовое лекарство.
+        """
+        settings = self._service.settings
+        return tuple(value for value in (settings.pg_dsn, settings.neo4j_uri) if value)
+
     def task_board(self, repo: str, branch: str) -> dict | None:
         policy, _meta = self._service._resolve_policy(repo, branch)
         board = getattr(policy, "task_board", None)

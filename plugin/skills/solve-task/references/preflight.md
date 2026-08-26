@@ -24,10 +24,11 @@
       **never block** — the survey must not stop the pipeline under any circumstance.
 
       **The mode governs the preflight questions below.** In `full-auto`, do not ask the
-      confirmations of Steps 0.1 and 0.4 (stale index, missing summaries): take the recommended
-      option in each (reindex; warm the summaries) and record each one as a decision made on the
-      user's behalf, per the run-state file of pipeline Step 4. In `normal` and `auto`, ask them as
-      written.
+      confirmations of Steps 0a., 0.1 and 0.4 (storage unavailable, stale index, missing
+      summaries): take the recommended option in each (`reviewer start` when a `remedy` is
+      available, else continue without the section; reindex; warm the summaries) and record each
+      one as a decision made on the user's behalf, per the run-state file of pipeline Step 4. In
+      `normal` and `auto`, ask them as written.
 
       **The panel is fixed, not a theme to improvise on.** Ask these three questions,
       in one `AskUserQuestion` call, using the headers **verbatim**: `Brief model tier`,
@@ -42,6 +43,33 @@
       any is missing, say so plainly and ask the missing ones immediately, in a new
       panel, before any preflight check runs — the answers govern the preflight
       questions below, so a late answer governs nothing.
+
+   0a. **Storage reachability — check this before anything else.** Scan `payload.gaps` for an
+       entry whose `cause` is `storage_unavailable`. Present it: **never build the brief on a
+       gutted context silently.** The gaps list also carries `remedy` — the command that fixes
+       it (`reviewer start`) or `null` when the deployment's storages are remote, where a local
+       docker stack fixes nothing.
+
+       Tell the user (in Russian) which sections were lost, then present **three options**:
+       1. «Поднять сейчас» — offered **only** when the gap carries a `remedy`. Run that command
+          (`reviewer start`), wait for it to finish, then re-run `prepare_task_context(...)` once
+          and continue with the fresh payload.
+       2. «Подниму сам» → **PAUSE HERE** and wait for the user to write «готово», «поднял»,
+          «done» or any confirmation. Once confirmed, re-run `prepare_task_context(...)` and
+          continue.
+       3. «Продолжить без контекста» → note under **Constraints / open questions** in the brief:
+          «хранилище не отвечает (`cause: storage_unavailable`); секции <перечислить> собраны не
+          были», and continue.
+
+       When `remedy` is `null`, option 1 is not shown at all — say plainly that the storages are
+       remote and `reviewer start` does not apply here.
+
+       **The server never starts containers.** It only classifies the failure and names the cure;
+       bringing the infrastructure up is the user's call, made here. In `full-auto` do not ask:
+       take option 1, or option 3 when there is no `remedy`, and record it in the run-state file's
+       decisions section.
+
+       If no gap carries `cause: storage_unavailable`, say nothing and go straight to Step 0.1.
 
    1. **Base-index freshness.** Read `drift` from `preflight.drift` in the `prepare_task_context`
       payload fetched above — the same field `uvx --from rag-reviewer reviewer status <path>
