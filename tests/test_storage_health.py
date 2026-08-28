@@ -66,3 +66,83 @@ def test_remedy_when_at_least_one_endpoint_is_local():
 def test_no_endpoints_means_no_remedy():
     assert sh.storage_remedy() is None
     assert sh.storage_remedy("") is None
+
+
+# ---------------------------------------------------------------------------
+# Тесты PRI-277: класс причины отдельно от уместности лекарства
+# ---------------------------------------------------------------------------
+
+_LOCAL_DSN = "postgresql://reviewer:s3cretpw@127.0.0.1:5433/reviewer"
+_REMOTE_DSN = "postgresql://reviewer:s3cretpw@db.example.com:5432/prod"
+
+
+def test_auth_failure_is_classified_and_loses_remedy():
+    """Контейнеры живы, пароль неверен — reviewer start уже выполнен и не поможет."""
+    exc = psycopg.OperationalError(
+        'connection failed: FATAL:  password authentication failed for user "reviewer"')
+    diagnosis = sh.classify_storage_failure(exc, _LOCAL_DSN)
+    assert diagnosis.detail == sh.DETAIL_AUTH_FAILED
+    assert diagnosis.remedy is None
+    assert diagnosis.redacted is None
+
+
+def test_missing_database_is_classified_and_loses_remedy():
+    exc = psycopg.OperationalError(
+        'connection failed: FATAL:  database "nosuchdb" does not exist')
+    diagnosis = sh.classify_storage_failure(exc, _LOCAL_DSN)
+    assert diagnosis.detail == sh.DETAIL_MISSING_DATABASE
+    assert diagnosis.remedy is None
+    assert diagnosis.redacted is None
+
+
+def test_unrecognised_local_failure_keeps_remedy_and_redacts():
+    """Нераспознанный сбой ведёт себя как прежде, но перестаёт быть немым."""
+    exc = psycopg.OperationalError(
+        "connection to server at 127.0.0.1, port 5433 failed: Connection refused")
+    diagnosis = sh.classify_storage_failure(exc, _LOCAL_DSN)
+    assert diagnosis.detail is None
+    assert diagnosis.remedy == sh.REMEDY_START
+    assert "[REDACTED]" in diagnosis.redacted
+
+
+def test_unrecognised_remote_failure_has_no_remedy():
+    """Удалённому деплою локальный docker-стек не помогает и здесь."""
+    exc = psycopg.OperationalError("connection to server failed: Connection refused")
+    diagnosis = sh.classify_storage_failure(exc, _REMOTE_DSN)
+    assert diagnosis.detail is None
+    assert diagnosis.remedy is None
+
+
+def test_non_storage_exception_is_empty_verdict():
+    """AuthError neo4j — неверные креды, не лежачее хранилище: совета быть не должно."""
+    diagnosis = sh.classify_storage_failure(AuthError("unauthorized"), "bolt://localhost:7687")
+    assert (diagnosis.detail, diagnosis.remedy, diagnosis.redacted) == (None, None, None)
+
+
+def test_redacted_never_carries_dsn_literals():
+    """Критерий 3: ни пароль, ни хост, ни имя пользователя, ни база в выдачу не попадают."""
+    exc = psycopg.OperationalError(
+        "connection to server at db.example.com, port 5432 failed: "
+        'FATAL:  odd failure for user "reviewer" in database "prod" (password s3cretpw)')
+    diagnosis = sh.classify_storage_failure(exc, _REMOTE_DSN)
+    for secret in ("s3cretpw", "db.example.com", "reviewer", "prod", "5432"):
+        assert secret not in repr(diagnosis), secret
+
+
+def test_short_literals_do_not_mangle_the_message():
+    """Односимвольный пароль не должен выесть все свои буквы из сообщения.
+
+    Литерал короче трёх символов не вымарывается: замена превратила бы текст в
+    кашу, а замер PRI-269 показал, что пароль в текст libpq и не попадает.
+    """
+    exc = psycopg.OperationalError("connection to server at 127.0.0.1 failed")
+    diagnosis = sh.classify_storage_failure(exc, "postgresql://u:p@127.0.0.1:5433/reviewer")
+    assert "connection to server" in diagnosis.redacted
+
+
+def test_auth_pattern_wins_over_missing_database():
+    """Порядок паттернов важен: сообщение может нести оба маркера сразу."""
+    exc = psycopg.OperationalError(
+        'FATAL:  password authentication failed for user "reviewer"\n'
+        'FATAL:  database "reviewer" does not exist')
+    assert sh.classify_storage_failure(exc, _LOCAL_DSN).detail == sh.DETAIL_AUTH_FAILED

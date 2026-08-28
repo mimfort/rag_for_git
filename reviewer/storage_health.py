@@ -5,16 +5,19 @@
 `reviewer/entrypoints/cli.py`, общего подпакета ниже них нет, а импорт
 `entrypoints.cli` из сервисного слоя развернул бы направление зависимости.
 
-Решение принимается по ТИПУ исключения, а не по его тексту: в тексте
-`psycopg.OperationalError` живёт DSN с паролем. Этим модуль отличается от
-соседнего `reviewer/config/fetch_errors.py`, который судит по именам классов в
-MRO: там исключения приходят от сменного VCS-клиента и модуль обязан остаться
-без зависимостей, здесь — от жёстко закреплённых драйверов, без которых проект
-не работает вовсе, и точность важнее развязки.
+Класс недоступности решается по ТИПУ исключения (`is_storage_unavailable`), а
+уточнение причины внутри этого класса — по ТЕКСТУ (`classify_storage_failure`).
+Разделение не косметическое: при сбое на этапе установления соединения libpq не
+возвращает результат, поэтому SQLSTATE пуст и ветвиться по коду ошибки нельзя
+(замер PRI-269). Прежний довод «в тексте живёт DSN с паролем» этим же замером
+опровергнут для данного класса ошибок: пароль в `str(exc)` не попадает, а хост,
+порт, имя пользователя и имя базы — попадают, и потому вымарываются. Наружу
+текст выходит только там, где класс назвать не удалось.
 """
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from urllib.parse import urlsplit
 
 import psycopg
@@ -62,3 +65,94 @@ def storage_remedy(*endpoints: str) -> str | None:
     if any(is_loopback_endpoint(endpoint) for endpoint in endpoints if endpoint):
         return REMEDY_START
     return None
+
+
+DETAIL_AUTH_FAILED = "auth_failed"
+DETAIL_MISSING_DATABASE = "missing_database"
+
+# Обрезка отрывка: диагностика не должна раздувать payload MCP-тула.
+_MAX_REDACTED_CHARS = 200
+# Литерал короче этого не вымарывается: замена односимвольного пароля выела бы
+# из сообщения все вхождения одной буквы и сделала бы его нечитаемым.
+_MIN_SECRET_CHARS = 3
+
+# Порядок значим: сообщение может нести оба маркера, и auth-сбой конкретнее
+# (тот же класс граблей, что у ConnectTimeout в config/fetch_errors.py).
+_DETAIL_PATTERNS = (
+    (DETAIL_AUTH_FAILED, re.compile(r"password authentication failed", re.IGNORECASE)),
+    (DETAIL_MISSING_DATABASE, re.compile(r"database\b.*\bdoes not exist", re.IGNORECASE)),
+)
+
+
+@dataclass(frozen=True)
+class StorageDiagnosis:
+    """Вердикт по одному сбою: класс причины, лекарство и безопасный отрывок.
+
+    `detail` — закрытая метка либо None, если класс назвать не удалось.
+    `remedy` — команда-лекарство, только когда она действительно применима.
+    `redacted` — вымаранный отрывок текста; заполнен лишь при пустом `detail`.
+    """
+
+    detail: str | None
+    remedy: str | None
+    redacted: str | None
+
+
+def _endpoint_secrets(endpoint: str) -> set[str]:
+    """Чувствительные литералы одного эндпоинта: хост, порт, пользователь, пароль, база."""
+    values: set[str] = set()
+    try:
+        parts = urlsplit(endpoint)
+    except ValueError:
+        parts = None
+    if parts is not None:
+        for value in (parts.hostname, parts.username, parts.password,
+                      parts.path.lstrip("/")):
+            if value:
+                values.add(str(value))
+        try:
+            if parts.port:
+                values.add(str(parts.port))
+        except ValueError:
+            pass  # порт не число — вымарывать нечего, остальные поля уже собраны
+    for keyword in ("host", "user", "password", "dbname", "port"):
+        values.update(re.findall(rf"\b{keyword}=([^\s]+)", endpoint))
+    return {value for value in values if len(value) >= _MIN_SECRET_CHARS}
+
+
+def _redact(text: str, *endpoints: str) -> str:
+    """Заменить литералы эндпоинтов на [REDACTED], схлопнуть пробелы и обрезать.
+
+    Длинные значения заменяются первыми: иначе значение-префикс оставило бы хвост
+    более длинного. Обрезка идёт ПОСЛЕ вымарывания — иначе литерал, попавший на
+    границу, уцелел бы наполовину.
+    """
+    secrets: set[str] = set()
+    for endpoint in endpoints:
+        if endpoint:
+            secrets |= _endpoint_secrets(endpoint)
+    rendered = text
+    for secret in sorted(secrets, key=len, reverse=True):
+        rendered = rendered.replace(secret, "[REDACTED]")
+    return " ".join(rendered.split())[:_MAX_REDACTED_CHARS]
+
+
+def classify_storage_failure(exc: BaseException, *endpoints: str) -> StorageDiagnosis:
+    """Класс причины недоступности и уместность совета `reviewer start`.
+
+    Единственный источник обоих машинных решений: и MCP (`mcp/task_context.py`),
+    и CLI (`reviewer check`) зовут её, поэтому разойтись им нечем — раньше каждый
+    решал сам и оба ошибались одинаково (PRI-277).
+
+    Пустой вердикт при не-storage исключении не заглушка, а рабочая ветка: ею
+    чинится Neo4j `AuthError`, который в `is_storage_unavailable` не входит.
+    """
+    if not is_storage_unavailable(exc):
+        return StorageDiagnosis(None, None, None)
+    text = str(exc)
+    for detail, pattern in _DETAIL_PATTERNS:
+        if pattern.search(text):
+            # Хранилище ответило отказом, значит контейнеры подняты и лекарство
+            # неприменимо; класс уже назван, поэтому текст наружу не нужен.
+            return StorageDiagnosis(detail, None, None)
+    return StorageDiagnosis(None, storage_remedy(*endpoints), _redact(text, *endpoints))
