@@ -379,13 +379,13 @@ def test_deps_without_storage_endpoints_still_work():
 
 
 def test_existing_gaps_keep_section_and_reason():
-    """Расширение аддитивно: прежние ключи записи на месте."""
+    """Расширение аддитивно: прежние ключи записи на месте, добавлен cause_detail."""
     payload = task_context.build_task_context(
         FakeDeps(subsystems=RuntimeError("нет сводок")), repo="o/n",
         key="PRI-268", branch="dev", warm_board=False)
     entry = next(g for g in payload["gaps"] if g["section"] == "subsystems")
     assert entry["reason"] == "сводки подсистем недоступны"
-    assert set(entry) == {"section", "reason", "cause", "remedy"}
+    assert set(entry) == {"section", "reason", "cause", "cause_detail", "remedy"}
 
 
 def test_warm_board_gap_reflects_storage_down_not_misconfigured_board():
@@ -399,7 +399,10 @@ def test_warm_board_gap_reflects_storage_down_not_misconfigured_board():
         deps, repo="o/n", key="PRI-268", branch="dev", warm_board=True)
     entry = next(g for g in payload["gaps"] if g["section"] == "warm_board")
     assert entry["cause"] == task_context.CAUSE_STORAGE_UNAVAILABLE
-    assert entry["reason"] == task_context.SKIPPED_REASON
+    # PRI-277: нераспознанный сбой дописывает вымаранный отрывок к SKIPPED_REASON
+    # (см. test_unrecognised_failure_carries_redacted_excerpt) — поэтому не
+    # точное равенство, а префикс.
+    assert entry["reason"].startswith(task_context.SKIPPED_REASON)
     assert entry["remedy"] == "reviewer start"
 
 
@@ -430,3 +433,70 @@ def test_broken_storage_endpoints_source_does_not_break_build():
     entry = next(g for g in payload["gaps"] if g["section"] == "preflight")
     assert entry["cause"] == task_context.CAUSE_STORAGE_UNAVAILABLE
     assert entry["remedy"] is None
+
+
+# ---------------------------------------------------------------------------
+# Тесты PRI-277: класс причины отдельно от уместности лекарства
+# ---------------------------------------------------------------------------
+
+def _preflight_gap(exc):
+    """Запись gaps секции preflight при заданном сбое источника."""
+    payload = task_context.build_task_context(
+        FakeDeps(preflight=exc), repo="o/n", key="PRI-277", branch="dev",
+        warm_board=False)
+    return next(g for g in payload["gaps"] if g["section"] == "preflight")
+
+
+def test_auth_failure_is_named_and_loses_remedy():
+    """Критерий 1 и 2: неверный пароль отличим и не получает совета."""
+    entry = _preflight_gap(psycopg.OperationalError(
+        'FATAL:  password authentication failed for user "reviewer"'))
+    assert entry["cause"] == "storage_unavailable"      # критерий 4: не переклассифицируем
+    assert entry["cause_detail"] == "auth_failed"
+    assert entry["remedy"] is None
+    assert "учётные данные" in entry["reason"]
+
+
+def test_missing_database_is_named_and_loses_remedy():
+    entry = _preflight_gap(psycopg.OperationalError(
+        'FATAL:  database "nosuchdb" does not exist'))
+    assert entry["cause"] == "storage_unavailable"
+    assert entry["cause_detail"] == "missing_database"
+    assert entry["remedy"] is None
+
+
+def test_stopped_containers_still_get_remedy_and_no_detail():
+    """Третий случай остаётся отличимым от первых двух с другой стороны."""
+    entry = _preflight_gap(psycopg.OperationalError("Connection refused"))
+    assert entry["cause_detail"] is None
+    assert entry["remedy"] == "reviewer start"
+
+
+def test_unrecognised_failure_carries_redacted_excerpt():
+    """Нераспознанный сбой перестаёт быть немым, но секретов не несёт."""
+    entry = _preflight_gap(psycopg.OperationalError(
+        "connection to server at 127.0.0.1, port 5433 failed: no space left on device"))
+    assert "no space left on device" in entry["reason"]
+    assert "127.0.0.1" not in entry["reason"]
+
+
+def test_skipped_sections_reuse_the_same_verdict():
+    """Все записи одного прогона согласованы: вердикт считается один раз."""
+    payload = task_context.build_task_context(
+        FakeDeps(preflight=psycopg.OperationalError(
+            'FATAL:  password authentication failed for user "reviewer"')),
+        repo="o/n", key="PRI-277", branch="dev", warm_board=False)
+    assert all(g["cause_detail"] == "auth_failed" for g in payload["gaps"])
+    skipped = next(g for g in payload["gaps"] if g["section"] == "code")
+    assert skipped["reason"].startswith("пропущено: ")
+    assert skipped["remedy"] is None
+
+
+def test_non_storage_gap_has_empty_detail():
+    """Аддитивность: запись не про хранилище получает пятый ключ пустым."""
+    payload = task_context.build_task_context(
+        FakeDeps(subsystems=RuntimeError("нет сводок")), repo="o/n",
+        key="PRI-277", branch="dev", warm_board=False)
+    entry = next(g for g in payload["gaps"] if g["section"] == "subsystems")
+    assert entry["cause"] == "unknown"
+    assert entry["cause_detail"] is None

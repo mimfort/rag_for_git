@@ -15,7 +15,9 @@ import logging
 
 from reviewer.mcp.subqueries import build_subqueries
 from reviewer.storage_health import (
-    CAUSE_STORAGE_UNAVAILABLE, CAUSE_UNKNOWN, is_storage_unavailable, storage_remedy,
+    CAUSE_STORAGE_UNAVAILABLE, CAUSE_UNKNOWN, DETAIL_AUTH_FAILED,
+    DETAIL_MISSING_DATABASE, StorageDiagnosis, classify_storage_failure,
+    is_storage_unavailable,
 )
 
 log = logging.getLogger(__name__)
@@ -26,30 +28,50 @@ SECTIONS = (
 )
 
 STORAGE_REASON = "хранилище не отвечает"
-SKIPPED_REASON = "пропущено: хранилище не отвечает"
+SKIPPED_REASON = f"пропущено: {STORAGE_REASON}"
+
+# Формулировки распознанных классов. Живут здесь, а не в storage_health: их
+# читает LLM и вставляет в бриф, а у CLI свой адресат и свои строки.
+DETAIL_REASONS = {
+    DETAIL_AUTH_FAILED: "хранилище отвергло учётные данные",
+    DETAIL_MISSING_DATABASE: "базы данных не существует",
+}
 
 
 def gap(section: str, reason: str, *, cause: str = CAUSE_UNKNOWN,
-        remedy: str | None = None) -> dict:
+        cause_detail: str | None = None, remedy: str | None = None) -> dict:
     """Структурная запись о пробеле: секция, причина и её класс, без секретов.
 
     `cause` — машиночитаемый класс причины: скилл и тесты ветвятся по нему, а не
-    по прозе `reason`. `remedy` — команда-лекарство, когда она есть и уместна.
+    по прозе `reason`. `cause_detail` — уточнение внутри класса, когда оно
+    установлено (PRI-277). `remedy` — команда-лекарство, когда она есть и уместна.
     """
-    return {"section": section, "reason": reason, "cause": cause, "remedy": remedy}
+    return {"section": section, "reason": reason, "cause": cause,
+            "cause_detail": cause_detail, "remedy": remedy}
 
 
 class _StorageState:
-    """Взведён ли флаг «хранилище не отвечает» и какое лекарство называть.
+    """Взведён ли флаг «хранилище не отвечает», и каков вердикт по первому сбою.
 
     Флаг живёт на один вызов `build_task_context`: первая же недоступность
     хранилища отменяет остальные store-секции, иначе каждая добавила бы к
     времени ответа собственный таймаут пула (30 с × 8 секций).
+
+    Вердикт считается лениво, при первом реальном сбое: до PRI-277 лекарство
+    фиксировалось на старте, когда исключения ещё нет, и потому не могло
+    зависеть от причины.
     """
 
-    def __init__(self, remedy: str | None) -> None:
-        self.remedy = remedy
+    def __init__(self, endpoints: tuple[str, ...]) -> None:
+        self.endpoints = endpoints
+        self.diagnosis: StorageDiagnosis | None = None
         self.down = False
+
+    def diagnose(self, exc: BaseException) -> StorageDiagnosis:
+        """Вердикт по первому сбою; последующие пропуски переиспользуют его."""
+        if self.diagnosis is None:
+            self.diagnosis = classify_storage_failure(exc, *self.endpoints)
+        return self.diagnosis
 
 
 def _storage_gap(payload: dict, section: str, reason: str, state: _StorageState) -> None:
@@ -58,8 +80,28 @@ def _storage_gap(payload: dict, section: str, reason: str, state: _StorageState)
     Общая точка для трёх мест, различающихся только `reason`: skip- и except-
     ветки `_safe`, а также `elif warm_board and not board` в build_task_context.
     """
-    payload["gaps"].append(gap(section, reason, cause=CAUSE_STORAGE_UNAVAILABLE,
-                               remedy=state.remedy))
+    diagnosis = state.diagnosis
+    detail = diagnosis.detail if diagnosis is not None else None
+    remedy = diagnosis.remedy if diagnosis is not None else None
+    payload["gaps"].append(gap(section, _reason_with_detail(reason, diagnosis),
+                               cause=CAUSE_STORAGE_UNAVAILABLE,
+                               cause_detail=detail, remedy=remedy))
+
+
+def _reason_with_detail(base: str, diagnosis: StorageDiagnosis | None) -> str:
+    """Причина с учётом вердикта: класс замещает общую формулировку, отрывок дополняет.
+
+    Подстановка работает и для `SKIPPED_REASON`, потому что тот собран из
+    `STORAGE_REASON`: «пропущено: хранилище не отвечает» превращается в
+    «пропущено: базы данных не существует», а не теряет отметку о пропуске.
+    """
+    if diagnosis is None:
+        return base
+    if diagnosis.detail:
+        return base.replace(STORAGE_REASON, DETAIL_REASONS[diagnosis.detail])
+    if diagnosis.redacted:
+        return f"{base}: {diagnosis.redacted}"
+    return base
 
 
 def _safe(payload: dict, section: str, produce, default, reason: str,
@@ -79,6 +121,7 @@ def _safe(payload: dict, section: str, produce, default, reason: str,
         log.warning("prepare_task_context: секция %s недоступна", section, exc_info=True)
         if is_storage_unavailable(exc):
             state.down = True
+            state.diagnose(exc)
             _storage_gap(payload, section, STORAGE_REASON, state)
         else:
             payload["gaps"].append(gap(section, reason))
@@ -113,20 +156,20 @@ def _test_queries(task: dict | None, key: str) -> list[str]:
     return [f"как тестируется: {query}" for query in _queries(task, key)]
 
 
-def _remedy(deps) -> str | None:
-    """Лекарство по эндпоинтам хранилищ, если провайдер умеет их назвать.
+def _endpoints(deps) -> tuple[str, ...]:
+    """Эндпоинты хранилищ, если провайдер умеет их назвать.
 
     Читается через `getattr`, как `augment_gaps`: модуль намеренно не знает про
     Settings, а старый провайдер без этого метода обязан продолжать работать.
     """
     getter = getattr(deps, "storage_endpoints", None)
     if not callable(getter):
-        return None
+        return ()
     try:
-        return storage_remedy(*(getter() or ()))
+        return tuple(getter() or ())
     except Exception:  # noqa: BLE001 — источник эндпоинтов недоступен, это не повод падать
         log.warning("prepare_task_context: эндпоинты хранилищ недоступны", exc_info=True)
-        return None
+        return ()
 
 
 def build_task_context(deps, *, repo: str, key: str, branch: str,
@@ -135,7 +178,7 @@ def build_task_context(deps, *, repo: str, key: str, branch: str,
     payload: dict = {section: None for section in SECTIONS}
     payload["gaps"] = []
     payload["warnings"] = []
-    state = _StorageState(_remedy(deps))
+    state = _StorageState(_endpoints(deps))
 
     payload["preflight"] = _safe(
         payload, "preflight", lambda: deps.preflight(repo, branch), None,
