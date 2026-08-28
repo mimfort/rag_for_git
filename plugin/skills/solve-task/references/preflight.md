@@ -46,9 +46,12 @@
 
    0a. **Storage reachability — check this before anything else.** Scan `payload.gaps` for an
        entry whose `cause` is `storage_unavailable`. Present it: **never build the brief on a
-       gutted context silently.** The gaps list also carries `remedy` — the command that fixes
-       it (`reviewer start`) or `null` when the deployment's storages are remote, where a local
-       docker stack fixes nothing.
+       gutted context silently.** The gaps list also carries `cause_detail` and `remedy`.
+       `remedy` is the command that fixes it (`reviewer start`), or `null` when no command
+       applies. `cause_detail` says WHY it does not apply: `auth_failed` — the storage rejected
+       the credentials; `missing_database` — the database does not exist; `null` — the cause was
+       not named, and only then does a `null` `remedy` mean the storages are remote, where a
+       local docker stack fixes nothing.
 
        Tell the user (in Russian) which sections were lost, then present **three options**:
        1. «Поднять сейчас» — offered **only** when the gap carries a `remedy`. Run that command
@@ -61,8 +64,13 @@
           «хранилище не отвечает (`cause: storage_unavailable`); секции <перечислить> собраны не
           были», and continue.
 
-       When `remedy` is `null`, option 1 is not shown at all — say plainly that the storages are
-       remote and `reviewer start` does not apply here.
+       When `remedy` is `null`, option 1 is not shown at all, and what you say depends on
+       `cause_detail`: `auth_failed` → the containers ARE up and the storage rejected the
+       credentials, so the password in `.env` is what to check; `missing_database` → the
+       containers ARE up but the database does not exist, so the database name in `PG_DSN` is
+       what to check; `null` → the storages are remote and `reviewer start` does not apply here.
+       Never say «хранилища удалённые» on a named `cause_detail`: the containers are running and
+       the claim is false.
 
        **The server never starts containers.** It only classifies the failure and names the cure;
        bringing the infrastructure up is the user's call, made here. In `full-auto` do not ask:
