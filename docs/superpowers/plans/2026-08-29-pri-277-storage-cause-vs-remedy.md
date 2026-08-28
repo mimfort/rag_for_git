@@ -766,12 +766,120 @@ git commit -m 'fix(cli): check не советует reviewer start при жи�
 
 ---
 
+### Task 4: Потребитель пятого ключа на стороне плагина
+
+Задача добавлена не при написании плана, а по итогам pre-flight сверки плана со спекой: `remedy: null`
+на стороне скилла означало ровно одно — «хранилища удалённые». После Task 2 то же `null` приходит и
+при живых локальных контейнерах с неверным паролем, и скилл начнёт утверждать заведомо ложное. Критерий
+приёмки 2 — «пользователю не советуется `reviewer start` при живых контейнерах»; заменить бесполезный
+совет ложным утверждением значит спрятать дефект, а не выполнить критерий.
+
+Отдельная задача, потому что это prompt-слой с собственной проверкой (регенерация codex-манифеста) —
+ревьюер может принять весь код и отдельно спорить о формулировках скилла.
+
+**Files:**
+- Modify: `plugin/skills/solve-task/SKILL.md` (форма записи `gaps`, строка 39)
+- Modify: `plugin/skills/solve-task/references/preflight.md` (шаг 0a: описание `remedy`, строки 49-52; ветка «`remedy` is `null`», строки 64-65)
+- Modify: манифесты codex — регенерируются скриптом, вручную не правятся
+- Test: `.venv/bin/pytest -q tests/skills tests/install`
+
+**Interfaces:**
+- Consumes: пятый ключ `cause_detail` и его значения `auth_failed` / `missing_database` / `null` из Task 2.
+- Produces: ничего для последующих задач — конечный потребитель.
+
+- [ ] **Step 1: Обновить форму записи в `SKILL.md`**
+
+В `plugin/skills/solve-task/SKILL.md` заменить фрагмент строки 39-41
+
+```
+`gaps` (a list of `{section, reason, cause, remedy}` — branch on `cause`, the
+   machine-readable class, not the prose `reason`; copy every entry into **Constraints / open
+   questions** in the Step 4 brief verbatim)
+```
+
+на
+
+```
+`gaps` (a list of `{section, reason, cause, cause_detail, remedy}` — branch on `cause`, the
+   machine-readable class, not the prose `reason`; `cause_detail` refines it INSIDE the class
+   (`auth_failed` | `missing_database` | `null`) and decides the wording of Step 0a; copy every
+   entry into **Constraints / open questions** in the Step 4 brief verbatim)
+```
+
+- [ ] **Step 2: Починить шаг 0a в `references/preflight.md`**
+
+Заменить абзац (строки 49-52)
+
+```
+       gutted context silently.** The gaps list also carries `remedy` — the command that fixes
+       it (`reviewer start`) or `null` when the deployment's storages are remote, where a local
+       docker stack fixes nothing.
+```
+
+на
+
+```
+       gutted context silently.** The gaps list also carries `cause_detail` and `remedy`.
+       `remedy` is the command that fixes it (`reviewer start`), or `null` when no command
+       applies. `cause_detail` says WHY it does not apply: `auth_failed` — the storage rejected
+       the credentials; `missing_database` — the database does not exist; `null` — the cause was
+       not named, and only then does a `null` `remedy` mean the storages are remote, where a
+       local docker stack fixes nothing.
+```
+
+и заменить абзац (строки 64-65)
+
+```
+       When `remedy` is `null`, option 1 is not shown at all — say plainly that the storages are
+       remote and `reviewer start` does not apply here.
+```
+
+на
+
+```
+       When `remedy` is `null`, option 1 is not shown at all, and what you say depends on
+       `cause_detail`: `auth_failed` → the containers ARE up and the storage rejected the
+       credentials, so the password in `.env` is what to check; `missing_database` → the
+       containers ARE up but the database does not exist, so the database name in `PG_DSN` is
+       what to check; `null` → the storages are remote and `reviewer start` does not apply here.
+       Never say «хранилища удалённые» on a named `cause_detail`: the containers are running and
+       the claim is false.
+```
+
+- [ ] **Step 3: Регенерировать манифест codex**
+
+Любая правка контента под `plugin/` меняет payload-digest, и без регенерации краснеет
+`tests/install/test_codex_plugin_payload.py`.
+
+Run: `.venv/bin/python scripts/update_codex_plugin_manifest.py`
+Expected: скрипт отрабатывает без ошибок; `git status` показывает изменённые файлы манифеста.
+
+- [ ] **Step 4: Прогнать тесты**
+
+Run: `.venv/bin/pytest -q tests/skills tests/install && .venv/bin/pytest -q`
+Expected: зелёно. Guard-тесты сборки промптов (`tests/skills/`) не завязаны на изменённые формулировки — проверено сверкой; если какой-то из них покраснел, это настоящая находка, а не ожидаемое следствие.
+
+- [ ] **Step 5: Коммит**
+
+```bash
+git add plugin/skills/solve-task/SKILL.md plugin/skills/solve-task/references/preflight.md
+git add <файлы манифеста, которые изменил скрипт — перечислить поимённо по git status>
+git commit -m 'docs(solve-task): шаг 0a различает класс причины, а не только лекарство
+
+Пустой remedy означал у скилла ровно одно — «хранилища удалённые». После
+пятого ключа cause_detail тот же null приходит и при живых контейнерах с
+неверным паролем, и формулировка становилась ложной. Теперь ветка выбирается
+по cause_detail, а форма записи gaps в SKILL.md описана целиком.'
+```
+
+---
+
 ## Проверка приёмки
 
-После Task 3 сверить с критериями задачи:
+После Task 4 сверить с критериями задачи:
 
 1. **Различимость.** `cause_detail` равен `auth_failed` / `missing_database` / `null` — три случая различимы машиночитаемо (тесты Task 2).
-2. **Нет ложного совета.** `remedy is None` при распознанном классе в обоих каналах (тесты Task 2 и Task 3).
+2. **Нет ложного совета.** `remedy is None` при распознанном классе в обоих каналах (тесты Task 2 и Task 3), и скилл на этом `null` больше не выдаёт ложное «хранилища удалённые» (Task 4).
 3. **Нет секретов.** `test_redacted_never_carries_dsn_literals` (Task 1) плюс структурная гарантия: у распознанных случаев `redacted` пуст вовсе.
 4. **Закреплено тестом.** Каждая задача заканчивается зелёным `.venv/bin/pytest -q`.
 
