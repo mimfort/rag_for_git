@@ -129,15 +129,33 @@ def test_redacted_never_carries_dsn_literals():
         assert secret not in repr(diagnosis), secret
 
 
-def test_short_literals_do_not_mangle_the_message():
-    """Односимвольный пароль не должен выесть все свои буквы из сообщения.
+def test_redacted_never_carries_keyword_style_dsn_literals():
+    """Тот же критерий 3, но для keyword-формы DSN (`host=... user=... password=...`).
 
-    Литерал короче трёх символов не вымарывается: замена превратила бы текст в
-    кашу, а замер PRI-269 показал, что пароль в текст libpq и не попадает.
+    `_endpoint_secrets` разбирает её отдельной веткой (не через `urlsplit`) — без
+    отдельного теста этот путь остаётся непроверенным.
     """
-    exc = psycopg.OperationalError("connection to server at 127.0.0.1 failed")
+    endpoint = "host=db.example.com port=5432 user=reviewer password=s3cretpw dbname=prod"
+    exc = psycopg.OperationalError(
+        "connection to server failed: odd failure for user reviewer "
+        "in database prod at db.example.com port 5432 password s3cretpw")
+    diagnosis = sh.classify_storage_failure(exc, endpoint)
+    for secret in ("s3cretpw", "db.example.com", "reviewer", "prod", "5432"):
+        assert secret not in repr(diagnosis), secret
+
+
+def test_short_literals_do_not_mangle_the_message():
+    """Односимвольные логин/пароль не должны выесть свои буквы из обычных слов.
+
+    Литерал короче трёх символов не вымарывается: без порога замена `u`/`p` на
+    `[REDACTED]` изуродовала бы каждое слово, где эти буквы встречаются как
+    часть текста, а не как секрет (замер PRI-269 показал, что пароль в текст
+    libpq и не попадает — риск принят сознательно).
+    """
+    exc = psycopg.OperationalError(
+        "connection to server at 127.0.0.1 failed: superuser setup incomplete")
     diagnosis = sh.classify_storage_failure(exc, "postgresql://u:p@127.0.0.1:5433/reviewer")
-    assert "connection to server" in diagnosis.redacted
+    assert "superuser setup incomplete" in diagnosis.redacted
 
 
 def test_auth_pattern_wins_over_missing_database():
