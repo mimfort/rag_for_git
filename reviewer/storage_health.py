@@ -25,6 +25,8 @@ CAUSE_UNKNOWN = "unknown"
 REMEDY_START = "reviewer start"
 
 _LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1", ""})
+# Ключ-значение libpq-формы DSN: компилируется один раз, а не на каждый вызов.
+_HOST_KV_RE = re.compile(r"host=([^\s]+)")
 
 
 def is_loopback_endpoint(value: str) -> bool:
@@ -38,7 +40,7 @@ def is_loopback_endpoint(value: str) -> bool:
     except ValueError:
         return False
     if host is None:
-        match = re.search(r"host=([^\s]+)", value)
+        match = _HOST_KV_RE.search(value)
         host = match.group(1) if match else None
     return (host or "").lower() in _LOOPBACK_HOSTS
 
