@@ -201,10 +201,21 @@ class _TrackingOutput(PlainTextOutput):
         self._frame = ""
         super().__init__(self.stream)
 
+    def _rendered(self) -> str:
+        """Всё выведенное к этому моменту: сброшенный поток плюс ещё не сброшенный буфер.
+
+        ``PlainTextOutput.write`` только копит данные в ``_buffer`` и переливает их
+        в поток лишь во ``flush``, поэтому один ``stream.getvalue()`` отстаёт на
+        кадр: текст последнего кадра, после которого записей не будет, не виден
+        вовсе. Склеивать полезную нагрузку ``write`` тоже нельзя — пробелы
+        частичной перерисовки идут мимо неё, через ``cursor_forward``.
+        """
+        return self.stream.getvalue() + "".join(self._buffer)
+
     def write(self, data: str) -> None:
         super().write(data)
         self._frame += data
-        rendered = self.stream.getvalue()
+        rendered = self._rendered()
         if "Проверяем способ установки" in rendered:
             self.progress_rendered.set()
         if (
@@ -296,6 +307,36 @@ class _SmallTerminalOutput(_TrackingOutput):
         if "[✓] --dry-run" in focused_text:
             self.focused_frames["dry_run_toggled"] = frame
             self.dry_run_toggled.set()
+
+
+def test_tracking_output_sees_last_frame_without_further_writes():
+    """Детектор обязан увидеть текст кадра, после которого записей больше не будет.
+
+    ``PlainTextOutput`` копит вывод в буфере и переливает его в поток только в
+    ``flush``; проверка одного ``stream.getvalue()`` отстаёт на кадр, и текст
+    последнего кадра не виден вовсе.
+    """
+    output = _TrackingOutput()
+
+    output.write("Доступна новая версия: 0.4.0 → 0.5.0")
+
+    assert output.update_result_rendered.is_set()
+
+
+def test_tracking_output_does_not_glue_over_cursor_forward_gap():
+    """Пробел диффового рендера разрывает строку, и детектор обязан это видеть.
+
+    При частичной перерисовке неизменённая ячейка выводится через
+    ``cursor_forward``, то есть пробелом мимо ``write``; склейка только полезной
+    нагрузки ``write`` дала бы ложное срабатывание на «вер сия».
+    """
+    output = _TrackingOutput()
+
+    output.write("Доступна новая вер")
+    output.cursor_forward(1)
+    output.write("сия: 0.4.0 → 0.5.0")
+
+    assert not output.update_result_rendered.is_set()
 
 
 def test_escape_from_palette_returns_clean_cancel():
