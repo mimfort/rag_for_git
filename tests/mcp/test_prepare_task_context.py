@@ -500,3 +500,25 @@ def test_non_storage_gap_has_empty_detail():
     entry = next(g for g in payload["gaps"] if g["section"] == "subsystems")
     assert entry["cause"] == "unknown"
     assert entry["cause_detail"] is None
+
+
+def test_reason_never_carries_password_without_storage_endpoints():
+    """Найдено финальным ревью: без `storage_endpoints` `reason` не должен нести пароль.
+
+    До фикса `classify_storage_failure` без эндпоинтов вымарывать было нечем, и
+    `_redact` возвращал текст исключения как есть — пароль из conninfo уходил в
+    `reason` записи `gaps` целиком (критерий 3 нарушался молча).
+    """
+    class OldDeps(FakeDeps):
+        storage_endpoints = None
+
+    exc = psycopg.OperationalError(
+        "connection to server at 127.0.0.1, port 5433 failed: Connection refused"
+        " (conninfo: postgresql://reviewer:s3cretpw@127.0.0.1:5433/reviewer)")
+    deps = OldDeps(preflight=exc)
+    payload = task_context.build_task_context(
+        deps, repo="o/n", key="PRI-277", branch="dev", warm_board=False)
+    entry = next(g for g in payload["gaps"] if g["section"] == "preflight")
+    assert "s3cretpw" not in entry["reason"]
+    assert entry["cause_detail"] is None
+    assert entry["remedy"] is None

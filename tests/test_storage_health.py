@@ -164,3 +164,74 @@ def test_auth_pattern_wins_over_missing_database():
         'FATAL:  password authentication failed for user "reviewer"\n'
         'FATAL:  database "reviewer" does not exist')
     assert sh.classify_storage_failure(exc, _LOCAL_DSN).detail == sh.DETAIL_AUTH_FAILED
+
+
+# ---------------------------------------------------------------------------
+# Guard: DETAIL_* константы не должны расходиться со словарями формулировок
+# ---------------------------------------------------------------------------
+
+def _detail_constants() -> set[str]:
+    """Все значения `DETAIL_*` модуля, интроспекцией — не перечислением руками.
+
+    Перечисление руками не заметило бы появления новой константы; guard обязан
+    ловить именно этот случай (PRI-277, находка ревью 3).
+    """
+    return {
+        value for name, value in vars(sh).items()
+        if name.startswith("DETAIL_") and isinstance(value, str)
+    }
+
+
+def test_detail_constants_are_known_to_task_context_reasons():
+    """`reviewer/mcp/task_context.py::DETAIL_REASONS` обязан знать каждый DETAIL_*.
+
+    Иначе `DETAIL_REASONS[diagnosis.detail]` бросит `KeyError` прямо из
+    `except`-ветки `_safe` и обрушит весь `build_task_context` — модуль,
+    написанный ради fail-open гарантии.
+    """
+    from reviewer.mcp import task_context
+
+    constants = _detail_constants()
+    assert constants, "DETAIL_* константы не найдены — тест ничего не проверяет"
+    missing = constants - set(task_context.DETAIL_REASONS)
+    assert not missing, f"DETAIL_REASONS не знает про: {missing}"
+
+
+def test_detail_constants_are_known_to_cli_messages():
+    """`reviewer/entrypoints/cli.py::_STORAGE_DETAIL_MESSAGES` обязан знать каждый DETAIL_*.
+
+    Иначе `_STORAGE_DETAIL_MESSAGES[diagnosis.detail]` бросит `KeyError` прямо
+    из команды `reviewer check`.
+    """
+    from reviewer.entrypoints import cli
+
+    constants = _detail_constants()
+    assert constants, "DETAIL_* константы не найдены — тест ничего не проверяет"
+    missing = constants - set(cli._STORAGE_DETAIL_MESSAGES)
+    assert not missing, f"_STORAGE_DETAIL_MESSAGES не знает про: {missing}"
+
+
+def test_no_endpoints_means_no_redacted_excerpt_even_with_secret():
+    """Находка ревью: без эндпоинтов вымарывать нечем, отрывок обязан остаться немым.
+
+    Раньше `_redact(text)` без эндпоинтов не находил секретов и возвращал текст
+    как есть — пароль из conninfo уходил наружу целиком. Пустой набор
+    эндпоинтов — штатный случай (провайдер без `storage_endpoints` или
+    вырожденный `Settings`), поэтому критерий 3 не должен зависеть от него.
+    """
+    exc = psycopg.OperationalError(
+        "connection to server at 127.0.0.1, port 5433 failed: Connection refused"
+        " (conninfo: postgresql://reviewer:s3cretpw@127.0.0.1:5433/reviewer)")
+    diagnosis = sh.classify_storage_failure(exc)
+    assert diagnosis == sh.StorageDiagnosis(None, None, None)
+    assert "s3cretpw" not in repr(diagnosis)
+
+
+def test_named_class_survives_missing_endpoints():
+    """Порядок обязателен: распознанный класс называется даже без эндпоинтов."""
+    exc = psycopg.OperationalError(
+        'FATAL:  password authentication failed for user "reviewer"')
+    diagnosis = sh.classify_storage_failure(exc)
+    assert diagnosis.detail == sh.DETAIL_AUTH_FAILED
+    assert diagnosis.remedy is None
+    assert diagnosis.redacted is None

@@ -155,4 +155,9 @@ def classify_storage_failure(exc: BaseException, *endpoints: str) -> StorageDiag
             # Хранилище ответило отказом, значит контейнеры подняты и лекарство
             # неприменимо; класс уже назван, поэтому текст наружу не нужен.
             return StorageDiagnosis(detail, None, None)
+    if not any(endpoints):
+        # Вымарывать нечем: без эндпоинтов литералы не из чего извлечь, и отрывок
+        # ушёл бы наружу сырым. Возвращаемся к прежнему немому поведению —
+        # критерий «секретов в диагностике нет» важнее информативности.
+        return StorageDiagnosis(None, None, None)
     return StorageDiagnosis(None, storage_remedy(*endpoints), _redact(text, *endpoints))
