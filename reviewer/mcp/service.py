@@ -3551,10 +3551,11 @@ class _TaskContextDeps:
         }
 
     def storage_endpoints(self) -> tuple[str, ...]:
-        """Эндпоинты хранилищ для решения об уместности совета `reviewer start`.
+        """Эндпоинты хранилищ для классификации причины и уместности совета.
 
         Settings доступен здесь законно: модуль сборки контекста про него не
-        знает намеренно и получает уже готовое лекарство.
+        знает намеренно и получает лишь сырые эндпоинты — класс причины и
+        лекарство считает лениво, по факту сбоя, `classify_storage_failure`.
         """
         settings = self._service.settings
         return tuple(value for value in (settings.pg_dsn, settings.neo4j_uri) if value)

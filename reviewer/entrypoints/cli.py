@@ -66,7 +66,10 @@ from reviewer.services.branch import resolve_branch
 from reviewer.services.gc import purge_orphaned_overlays
 from reviewer.services.review_service import ReviewService
 from reviewer.services.status import build_status_report, render_status, render_status_json
-from reviewer.storage_health import is_loopback_endpoint as _is_loopback_endpoint
+from reviewer.storage_health import (
+    DETAIL_AUTH_FAILED, DETAIL_MISSING_DATABASE, classify_storage_failure,
+    mask_endpoint,
+)
 from reviewer.tasks.boards.errors import sanitize_provider_text
 from reviewer.update_lifecycle import (
     download_compose,
@@ -85,6 +88,13 @@ log = logging.getLogger(__name__)
 
 
 _SUBSTITUTED = "env:DEFAULT_REPO"
+
+# Сообщения CLI отдельны от формулировок MCP-payload: у них разные адресаты —
+# терминал оператора против брифа, который собирает LLM.
+_STORAGE_DETAIL_MESSAGES = {
+    DETAIL_AUTH_FAILED: "хранилище отвергло учётные данные — проверьте пароль в .env",
+    DETAIL_MISSING_DATABASE: "базы данных не существует — проверьте имя базы в PG_DSN",
+}
 
 
 def _resolve_repo(repo_opt: str | None, path: str, settings):
@@ -842,7 +852,7 @@ def check(board_project_values: tuple[str, ...]) -> None:
     s = Settings()
     board_projects = _parse_board_projects(board_project_values)
     failed = False
-    local_storage_down = False
+    storage_remedy_hint: str | None = None
 
     # 1. Ключи
     for label, val in (("VOYAGE_API_KEY", s.voyage_api_key),):
@@ -862,7 +872,7 @@ def check(board_project_values: tuple[str, ...]) -> None:
         )
         with store._connect() as conn:
             conn.execute("SELECT 1 FROM chunks LIMIT 1")
-        click.echo(f"✓ Postgres ({s.pg_dsn}): подключение и таблица chunks — OK")
+        click.echo(f"✓ Postgres ({mask_endpoint(s.pg_dsn)}): подключение и таблица chunks — OK")
         try:
             store.check_vector_roundtrip()
             click.echo("✓ pgvector: вектор читается из БД в list[float] — OK")
@@ -877,14 +887,19 @@ def check(board_project_values: tuple[str, ...]) -> None:
             failed = True
     except Exception as e:
         err = str(e)
-        if "chunks" in err or "does not exist" in err:
+        diagnosis = classify_storage_failure(e, s.pg_dsn)
+        if diagnosis.detail:
+            # Первым делом: «database ... does not exist» несут и несуществующая
+            # БД, и отсутствующая таблица chunks, но лечатся они разным.
+            click.echo(f"✗ Postgres: {_STORAGE_DETAIL_MESSAGES[diagnosis.detail]}")
+        elif "chunks" in err or "does not exist" in err:
             click.echo(
                 "✗ Postgres: схема не инициализирована — выполните reviewer index"
             )
         else:
             click.echo(f"✗ Postgres: {err}")
         failed = True
-        local_storage_down = local_storage_down or _is_loopback_endpoint(s.pg_dsn)
+        storage_remedy_hint = storage_remedy_hint or diagnosis.remedy
     finally:
         if store is not None:
             store.close()
@@ -894,17 +909,19 @@ def check(board_project_values: tuple[str, ...]) -> None:
         graph = GraphStore(s.neo4j_uri, s.neo4j_user, s.neo4j_password)
         try:
             graph._driver.verify_connectivity()
-            click.echo(f"✓ Neo4j ({s.neo4j_uri}): подключение — OK")
+            click.echo(f"✓ Neo4j ({mask_endpoint(s.neo4j_uri)}): подключение — OK")
         finally:
             graph.close()
     except Exception as e:
         click.echo(f"✗ Neo4j: {e}")
         failed = True
-        local_storage_down = local_storage_down or _is_loopback_endpoint(s.neo4j_uri)
+        storage_remedy_hint = (
+            storage_remedy_hint or classify_storage_failure(e, s.neo4j_uri).remedy
+        )
 
-    if local_storage_down:
+    if storage_remedy_hint:
         click.echo(
-            "  Подсказка: локальные хранилища не отвечают — запустите reviewer start"
+            f"  Подсказка: локальные хранилища не отвечают — запустите {storage_remedy_hint}"
         )
 
     # 4. scip-python (информационно, не влияет на exit-code)

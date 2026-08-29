@@ -7,8 +7,10 @@
 from __future__ import annotations
 from unittest.mock import MagicMock, patch
 
+import psycopg
 import pytest
 from click.testing import CliRunner
+from neo4j.exceptions import AuthError as Neo4jAuthError
 
 from reviewer.entrypoints.cli import cli
 from reviewer.services.review_service import (
@@ -448,6 +450,100 @@ def test_check_fails_on_neo4j_error(
     _assert_no_socket_warnings(recwarn)
 
 
+def _check_settings():
+    """Settings для check с локальными эндпоинтами (иначе совет не положен вовсе)."""
+    s = MagicMock()
+    s.voyage_api_key = "key"
+    s.github_token = "key"
+    s.pg_dsn = "postgresql://reviewer:s3cretpw@127.0.0.1:5433/reviewer"
+    s.pg_pool_min_size = 1
+    s.pg_pool_max_size = 4
+    s.neo4j_uri = "bolt://localhost:7687"
+    s.neo4j_user = "u"
+    s.neo4j_password = "p"
+    return s
+
+
+@patch("reviewer.entrypoints.cli.GraphStore")
+@patch("reviewer.entrypoints.cli.ChunkStore")
+@patch("reviewer.entrypoints.cli.Settings")
+def test_check_wrong_password_does_not_advise_start(
+    mock_settings_cls, mock_chunk_cls, mock_graph_cls, runner, recwarn
+):
+    """Дефект Д-6: контейнеры живы, совет reviewer start бессмыслен."""
+    mock_settings_cls.return_value = _check_settings()
+    mock_chunk_cls.side_effect = psycopg.OperationalError(
+        'connection failed: FATAL:  password authentication failed for user "reviewer"')
+    mock_graph_cls.return_value = MagicMock()
+
+    result = runner.invoke(cli, ["check"])
+
+    assert result.exit_code == 1
+    assert "reviewer start" not in result.output
+    assert "учётные данные" in result.output
+    _assert_no_socket_warnings(recwarn)
+
+
+@patch("reviewer.entrypoints.cli.GraphStore")
+@patch("reviewer.entrypoints.cli.ChunkStore")
+@patch("reviewer.entrypoints.cli.Settings")
+def test_check_missing_database_is_not_reported_as_missing_schema(
+    mock_settings_cls, mock_chunk_cls, mock_graph_cls, runner, recwarn
+):
+    """«does not exist» несут оба случая; несуществующая БД не лечится reviewer index."""
+    mock_settings_cls.return_value = _check_settings()
+    mock_chunk_cls.side_effect = psycopg.OperationalError(
+        'connection failed: FATAL:  database "nosuchdb" does not exist')
+    mock_graph_cls.return_value = MagicMock()
+
+    result = runner.invoke(cli, ["check"])
+
+    assert result.exit_code == 1
+    assert "reviewer start" not in result.output
+    assert "схема не инициализирована" not in result.output
+    assert "базы данных не существует" in result.output
+    _assert_no_socket_warnings(recwarn)
+
+
+@patch("reviewer.entrypoints.cli.GraphStore")
+@patch("reviewer.entrypoints.cli.ChunkStore")
+@patch("reviewer.entrypoints.cli.Settings")
+def test_check_stopped_containers_still_advise_start(
+    mock_settings_cls, mock_chunk_cls, mock_graph_cls, runner, recwarn
+):
+    """Обратная сторона: настоящему простою совет по-прежнему выдаётся."""
+    mock_settings_cls.return_value = _check_settings()
+    mock_chunk_cls.side_effect = psycopg.OperationalError(
+        "connection to server at 127.0.0.1, port 5433 failed: Connection refused")
+    mock_graph_cls.return_value = MagicMock()
+
+    result = runner.invoke(cli, ["check"])
+
+    assert result.exit_code == 1
+    assert "reviewer start" in result.output
+    _assert_no_socket_warnings(recwarn)
+
+
+@patch("reviewer.entrypoints.cli.GraphStore")
+@patch("reviewer.entrypoints.cli.ChunkStore")
+@patch("reviewer.entrypoints.cli.Settings")
+def test_check_neo4j_auth_error_does_not_advise_start(
+    mock_settings_cls, mock_chunk_cls, mock_graph_cls, runner, recwarn
+):
+    """Неверные креды Neo4j запуском контейнеров не лечатся (AuthError вне предиката)."""
+    mock_settings_cls.return_value = _check_settings()
+    mock_chunk_cls.return_value = MagicMock()
+    graph = MagicMock()
+    graph._driver.verify_connectivity.side_effect = Neo4jAuthError("unauthorized")
+    mock_graph_cls.return_value = graph
+
+    result = runner.invoke(cli, ["check"])
+
+    assert result.exit_code == 1
+    assert "reviewer start" not in result.output
+    _assert_no_socket_warnings(recwarn)
+
+
 @patch("reviewer.entrypoints.cli.httpx.get")
 @patch("reviewer.entrypoints.cli.GraphStore")
 @patch("reviewer.entrypoints.cli.ChunkStore")
@@ -687,3 +783,55 @@ def test_migrate_branches_warns_on_substituted_repo(
 
     assert result.exit_code == 0, result.output
     assert "DEFAULT_REPO" in result.output
+
+
+@patch("reviewer.entrypoints.cli._shutil")
+@patch("reviewer.entrypoints.cli.httpx.get")
+@patch("reviewer.entrypoints.cli.GraphStore")
+@patch("reviewer.entrypoints.cli.ChunkStore")
+@patch("reviewer.entrypoints.cli.Settings")
+def test_check_success_does_not_print_password(
+    mock_settings_cls,
+    mock_chunk_cls,
+    mock_graph_cls,
+    mock_httpx,
+    mock_shutil,
+    runner,
+):
+    """Успешный путь check печатал полный DSN с паролем: вывод уходит в issue и на демо экрана.
+
+    Проверяется обе половины размена: секрет не доходит до терминала, а хост,
+    порт и имя базы доходят — иначе строка перестала бы отвечать на вопрос
+    «куда я подключаюсь» и её незачем было бы печатать вовсе.
+    """
+    s = MagicMock()
+    s.voyage_api_key = "key"
+    s.github_token = "key"
+    s.gitlab_token = ""
+    s.pg_dsn = "postgresql://reviewer:s3cretpw@127.0.0.1:5433/reviewer"
+    s.pg_pool_min_size = 1
+    s.pg_pool_max_size = 4
+    s.neo4j_uri = "bolt://neo:b0ltpw@localhost:7687"
+    s.neo4j_user = "u"
+    s.neo4j_password = "p"
+    mock_settings_cls.return_value = s
+
+    store = MagicMock()
+    conn = store._connect.return_value.__enter__.return_value
+    conn.execute.return_value = None
+    mock_chunk_cls.return_value = store
+    mock_graph_cls.return_value = MagicMock()
+
+    resp = MagicMock()
+    resp.status_code = 200
+    resp.json.return_value = {"login": "testuser"}
+    mock_httpx.return_value = resp
+    mock_shutil.which.return_value = "/usr/bin/scip-python"
+
+    result = runner.invoke(cli, ["check"])
+
+    assert result.exit_code == 0
+    assert "s3cretpw" not in result.output
+    assert "b0ltpw" not in result.output
+    assert "127.0.0.1:5433/reviewer" in result.output
+    assert "localhost:7687" in result.output

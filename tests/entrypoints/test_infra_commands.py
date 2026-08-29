@@ -4,6 +4,8 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from click.testing import CliRunner
+from neo4j.exceptions import ServiceUnavailable
+import psycopg
 import pytest
 
 import reviewer.entrypoints.cli as cli_mod
@@ -133,15 +135,24 @@ def _settings(pg_dsn: str, neo4j_uri: str) -> SimpleNamespace:
     )
 
 
-class DeadStore:
+class DeadChunkStore:
     def __init__(self, *args, **kwargs) -> None:
-        raise RuntimeError("connection refused")
+        raise psycopg.OperationalError("connection refused")
+
+
+class DeadGraphStore:
+    def __init__(self, *args, **kwargs) -> None:
+        raise ServiceUnavailable("connection refused")
 
 
 def _arrange_dead_storages(monkeypatch, pg_dsn: str, neo4j_uri: str) -> None:
+    # classify_storage_failure (PRI-277) решает по ТИПУ исключения, поэтому
+    # дублёры обязаны бросать те же классы, что реальные драйверы при
+    # обрыве соединения — общий RuntimeError под "хранилище недоступно"
+    # больше не маскируется.
     monkeypatch.setattr(cli_mod, "Settings", lambda: _settings(pg_dsn, neo4j_uri))
-    monkeypatch.setattr(cli_mod, "ChunkStore", DeadStore)
-    monkeypatch.setattr(cli_mod, "GraphStore", DeadStore)
+    monkeypatch.setattr(cli_mod, "ChunkStore", DeadChunkStore)
+    monkeypatch.setattr(cli_mod, "GraphStore", DeadGraphStore)
     monkeypatch.setattr(cli_mod, "_check_vcs_providers", lambda settings: False)
     # _check_board_providers принимает board_projects keyword-only
     # (reviewer/entrypoints/cli.py:599-604) — мок глотает любые kwargs.
