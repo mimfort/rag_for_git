@@ -68,6 +68,7 @@ from reviewer.services.review_service import ReviewService
 from reviewer.services.status import build_status_report, render_status, render_status_json
 from reviewer.storage_health import (
     DETAIL_AUTH_FAILED, DETAIL_MISSING_DATABASE, classify_storage_failure,
+    mask_endpoint,
 )
 from reviewer.tasks.boards.errors import sanitize_provider_text
 from reviewer.update_lifecycle import (
@@ -871,7 +872,7 @@ def check(board_project_values: tuple[str, ...]) -> None:
         )
         with store._connect() as conn:
             conn.execute("SELECT 1 FROM chunks LIMIT 1")
-        click.echo(f"✓ Postgres ({s.pg_dsn}): подключение и таблица chunks — OK")
+        click.echo(f"✓ Postgres ({mask_endpoint(s.pg_dsn)}): подключение и таблица chunks — OK")
         try:
             store.check_vector_roundtrip()
             click.echo("✓ pgvector: вектор читается из БД в list[float] — OK")
@@ -908,7 +909,7 @@ def check(board_project_values: tuple[str, ...]) -> None:
         graph = GraphStore(s.neo4j_uri, s.neo4j_user, s.neo4j_password)
         try:
             graph._driver.verify_connectivity()
-            click.echo(f"✓ Neo4j ({s.neo4j_uri}): подключение — OK")
+            click.echo(f"✓ Neo4j ({mask_endpoint(s.neo4j_uri)}): подключение — OK")
         finally:
             graph.close()
     except Exception as e:

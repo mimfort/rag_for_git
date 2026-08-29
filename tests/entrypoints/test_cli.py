@@ -783,3 +783,55 @@ def test_migrate_branches_warns_on_substituted_repo(
 
     assert result.exit_code == 0, result.output
     assert "DEFAULT_REPO" in result.output
+
+
+@patch("reviewer.entrypoints.cli._shutil")
+@patch("reviewer.entrypoints.cli.httpx.get")
+@patch("reviewer.entrypoints.cli.GraphStore")
+@patch("reviewer.entrypoints.cli.ChunkStore")
+@patch("reviewer.entrypoints.cli.Settings")
+def test_check_success_does_not_print_password(
+    mock_settings_cls,
+    mock_chunk_cls,
+    mock_graph_cls,
+    mock_httpx,
+    mock_shutil,
+    runner,
+):
+    """Успешный путь check печатал полный DSN с паролем: вывод уходит в issue и на демо экрана.
+
+    Проверяется обе половины размена: секрет не доходит до терминала, а хост,
+    порт и имя базы доходят — иначе строка перестала бы отвечать на вопрос
+    «куда я подключаюсь» и её незачем было бы печатать вовсе.
+    """
+    s = MagicMock()
+    s.voyage_api_key = "key"
+    s.github_token = "key"
+    s.gitlab_token = ""
+    s.pg_dsn = "postgresql://reviewer:s3cretpw@127.0.0.1:5433/reviewer"
+    s.pg_pool_min_size = 1
+    s.pg_pool_max_size = 4
+    s.neo4j_uri = "bolt://neo:b0ltpw@localhost:7687"
+    s.neo4j_user = "u"
+    s.neo4j_password = "p"
+    mock_settings_cls.return_value = s
+
+    store = MagicMock()
+    conn = store._connect.return_value.__enter__.return_value
+    conn.execute.return_value = None
+    mock_chunk_cls.return_value = store
+    mock_graph_cls.return_value = MagicMock()
+
+    resp = MagicMock()
+    resp.status_code = 200
+    resp.json.return_value = {"login": "testuser"}
+    mock_httpx.return_value = resp
+    mock_shutil.which.return_value = "/usr/bin/scip-python"
+
+    result = runner.invoke(cli, ["check"])
+
+    assert result.exit_code == 0
+    assert "s3cretpw" not in result.output
+    assert "b0ltpw" not in result.output
+    assert "127.0.0.1:5433/reviewer" in result.output
+    assert "localhost:7687" in result.output

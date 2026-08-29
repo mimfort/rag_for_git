@@ -29,6 +29,11 @@ REMEDY_START = "reviewer start"
 
 _LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1", ""})
 
+# Единственный литерал маски в модуле: и вымарывание чужого текста, и показ
+# самого эндпоинта обязаны выглядеть одинаково, иначе читатель вывода решит,
+# что это два разных механизма.
+_MASK = "[REDACTED]"
+
 
 def is_loopback_endpoint(value: str) -> bool:
     """Адресован ли DSN/URI локальной машине.
@@ -65,6 +70,33 @@ def storage_remedy(*endpoints: str) -> str | None:
     if any(is_loopback_endpoint(endpoint) for endpoint in endpoints if endpoint):
         return REMEDY_START
     return None
+
+
+def mask_endpoint(value: str) -> str:
+    """Показать DSN/URI без пароля, сохранив всё остальное.
+
+    Вывод `reviewer check` попадает в issue, чат и демонстрацию экрана, поэтому
+    пароль до терминала не доходит. Хост, порт, пользователь и имя базы остаются
+    намеренно: без них строка перестаёт отвечать на вопрос «куда я подключаюсь»,
+    и печатать её было бы незачем.
+
+    Это не то же, что `_redact`: там вымарывается ЧУЖОЙ текст (сообщение
+    драйвера) по литералам эндпоинта, здесь — сам эндпоинт, поэтому пароль
+    известен точно и остальные поля трогать не нужно.
+    """
+    rendered = value
+    try:
+        password = urlsplit(value).password
+    except ValueError:
+        password = None
+    if password:
+        # Замена подстроки `:<пароль>@`, а не пересборка через urlunsplit:
+        # пересборка нормализует строку, и оператор увидел бы не тот DSN, что
+        # у него в .env. `urlsplit` не декодирует, поэтому percent-encoded
+        # пароль совпадает буквально.
+        rendered = rendered.replace(f":{password}@", f":{_MASK}@", 1)
+    # Вторая живая форма conninfo — keyword-style, у неё userinfo нет вовсе.
+    return re.sub(r"(\bpassword=)[^\s]+", lambda m: m.group(1) + _MASK, rendered)
 
 
 DETAIL_AUTH_FAILED = "auth_failed"
@@ -133,7 +165,7 @@ def _redact(text: str, *endpoints: str) -> str:
             secrets |= _endpoint_secrets(endpoint)
     rendered = text
     for secret in sorted(secrets, key=len, reverse=True):
-        rendered = rendered.replace(secret, "[REDACTED]")
+        rendered = rendered.replace(secret, _MASK)
     return " ".join(rendered.split())[:_MAX_REDACTED_CHARS]
 
 

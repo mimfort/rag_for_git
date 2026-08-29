@@ -235,3 +235,34 @@ def test_named_class_survives_missing_endpoints():
     assert diagnosis.detail == sh.DETAIL_AUTH_FAILED
     assert diagnosis.remedy is None
     assert diagnosis.redacted is None
+
+
+# ---------------------------------------------------------------------------
+# mask_endpoint: показать эндпоинт без пароля
+# ---------------------------------------------------------------------------
+
+
+def test_mask_endpoint_hides_password_in_url_form():
+    """Пароль уходит, остальное остаётся: строка обязана отвечать «куда я подключаюсь»."""
+    masked = sh.mask_endpoint("postgresql://reviewer:s3cretpw@127.0.0.1:5433/reviewer")
+    assert "s3cretpw" not in masked
+    assert masked == "postgresql://reviewer:[REDACTED]@127.0.0.1:5433/reviewer"
+
+
+def test_mask_endpoint_hides_password_in_keyword_form():
+    """Keyword-DSN — вторая живая форма conninfo, её нельзя оставить незакрытой."""
+    masked = sh.mask_endpoint("host=127.0.0.1 port=5433 user=reviewer password=s3cretpw")
+    assert "s3cretpw" not in masked
+    assert masked == "host=127.0.0.1 port=5433 user=reviewer password=[REDACTED]"
+
+
+def test_mask_endpoint_keeps_endpoint_without_password_intact():
+    """Без пароля вымарывать нечего — строка обязана дойти до терминала как есть."""
+    assert sh.mask_endpoint("bolt://localhost:7687") == "bolt://localhost:7687"
+
+
+def test_mask_endpoint_hides_percent_encoded_password():
+    """Пароль со спецсимволами живёт в DSN percent-encoded; замена идёт по сырой подстроке."""
+    masked = sh.mask_endpoint("postgresql://reviewer:p%40ss%3Aword@127.0.0.1:5433/db")
+    assert "p%40ss%3Aword" not in masked
+    assert masked == "postgresql://reviewer:[REDACTED]@127.0.0.1:5433/db"
