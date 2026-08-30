@@ -29,6 +29,7 @@ from reviewer.mcp.session_serde import from_payload, to_payload
 from reviewer.mcp.session_store import SessionStore
 from reviewer.retrieval.retriever import ContextPack
 from reviewer.services.gc import purge_orphaned_overlays
+from reviewer.storage_health import is_storage_unavailable
 from reviewer.services.review_service import (
     BranchNotTrackedError,
     PreparedReview,
@@ -504,8 +505,18 @@ class MCPReviewService:
         return self.components.task_service.search_tasks(query, top_k, project=project)
 
     def get_task_context(self, key: str, project: str | None = None) -> str:
-        """Граф-контекст задачи. При project — соседи только этого проекта."""
-        return self.components.task_service.get_task_context(key, project=project)
+        """Граф-контекст задачи. При project — соседи только этого проекта.
+
+        Нота при недоступном хранилище ставится здесь, а не в TaskService
+        (PRI-276): контракт тула — строка, а провайдеру секции нужно исключение.
+        """
+        try:
+            return self.components.task_service.get_task_context(key, project=project)
+        except Exception as exc:  # noqa: BLE001 — недоступное хранилище графа, штатный случай
+            if not is_storage_unavailable(exc):
+                raise
+            log.warning("get_task_context: хранилище графа недоступно", exc_info=True)
+            return "(task graph unavailable)"
 
     def get_task(self, key: str, project: str | None = None) -> dict | None:
         """Нормализованный TaskBrief из стора. При project — только из этого проекта."""
@@ -3548,6 +3559,9 @@ class _TaskContextDeps:
             "summaries": status.summaries,
             "chunks": status.chunks,
             "graph_nodes": status.graph_nodes,
+            # Причина пропуска графа: build_task_context извлечёт ключ и замкнёт
+            # граф, не платя второй таймаут (PRI-276). В payload не попадает.
+            "graph_error": status.graph_error,
         }
 
     def storage_endpoints(self) -> tuple[str, ...]:
@@ -3574,7 +3588,12 @@ class _TaskContextDeps:
         return self._service.get_task(key, project=project)
 
     def linked(self, key: str, project: str | None) -> str:
-        return self._service.get_task_context(key, project=project)
+        """Граф-контекст задачи без ноты: исключение обязано дойти до `_safe`.
+
+        Зовём task_service напрямую, минуя обёртку сервиса: та ставит ноту ради
+        публичного контракта тула, и здесь она обнулила бы сигнал (PRI-276).
+        """
+        return self._service.components.task_service.get_task_context(key, project=project)
 
     def similar(self, query: str, project: str | None) -> str:
         """Похожие задачи. Побочно запоминает структурные хиты для секции code.

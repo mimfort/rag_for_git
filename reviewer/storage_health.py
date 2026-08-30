@@ -27,6 +27,9 @@ CAUSE_STORAGE_UNAVAILABLE = "storage_unavailable"
 CAUSE_UNKNOWN = "unknown"
 REMEDY_START = "reviewer start"
 
+BACKEND_GRAPH = "graph"
+BACKEND_POSTGRES = "postgres"
+
 _LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1", ""})
 
 # Единственный литерал маски в модуле: и вымарывание чужого текста, и показ
@@ -63,6 +66,23 @@ def is_storage_unavailable(exc: BaseException) -> bool:
     контейнеров.
     """
     return isinstance(exc, (psycopg.OperationalError, ServiceUnavailable, SessionExpired))
+
+
+def storage_backend(exc: BaseException) -> str | None:
+    """Какое из хранилищ молчит, если молчит вообще.
+
+    Пара к `is_storage_unavailable`: та отвечает «лечится ли подъёмом
+    контейнеров», эта — «кого именно поднимать». Покрытие у них общее, поэтому
+    None здесь означает ровно то же, что False там.
+
+    Решает тип исключения, а не текст: в тексте `OperationalError` живёт DSN с
+    паролем (тот же мотив, что у `classify_storage_failure`).
+    """
+    if isinstance(exc, (ServiceUnavailable, SessionExpired)):
+        return BACKEND_GRAPH
+    if isinstance(exc, psycopg.OperationalError):
+        return BACKEND_POSTGRES
+    return None
 
 
 def storage_remedy(*endpoints: str) -> str | None:

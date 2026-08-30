@@ -266,3 +266,31 @@ def test_mask_endpoint_hides_percent_encoded_password():
     masked = sh.mask_endpoint("postgresql://reviewer:p%40ss%3Aword@127.0.0.1:5433/db")
     assert "p%40ss%3Aword" not in masked
     assert masked == "postgresql://reviewer:[REDACTED]@127.0.0.1:5433/db"
+
+
+# ---------------------------------------------------------------------------
+# Тесты PRI-276: какое из хранилищ молчит
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("exc", [ServiceUnavailable("no routing servers"),
+                                 SessionExpired("session expired")])
+def test_storage_backend_neo4j_errors_are_graph(exc):
+    assert sh.storage_backend(exc) == sh.BACKEND_GRAPH
+
+
+def test_storage_backend_operational_error_is_postgres():
+    assert sh.storage_backend(psycopg.OperationalError("connection refused")) == sh.BACKEND_POSTGRES
+
+
+def test_storage_backend_pool_timeout_is_postgres():
+    """PoolTimeout — подкласс OperationalError, покрытие обязано совпадать с is_storage_unavailable."""
+    exc = psycopg_pool.PoolTimeout("couldn't get a connection after 30.00 sec")
+    assert sh.storage_backend(exc) == sh.BACKEND_POSTGRES
+
+
+@pytest.mark.parametrize("exc", [RuntimeError("no index"),
+                                 psycopg.ProgrammingError("syntax error at or near"),
+                                 AuthError("unauthorized")])
+def test_storage_backend_is_none_for_non_storage_failures(exc):
+    """Покрытие совпадает с is_storage_unavailable: что не «хранилище лежит» — то None."""
+    assert sh.storage_backend(exc) is None
