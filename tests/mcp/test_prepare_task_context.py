@@ -1,5 +1,6 @@
 """prepare_task_context: форма payload и посекционный fail-open (PRI-248)."""
 import psycopg
+from neo4j.exceptions import ServiceUnavailable
 
 from reviewer.mcp import task_context
 
@@ -116,12 +117,39 @@ def test_postgres_down_empties_retrieval_sections():
 
 
 def test_neo4j_down_empties_linked_only():
+    """Критерий 5: настоящее neo4j-исключение, а не RuntimeError."""
     payload = task_context.build_task_context(
-        FakeDeps(linked=RuntimeError("no neo4j")), repo="o/n", key="PRI-248",
-        branch="dev", warm_board=False)
+        FakeDeps(linked=ServiceUnavailable("no routing servers")), repo="o/n",
+        key="PRI-276", branch="dev", warm_board=False)
     assert payload["related"]["linked"] == ""
     assert payload["related"]["similar"]
-    assert "related.linked" in _gap_sections(payload)
+    entry = next(g for g in payload["gaps"] if g["section"] == "related.linked")
+    assert entry["cause"] == "storage_unavailable"
+    assert entry["remedy"] == "reviewer start"
+
+
+def test_neo4j_down_keeps_postgres_sections():
+    """Критерий 4: теряется ровно related.linked, Postgres-секции собраны полностью."""
+    deps = FakeDeps(linked=ServiceUnavailable("no routing servers"))
+    payload = task_context.build_task_context(
+        deps, repo="o/n", key="PRI-276", branch="dev", warm_board=False)
+    assert payload["code"] and payload["test_exemplars"]
+    assert payload["subsystems"] and payload["related"]["similar"]
+    assert [g["section"] for g in payload["gaps"]] == ["related.linked"]
+
+
+def test_both_stores_down_keep_separate_diagnoses():
+    """Вердикты не сливаются: причина Postgres не приписывается графу."""
+    deps = FakeDeps(
+        preflight=psycopg.OperationalError(
+            'connection failed: FATAL:  password authentication failed for user "reviewer"'),
+        linked=ServiceUnavailable("no routing servers"))
+    payload = task_context.build_task_context(
+        deps, repo="o/n", key="PRI-276", branch="dev", warm_board=False)
+    pg_entry = next(g for g in payload["gaps"] if g["section"] == "preflight")
+    graph_entry = next(g for g in payload["gaps"] if g["section"] == "related.linked")
+    assert pg_entry["cause_detail"] == "auth_failed"
+    assert graph_entry["cause_detail"] is None
 
 
 def test_no_index_marks_gap_and_keeps_going():
@@ -332,11 +360,15 @@ def test_other_failure_keeps_cause_unknown():
 
 
 def test_storage_failure_short_circuits_remaining_sections():
-    """Критерий 1: остальные store-секции не вызываются — иначе +30 с каждая."""
+    """Критерий 1 PRI-268: Postgres-секции не вызываются — иначе +30 с каждая.
+
+    related.linked живёт в другом хранилище и Postgres-сбоем не замыкается
+    (PRI-276): при живом Neo4j секция собирается, вместо того чтобы теряться зря.
+    """
     deps = FakeDeps(preflight=psycopg.OperationalError("connection refused"))
     payload = task_context.build_task_context(
         deps, repo="o/n", key="PRI-268", branch="dev", warm_board=False)
-    assert deps.calls == ["preflight"]
+    assert deps.calls == ["preflight", "linked"]
     assert set(payload) == set(task_context.SECTIONS)
     assert all(g["cause"] == "storage_unavailable" for g in payload["gaps"])
 

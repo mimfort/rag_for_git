@@ -15,9 +15,9 @@ import logging
 
 from reviewer.mcp.subqueries import build_subqueries
 from reviewer.storage_health import (
-    CAUSE_STORAGE_UNAVAILABLE, CAUSE_UNKNOWN, DETAIL_AUTH_FAILED,
-    DETAIL_MISSING_DATABASE, StorageDiagnosis, classify_storage_failure,
-    is_storage_unavailable,
+    BACKEND_GRAPH, BACKEND_POSTGRES, CAUSE_STORAGE_UNAVAILABLE, CAUSE_UNKNOWN,
+    DETAIL_AUTH_FAILED, DETAIL_MISSING_DATABASE, StorageDiagnosis,
+    classify_storage_failure, is_storage_unavailable, storage_backend,
 )
 
 log = logging.getLogger(__name__)
@@ -51,11 +51,16 @@ def gap(section: str, reason: str, *, cause: str = CAUSE_UNKNOWN,
 
 
 class _StorageState:
-    """Взведён ли флаг «хранилище не отвечает», и каков вердикт по первому сбою.
+    """Какие хранилища не отвечают и каков вердикт по первому сбою каждого.
 
-    Флаг живёт на один вызов `build_task_context`: первая же недоступность
-    хранилища отменяет остальные store-секции, иначе каждая добавила бы к
-    времени ответа собственный таймаут пула (30 с × 8 секций).
+    Флаги живут на один вызов `build_task_context`: первая же недоступность
+    хранилища отменяет остальные секции ЭТОГО хранилища, иначе каждая добавила
+    бы к времени ответа собственный таймаут пула (30 с × 8 секций).
+
+    Множество, а не один флаг (PRI-276): у графа и Postgres разные секции, и
+    отказ Neo4j не должен отменять поиск по коду. Вердикт хранится по бэкенду —
+    у неверного пароля Postgres и остановленного Neo4j причины разные, и один
+    вердикт на двоих приписал бы одному чужое лекарство.
 
     Вердикт считается лениво, при первом реальном сбое: до PRI-277 лекарство
     фиксировалось на старте, когда исключения ещё нет, и потому не могло
@@ -64,23 +69,29 @@ class _StorageState:
 
     def __init__(self, endpoints: tuple[str, ...]) -> None:
         self.endpoints = endpoints
-        self.diagnosis: StorageDiagnosis | None = None
-        self.down = False
+        self.down: set[str] = set()
+        self.diagnoses: dict[str, StorageDiagnosis] = {}
 
-    def diagnose(self, exc: BaseException) -> StorageDiagnosis:
-        """Вердикт по первому сбою; последующие пропуски переиспользуют его."""
-        if self.diagnosis is None:
-            self.diagnosis = classify_storage_failure(exc, *self.endpoints)
-        return self.diagnosis
+    def mark(self, backend: str, exc: BaseException) -> StorageDiagnosis:
+        """Взвести флаг бэкенда; вердикт считается по его первому сбою."""
+        self.down.add(backend)
+        if backend not in self.diagnoses:
+            self.diagnoses[backend] = classify_storage_failure(exc, *self.endpoints)
+        return self.diagnoses[backend]
+
+    def is_down(self, backend: str) -> bool:
+        return backend in self.down
 
 
-def _storage_gap(payload: dict, section: str, reason: str, state: _StorageState) -> None:
+def _storage_gap(payload: dict, section: str, reason: str, state: _StorageState,
+                 backend: str) -> None:
     """Записать в gaps пробел, вызванный недоступностью хранилища.
 
     Общая точка для трёх мест, различающихся только `reason`: skip- и except-
     ветки `_safe`, а также `elif warm_board and not board` в build_task_context.
+    Вердикт берётся по бэкенду секции, а не общий на вызов.
     """
-    diagnosis = state.diagnosis
+    diagnosis = state.diagnoses.get(backend)
     detail = diagnosis.detail if diagnosis is not None else None
     remedy = diagnosis.remedy if diagnosis is not None else None
     payload["gaps"].append(gap(section, _reason_with_detail(reason, diagnosis),
@@ -105,24 +116,28 @@ def _reason_with_detail(base: str, diagnosis: StorageDiagnosis | None) -> str:
 
 
 def _safe(payload: dict, section: str, produce, default, reason: str,
-          state: _StorageState):
+          state: _StorageState, backend: str = BACKEND_POSTGRES):
     """Собрать секцию fail-open: сбой → default + запись в gaps.
 
-    При взведённом `state.down` источник не вызывается вовсе — секция получает
-    свой default и запись о пропуске, поэтому payload по-прежнему содержит все
-    ключи `SECTIONS`.
+    `backend` — хранилище секции; дефолт Postgres, потому что своё хранилище он
+    у всех секций, кроме `related.linked`. При взведённом флаге ЭТОГО бэкенда
+    источник не вызывается вовсе — секция получает свой default и запись
+    о пропуске, поэтому payload по-прежнему содержит все ключи `SECTIONS`.
+
+    Какой бэкенд упал, решает тип исключения, а не разметка секции: она отвечает
+    на другой вопрос — кого пропускать.
     """
-    if state.down:
-        _storage_gap(payload, section, SKIPPED_REASON, state)
+    if state.is_down(backend):
+        _storage_gap(payload, section, SKIPPED_REASON, state, backend)
         return default
     try:
         return produce()
     except Exception as exc:  # noqa: BLE001 — источник секции недоступен, это штатный случай
         log.warning("prepare_task_context: секция %s недоступна", section, exc_info=True)
         if is_storage_unavailable(exc):
-            state.down = True
-            state.diagnose(exc)
-            _storage_gap(payload, section, STORAGE_REASON, state)
+            failed = storage_backend(exc) or backend
+            state.mark(failed, exc)
+            _storage_gap(payload, section, STORAGE_REASON, state, failed)
         else:
             payload["gaps"].append(gap(section, reason))
         return default
@@ -196,8 +211,8 @@ def build_task_context(deps, *, repo: str, key: str, branch: str,
         if result is not None:
             payload["warnings"].append({"warm_board": result})
     elif warm_board and not board:
-        if state.down:
-            _storage_gap(payload, "warm_board", SKIPPED_REASON, state)
+        if state.is_down(BACKEND_POSTGRES):
+            _storage_gap(payload, "warm_board", SKIPPED_REASON, state, BACKEND_POSTGRES)
         else:
             payload["gaps"].append(gap("warm_board", "доска не настроена"))
 
@@ -211,7 +226,7 @@ def build_task_context(deps, *, repo: str, key: str, branch: str,
     payload["related"] = {
         "linked": _safe(payload, "related.linked",
                         lambda: deps.linked(key, project), "", "граф задач недоступен",
-                        state),
+                        state, BACKEND_GRAPH),
         "similar": _safe(payload, "related.similar",
                          lambda: deps.similar(query, project), "", "корпус задач недоступен",
                          state),
