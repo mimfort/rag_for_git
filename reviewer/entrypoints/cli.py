@@ -906,7 +906,10 @@ def check(board_project_values: tuple[str, ...]) -> None:
 
     # 3. Neo4j
     try:
-        graph = GraphStore(s.neo4j_uri, s.neo4j_user, s.neo4j_password)
+        graph = GraphStore(s.neo4j_uri, s.neo4j_user, s.neo4j_password,
+                           connection_timeout=s.neo4j_connection_timeout,
+                           acquisition_timeout=s.neo4j_acquisition_timeout,
+                           max_retry_time=s.neo4j_max_retry_time)
         try:
             graph._driver.verify_connectivity()
             click.echo(f"✓ Neo4j ({mask_endpoint(s.neo4j_uri)}): подключение — OK")
@@ -1196,7 +1199,10 @@ def status(path: str, repo_tag: str | None, branch_opt: str | None,
         raise click.ClickException(str(exc)) from exc
     branches = [branch_opt] if branch_opt else list(repo_branches.index)
     store = ChunkStore(s.pg_dsn, min_size=s.pg_pool_min_size, max_size=s.pg_pool_max_size)
-    graph = GraphStore(s.neo4j_uri, s.neo4j_user, s.neo4j_password)
+    graph = GraphStore(s.neo4j_uri, s.neo4j_user, s.neo4j_password,
+                       connection_timeout=s.neo4j_connection_timeout,
+                       acquisition_timeout=s.neo4j_acquisition_timeout,
+                       max_retry_time=s.neo4j_max_retry_time)
     summary_store = SummaryStore(s.pg_dsn, min_size=s.pg_pool_min_size,
                                  max_size=s.pg_pool_max_size)
     try:
