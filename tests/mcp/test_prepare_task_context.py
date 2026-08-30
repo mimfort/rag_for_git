@@ -20,9 +20,12 @@ class FakeDeps:
         return value
 
     def preflight(self, repo, branch):
-        return self._result("preflight", {
+        payload = self._result("preflight", {
             "branch": branch, "indexed_sha": "abc", "drift": 0,
             "summaries": 40, "chunks": 7110, "graph_nodes": 7362})
+        if isinstance(payload, dict) and "graph_error" in self._overrides:
+            payload = {**payload, "graph_error": self._overrides["graph_error"]}
+        return payload
 
     def storage_endpoints(self):
         return ("postgresql://u:p@127.0.0.1:5433/reviewer", "bolt://localhost:7687")
@@ -554,3 +557,37 @@ def test_reason_never_carries_password_without_storage_endpoints():
     assert "s3cretpw" not in entry["reason"]
     assert entry["cause_detail"] is None
     assert entry["remedy"] is None
+
+
+# ---------------------------------------------------------------------------
+# Тесты PRI-276: preflight взводит флаг графа, не платя второй таймаут
+# ---------------------------------------------------------------------------
+
+def test_graph_error_from_preflight_skips_linked_without_calling_graph():
+    """Критерий 3: второй заход в мёртвый граф не делается вовсе."""
+    deps = FakeDeps(graph_error=ServiceUnavailable("no routing servers"))
+    payload = task_context.build_task_context(
+        deps, repo="o/n", key="PRI-276", branch="dev", warm_board=False)
+    assert "linked" not in deps.calls
+    entry = next(g for g in payload["gaps"] if g["section"] == "related.linked")
+    assert entry["cause"] == "storage_unavailable"
+    assert payload["related"]["linked"] == ""
+    assert payload["code"] and payload["test_exemplars"]
+
+
+def test_graph_error_does_not_leak_into_payload():
+    """Объекту исключения в payload делать нечего: его читает LLM."""
+    deps = FakeDeps(graph_error=ServiceUnavailable("no routing servers"))
+    payload = task_context.build_task_context(
+        deps, repo="o/n", key="PRI-276", branch="dev", warm_board=False)
+    assert "graph_error" not in payload["preflight"]
+    assert payload["preflight"]["drift"] == 0
+
+
+def test_non_storage_graph_error_is_ignored():
+    """Не всякая ошибка графа — недоступность: замыкать нечего, секция вызывается."""
+    deps = FakeDeps(graph_error=RuntimeError("cypher blew up"))
+    payload = task_context.build_task_context(
+        deps, repo="o/n", key="PRI-276", branch="dev", warm_board=False)
+    assert "linked" in deps.calls
+    assert payload["related"]["linked"]

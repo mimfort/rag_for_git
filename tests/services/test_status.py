@@ -300,3 +300,35 @@ def test_render_status_no_warning_when_derived_from_origin():
     out = render_status(rep, "tree-sitter (fallback)")
     assert "git:origin" in out
     assert "DEFAULT_REPO" not in out
+
+
+# ---------------------------------------------------------------------------
+# Тесты PRI-276: причина пропуска графа названа полем, а не проглочена молча
+# ---------------------------------------------------------------------------
+
+def test_build_status_report_carries_graph_error(monkeypatch):
+    """Секция цела (graph_nodes=None), но причина названа полем."""
+    store = FakeStore(meta={}, chunks={"base:main": 0}, refs=["base:main"])
+    graph = FakeGraph(nodes={}, fail=True)
+    monkeypatch.setattr(status_mod, "commits_behind", lambda *a: None)
+    rep = build_status_report(store, graph, "a/x", ["main"], "/tmp/repo")
+    b = rep.branches[0]
+    assert b.graph_nodes is None
+    assert isinstance(b.graph_error, Exception)
+
+
+def test_build_status_report_graph_error_is_none_when_graph_alive(monkeypatch):
+    store = FakeStore(meta={}, chunks={"base:main": 0}, refs=["base:main"])
+    graph = FakeGraph(nodes={"main": 7})
+    monkeypatch.setattr(status_mod, "commits_behind", lambda *a: None)
+    rep = build_status_report(store, graph, "a/x", ["main"], "/tmp/repo")
+    assert rep.branches[0].graph_error is None
+
+
+def test_render_status_json_omits_graph_error():
+    """Исключение — не для машиночитаемого вывода: контракт status --json не меняется."""
+    rep = RepoStatus(repo="a/x", branches=[
+        BranchStatus("main", "base:main", "abc1234567", None, 10, None, 0,
+                     graph_error=RuntimeError("neo4j down"))], overlays=[])
+    payload = json.loads(render_status_json(rep))
+    assert "graph_error" not in payload["branches"][0]

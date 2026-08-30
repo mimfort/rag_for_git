@@ -3559,6 +3559,9 @@ class _TaskContextDeps:
             "summaries": status.summaries,
             "chunks": status.chunks,
             "graph_nodes": status.graph_nodes,
+            # Причина пропуска графа: build_task_context извлечёт ключ и замкнёт
+            # граф, не платя второй таймаут (PRI-276). В payload не попадает.
+            "graph_error": status.graph_error,
         }
 
     def storage_endpoints(self) -> tuple[str, ...]:

@@ -143,6 +143,25 @@ def _safe(payload: dict, section: str, produce, default, reason: str,
         return default
 
 
+def _absorb_graph_error(preflight, state: _StorageState):
+    """Взвести флаг графа по ошибке, которую preflight проглотил внутри себя.
+
+    Preflight обязан остаться собранной секцией (`graph_nodes=None` — валидная
+    деградация, на ней стоит CLI `status`), поэтому исключение приходит не
+    броском, а ключом словаря. Ключ извлекается: payload читает LLM, объекту
+    исключения там места нет.
+
+    Упавший preflight (None вместо словаря) и провайдер без этого ключа проходят
+    функцию без изменений.
+    """
+    if not isinstance(preflight, dict):
+        return preflight
+    error = preflight.pop("graph_error", None)
+    if error is not None and is_storage_unavailable(error):
+        state.mark(BACKEND_GRAPH, error)
+    return preflight
+
+
 def _query(task: dict | None, key: str) -> str:
     """Запрос ретрива: заголовок и начало описания задачи либо сам ключ.
 
@@ -195,9 +214,10 @@ def build_task_context(deps, *, repo: str, key: str, branch: str,
     payload["warnings"] = []
     state = _StorageState(_endpoints(deps))
 
-    payload["preflight"] = _safe(
-        payload, "preflight", lambda: deps.preflight(repo, branch), None,
-        "статус индекса недоступен", state)
+    payload["preflight"] = _absorb_graph_error(
+        _safe(payload, "preflight", lambda: deps.preflight(repo, branch), None,
+              "статус индекса недоступен", state),
+        state)
     board = _safe(
         payload, "task_board", lambda: deps.task_board(repo, branch), None,
         "конфиг доски не разрешён", state)
