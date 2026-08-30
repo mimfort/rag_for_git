@@ -641,6 +641,27 @@ def test_task_tool_delegates() -> None:
     svc.components.task_service.get_task_context.assert_called_once_with("ID-1", project=None)
 
 
+def test_public_get_task_context_keeps_note_on_storage_failure():
+    """PRI-276: публичный контракт тула цел — нота, а не исключение."""
+    from neo4j.exceptions import ServiceUnavailable
+
+    svc = _make_mcp_service()
+    svc.components.task_service.get_task_context.side_effect = ServiceUnavailable("down")
+    assert svc.get_task_context("ID-1") == "(task graph unavailable)"
+
+
+def test_task_context_deps_linked_lets_storage_failure_through():
+    """А провайдер секции отдаёт исключение в _safe, минуя обёртку с нотой."""
+    from neo4j.exceptions import ServiceUnavailable
+
+    from reviewer.mcp.service import _TaskContextDeps
+
+    svc = _make_mcp_service()
+    svc.components.task_service.get_task_context.side_effect = ServiceUnavailable("down")
+    with pytest.raises(ServiceUnavailable):
+        _TaskContextDeps(svc, None).linked("ID-1", "PRI")
+
+
 def test_search_codebase_delegates_to_retriever() -> None:
     """search_codebase зовёт retriever.search_base (include_tests=False)
     и рендерит ContextPack с номерами строк."""

@@ -414,12 +414,20 @@ class TaskService:
         return self.render_hits(self.search_hits(query, top_k, project=project), top_k)
 
     def get_task_context(self, key: str, project: str | None = None) -> str:
-        """Граф-контекст задачи: связанные задачи → их PR → код. Деградация → нота."""
+        """Граф-контекст задачи: связанные задачи → их PR → код. Деградация → нота.
+
+        Недоступность хранилища — исключение, а не нота (PRI-276): подмена
+        строкой здесь означала бы, что классификатор `_safe` не вызывается
+        вовсе, а клиент не получает машиночитаемого сигнала. Ноту для своих
+        вызывающих ставит граница MCP-тула.
+        """
         if self._graph is None:
             return "(task graph unavailable)"
         try:
             ctx = self._graph.task_context(key, project or "")
-        except Exception:
+        except Exception as exc:
+            if is_storage_unavailable(exc):
+                raise
             log.warning("get_task_context: сбой обхода графа для %s", key, exc_info=True)
             return "(task graph unavailable)"
         if not ctx:
