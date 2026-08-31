@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+import psycopg_pool
 import pytest
 
 from reviewer.config.settings import Settings
@@ -1151,3 +1152,76 @@ def test_prepare_review_payload_omits_empty_structural_summary(
     out = svc.prepare_review("o/r", 7)
 
     assert "structural_summary" not in out["units"][0]
+
+
+# ---------------------------------------------------------------------------
+# Тесты PRI-275: preflight не платит второй таймаут пула за мёртвый Postgres
+# ---------------------------------------------------------------------------
+
+def test_task_context_deps_preflight_raises_and_stops_after_one_store_call() -> None:
+    """_TaskContextDeps.preflight при недоступном сторе делает ОДИН заход в стор.
+
+    Тип исключения обязан быть psycopg_pool.PoolTimeout, а не голый
+    psycopg.OperationalError: это намеренный контракт с соседней задачей
+    PRI-274 — если она выведет PoolTimeout из is_storage_unavailable, этот
+    тест обязан покраснеть.
+    """
+    from reviewer.mcp.service import _TaskContextDeps
+
+    calls: list[str] = []
+
+    class _CountingStore:
+        def get_repo_clone(self, repo: str) -> str | None:
+            calls.append("get_repo_clone")
+            raise psycopg_pool.PoolTimeout("couldn't get a connection after 30.00 sec")
+
+        def get_index_meta_row(self, repo: str, ref: str):
+            calls.append("get_index_meta_row")
+            return None
+
+        def count_chunks(self, repo: str, ref: str) -> int:
+            calls.append("count_chunks")
+            return 0
+
+    svc = _make_mcp_service()
+    svc.components.store = _CountingStore()
+    deps = _TaskContextDeps(svc, None)
+
+    with pytest.raises(psycopg_pool.PoolTimeout):
+        deps.preflight("o/r", "dev")
+
+    assert calls == ["get_repo_clone"]
+
+
+def test_task_context_deps_preflight_stays_fail_soft_on_non_storage_clone_failure() -> None:
+    """Не-storage сбой чтения пути к клону остаётся fail-soft: preflight не падает.
+
+    RuntimeError не распознаётся is_storage_unavailable, поэтому strict=True
+    у _repo_clone_path его не пробрасывает — путь клона резолвится в пустую
+    строку, и build_status_report вызывается как обычно.
+    """
+    from reviewer.mcp.service import _TaskContextDeps
+    from reviewer.services.status import BranchStatus, RepoStatus
+
+    class _BrokenCloneStore:
+        def get_repo_clone(self, repo: str) -> str | None:
+            raise RuntimeError("битая строка")
+
+    svc = _make_mcp_service()
+    svc.components.store = _BrokenCloneStore()
+
+    fake_report = RepoStatus(
+        repo="o/r",
+        branches=[BranchStatus(branch="dev", ref="base:dev", indexed_sha="abc",
+                               updated_at=None, chunks=5, graph_nodes=3, drift=0)],
+        overlays=[])
+
+    with patch("reviewer.services.status.build_status_report") as build_report:
+        build_report.return_value = fake_report
+        deps = _TaskContextDeps(svc, None)
+        result = deps.preflight("o/r", "dev")
+
+    assert result["indexed_sha"] == "abc"
+    # clone_path — пятый позиционный аргумент build_status_report; пустая
+    # строка подтверждает, что сбой чтения пути молча проглочен (fail-soft).
+    assert build_report.call_args.args[4] == ""

@@ -1648,21 +1648,28 @@ class MCPReviewService:
         except ValueError as exc:
             return f"({exc})"
 
-    def _repo_clone_path(self, repo: str) -> str | None:
+    def _repo_clone_path(self, repo: str, *, strict: bool = False) -> str | None:
         """Путь к локальному клону репо из индекса, если он там записан (PRI-235).
 
-        Пишет его `reviewer index`, который и так выполняется из клона. Fail-soft:
-        недоступный Postgres или индекс, построенный до миграции, просто лишают
-        резолв локального пути — коммиченный слой уйдёт читаться через VCS.
-        Годность самого пути проверяет CommittedLayerFetcher: MCP-сервер может
-        работать не на той машине, где индексировали.
+        Пишет его `reviewer index`, который и так выполняется из клона. Fail-soft
+        по умолчанию: недоступный Postgres или индекс, построенный до миграции,
+        просто лишают резолв локального пути — коммиченный слой уйдёт читаться
+        через VCS. Годность самого пути проверяет CommittedLayerFetcher: MCP-сервер
+        может работать не на той машине, где индексировали.
+
+        `strict=True` (PRI-275) пробрасывает недоступность хранилища вызывающему,
+        который умеет её обработать (взвести флаг и не платить второй таймаут
+        пула за секции, которые всё равно будут пропущены) — остальные сбои
+        (индекс без миграции, битая строка и т.п.) остаются fail-soft и здесь.
         """
         store = getattr(self.components, "store", None)
         if store is None:
             return None
         try:
             return store.get_repo_clone(repo)
-        except Exception:  # noqa: BLE001 — путь вторичен, VCS остаётся фолбэком
+        except Exception as exc:  # noqa: BLE001 — путь вторичен, VCS остаётся фолбэком
+            if strict and is_storage_unavailable(exc):
+                raise
             log.warning("Не удалось прочитать путь к клону для %s", repo)
             return None
 
@@ -3542,7 +3549,14 @@ class _TaskContextDeps:
         self.augment_gaps: list[str] = []
 
     def _clone_path(self, repo: str) -> str:
-        return self._path or self._service._repo_clone_path(repo) or ""
+        """Путь к локальному клону, строго относительно недоступности хранилища.
+
+        Вызывается внутри `_safe`-секции preflight (`task_context.py`), который
+        умеет взвести флаг и записать gap по проброшенному исключению — поэтому
+        здесь `strict=True`: до PRI-275 сбой глотался тут же, `build_status_report`
+        всё равно шёл читать стор дальше и платил второй таймаут пула.
+        """
+        return self._path or self._service._repo_clone_path(repo, strict=True) or ""
 
     def preflight(self, repo: str, branch: str) -> dict:
         from reviewer.services.status import build_status_report
