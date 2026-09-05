@@ -274,3 +274,55 @@ def test_open_live_wires_and_closes_components():
         assert preflight["chunks"] == 0
     finally:
         provider.close()
+
+
+def test_code_multi_survives_similar_failure_but_records_it(monkeypatch):
+    """M7: strict=True пробивает отказ эмбеддера мимо `_safe` — харнесс не падает.
+
+    В проде `deps.similar` защищён `_safe`, здесь защиты нет: с PRI-272 отказ
+    эмбеддера выходит наружу и ронял бы прогон там, где раньше была тихая
+    деградация. Молчаливое подавление тоже не годится — подмешивание просто не
+    состоялось бы, а число подмешанных путей уехало бы вниз без видимой
+    причины; поэтому сбой переживается и остаётся названным.
+    """
+    from reviewer.policy.context_limits import ContextLimits
+    from reviewer.retrieval import multiquery
+    from voyageai.error import APIError
+
+    from eval.solve_task_metrics.live import LiveRetrieval
+    from reviewer.mcp import service as service_mod
+
+    class FakeDeps:
+        def __init__(self, service, path):
+            pass
+
+        def similar(self, query, project):
+            raise APIError("HTTP code 403")
+
+        def _augment_paths(self, repo):
+            return []
+
+    monkeypatch.setattr(service_mod, "_TaskContextDeps", FakeDeps)
+
+    class FakeService:
+        def _resolve_context_limits(self, repo, branch):
+            return ContextLimits()
+
+    class FakeComponents:
+        retriever = object()
+
+    def fake_search_multi(retriever, repo, queries, **kwargs):
+        class Pack:
+            def as_context(self, line_numbers=True):
+                return "текст"
+
+        return Pack()
+
+    monkeypatch.setattr(multiquery, "search_multi", fake_search_multi)
+    provider = LiveRetrieval(object(), FakeComponents(), FakeService())
+
+    out = provider.code_multi("o/n", "dev", ["q"], {"code_section": {"max_files": 4}},
+                              similar_paths=True)
+
+    assert out == "текст"
+    assert provider.failures == ["similar: o/n"]

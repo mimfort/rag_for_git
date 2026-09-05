@@ -603,3 +603,71 @@ def test_batch_reports_no_failure_on_success():
     results = TaskService(_FakeStore(), _FakeGraph(), _FakeEmbedder()).index_batch(
         [_brief()])
     assert results[0]["failure"] is None
+
+
+# ---------------------------------------------------------------------------
+# M3 (финальное ревью PRI-274/272): гейт failure="storage" на всех трёх ветках
+# ---------------------------------------------------------------------------
+
+def test_batch_upsert_storage_failure_is_called_storage():
+    """Ветка upsert_task: недоступное хранилище называется своим классом."""
+    class _DeadStore(_FakeStore):
+        def upsert_task(self, row):
+            raise psycopg.OperationalError("connection refused")
+
+    results = TaskService(
+        _DeadStore(), _FakeGraph(), _FakeEmbedder()
+    ).index_batch([_brief()])
+
+    assert results[0]["failure"] == "storage"
+    assert results[0]["retry_required"] is True
+
+
+def test_batch_upsert_non_storage_error_is_not_called_storage():
+    """Ветка upsert_task: SQL-баг под «лечится подъёмом контейнеров» не маскируется."""
+    class _BuggyStore(_FakeStore):
+        def upsert_task(self, row):
+            raise psycopg.ProgrammingError('column "nope" does not exist')
+
+    results = TaskService(
+        _BuggyStore(), _FakeGraph(), _FakeEmbedder()
+    ).index_batch([_brief()])
+
+    assert results[0]["failure"] is None
+    assert results[0]["retry_required"] is True
+
+
+def test_batch_update_meta_storage_failure_is_called_storage():
+    """Ветка update_meta (задача не менялась): тот же гейт, та же классификация."""
+    class _DeadStore(_FakeStore):
+        def update_meta(self, key, title, status, url, aliases, project=""):
+            raise psycopg.OperationalError("connection refused")
+
+    brief = _brief()
+    # Прогон-разогрев кладёт content_hash, чтобы задача пошла веткой meta_only.
+    warm = TaskService(_FakeStore(), _FakeGraph(), _FakeEmbedder())
+    warm.index_batch([brief])
+    store = _DeadStore(hashes={brief["key"]: warm._store._hashes[brief["key"]]})
+
+    results = TaskService(store, _FakeGraph(), _FakeEmbedder()).index_batch([brief])
+
+    assert store.upserted == [], "задача не менялась — ветка meta_only"
+    assert results[0]["failure"] == "storage"
+
+
+def test_batch_update_meta_non_storage_error_is_not_called_storage():
+    """Ветка update_meta: настоящий баг SQL обязан остаться видимым."""
+    class _BuggyStore(_FakeStore):
+        def update_meta(self, key, title, status, url, aliases, project=""):
+            raise psycopg.ProgrammingError('syntax error at or near "UPDATE"')
+
+    brief = _brief()
+    warm = TaskService(_FakeStore(), _FakeGraph(), _FakeEmbedder())
+    warm.index_batch([brief])
+    store = _BuggyStore(hashes={brief["key"]: warm._store._hashes[brief["key"]]})
+
+    results = TaskService(store, _FakeGraph(), _FakeEmbedder()).index_batch([brief])
+
+    assert store.upserted == []
+    assert results[0]["failure"] is None
+    assert results[0]["retry_required"] is True

@@ -816,3 +816,53 @@ def test_legacy_warm_board_summary_without_the_flag_still_works():
     """Свод без нового ключа (старый деплой) проходит без исключения."""
     payload = _build(warm_board={"enumerated": 10, "changed": 0}, task=None)
     assert _gap(payload, "task")["reason"] == "задачи нет в сторе"
+
+
+# ---------------------------------------------------------------------------
+# M5 (финальное ревью PRI-274/272): имена в _EMBEDDER_SECTIONS не выдуманы
+# ---------------------------------------------------------------------------
+
+def _sections_passed_to_safe(monkeypatch) -> set[str]:
+    """Имена секций, реально доехавшие до `_safe` за один сбор контекста."""
+    seen: set[str] = set()
+    original = task_context._safe
+
+    def spy(payload, section, produce, default, reason, state,
+            backend=sh.BACKEND_POSTGRES):
+        seen.add(section)
+        return original(payload, section, produce, default, reason, state, backend)
+
+    monkeypatch.setattr(task_context, "_safe", spy)
+    task_context.build_task_context(
+        FakeDeps(), repo="o/n", key="PRI-272", branch="dev", warm_board=True)
+    return seen
+
+
+def test_embedder_sections_are_real_section_names(monkeypatch):
+    """Опечатка в наборе тихо отключила бы замыкание для этой секции.
+
+    Регрессия была бы невидима: payload остался бы правильным, вернулся бы лишь
+    лишний таймаут Voyage — ни тест, ни глаз этого не поймали бы. Поэтому набор
+    сверяется не с копией литерала, а с фактическими именами, которые
+    `build_task_context` передаёт в `_safe`.
+    """
+    seen = _sections_passed_to_safe(monkeypatch)
+    unknown = task_context._EMBEDDER_SECTIONS - seen
+    assert not unknown, f"секций с такими именами не существует: {unknown}"
+
+
+def test_every_embedder_section_is_actually_skipped_when_voyage_is_down():
+    """Обратная сторона: каждое имя из набора действительно замыкается.
+
+    Первая проверка ловит опечатку, эта — молчаливую потерю разметки: имя может
+    существовать и всё равно не участвовать в замыкании, если ветка `_safe`
+    разъедется с набором.
+    """
+    from voyageai.error import APIError
+
+    payload = task_context.build_task_context(
+        FakeDeps(similar=APIError("HTTP code 403")), repo="o/n", key="PRI-272",
+        branch="dev", warm_board=True)
+    skipped = {g["section"] for g in payload["gaps"]
+               if g["cause"] == "embedder_unavailable"}
+    assert task_context._EMBEDDER_SECTIONS <= skipped
