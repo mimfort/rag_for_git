@@ -16,8 +16,9 @@ import logging
 from reviewer.mcp.subqueries import build_subqueries
 from reviewer.storage_health import (
     BACKEND_GRAPH, BACKEND_POSTGRES, CAUSE_STORAGE_UNAVAILABLE, CAUSE_UNKNOWN,
-    DETAIL_AUTH_FAILED, DETAIL_MISSING_DATABASE, StorageDiagnosis,
-    classify_storage_failure, is_storage_unavailable, storage_backend,
+    DETAIL_AUTH_FAILED, DETAIL_MISSING_DATABASE, DETAIL_POOL_EXHAUSTED,
+    StorageDiagnosis, classify_storage_failure, is_storage_unavailable,
+    storage_backend,
 )
 
 log = logging.getLogger(__name__)
@@ -35,6 +36,7 @@ SKIPPED_REASON = f"пропущено: {STORAGE_REASON}"
 DETAIL_REASONS = {
     DETAIL_AUTH_FAILED: "хранилище отвергло учётные данные",
     DETAIL_MISSING_DATABASE: "базы данных не существует",
+    DETAIL_POOL_EXHAUSTED: "свободных соединений в пуле не осталось",
 }
 
 

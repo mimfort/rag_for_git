@@ -613,6 +613,10 @@ def test_storage_down_makes_single_store_call_and_keeps_classification():
     Сервис — настоящий MCPReviewService (а не MagicMock целиком): иначе
     _repo_clone_path был бы автосгенерированным моком без реальной strict-логики,
     и тест проверял бы не тот код, ради которого написан.
+
+    `remedy is None`, а не `"reviewer start"` (PRI-274): PoolTimeout получает
+    свою деталь `pool_exhausted`, и локальный совет здесь был бы ложью —
+    контейнеры подняты, свободных соединений в пуле не осталось.
     """
     calls: list[str] = []
 
@@ -651,4 +655,5 @@ def test_storage_down_makes_single_store_call_and_keeps_classification():
         assert section in payload
     entry = next(g for g in payload["gaps"] if g["section"] == "preflight")
     assert entry["cause"] == "storage_unavailable"
-    assert entry["remedy"] == "reviewer start"
+    assert entry["cause_detail"] == "pool_exhausted"
+    assert entry["remedy"] is None

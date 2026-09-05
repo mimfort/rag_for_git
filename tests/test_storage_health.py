@@ -294,3 +294,55 @@ def test_storage_backend_pool_timeout_is_postgres():
 def test_storage_backend_is_none_for_non_storage_failures(exc):
     """Покрытие совпадает с is_storage_unavailable: что не «хранилище лежит» — то None."""
     assert sh.storage_backend(exc) is None
+
+
+# ---------------------------------------------------------------------------
+# Тесты PRI-274/PRI-272: пул как деталь, эмбеддер как класс
+# ---------------------------------------------------------------------------
+
+
+def test_pool_timeout_gets_pool_exhausted_detail():
+    """Исчерпание пула отличимо от закрытого порта — по типу, не по тексту."""
+    d = sh.classify_storage_failure(
+        psycopg_pool.PoolTimeout("couldn't get a connection after 30.00 sec"),
+        "postgresql://u:p@localhost:5433/reviewer")
+    assert d.detail == sh.DETAIL_POOL_EXHAUSTED
+    assert d.remedy is None
+    assert d.redacted is None
+
+
+def test_pool_timeout_stays_storage_unavailable():
+    """Предикат НЕ меняется: иначе замыкание перестанет ловить пул (PRI-275)."""
+    assert sh.is_storage_unavailable(psycopg_pool.PoolTimeout("timeout"))
+
+
+def test_pool_detail_wins_over_text_patterns():
+    """Тип конкретнее текста: сообщение с auth-маркером всё равно даёт пул."""
+    d = sh.classify_storage_failure(
+        psycopg_pool.PoolTimeout("password authentication failed"),
+        "postgresql://u:p@localhost:5433/reviewer")
+    assert d.detail == sh.DETAIL_POOL_EXHAUSTED
+
+
+def test_voyage_errors_are_embedder_unavailable():
+    from voyageai.error import APIError, AuthenticationError, ServiceUnavailableError
+    for exc in (APIError("HTTP code 403"), AuthenticationError("bad key"),
+                ServiceUnavailableError("503")):
+        assert sh.is_embedder_unavailable(exc)
+
+
+def test_rate_limit_is_not_embedder_unavailable():
+    """RateLimitError штатно ретраится в with_voyage_retry — это не недоступность."""
+    from voyageai.error import RateLimitError
+    assert not sh.is_embedder_unavailable(RateLimitError("429"))
+
+
+def test_storage_errors_are_not_embedder_unavailable():
+    assert not sh.is_embedder_unavailable(psycopg.OperationalError("connection refused"))
+    assert not sh.is_embedder_unavailable(RuntimeError("boom"))
+
+
+def test_embedder_error_is_not_storage_unavailable():
+    """Эмбеддер не хранилище: reviewer start его не чинит."""
+    from voyageai.error import APIError
+    assert not sh.is_storage_unavailable(APIError("HTTP code 403"))

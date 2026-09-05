@@ -67,8 +67,8 @@ from reviewer.services.gc import purge_orphaned_overlays
 from reviewer.services.review_service import ReviewService
 from reviewer.services.status import build_status_report, render_status, render_status_json
 from reviewer.storage_health import (
-    DETAIL_AUTH_FAILED, DETAIL_MISSING_DATABASE, classify_storage_failure,
-    mask_endpoint,
+    DETAIL_AUTH_FAILED, DETAIL_MISSING_DATABASE, DETAIL_POOL_EXHAUSTED,
+    classify_storage_failure, mask_endpoint,
 )
 from reviewer.tasks.boards.errors import sanitize_provider_text
 from reviewer.update_lifecycle import (
@@ -94,6 +94,10 @@ _SUBSTITUTED = "env:DEFAULT_REPO"
 _STORAGE_DETAIL_MESSAGES = {
     DETAIL_AUTH_FAILED: "хранилище отвергло учётные данные — проверьте пароль в .env",
     DETAIL_MISSING_DATABASE: "базы данных не существует — проверьте имя базы в PG_DSN",
+    DETAIL_POOL_EXHAUSTED: (
+        "свободных соединений в пуле не осталось — поднимите PG_POOL_MAX_SIZE"
+        " или снизьте параллелизм"
+    ),
 }
 
 

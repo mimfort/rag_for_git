@@ -6,13 +6,19 @@
 `entrypoints.cli` из сервисного слоя развернул бы направление зависимости.
 
 Класс недоступности решается по ТИПУ исключения (`is_storage_unavailable`), а
-уточнение причины внутри этого класса — по ТЕКСТУ (`classify_storage_failure`).
-Разделение не косметическое: при сбое на этапе установления соединения libpq не
-возвращает результат, поэтому SQLSTATE пуст и ветвиться по коду ошибки нельзя
-(замер PRI-269). Прежний довод «в тексте живёт DSN с паролем» этим же замером
-опровергнут для данного класса ошибок: пароль в `str(exc)` не попадает, а хост,
-порт, имя пользователя и имя базы — попадают, и потому вымарываются. Наружу
-текст выходит только там, где класс назвать не удалось.
+уточнение причины внутри этого класса — двумя способами по приоритету: сперва
+снова ТИПОМ (`psycopg_pool.PoolTimeout` → `DETAIL_POOL_EXHAUSTED`, PRI-274), и
+только когда тип не сузил причину — ТЕКСТОМ (`_DETAIL_PATTERNS` в
+`classify_storage_failure`). Тип проверяется первым, потому что он конкретнее
+текста: сообщение таймаута пула может случайно нести чужой маркер (например,
+auth-паттерн), а свободных соединений от этого не прибавится. Разделение на
+класс и причину не косметическое: при сбое на этапе установления соединения
+libpq не возвращает результат, поэтому SQLSTATE пуст и ветвиться по коду ошибки
+нельзя (замер PRI-269). Прежний довод «в тексте живёт DSN с паролем» этим же
+замером опровергнут для данного класса ошибок: пароль в `str(exc)` не попадает,
+а хост, порт, имя пользователя и имя базы — попадают, и потому вымарываются.
+Наружу текст выходит только там, где класс назвать не удалось ни типом, ни
+паттерном.
 """
 from __future__ import annotations
 
@@ -21,6 +27,7 @@ from dataclasses import dataclass
 from urllib.parse import urlsplit
 
 import psycopg
+import psycopg_pool
 from neo4j.exceptions import ServiceUnavailable, SessionExpired
 
 CAUSE_STORAGE_UNAVAILABLE = "storage_unavailable"
@@ -29,6 +36,12 @@ REMEDY_START = "reviewer start"
 
 BACKEND_GRAPH = "graph"
 BACKEND_POSTGRES = "postgres"
+
+# Эмбеддер — третий источник контекста наравне с двумя хранилищами. Класс у него
+# свой, а не уточнение storage_unavailable: Voyage не хранилище, контейнеры при
+# его отказе подняты, и `reviewer start` не лечит ничего.
+CAUSE_EMBEDDER_UNAVAILABLE = "embedder_unavailable"
+SOURCE_EMBEDDER = "embedder"
 
 _LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1", ""})
 
@@ -57,8 +70,11 @@ def is_loopback_endpoint(value: str) -> bool:
 def is_storage_unavailable(exc: BaseException) -> bool:
     """Не отвечает ли хранилище — в отличие от прочих сбоев секции.
 
-    `psycopg_pool.PoolTimeout` является подклассом `psycopg.OperationalError`,
-    поэтому одна проверка покрывает и таймаут пула, и обрыв соединения.
+    `psycopg_pool.PoolTimeout` является подклассом `psycopg.OperationalError` и
+    остаётся внутри этого класса намеренно (PRI-274): вывести его отсюда значило
+    бы лишить замыкание `_StorageState` возможности поймать его на первом же
+    сбое и вернуть восемь таймаутов пула вместо одного. Отличается он не
+    предикатом, а `cause_detail` — см. `classify_storage_failure`.
     `psycopg.ProgrammingError` подклассом не является и под «хранилище лежит»
     не маскируется: настоящий баг SQL обязан остаться видимым. У neo4j по той же
     причине берутся только `ServiceUnavailable`/`SessionExpired` (ветка
@@ -83,6 +99,26 @@ def storage_backend(exc: BaseException) -> str | None:
     if isinstance(exc, psycopg.OperationalError):
         return BACKEND_POSTGRES
     return None
+
+
+def is_embedder_unavailable(exc: BaseException) -> bool:
+    """Не отвечает ли эмбеддер — в отличие от штатного троттлинга.
+
+    Иерархия `voyageai.error` плоская: все классы — прямые наследники
+    `VoyageError`, поэтому одна проверка покрывает отказ фронтенда (403),
+    неверный ключ, обрыв соединения и таймаут. `RateLimitError` вычитается
+    намеренно: free tier — 3 RPM, троттлинг там штатное состояние, его уже
+    отрабатывает `with_voyage_retry`, и звать это недоступностью значило бы
+    поднимать тревогу на каждом втором прогоне.
+
+    Импорт ленивый: модуль зовут потребители, которым эмбеддер не нужен вовсе,
+    и стоимость импорта клиента им платить незачем.
+    """
+    try:
+        from voyageai.error import RateLimitError, VoyageError
+    except Exception:  # noqa: BLE001 — без клиента Voyage вопрос не стоит
+        return False
+    return isinstance(exc, VoyageError) and not isinstance(exc, RateLimitError)
 
 
 def storage_remedy(*endpoints: str) -> str | None:
@@ -121,6 +157,7 @@ def mask_endpoint(value: str) -> str:
 
 DETAIL_AUTH_FAILED = "auth_failed"
 DETAIL_MISSING_DATABASE = "missing_database"
+DETAIL_POOL_EXHAUSTED = "pool_exhausted"
 
 # Обрезка отрывка: диагностика не должна раздувать payload MCP-тула.
 _MAX_REDACTED_CHARS = 200
@@ -202,6 +239,12 @@ def classify_storage_failure(exc: BaseException, *endpoints: str) -> StorageDiag
     if not is_storage_unavailable(exc):
         return StorageDiagnosis(None, None, None)
     text = str(exc)
+    if isinstance(exc, psycopg_pool.PoolTimeout):
+        # Тип конкретнее текста: сообщение таймаута может нести чужие маркеры,
+        # а свободных соединений от этого не прибавится. Лекарство — поднять
+        # pg_pool_max_size или снизить параллелизм, но локальной команды для
+        # этого нет, поэтому remedy пуст: `reviewer start` здесь бесполезен.
+        return StorageDiagnosis(DETAIL_POOL_EXHAUSTED, None, None)
     for detail, pattern in _DETAIL_PATTERNS:
         if pattern.search(text):
             # Хранилище ответило отказом, значит контейнеры подняты и лекарство
