@@ -734,3 +734,42 @@ def test_pool_exhaustion_reports_detail_and_no_remedy():
     assert entry["cause_detail"] == "pool_exhausted"
     assert entry["remedy"] is None
     assert "пул" in entry["reason"]
+
+
+# ---------------------------------------------------------------------------
+# Тесты Task 5 (PRI-274/PRI-272): секция task берёт причину из синка
+# ---------------------------------------------------------------------------
+
+def test_task_gap_blames_embedder_not_the_board():
+    """Задачи нет в сторе, потому что её туда не пустил упавший синк.
+
+    Секция `task` не бросает вовсе, поэтому проброс её не лечит: причина
+    рождается этажом выше, в своде warm_board.
+    """
+    payload = _build(
+        warm_board={"enumerated": 126, "changed": 3, "failed": 3,
+                    "embedder_failed": True},
+        task=None)
+
+    entry = _gap(payload, "task")
+    assert entry["cause"] == "embedder_unavailable"
+    assert "эмбеддер" in entry["reason"]
+    assert "нет в сторе" not in entry["reason"]
+
+
+def test_task_gap_stays_board_shaped_without_embedder_failure():
+    """Без сбоя эмбеддера формулировка прежняя — задачи действительно нет."""
+    payload = _build(
+        warm_board={"enumerated": 126, "changed": 0, "failed": 0,
+                    "embedder_failed": False},
+        task=None)
+
+    entry = _gap(payload, "task")
+    assert entry["cause"] == "unknown"
+    assert entry["reason"] == "задачи нет в сторе"
+
+
+def test_legacy_warm_board_summary_without_the_flag_still_works():
+    """Свод без нового ключа (старый деплой) проходит без исключения."""
+    payload = _build(warm_board={"enumerated": 10, "changed": 0}, task=None)
+    assert _gap(payload, "task")["reason"] == "задачи нет в сторе"

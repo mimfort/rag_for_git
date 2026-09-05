@@ -281,6 +281,10 @@ def build_task_context(deps, *, repo: str, key: str, branch: str,
             "прогрев доски не выполнен", state)
         if result is not None:
             payload["warnings"].append({"warm_board": result})
+        if isinstance(result, dict) and result.get("embedder_failed"):
+            # Синк уже назвал класс структурно; исключения здесь нет и быть не
+            # может — index_batch отработал его сам, отметив задачи к повтору.
+            state.mark(SOURCE_EMBEDDER)
     elif warm_board and not board:
         if state.is_down(BACKEND_POSTGRES):
             _source_gap(payload, "warm_board", state, BACKEND_POSTGRES, skipped=True)
@@ -291,7 +295,14 @@ def build_task_context(deps, *, repo: str, key: str, branch: str,
                  "задача не прочитана из стора", state)
     payload["task"] = task
     if task is None and not any(g["section"] == "task" for g in payload["gaps"]):
-        payload["gaps"].append(gap("task", "задачи нет в сторе"))
+        if state.is_down(SOURCE_EMBEDDER):
+            # «Задачи нет в сторе» указывает на доску, а виноват эмбеддер: задача
+            # на доске есть, её не удалось проиндексировать.
+            payload["gaps"].append(gap(
+                "task", f"задача не проиндексирована: {EMBEDDER_REASON}",
+                cause=state.cause_of(SOURCE_EMBEDDER)))
+        else:
+            payload["gaps"].append(gap("task", "задачи нет в сторе"))
 
     query = _query(task, key)
     payload["related"] = {
