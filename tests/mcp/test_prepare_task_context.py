@@ -657,3 +657,80 @@ def test_storage_down_makes_single_store_call_and_keeps_classification():
     assert entry["cause"] == "storage_unavailable"
     assert entry["cause_detail"] == "pool_exhausted"
     assert entry["remedy"] is None
+
+
+# ---------------------------------------------------------------------------
+# Тесты Task 2 (PRI-274/PRI-272): замыкание обобщается с хранилищ на источники
+# ---------------------------------------------------------------------------
+
+def _build(**overrides):
+    return task_context.build_task_context(
+        FakeDeps(**overrides), repo="o/n", key="PRI-274", branch="dev",
+        warm_board=True)
+
+
+def _gap(payload, section):
+    return next(g for g in payload["gaps"] if g["section"] == section)
+
+
+def test_embedder_failure_gets_own_cause():
+    """Сбой эмбеддера — свой класс, не storage_unavailable и не unknown."""
+    from voyageai.error import APIError
+
+    payload = _build(subsystems=APIError("HTTP code 403"))
+
+    entry = _gap(payload, "subsystems")
+    assert entry["cause"] == "embedder_unavailable"
+    assert entry["remedy"] is None
+    assert entry["cause_detail"] is None
+    assert "эмбеддер" in entry["reason"]
+
+
+def test_embedder_failure_does_not_close_storage_sections():
+    """Мёртвый эмбеддер не отменяет секции, которым нужен только Postgres."""
+    from voyageai.error import APIError
+
+    payload = _build(subsystems=APIError("HTTP code 403"))
+
+    assert payload["task_board"] is not None
+    assert payload["task"] is not None
+    assert "related.linked" not in _gap_sections(payload)
+
+
+def test_embedder_closure_skips_later_embedder_sections():
+    """Второй заход в мёртвый эмбеддер не делается: секция пропускается."""
+    from voyageai.error import APIError
+
+    deps = FakeDeps(similar=APIError("HTTP code 403"))
+    payload = task_context.build_task_context(
+        deps, repo="o/n", key="PRI-274", branch="dev", warm_board=True)
+
+    assert "code" not in deps.calls
+    assert "test_exemplars" not in deps.calls
+    entry = _gap(payload, "code")
+    assert entry["cause"] == "embedder_unavailable"
+    assert entry["reason"].startswith("пропущено")
+
+
+def test_embedder_closure_does_not_skip_postgres_sections():
+    """Замыкание адресное: секции, которым эмбеддер не нужен, всё равно идут."""
+    from voyageai.error import APIError
+
+    deps = FakeDeps(similar=APIError("HTTP code 403"))
+    task_context.build_task_context(
+        deps, repo="o/n", key="PRI-274", branch="dev", warm_board=True)
+
+    assert "task" in deps.calls
+    assert "linked" in deps.calls
+    assert deps.calls.count("similar") == 1
+
+
+def test_pool_exhaustion_reports_detail_and_no_remedy():
+    """Исчерпание пула: класс storage_unavailable, но лекарство не советуется."""
+    entry = _preflight_gap(
+        psycopg_pool.PoolTimeout("couldn't get a connection after 30.00 sec"))
+
+    assert entry["cause"] == "storage_unavailable"
+    assert entry["cause_detail"] == "pool_exhausted"
+    assert entry["remedy"] is None
+    assert "пул" in entry["reason"]
