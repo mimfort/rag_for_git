@@ -57,7 +57,9 @@
        `storage_unavailable` — `embedder_unavailable` never carries one.
 
        Tell the user (in Russian) which sections were lost and name the class: `storage_unavailable`
-       → «хранилище не отвечает», `embedder_unavailable` → «эмбеддер не отвечает». Then present
+       → «хранилище не отвечает», `embedder_unavailable` → «эмбеддер не отвечает». A class this
+       table does not list is still presented — quote its `cause` verbatim and pass its `reason`
+       through; an unfamiliar class is a reason to say more, never to fall silent. Then present
        **three options**:
        1. «Поднять сейчас» — offered **only** when the gap carries a `remedy`. Run that command
           (`reviewer start`), wait for it to finish, then re-run `prepare_task_context(...)` once
@@ -82,6 +84,14 @@
        удалённые» on a named `cause_detail`, and never say or imply the containers are down for
        `embedder_unavailable` or for a `pool_exhausted` `storage_unavailable`: in both, the
        containers are running.
+
+       **Several classes at once are several problems.** Sources fail independently, so
+       `gaps` can carry `storage_unavailable` and `embedder_unavailable` together. Group the
+       entries by `cause`, name every class with its own lost sections and its own
+       `cause_detail`/`remedy`, and offer option 1 only for the classes that actually carry a
+       `remedy` — saying which ones it fixes. Curing one class leaves the others standing: after
+       re-running `prepare_task_context(...)`, scan the fresh `gaps` again from the top of this
+       step.
 
        **The server never starts containers.** It only classifies the failure and names the cure;
        bringing the infrastructure up is the user's call, made here. In `full-auto` do not ask:
