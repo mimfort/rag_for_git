@@ -183,6 +183,42 @@ def test_embedder_failure_reraises_when_strict():
                     limits=CodebaseLimits(), branch="dev", strict=True)
 
 
+def test_strict_batch_failure_does_not_pay_a_second_call():
+    """I2: батчевый проброс проверяется ОТДЕЛЬНО — одиночный откат его не заменяет.
+
+    Смысл именно этой половины — не платить второй сетевой таймаут мёртвому
+    Voyage. Одиночный вызов здесь исправен: если проброс в батчевом except снять,
+    откат отработает, исключение наружу не выйдет, и тест покраснеет — а раньше
+    его прикрывал проброс из второго except, потому что исключение подавалось в
+    оба уровня сразу.
+    """
+    from voyageai.error import APIError
+    embedder = _FakeEmbedder(batch_exc=APIError("HTTP code 403"))
+    store = _FakeStore({"q0": [_bm25("a.py#f")]})
+    with pytest.raises(APIError):
+        search_multi(_Retriever(store, embedder), "o/n", ["q0", "q1"],
+                     limits=CodebaseLimits(), branch="dev", strict=True)
+    assert embedder.singles == [], "второй заход в мёртвый эмбеддер не делается"
+
+
+def test_strict_single_fallback_failure_reraises():
+    """I2: одиночный проброс проверяется ОТДЕЛЬНО — батчевый до него не доходит.
+
+    Батч падает RateLimitError: предикат недоступностью его не считает, поэтому
+    батчевый проброс молчит и откат штатно срабатывает. Уже он бьёт напрямую в
+    эмбеддер, и без второго проброса `_embed_pairs` вернул бы [] — секция отдала
+    бы «(ничего не найдено)», а gap с `embedder_unavailable` не появился бы
+    вовсе, то есть дефект PRI-272 воспроизвёлся бы в исходной форме.
+    """
+    from voyageai.error import APIError, RateLimitError
+    embedder = _FakeEmbedder(batch_exc=RateLimitError("HTTP code 429"),
+                             single_exc=APIError("HTTP code 403"))
+    store = _FakeStore({"q0": [_bm25("a.py#f")]})
+    with pytest.raises(APIError):
+        search_multi(_Retriever(store, embedder), "o/n", ["q0", "q1"],
+                     limits=CodebaseLimits(), branch="dev", strict=True)
+
+
 def test_embedder_failure_stays_soft_by_default():
     """Тот же отказ без strict — прежнее поведение: пустая (но не упавшая) выдача."""
     from voyageai.error import APIError
