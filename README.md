@@ -695,8 +695,13 @@ namespaced skills with `$rag-reviewer:...`.
   (`classify_storage_failure`): a failure during connection setup gives libpq nothing to return, so
   SQLSTATE is empty and there is no code to branch on. The one detail decided by type instead is an
   exhausted connection pool: `PoolTimeout` stays inside the storage class (removing it would cost
-  the breaker its ability to trip on the first failure) but carries `cause_detail: pool_exhausted`,
-  because the containers are up and the real cure is a bigger pool or less concurrency. Raw text only
+  the breaker its ability to trip on the first failure) but may carry `cause_detail: pool_exhausted`,
+  because the containers are up and the real cure is a bigger pool or less concurrency. The type
+  alone is not enough there: production only reaches Postgres through the pool, and a stopped
+  container surfaces as the very same `PoolTimeout`, so the branch adds one observation — a single
+  direct `psycopg.connect(dsn, connect_timeout=2)` outside the pool. Connected means the pool really
+  is busy; failed means the *probe's* exception is classified instead, so a stopped container keeps
+  its `reviewer start` and a stale password still reads as `auth_failed`. Raw text only
   ever reaches the caller when the cause couldn't be named, and even then only redacted
   (`reviewer/storage_health.py`). Every `gaps` entry carries `cause` (`storage_unavailable` |
   `embedder_unavailable` | `unknown`), `cause_detail` (`auth_failed` | `missing_database` |

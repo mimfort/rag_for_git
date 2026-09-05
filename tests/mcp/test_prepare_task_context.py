@@ -3,11 +3,23 @@ from unittest.mock import MagicMock
 
 import psycopg
 import psycopg_pool
+import pytest
 from neo4j.exceptions import ServiceUnavailable
 
+from reviewer import storage_health as sh
 from reviewer.config.settings import Settings
 from reviewer.mcp import task_context
 from reviewer.mcp.service import MCPReviewService, _TaskContextDeps
+
+
+@pytest.fixture(autouse=True)
+def _live_server_probe(monkeypatch):
+    """Проба ветки PoolTimeout не должна открывать сокет в unit-тесте.
+
+    Дефолт — «сервер отвечает», то есть пул действительно занят. Тест, которому
+    нужен остановленный контейнер, подменяет пробу своей, падающей.
+    """
+    monkeypatch.setattr(sh, "_probe_postgres", lambda dsn: None)
 
 
 class FakeDeps:
@@ -479,6 +491,12 @@ def test_broken_storage_endpoints_source_does_not_break_build():
 # Тесты PRI-277: класс причины отдельно от уместности лекарства
 # ---------------------------------------------------------------------------
 
+def _refuse_connection(dsn: str) -> None:
+    """Проба остановленного контейнера: порт закрыт."""
+    raise psycopg.OperationalError(
+        "connection to server at 127.0.0.1, port 5433 failed: Connection refused")
+
+
 def _preflight_gap(exc):
     """Запись gaps секции preflight при заданном сбое источника."""
     payload = task_context.build_task_context(
@@ -508,6 +526,23 @@ def test_missing_database_is_named_and_loses_remedy():
 def test_stopped_containers_still_get_remedy_and_no_detail():
     """Третий случай остаётся отличимым от первых двух с другой стороны."""
     entry = _preflight_gap(psycopg.OperationalError("Connection refused"))
+    assert entry["cause_detail"] is None
+    assert entry["remedy"] == "reviewer start"
+
+
+def test_stopped_containers_keep_remedy_on_the_production_exception_type(monkeypatch):
+    """Тот же случай на ПРОДОВОМ типе: пул отдаёт PoolTimeout, а не отказ соединения.
+
+    Соседний тест выше моделирует остановленный контейнер голым
+    `OperationalError`, которого прод по этому пути не производит: в Postgres
+    он ходит только через пул. Именно этот зазор между фейком и продом пропустил
+    дефект C1 — деталь `pool_exhausted` приписывалась лежачему хранилищу, и
+    `reviewer start` исчезал.
+    """
+    monkeypatch.setattr(sh, "_probe_postgres", _refuse_connection)
+    entry = _preflight_gap(
+        psycopg_pool.PoolTimeout("couldn't get a connection after 30.00 sec"))
+    assert entry["cause"] == "storage_unavailable"
     assert entry["cause_detail"] is None
     assert entry["remedy"] == "reviewer start"
 
@@ -602,7 +637,7 @@ def test_non_storage_graph_error_is_ignored():
 # Тесты PRI-275: preflight не платит второй таймаут пула за мёртвый Postgres
 # ---------------------------------------------------------------------------
 
-def test_storage_down_makes_single_store_call_and_keeps_classification():
+def test_storage_down_makes_single_store_call_and_keeps_classification(monkeypatch):
     """build_task_context с НАСТОЯЩИМ _TaskContextDeps поверх фейкового components.store.
 
     До PRI-275 проглоченный сбой clone_path заставлял preflight читать
@@ -614,9 +649,11 @@ def test_storage_down_makes_single_store_call_and_keeps_classification():
     _repo_clone_path был бы автосгенерированным моком без реальной strict-логики,
     и тест проверял бы не тот код, ради которого написан.
 
-    `remedy is None`, а не `"reviewer start"` (PRI-274): PoolTimeout получает
-    свою деталь `pool_exhausted`, и локальный совет здесь был бы ложью —
-    контейнеры подняты, свободных соединений в пуле не осталось.
+    Лежачее хранилище обязано получить `reviewer start`: сбой приходит продовым
+    типом `PoolTimeout` (в Postgres прод ходит только через пул), а проба сервера
+    показывает закрытый порт. Правка этого ожидания на `remedy is None` при
+    реализации PRI-274 и была тем, что скрыло дефект C1: тест выглядел как
+    согласование, а на деле снял единственную проверку лекарства на продовом типе.
     """
     calls: list[str] = []
 
@@ -637,6 +674,7 @@ def test_storage_down_makes_single_store_call_and_keeps_classification():
             calls.append("list_refs")
             return []
 
+    monkeypatch.setattr(sh, "_probe_postgres", _refuse_connection)
     settings = Settings()
     # loopback-эндпоинты обязательны, иначе classify_storage_failure не назовёт
     # remedy: storage_endpoints() читает их из settings.pg_dsn/neo4j_uri.
@@ -655,8 +693,8 @@ def test_storage_down_makes_single_store_call_and_keeps_classification():
         assert section in payload
     entry = next(g for g in payload["gaps"] if g["section"] == "preflight")
     assert entry["cause"] == "storage_unavailable"
-    assert entry["cause_detail"] == "pool_exhausted"
-    assert entry["remedy"] is None
+    assert entry["cause_detail"] is None
+    assert entry["remedy"] == "reviewer start"
 
 
 # ---------------------------------------------------------------------------
@@ -726,7 +764,12 @@ def test_embedder_closure_does_not_skip_postgres_sections():
 
 
 def test_pool_exhaustion_reports_detail_and_no_remedy():
-    """Исчерпание пула: класс storage_unavailable, но лекарство не советуется."""
+    """Исчерпание пула: класс storage_unavailable, но лекарство не советуется.
+
+    Пул назван занятым только потому, что проба (фикстура `_live_server_probe`)
+    соединилась с сервером; на закрытом порту тот же тип исключения даёт другой
+    вердикт — см. `test_stopped_containers_keep_remedy_on_the_production_exception_type`.
+    """
     entry = _preflight_gap(
         psycopg_pool.PoolTimeout("couldn't get a connection after 30.00 sec"))
 
