@@ -76,8 +76,9 @@
        данные» — the containers ARE up, so the password in `.env` is what to check;
        `missing_database` → «базы данных не существует» — the containers ARE up but the database
        does not exist, so the database name in `PG_DSN` is what to check; `pool_exhausted` →
-       «свободных соединений в пуле не осталось: поднять `pg_pool_max_size` или снизить
-       параллелизм; `reviewer start` здесь не поможет» — the containers ARE up and busy, not down;
+       «свободных соединений в пуле не осталось: поднять `PG_POOL_MAX_SIZE` или снизить
+       параллелизм; `reviewer start` здесь не поможет» — the containers ARE up and busy, not down
+       (the server confirmed this by connecting to them, so do not hedge it);
        `null` `cause_detail` → the storages are remote and `reviewer start` does not apply here.
        For `embedder_unavailable`, say «эмбеддер не отвечает» and that no local command fixes it —
        Voyage is a remote service regardless of what runs on this machine. Never say «хранилища
