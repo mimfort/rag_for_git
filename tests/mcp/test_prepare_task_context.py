@@ -1,8 +1,13 @@
 """prepare_task_context: форма payload и посекционный fail-open (PRI-248)."""
+from unittest.mock import MagicMock
+
 import psycopg
+import psycopg_pool
 from neo4j.exceptions import ServiceUnavailable
 
+from reviewer.config.settings import Settings
 from reviewer.mcp import task_context
+from reviewer.mcp.service import MCPReviewService, _TaskContextDeps
 
 
 class FakeDeps:
@@ -591,3 +596,59 @@ def test_non_storage_graph_error_is_ignored():
         deps, repo="o/n", key="PRI-276", branch="dev", warm_board=False)
     assert "linked" in deps.calls
     assert payload["related"]["linked"]
+
+
+# ---------------------------------------------------------------------------
+# Тесты PRI-275: preflight не платит второй таймаут пула за мёртвый Postgres
+# ---------------------------------------------------------------------------
+
+def test_storage_down_makes_single_store_call_and_keeps_classification():
+    """build_task_context с НАСТОЯЩИМ _TaskContextDeps поверх фейкового components.store.
+
+    До PRI-275 проглоченный сбой clone_path заставлял preflight читать
+    get_index_meta_row/count_chunks ПОСЛЕ уже упавшего get_repo_clone — второй
+    таймаут пула. Теперь strict=True на _repo_clone_path пробрасывает сбой
+    до этих вызовов, и в стор делается ровно один заход.
+
+    Сервис — настоящий MCPReviewService (а не MagicMock целиком): иначе
+    _repo_clone_path был бы автосгенерированным моком без реальной strict-логики,
+    и тест проверял бы не тот код, ради которого написан.
+    """
+    calls: list[str] = []
+
+    class _CountingStore:
+        def get_repo_clone(self, repo: str) -> str | None:
+            calls.append("get_repo_clone")
+            raise psycopg_pool.PoolTimeout("couldn't get a connection after 30.00 sec")
+
+        def get_index_meta_row(self, repo: str, ref: str):
+            calls.append("get_index_meta_row")
+            return None
+
+        def count_chunks(self, repo: str, ref: str) -> int:
+            calls.append("count_chunks")
+            return 0
+
+        def list_refs(self, repo: str) -> list[str]:
+            calls.append("list_refs")
+            return []
+
+    settings = Settings()
+    # loopback-эндпоинты обязательны, иначе classify_storage_failure не назовёт
+    # remedy: storage_endpoints() читает их из settings.pg_dsn/neo4j_uri.
+    settings.pg_dsn = "postgresql://u:p@127.0.0.1:5433/reviewer"
+    settings.neo4j_uri = "bolt://localhost:7687"
+    components = MagicMock()
+    components.store = _CountingStore()
+    service = MCPReviewService(settings, components)
+    deps = _TaskContextDeps(service, None)
+
+    payload = task_context.build_task_context(
+        deps, repo="o/r", key="PRI-275", branch="dev", warm_board=False)
+
+    assert calls == ["get_repo_clone"]
+    for section in task_context.SECTIONS:
+        assert section in payload
+    entry = next(g for g in payload["gaps"] if g["section"] == "preflight")
+    assert entry["cause"] == "storage_unavailable"
+    assert entry["remedy"] == "reviewer start"
