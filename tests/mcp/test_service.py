@@ -767,10 +767,9 @@ def test_search_codebase_multi_rejects_untracked_branch() -> None:
 class _FailingRetriever:
     """Ретривер, у которого уже доступ к `.embedder` бросает `exc`.
 
-    search_multi читает `retriever.embedder` до входа в собственные fail-soft
-    блоки (_embed_pairs/_run/_graph_items оборачивают вызовы, а не сам доступ
-    к атрибуту) — поэтому только так сбой долетает до _search_codebase_multi
-    настоящим, не проглоченным внутри самого search_multi.
+    Бьёт ровно в границу `_search_codebase_multi`: сбой приходит снизу, а
+    поведение проверяется на её уровне, без участия внутренностей search_multi.
+    Сквозной путь — через `_EmbedderFailingRetriever` ниже.
     """
 
     def __init__(self, exc: BaseException) -> None:
@@ -779,6 +778,33 @@ class _FailingRetriever:
     @property
     def embedder(self):
         raise self._exc
+
+
+class _EmbedderFailingRetriever:
+    """Ретривер с настоящим эмбеддером, чьи методы бросают `exc`.
+
+    Отличие от `_FailingRetriever` содержательное: там исключение рождается на
+    доступе к атрибуту, здесь — внутри `embed_queries`/`embed_query`, то есть
+    там же, где его рождает мёртвый Voyage. Ровно на этом шве задача один раз
+    уже оказалась неработающей: `_embed_pairs` гасил оба уровня, и `strict`
+    в `_search_codebase_multi` не мог сработать ни разу, хотя обе половины
+    по отдельности были покрыты и зелены.
+    """
+
+    class _Embedder:
+        def __init__(self, exc: BaseException) -> None:
+            self._exc = exc
+
+        def embed_queries(self, queries):
+            raise self._exc
+
+        def embed_query(self, query):
+            raise self._exc
+
+    def __init__(self, exc: BaseException) -> None:
+        self.embedder = self._Embedder(exc)
+        self.store = None
+        self.graph = None
 
 
 def _service_with_failing_retriever(exc: BaseException) -> MCPReviewService:
@@ -801,6 +827,33 @@ def test_search_codebase_multi_reraises_embedder_failure_when_strict():
     svc = _service_with_failing_retriever(APIError("HTTP code 403"))
     with pytest.raises(APIError):
         svc._search_codebase_multi("o/n", ["q"], "dev", strict=True)
+
+
+def test_search_codebase_multi_reraises_through_the_whole_seam_when_strict():
+    """Сквозной путь: _search_codebase_multi → search_multi → _embed_pairs.
+
+    Обе половины покрыты по отдельности, но именно их стык однажды и разошёлся:
+    граничный тест выше бьёт в `_search_codebase_multi`, тесты multiquery — в
+    `search_multi`, а мёртвый Voyage бросает внутри методов эмбеддера, ниже их
+    обоих. Здесь исключение проходит все три уровня целиком.
+    """
+    from voyageai.error import APIError
+
+    svc = _make_mcp_service()
+    svc.components.retriever = _EmbedderFailingRetriever(APIError("HTTP code 403"))
+
+    with pytest.raises(APIError):
+        svc._search_codebase_multi("o/n", ["q"], "dev", strict=True)
+
+
+def test_search_codebase_multi_seam_stays_soft_without_strict():
+    """Тот же сквозной путь без strict остаётся немым — контракт не изменился."""
+    from voyageai.error import APIError
+
+    svc = _make_mcp_service()
+    svc.components.retriever = _EmbedderFailingRetriever(APIError("HTTP code 403"))
+
+    assert svc._search_codebase_multi("o/n", ["q"], "dev") == "(ничего не найдено)"
 
 
 def test_search_codebase_multi_stays_soft_on_other_failures_when_strict():
