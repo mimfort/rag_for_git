@@ -21,6 +21,7 @@ from reviewer.retrieval.retriever import (
     ContextPack, _dedupe_overlapping, _is_test_path,
 )
 from reviewer.rrf import RRF_K
+from reviewer.storage_health import is_embedder_unavailable
 
 log = logging.getLogger(__name__)
 
@@ -67,22 +68,38 @@ def cap_block(item, max_chars: int):
         end_line=item.start_line + max(len(kept) - 1, 0))
 
 
-def _embed_pairs(embedder, queries: list[str]) -> list[tuple]:
+def _embed_pairs(embedder, queries: list[str], *, strict: bool = False) -> list[tuple]:
     """Пары (запрос, вектор) одним батчем; при сбое — только первый подзапрос.
 
     Откат идёт по первому подзапросу намеренно: он и есть продакшн-запрос
     целиком, поэтому деградация возвращает сегодняшнее поведение, а не пустоту.
+
+    `strict` (PRI-272) — распознанный отказ эмбеддера пробрасывается вызывающему
+    вместо тихого отката; проверяется в ОБОИХ except. Батчевый вызов может
+    упасть по причине, не связанной с эмбеддером (тогда откат на одиночный
+    запрос — штатное поведение, и ему дают сработать), а одиночный откат уже
+    бьёт напрямую в эмбеддер. В батчевом except проброс идёт ДО отката: если
+    предикат уже признал сервис недоступным, второй вызов к тому же мёртвому
+    сервису — лишняя задержка на пути, где ответ пользователю всё равно будет
+    назвавшей причину ошибкой. RateLimitError предикат не считает
+    недоступностью (штатный троттлинг free tier, retry уже есть в
+    with_voyage_retry) — этот сценарий по-прежнему откатывается на одиночный
+    запрос, даже при strict=True.
     """
     if not queries:
         return []
     try:
         return list(zip(queries, embedder.embed_queries(queries), strict=True))
-    except Exception:  # noqa: BLE001 — квота Voyage кончилась, это штатный случай
+    except Exception as exc:  # noqa: BLE001 — квота Voyage кончилась, это штатный случай
+        if strict and is_embedder_unavailable(exc):
+            raise
         log.warning("multiquery: батч-эмбеддинг недоступен — откат на один запрос",
                     exc_info=True)
         try:
             return [(queries[0], embedder.embed_query(queries[0]))]
-        except Exception:  # noqa: BLE001
+        except Exception as exc2:  # noqa: BLE001
+            if strict and is_embedder_unavailable(exc2):
+                raise
             log.warning("multiquery: эмбеддинг запроса недоступен", exc_info=True)
             return []
 
@@ -217,7 +234,8 @@ def diversify_by_file(items: list, *, max_files: int, max_chunks_per_file: int) 
 
 def search_multi(retriever, repo: str, queries: list[str], *, limits=None,
                  section_limits=None, hops: int = 1, branch: str = "",
-                 include_tests: bool = False, augment_sources=None) -> ContextPack:
+                 include_tests: bool = False, augment_sources=None,
+                 strict: bool = False) -> ContextPack:
     """Мультизапросный ретрив по base-индексу ветки: N прогонов, RRF, обрезка.
 
     Реранкера и cliff-отсечки здесь нет — финальный ранкер RRF (см. докстринг
@@ -244,6 +262,12 @@ def search_multi(retriever, repo: str, queries: list[str], *, limits=None,
     обнуляла рычаг на живом замере, — см.
     .superpowers/sdd/2026-08-17-pri-257-augmented-candidates/step8-measurement.md
     и раздел «Приёмка PRI-258» в eval/replay_report.md.
+
+    `strict` (PRI-272) — проброс распознанного отказа эмбеддера вызывающему;
+    см. `_embed_pairs`. Единственный продакшн-вызывающий с `strict=True` —
+    `MCPReviewService._search_codebase_multi` (секции `code`/`test_exemplars`
+    сборки контекста задачи); остальные пути (`search_codebase`, /ask,
+    ревью PR, офлайн-эвал) не меняются, дефолт `False`.
     """
     from reviewer.policy.context_limits import CodebaseLimits, CodeSectionLimits
     lim = limits or CodebaseLimits()
@@ -255,7 +279,7 @@ def search_multi(retriever, repo: str, queries: list[str], *, limits=None,
     # отката _embed_pairs при сбое батча).
     deduped_queries = list(dict.fromkeys(queries))
     runs: list[list] = []
-    for query, qvec in _embed_pairs(retriever.embedder, deduped_queries):
+    for query, qvec in _embed_pairs(retriever.embedder, deduped_queries, strict=strict):
         try:
             runs.append(_run(retriever.store, repo, query, qvec, lim, bref))
         except Exception:  # noqa: BLE001 — сбой одного прогона не роняет сборку

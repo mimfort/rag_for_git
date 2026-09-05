@@ -1848,7 +1848,7 @@ class MCPReviewService:
                 self.components.retriever, repo, queries,
                 limits=cl.search_codebase, section_limits=cl.code_section,
                 hops=cl.graph.hops, branch=resolved, include_tests=include_tests,
-                augment_sources=augment_sources)
+                augment_sources=augment_sources, strict=strict)
         except Exception as exc:
             if strict and is_embedder_unavailable(exc):
                 raise

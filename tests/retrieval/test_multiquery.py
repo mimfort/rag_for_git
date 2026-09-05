@@ -1,4 +1,6 @@
 """RRF-слияние выдач подзапросов и обрезка блока рендера (PRI-255)."""
+import pytest
+
 from reviewer.index.store import Retrieved
 from reviewer.policy.context_limits import CodebaseLimits, CodeSectionLimits
 from reviewer.retrieval.augment import AugmentSource
@@ -65,18 +67,24 @@ def test_cap_block_does_not_mutate_source():
 
 
 class _FakeEmbedder:
-    def __init__(self, fail_batch: bool = False):
+    def __init__(self, fail_batch: bool = False, batch_exc=None, single_exc=None):
         self.batches: list = []
         self.singles: list = []
         self._fail_batch = fail_batch
+        self._batch_exc = batch_exc
+        self._single_exc = single_exc
 
     def embed_queries(self, texts):
+        if self._batch_exc is not None:
+            raise self._batch_exc
         if self._fail_batch:
             raise RuntimeError("нет квоты")
         self.batches.append(list(texts))
         return [[0.1] * 8 for _ in texts]
 
     def embed_query(self, text):
+        if self._single_exc is not None:
+            raise self._single_exc
         self.singles.append(text)
         return [0.1] * 8
 
@@ -160,6 +168,43 @@ def test_failed_batch_falls_back_to_single_query():
     assert embedder.singles == ["q0"]
     assert store.queries == ["q0"], "откат идёт по первому подзапросу"
     assert pack.items
+
+
+def test_embedder_failure_reraises_when_strict():
+    """PRI-272: распознанный отказ эмбеддера (и в батче, и в одиночном откате)
+    пробрасывается наружу вызывающему при strict=True — иначе секции code/
+    test_exemplars никогда не увидят его причину, только пустую выдачу."""
+    from voyageai.error import APIError
+    embedder = _FakeEmbedder(batch_exc=APIError("HTTP code 403"),
+                             single_exc=APIError("HTTP code 403"))
+    store = _FakeStore({})
+    with pytest.raises(APIError):
+        search_multi(_Retriever(store, embedder), "o/n", ["q0"],
+                    limits=CodebaseLimits(), branch="dev", strict=True)
+
+
+def test_embedder_failure_stays_soft_by_default():
+    """Тот же отказ без strict — прежнее поведение: пустая (но не упавшая) выдача."""
+    from voyageai.error import APIError
+    embedder = _FakeEmbedder(batch_exc=APIError("HTTP code 403"),
+                             single_exc=APIError("HTTP code 403"))
+    store = _FakeStore({})
+    pack = search_multi(_Retriever(store, embedder), "o/n", ["q0"],
+                        limits=CodebaseLimits(), branch="dev")
+    assert pack.items == []
+
+
+def test_rate_limit_batch_failure_still_falls_back_when_strict():
+    """RateLimitError — штатный троттлинг, а не недоступность (предикат его не
+    признаёт): откат на одиночный запрос обязан сработать как обычно, даже
+    при strict=True — это и есть деградация, ради которой откат существует."""
+    from voyageai.error import RateLimitError
+    embedder = _FakeEmbedder(batch_exc=RateLimitError("HTTP code 429"))
+    store = _FakeStore({"q0": [_bm25("a.py#f")]})
+    pack = search_multi(_Retriever(store, embedder), "o/n", ["q0", "q1"],
+                        limits=CodebaseLimits(), branch="dev", strict=True)
+    assert embedder.singles == ["q0"], "откат идёт по первому подзапросу"
+    assert {it.path for it in pack.items} == {"a.py"}
 
 
 def test_failed_run_is_skipped_and_others_merge():
