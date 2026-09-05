@@ -764,6 +764,51 @@ def test_search_codebase_multi_rejects_untracked_branch() -> None:
         sm.assert_not_called()
 
 
+class _FailingRetriever:
+    """Ретривер, у которого уже доступ к `.embedder` бросает `exc`.
+
+    search_multi читает `retriever.embedder` до входа в собственные fail-soft
+    блоки (_embed_pairs/_run/_graph_items оборачивают вызовы, а не сам доступ
+    к атрибуту) — поэтому только так сбой долетает до _search_codebase_multi
+    настоящим, не проглоченным внутри самого search_multi.
+    """
+
+    def __init__(self, exc: BaseException) -> None:
+        self._exc = exc
+
+    @property
+    def embedder(self):
+        raise self._exc
+
+
+def _service_with_failing_retriever(exc: BaseException) -> MCPReviewService:
+    svc = _make_mcp_service()
+    svc.components.retriever = _FailingRetriever(exc)
+    return svc
+
+
+def test_search_codebase_multi_swallows_embedder_failure_by_default():
+    """Приватный мультизапрос по умолчанию нем — как и был."""
+    from voyageai.error import APIError
+
+    svc = _service_with_failing_retriever(APIError("HTTP code 403"))
+    assert svc._search_codebase_multi("o/n", ["q"], "dev") == "(ничего не найдено)"
+
+
+def test_search_codebase_multi_reraises_embedder_failure_when_strict():
+    from voyageai.error import APIError
+
+    svc = _service_with_failing_retriever(APIError("HTTP code 403"))
+    with pytest.raises(APIError):
+        svc._search_codebase_multi("o/n", ["q"], "dev", strict=True)
+
+
+def test_search_codebase_multi_stays_soft_on_other_failures_when_strict():
+    svc = _service_with_failing_retriever(RuntimeError("boom"))
+    assert svc._search_codebase_multi(
+        "o/n", ["q"], "dev", strict=True) == "(ничего не найдено)"
+
+
 def test_task_context_deps_code_passes_include_tests_false() -> None:
     """_TaskContextDeps.code зовёт _search_codebase_multi с include_tests=False.
 
@@ -783,6 +828,7 @@ def test_task_context_deps_code_passes_include_tests_false() -> None:
 
     call = fake_service._search_codebase_multi.call_args
     assert call.args == ("o/r", ["q1", "q2"], "dev", False)
+    assert call.kwargs["strict"] is True
     sources = call.kwargs["augment_sources"]
     assert len(sources) == 1
     assert sources[0].name == "similar-diffs"
@@ -809,7 +855,7 @@ def test_task_context_deps_similar_stores_hits_and_renders_once() -> None:
     result = deps.similar("query", "PRI")
 
     fake_service.components.task_service.search_hits.assert_called_once_with(
-        "query", project="PRI")
+        "query", project="PRI", strict=True)
     fake_service.components.task_service.render_hits.assert_called_once_with(hits)
     assert result == "1. ID-311 ..."
     assert deps._similar_hits == hits
@@ -883,7 +929,7 @@ def test_task_context_deps_test_exemplars_passes_include_tests_true() -> None:
     result = deps.test_exemplars("o/r", "dev", ["q1", "q2"])
 
     fake_service._search_codebase_multi.assert_called_once_with(
-        "o/r", ["q1", "q2"], "dev", True)
+        "o/r", ["q1", "q2"], "dev", True, strict=True)
     assert result == "tests-out"
 
 

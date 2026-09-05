@@ -385,7 +385,7 @@ class TaskService:
         return {"meta_refreshed": len(metas), "warnings": warnings}
 
     def search_hits(self, query: str, top_k: int | None = None,
-                    project: str | None = None) -> list | None:
+                    project: str | None = None, *, strict: bool = False) -> list | None:
         """Структурные хиты похожих задач (PRI-257).
 
         Отдельный метод, потому что подмешивание diff-путей ключуется по
@@ -395,6 +395,11 @@ class TaskService:
         None и [] различаются намеренно: прежний search_tasks отдавал разные
         ноты на «источник недоступен» и «ничего не найдено», и схлопывание их
         в пустой список было бы регрессией контракта. None — сбой, [] — пусто.
+
+        `strict` (PRI-272) — keyword-only, как у `_repo_clone_path` (PRI-275):
+        при нём распознанный отказ эмбеддера пробрасывается вызывающему, чтобы
+        тот назвал причину. Зовёт со `strict=True` только сборка контекста
+        задачи; публичный `search_tasks` остаётся немым намеренно.
         """
         from reviewer.policy.context_limits import TasksLimits
         ceiling = top_k or TasksLimits.ceiling
@@ -402,7 +407,9 @@ class TaskService:
             vec = self._embedder.embed_query(query)
             return self._store.search(query, vec, top_k=max(ceiling * 3, 30),
                                       project=project)
-        except Exception:
+        except Exception as e:
+            if strict and is_embedder_unavailable(e):
+                raise
             log.warning("search_hits: сбой поиска по запросу %r", query, exc_info=True)
             return None
 
