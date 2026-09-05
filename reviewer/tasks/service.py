@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import logging
 
-from reviewer.storage_health import is_storage_unavailable
+from reviewer.storage_health import is_embedder_unavailable, is_storage_unavailable
 from reviewer.tasks.graph import PRRef
 from reviewer.tasks.pr_links import extract_pr_refs
 from reviewer.tasks.store import TaskRow, build_task_text, task_content_hash
@@ -26,7 +26,8 @@ def _skipped_result(key: str) -> dict:
     """
     return {"key": key, "embedded": False, "links_upserted": 0,
             "links_stored": None, "prs_linked": 0,
-            "warnings": [_STORAGE_SKIPPED], "retry_required": True}
+            "warnings": [_STORAGE_SKIPPED], "retry_required": True,
+            "failure": "storage"}
 
 
 def _normalize_links(links: object) -> list[dict]:
@@ -153,7 +154,7 @@ class TaskService:
                 results[i] = {"key": None, "embedded": False, "links_upserted": 0,
                               "links_stored": None, "prs_linked": 0,
                               "warnings": ["task has no key"],
-                              "retry_required": False}
+                              "retry_required": False, "failure": None}
                 parsed.append(None)
                 continue
             aliases = [a for a in (task.get("aliases") or []) if a and a != key]
@@ -183,6 +184,12 @@ class TaskService:
         # каждая задача добавляет собственный таймаут (47 × 30 с ≈ 23 минуты).
         storage_down = False
 
+        # В отличие от storage_down это НЕ замыкание: Voyage зовётся один раз на
+        # весь батч, гасить нечего. Флаг запоминает только КЛАСС отказа, решённый
+        # типом исключения ЗДЕСЬ, пока объект жив: этажом выше от него остаётся
+        # одна строка, и различить причину уже нечем.
+        embedder_down = False
+
         for i, p in enumerate(parsed):
             if p is None:
                 continue
@@ -198,7 +205,7 @@ class TaskService:
                 results[i] = {"key": p["key"], "embedded": False, "links_upserted": 0,
                               "links_stored": None, "prs_linked": 0,
                               "warnings": [f"store: {type(e).__name__}: {e}"],
-                              "retry_required": True}
+                              "retry_required": True, "failure": "storage"}
                 continue
             (meta_only if prev == p["chash"] else to_embed).append(i)
 
@@ -212,6 +219,7 @@ class TaskService:
             except Exception as e:
                 log.warning("index_batch: сбой embed_documents", exc_info=True)
                 embed_err = f"embedder: {type(e).__name__}: {e}"
+                embedder_down = is_embedder_unavailable(e)
 
         # Шаг 4: upsert изменившихся задач (или propagate embed_err)
         for i in to_embed:
@@ -222,9 +230,12 @@ class TaskService:
             warnings: list[str] = []
             embedded = False
             retry_required = False
+            failure: str | None = None
             if embed_err:
                 warnings.append(embed_err)
                 retry_required = True
+                if embedder_down:
+                    failure = "embedder"
             else:
                 try:
                     self._store.upsert_task(TaskRow(
@@ -240,11 +251,13 @@ class TaskService:
                     retry_required = True
                     log.warning("index_batch: сбой store для %s", p["key"], exc_info=True)
                     warnings.append(f"store: {type(e).__name__}: {e}")
+                    failure = "storage"
             results[i] = {"key": p["key"], "embedded": embedded,
                           "links_upserted": 0,
                           "links_stored": True if embedded and p["links_supplied"] else None,
                           "prs_linked": 0,
-                          "warnings": warnings, "retry_required": retry_required}
+                          "warnings": warnings, "retry_required": retry_required,
+                          "failure": failure}
 
         # Шаг 5: update_meta для неизменившихся задач
         for i in meta_only:
@@ -254,6 +267,7 @@ class TaskService:
                 continue
             warnings: list[str] = []
             retry_required = False
+            failure: str | None = None
             try:
                 self._store.update_meta(p["key"], p["title"], p["status"],
                                         p["url"], p["aliases"], p["project"])
@@ -263,10 +277,12 @@ class TaskService:
                 retry_required = True
                 log.warning("index_batch: сбой update_meta для %s", p["key"], exc_info=True)
                 warnings.append(f"store: {type(e).__name__}: {e}")
+                failure = "storage"
             results[i] = {"key": p["key"], "embedded": False,
                           "links_upserted": 0, "links_stored": None,
                           "prs_linked": 0,
-                          "warnings": warnings, "retry_required": retry_required}
+                          "warnings": warnings, "retry_required": retry_required,
+                          "failure": failure}
 
         # Snapshot links обновляется независимо от ветки embed/meta-only.
         for i, p in enumerate(parsed):

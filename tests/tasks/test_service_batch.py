@@ -444,7 +444,7 @@ def test_result_shape_survives_the_early_exit():
 
     for result in results:
         assert set(result) == {"key", "embedded", "links_upserted", "links_stored",
-                               "prs_linked", "warnings", "retry_required"}
+                               "prs_linked", "warnings", "retry_required", "failure"}
 
 
 def test_non_storage_error_still_processes_every_task():
@@ -506,7 +506,7 @@ def test_result_shape_survives_mid_batch_storage_failure():
     results = TaskService(store, graph, emb).index_batch(tasks)
 
     expected_keys = {"key", "embedded", "links_upserted", "links_stored",
-                      "prs_linked", "warnings", "retry_required"}
+                      "prs_linked", "warnings", "retry_required", "failure"}
     for r in results:
         assert set(r) == expected_keys
     assert results[0]["embedded"] is True        # первая задача упсертилась успешно
@@ -534,3 +534,52 @@ def test_storage_down_mid_hash_phase_still_blocks_voyage_call():
     TaskService(store, graph, emb).index_batch(tasks)
 
     assert emb.doc_calls == []
+
+
+def test_batch_marks_embedder_failure_as_embedder():
+    """Сбой эмбеддера и сбой стора различимы полем, а не текстом warnings."""
+    from voyageai.error import APIError
+
+    class _VoyageDownEmbedder(_FakeEmbedder):
+        def embed_documents(self, texts):
+            super().embed_documents(texts)
+            raise APIError("HTTP code 403")
+
+    t1 = build_task_text("Add logout", "Clear session", ["redirects"])
+    store = _FakeStore(hashes={"ID-1": task_content_hash(t1)})
+    tasks = [_brief("ID-1", "PRI-1"),
+             _brief("ID-2", "PRI-2", title="Fix bug", description="desc", links=[])]
+    results = TaskService(store, _FakeGraph(), _VoyageDownEmbedder()).index_batch(tasks)
+
+    assert results[0]["failure"] is None      # unchanged — meta-only, сбоя не видела
+    assert results[1]["failure"] == "embedder"
+    assert results[1]["retry_required"] is True
+
+
+def test_batch_marks_storage_failure_as_storage():
+    """Отказ стора остаётся отказом стора — класс не подменяется эмбеддером."""
+    results = TaskService(
+        _TimingOutStore(), _FakeGraph(), _FakeEmbedder()
+    ).index_batch([_brief()])
+
+    assert results[0]["failure"] == "storage"
+
+
+def test_batch_unknown_embed_error_is_not_called_embedder():
+    """Непонятный сбой классом не награждается: врать про причину нельзя."""
+    class _BrokenEmbedder(_FakeEmbedder):
+        def embed_documents(self, texts):
+            raise RuntimeError("voyage down")
+
+    results = TaskService(
+        _FakeStore(), _FakeGraph(), _BrokenEmbedder()
+    ).index_batch([_brief()])
+
+    assert results[0]["failure"] is None
+    assert results[0]["retry_required"] is True
+
+
+def test_batch_reports_no_failure_on_success():
+    results = TaskService(_FakeStore(), _FakeGraph(), _FakeEmbedder()).index_batch(
+        [_brief()])
+    assert results[0]["failure"] is None
