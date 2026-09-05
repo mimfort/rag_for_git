@@ -199,13 +199,15 @@ class TaskService:
             try:
                 prev = self._store.existing_hash(p["key"])
             except Exception as e:
-                if is_storage_unavailable(e):
+                storage_unavailable = is_storage_unavailable(e)
+                if storage_unavailable:
                     storage_down = True
                 log.warning("index_batch: existing_hash сбой для %s", p["key"], exc_info=True)
                 results[i] = {"key": p["key"], "embedded": False, "links_upserted": 0,
                               "links_stored": None, "prs_linked": 0,
                               "warnings": [f"store: {type(e).__name__}: {e}"],
-                              "retry_required": True, "failure": "storage"}
+                              "retry_required": True,
+                              "failure": "storage" if storage_unavailable else None}
                 continue
             (meta_only if prev == p["chash"] else to_embed).append(i)
 
@@ -246,12 +248,14 @@ class TaskService:
                         links=p["links"]))
                     embedded = True
                 except Exception as e:
-                    if is_storage_unavailable(e):
+                    storage_unavailable = is_storage_unavailable(e)
+                    if storage_unavailable:
                         storage_down = True
                     retry_required = True
                     log.warning("index_batch: сбой store для %s", p["key"], exc_info=True)
                     warnings.append(f"store: {type(e).__name__}: {e}")
-                    failure = "storage"
+                    if storage_unavailable:
+                        failure = "storage"
             results[i] = {"key": p["key"], "embedded": embedded,
                           "links_upserted": 0,
                           "links_stored": True if embedded and p["links_supplied"] else None,
@@ -272,12 +276,14 @@ class TaskService:
                 self._store.update_meta(p["key"], p["title"], p["status"],
                                         p["url"], p["aliases"], p["project"])
             except Exception as e:
-                if is_storage_unavailable(e):
+                storage_unavailable = is_storage_unavailable(e)
+                if storage_unavailable:
                     storage_down = True
                 retry_required = True
                 log.warning("index_batch: сбой update_meta для %s", p["key"], exc_info=True)
                 warnings.append(f"store: {type(e).__name__}: {e}")
-                failure = "storage"
+                if storage_unavailable:
+                    failure = "storage"
             results[i] = {"key": p["key"], "embedded": False,
                           "links_upserted": 0, "links_stored": None,
                           "prs_linked": 0,

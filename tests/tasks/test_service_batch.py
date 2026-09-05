@@ -1,4 +1,5 @@
 """Unit-тесты для TaskService.index_batch."""
+import psycopg
 import psycopg_pool
 
 from reviewer.tasks.service import TaskService
@@ -563,6 +564,25 @@ def test_batch_marks_storage_failure_as_storage():
     ).index_batch([_brief()])
 
     assert results[0]["failure"] == "storage"
+
+
+def test_batch_non_storage_store_error_is_not_called_storage():
+    """SQL-баг стора не награждается классом "storage": врать про причину нельзя.
+
+    `is_storage_unavailable` намеренно не покрывает `psycopg.ProgrammingError`
+    (настоящий баг SQL обязан остаться видимым, PRI-268/PRI-277) — тот же вызов
+    existing_hash, что и у test_batch_marks_storage_failure_as_storage, но другим
+    типом исключения, обязан дать другую классификацию."""
+    class _BuggyStore(_FakeStore):
+        def existing_hash(self, key):
+            raise psycopg.ProgrammingError('syntax error at or near "SELECT"')
+
+    results = TaskService(
+        _BuggyStore(), _FakeGraph(), _FakeEmbedder()
+    ).index_batch([_brief()])
+
+    assert results[0]["failure"] is None
+    assert results[0]["retry_required"] is True
 
 
 def test_batch_unknown_embed_error_is_not_called_embedder():
