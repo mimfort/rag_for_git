@@ -710,7 +710,9 @@ namespaced skills with `$rag-reviewer:...`.
   branches on machine-readable fields rather than on prose. A dead embedder is its own class, not a
   detail of the storage one: Voyage is not a storage, and `reviewer start` does not fix it. Voyage
   throttling (`RateLimitError`) is deliberately excluded — on the free tier it is a normal state
-  that `with_voyage_retry` already handles. The server never starts containers — it names the cure,
+  that `with_voyage_retry` already handles — and so are request-validation failures
+  (`InvalidRequestError` 400, `MalformedRequestError` 422, `VideoProcessingError`): a rejected
+  request is not a dead service, and treating it as one would silently gut half the task context. The server never starts containers — it names the cure,
   and `solve-task` asks the user whether to run it. The same flag stops `index_batch` from walking a
   dead pool task by task and from spending Voyage quota it has nowhere to store.
 - **Multi-query retrieval for `code`:** the `code` and `test_exemplars` sections are searched with a

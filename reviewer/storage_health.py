@@ -49,6 +49,16 @@ BACKEND_POSTGRES = "postgres"
 CAUSE_EMBEDDER_UNAVAILABLE = "embedder_unavailable"
 SOURCE_EMBEDDER = "embedder"
 
+# Классы `voyageai.error`, которые недоступностью НЕ считаются. Имена, а не сами
+# классы: набор резолвится лениво, и версия клиента, не знающая какого-то имени,
+# обязана оставить предикат рабочим, а не уронить импорт.
+_NOT_EMBEDDER_DOWN = (
+    "RateLimitError",         # штатный троттлинг free tier, ретраится сам
+    "InvalidRequestError",    # 400: запрос неверен (бросается и локально, без сети)
+    "MalformedRequestError",  # 422: тело запроса не разобрано
+    "VideoProcessingError",   # контент не обработан — сервис при этом отвечает
+)
+
 _LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1", ""})
 
 # Единственный литерал маски в модуле: и вымарывание чужого текста, и показ
@@ -112,19 +122,36 @@ def is_embedder_unavailable(exc: BaseException) -> bool:
 
     Иерархия `voyageai.error` плоская: все классы — прямые наследники
     `VoyageError`, поэтому одна проверка покрывает отказ фронтенда (403),
-    неверный ключ, обрыв соединения и таймаут. `RateLimitError` вычитается
-    намеренно: free tier — 3 RPM, троттлинг там штатное состояние, его уже
-    отрабатывает `with_voyage_retry`, и звать это недоступностью значило бы
-    поднимать тревогу на каждом втором прогоне.
+    неверный ключ, обрыв соединения и таймаут. Вычитаемые классы приходится
+    перечислять по той же причине — порядком веток исключение не выразить.
+
+    Вычитается `RateLimitError`: free tier — 3 RPM, троттлинг там штатное
+    состояние, его уже отрабатывает `with_voyage_retry`, и звать это
+    недоступностью значило бы поднимать тревогу на каждом втором прогоне.
+    Вместе с ним — ошибки самого запроса: `InvalidRequestError` (400, клиент
+    бросает её и локально, без сети), `MalformedRequestError` (422) и
+    `VideoProcessingError`. Все три означают «запрос неверен / контент не
+    обработан», а не «сервис лежит», и цена ошибки здесь несимметрична: одна
+    такая ошибка внутри `warm_board` ставит `embedder_failed` и снимает четыре
+    секции контекста задачи при полностью живом эмбеддере.
 
     Импорт ленивый: модуль зовут потребители, которым эмбеддер не нужен вовсе,
-    и стоимость импорта клиента им платить незачем.
+    и стоимость импорта клиента им платить незачем. Отсутствующий класс не
+    ломает предикат: словарь версии клиента может не знать нового имени, и
+    пропущенное вычитание безопаснее отказа классифицировать вовсе.
     """
     try:
-        from voyageai.error import RateLimitError, VoyageError
+        from voyageai import error as voyage_error
     except Exception:  # noqa: BLE001 — без клиента Voyage вопрос не стоит
         return False
-    return isinstance(exc, VoyageError) and not isinstance(exc, RateLimitError)
+    base = getattr(voyage_error, "VoyageError", None)
+    if base is None:
+        return False
+    excluded = tuple(
+        cls for cls in (getattr(voyage_error, name, None) for name in _NOT_EMBEDDER_DOWN)
+        if isinstance(cls, type)
+    )
+    return isinstance(exc, base) and not isinstance(exc, excluded)
 
 
 def storage_remedy(*endpoints: str) -> str | None:

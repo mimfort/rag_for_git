@@ -445,3 +445,33 @@ def test_pool_timeout_probe_is_not_called_for_other_failures():
         psycopg.OperationalError("Connection refused"), _LOCAL_DSN,
         probe=lambda dsn: calls.append(dsn))
     assert calls == []
+
+
+def test_request_validation_errors_are_not_embedder_unavailable():
+    """400/422 — «запрос неверен», а не «сервис лежит» (I1 финального ревью).
+
+    Цена ошибки здесь несимметрична: одна такая ошибка внутри warm_board ставит
+    embedder_failed и снимает четыре секции контекста задачи, хотя эмбеддер
+    полностью работоспособен.
+    """
+    from voyageai.error import InvalidRequestError, MalformedRequestError
+    assert not sh.is_embedder_unavailable(InvalidRequestError("unknown model"))
+    assert not sh.is_embedder_unavailable(MalformedRequestError("422"))
+
+
+def test_video_processing_error_is_not_embedder_unavailable():
+    """Контент не обработан — сервис при этом отвечает."""
+    from voyageai.error import VideoProcessingError
+    assert not sh.is_embedder_unavailable(VideoProcessingError("bad video"))
+
+
+def test_transport_errors_stay_embedder_unavailable():
+    """Вычитание валидации не должно задеть настоящую недоступность."""
+    from voyageai.error import (
+        APIConnectionError, AuthenticationError, ServerError, ServiceUnavailableError,
+        Timeout, TryAgain,
+    )
+    for exc in (APIConnectionError("connection error"), AuthenticationError("401"),
+                ServerError("500"), ServiceUnavailableError("503"),
+                Timeout("timed out"), TryAgain("retry")):
+        assert sh.is_embedder_unavailable(exc), type(exc).__name__
