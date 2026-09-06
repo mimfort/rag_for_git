@@ -1173,10 +1173,13 @@ class MCPReviewService:
         try:
             changed = vcs.get_changed_files(target.number)
             status_map = {item.path: item.status for item in changed}
-            head_sha = vcs.get_pull_request(target.number).head_sha
-            policy, _meta = self._resolve_policy(repo, self._bug_branches(repo)[0])
+            pr = vcs.get_pull_request(target.number)
+            # base_ref РЕАЛЬНОГО PR, а не первичная ветка репозитория: .review.yml
+            # берётся из целевой ветки PR (см. _record_brief_quality/publish_review) —
+            # иначе на PR в неглавную ветку эта точка съёма считает по чужому конфигу.
+            policy, _meta = self._resolve_policy(repo, pr.base_ref)
             return brief_quality.measure_and_record(
-                task_key=key, repo=repo, pr_number=target.number, head_sha=head_sha,
+                task_key=key, repo=repo, pr_number=target.number, head_sha=pr.head_sha,
                 changed_paths=list(status_map), changed_status=status_map,
                 clone_path=self._repo_clone_path(repo), config=policy.brief_quality,
                 history=self._review_service._ensure_history(), run_id=None,

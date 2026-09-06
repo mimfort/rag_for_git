@@ -336,20 +336,27 @@ class _FakeHistory:
 
 
 class _MetricVCS(_FakeVCS):
-    """`_FakeVCS` + дифф/head_sha, нужные съёму метрики (get_changed_files, PR.head_sha)."""
+    """`_FakeVCS` + дифф/head_sha/base_ref, нужные съёму метрики
+    (get_changed_files, PR.head_sha, PR.base_ref)."""
 
-    def __init__(self, *, vcs_raises=False, **kwargs):
+    def __init__(self, *, vcs_raises=False, base_ref="main",
+                 changed_path="reviewer/app.py", **kwargs):
         super().__init__(**kwargs)
         self._vcs_raises = vcs_raises
+        self._base_ref = base_ref
+        self._changed_path = changed_path
 
     def get_changed_files(self, number):
         if self._vcs_raises:
             raise RuntimeError("VCS недоступен")
-        return [ChangedFile(path="reviewer/app.py", status="modified", patch=None)]
+        return [ChangedFile(path=self._changed_path, status="modified", patch=None)]
 
     def get_pull_request(self, number):
         pr = super().get_pull_request(number)
-        return type("PR", (), {"number": pr.number, "body": pr.body, "head_sha": "deadbeef"})()
+        return type("PR", (), {
+            "number": pr.number, "body": pr.body, "head_sha": "deadbeef",
+            "base_ref": self._base_ref,
+        })()
 
 
 def _service_with_board(monkeypatch, tmp_path, recorded, *, vcs_raises=False, on_vcs_open=None):
@@ -401,6 +408,50 @@ def test_finish_task_survives_metric_failure(monkeypatch, tmp_path):
     assert out["status"] == "ok"
     assert out["task_link_status"] in {"added", "already_present", "failed"}
     assert out["brief_quality_status"] is None
+
+
+def test_finish_task_metric_resolves_policy_from_pr_base_ref_not_primary_branch(
+    monkeypatch, tmp_path
+):
+    """Съём метрики на finish_task обязан взять конфиг ЦЕЛЕВОЙ ветки PR, а не
+    первичной ветки репозитория — как и на публикации ревью (`_record_brief_quality`
+    берёт `p.prq.base_ref`). Репозиторий отслеживает две ветки с РАЗНЫМ core_paths;
+    PR закрывается в неглавную ветку. Если резолв ошибочно возьмёт первичную ветку,
+    ядро посчитается по чужому конфигу и статус будет другим."""
+    from reviewer.metrics.brief_quality.config import BriefQualityConfig
+
+    _write_brief(tmp_path, "2026-09-01-PRI-1-x.md", ["release_core/app.py"])
+    recorded = {}
+
+    primary_config = BriefQualityConfig(core_paths=("primary_core/**",), configured=True)
+    target_config = BriefQualityConfig(core_paths=("release_core/**",), configured=True)
+
+    # PR закрывается в "release" — неглавную ветку; "dev" — первичная.
+    vcs = _MetricVCS(base_ref="release", changed_path="release_core/app.py")
+    svc = _Svc(["fake"], vcs=vcs)
+    svc._review_service = type(
+        "RS", (), {"_ensure_history": lambda self: _FakeHistory(recorded)}
+    )()
+    monkeypatch.setattr(svc, "_repo_clone_path", lambda repo: str(tmp_path))
+    monkeypatch.setattr(svc, "_bug_branches", lambda repo: ("dev", ("dev", "release")))
+
+    def _resolve_policy(repo, branch):
+        if branch == "release":
+            return type("P", (), {"brief_quality": target_config})(), None
+        if branch == "dev":
+            return type("P", (), {"brief_quality": primary_config})(), None
+        raise AssertionError(f"неожиданная ветка: {branch}")
+
+    monkeypatch.setattr(svc, "_resolve_policy", _resolve_policy)
+
+    out = svc.finish_task("PRI-1", "https://github.com/o/r/pull/7")
+
+    assert out["status"] == "ok"
+    # Ядро "release_core/**" совпадает с изменённым файлом только в конфиге
+    # ЦЕЛЕВОЙ ветки — если бы резолв взял первичную "dev", ядро было бы пустым
+    # (configured=True → status="empty_core_denominator", а не "measured").
+    assert out["brief_quality_status"] == "measured"
+    assert recorded["status"] == "measured"
 
 
 def test_finish_task_opens_vcs_once(monkeypatch, tmp_path):
