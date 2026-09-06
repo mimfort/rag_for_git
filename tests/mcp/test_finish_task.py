@@ -10,6 +10,7 @@ from reviewer.tasks.boards.registry import (
     ProviderOptionSpec,
     ProviderSetupSpec,
 )
+from reviewer.vcs.base import ChangedFile
 from tests.provider_access import FAKE_PROVIDER_ACCESS
 
 
@@ -305,3 +306,104 @@ def test_finish_task_link_status_matches_warnings_contract():
     assert out["task_link_status"] in {"added", "already_present", "failed"}
     assert out["task_link_added"] is (out["task_link_status"] == "added")
     assert not [w for w in out["warnings"] if "ссылка на задачу" in w]
+
+
+# --- Съём качества брифа на finish_task (PRI-270) -----------------------------
+
+
+def _write_brief(tmp_path, name, relevant):
+    directory = tmp_path / "docs" / "superpowers" / "briefs"
+    directory.mkdir(parents=True, exist_ok=True)
+    lines = "\n".join(f"- `{path}` — зачем" for path in relevant)
+    (directory / name).write_text(f"# Brief\n\n## Relevant code\n{lines}\n", encoding="utf-8")
+
+
+class _FakeHistory:
+    """Подложка ReviewHistory: помнит аргументы record_brief_quality в recorded."""
+
+    def __init__(self, recorded):
+        self._recorded = recorded
+
+    def record_brief_quality(self, run_id, repo, pr_number, head_sha, measurement):
+        self._recorded["run_id"] = run_id
+        self._recorded["repo"] = repo
+        self._recorded["pr_number"] = pr_number
+        self._recorded["head_sha"] = head_sha
+        self._recorded["status"] = measurement.status
+        return 1
+
+
+class _MetricVCS(_FakeVCS):
+    """`_FakeVCS` + дифф/head_sha, нужные съёму метрики (get_changed_files, PR.head_sha)."""
+
+    def __init__(self, *, vcs_raises=False, **kwargs):
+        super().__init__(**kwargs)
+        self._vcs_raises = vcs_raises
+
+    def get_changed_files(self, number):
+        if self._vcs_raises:
+            raise RuntimeError("VCS недоступен")
+        return [ChangedFile(path="reviewer/app.py", status="modified", patch=None)]
+
+    def get_pull_request(self, number):
+        pr = super().get_pull_request(number)
+        return type("PR", (), {"number": pr.number, "body": pr.body, "head_sha": "deadbeef"})()
+
+
+def _service_with_board(monkeypatch, tmp_path, recorded, *, vcs_raises=False, on_vcs_open=None):
+    """Собрать finish_task-сервис с подложками съёма: клон, политика, история.
+
+    `_resolve_policy`/`_repo_clone_path` подменены напрямую — их резолв не
+    предмет этой задачи (Task 3/4 уже покрыты своими тестами), а VCS-фабрика
+    даёт `_MetricVCS`, умеющую и бэклинк, и `get_changed_files`/`head_sha` для
+    съёма метрики — один провайдер на обе операции, как того требует `_pr_session`.
+    """
+    from reviewer.metrics.brief_quality.config import DEFAULT
+
+    vcs = _MetricVCS(vcs_raises=vcs_raises)
+    svc = _Svc(["fake"], vcs=vcs)
+    if on_vcs_open is not None:
+        factory = svc._vcs_factory
+
+        def _tracked(owner, name):
+            on_vcs_open((owner, name))
+            return factory(owner, name)
+
+        svc._vcs_factory = _tracked
+    svc._review_service = type(
+        "RS", (), {"_ensure_history": lambda self: _FakeHistory(recorded)}
+    )()
+    monkeypatch.setattr(svc, "_repo_clone_path", lambda repo: str(tmp_path))
+    monkeypatch.setattr(
+        svc, "_resolve_policy",
+        lambda repo, branch: (type("P", (), {"brief_quality": DEFAULT})(), None),
+    )
+    return svc
+
+
+def test_finish_task_records_brief_quality(monkeypatch, tmp_path):
+    """Съём метрики на закрытии задачи: строка пишется, run_id остаётся пустым."""
+    _write_brief(tmp_path, "2026-09-01-PRI-1-x.md", ["reviewer/app.py"])
+    recorded = {}
+    svc = _service_with_board(monkeypatch, tmp_path, recorded)   # хелпер модуля
+    out = svc.finish_task("PRI-1", "https://github.com/o/r/pull/7")
+    assert out["status"] == "ok"
+    assert out["brief_quality_status"] == "measured"
+    assert recorded["run_id"] is None and recorded["pr_number"] == 7
+
+
+def test_finish_task_survives_metric_failure(monkeypatch, tmp_path):
+    """Полный отказ съёма не меняет прежний результат finish_task (крит. 4 PRI-270)."""
+    svc = _service_with_board(monkeypatch, tmp_path, {}, vcs_raises=True)
+    out = svc.finish_task("PRI-1", "https://github.com/o/r/pull/7")
+    assert out["status"] == "ok"
+    assert out["task_link_status"] in {"added", "already_present", "failed"}
+    assert out["brief_quality_status"] is None
+
+
+def test_finish_task_opens_vcs_once(monkeypatch, tmp_path):
+    """Бэклинк и съём делят одно соединение: PR-ссылка резолвится один раз."""
+    opened = []
+    svc = _service_with_board(monkeypatch, tmp_path, {}, on_vcs_open=opened.append)
+    svc.finish_task("PRI-1", "https://github.com/o/r/pull/7")
+    assert len(opened) == 1

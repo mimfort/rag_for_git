@@ -5,6 +5,7 @@
 """
 import logging
 from collections.abc import Callable, Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING
@@ -1094,7 +1095,38 @@ class MCPReviewService:
         )
         return request, registry, credentials
 
-    def _backlink_pr(self, pr_url: str, key: str, task_url: str) -> tuple[str, list[str]]:
+    @contextmanager
+    def _pr_session(self, pr_url: str):
+        """Открыть VCS по ссылке на PR один раз на все операции finish_task.
+
+        Никогда не бросает: отдаёт (target, vcs, error). Ни бэклинк, ни съём
+        метрики не смеют уронить finish_task — доска к этому моменту уже
+        записана, и её успех не отменяется ничем из последующего.
+        """
+        from reviewer.tasks.pr_backlink import parse_pr_url
+
+        target = parse_pr_url(pr_url)
+        if target is None:
+            yield None, None, f"{pr_url!r} не распознан как ссылка на PR/MR"
+            return
+        vcs = None
+        try:
+            vcs = (self._vcs_factory(target.owner, target.repo) if self._vcs_factory
+                   else self._review_service._create_vcs_provider(
+                       target.owner, target.repo,
+                       platform=target.platform, base_url=target.base_url))
+            yield target, vcs, None
+        except Exception as exc:  # noqa: BLE001 — открытие VCS не смеет уронить finish_task
+            log.warning("не удалось открыть VCS для %s", pr_url, exc_info=True)
+            yield target, None, str(exc)
+        finally:
+            if vcs is not None and self._vcs_factory is None:
+                try:
+                    vcs.close()
+                except Exception:
+                    log.warning("не удалось закрыть VCS после finish_task", exc_info=True)
+
+    def _apply_backlink(self, target, vcs, key: str, task_url: str) -> tuple[str, list[str]]:
         """Дописать ссылку на задачу в начало тела PR. Возвращает (status, warnings).
 
         status — один из трёх исходов: "added" (записали сейчас), "already_present"
@@ -1104,21 +1136,13 @@ class MCPReviewService:
 
         Обратная сторона связи: finish пишет PR-ссылку в задачу, здесь — ссылку
         на задачу в PR. Полностью fail-soft: доска к этому моменту уже записана,
-        поэтому ни одна ошибка правки PR не отменяет успех finish_task."""
-        from reviewer.tasks.pr_backlink import apply_backlink, parse_pr_url
+        поэтому ни одна ошибка правки PR не отменяет успех finish_task. VCS уже
+        открыт вызывающим (`_pr_session`) — здесь только применение бэклинка."""
+        from reviewer.tasks.pr_backlink import apply_backlink
         if not task_url:
             return "failed", ["ссылка на задачу не добавлена в PR: url задачи не резолвится "
                               "(task_board.url_template не задан)"]
-        target = parse_pr_url(pr_url)
-        if target is None:
-            return "failed", ["ссылка на задачу не добавлена в PR: "
-                              f"{pr_url!r} не распознан как ссылка на PR/MR"]
-        vcs = None
         try:
-            vcs = (self._vcs_factory(target.owner, target.repo) if self._vcs_factory
-                   else self._review_service._create_vcs_provider(
-                       target.owner, target.repo,
-                       platform=target.platform, base_url=target.base_url))
             body = apply_backlink(vcs.get_pull_request(target.number).body, key, task_url)
             if body is None:
                 return "already_present", []   # ссылка уже на месте — идемпотентный no-op
@@ -1127,12 +1151,32 @@ class MCPReviewService:
         except Exception as exc:
             log.warning("бэклинк задачи в PR не удался", exc_info=True)
             return "failed", [f"ссылка на задачу не добавлена в PR: {exc}"]
-        finally:
-            if vcs is not None and self._vcs_factory is None:
-                try:
-                    vcs.close()
-                except Exception:
-                    log.warning("не удалось закрыть VCS после бэклинка", exc_info=True)
+
+    def _record_finish_task_metric(self, target, vcs, key: str) -> str | None:
+        """Снять качество брифа по факту закрытия задачи (PRI-270).
+
+        Знаменатель — ПОЛНЫЙ дифф PR, как и на публикации ревью: иначе числа
+        двух точек съёма посчитаны разными линейками. Полностью fail-soft:
+        закрытие задачи важнее наблюдаемости за самим reviewer.
+        """
+        from reviewer.services import brief_quality
+
+        repo = f"{target.owner}/{target.repo}"
+        try:
+            changed = vcs.get_changed_files(target.number)
+            status_map = {item.path: item.status for item in changed}
+            head_sha = vcs.get_pull_request(target.number).head_sha
+            policy, _meta = self._resolve_policy(repo, self._bug_branches(repo)[0])
+            return brief_quality.measure_and_record(
+                task_key=key, repo=repo, pr_number=target.number, head_sha=head_sha,
+                changed_paths=list(status_map), changed_status=status_map,
+                clone_path=self._repo_clone_path(repo), config=policy.brief_quality,
+                history=self._review_service._ensure_history(), run_id=None,
+            )
+        except Exception:  # noqa: BLE001 — наблюдаемость не роняет закрытие задачи
+            log.warning("Не удалось снять качество брифа на finish_task для %s", repo,
+                        exc_info=True)
+            return None
 
     def sync_board(
         self,
@@ -1431,8 +1475,16 @@ class MCPReviewService:
                     target=target,
                 )
                 brief = self._write_through(resolved.provider, key)
-                link_status, link_warnings = self._backlink_pr(
-                    pr_url, key, (brief or {}).get("url") or "")
+                task_url = (brief or {}).get("url") or ""
+                metric_status = None
+                with self._pr_session(pr_url) as (target, vcs, error):
+                    if vcs is None:
+                        link_status, link_warnings = "failed", [
+                            f"ссылка на задачу не добавлена в PR: {error}"]
+                    else:
+                        link_status, link_warnings = self._apply_backlink(
+                            target, vcs, key, task_url)
+                        metric_status = self._record_finish_task_metric(target, vcs, key)
                 result.setdefault("warnings", []).extend(migration_warnings)
                 result["warnings"].extend(link_warnings)
                 return self._safe_board_payload(
@@ -1444,6 +1496,9 @@ class MCPReviewService:
                         # task_link_status — три различимых исхода (PRI-238).
                         "task_link_added": link_status == "added",
                         "task_link_status": link_status,
+                        # Съём качества брифа на закрытии задачи (PRI-270): вторая,
+                        # более частая точка измерения — рядом с publish_review.
+                        "brief_quality_status": metric_status,
                         **result,
                     },
                     resolved.secrets,
