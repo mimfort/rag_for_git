@@ -49,7 +49,11 @@ class HarnessPaths:
 def resolve_paths(repo_path, briefs_dir) -> HarnessPaths:
     """Пути прогона относительно ЦЕЛЕВОГО клона, а не этого репозитория."""
     repo = pathlib.Path(repo_path)
-    briefs = pathlib.Path(briefs_dir) if briefs_dir else repo / "docs" / "superpowers" / "briefs"
+    # `repo / briefs_dir` — не только конкатенация: pathlib сама разруливает
+    # относительный/абсолютный случай (`Path("/a") / "b/c"` → "/a/b/c", а
+    # `Path("/a") / "/x"` → "/x"), поэтому третьей ветки для абсолютного пути
+    # не нужно — её отсутствие и было дефектом фикс-раунда 1.
+    briefs = repo / briefs_dir if briefs_dir else repo / "docs" / "superpowers" / "briefs"
     eval_dir = repo / "eval"
     return HarnessPaths(
         repo=repo,

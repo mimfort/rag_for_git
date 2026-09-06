@@ -132,3 +132,20 @@ def test_history_path_follows_repo_path(tmp_path):
     paths = resolve_paths(tmp_path, briefs_dir=None)
     assert paths.history == tmp_path / "eval" / history.HISTORY_PATH_NAME
     assert paths.briefs == tmp_path / "docs" / "superpowers" / "briefs"
+
+
+def test_relative_briefs_dir_resolves_inside_target_repo(tmp_path):
+    """Относительный --briefs-dir — путь ВНУТРИ целевого клона, не текущего каталога.
+
+    Фикс-раунд 1: `pathlib.Path(briefs_dir)` без префикса `repo` резолвился от CWD
+    процесса и молча давал пустой корпус вместо ошибки.
+    """
+    paths = resolve_paths(tmp_path, briefs_dir="docs/briefs")
+    assert paths.briefs == tmp_path / "docs" / "briefs"
+
+
+def test_absolute_briefs_dir_used_as_is(tmp_path):
+    """Абсолютный --briefs-dir не должен ловить второй префикс от repo."""
+    absolute = tmp_path / "elsewhere" / "briefs"
+    paths = resolve_paths(tmp_path / "repo", briefs_dir=str(absolute))
+    assert paths.briefs == absolute
