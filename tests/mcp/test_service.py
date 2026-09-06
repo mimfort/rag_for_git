@@ -36,6 +36,13 @@ def _settings() -> Settings:
     s.github_token = "test"
     s.review_session_persist = False     # unit-тесты не трогают Postgres-таблицу сессий
     s.default_repo = ""                  # изолируем от локального .env (DEFAULT_REPO)
+    # Набор отслеживаемых веток приходит оттуда же: у оператора в
+    # ~/.config/rag-reviewer/.env лежит REVIEW_BRANCHES=main,dev, в CI переменной
+    # нет и остаётся дефолтный ["main"]. Без пина тест, называющий ветку явно,
+    # зелен только на машине разработчика: в CI _resolve_repo_branch отсекает его
+    # нотой «ветка не отслеживается» ДО проверяемого поведения, и утверждение
+    # проверяет не то, ради чего написано.
+    s.review_branches = "main,dev"
     # изолируем доску от локального .env целиком (иначе настроенный TASK_BOARD_*
     # в ~/.config/rag-reviewer/.env протекает в payload и ломает unconfigured-кейс)
     s.task_board_type = ""
