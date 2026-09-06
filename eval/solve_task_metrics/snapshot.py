@@ -32,8 +32,9 @@ def build_snapshot(
         run_git: GitRunner (инъектируется, чтобы тесты шли без git-репозитория).
         commit: sha HEAD на момент прогона.
         taken_at: ISO-8601 метка времени прогона.
-        config: BriefQualityConfig репозитория (до Task 9 передаётся вызывающим
-            явно — `__main__.py` собирает `BriefQualityConfig()`).
+        config: BriefQualityConfig репозитория — обязателен, передаётся вызывающим
+            явно; молчаливый дефолт (ядро rag_for_git) — тот тихий провал, ради
+            починки которого затевалась вся задача.
         transcripts: результат endtoend.scan_transcripts() или None.
 
     Returns:

@@ -67,7 +67,14 @@ def resolve_paths(repo_path, briefs_dir) -> HarnessPaths:
 
 
 def resolve_config(repo_path, briefs_dir):
-    """Конфиг метрики из .review.yml ЦЕЛЕВОГО клона; без файла — дефолт."""
+    """Конфиг метрики из .review.yml ЦЕЛЕВОГО клона; без файла — дефолт.
+
+    Намеренно без домашних слоёв (`home:review.yml`/`home:repos/...`), в
+    отличие от CLI `reviewer measure-briefs`: харнесс обязан считать
+    произвольный чужой клон на машине, где reviewer вообще может быть не
+    настроен (нет `~/.config/rag-reviewer/`, нет установленного пакета) —
+    не «чинить» по образцу CLI без такого же ограничения.
+    """
     review = pathlib.Path(repo_path) / ".review.yml"
     data = yaml.safe_load(review.read_text(encoding="utf-8")) if review.exists() else {}
     relative = str(pathlib.Path(briefs_dir)) if briefs_dir else None
