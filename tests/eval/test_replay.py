@@ -3,7 +3,8 @@ from __future__ import annotations
 
 import pathlib
 
-from eval.solve_task_metrics import replay
+from eval.solve_task_metrics import replay, replay_history
+from eval.solve_task_metrics.__main__ import resolve_paths
 from eval.solve_task_metrics.config import DEFAULT
 
 BRIEF = """# Brief — {key}
@@ -546,3 +547,10 @@ def test_graph_failure_wins_over_undefined(tmp_path):
         predicted={"PRI-45": ["reviewer/a.py"]},
     )
     assert snap["tasks"][0]["context_status"] == replay.STATUS_CONTEXT_FAILED
+
+
+def test_replay_paths_follow_repo_path(tmp_path):
+    """Снимок и отчёт replay чужого клона не смешиваются с нашими (PRI-271/270)."""
+    paths = resolve_paths(tmp_path, briefs_dir=None)
+    assert paths.replay_history == tmp_path / "eval" / replay_history.HISTORY_PATH_NAME
+    assert paths.replay_report == tmp_path / "eval" / "replay_report.md"

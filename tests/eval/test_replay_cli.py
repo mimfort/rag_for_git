@@ -53,16 +53,19 @@ def test_limits_variant_without_overrides_is_rejected(capsys):
     assert "--set" in capsys.readouterr().out
 
 
-def test_replay_refuses_report_without_marker_before_any_run(tmp_path, monkeypatch, capsys):
+def test_replay_refuses_report_without_marker_before_any_run(tmp_path, capsys):
     """Fail-closed стоит ДО прогона: инфраструктура не трогается вовсе.
 
     Тест проходит без Postgres/Neo4j именно потому, что отказ случается раньше
     открытия живых зависимостей: любой выход в сеть здесь уронил бы тест.
+    Чужой клон (`--repo-path tmp_path`) — не только изоляция от констант, но и
+    защита от порчи реального eval/replay_report.md этого репозитория.
     """
-    report = tmp_path / "replay_report.md"
+    eval_dir = tmp_path / "eval"
+    eval_dir.mkdir()
+    report = eval_dir / "replay_report.md"
     report.write_text("# Отчёт\n\n## Приёмка PRI-262\n\nручное\n", encoding="utf-8")
-    monkeypatch.setattr(cli, "REPLAY_REPORT_PATH", report)
-    args = cli.build_parser().parse_args(["replay"])
+    args = cli.build_parser().parse_args(["replay", "--repo-path", str(tmp_path)])
     assert cli.cmd_replay(args) == 1
     out = capsys.readouterr().out
     assert str(report) in out
@@ -71,18 +74,20 @@ def test_replay_refuses_report_without_marker_before_any_run(tmp_path, monkeypat
     assert "## Приёмка PRI-262" in report.read_text(encoding="utf-8")
 
 
-def test_snapshot_refuses_report_without_marker_before_any_run(tmp_path, monkeypatch, capsys):
-    report = tmp_path / "solve_task_metrics_report.md"
+def test_snapshot_refuses_report_without_marker_before_any_run(tmp_path, capsys):
+    eval_dir = tmp_path / "eval"
+    eval_dir.mkdir()
+    report = eval_dir / "solve_task_metrics_report.md"
     report.write_text("# Метрики\n\n## Ручное\n\nтекст\n", encoding="utf-8")
-    monkeypatch.setattr(cli, "REPORT_PATH", report)
-    args = cli.build_parser().parse_args(["snapshot"])
+    args = cli.build_parser().parse_args(["snapshot", "--repo-path", str(tmp_path)])
     assert cli.cmd_snapshot(args) == 1
     assert report_merge.MARKER in capsys.readouterr().out
 
 
 def test_repository_reports_carry_the_marker():
     """Оба отчёта репозитория пригодны к слиянию — иначе первый же прогон откажет."""
-    for path in (cli.REPLAY_REPORT_PATH, cli.REPORT_PATH):
+    paths = cli.resolve_paths(cli.DEFAULT_REPO_ROOT, None)
+    for path in (paths.replay_report, paths.report):
         assert report_merge.MARKER in path.read_text(encoding="utf-8"), path
 
 

@@ -1,5 +1,6 @@
 """Unit-тесты сборки среза по корпусу брифов (git инъектирован, сети нет)."""
 from eval.solve_task_metrics import history, snapshot
+from eval.solve_task_metrics.__main__ import resolve_config, resolve_paths
 from eval.solve_task_metrics.config import DEFAULT
 
 BRIEF = """# Brief — PRI-7 пример
@@ -113,3 +114,21 @@ def test_build_snapshot_counts_one_key_once(tmp_path):
     assert snap["corpus"]["briefs"] == 2
     assert snap["corpus"]["with_key"] == 1
     assert len(rows) == 1
+
+
+def test_snapshot_uses_foreign_repo_config(tmp_path):
+    """--repo-path чужого клона: ядро и ключ берутся из ЕГО .review.yml."""
+    (tmp_path / ".review.yml").write_text(
+        "task_board:\n  key_pattern: 'RON-\\d+'\n"
+        "metrics:\n  brief_quality:\n    core_paths: ['app/**/*.py']\n",
+        encoding="utf-8")
+    config = resolve_config(tmp_path, briefs_dir=None)      # хелпер __main__
+    assert config.key_pattern == r"RON-\d+"
+    assert config.matches_core("app/api/routes.py") is True
+
+
+def test_history_path_follows_repo_path(tmp_path):
+    """Ряды чужого репозитория не смешиваются с нашими замерами приёмок."""
+    paths = resolve_paths(tmp_path, briefs_dir=None)
+    assert paths.history == tmp_path / "eval" / history.HISTORY_PATH_NAME
+    assert paths.briefs == tmp_path / "docs" / "superpowers" / "briefs"
