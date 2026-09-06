@@ -3245,11 +3245,10 @@ class MCPReviewService:
         run_id: int,
         task_key: str | None,
     ) -> None:
-        """Посчитать и сохранить качество брифа solve-task (PRI-249).
+        """Съём качества брифа на публикации ревью (PRI-249).
 
-        Полностью fail-soft: метрика — наблюдение за самим reviewer, и ни один
-        её сбой не смеет повлиять на результат ревью. Ключ задачи берётся из
-        аргумента publish_review, иначе из уже отрезолвленного task_keys.primary.
+        Гейт вызова и его семантика не меняются; сам расчёт и запись живут в
+        reviewer.services.brief_quality.measure_and_record, общем с finish_task.
         """
         try:
             from reviewer.services import brief_quality
@@ -3257,19 +3256,12 @@ class MCPReviewService:
             key = task_key
             if not key and p.task_keys:
                 key = p.task_keys.get("primary")
-            policy, _ = self._resolve_policy(repo, p.prq.base_ref)
-            measurement = brief_quality.measure(
-                task_key=key,
-                clone_path=self._repo_clone_path(repo),
-                changed_paths=p.changed_paths,
-                changed_status=p.changed_status,
-                config=policy.brief_quality,
-            )
-            history = self._review_service._ensure_history()
-            if history is None:
-                return
-            history.record_brief_quality(
-                run_id, repo, pr, p.prq.head_sha, measurement
+            policy, _meta = self._resolve_policy(repo, p.prq.base_ref)
+            brief_quality.measure_and_record(
+                task_key=key, repo=repo, pr_number=pr, head_sha=p.prq.head_sha,
+                changed_paths=p.changed_paths, changed_status=p.changed_status,
+                clone_path=self._repo_clone_path(repo), config=policy.brief_quality,
+                history=self._review_service._ensure_history(), run_id=run_id,
             )
         except Exception:  # noqa: BLE001 — наблюдаемость не роняет ревью
             log.warning("Не удалось посчитать качество брифа для %s pr:%s", repo, pr, exc_info=True)

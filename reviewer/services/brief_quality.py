@@ -186,3 +186,40 @@ def measure(
         expected_core_paths=tuple(sorted(expected_core)),
         hit_core_paths=tuple(sorted(predicted & expected_core)),
     )
+
+
+def measure_and_record(
+    *,
+    task_key: str | None,
+    repo: str,
+    pr_number: int,
+    head_sha: str | None,
+    changed_paths: list,
+    changed_status: dict,
+    clone_path: str | None,
+    config: BriefQualityConfig,
+    history,
+    run_id: int | None = None,
+) -> str | None:
+    """Посчитать качество брифа и записать строку. Никогда не бросает.
+
+    Общий путь трёх точек съёма: publish_review (с run_id), finish_task и CLI
+    measure-briefs (без него). Возвращает status измерения — его показывает
+    вызывающий; None означает, что записи не было (нет истории или сбой).
+    """
+    if history is None:
+        return None
+    try:
+        measurement = measure(
+            task_key=task_key,
+            clone_path=clone_path,
+            changed_paths=changed_paths,
+            changed_status=changed_status,
+            config=config,
+        )
+        history.record_brief_quality(run_id, repo, pr_number, head_sha, measurement)
+        return measurement.status
+    except Exception:  # noqa: BLE001 — наблюдаемость не роняет вызывающий поток
+        log.warning("Не удалось снять качество брифа для %s pr:%s", repo, pr_number,
+                    exc_info=True)
+        return None

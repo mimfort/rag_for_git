@@ -389,3 +389,45 @@ def test_online_matches_offline_formula_on_full_diff(tmp_path):
         "reviewer/mcp/service.py",
         "reviewer/old/legacy.py",
     }
+
+
+def test_measure_and_record_writes_row_and_returns_status(tmp_path):
+    _write_brief(tmp_path, "2026-09-01-PRI-1-x.md", ["reviewer/app.py"])
+    written = {}
+
+    class _History:
+        def record_brief_quality(self, run_id, repo, pr_number, head_sha, measurement):
+            written.update(run_id=run_id, repo=repo, pr=pr_number, status=measurement.status)
+            return 1
+
+    status = brief_quality.measure_and_record(
+        task_key="PRI-1", repo="o/r", pr_number=7, head_sha="sha",
+        changed_paths=["reviewer/app.py"], changed_status={"reviewer/app.py": "modified"},
+        clone_path=str(tmp_path), config=DEFAULT, history=_History(),
+    )
+    assert status == brief_quality.STATUS_MEASURED
+    assert written == {"run_id": None, "repo": "o/r", "pr": 7,
+                       "status": brief_quality.STATUS_MEASURED}
+
+
+def test_measure_and_record_is_fail_soft_on_history_error(tmp_path):
+    """Сбой записи не смеет прорваться наружу: метрика наблюдает, а не управляет."""
+    _write_brief(tmp_path, "2026-09-01-PRI-1-x.md", ["reviewer/app.py"])
+
+    class _Boom:
+        def record_brief_quality(self, *a, **kw):
+            raise RuntimeError("БД недоступна")
+
+    assert brief_quality.measure_and_record(
+        task_key="PRI-1", repo="o/r", pr_number=7, head_sha=None,
+        changed_paths=[], changed_status={"reviewer/app.py": "modified"},
+        clone_path=str(tmp_path), config=DEFAULT, history=_Boom(),
+    ) is None
+
+
+def test_measure_and_record_without_history_returns_none(tmp_path):
+    assert brief_quality.measure_and_record(
+        task_key="PRI-1", repo="o/r", pr_number=7, head_sha=None,
+        changed_paths=[], changed_status={}, clone_path=str(tmp_path),
+        config=DEFAULT, history=None,
+    ) is None
