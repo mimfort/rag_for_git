@@ -134,12 +134,30 @@ ALTER TABLE brief_quality ALTER COLUMN run_id DROP NOT NULL;
 -- Схлопывание дублей перед уникальным индексом: до PRI-270 идентичности у
 -- строки не было, и на деплое с историей их может оказаться несколько.
 -- Выживает последняя (максимальный id) — она же самая свежая.
-DELETE FROM brief_quality a
-    USING brief_quality b
-    WHERE a.repo = b.repo
-      AND a.pr_number = b.pr_number
-      AND COALESCE(a.task_key, '') = COALESCE(b.task_key, '')
-      AND a.id < b.id;
+--
+-- Guard по существованию индекса обязателен: DELETE ниже — единственная DML
+-- в файле дешёвых idempotent-чеков (CREATE ... IF NOT EXISTS), а
+-- `_SCHEMA` целиком выполняется при КАЖДОМ старте reviewer serve/reviewer-mcp
+-- (`init_schema`). Уникальный индекс сам по себе не режет работу — он не
+-- используется как short-circuit (план — Hash Join двух полных Seq Scan),
+-- поэтому без guard'а каждый последующий рестарт платил бы растущий
+-- полный скан таблицы за гарантированно нулевой эффект (после первого
+-- успешного прогона дублей больше нет). Наличие индекса — надёжный сигнал
+-- «схлопывание уже случилось»: он создаётся один раз ниже и переживает
+-- рестарты.
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_indexes WHERE indexname = 'brief_quality_identity'
+    ) THEN
+        DELETE FROM brief_quality a
+            USING brief_quality b
+            WHERE a.repo = b.repo
+              AND a.pr_number = b.pr_number
+              AND COALESCE(a.task_key, '') = COALESCE(b.task_key, '')
+              AND a.id < b.id;
+    END IF;
+END $$;
 
 -- COALESCE обязателен: в SQL NULL ≠ NULL, и обычный UNIQUE не покрыл бы
 -- строки без task_key — а именно они пишутся при съёме без ключа задачи.

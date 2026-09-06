@@ -785,6 +785,13 @@ def test_record_brief_quality_second_write_updates_row_and_keeps_run_id():
 
     repo уникален на прогон — как и в остальных integration-тестах файла,
     единственный способ изолировать выборку от чужих строк истории.
+
+    Третий шаг (real₁ → real₂) — не то же самое, что None → real: он ловит
+    именно реверс аргументов `COALESCE(EXCLUDED.run_id, brief_quality.run_id)`.
+    С реверсом строка застряла бы на первом run_id навсегда, а сценарий
+    None → real этого не отличил бы от корректного поведения — EXCLUDED.run_id
+    там NULL в обоих случаях, и COALESCE отдал бы старое значение независимо
+    от порядка аргументов.
     """
     import uuid
 
@@ -816,6 +823,18 @@ def test_record_brief_quality_second_write_updates_row_and_keeps_run_id():
         ).fetchall()
     assert len(rows) == 1
     assert rows[0][0] == run_id
+
+    run_id_2 = history.record_run({**_sample_run(), "pr_number": 900005}, [])
+    history.record_brief_quality(run_id_2, repo, 7, "sha3", measurement)
+
+    with history._connect() as conn:
+        rows = conn.execute(
+            "SELECT run_id FROM brief_quality WHERE repo = %s AND pr_number = %s",
+            (repo, 7),
+        ).fetchall()
+    assert len(rows) == 1
+    assert rows[0][0] == run_id_2
+    assert run_id_2 != run_id
 
 
 # ---------------------------------------------------------------------------
