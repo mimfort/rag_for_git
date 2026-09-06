@@ -1,3 +1,5 @@
+import pytest
+
 from reviewer.config.provider_credentials import ProviderCredentialSource
 from reviewer.config.settings import Settings
 from reviewer.mcp.service import MCPReviewService
@@ -407,3 +409,77 @@ def test_finish_task_opens_vcs_once(monkeypatch, tmp_path):
     svc = _service_with_board(monkeypatch, tmp_path, {}, on_vcs_open=opened.append)
     svc.finish_task("PRI-1", "https://github.com/o/r/pull/7")
     assert len(opened) == 1
+
+
+# --- Регрессия ревью Task 7: yield внутри except открытия VCS -----------------
+#
+# `_pr_session` — генератор-контекстменеджер. Протокол генераторов доставляет
+# исключение из тела `with`-блока обратно В ГЕНЕРАТОР через .throw() ровно в
+# точку yield. Если этот yield лежит внутри try/except, задуманного только для
+# ошибок ОТКРЫТИЯ VCS, исключение тела блока ловится той же веткой, логируется
+# под чужой причиной и пытается yield'нуть второй раз — что contextlib на выходе
+# подменяет на RuntimeError("generator didn't stop after throw()"), теряя
+# исходную ошибку. Тесты ниже бьют по `_pr_session` напрямую (без finish_task),
+# потому что это тот самый юнит, где сидел дефект.
+
+def test_pr_session_reraises_body_exception():
+    """Исключение из тела with-блока доходит наружу как есть, а не как
+    RuntimeError('generator didn't stop after throw()')."""
+    svc = _Svc(["fake"], vcs=_FakeVCS())
+    with pytest.raises(ValueError, match="boom-echo"):
+        with svc._pr_session(PR_URL) as (target, vcs, error):
+            assert vcs is not None
+            raise ValueError("boom-echo")
+
+
+def test_pr_session_open_failure_unchanged():
+    """Сбой ОТКРЫТИЯ VCS (а не тела блока) — поведение прежнее: (target, None,
+    текст ошибки), без исключения наружу."""
+    svc = _Svc(["fake"])   # _vcs_factory=None и _review_service=None → создание VCS падает
+    with svc._pr_session(PR_URL) as (target, vcs, error):
+        assert vcs is None
+        assert target is not None
+        assert error
+
+
+def test_pr_session_closes_vcs_once_when_service_owns_lifecycle():
+    """Закрытие — ровно один раз и только когда `_vcs_factory is None`
+    (владелец жизненного цикла — сам finish_task, не тестовая фабрика)."""
+    vcs = _FakeVCS()
+
+    class _RS:
+        def _create_vcs_provider(self, owner, name, **kwargs):
+            return vcs
+
+    svc = _Svc(["fake"])
+    svc._review_service = _RS()
+    with svc._pr_session(PR_URL) as (target, got_vcs, error):
+        assert got_vcs is vcs
+        assert vcs.closed is False   # ещё не закрыт внутри блока
+    assert vcs.closed is True        # закрыт по выходу
+
+
+def test_pr_session_does_not_close_test_owned_vcs():
+    """Тестовая `_vcs_factory` владеет жизненным циклом сама: `_pr_session` не закрывает."""
+    vcs = _FakeVCS()
+    svc = _Svc(["fake"], vcs=vcs)
+    with svc._pr_session(PR_URL) as (target, got_vcs, error):
+        assert got_vcs is vcs
+    assert vcs.closed is False
+
+
+def test_finish_task_backlink_failure_surfaces_original_reason(monkeypatch, tmp_path):
+    """End-to-end воспроизведение находки ревью: сбой `_apply_backlink` не
+    маскируется под RuntimeError generator-протокола — доска к этому моменту
+    уже записана, но причина ошибки в ответе — подлинная."""
+    recorded = {}
+    svc = _service_with_board(monkeypatch, tmp_path, recorded)
+
+    def _boom(*a, **k):
+        raise ValueError("boom-echo")
+
+    monkeypatch.setattr(svc, "_apply_backlink", _boom)
+    out = svc.finish_task("PRI-1", "https://github.com/o/r/pull/7")
+    assert out["status"] == "error"
+    assert "boom-echo" in out["reason"]
+    assert "didn't stop after throw" not in out["reason"]

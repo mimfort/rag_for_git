@@ -1115,10 +1115,18 @@ class MCPReviewService:
                    else self._review_service._create_vcs_provider(
                        target.owner, target.repo,
                        platform=target.platform, base_url=target.base_url))
-            yield target, vcs, None
         except Exception as exc:  # noqa: BLE001 — открытие VCS не смеет уронить finish_task
             log.warning("не удалось открыть VCS для %s", pr_url, exc_info=True)
             yield target, None, str(exc)
+            return
+        # `yield` — ВНЕ try/except открытия: исключение из тела `with`-блока
+        # (протокол генераторов доставляет его сюда через .throw()) не должно
+        # попадать в except выше — иначе оно ловится как «не удалось открыть
+        # VCS», логируется под чужой причиной, и генератор пытается yield'нуть
+        # второй раз, что contextlib подменяет на RuntimeError("generator
+        # didn't stop after throw()"), теряя исходную ошибку вызывающего кода.
+        try:
+            yield target, vcs, None
         finally:
             if vcs is not None and self._vcs_factory is None:
                 try:
