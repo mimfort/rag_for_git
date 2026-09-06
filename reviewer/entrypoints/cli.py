@@ -58,6 +58,9 @@ from reviewer.graph.store import GraphStore
 from reviewer.index.freshness import update_base
 from reviewer.index.pathfilter import is_ignored
 from reviewer.index.refs import base_ref
+from reviewer.metrics.brief_quality import ground_truth
+from reviewer.metrics.brief_quality.config import BriefQualityConfig
+from reviewer.metrics.brief_quality.corpus import measure_corpus
 from reviewer.policy.policy import ReviewPolicy
 from reviewer.index.store import ChunkStore
 from reviewer.index.summary_store import SummaryStore
@@ -78,6 +81,7 @@ from reviewer.update_lifecycle import (
     sync_compose_file,
 )
 from reviewer.versioning import InstallMode, check_latest, detect_installation, upgrade_uv_tool
+from reviewer.web.history import ReviewHistory
 from reviewer.web.serve import DEFAULT_HOST, DEFAULT_PORT
 
 if TYPE_CHECKING:
@@ -1221,6 +1225,54 @@ def status(path: str, repo_tag: str | None, branch_opt: str | None,
     backend = ("scip-python (точный)" if _shutil.which("scip-python")
                else "tree-sitter (fallback, scip-python не найден)")
     click.echo(render_status(report, backend))
+
+
+def _render_measure(summary: Mapping[str, object]) -> str:
+    """Человекочитаемый отчёт по сводке `measure_corpus` (для click.echo)."""
+    fixed = {"briefs", "skipped_no_key", "skipped_no_merges", "rows"}
+    lines = [
+        f"Брифов обработано: {summary['briefs']}",
+        f"Строк записано: {summary['rows']}",
+        f"Пропущено без ключа задачи: {summary['skipped_no_key']}",
+        f"Пропущено без PR-мержей: {summary['skipped_no_merges']}",
+    ]
+    statuses = {k: v for k, v in summary.items() if k not in fixed}
+    if statuses:
+        lines.append("По статусам:")
+        lines.extend(f"  {status}: {statuses[status]}" for status in sorted(statuses))
+    return "\n".join(lines)
+
+
+@cli.command("measure-briefs")
+@click.argument("path", default=".")
+@click.option("--repo", "repo_tag", default=None,
+              help="owner/name тег строк метрики; по умолчанию из git remote origin")
+@click.option("--briefs-dir", "briefs_dir", default=None,
+              help="каталог брифов относительно клона; по умолчанию docs/superpowers/briefs")
+@click.option("--json", "as_json", is_flag=True, default=False,
+              help="машиночитаемый JSON вместо текста")
+def measure_briefs(path: str, repo_tag: str | None, briefs_dir: str | None,
+                    as_json: bool) -> None:
+    """Пересчитать качество брифов по PR-мержам клона (не тратит Voyage)."""
+    s = Settings()
+    resolution = _resolve_repo(repo_tag, path, s)
+    if resolution.source == _SUBSTITUTED:
+        # Fail-open, как migrate-branches: команда ничего не индексирует, но
+        # молчать про чужой repo-тег в строках brief_quality тоже не должна.
+        click.echo("⚠ " + _substitution_note(path, resolution.repo), err=True)
+    review_yaml = Path(path) / ".review.yml"
+    data = (yaml.safe_load(review_yaml.read_text(encoding="utf-8"))
+            if review_yaml.exists() else {})
+    config = BriefQualityConfig.from_review_yaml(data or {}, briefs_dir=briefs_dir)
+    history = ReviewHistory(s.pg_dsn, min_size=s.pg_pool_min_size, max_size=s.pg_pool_max_size)
+    try:
+        summary = measure_corpus(path, resolution.repo, config,
+                                 ground_truth.git_runner(Path(path)), history)
+    except psycopg.OperationalError as e:
+        raise click.ClickException(f"Postgres недоступен: {e}")
+    finally:
+        history.close()
+    click.echo(json.dumps(summary, ensure_ascii=False) if as_json else _render_measure(summary))
 
 
 @cli.command()

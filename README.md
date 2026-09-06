@@ -918,7 +918,9 @@ docker compose ps
 
 `reviewer check` validates configured credentials and service connectivity without spending
 Voyage quota. `status` compares the indexed SHA with the selected local ref and reports chunks,
-graph nodes, subsystem summaries, and commit drift for each tracked branch.
+graph nodes, subsystem summaries, and commit drift for each tracked branch. `reviewer measure-briefs`
+recomputes the solve-task brief quality metric across the whole brief corpus from git PR-merge
+history, also without touching Voyage.
 
 ### Index freshness and recovery
 
