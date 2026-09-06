@@ -7,8 +7,13 @@ from __future__ import annotations
 import pytest
 
 from reviewer.metrics.brief_quality import classify, recall
-from reviewer.metrics.brief_quality.config import DEFAULT
-from reviewer.services.brief_quality import BRIEFS_DIR, find_brief, measure
+from reviewer.metrics.brief_quality.config import DEFAULT, BriefQualityConfig
+from reviewer.services import brief_quality
+from reviewer.services.brief_quality import find_brief, measure
+
+# Дефолт `config.briefs_dir` воспроизводит прежнюю модульную константу сервиса;
+# своей константы каталога брифов у тестов больше нет — её роль занял конфиг.
+BRIEFS_DIR = DEFAULT.briefs_dir
 
 _BRIEF = """# Brief — PRI-999 Тестовая задача
 
@@ -28,6 +33,70 @@ def _clone(tmp_path, name="2026-08-14-PRI-999-test.md", text=_BRIEF):
     briefs.mkdir(parents=True, exist_ok=True)
     (briefs / name).write_text(text, encoding="utf-8")
     return str(tmp_path)
+
+
+def _write_brief(tmp_path, name, relevant):
+    directory = tmp_path / "docs" / "superpowers" / "briefs"
+    directory.mkdir(parents=True, exist_ok=True)
+    lines = "\n".join(f"- `{path}` — зачем" for path in relevant)
+    (directory / name).write_text(f"# Brief\n\n## Relevant code\n{lines}\n", encoding="utf-8")
+
+
+def test_empty_core_without_config_is_unconfigured(tmp_path):
+    """Чужой репозиторий без ключа: знаменатель пуст, но это не «пустое ядро»."""
+    _write_brief(tmp_path, "2026-08-26-RON-55-x.md", ["app/api/routes.py"])
+    out = brief_quality.measure(
+        task_key="RON-55",
+        clone_path=str(tmp_path),
+        changed_paths=["app/api/routes.py"],
+        changed_status={"app/api/routes.py": "modified"},
+        config=BriefQualityConfig.from_review_yaml({"task_board": {"key_pattern": r"RON-\d+"}}),
+    )
+    assert out.status == brief_quality.STATUS_UNCONFIGURED_CORE
+    assert out.core_recall is None
+
+
+def test_empty_core_with_config_stays_empty_core(tmp_path):
+    """Настроенный репозиторий с диффом из одних доков — честное «ядро пусто»."""
+    _write_brief(tmp_path, "2026-08-26-RON-55-x.md", ["app/api/routes.py"])
+    out = brief_quality.measure(
+        task_key="RON-55",
+        clone_path=str(tmp_path),
+        changed_paths=["docs/readme.md"],
+        changed_status={"docs/readme.md": "modified"},
+        config=BriefQualityConfig.from_review_yaml(
+            {"metrics": {"brief_quality": {"core_paths": ["app/**/*.py"]}}}
+        ),
+    )
+    assert out.status == brief_quality.STATUS_EMPTY_CORE
+
+
+def test_foreign_repo_core_recall_11_of_13(tmp_path):
+    """Критерий 1 PRI-271 на управляемых данных: ядро app/** + frontend/src/**.
+
+    13 файлов ядра существовали до PR, бриф предсказал 11 — core-recall 11/13.
+    """
+    expected_core = [f"app/mod{i}.py" for i in range(9)] + [
+        f"frontend/src/comp{i}.tsx" for i in range(4)
+    ]
+    predicted = expected_core[:11]
+    _write_brief(tmp_path, "2026-08-26-RON-55-x.md", predicted)
+    changed_status = {path: "modified" for path in expected_core}
+    changed_status["tests/test_x.py"] = "modified"          # вне ядра
+    changed_status["app/new.py"] = "added"                  # ядро, но новый файл
+    out = brief_quality.measure(
+        task_key="RON-55",
+        clone_path=str(tmp_path),
+        changed_paths=list(changed_status),
+        changed_status=changed_status,
+        config=BriefQualityConfig.from_review_yaml({
+            "task_board": {"key_pattern": r"RON-\d+"},
+            "metrics": {"brief_quality": {"core_paths": ["app/**/*.py", "frontend/src/**"]}},
+        }),
+    )
+    assert out.status == brief_quality.STATUS_MEASURED
+    assert (out.hit_core, out.expected_core) == (11, 13)
+    assert round(out.core_recall, 4) == round(11 / 13, 4)
 
 
 def test_measured_matches_offline_formula(tmp_path):
@@ -52,6 +121,7 @@ def test_measured_matches_offline_formula(tmp_path):
             "tests/web/test_api.py": "added",
             "README.md": "modified",
         },
+        config=DEFAULT,
     )
     assert result.status == "measured"
     assert result.task_key == "PRI-999"
@@ -83,6 +153,7 @@ def test_misses_are_categorized(tmp_path):
             "tests/web/test_api.py": "modified",
             "reviewer/metrics/new.py": "added",
         },
+        config=DEFAULT,
     )
     assert result.misses["reviewer/web"] == 1
     assert result.misses["tests/"] == 1
@@ -97,25 +168,32 @@ def test_dropped_line_is_not_a_path(tmp_path):
         clone_path=clone,
         changed_paths=["reviewer/web/api.py"],
         changed_status={"reviewer/web/api.py": "modified"},
+        config=DEFAULT,
     )
     assert all("dropped" not in path for path in result.predicted_paths)
 
 
 def test_empty_core_denominator_is_not_zero_recall(tmp_path):
-    """Diff только из тестов и доков — «нет точки измерения», а не ноль."""
+    """Diff только из тестов и доков в настроенном репозитории — «нет точки
+    измерения», а не ноль. `configured=True` отличает этот случай от
+    `unconfigured_core_denominator`: там ключа в `.review.yml` вовсе нет."""
     clone = _clone(tmp_path)
     result = measure(
         task_key="PRI-999",
         clone_path=clone,
         changed_paths=["tests/web/test_api.py", "README.md"],
         changed_status={"tests/web/test_api.py": "modified", "README.md": "modified"},
+        config=BriefQualityConfig(core_paths=DEFAULT.core_paths, configured=True),
     )
     assert result.status == "empty_core_denominator"
     assert result.core_recall is None
 
 
 def test_no_task_key(tmp_path):
-    result = measure(task_key=None, clone_path=_clone(tmp_path), changed_paths=[], changed_status={})
+    result = measure(
+        task_key=None, clone_path=_clone(tmp_path), changed_paths=[], changed_status={},
+        config=DEFAULT,
+    )
     assert result.status == "no_task_key"
 
 
@@ -123,6 +201,7 @@ def test_no_brief_without_clone():
     result = measure(
         task_key="PRI-999", clone_path=None,
         changed_paths=["reviewer/web/api.py"], changed_status={"reviewer/web/api.py": "modified"},
+        config=DEFAULT,
     )
     assert result.status == "no_brief"
 
@@ -131,6 +210,7 @@ def test_no_brief_when_key_not_found(tmp_path):
     result = measure(
         task_key="PRI-111", clone_path=_clone(tmp_path),
         changed_paths=["reviewer/web/api.py"], changed_status={"reviewer/web/api.py": "modified"},
+        config=DEFAULT,
     )
     assert result.status == "no_brief"
 
@@ -140,6 +220,7 @@ def test_brief_without_relevant_section_is_unreadable(tmp_path):
     result = measure(
         task_key="PRI-999", clone_path=clone,
         changed_paths=["reviewer/web/api.py"], changed_status={"reviewer/web/api.py": "modified"},
+        config=DEFAULT,
     )
     assert result.status == "brief_unreadable"
 
@@ -148,20 +229,20 @@ def test_latest_brief_wins_on_duplicate_keys(tmp_path):
     """Несколько брифов на один ключ → берётся лексикографически последний."""
     clone = _clone(tmp_path, name="2026-08-10-PRI-999-old.md")
     _clone(tmp_path, name="2026-08-14-PRI-999-new.md")
-    found = find_brief(clone, "PRI-999")
+    found = find_brief(clone, "PRI-999", DEFAULT)
     assert found is not None and found.name == "2026-08-14-PRI-999-new.md"
 
 
 def test_key_match_is_case_insensitive(tmp_path):
     clone = _clone(tmp_path, name="2026-08-14-pri-999-lower.md")
-    assert find_brief(clone, "PRI-999") is not None
+    assert find_brief(clone, "PRI-999", DEFAULT) is not None
 
 
 def test_key_match_respects_token_boundary(tmp_path):
     """PRI-99 не должен совпасть с брифом PRI-999: ошибка была бы тихой."""
     clone = _clone(tmp_path, name="2026-08-14-PRI-999-test.md")
-    assert find_brief(clone, "PRI-99") is None
-    assert find_brief(clone, "PRI-999") is not None
+    assert find_brief(clone, "PRI-99", DEFAULT) is None
+    assert find_brief(clone, "PRI-999", DEFAULT) is not None
 
 
 def test_brief_in_broken_encoding_is_unreadable(tmp_path):
@@ -177,6 +258,7 @@ def test_brief_in_broken_encoding_is_unreadable(tmp_path):
     result = measure(
         task_key="PRI-998", clone_path=str(tmp_path),
         changed_paths=["reviewer/web/api.py"], changed_status={"reviewer/web/api.py": "modified"},
+        config=DEFAULT,
     )
     assert result.status == "brief_unreadable"
     assert result.brief_path == f"{BRIEFS_DIR}/2026-08-14-PRI-998-cp1251.md"
@@ -195,6 +277,7 @@ def test_no_brief_on_broken_path_not_raising(tmp_path, monkeypatch):
     result = measure(
         task_key="PRI-999", clone_path=str(tmp_path),
         changed_paths=["reviewer/web/api.py"], changed_status={"reviewer/web/api.py": "modified"},
+        config=DEFAULT,
     )
     assert result.status == "no_brief"
 
@@ -216,6 +299,7 @@ def test_measurement_carries_path_sets_not_only_counters(tmp_path):
             "reviewer/mcp/service.py": "modified",
             "reviewer/web/history.py": "modified",
         },
+        config=DEFAULT,
     )
     assert result.status == "measured"
     assert result.expected_core_paths        # не пусто
@@ -273,6 +357,7 @@ def test_online_matches_offline_formula_on_full_diff(tmp_path):
         clone_path=clone,
         changed_paths=review_selected_paths,
         changed_status=changed_status,
+        config=DEFAULT,
     )
 
     # Офлайн-формула (snapshot.py::build_snapshot), воспроизведённая явно на

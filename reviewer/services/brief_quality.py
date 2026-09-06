@@ -19,17 +19,16 @@ import re
 from dataclasses import dataclass, field
 
 from reviewer.metrics.brief_quality import briefs, classify, recall
-from reviewer.metrics.brief_quality.config import DEFAULT, BriefQualityConfig
+from reviewer.metrics.brief_quality.config import BriefQualityConfig
 
 log = logging.getLogger(__name__)
-
-BRIEFS_DIR = "docs/superpowers/briefs"
 
 STATUS_MEASURED = "measured"
 STATUS_NO_TASK_KEY = "no_task_key"
 STATUS_NO_BRIEF = "no_brief"
 STATUS_BRIEF_UNREADABLE = "brief_unreadable"
 STATUS_EMPTY_CORE = "empty_core_denominator"
+STATUS_UNCONFIGURED_CORE = "unconfigured_core_denominator"
 
 
 @dataclass(frozen=True)
@@ -52,8 +51,13 @@ class BriefQualityMeasurement:
     hit_core_paths: tuple = ()
 
 
-def find_brief(clone_path: str | None, task_key: str) -> pathlib.Path | None:
+def find_brief(
+    clone_path: str | None, task_key: str, config: BriefQualityConfig
+) -> pathlib.Path | None:
     """Файл брифа задачи в клоне или None.
+
+    Каталог брифов — `config.briefs_dir`: своей константы у сервиса больше
+    нет, чтобы значение не могло разъехаться с конфигом репозитория.
 
     Совпадение по ключу регистронезависимо: имена брифов пишутся и как PRI-249,
     и как pri-249. При нескольких файлах берётся лексикографически последний —
@@ -69,7 +73,7 @@ def find_brief(clone_path: str | None, task_key: str) -> pathlib.Path | None:
     """
     if not clone_path or not task_key:
         return None
-    directory = pathlib.Path(clone_path) / BRIEFS_DIR
+    directory = pathlib.Path(clone_path) / config.briefs_dir
     try:
         if not directory.is_dir():
             return None
@@ -91,26 +95,26 @@ def measure(
     clone_path: str | None,
     changed_paths: list,
     changed_status: dict,
-    config: BriefQualityConfig = DEFAULT,
+    config: BriefQualityConfig,
 ) -> BriefQualityMeasurement:
     """Посчитать качество брифа задачи против фактического diff'а PR.
 
     Никогда не бросает: каждый отказ — именованный status, потому что молчание
     неотличимо от «метрика сломалась».
 
-    `config` по умолчанию — ядро rag_for_git (`DEFAULT`): вызывающий из
-    reviewer/mcp/service.py обязан передавать реально отрезолвленную политику
-    репозитория, а не полагаться на дефолт (иначе метрика чужого репозитория
-    молча считалась бы по чужой линейке).
+    `config` обязателен без значения по умолчанию: молчаливый дефолт (ядро
+    rag_for_git) — и есть тихий провал, ради которого делается задача. Вызывающий
+    из reviewer/mcp/service.py обязан передавать реально отрезолвленную политику
+    репозитория, иначе чужой репозиторий молча считался бы по чужой линейке.
     """
     if not task_key:
         return BriefQualityMeasurement(status=STATUS_NO_TASK_KEY)
 
-    brief = find_brief(clone_path, task_key)
+    brief = find_brief(clone_path, task_key, config)
     if brief is None:
         return BriefQualityMeasurement(status=STATUS_NO_BRIEF, task_key=task_key)
 
-    relative = f"{BRIEFS_DIR}/{brief.name}"
+    relative = f"{config.briefs_dir}/{brief.name}"
     try:
         text = brief.read_text(encoding="utf-8")
     except (OSError, UnicodeError):
@@ -156,7 +160,16 @@ def measure(
         category = classify.categorize_miss(missed, existed_before(missed), config)
         misses[category] = misses.get(category, 0) + 1
 
-    status = STATUS_MEASURED if expected_core else STATUS_EMPTY_CORE
+    if expected_core:
+        status = STATUS_MEASURED
+    elif config.configured:
+        status = STATUS_EMPTY_CORE
+    else:
+        # Ядро пусто И ключа `metrics.brief_quality.core_paths` в `.review.yml`
+        # нет: скорее всего репозиторий просто не настроен, и молчаливый ноль
+        # здесь неотличим от честного «в диффе только тесты и доки» (критерий
+        # 3 PRI-271).
+        status = STATUS_UNCONFIGURED_CORE
     return BriefQualityMeasurement(
         status=status,
         task_key=task_key,
