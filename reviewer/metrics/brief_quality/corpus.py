@@ -40,11 +40,12 @@ def measure_corpus(clone_path, repo, config, run_git, history) -> dict:
                 changed_status=status_map, clone_path=clone_path, config=config,
                 history=history, run_id=None,
             )
-            summary["rows"] += 1
             if status is None:
                 # history здесь всегда задан (CLI создаёт его перед вызовом) —
                 # None означает сбой самой записи, а не «истории не было».
+                # rows не растёт: строка реально не записана.
                 summary["write_failed"] = summary.get("write_failed", 0) + 1
             else:
+                summary["rows"] += 1
                 summary[status] = summary.get(status, 0) + 1
     return summary

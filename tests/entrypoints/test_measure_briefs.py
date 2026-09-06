@@ -69,7 +69,10 @@ def test_measure_corpus_counts_write_failures_separately(tmp_path):
     summary = measure_corpus(str(tmp_path), "o/r", DEFAULT, run_git, _FailingHistory())
 
     assert summary["write_failed"] == 1
-    assert summary["rows"] == 1
+    # rows — строк РЕАЛЬНО записанных, а не попыток: при полном сбое записи
+    # успешных строк ноль, иначе «Строк записано: N» противоречило бы
+    # соседней «Сбоев записи в БД: N» в выводе команды.
+    assert summary["rows"] == 0
     assert "not_recorded" not in summary
     assert "measured" not in summary
 
