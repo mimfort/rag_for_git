@@ -294,3 +294,184 @@ def test_storage_backend_pool_timeout_is_postgres():
 def test_storage_backend_is_none_for_non_storage_failures(exc):
     """Покрытие совпадает с is_storage_unavailable: что не «хранилище лежит» — то None."""
     assert sh.storage_backend(exc) is None
+
+
+# ---------------------------------------------------------------------------
+# Тесты PRI-274/PRI-272: пул как деталь, эмбеддер как класс
+# ---------------------------------------------------------------------------
+
+
+def test_pool_timeout_gets_pool_exhausted_detail():
+    """Исчерпание пула отличимо от закрытого порта — по типу плюс пробе сервера.
+
+    Проба подменена: при живом сервере вердикт тот же, что был до C1, — но
+    теперь он опирается на наблюдение, а не на один тип исключения.
+    """
+    d = sh.classify_storage_failure(
+        psycopg_pool.PoolTimeout("couldn't get a connection after 30.00 sec"),
+        "postgresql://u:p@localhost:5433/reviewer", probe=_ok_probe)
+    assert d.detail == sh.DETAIL_POOL_EXHAUSTED
+    assert d.remedy is None
+    assert d.redacted is None
+
+
+def test_pool_timeout_stays_storage_unavailable():
+    """Предикат НЕ меняется: иначе замыкание перестанет ловить пул (PRI-275)."""
+    assert sh.is_storage_unavailable(psycopg_pool.PoolTimeout("timeout"))
+
+
+def test_pool_detail_wins_over_text_patterns():
+    """Тип конкретнее текста: чужой маркер в сообщении таймаута не решает ничего.
+
+    Решает проба: сервер отвечает, значит свободных соединений нет, а
+    auth-паттерн в тексте `PoolTimeout` — совпадение, а не причина.
+    """
+    d = sh.classify_storage_failure(
+        psycopg_pool.PoolTimeout("password authentication failed"),
+        "postgresql://u:p@localhost:5433/reviewer", probe=_ok_probe)
+    assert d.detail == sh.DETAIL_POOL_EXHAUSTED
+
+
+def test_voyage_errors_are_embedder_unavailable():
+    from voyageai.error import APIError, AuthenticationError, ServiceUnavailableError
+    for exc in (APIError("HTTP code 403"), AuthenticationError("bad key"),
+                ServiceUnavailableError("503")):
+        assert sh.is_embedder_unavailable(exc)
+
+
+def test_rate_limit_is_not_embedder_unavailable():
+    """RateLimitError штатно ретраится в with_voyage_retry — это не недоступность."""
+    from voyageai.error import RateLimitError
+    assert not sh.is_embedder_unavailable(RateLimitError("429"))
+
+
+def test_storage_errors_are_not_embedder_unavailable():
+    assert not sh.is_embedder_unavailable(psycopg.OperationalError("connection refused"))
+    assert not sh.is_embedder_unavailable(RuntimeError("boom"))
+
+
+def test_embedder_error_is_not_storage_unavailable():
+    """Эмбеддер не хранилище: reviewer start его не чинит."""
+    from voyageai.error import APIError
+    assert not sh.is_storage_unavailable(APIError("HTTP code 403"))
+
+
+# ---------------------------------------------------------------------------
+# Тесты C1 (финальное ревью PRI-274): PoolTimeout дополняется наблюдением
+# ---------------------------------------------------------------------------
+
+def _raiser(exc: BaseException):
+    """Проба, падающая заданным исключением."""
+    def probe(dsn: str) -> None:
+        raise exc
+    return probe
+
+
+def _ok_probe(dsn: str) -> None:
+    """Проба, которая соединилась: сервер жив, значит занят действительно пул."""
+
+
+def test_pool_timeout_with_live_server_is_pool_exhausted():
+    """Проба соединилась — пул действительно занят, лекарства для этого нет."""
+    d = sh.classify_storage_failure(
+        psycopg_pool.PoolTimeout("couldn't get a connection after 30.00 sec"),
+        _LOCAL_DSN, probe=_ok_probe)
+    assert d.detail == sh.DETAIL_POOL_EXHAUSTED
+    assert d.remedy is None
+
+
+def test_pool_timeout_from_stopped_containers_keeps_remedy():
+    """КОНТРОЛЬНЫЙ случай: контейнеры не подняты, и лекарство обязано остаться.
+
+    Прод ходит в Postgres только через пул, поэтому остановленный контейнер
+    приходит сюда `PoolTimeout`, а не `OperationalError`. До пробы такой сбой
+    назывался исчерпанием пула и терял `reviewer start` — это и был дефект C1.
+    """
+    d = sh.classify_storage_failure(
+        psycopg_pool.PoolTimeout("couldn't get a connection after 30.00 sec"),
+        _LOCAL_DSN,
+        probe=_raiser(psycopg.OperationalError(
+            "connection to server at 127.0.0.1, port 5433 failed: Connection refused")))
+    assert d.detail is None
+    assert d.remedy == sh.REMEDY_START
+
+
+def test_pool_timeout_with_bad_password_is_auth_failed():
+    """Причина ищется в исключении пробы, поэтому уточнения остаются доступны."""
+    d = sh.classify_storage_failure(
+        psycopg_pool.PoolTimeout("couldn't get a connection after 30.00 sec"),
+        _LOCAL_DSN,
+        probe=_raiser(psycopg.OperationalError(
+            'FATAL:  password authentication failed for user "reviewer"')))
+    assert d.detail == sh.DETAIL_AUTH_FAILED
+    assert d.remedy is None
+
+
+def test_pool_timeout_with_unclassifiable_probe_keeps_remedy():
+    """«Не знаю причину» не отбирает единственное лекарство: проба не соединилась."""
+    d = sh.classify_storage_failure(
+        psycopg_pool.PoolTimeout("couldn't get a connection after 30.00 sec"),
+        _LOCAL_DSN, probe=_raiser(RuntimeError("сокеты в unit-тестах запрещены")))
+    assert d.detail is None
+    assert d.remedy == sh.REMEDY_START
+
+
+def test_pool_timeout_without_postgres_endpoint_makes_no_claim():
+    """Пробовать нечего — и утверждать «пул занят» тоже нечем."""
+    d = sh.classify_storage_failure(
+        psycopg_pool.PoolTimeout("couldn't get a connection after 30.00 sec"),
+        "bolt://localhost:7687", probe=_ok_probe)
+    assert d.detail is None
+    assert d.remedy == sh.REMEDY_START
+
+
+def test_pool_timeout_probe_targets_the_non_graph_endpoint():
+    """Проба идёт в Postgres, а не в Neo4j: у графа своя диагностика и свой тип."""
+    seen: list[str] = []
+
+    def probe(dsn: str) -> None:
+        seen.append(dsn)
+
+    sh.classify_storage_failure(
+        psycopg_pool.PoolTimeout("timeout"),
+        "bolt+s://graph.example.com:7687", _LOCAL_DSN, probe=probe)
+    assert seen == [_LOCAL_DSN]
+
+
+def test_pool_timeout_probe_is_not_called_for_other_failures():
+    """Проба платится только на ветке PoolTimeout — остальные её не оплачивают."""
+    calls: list[str] = []
+    sh.classify_storage_failure(
+        psycopg.OperationalError("Connection refused"), _LOCAL_DSN,
+        probe=lambda dsn: calls.append(dsn))
+    assert calls == []
+
+
+def test_request_validation_errors_are_not_embedder_unavailable():
+    """400/422 — «запрос неверен», а не «сервис лежит» (I1 финального ревью).
+
+    Цена ошибки здесь несимметрична: одна такая ошибка внутри warm_board ставит
+    embedder_failed и снимает четыре секции контекста задачи, хотя эмбеддер
+    полностью работоспособен.
+    """
+    from voyageai.error import InvalidRequestError, MalformedRequestError
+    assert not sh.is_embedder_unavailable(InvalidRequestError("unknown model"))
+    assert not sh.is_embedder_unavailable(MalformedRequestError("422"))
+
+
+def test_video_processing_error_is_not_embedder_unavailable():
+    """Контент не обработан — сервис при этом отвечает."""
+    from voyageai.error import VideoProcessingError
+    assert not sh.is_embedder_unavailable(VideoProcessingError("bad video"))
+
+
+def test_transport_errors_stay_embedder_unavailable():
+    """Вычитание валидации не должно задеть настоящую недоступность."""
+    from voyageai.error import (
+        APIConnectionError, AuthenticationError, ServerError, ServiceUnavailableError,
+        Timeout, TryAgain,
+    )
+    for exc in (APIConnectionError("connection error"), AuthenticationError("401"),
+                ServerError("500"), ServiceUnavailableError("503"),
+                Timeout("timed out"), TryAgain("retry")):
+        assert sh.is_embedder_unavailable(exc), type(exc).__name__

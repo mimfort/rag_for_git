@@ -15,9 +15,11 @@ import logging
 
 from reviewer.mcp.subqueries import build_subqueries
 from reviewer.storage_health import (
-    BACKEND_GRAPH, BACKEND_POSTGRES, CAUSE_STORAGE_UNAVAILABLE, CAUSE_UNKNOWN,
-    DETAIL_AUTH_FAILED, DETAIL_MISSING_DATABASE, StorageDiagnosis,
-    classify_storage_failure, is_storage_unavailable, storage_backend,
+    BACKEND_GRAPH, BACKEND_POSTGRES, CAUSE_EMBEDDER_UNAVAILABLE,
+    CAUSE_STORAGE_UNAVAILABLE, CAUSE_UNKNOWN, DETAIL_AUTH_FAILED,
+    DETAIL_MISSING_DATABASE, DETAIL_POOL_EXHAUSTED, SOURCE_EMBEDDER,
+    StorageDiagnosis, classify_storage_failure, is_embedder_unavailable,
+    is_storage_unavailable, storage_backend,
 )
 
 log = logging.getLogger(__name__)
@@ -30,11 +32,36 @@ SECTIONS = (
 STORAGE_REASON = "хранилище не отвечает"
 SKIPPED_REASON = f"пропущено: {STORAGE_REASON}"
 
+EMBEDDER_REASON = "эмбеддер не отвечает"
+EMBEDDER_SKIPPED_REASON = f"пропущено: {EMBEDDER_REASON}"
+
+# Базовая формулировка по источнику: у эмбеддера своя, потому что «хранилище
+# не отвечает» про него — неправда, а именно эта неправда и была дефектом.
+_SOURCE_REASONS = {
+    SOURCE_EMBEDDER: (EMBEDDER_REASON, EMBEDDER_SKIPPED_REASON),
+}
+_DEFAULT_REASONS = (STORAGE_REASON, SKIPPED_REASON)
+
+# Секции, которым нужен эмбеддер. Разметка явная, а не выведенная: preflight,
+# task_board, warm_board, task и related.linked его не трогают вовсе, и замыкать
+# их отказом Voyage значило бы терять данные, которые собрались бы без него.
+# `subsystems` входит сюда, хотя эмбеддер ей нужен не всегда:
+# `get_subsystem_summaries` зовёт `embed_query` только когда сводок больше
+# `summary_topk_threshold` (дефолт 20), а ниже порога отдаёт их все без Voyage.
+# Размен сознательный. Исключить секцию значило бы заплатить ВТОРОЙ отказ
+# эмбеддера на каждом репозитории крупнее порога — ровно ту цену, ради отказа
+# от которой замыкание и заведено. Цена обратного выбора уже: репозиторий с
+# 20 и менее кластерами теряет неранжированный список, который собрался бы.
+_EMBEDDER_SECTIONS = frozenset({
+    "related.similar", "subsystems", "code", "test_exemplars",
+})
+
 # Формулировки распознанных классов. Живут здесь, а не в storage_health: их
 # читает LLM и вставляет в бриф, а у CLI свой адресат и свои строки.
 DETAIL_REASONS = {
     DETAIL_AUTH_FAILED: "хранилище отвергло учётные данные",
     DETAIL_MISSING_DATABASE: "базы данных не существует",
+    DETAIL_POOL_EXHAUSTED: "свободных соединений в пуле не осталось",
 }
 
 
@@ -65,38 +92,63 @@ class _StorageState:
     Вердикт считается лениво, при первом реальном сбое: до PRI-277 лекарство
     фиксировалось на старте, когда исключения ещё нет, и потому не могло
     зависеть от причины.
+
+    Источник, а не только хранилище (PRI-272): эмбеддер отказывает независимо
+    от Postgres и Neo4j, и его отказ обязан отменять ровно те секции, которым
+    он нужен. Класс причины хранится рядом с вердиктом — «лежит хранилище» и
+    «не отвечает эмбеддер» это разные классы, а не разные детали одного.
     """
 
     def __init__(self, endpoints: tuple[str, ...]) -> None:
         self.endpoints = endpoints
         self.down: set[str] = set()
         self.diagnoses: dict[str, StorageDiagnosis] = {}
+        self.causes: dict[str, str] = {}
 
-    def mark(self, backend: str, exc: BaseException) -> StorageDiagnosis:
-        """Взвести флаг бэкенда; вердикт считается по его первому сбою."""
-        self.down.add(backend)
-        if backend not in self.diagnoses:
-            self.diagnoses[backend] = classify_storage_failure(exc, *self.endpoints)
-        return self.diagnoses[backend]
+    def mark(self, source: str, exc: BaseException | None = None) -> StorageDiagnosis:
+        """Взвести флаг источника; вердикт считается по его первому сбою.
 
-    def is_down(self, backend: str) -> bool:
-        return backend in self.down
+        `exc` необязателен: недоступность эмбеддера может прийти не броском, а
+        структурным полем свода синка (секция `task`), и тогда классифицировать
+        нечего — класс известен из самого источника.
+        """
+        self.down.add(source)
+        if source not in self.diagnoses:
+            if source == SOURCE_EMBEDDER:
+                self.diagnoses[source] = StorageDiagnosis(None, None, None)
+                self.causes[source] = CAUSE_EMBEDDER_UNAVAILABLE
+            else:
+                self.diagnoses[source] = (
+                    classify_storage_failure(exc, *self.endpoints)
+                    if exc is not None else StorageDiagnosis(None, None, None))
+                self.causes[source] = CAUSE_STORAGE_UNAVAILABLE
+        return self.diagnoses[source]
+
+    def cause_of(self, source: str) -> str:
+        """Класс причины по источнику; `unknown`, пока источник не помечен."""
+        return self.causes.get(source, CAUSE_UNKNOWN)
+
+    def is_down(self, source: str) -> bool:
+        return source in self.down
 
 
-def _storage_gap(payload: dict, section: str, reason: str, state: _StorageState,
-                 backend: str) -> None:
-    """Записать в gaps пробел, вызванный недоступностью хранилища.
+def _source_gap(payload: dict, section: str, state: _StorageState, source: str,
+                *, skipped: bool) -> None:
+    """Записать в gaps пробел, вызванный недоступностью источника.
 
-    Общая точка для трёх мест, различающихся только `reason`: skip- и except-
-    ветки `_safe`, а также `elif warm_board and not board` в build_task_context.
-    Вердикт берётся по бэкенду секции, а не общий на вызов.
+    Общая точка для трёх мест, различающихся только тем, пропущена секция или
+    реально упала: skip- и except-ветки `_safe`, а также ветка
+    `elif warm_board and not board` в build_task_context. Вердикт, класс и
+    базовая формулировка берутся по источнику секции, а не общие на вызов.
     """
-    diagnosis = state.diagnoses.get(backend)
-    detail = diagnosis.detail if diagnosis is not None else None
-    remedy = diagnosis.remedy if diagnosis is not None else None
-    payload["gaps"].append(gap(section, _reason_with_detail(reason, diagnosis),
-                               cause=CAUSE_STORAGE_UNAVAILABLE,
-                               cause_detail=detail, remedy=remedy))
+    diagnosis = state.diagnoses.get(source)
+    base, skipped_base = _SOURCE_REASONS.get(source, _DEFAULT_REASONS)
+    reason = skipped_base if skipped else base
+    payload["gaps"].append(gap(
+        section, _reason_with_detail(reason, diagnosis),
+        cause=state.cause_of(source),
+        cause_detail=diagnosis.detail if diagnosis is not None else None,
+        remedy=diagnosis.remedy if diagnosis is not None else None))
 
 
 def _reason_with_detail(base: str, diagnosis: StorageDiagnosis | None) -> str:
@@ -127,17 +179,23 @@ def _safe(payload: dict, section: str, produce, default, reason: str,
     Какой бэкенд упал, решает тип исключения, а не разметка секции: она отвечает
     на другой вопрос — кого пропускать.
     """
+    if section in _EMBEDDER_SECTIONS and state.is_down(SOURCE_EMBEDDER):
+        _source_gap(payload, section, state, SOURCE_EMBEDDER, skipped=True)
+        return default
     if state.is_down(backend):
-        _storage_gap(payload, section, SKIPPED_REASON, state, backend)
+        _source_gap(payload, section, state, backend, skipped=True)
         return default
     try:
         return produce()
     except Exception as exc:  # noqa: BLE001 — источник секции недоступен, это штатный случай
         log.warning("prepare_task_context: секция %s недоступна", section, exc_info=True)
-        if is_storage_unavailable(exc):
+        if is_embedder_unavailable(exc):
+            state.mark(SOURCE_EMBEDDER, exc)
+            _source_gap(payload, section, state, SOURCE_EMBEDDER, skipped=False)
+        elif is_storage_unavailable(exc):
             failed = storage_backend(exc) or backend
             state.mark(failed, exc)
-            _storage_gap(payload, section, STORAGE_REASON, state, failed)
+            _source_gap(payload, section, state, failed, skipped=False)
         else:
             payload["gaps"].append(gap(section, reason))
         return default
@@ -230,9 +288,13 @@ def build_task_context(deps, *, repo: str, key: str, branch: str,
             "прогрев доски не выполнен", state)
         if result is not None:
             payload["warnings"].append({"warm_board": result})
+        if isinstance(result, dict) and result.get("embedder_failed"):
+            # Синк уже назвал класс структурно; исключения здесь нет и быть не
+            # может — index_batch отработал его сам, отметив задачи к повтору.
+            state.mark(SOURCE_EMBEDDER)
     elif warm_board and not board:
         if state.is_down(BACKEND_POSTGRES):
-            _storage_gap(payload, "warm_board", SKIPPED_REASON, state, BACKEND_POSTGRES)
+            _source_gap(payload, "warm_board", state, BACKEND_POSTGRES, skipped=True)
         else:
             payload["gaps"].append(gap("warm_board", "доска не настроена"))
 
@@ -240,7 +302,14 @@ def build_task_context(deps, *, repo: str, key: str, branch: str,
                  "задача не прочитана из стора", state)
     payload["task"] = task
     if task is None and not any(g["section"] == "task" for g in payload["gaps"]):
-        payload["gaps"].append(gap("task", "задачи нет в сторе"))
+        if state.is_down(SOURCE_EMBEDDER):
+            # «Задачи нет в сторе» указывает на доску, а виноват эмбеддер: задача
+            # на доске есть, её не удалось проиндексировать.
+            payload["gaps"].append(gap(
+                "task", f"задача не проиндексирована: {EMBEDDER_REASON}",
+                cause=state.cause_of(SOURCE_EMBEDDER)))
+        else:
+            payload["gaps"].append(gap("task", "задачи нет в сторе"))
 
     query = _query(task, key)
     payload["related"] = {

@@ -1,4 +1,5 @@
 """Unit-тесты для TaskService.index_batch."""
+import psycopg
 import psycopg_pool
 
 from reviewer.tasks.service import TaskService
@@ -444,7 +445,7 @@ def test_result_shape_survives_the_early_exit():
 
     for result in results:
         assert set(result) == {"key", "embedded", "links_upserted", "links_stored",
-                               "prs_linked", "warnings", "retry_required"}
+                               "prs_linked", "warnings", "retry_required", "failure"}
 
 
 def test_non_storage_error_still_processes_every_task():
@@ -506,7 +507,7 @@ def test_result_shape_survives_mid_batch_storage_failure():
     results = TaskService(store, graph, emb).index_batch(tasks)
 
     expected_keys = {"key", "embedded", "links_upserted", "links_stored",
-                      "prs_linked", "warnings", "retry_required"}
+                      "prs_linked", "warnings", "retry_required", "failure"}
     for r in results:
         assert set(r) == expected_keys
     assert results[0]["embedded"] is True        # первая задача упсертилась успешно
@@ -534,3 +535,139 @@ def test_storage_down_mid_hash_phase_still_blocks_voyage_call():
     TaskService(store, graph, emb).index_batch(tasks)
 
     assert emb.doc_calls == []
+
+
+def test_batch_marks_embedder_failure_as_embedder():
+    """Сбой эмбеддера и сбой стора различимы полем, а не текстом warnings."""
+    from voyageai.error import APIError
+
+    class _VoyageDownEmbedder(_FakeEmbedder):
+        def embed_documents(self, texts):
+            super().embed_documents(texts)
+            raise APIError("HTTP code 403")
+
+    t1 = build_task_text("Add logout", "Clear session", ["redirects"])
+    store = _FakeStore(hashes={"ID-1": task_content_hash(t1)})
+    tasks = [_brief("ID-1", "PRI-1"),
+             _brief("ID-2", "PRI-2", title="Fix bug", description="desc", links=[])]
+    results = TaskService(store, _FakeGraph(), _VoyageDownEmbedder()).index_batch(tasks)
+
+    assert results[0]["failure"] is None      # unchanged — meta-only, сбоя не видела
+    assert results[1]["failure"] == "embedder"
+    assert results[1]["retry_required"] is True
+
+
+def test_batch_marks_storage_failure_as_storage():
+    """Отказ стора остаётся отказом стора — класс не подменяется эмбеддером."""
+    results = TaskService(
+        _TimingOutStore(), _FakeGraph(), _FakeEmbedder()
+    ).index_batch([_brief()])
+
+    assert results[0]["failure"] == "storage"
+
+
+def test_batch_non_storage_store_error_is_not_called_storage():
+    """SQL-баг стора не награждается классом "storage": врать про причину нельзя.
+
+    `is_storage_unavailable` намеренно не покрывает `psycopg.ProgrammingError`
+    (настоящий баг SQL обязан остаться видимым, PRI-268/PRI-277) — тот же вызов
+    existing_hash, что и у test_batch_marks_storage_failure_as_storage, но другим
+    типом исключения, обязан дать другую классификацию."""
+    class _BuggyStore(_FakeStore):
+        def existing_hash(self, key):
+            raise psycopg.ProgrammingError('syntax error at or near "SELECT"')
+
+    results = TaskService(
+        _BuggyStore(), _FakeGraph(), _FakeEmbedder()
+    ).index_batch([_brief()])
+
+    assert results[0]["failure"] is None
+    assert results[0]["retry_required"] is True
+
+
+def test_batch_unknown_embed_error_is_not_called_embedder():
+    """Непонятный сбой классом не награждается: врать про причину нельзя."""
+    class _BrokenEmbedder(_FakeEmbedder):
+        def embed_documents(self, texts):
+            raise RuntimeError("voyage down")
+
+    results = TaskService(
+        _FakeStore(), _FakeGraph(), _BrokenEmbedder()
+    ).index_batch([_brief()])
+
+    assert results[0]["failure"] is None
+    assert results[0]["retry_required"] is True
+
+
+def test_batch_reports_no_failure_on_success():
+    results = TaskService(_FakeStore(), _FakeGraph(), _FakeEmbedder()).index_batch(
+        [_brief()])
+    assert results[0]["failure"] is None
+
+
+# ---------------------------------------------------------------------------
+# M3 (финальное ревью PRI-274/272): гейт failure="storage" на всех трёх ветках
+# ---------------------------------------------------------------------------
+
+def test_batch_upsert_storage_failure_is_called_storage():
+    """Ветка upsert_task: недоступное хранилище называется своим классом."""
+    class _DeadStore(_FakeStore):
+        def upsert_task(self, row):
+            raise psycopg.OperationalError("connection refused")
+
+    results = TaskService(
+        _DeadStore(), _FakeGraph(), _FakeEmbedder()
+    ).index_batch([_brief()])
+
+    assert results[0]["failure"] == "storage"
+    assert results[0]["retry_required"] is True
+
+
+def test_batch_upsert_non_storage_error_is_not_called_storage():
+    """Ветка upsert_task: SQL-баг под «лечится подъёмом контейнеров» не маскируется."""
+    class _BuggyStore(_FakeStore):
+        def upsert_task(self, row):
+            raise psycopg.ProgrammingError('column "nope" does not exist')
+
+    results = TaskService(
+        _BuggyStore(), _FakeGraph(), _FakeEmbedder()
+    ).index_batch([_brief()])
+
+    assert results[0]["failure"] is None
+    assert results[0]["retry_required"] is True
+
+
+def test_batch_update_meta_storage_failure_is_called_storage():
+    """Ветка update_meta (задача не менялась): тот же гейт, та же классификация."""
+    class _DeadStore(_FakeStore):
+        def update_meta(self, key, title, status, url, aliases, project=""):
+            raise psycopg.OperationalError("connection refused")
+
+    brief = _brief()
+    # Прогон-разогрев кладёт content_hash, чтобы задача пошла веткой meta_only.
+    warm = TaskService(_FakeStore(), _FakeGraph(), _FakeEmbedder())
+    warm.index_batch([brief])
+    store = _DeadStore(hashes={brief["key"]: warm._store._hashes[brief["key"]]})
+
+    results = TaskService(store, _FakeGraph(), _FakeEmbedder()).index_batch([brief])
+
+    assert store.upserted == [], "задача не менялась — ветка meta_only"
+    assert results[0]["failure"] == "storage"
+
+
+def test_batch_update_meta_non_storage_error_is_not_called_storage():
+    """Ветка update_meta: настоящий баг SQL обязан остаться видимым."""
+    class _BuggyStore(_FakeStore):
+        def update_meta(self, key, title, status, url, aliases, project=""):
+            raise psycopg.ProgrammingError('syntax error at or near "UPDATE"')
+
+    brief = _brief()
+    warm = TaskService(_FakeStore(), _FakeGraph(), _FakeEmbedder())
+    warm.index_batch([brief])
+    store = _BuggyStore(hashes={brief["key"]: warm._store._hashes[brief["key"]]})
+
+    results = TaskService(store, _FakeGraph(), _FakeEmbedder()).index_batch([brief])
+
+    assert store.upserted == []
+    assert results[0]["failure"] is None
+    assert results[0]["retry_required"] is True

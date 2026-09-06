@@ -3,11 +3,23 @@ from unittest.mock import MagicMock
 
 import psycopg
 import psycopg_pool
+import pytest
 from neo4j.exceptions import ServiceUnavailable
 
+from reviewer import storage_health as sh
 from reviewer.config.settings import Settings
 from reviewer.mcp import task_context
 from reviewer.mcp.service import MCPReviewService, _TaskContextDeps
+
+
+@pytest.fixture(autouse=True)
+def _live_server_probe(monkeypatch):
+    """Проба ветки PoolTimeout не должна открывать сокет в unit-тесте.
+
+    Дефолт — «сервер отвечает», то есть пул действительно занят. Тест, которому
+    нужен остановленный контейнер, подменяет пробу своей, падающей.
+    """
+    monkeypatch.setattr(sh, "_probe_postgres", lambda dsn: None)
 
 
 class FakeDeps:
@@ -479,6 +491,12 @@ def test_broken_storage_endpoints_source_does_not_break_build():
 # Тесты PRI-277: класс причины отдельно от уместности лекарства
 # ---------------------------------------------------------------------------
 
+def _refuse_connection(dsn: str) -> None:
+    """Проба остановленного контейнера: порт закрыт."""
+    raise psycopg.OperationalError(
+        "connection to server at 127.0.0.1, port 5433 failed: Connection refused")
+
+
 def _preflight_gap(exc):
     """Запись gaps секции preflight при заданном сбое источника."""
     payload = task_context.build_task_context(
@@ -508,6 +526,23 @@ def test_missing_database_is_named_and_loses_remedy():
 def test_stopped_containers_still_get_remedy_and_no_detail():
     """Третий случай остаётся отличимым от первых двух с другой стороны."""
     entry = _preflight_gap(psycopg.OperationalError("Connection refused"))
+    assert entry["cause_detail"] is None
+    assert entry["remedy"] == "reviewer start"
+
+
+def test_stopped_containers_keep_remedy_on_the_production_exception_type(monkeypatch):
+    """Тот же случай на ПРОДОВОМ типе: пул отдаёт PoolTimeout, а не отказ соединения.
+
+    Соседний тест выше моделирует остановленный контейнер голым
+    `OperationalError`, которого прод по этому пути не производит: в Postgres
+    он ходит только через пул. Именно этот зазор между фейком и продом пропустил
+    дефект C1 — деталь `pool_exhausted` приписывалась лежачему хранилищу, и
+    `reviewer start` исчезал.
+    """
+    monkeypatch.setattr(sh, "_probe_postgres", _refuse_connection)
+    entry = _preflight_gap(
+        psycopg_pool.PoolTimeout("couldn't get a connection after 30.00 sec"))
+    assert entry["cause"] == "storage_unavailable"
     assert entry["cause_detail"] is None
     assert entry["remedy"] == "reviewer start"
 
@@ -602,7 +637,7 @@ def test_non_storage_graph_error_is_ignored():
 # Тесты PRI-275: preflight не платит второй таймаут пула за мёртвый Postgres
 # ---------------------------------------------------------------------------
 
-def test_storage_down_makes_single_store_call_and_keeps_classification():
+def test_storage_down_makes_single_store_call_and_keeps_classification(monkeypatch):
     """build_task_context с НАСТОЯЩИМ _TaskContextDeps поверх фейкового components.store.
 
     До PRI-275 проглоченный сбой clone_path заставлял preflight читать
@@ -613,6 +648,12 @@ def test_storage_down_makes_single_store_call_and_keeps_classification():
     Сервис — настоящий MCPReviewService (а не MagicMock целиком): иначе
     _repo_clone_path был бы автосгенерированным моком без реальной strict-логики,
     и тест проверял бы не тот код, ради которого написан.
+
+    Лежачее хранилище обязано получить `reviewer start`: сбой приходит продовым
+    типом `PoolTimeout` (в Postgres прод ходит только через пул), а проба сервера
+    показывает закрытый порт. Правка этого ожидания на `remedy is None` при
+    реализации PRI-274 и была тем, что скрыло дефект C1: тест выглядел как
+    согласование, а на деле снял единственную проверку лекарства на продовом типе.
     """
     calls: list[str] = []
 
@@ -633,6 +674,7 @@ def test_storage_down_makes_single_store_call_and_keeps_classification():
             calls.append("list_refs")
             return []
 
+    monkeypatch.setattr(sh, "_probe_postgres", _refuse_connection)
     settings = Settings()
     # loopback-эндпоинты обязательны, иначе classify_storage_failure не назовёт
     # remedy: storage_endpoints() читает их из settings.pg_dsn/neo4j_uri.
@@ -651,4 +693,176 @@ def test_storage_down_makes_single_store_call_and_keeps_classification():
         assert section in payload
     entry = next(g for g in payload["gaps"] if g["section"] == "preflight")
     assert entry["cause"] == "storage_unavailable"
+    assert entry["cause_detail"] is None
     assert entry["remedy"] == "reviewer start"
+
+
+# ---------------------------------------------------------------------------
+# Тесты Task 2 (PRI-274/PRI-272): замыкание обобщается с хранилищ на источники
+# ---------------------------------------------------------------------------
+
+def _build(**overrides):
+    return task_context.build_task_context(
+        FakeDeps(**overrides), repo="o/n", key="PRI-274", branch="dev",
+        warm_board=True)
+
+
+def _gap(payload, section):
+    return next(g for g in payload["gaps"] if g["section"] == section)
+
+
+def test_embedder_failure_gets_own_cause():
+    """Сбой эмбеддера — свой класс, не storage_unavailable и не unknown."""
+    from voyageai.error import APIError
+
+    payload = _build(subsystems=APIError("HTTP code 403"))
+
+    entry = _gap(payload, "subsystems")
+    assert entry["cause"] == "embedder_unavailable"
+    assert entry["remedy"] is None
+    assert entry["cause_detail"] is None
+    assert "эмбеддер" in entry["reason"]
+
+
+def test_embedder_failure_does_not_close_storage_sections():
+    """Мёртвый эмбеддер не отменяет секции, которым нужен только Postgres."""
+    from voyageai.error import APIError
+
+    payload = _build(subsystems=APIError("HTTP code 403"))
+
+    assert payload["task_board"] is not None
+    assert payload["task"] is not None
+    assert "related.linked" not in _gap_sections(payload)
+
+
+def test_embedder_closure_skips_later_embedder_sections():
+    """Второй заход в мёртвый эмбеддер не делается: секция пропускается."""
+    from voyageai.error import APIError
+
+    deps = FakeDeps(similar=APIError("HTTP code 403"))
+    payload = task_context.build_task_context(
+        deps, repo="o/n", key="PRI-274", branch="dev", warm_board=True)
+
+    assert "code" not in deps.calls
+    assert "test_exemplars" not in deps.calls
+    entry = _gap(payload, "code")
+    assert entry["cause"] == "embedder_unavailable"
+    assert entry["reason"].startswith("пропущено")
+
+
+def test_embedder_closure_does_not_skip_postgres_sections():
+    """Замыкание адресное: секции, которым эмбеддер не нужен, всё равно идут."""
+    from voyageai.error import APIError
+
+    deps = FakeDeps(similar=APIError("HTTP code 403"))
+    task_context.build_task_context(
+        deps, repo="o/n", key="PRI-274", branch="dev", warm_board=True)
+
+    assert "task" in deps.calls
+    assert "linked" in deps.calls
+    assert deps.calls.count("similar") == 1
+
+
+def test_pool_exhaustion_reports_detail_and_no_remedy():
+    """Исчерпание пула: класс storage_unavailable, но лекарство не советуется.
+
+    Пул назван занятым только потому, что проба (фикстура `_live_server_probe`)
+    соединилась с сервером; на закрытом порту тот же тип исключения даёт другой
+    вердикт — см. `test_stopped_containers_keep_remedy_on_the_production_exception_type`.
+    """
+    entry = _preflight_gap(
+        psycopg_pool.PoolTimeout("couldn't get a connection after 30.00 sec"))
+
+    assert entry["cause"] == "storage_unavailable"
+    assert entry["cause_detail"] == "pool_exhausted"
+    assert entry["remedy"] is None
+    assert "пул" in entry["reason"]
+
+
+# ---------------------------------------------------------------------------
+# Тесты Task 5 (PRI-274/PRI-272): секция task берёт причину из синка
+# ---------------------------------------------------------------------------
+
+def test_task_gap_blames_embedder_not_the_board():
+    """Задачи нет в сторе, потому что её туда не пустил упавший синк.
+
+    Секция `task` не бросает вовсе, поэтому проброс её не лечит: причина
+    рождается этажом выше, в своде warm_board.
+    """
+    payload = _build(
+        warm_board={"enumerated": 126, "changed": 3, "failed": 3,
+                    "embedder_failed": True},
+        task=None)
+
+    entry = _gap(payload, "task")
+    assert entry["cause"] == "embedder_unavailable"
+    assert "эмбеддер" in entry["reason"]
+    assert "нет в сторе" not in entry["reason"]
+
+
+def test_task_gap_stays_board_shaped_without_embedder_failure():
+    """Без сбоя эмбеддера формулировка прежняя — задачи действительно нет."""
+    payload = _build(
+        warm_board={"enumerated": 126, "changed": 0, "failed": 0,
+                    "embedder_failed": False},
+        task=None)
+
+    entry = _gap(payload, "task")
+    assert entry["cause"] == "unknown"
+    assert entry["reason"] == "задачи нет в сторе"
+
+
+def test_legacy_warm_board_summary_without_the_flag_still_works():
+    """Свод без нового ключа (старый деплой) проходит без исключения."""
+    payload = _build(warm_board={"enumerated": 10, "changed": 0}, task=None)
+    assert _gap(payload, "task")["reason"] == "задачи нет в сторе"
+
+
+# ---------------------------------------------------------------------------
+# M5 (финальное ревью PRI-274/272): имена в _EMBEDDER_SECTIONS не выдуманы
+# ---------------------------------------------------------------------------
+
+def _sections_passed_to_safe(monkeypatch) -> set[str]:
+    """Имена секций, реально доехавшие до `_safe` за один сбор контекста."""
+    seen: set[str] = set()
+    original = task_context._safe
+
+    def spy(payload, section, produce, default, reason, state,
+            backend=sh.BACKEND_POSTGRES):
+        seen.add(section)
+        return original(payload, section, produce, default, reason, state, backend)
+
+    monkeypatch.setattr(task_context, "_safe", spy)
+    task_context.build_task_context(
+        FakeDeps(), repo="o/n", key="PRI-272", branch="dev", warm_board=True)
+    return seen
+
+
+def test_embedder_sections_are_real_section_names(monkeypatch):
+    """Опечатка в наборе тихо отключила бы замыкание для этой секции.
+
+    Регрессия была бы невидима: payload остался бы правильным, вернулся бы лишь
+    лишний таймаут Voyage — ни тест, ни глаз этого не поймали бы. Поэтому набор
+    сверяется не с копией литерала, а с фактическими именами, которые
+    `build_task_context` передаёт в `_safe`.
+    """
+    seen = _sections_passed_to_safe(monkeypatch)
+    unknown = task_context._EMBEDDER_SECTIONS - seen
+    assert not unknown, f"секций с такими именами не существует: {unknown}"
+
+
+def test_every_embedder_section_is_actually_skipped_when_voyage_is_down():
+    """Обратная сторона: каждое имя из набора действительно замыкается.
+
+    Первая проверка ловит опечатку, эта — молчаливую потерю разметки: имя может
+    существовать и всё равно не участвовать в замыкании, если ветка `_safe`
+    разъедется с набором.
+    """
+    from voyageai.error import APIError
+
+    payload = task_context.build_task_context(
+        FakeDeps(similar=APIError("HTTP code 403")), repo="o/n", key="PRI-272",
+        branch="dev", warm_board=True)
+    skipped = {g["section"] for g in payload["gaps"]
+               if g["cause"] == "embedder_unavailable"}
+    assert task_context._EMBEDDER_SECTIONS <= skipped

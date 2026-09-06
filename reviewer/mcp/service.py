@@ -29,7 +29,7 @@ from reviewer.mcp.session_serde import from_payload, to_payload
 from reviewer.mcp.session_store import SessionStore
 from reviewer.retrieval.retriever import ContextPack
 from reviewer.services.gc import purge_orphaned_overlays
-from reviewer.storage_health import is_storage_unavailable
+from reviewer.storage_health import is_embedder_unavailable, is_storage_unavailable
 from reviewer.services.review_service import (
     BranchNotTrackedError,
     PreparedReview,
@@ -1822,7 +1822,8 @@ class MCPReviewService:
     def _search_codebase_multi(self, repo: str, queries: list[str],
                                branch: str | None = None,
                                include_tests: bool = False,
-                               augment_sources: list | None = None) -> str:
+                               augment_sources: list | None = None,
+                               *, strict: bool = False) -> str:
         """Мультизапросный ретрив секций контекста задачи (PRI-255).
 
         Приватный: публичный search_codebase остаётся однозапросным, чтобы
@@ -1830,6 +1831,11 @@ class MCPReviewService:
 
         augment_sources (PRI-257/258) — именованные источники кандидатов со
         своими квотами; см. search_multi.
+
+        `strict` (PRI-272) — keyword-only, как у `_repo_clone_path` (PRI-275)
+        и `TaskService.search_hits`: при нём распознанный отказ эмбеддера
+        пробрасывается вызывающему. Включает его только `_TaskContextDeps`
+        (секции `code`/`test_exemplars`); публичный search_codebase не меняется.
         """
         from reviewer.retrieval.multiquery import search_multi
         rb = self._resolve_repo_branch(repo, branch)
@@ -1842,8 +1848,10 @@ class MCPReviewService:
                 self.components.retriever, repo, queries,
                 limits=cl.search_codebase, section_limits=cl.code_section,
                 hops=cl.graph.hops, branch=resolved, include_tests=include_tests,
-                augment_sources=augment_sources)
-        except Exception:
+                augment_sources=augment_sources, strict=strict)
+        except Exception as exc:
+            if strict and is_embedder_unavailable(exc):
+                raise
             log.warning("_search_codebase_multi: сбой поиска", exc_info=True)
             return "(ничего не найдено)"
         return pack.as_context(line_numbers=True) or "(ничего не найдено)"
@@ -3617,7 +3625,7 @@ class _TaskContextDeps:
         вызовов (similar до code) закреплён тестом build_task_context.
         """
         service = self._service.components.task_service
-        hits = service.search_hits(query, project=project)
+        hits = service.search_hits(query, project=project, strict=True)
         self._similar_hits = list(hits or [])
         return service.render_hits(hits)
 
@@ -3664,7 +3672,7 @@ class _TaskContextDeps:
                                  quota=self._service._resolve_context_limits(
                                      repo, branch).code_section.max_augmented_files)]
         return self._service._search_codebase_multi(
-            repo, queries, branch, False, augment_sources=sources)
+            repo, queries, branch, False, augment_sources=sources, strict=True)
 
     def test_exemplars(self, repo: str, branch: str, queries: list) -> str:
-        return self._service._search_codebase_multi(repo, queries, branch, True)
+        return self._service._search_codebase_multi(repo, queries, branch, True, strict=True)

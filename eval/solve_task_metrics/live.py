@@ -10,6 +10,7 @@ _TaskContextDeps при сборке контекста задачи. Своей
 """
 from __future__ import annotations
 
+import logging
 from dataclasses import asdict
 
 from reviewer.app import build_components
@@ -19,6 +20,8 @@ from reviewer.mcp.service import MCPReviewService
 from reviewer.mcp.task_context import _query as production_query
 from reviewer.policy.context_limits import ContextLimits
 from reviewer.services.status import build_status_report
+
+log = logging.getLogger(__name__)
 
 
 def limits_to_yaml(limits: ContextLimits) -> dict:
@@ -52,6 +55,9 @@ class LiveRetrieval:
         self._settings = settings
         self._components = components
         self._service = service
+        self.failures: list[str] = []
+        """Сбои источников, пережитые прогоном. Читается вызывающим: тихая
+        деградация в мерном харнессе неотличима от честного нуля."""
 
     # -- жизненный цикл ---------------------------------------------------
 
@@ -146,7 +152,18 @@ class LiveRetrieval:
             deps = _TaskContextDeps(self._service, None)
             # Хиты похожих задач наполняются вызовом similar; первый подзапрос —
             # это и есть продакшн-запрос задачи целиком (см. _queries).
-            deps.similar(queries[0], None)
+            # В проде этот вызов защищён `_safe`, здесь — нет, а с PRI-272 он
+            # ходит со strict=True и отказ эмбеддера пробивается наружу. Замер
+            # ронять на этом нельзя (сторона «до» и сторона «после» обязаны
+            # сниматься одним прогоном), но и молчать нельзя: подмешивание
+            # просто не состоится, и число подмешанных путей уедет вниз без
+            # видимой причины. Поэтому отказ ловится и называется, а не гасится.
+            try:
+                deps.similar(queries[0], None)
+            except Exception:  # noqa: BLE001 — харнесс продолжает без подмешивания
+                log.warning("live: similar недоступен, подмешивание similar-diffs "
+                            "в этом прогоне не состоится", exc_info=True)
+                self.failures.append(f"similar: {repo}")
             sources.append(AugmentSource(name="similar-diffs", paths=deps._augment_paths(repo),
                                          quota=effective.code_section.max_augmented_files))
         if not limits:

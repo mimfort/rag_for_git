@@ -36,6 +36,13 @@ def _settings() -> Settings:
     s.github_token = "test"
     s.review_session_persist = False     # unit-тесты не трогают Postgres-таблицу сессий
     s.default_repo = ""                  # изолируем от локального .env (DEFAULT_REPO)
+    # Набор отслеживаемых веток приходит оттуда же: у оператора в
+    # ~/.config/rag-reviewer/.env лежит REVIEW_BRANCHES=main,dev, в CI переменной
+    # нет и остаётся дефолтный ["main"]. Без пина тест, называющий ветку явно,
+    # зелен только на машине разработчика: в CI _resolve_repo_branch отсекает его
+    # нотой «ветка не отслеживается» ДО проверяемого поведения, и утверждение
+    # проверяет не то, ради чего написано.
+    s.review_branches = "main,dev"
     # изолируем доску от локального .env целиком (иначе настроенный TASK_BOARD_*
     # в ~/.config/rag-reviewer/.env протекает в payload и ломает unconfigured-кейс)
     s.task_board_type = ""
@@ -764,6 +771,104 @@ def test_search_codebase_multi_rejects_untracked_branch() -> None:
         sm.assert_not_called()
 
 
+class _FailingRetriever:
+    """Ретривер, у которого уже доступ к `.embedder` бросает `exc`.
+
+    Бьёт ровно в границу `_search_codebase_multi`: сбой приходит снизу, а
+    поведение проверяется на её уровне, без участия внутренностей search_multi.
+    Сквозной путь — через `_EmbedderFailingRetriever` ниже.
+    """
+
+    def __init__(self, exc: BaseException) -> None:
+        self._exc = exc
+
+    @property
+    def embedder(self):
+        raise self._exc
+
+
+class _EmbedderFailingRetriever:
+    """Ретривер с настоящим эмбеддером, чьи методы бросают `exc`.
+
+    Отличие от `_FailingRetriever` содержательное: там исключение рождается на
+    доступе к атрибуту, здесь — внутри `embed_queries`/`embed_query`, то есть
+    там же, где его рождает мёртвый Voyage. Ровно на этом шве задача один раз
+    уже оказалась неработающей: `_embed_pairs` гасил оба уровня, и `strict`
+    в `_search_codebase_multi` не мог сработать ни разу, хотя обе половины
+    по отдельности были покрыты и зелены.
+    """
+
+    class _Embedder:
+        def __init__(self, exc: BaseException) -> None:
+            self._exc = exc
+
+        def embed_queries(self, queries):
+            raise self._exc
+
+        def embed_query(self, query):
+            raise self._exc
+
+    def __init__(self, exc: BaseException) -> None:
+        self.embedder = self._Embedder(exc)
+        self.store = None
+        self.graph = None
+
+
+def _service_with_failing_retriever(exc: BaseException) -> MCPReviewService:
+    svc = _make_mcp_service()
+    svc.components.retriever = _FailingRetriever(exc)
+    return svc
+
+
+def test_search_codebase_multi_swallows_embedder_failure_by_default():
+    """Приватный мультизапрос по умолчанию нем — как и был."""
+    from voyageai.error import APIError
+
+    svc = _service_with_failing_retriever(APIError("HTTP code 403"))
+    assert svc._search_codebase_multi("o/n", ["q"], "dev") == "(ничего не найдено)"
+
+
+def test_search_codebase_multi_reraises_embedder_failure_when_strict():
+    from voyageai.error import APIError
+
+    svc = _service_with_failing_retriever(APIError("HTTP code 403"))
+    with pytest.raises(APIError):
+        svc._search_codebase_multi("o/n", ["q"], "dev", strict=True)
+
+
+def test_search_codebase_multi_reraises_through_the_whole_seam_when_strict():
+    """Сквозной путь: _search_codebase_multi → search_multi → _embed_pairs.
+
+    Обе половины покрыты по отдельности, но именно их стык однажды и разошёлся:
+    граничный тест выше бьёт в `_search_codebase_multi`, тесты multiquery — в
+    `search_multi`, а мёртвый Voyage бросает внутри методов эмбеддера, ниже их
+    обоих. Здесь исключение проходит все три уровня целиком.
+    """
+    from voyageai.error import APIError
+
+    svc = _make_mcp_service()
+    svc.components.retriever = _EmbedderFailingRetriever(APIError("HTTP code 403"))
+
+    with pytest.raises(APIError):
+        svc._search_codebase_multi("o/n", ["q"], "dev", strict=True)
+
+
+def test_search_codebase_multi_seam_stays_soft_without_strict():
+    """Тот же сквозной путь без strict остаётся немым — контракт не изменился."""
+    from voyageai.error import APIError
+
+    svc = _make_mcp_service()
+    svc.components.retriever = _EmbedderFailingRetriever(APIError("HTTP code 403"))
+
+    assert svc._search_codebase_multi("o/n", ["q"], "dev") == "(ничего не найдено)"
+
+
+def test_search_codebase_multi_stays_soft_on_other_failures_when_strict():
+    svc = _service_with_failing_retriever(RuntimeError("boom"))
+    assert svc._search_codebase_multi(
+        "o/n", ["q"], "dev", strict=True) == "(ничего не найдено)"
+
+
 def test_task_context_deps_code_passes_include_tests_false() -> None:
     """_TaskContextDeps.code зовёт _search_codebase_multi с include_tests=False.
 
@@ -783,6 +888,7 @@ def test_task_context_deps_code_passes_include_tests_false() -> None:
 
     call = fake_service._search_codebase_multi.call_args
     assert call.args == ("o/r", ["q1", "q2"], "dev", False)
+    assert call.kwargs["strict"] is True
     sources = call.kwargs["augment_sources"]
     assert len(sources) == 1
     assert sources[0].name == "similar-diffs"
@@ -809,7 +915,7 @@ def test_task_context_deps_similar_stores_hits_and_renders_once() -> None:
     result = deps.similar("query", "PRI")
 
     fake_service.components.task_service.search_hits.assert_called_once_with(
-        "query", project="PRI")
+        "query", project="PRI", strict=True)
     fake_service.components.task_service.render_hits.assert_called_once_with(hits)
     assert result == "1. ID-311 ..."
     assert deps._similar_hits == hits
@@ -883,7 +989,7 @@ def test_task_context_deps_test_exemplars_passes_include_tests_true() -> None:
     result = deps.test_exemplars("o/r", "dev", ["q1", "q2"])
 
     fake_service._search_codebase_multi.assert_called_once_with(
-        "o/r", ["q1", "q2"], "dev", True)
+        "o/r", ["q1", "q2"], "dev", True, strict=True)
     assert result == "tests-out"
 
 

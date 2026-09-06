@@ -1056,3 +1056,32 @@ def test_sync_service_close_attempts_all_owned_providers_and_raises_first_error(
     assert captured.value is first_error
     assert events == ["first", "second", "last"]
     assert [first.close_calls, second.close_calls, last.close_calls] == [1, 1, 1]
+
+
+class _EmbedderDownTaskService(FakeTaskService):
+    """Батч, где эмбеддер лёг: index_batch отдаёт класс структурно."""
+
+    def index_batch(self, tasks):
+        rows = super().index_batch(tasks)
+        for row in rows:
+            row.update({"embedded": False, "failure": "embedder",
+                        "retry_required": True,
+                        "warnings": ["embedder: APIError: HTTP code 403"]})
+        return rows
+
+
+def test_sync_aggregates_embedder_failure_flag():
+    """Свод синка несёт булев признак, а не только текст в warnings."""
+    provider = FakeProvider([_raw("ID-1", 100)])
+    summary = SyncService([provider], _EmbedderDownTaskService(), FakeMeta()).run()
+
+    assert summary["embedder_failed"] is True
+    assert summary["by_board"][0]["embedder_failed"] is True
+
+
+def test_sync_embedder_flag_false_without_embedder_failure():
+    provider = FakeProvider([_raw("ID-1", 100)])
+    summary = SyncService([provider], FakeTaskService(), FakeMeta()).run()
+
+    assert summary["embedder_failed"] is False
+    assert summary["by_board"][0]["embedder_failed"] is False

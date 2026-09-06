@@ -106,6 +106,7 @@ class SyncService:
             "failed": 0,
             "warnings": warnings,
             "cursor_advanced": False,
+            "embedder_failed": False,
         }
         ref = self._cursor_ref(provider.board_type, board)
         try:
@@ -247,6 +248,7 @@ class SyncService:
             1 for r in results if not r.get("embedded") and not r.get("warnings")
         )
         failed = sum(1 for r in results if r.get("warnings"))
+        embedder_failed = any(r.get("failure") == "embedder" for r in results)
         retry_required = retry_required or any(
             r.get("retry_required") is True for r in results
         )
@@ -308,6 +310,7 @@ class SyncService:
             "embedded": embedded, "refreshed": refreshed, "unchanged": unchanged,
             "meta_refreshed": meta_refreshed,
             "failed": failed, "warnings": warnings, "cursor_advanced": cursor_advanced,
+            "embedder_failed": embedder_failed,
         })
         return active_keys, one, True
 
@@ -322,7 +325,8 @@ class SyncService:
                "filter_applied": filter_is_active(sync_filter),
                "filter_fingerprint": filter_fingerprint(sync_filter),
                "filter_source": filter_source,
-               "warnings": [], "cursor_advanced": False}
+               "warnings": [], "cursor_advanced": False,
+               "embedder_failed": False}
         # PRI-170: scoped-синк из репо — только один тип доски (board_type), а не все.
         providers = self._providers
         if board_type is not None:
@@ -356,6 +360,7 @@ class SyncService:
                 agg[k] += one[k]
             agg["warnings"].extend(one["warnings"])
             agg["cursor_advanced"] = agg["cursor_advanced"] or one["cursor_advanced"]
+            agg["embedder_failed"] = agg["embedder_failed"] or one["embedder_failed"]
             by_board.append({
                 "board_type": provider.board_type,
                 "board": board or "*",
@@ -365,7 +370,7 @@ class SyncService:
                                         "filtered_by_age", "filtered_archived",
                                         "age_unknown", "archive_unknown",
                                         "filter_applied", "filter_fingerprint",
-                                        "filter_source")},
+                                        "filter_source", "embedder_failed")},
             })
 
         partial = limit is not None
