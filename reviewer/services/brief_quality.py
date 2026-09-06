@@ -217,8 +217,8 @@ def measure_and_record(
             changed_status=changed_status,
             config=config,
         )
-        history.record_brief_quality(run_id, repo, pr_number, head_sha, measurement)
-        return measurement.status
+        recorded_id = history.record_brief_quality(run_id, repo, pr_number, head_sha, measurement)
+        return measurement.status if recorded_id is not None else None
     except Exception:  # noqa: BLE001 — наблюдаемость не роняет вызывающий поток
         log.warning("Не удалось снять качество брифа для %s pr:%s", repo, pr_number,
                     exc_info=True)

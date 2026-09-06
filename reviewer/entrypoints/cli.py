@@ -1229,13 +1229,15 @@ def status(path: str, repo_tag: str | None, branch_opt: str | None,
 
 def _render_measure(summary: Mapping[str, object]) -> str:
     """Человекочитаемый отчёт по сводке `measure_corpus` (для click.echo)."""
-    fixed = {"briefs", "skipped_no_key", "skipped_no_merges", "rows"}
+    fixed = {"briefs", "skipped_no_key", "skipped_no_merges", "rows", "write_failed"}
     lines = [
         f"Брифов обработано: {summary['briefs']}",
         f"Строк записано: {summary['rows']}",
         f"Пропущено без ключа задачи: {summary['skipped_no_key']}",
         f"Пропущено без PR-мержей: {summary['skipped_no_merges']}",
     ]
+    if summary.get("write_failed"):
+        lines.append(f"Сбоев записи в БД: {summary['write_failed']}")
     statuses = {k: v for k, v in summary.items() if k not in fixed}
     if statuses:
         lines.append("По статусам:")
@@ -1266,6 +1268,11 @@ def measure_briefs(path: str, repo_tag: str | None, briefs_dir: str | None,
     config = BriefQualityConfig.from_review_yaml(data or {}, briefs_dir=briefs_dir)
     history = ReviewHistory(s.pg_dsn, min_size=s.pg_pool_min_size, max_size=s.pg_pool_max_size)
     try:
+        # Preflight: record_brief_quality гасит DB-сбои сама (fail-soft для
+        # publish_review/finish_task) — без явной проверки соединения ДО
+        # цикла команда молча отчиталась бы об успехе на лежащем Postgres.
+        # init_schema — единственный метод ReviewHistory без своего try/except.
+        history.init_schema()
         summary = measure_corpus(path, resolution.repo, config,
                                  ground_truth.git_runner(Path(path)), history)
     except psycopg.OperationalError as e:
@@ -1273,6 +1280,12 @@ def measure_briefs(path: str, repo_tag: str | None, briefs_dir: str | None,
     finally:
         history.close()
     click.echo(json.dumps(summary, ensure_ascii=False) if as_json else _render_measure(summary))
+    write_failed = summary.get("write_failed", 0)
+    if write_failed:
+        # Postgres умер на середине прогона (после preflight) — исключение
+        # уже погашено внутри measure_and_record, сигналим по счётчику.
+        click.echo(f"⚠ Не записано в БД строк: {write_failed}", err=True)
+        raise SystemExit(1)
 
 
 @cli.command()

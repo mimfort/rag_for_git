@@ -41,5 +41,10 @@ def measure_corpus(clone_path, repo, config, run_git, history) -> dict:
                 history=history, run_id=None,
             )
             summary["rows"] += 1
-            summary[status or "not_recorded"] = summary.get(status or "not_recorded", 0) + 1
+            if status is None:
+                # history здесь всегда задан (CLI создаёт его перед вызовом) —
+                # None означает сбой самой записи, а не «истории не было».
+                summary["write_failed"] = summary.get("write_failed", 0) + 1
+            else:
+                summary[status] = summary.get(status, 0) + 1
     return summary

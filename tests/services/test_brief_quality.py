@@ -431,3 +431,24 @@ def test_measure_and_record_without_history_returns_none(tmp_path):
         changed_paths=[], changed_status={}, clone_path=str(tmp_path),
         config=DEFAULT, history=None,
     ) is None
+
+
+def test_measure_and_record_returns_none_when_write_silently_fails(tmp_path):
+    """record_brief_quality — fail-soft (не бросает при сбое БД, гасит и отдаёт None).
+
+    Докстринг measure_and_record обещает «None означает, что записи не было
+    (нет истории или сбой)» — а значит обязан проверить исход самой записи,
+    а не поверить в него по факту отсутствия исключения.
+    """
+    _write_brief(tmp_path, "2026-09-01-PRI-1-x.md", ["reviewer/app.py"])
+
+    class _SilentlyFailingHistory:
+        def record_brief_quality(self, run_id, repo, pr_number, head_sha, measurement):
+            return None  # как настоящий ReviewHistory при недоступном Postgres
+
+    status = brief_quality.measure_and_record(
+        task_key="PRI-1", repo="o/r", pr_number=7, head_sha="sha",
+        changed_paths=["reviewer/app.py"], changed_status={"reviewer/app.py": "modified"},
+        clone_path=str(tmp_path), config=DEFAULT, history=_SilentlyFailingHistory(),
+    )
+    assert status is None
