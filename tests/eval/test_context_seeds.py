@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from eval.solve_task_metrics import context_seeds
+from eval.solve_task_metrics.config import DEFAULT
 
 DIFF = """diff --git a/reviewer/a.py b/reviewer/a.py
 index 111..222 100644
@@ -59,7 +60,7 @@ def test_seeds_for_merge_maps_ranges_to_symbols():
             return SOURCE_BEFORE if "^1" in args[1] else SOURCE
         raise AssertionError(args)
 
-    seeds = context_seeds.seeds_for_merge("deadbeef", {"reviewer/a.py"}, run_git)
+    seeds = context_seeds.seeds_for_merge("deadbeef", {"reviewer/a.py"}, run_git, DEFAULT)
     assert seeds.symbols == {"reviewer/a.py#f", "reviewer/a.py#g"}
 
 
@@ -68,7 +69,7 @@ def test_seeds_for_merge_skips_non_core_paths():
     def run_git(args):
         raise AssertionError("git не должен вызываться для не-core путей")
 
-    assert context_seeds.seeds_for_merge("x", {"tests/test_a.py"}, run_git).symbols == set()
+    assert context_seeds.seeds_for_merge("x", {"tests/test_a.py"}, run_git, DEFAULT).symbols == set()
 
 
 def test_seeds_for_merge_survives_git_failure():
@@ -79,7 +80,7 @@ def test_seeds_for_merge_survives_git_failure():
             return DIFF
         raise context_seeds.ground_truth.GitError("no such path")
 
-    assert context_seeds.seeds_for_merge("x", {"reviewer/a.py"}, run_git).symbols == set()
+    assert context_seeds.seeds_for_merge("x", {"reviewer/a.py"}, run_git, DEFAULT).symbols == set()
 
 
 def test_seeds_for_merge_skips_unparsable_source():
@@ -87,7 +88,7 @@ def test_seeds_for_merge_skips_unparsable_source():
     def run_git(args):
         return DIFF if args[0] == "diff" else "\x00\x01 not python"
 
-    assert context_seeds.seeds_for_merge("x", {"reviewer/a.py"}, run_git).symbols == set()
+    assert context_seeds.seeds_for_merge("x", {"reviewer/a.py"}, run_git, DEFAULT).symbols == set()
 
 
 # --- PRI-262: значимость хунка, внутренний символ, имена вызовов ---
@@ -122,7 +123,7 @@ def test_docstring_only_hunk_yields_no_seed():
     """PRI-227 в чистом виде: переименование докстринга не меняет исполняемого
     кода, поэтому не имеет права тащить call-граф своей функции."""
     result = context_seeds.seeds_for_merge(
-        "sha", {"reviewer/a.py"}, _git(DOCSTRING_BEFORE, DOCSTRING_AFTER, DOCSTRING_DIFF)
+        "sha", {"reviewer/a.py"}, _git(DOCSTRING_BEFORE, DOCSTRING_AFTER, DOCSTRING_DIFF), DEFAULT
     )
     assert result.symbols == set()
     assert result.called_names == set()
@@ -139,7 +140,7 @@ COMMENT_AFTER = "def f():\n    # новый комментарий\n    return h
 
 def test_comment_only_hunk_yields_no_seed():
     result = context_seeds.seeds_for_merge(
-        "sha", {"reviewer/a.py"}, _git(COMMENT_BEFORE, COMMENT_AFTER, COMMENT_DIFF)
+        "sha", {"reviewer/a.py"}, _git(COMMENT_BEFORE, COMMENT_AFTER, COMMENT_DIFF), DEFAULT
     )
     assert result.symbols == set()
 
@@ -173,7 +174,7 @@ def test_help_text_only_hunk_yields_no_seed():
     ничего не изменилось. Позиционное правило тут не спасает — нужен разбор
     содержимого с вымаранными строковыми литералами."""
     result = context_seeds.seeds_for_merge(
-        "sha", {"reviewer/cli.py"}, _git(HELP_BEFORE, HELP_AFTER, HELP_DIFF)
+        "sha", {"reviewer/cli.py"}, _git(HELP_BEFORE, HELP_AFTER, HELP_DIFF), DEFAULT
     )
     assert result.symbols == set()
 
@@ -204,7 +205,7 @@ def test_seeds_innermost_symbol_only():
     """chunk_python отдаёт и класс, и метод. Сид по обоим означал бы, что хунк в
     одном методе god-класса тянет исходящие рёбра всего класса."""
     result = context_seeds.seeds_for_merge(
-        "sha", {"reviewer/svc.py"}, _git(NESTED_BEFORE, NESTED_AFTER, NESTED_DIFF)
+        "sha", {"reviewer/svc.py"}, _git(NESTED_BEFORE, NESTED_AFTER, NESTED_DIFF), DEFAULT
     )
     assert result.symbols == {"reviewer/svc.py#Service.a"}
 
@@ -212,7 +213,7 @@ def test_seeds_innermost_symbol_only():
 def test_called_names_come_only_from_changed_lines():
     """Вызовы нетронутых строк той же функции в множество не попадают."""
     result = context_seeds.seeds_for_merge(
-        "sha", {"reviewer/svc.py"}, _git(NESTED_BEFORE, NESTED_AFTER, NESTED_DIFF)
+        "sha", {"reviewer/svc.py"}, _git(NESTED_BEFORE, NESTED_AFTER, NESTED_DIFF), DEFAULT
     )
     assert "fresh" in result.called_names
     assert "other" not in result.called_names
@@ -227,7 +228,7 @@ def test_pure_deletion_of_code_still_seeds():
     before = "def f():\n    # комментарий\n    return helper()\n"
     after = "def f():\n    pass\n"
     result = context_seeds.seeds_for_merge(
-        "sha", {"reviewer/a.py"}, _git(before, after, DELETE_CODE_DIFF)
+        "sha", {"reviewer/a.py"}, _git(before, after, DELETE_CODE_DIFF), DEFAULT
     )
     assert result.symbols == {"reviewer/a.py#f"}
 
@@ -236,7 +237,7 @@ def test_pure_deletion_of_comment_does_not_seed():
     before = "def f():\n    # комментарий\n    return helper()\n"
     after = "def f():\n    return helper()\n"
     result = context_seeds.seeds_for_merge(
-        "sha", {"reviewer/a.py"}, _git(before, after, DELETE_COMMENT_DIFF)
+        "sha", {"reviewer/a.py"}, _git(before, after, DELETE_COMMENT_DIFF), DEFAULT
     )
     assert result.symbols == set()
 
@@ -248,7 +249,7 @@ def test_inheritance_base_counts_as_called_name():
     after = "class A(Fresh):\n    pass\n"
     diff = "@@ -1 +1 @@\n-class A(Old):\n+class A(Fresh):\n"
     result = context_seeds.seeds_for_merge(
-        "sha", {"reviewer/a.py"}, _git(before, after, diff)
+        "sha", {"reviewer/a.py"}, _git(before, after, diff), DEFAULT
     )
     assert result.symbols == {"reviewer/a.py#A"}
     assert "Fresh" in result.called_names

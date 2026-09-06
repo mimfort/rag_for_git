@@ -2,6 +2,7 @@
 import pytest
 
 from reviewer.metrics.brief_quality import briefs
+from reviewer.metrics.brief_quality.config import DEFAULT
 
 BRIEF_WITH_TOKENS = """# Brief — PRI-42 пример
 
@@ -75,16 +76,16 @@ def test_extract_section_paths_missing_header_is_empty():
 
 
 def test_extract_task_key_from_filename():
-    assert briefs.extract_task_key("2026-08-14-PRI-250-harness.md") == "PRI-250"
-    assert briefs.extract_task_key("2026-08-14-pri-42-x.md") == "PRI-42"
-    assert briefs.extract_task_key("2026-08-14-no-key.md") is None
+    assert briefs.extract_task_key("2026-08-14-PRI-250-harness.md", DEFAULT) == "PRI-250"
+    assert briefs.extract_task_key("2026-08-14-pri-42-x.md", DEFAULT) == "PRI-42"
+    assert briefs.extract_task_key("2026-08-14-no-key.md", DEFAULT) is None
 
 
 def test_load_briefs_reads_corpus(tmp_path):
     (tmp_path / "2026-01-01-PRI-7-a.md").write_text(BRIEF_WITH_TOKENS, encoding="utf-8")
     (tmp_path / "2026-01-02-plain.md").write_text("# Brief\n", encoding="utf-8")
 
-    records = briefs.load_briefs(tmp_path)
+    records = briefs.load_briefs(tmp_path, DEFAULT)
 
     assert [r.task_key for r in records] == ["PRI-7", None]
     assert records[0].token_block is not None

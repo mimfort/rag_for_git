@@ -1,6 +1,7 @@
 """Чистый вывод контекстного ядра: без графа, обход инъектируется."""
 from __future__ import annotations
 
+from reviewer.metrics.brief_quality.config import DEFAULT
 from reviewer.metrics.brief_quality.context_core import (
     derive_context_core,
     node_paths,
@@ -25,7 +26,7 @@ def test_empty_seeds_do_not_call_traversal():
         calls.append(ids)
         return set()
 
-    assert derive_context_core([], {"reviewer/a.py"}, traverse) == set()
+    assert derive_context_core([], {"reviewer/a.py"}, traverse, DEFAULT) == set()
     assert calls == []
 
 
@@ -35,7 +36,7 @@ def test_derives_core_paths_of_neighbours():
         return {"reviewer/b.py#g", "reviewer/c.py#h"}
 
     result = derive_context_core(
-        ["reviewer/a.py#f"], {"reviewer/a.py"}, traverse
+        ["reviewer/a.py#f"], {"reviewer/a.py"}, traverse, DEFAULT
     )
     assert result == {"reviewer/b.py", "reviewer/c.py"}
 
@@ -47,7 +48,7 @@ def test_subtracts_changed_core():
         return {"reviewer/a.py#f", "reviewer/b.py#g"}
 
     result = derive_context_core(
-        ["reviewer/a.py#f"], {"reviewer/a.py"}, traverse
+        ["reviewer/a.py#f"], {"reviewer/a.py"}, traverse, DEFAULT
     )
     assert result == {"reviewer/b.py"}
 
@@ -58,7 +59,7 @@ def test_filters_non_core_paths():
         return {"tests/test_a.py#t", "docs/x.md#d", "eval/y.py#e",
                 "reviewer/b.py#g"}
 
-    result = derive_context_core(["reviewer/a.py#f"], set(), traverse)
+    result = derive_context_core(["reviewer/a.py#f"], set(), traverse, DEFAULT)
     assert result == {"reviewer/b.py"}
 
 
@@ -70,7 +71,7 @@ def test_seeds_passed_sorted_for_determinism():
         seen.append(list(ids))
         return set()
 
-    derive_context_core({"b.py#g", "a.py#f"}, set(), traverse)
+    derive_context_core({"b.py#g", "a.py#f"}, set(), traverse, DEFAULT)
     assert seen == [["a.py#f", "b.py#g"]]
 
 
@@ -80,7 +81,7 @@ def test_allowed_names_none_keeps_every_neighbour():
         return {"reviewer/b.py#g", "reviewer/c.py#H.m"}
 
     assert derive_context_core(
-        ["reviewer/a.py#f"], set(), traverse, allowed_names=None
+        ["reviewer/a.py#f"], set(), traverse, DEFAULT, allowed_names=None
     ) == {"reviewer/b.py", "reviewer/c.py"}
 
 
@@ -94,7 +95,7 @@ def test_allowed_names_filters_by_last_fqn_segment():
         return {"reviewer/b.py#g", "reviewer/c.py#H.m", "reviewer/d.py#junk"}
 
     assert derive_context_core(
-        ["reviewer/a.py#f"], set(), traverse, allowed_names={"g", "m"}
+        ["reviewer/a.py#f"], set(), traverse, DEFAULT, allowed_names={"g", "m"}
     ) == {"reviewer/b.py", "reviewer/c.py"}
 
 
@@ -105,7 +106,7 @@ def test_empty_allowed_names_drops_every_neighbour():
         return {"reviewer/b.py#g"}
 
     assert derive_context_core(
-        ["reviewer/a.py#f"], set(), traverse, allowed_names=set()
+        ["reviewer/a.py#f"], set(), traverse, DEFAULT, allowed_names=set()
     ) == set()
 
 
@@ -130,5 +131,5 @@ def test_allowed_names_none_matches_unfiltered_on_random_inputs():
         def traverse(ids, _n=neighbours):
             return set(_n)
 
-        legacy = derive_context_core(seeds, changed, traverse)
-        assert derive_context_core(seeds, changed, traverse, allowed_names=None) == legacy
+        legacy = derive_context_core(seeds, changed, traverse, DEFAULT)
+        assert derive_context_core(seeds, changed, traverse, DEFAULT, allowed_names=None) == legacy

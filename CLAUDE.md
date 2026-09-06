@@ -327,6 +327,31 @@ MCP-сессия (PreparedReview + ToolContext) живёт в процессе `
   изменившихся: типы из аннотаций половины кодовой базы шапка тянет независимо от темы задачи.
   В-третьих, **вся правка живёт в `eval/`**: `reviewer/metrics/brief_quality/**` не тронут, и
   аддитивность подтверждена не только тестом — вся core-линия обеих сторон побайтово совпадает.
+- **Ядро метрики брифа репо-агностично, а съём — трёхточечный (PRI-271/PRI-270).**
+  Ядро продакшн-путей, ключ задачи и каталог брифов перестали быть хардкодом
+  rag_for_git: `reviewer/metrics/brief_quality/config.py::BriefQualityConfig`
+  резолвится из `.review.yml` (ключ `metrics.brief_quality.core_paths`, см. этот
+  файл в корне репозитория) и передаётся явным параметром `config` во все функции
+  расчётного ядра — без дефолта, чтобы молчаливое ядро rag_for_git не оказалось
+  тихим провалом для чужого репозитория. Три вещи здесь неочевидны. Во-первых,
+  **`unconfigured_core_denominator` требует ДВУХ условий одновременно** — пустой
+  знаменатель ядра И отсутствие ключа `core_paths` в `.review.yml` — а не одного
+  из них: развязать их значило бы столкнуть лбами «в диффе только тесты и доки»
+  (честный `empty_core_denominator`) и «репозиторий не настроен, ядро посчитано
+  чужой линейкой» (`unconfigured_core_denominator`) — ровно то различие, ради
+  которого статус вообще заведён. Во-вторых, **матчер путей собственный, не
+  `fnmatch`**: `fnmatch` не знает про `/`, и на нём невыразимо правило «только
+  корневые `*.py`» (`fnmatch("reviewer/x.py", "*.py")` истинно) — поэтому
+  `_glob_to_regex` компилирует `**`/`*`/`?` вручную, с `**` пересекающим `/` и
+  одиночным `*` — нет. В-третьих, **уникальность строки измерения — по
+  `(repo, pr_number, COALESCE(task_key, ''))`**, а не по одному `task_key`:
+  в SQL `NULL ≠ NULL`, и без `COALESCE` каждая задача без ключа получала бы
+  собственную строку вместо одной переиспользуемой. Съём теперь трёхточечный —
+  `publish_review` (с `run_id`), `finish_task` и CLI `reviewer measure-briefs`
+  (оба без `run_id`) — общей точкой стал `reviewer.services.brief_quality.
+  measure_and_record`; идентичность строки держится на тройке выше, а не на
+  факте прогона ревью, поэтому более ранний съём без ревью и более поздний
+  `publish_review` дописывают одну и ту же строку, а не плодят две.
 - **Полная воронка находок в `review_findings` (outcome/reject_reason).** `review_findings` персистит **каждого кандидата**, а не только опубликованных: колонка `outcome` — терминальный исход одного из 6 состояний (`published_inline`/`published_summary`/`verify_rejected`/`gate_dropped`/`deduped`/`already_posted`), `reject_reason` — причина отсева (текст верификатора при `verify_rejected` через `VerdictIn.reason`; сработавшее правило политики через `ReviewPolicy.gate_reason` при `gate_dropped`; иначе `NULL`). Учёт — чистый юнит `reviewer/agent/outcomes.py::account_outcomes`, инвариант `len(rows) == len(candidates)` (сумма по 6 исходам = числу кандидатов). **`deduped`-разность считается по IDENTITY (`id()`), не по fingerprint**: точный дубль имеет тот же fingerprint, что выживший (`dedup_findings` возвращает те же объекты), поэтому fingerprint-diff недосчитал бы схлопнутые. `outcome` — новое поле-истина; старые `is_real`/`published`/`inline` заполняются как прежде (обратная совместимость). Миграция аддитивна/идемпотентна (`ADD COLUMN IF NOT EXISTS` + best-effort бэкфилл). При `status='error'` строки хранят намеченный `outcome`, но `published=False`.
 - **MCP-сессия живёт в процессе сервера** между `prepare_review` и `publish_review` одного PR: `_Session(prepared, ctx)` в `MCPReviewService._sessions`. При повторном `prepare_review` для того же (repo, pr) сессия перезаписывается, старый VCS-провайдер закрывается (fail-soft).
 - **Плагин** находится в `plugin/` в корне репозитория — это корень Claude Code-плагина для скилла `/rag-reviewer:review-pr`.
