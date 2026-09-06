@@ -10,11 +10,13 @@ from eval.solve_task_metrics import briefs as eval_briefs
 from eval.solve_task_metrics import classify as eval_classify
 from eval.solve_task_metrics import config as eval_config
 from eval.solve_task_metrics import context_core as eval_context_core
+from eval.solve_task_metrics import ground_truth as eval_ground_truth
 from eval.solve_task_metrics import recall as eval_recall
 from reviewer.metrics.brief_quality import briefs as prod_briefs
 from reviewer.metrics.brief_quality import classify as prod_classify
 from reviewer.metrics.brief_quality import config as prod_config
 from reviewer.metrics.brief_quality import context_core as prod_context_core
+from reviewer.metrics.brief_quality import ground_truth as prod_ground_truth
 from reviewer.metrics.brief_quality import recall as prod_recall
 
 
@@ -32,6 +34,8 @@ def test_eval_reexports_production_objects():
     assert eval_context_core.node_paths is prod_context_core.node_paths
     assert eval_config.BriefQualityConfig is prod_config.BriefQualityConfig
     assert eval_config.DEFAULT is prod_config.DEFAULT
+    assert eval_ground_truth.collect is prod_ground_truth.collect
+    assert eval_ground_truth.filter_pr_merges is prod_ground_truth.filter_pr_merges
 
 
 def test_production_core_does_not_import_eval():
