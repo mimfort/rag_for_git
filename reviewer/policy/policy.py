@@ -8,6 +8,7 @@ import yaml
 from reviewer.config.settings import SeverityLevel
 from reviewer.config.task_board import normalize_task_board_config
 from reviewer.index.pathfilter import is_ignored
+from reviewer.metrics.brief_quality.config import BriefQualityConfig
 from reviewer.policy.context_limits import ContextLimits
 
 _SEV = {"low": 0, "medium": 1, "high": 2, "critical": 3}
@@ -39,6 +40,8 @@ class ReviewPolicy:
     summary_paths_ignore: list[str] = field(
         default_factory=lambda: list(DEFAULT_SUMMARY_PATHS_IGNORE)
     )   # фильтр кластеризации сводок; НЕ влияет на индекс ревью (PRI-245)
+    brief_quality: BriefQualityConfig = field(
+        default_factory=BriefQualityConfig)   # ядро метрики брифа (PRI-271), только из .review.yml
 
     @staticmethod
     def _summary_paths_ignore(data: Mapping[str, object]) -> list[str] | None:
@@ -91,6 +94,7 @@ class ReviewPolicy:
             summary_cluster_depth_overrides=dict(
                 data.get("summary_cluster_depth_overrides", {}) or {}),
             context_limits=ContextLimits.from_review_yaml(data),
+            brief_quality=BriefQualityConfig.from_review_yaml(data),
             bug_reports=bool(data.get("bug_reports", True)),
             summary_paths_ignore=(
                 list(DEFAULT_SUMMARY_PATHS_IGNORE)
@@ -156,6 +160,8 @@ class ReviewPolicy:
                 data["summary_cluster_depth_overrides"] or {})
         if "context_limits" in data:
             policy.context_limits = ContextLimits.from_review_yaml(data)
+        if "metrics" in data or "task_board" in data:
+            policy.brief_quality = BriefQualityConfig.from_review_yaml(data)
         if "bug_reports" in data:
             policy.bug_reports = bool(data["bug_reports"])
         summary_paths_ignore = cls._summary_paths_ignore(data)
