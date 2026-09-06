@@ -32,9 +32,11 @@ IMPORT_RE = re.compile(
 # функции без Postgres/Neo4j/Voyage. chunk_python — tree-sitter-разбор в памяти
 # (на тексте, прочитанном инъектированным run_git, а не живым клиентом),
 # is_core_production_path — та же чистая классификация путей, что у classify.py.
+# config.py (PRI-271) — тот же класс: чистый ре-экспорт неизменяемого датакласса
+# BriefQualityConfig, без ввода-вывода вообще.
 ALLOWED = {
     "briefs.py", "classify.py", "recall.py", "live.py", "variants.py",
-    "subquery_stats.py", "context_core.py", "context_seeds.py",
+    "subquery_stats.py", "context_core.py", "context_seeds.py", "config.py",
 }
 
 

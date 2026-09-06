@@ -1,47 +1,42 @@
 """Классификация путей: что входит в ядро и как называется промах."""
 from __future__ import annotations
 
+from reviewer.metrics.brief_quality.config import BriefQualityConfig
+
 NEW_FILE_CATEGORY = "новый файл (не существовал до PR)"
+ROOT_CATEGORY = "корень"
 
 
-def is_core_production_path(path: str) -> bool:
+def is_core_production_path(path: str, config: BriefQualityConfig) -> bool:
     """Уже существовавший продакшн-код, по которому ретрив может и должен попадать.
 
-    Ядро: reviewer/**/*.py, plugin/** кроме *.md, корневые *.py. Всё остальное
-    (тесты, доки, конфиги, манифесты, eval/) — вне ядра: бриф структурно не
+    Ядро задаёт `config.core_paths` (по умолчанию — ядро rag_for_git). Всё
+    остальное — тесты, доки, конфиги, манифесты — вне ядра: бриф структурно не
     обязан их предсказывать, и включение их в знаменатель делает recall
     метрикой размера diff'а, а не качества ретрива.
+
+    `config` обязателен намеренно: значение по умолчанию вернуло бы ровно тот
+    тихий провал, ради которого задача и делалась — чужой репозиторий молча
+    считался бы по ядру rag_for_git.
     """
-    if path.startswith("eval/"):
-        return False
-    if path.startswith("reviewer/") and path.endswith(".py"):
-        return True
-    if path.startswith("plugin/") and not path.endswith(".md"):
-        return True
-    if "/" not in path and path.endswith(".py"):
-        return True
-    return False
+    return config.matches_core(path)
 
 
-def categorize_miss(path: str, existed_before: bool) -> str:
-    """Категория непредсказанного файла. Новый файл — отдельная категория:
-    бриф не мог сослаться на файл, которого ещё не существовало."""
+def categorize_miss(path: str, existed_before: bool, config: BriefQualityConfig) -> str:
+    """Категория непредсказанного файла.
+
+    Категории выводятся из тех же `core_paths`, что и само ядро: файл ядра
+    называется «верхний сегмент + модуль», прочий — верхним сегментом. Прежний
+    захардкоженный список ярлыков (`.review.yml/конфиги`, `plugin/skills/*.md`)
+    на чужом репозитории врал, а разъехаться с определением ядра теперь нечему.
+    Новый файл — отдельная категория: бриф не мог сослаться на файл, которого
+    ещё не существовало.
+    """
     if not existed_before:
         return NEW_FILE_CATEGORY
-    if path.startswith("tests/"):
-        return "tests/"
-    if path.startswith("docs/"):
-        return "docs/"
-    if path == ".review.yml" or path.endswith(".review.yml"):
-        return ".review.yml/конфиги"
-    if path.startswith("plugin/skills/") and path.endswith(".md"):
-        return "plugin/skills/*.md"
-    if path.startswith("plugin/"):
-        return "plugin/ (прочее)"
-    if path.startswith("reviewer/"):
-        parts = path.split("/")
-        module = parts[1] if len(parts) > 1 else ""
-        return f"reviewer/{module}" if module else "reviewer/"
-    if path.startswith("eval/"):
-        return "eval/"
-    return "прочее"
+    parts = path.split("/")
+    if len(parts) == 1:
+        return ROOT_CATEGORY
+    if config.matches_core(path) and len(parts) > 2:
+        return f"{parts[0]}/{parts[1]}"
+    return f"{parts[0]}/"

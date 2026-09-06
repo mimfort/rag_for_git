@@ -7,6 +7,7 @@ from __future__ import annotations
 import pytest
 
 from reviewer.metrics.brief_quality import classify, recall
+from reviewer.metrics.brief_quality.config import DEFAULT
 from reviewer.services.brief_quality import BRIEFS_DIR, find_brief, measure
 
 _BRIEF = """# Brief — PRI-999 Тестовая задача
@@ -286,7 +287,7 @@ def test_online_matches_offline_formula_on_full_diff(tmp_path):
     expected_core_offline = {
         path
         for path in expected_offline
-        if classify.is_core_production_path(path) and existed_offline(path)
+        if classify.is_core_production_path(path, DEFAULT) and existed_offline(path)
     }
     offline_row = recall.evaluate_task(
         "PRI-999", predicted, expected_offline, expected_core_offline

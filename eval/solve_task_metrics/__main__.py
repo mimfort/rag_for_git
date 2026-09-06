@@ -24,6 +24,7 @@ from . import (
     subquery_stats,
     variants,
 )
+from .config import BriefQualityConfig
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 BRIEFS_DIR = REPO_ROOT / "docs" / "superpowers" / "briefs"
@@ -56,6 +57,7 @@ def cmd_snapshot(_args) -> int:
         run_git=run_git,
         commit=_head_commit(run_git),
         taken_at=taken_at,
+        config=BriefQualityConfig(),
         transcripts=transcripts,
     )
     history.append_snapshot(HISTORY_PATH, snap)
@@ -142,6 +144,7 @@ def cmd_forecast(args) -> int:
         run_git=run_git,
         commit=_head_commit(run_git),
         taken_at=dt.datetime.now(dt.timezone.utc).isoformat(),
+        config=BriefQualityConfig(),
     )
     items = forecast.build(rows)
     if args.core_files is None:
@@ -231,7 +234,8 @@ def _replay_side(provider, args, run_git, commit, taken_at, repo, branch,
     snap = replay_mod.run_replay(
         provider=provider, run_git=run_git, briefs_dir=BRIEFS_DIR,
         target=target, variant_name=variant_name, commit=commit,
-        taken_at=taken_at, limit=args.limit, seed_mode=args.context_seeds,
+        taken_at=taken_at, config=BriefQualityConfig(),
+        limit=args.limit, seed_mode=args.context_seeds,
     )
     replay_history.append(REPLAY_HISTORY_PATH, snap)
     return snap
@@ -321,7 +325,7 @@ def cmd_subqueries(args) -> int:
     provider, repo, branch = live.open_live(args.repo, args.branch)
     with provider:
         rows = []
-        for key in replay_mod.corpus_keys(BRIEFS_DIR):
+        for key in replay_mod.corpus_keys(BRIEFS_DIR, BriefQualityConfig()):
             task = provider.task(key)
             rows.append((key, task, provider.query(task, key)))
     print(f"Корпус: {len(rows)} задач, репозиторий {repo}@{branch}")

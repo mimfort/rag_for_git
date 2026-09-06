@@ -4,6 +4,7 @@ from __future__ import annotations
 import pathlib
 
 from eval.solve_task_metrics import replay
+from eval.solve_task_metrics.config import DEFAULT
 
 BRIEF = """# Brief — {key}
 
@@ -115,6 +116,7 @@ def _run(tmp_path, keys, *, tasks, changed, predicted, fail=(), missing=(), limi
         variant_name="baseline",
         commit="deadbee",
         taken_at="2026-08-17T00:00:00+00:00",
+        config=DEFAULT,
         limit=limit,
         seed_mode=seed_mode,
     )
@@ -195,7 +197,7 @@ def test_duplicate_keys_counted_once(tmp_path):
     briefs.mkdir()
     for name in ("2026-01-01-PRI-7-a.md", "2026-01-02-PRI-7-b.md"):
         (briefs / name).write_text(BRIEF.format(key="PRI-7"), encoding="utf-8")
-    assert replay.corpus_keys(briefs) == ["PRI-7"]
+    assert replay.corpus_keys(briefs, DEFAULT) == ["PRI-7"]
 
 
 def test_limit_truncates_corpus_and_marks_snapshot_partial(tmp_path):
@@ -289,6 +291,7 @@ def _run_with_failing_graph(tmp_path, keys, *, tasks, changed, predicted):
         variant_name="baseline",
         commit="deadbee",
         taken_at="2026-08-17T00:00:00+00:00",
+        config=DEFAULT,
     )
 
 
@@ -390,14 +393,14 @@ def test_seed_mode_lines_is_the_default_and_ignores_signature_names(monkeypatch,
     """Дефолт тождественен поведению до PRI-266: шапка не участвует."""
     seen = {}
 
-    def fake_collect(truth, run_git):
+    def fake_collect(truth, run_git, config):
         return replay.context_seeds.SeedSet(
             symbols={"reviewer/a.py#g"},
             called_names={"g"},
             signature_names={"Sig"},
         )
 
-    def fake_derive(seed_ids, changed_core, traverse, allowed_names=None):
+    def fake_derive(seed_ids, changed_core, traverse, config, allowed_names=None):
         seen["allowed"] = allowed_names
         return set()
 
@@ -417,14 +420,14 @@ def test_seed_mode_lines_is_the_default_and_ignores_signature_names(monkeypatch,
 def test_seed_mode_signature_unions_both_name_sources(monkeypatch, tmp_path):
     seen = {}
 
-    def fake_collect(truth, run_git):
+    def fake_collect(truth, run_git, config):
         return replay.context_seeds.SeedSet(
             symbols={"reviewer/a.py#g"},
             called_names={"g"},
             signature_names={"Sig"},
         )
 
-    def fake_derive(seed_ids, changed_core, traverse, allowed_names=None):
+    def fake_derive(seed_ids, changed_core, traverse, config, allowed_names=None):
         seen["allowed"] = allowed_names
         return set()
 

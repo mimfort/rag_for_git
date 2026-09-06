@@ -1,5 +1,6 @@
 """Unit-тесты сборки среза по корпусу брифов (git инъектирован, сети нет)."""
 from eval.solve_task_metrics import history, snapshot
+from eval.solve_task_metrics.config import DEFAULT
 
 BRIEF = """# Brief — PRI-7 пример
 
@@ -35,6 +36,7 @@ def test_build_snapshot_counts_corpus_and_metrics(tmp_path):
         run_git=_fake_git,
         commit="deadbee",
         taken_at="2026-08-14T00:00:00+00:00",
+        config=DEFAULT,
     )
 
     assert snap["schema"] == history.SCHEMA
@@ -52,7 +54,7 @@ def test_build_snapshot_weighted_cost_is_below_raw(tmp_path):
 
     snap, _ = snapshot.build_snapshot(
         briefs_dir=tmp_path, run_git=_fake_git, commit="c",
-        taken_at="2026-08-14T00:00:00+00:00",
+        taken_at="2026-08-14T00:00:00+00:00", config=DEFAULT,
     )
 
     assert snap["cost"]["weighted_median"] < snap["cost"]["raw_median"]
@@ -64,7 +66,7 @@ def test_build_snapshot_counts_new_file_miss(tmp_path):
 
     snap, _ = snapshot.build_snapshot(
         briefs_dir=tmp_path, run_git=_fake_git, commit="c",
-        taken_at="2026-08-14T00:00:00+00:00",
+        taken_at="2026-08-14T00:00:00+00:00", config=DEFAULT,
     )
 
     assert snap["misses"]["новый файл (не существовал до PR)"] == 1
@@ -76,7 +78,7 @@ def test_build_snapshot_brief_without_key_not_in_quality(tmp_path):
 
     snap, rows = snapshot.build_snapshot(
         briefs_dir=tmp_path, run_git=_fake_git, commit="c",
-        taken_at="2026-08-14T00:00:00+00:00",
+        taken_at="2026-08-14T00:00:00+00:00", config=DEFAULT,
     )
 
     assert rows == []
@@ -105,6 +107,7 @@ def test_build_snapshot_counts_one_key_once(tmp_path):
         run_git=fake_git,
         commit="deadbee",
         taken_at="2026-01-03T00:00:00+00:00",
+        config=DEFAULT,
     )
 
     assert snap["corpus"]["briefs"] == 2

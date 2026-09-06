@@ -3257,11 +3257,13 @@ class MCPReviewService:
             key = task_key
             if not key and p.task_keys:
                 key = p.task_keys.get("primary")
+            policy, _ = self._resolve_policy(repo, p.prq.base_ref)
             measurement = brief_quality.measure(
                 task_key=key,
                 clone_path=self._repo_clone_path(repo),
                 changed_paths=p.changed_paths,
                 changed_status=p.changed_status,
+                config=policy.brief_quality,
             )
             history = self._review_service._ensure_history()
             if history is None:

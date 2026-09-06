@@ -15,6 +15,7 @@ from __future__ import annotations
 from typing import Callable, Iterable
 
 from reviewer.metrics.brief_quality.classify import is_core_production_path
+from reviewer.metrics.brief_quality.config import BriefQualityConfig
 
 Traversal = Callable[[list], set]
 """Обход графа: отсортированный список сид-символов → множество соседних node_id."""
@@ -38,6 +39,7 @@ def derive_context_core(
     seed_ids: Iterable[str],
     changed_core: Iterable[str],
     traverse: Traversal,
+    config: BriefQualityConfig,
     allowed_names: set | None = None,
 ) -> set:
     """Контекстное ядро: core-пути соседей сид-символов минус изменённое ядро.
@@ -64,5 +66,5 @@ def derive_context_core(
     neighbours = traverse(seeds)
     if allowed_names is not None:
         neighbours = {n for n in neighbours if symbol_name(n) in allowed_names}
-    paths = {p for p in node_paths(neighbours) if is_core_production_path(p)}
+    paths = {p for p in node_paths(neighbours) if is_core_production_path(p, config)}
     return paths - set(changed_core)

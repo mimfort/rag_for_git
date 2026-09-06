@@ -19,6 +19,7 @@ import re
 from dataclasses import dataclass, field
 
 from reviewer.metrics.brief_quality import briefs, classify, recall
+from reviewer.metrics.brief_quality.config import DEFAULT, BriefQualityConfig
 
 log = logging.getLogger(__name__)
 
@@ -90,11 +91,17 @@ def measure(
     clone_path: str | None,
     changed_paths: list,
     changed_status: dict,
+    config: BriefQualityConfig = DEFAULT,
 ) -> BriefQualityMeasurement:
     """Посчитать качество брифа задачи против фактического diff'а PR.
 
     Никогда не бросает: каждый отказ — именованный status, потому что молчание
     неотличимо от «метрика сломалась».
+
+    `config` по умолчанию — ядро rag_for_git (`DEFAULT`): вызывающий из
+    reviewer/mcp/service.py обязан передавать реально отрезолвленную политику
+    репозитория, а не полагаться на дефолт (иначе метрика чужого репозитория
+    молча считалась бы по чужой линейке).
     """
     if not task_key:
         return BriefQualityMeasurement(status=STATUS_NO_TASK_KEY)
@@ -140,13 +147,13 @@ def measure(
     expected_core = {
         path
         for path in expected
-        if classify.is_core_production_path(path) and existed_before(path)
+        if classify.is_core_production_path(path, config) and existed_before(path)
     }
     row = recall.evaluate_task(task_key, predicted, expected, expected_core)
 
     misses: dict = {}
     for missed in expected - predicted:
-        category = classify.categorize_miss(missed, existed_before(missed))
+        category = classify.categorize_miss(missed, existed_before(missed), config)
         misses[category] = misses.get(category, 0) + 1
 
     status = STATUS_MEASURED if expected_core else STATUS_EMPTY_CORE
