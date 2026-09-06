@@ -134,6 +134,39 @@ def test_measure_briefs_command_renders_text_summary(
 @patch("reviewer.entrypoints.cli.ReviewHistory")
 @patch("reviewer.entrypoints.cli.measure_corpus")
 @patch("reviewer.entrypoints.cli.remote_url")
+def test_measure_briefs_config_sees_home_layer_core_paths(
+    mock_remote_url, mock_measure, mock_history_cls, monkeypatch, tmp_path
+):
+    """core_paths, заданный ТОЛЬКО домашним слоем (home:review.yml, не .review.yml
+    самого клона), обязан попасть в config, который CLI передаёт в measure_corpus —
+    как и у finish_task/publish_review (_resolve_policy). Голое чтение файла
+    клона такой слой не видит вовсе, и три точки съёма считали бы по разным
+    линейкам для одного и того же PR."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    mock_remote_url.return_value = "https://github.com/owner/myrepo.git"
+    mock_measure.return_value = {
+        "briefs": 0, "skipped_no_key": 0, "skipped_no_merges": 0, "rows": 0,
+    }
+    mock_history_cls.return_value = MagicMock()
+
+    home_review = tmp_path / "rag-reviewer" / "review.yml"
+    home_review.parent.mkdir(parents=True, exist_ok=True)
+    home_review.write_text(
+        "metrics:\n  brief_quality:\n    core_paths: ['custom_core/**']\n",
+        encoding="utf-8",
+    )
+
+    result = CliRunner().invoke(cli, ["measure-briefs", str(tmp_path)])
+
+    assert result.exit_code == 0, result.output
+    passed_config = mock_measure.call_args[0][2]
+    assert passed_config.core_paths == ("custom_core/**",)
+    assert passed_config.configured is True
+
+
+@patch("reviewer.entrypoints.cli.ReviewHistory")
+@patch("reviewer.entrypoints.cli.measure_corpus")
+@patch("reviewer.entrypoints.cli.remote_url")
 def test_measure_briefs_json_flag_is_machine_readable(
     mock_remote_url, mock_measure, mock_history_cls, monkeypatch, tmp_path
 ):

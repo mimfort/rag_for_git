@@ -1262,10 +1262,16 @@ def measure_briefs(path: str, repo_tag: str | None, briefs_dir: str | None,
         # Fail-open, как migrate-branches: команда ничего не индексирует, но
         # молчать про чужой repo-тег в строках brief_quality тоже не должна.
         click.echo("⚠ " + _substitution_note(path, resolution.repo), err=True)
-    review_yaml = Path(path) / ".review.yml"
-    data = (yaml.safe_load(review_yaml.read_text(encoding="utf-8"))
-            if review_yaml.exists() else {})
-    config = BriefQualityConfig.from_review_yaml(data or {}, briefs_dir=briefs_dir)
+    # Слоистый резолв (env/home/committed), как у finish_task/publish_review —
+    # голое чтение файла клона молча теряло бы core_paths/key_pattern,
+    # заданные через home:review.yml или home:repos/<owner>/<name>.yml, и три
+    # точки съёма считали бы по разным линейкам для одного и того же PR.
+    # Committed-слой — из HEAD клона (git show, без сети, PRI-235); fail-soft
+    # по умолчанию (strict_committed=False) — недоступный/битый .review.yml не
+    # должен обнулять домашние слои и уж тем более ронять весь пересчёт корпуса.
+    fetch_committed = CommittedLayerFetcher(resolution.repo, clone_path=path)
+    policy_data, _policy_meta = resolve_policy_data(resolution.repo, "HEAD", fetch_committed)
+    config = BriefQualityConfig.from_review_yaml(policy_data, briefs_dir=briefs_dir)
     history = ReviewHistory(s.pg_dsn, min_size=s.pg_pool_min_size, max_size=s.pg_pool_max_size)
     try:
         # Preflight: record_brief_quality гасит DB-сбои сама (fail-soft для
