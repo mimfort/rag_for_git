@@ -16,7 +16,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - name: HOL Plugin Scanner
-        uses: hashgraph-online/ai-plugin-scanner-action@11cbacde361ef96e800316edbaadb332415798e7  # v1
+        uses: hashgraph-online/ai-plugin-scanner-action@3220f5fedcd269533a6275738b2ab5d5f9753e8e  # v1
         with:
           # Сканируем сам плагин, а не весь репозиторий: при plugin_dir "." в скан
           # попадали eval-репорты, и энтропийная эвристика принимала имена файлов
