@@ -235,7 +235,8 @@ def diversify_by_file(items: list, *, max_files: int, max_chunks_per_file: int) 
 def search_multi(retriever, repo: str, queries: list[str], *, limits=None,
                  section_limits=None, hops: int = 1, branch: str = "",
                  include_tests: bool = False, augment_sources=None,
-                 strict: bool = False, include_selection_stats: bool = False) -> ContextPack:
+                 strict: bool = False, tests_only: bool = False,
+                 include_selection_stats: bool = False) -> ContextPack:
     """Мультизапросный ретрив по base-индексу ветки: N прогонов, RRF, обрезка.
 
     Реранкера и cliff-отсечки здесь нет — финальный ранкер RRF (см. докстринг
@@ -247,6 +248,9 @@ def search_multi(retriever, repo: str, queries: list[str], *, limits=None,
     max_chunks_per_file × chars_per_file (его держит cap_block на ИСХОДНОМ
     тексте блока); section_limits.max_chars — лишь страховочный потолок после
     рендера.
+
+    `tests_only` оставляет тестовые пути после расширения графа и отключает
+    подмешивание. Этот режим имеет приоритет над `include_tests`.
 
     Источники подмешивания приходят списком AugmentSource (обобщение PRI-258):
     у каждого своё имя и своя файловая квота — РЕЗЕРВ слотов внутри max_files,
@@ -291,7 +295,9 @@ def search_multi(retriever, repo: str, queries: list[str], *, limits=None,
     rank_by_path: dict[str, int] = {}
     for rank, item in enumerate(items):
         rank_by_path.setdefault(item.path, rank)
-    if not include_tests:
+    if tests_only:
+        items = [item for item in items if _is_test_path(item.path)]
+    elif not include_tests:
         items = [item for item in items if not _is_test_path(item.path)]
     candidates = {item.path for item in items} if include_selection_stats else None
     # Сначала — полная гибридная выдача на весь бюджет max_files, как если бы
@@ -303,7 +309,7 @@ def search_multi(retriever, repo: str, queries: list[str], *, limits=None,
                                      max_chunks_per_file=sec.max_chunks_per_file)
     hybrid_paths = {item.path for item in hybrid_final}
     augmented, note = _augment_items(
-        retriever, repo, sources=augment_sources, bref=bref,
+        retriever, repo, sources=None if tests_only else augment_sources, bref=bref,
         known_paths=hybrid_paths,
         include_tests=include_tests, rank_by_path=rank_by_path)
     # Резерв слотов: augmented — свой путь дедупа не требует (fetch_retrieved_
