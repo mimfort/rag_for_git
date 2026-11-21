@@ -317,9 +317,12 @@ a New Chat or new CLI session. In an IDE, also use Reload Window.
 ### Required services and credentials
 
 Run `reviewer` without arguments to open the command menu. Search accepts full commands such as
-`reviewer init`. In a command form, F3 opens the preview even when a flag has focus.
+`reviewer init`. In a command form, Left and Right cycle through supported choices. F3 opens the
+preview.
 
 `reviewer init` asks for missing keys and previews the proposed configuration before saving.
+When creating a repository profile, use the edit-branches action in the preview to adjust the
+plan while keeping the keys you entered.
 Use `reviewer init --advanced` to choose providers or configure stores and task boards.
 `reviewer init --dry-run` prints the plan without writing. Use `reviewer check --env-file PATH`
 to validate a separate setup profile. Default env file resolution

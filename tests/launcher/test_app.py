@@ -663,6 +663,18 @@ def test_details_render_click_help_and_choices():
     assert "internal_mode" not in rendered
 
 
+def test_choice_options_can_be_selected_with_arrows_and_cleared():
+    with create_pipe_input() as pipe:
+        pipe.send_bytes(b"\r\x1b[C\x1b[C\x1b[D\x1bOR\r\x03")
+        selected = run_launcher(commands=(_choice_spec(),), input=pipe, output=DummyOutput())
+    assert selected.argv == ("choose", "--mode", "fast")
+
+    with create_pipe_input() as pipe:
+        pipe.send_bytes(b"\r\x1b[C\x1b[D\x1bOR\r\x03")
+        cleared = run_launcher(commands=(_choice_spec(),), input=pipe, output=DummyOutput())
+    assert cleared.argv == ("choose",)
+
+
 def test_repeatable_metavar_and_encoding_are_explained_by_app():
     check = _spec("check")
     parameter = next(item for item in check.params if item.name == "board_project_values")
