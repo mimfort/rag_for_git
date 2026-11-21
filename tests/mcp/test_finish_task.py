@@ -1,3 +1,5 @@
+import pytest
+
 from reviewer.config.provider_credentials import ProviderCredentialSource
 from reviewer.config.settings import Settings
 from reviewer.mcp.service import MCPReviewService
@@ -10,6 +12,7 @@ from reviewer.tasks.boards.registry import (
     ProviderOptionSpec,
     ProviderSetupSpec,
 )
+from reviewer.vcs.base import ChangedFile
 from tests.provider_access import FAKE_PROVIDER_ACCESS
 
 
@@ -305,3 +308,229 @@ def test_finish_task_link_status_matches_warnings_contract():
     assert out["task_link_status"] in {"added", "already_present", "failed"}
     assert out["task_link_added"] is (out["task_link_status"] == "added")
     assert not [w for w in out["warnings"] if "ссылка на задачу" in w]
+
+
+# --- Съём качества брифа на finish_task (PRI-270) -----------------------------
+
+
+def _write_brief(tmp_path, name, relevant):
+    directory = tmp_path / "docs" / "superpowers" / "briefs"
+    directory.mkdir(parents=True, exist_ok=True)
+    lines = "\n".join(f"- `{path}` — зачем" for path in relevant)
+    (directory / name).write_text(f"# Brief\n\n## Relevant code\n{lines}\n", encoding="utf-8")
+
+
+class _FakeHistory:
+    """Подложка ReviewHistory: помнит аргументы record_brief_quality в recorded."""
+
+    def __init__(self, recorded):
+        self._recorded = recorded
+
+    def record_brief_quality(self, run_id, repo, pr_number, head_sha, measurement):
+        self._recorded["run_id"] = run_id
+        self._recorded["repo"] = repo
+        self._recorded["pr_number"] = pr_number
+        self._recorded["head_sha"] = head_sha
+        self._recorded["status"] = measurement.status
+        return 1
+
+
+class _MetricVCS(_FakeVCS):
+    """`_FakeVCS` + дифф/head_sha/base_ref, нужные съёму метрики
+    (get_changed_files, PR.head_sha, PR.base_ref)."""
+
+    def __init__(self, *, vcs_raises=False, base_ref="main",
+                 changed_path="reviewer/app.py", **kwargs):
+        super().__init__(**kwargs)
+        self._vcs_raises = vcs_raises
+        self._base_ref = base_ref
+        self._changed_path = changed_path
+
+    def get_changed_files(self, number):
+        if self._vcs_raises:
+            raise RuntimeError("VCS недоступен")
+        return [ChangedFile(path=self._changed_path, status="modified", patch=None)]
+
+    def get_pull_request(self, number):
+        pr = super().get_pull_request(number)
+        return type("PR", (), {
+            "number": pr.number, "body": pr.body, "head_sha": "deadbeef",
+            "base_ref": self._base_ref,
+        })()
+
+
+def _service_with_board(monkeypatch, tmp_path, recorded, *, vcs_raises=False, on_vcs_open=None):
+    """Собрать finish_task-сервис с подложками съёма: клон, политика, история.
+
+    `_resolve_policy`/`_repo_clone_path` подменены напрямую — их резолв не
+    предмет этой задачи (Task 3/4 уже покрыты своими тестами), а VCS-фабрика
+    даёт `_MetricVCS`, умеющую и бэклинк, и `get_changed_files`/`head_sha` для
+    съёма метрики — один провайдер на обе операции, как того требует `_pr_session`.
+    """
+    from reviewer.metrics.brief_quality.config import DEFAULT
+
+    vcs = _MetricVCS(vcs_raises=vcs_raises)
+    svc = _Svc(["fake"], vcs=vcs)
+    if on_vcs_open is not None:
+        factory = svc._vcs_factory
+
+        def _tracked(owner, name):
+            on_vcs_open((owner, name))
+            return factory(owner, name)
+
+        svc._vcs_factory = _tracked
+    svc._review_service = type(
+        "RS", (), {"_ensure_history": lambda self: _FakeHistory(recorded)}
+    )()
+    monkeypatch.setattr(svc, "_repo_clone_path", lambda repo: str(tmp_path))
+    monkeypatch.setattr(
+        svc, "_resolve_policy",
+        lambda repo, branch: (type("P", (), {"brief_quality": DEFAULT})(), None),
+    )
+    return svc
+
+
+def test_finish_task_records_brief_quality(monkeypatch, tmp_path):
+    """Съём метрики на закрытии задачи: строка пишется, run_id остаётся пустым."""
+    _write_brief(tmp_path, "2026-09-01-PRI-1-x.md", ["reviewer/app.py"])
+    recorded = {}
+    svc = _service_with_board(monkeypatch, tmp_path, recorded)   # хелпер модуля
+    out = svc.finish_task("PRI-1", "https://github.com/o/r/pull/7")
+    assert out["status"] == "ok"
+    assert out["brief_quality_status"] == "measured"
+    assert recorded["run_id"] is None and recorded["pr_number"] == 7
+
+
+def test_finish_task_survives_metric_failure(monkeypatch, tmp_path):
+    """Полный отказ съёма не меняет прежний результат finish_task (крит. 4 PRI-270)."""
+    svc = _service_with_board(monkeypatch, tmp_path, {}, vcs_raises=True)
+    out = svc.finish_task("PRI-1", "https://github.com/o/r/pull/7")
+    assert out["status"] == "ok"
+    assert out["task_link_status"] in {"added", "already_present", "failed"}
+    assert out["brief_quality_status"] is None
+
+
+def test_finish_task_metric_resolves_policy_from_pr_base_ref_not_primary_branch(
+    monkeypatch, tmp_path
+):
+    """Съём метрики на finish_task обязан взять конфиг ЦЕЛЕВОЙ ветки PR, а не
+    первичной ветки репозитория — как и на публикации ревью (`_record_brief_quality`
+    берёт `p.prq.base_ref`). Репозиторий отслеживает две ветки с РАЗНЫМ core_paths;
+    PR закрывается в неглавную ветку. Если резолв ошибочно возьмёт первичную ветку,
+    ядро посчитается по чужому конфигу и статус будет другим."""
+    from reviewer.metrics.brief_quality.config import BriefQualityConfig
+
+    _write_brief(tmp_path, "2026-09-01-PRI-1-x.md", ["release_core/app.py"])
+    recorded = {}
+
+    primary_config = BriefQualityConfig(core_paths=("primary_core/**",), configured=True)
+    target_config = BriefQualityConfig(core_paths=("release_core/**",), configured=True)
+
+    # PR закрывается в "release" — неглавную ветку; "dev" — первичная.
+    vcs = _MetricVCS(base_ref="release", changed_path="release_core/app.py")
+    svc = _Svc(["fake"], vcs=vcs)
+    svc._review_service = type(
+        "RS", (), {"_ensure_history": lambda self: _FakeHistory(recorded)}
+    )()
+    monkeypatch.setattr(svc, "_repo_clone_path", lambda repo: str(tmp_path))
+    monkeypatch.setattr(svc, "_bug_branches", lambda repo: ("dev", ("dev", "release")))
+
+    def _resolve_policy(repo, branch):
+        if branch == "release":
+            return type("P", (), {"brief_quality": target_config})(), None
+        if branch == "dev":
+            return type("P", (), {"brief_quality": primary_config})(), None
+        raise AssertionError(f"неожиданная ветка: {branch}")
+
+    monkeypatch.setattr(svc, "_resolve_policy", _resolve_policy)
+
+    out = svc.finish_task("PRI-1", "https://github.com/o/r/pull/7")
+
+    assert out["status"] == "ok"
+    # Ядро "release_core/**" совпадает с изменённым файлом только в конфиге
+    # ЦЕЛЕВОЙ ветки — если бы резолв взял первичную "dev", ядро было бы пустым
+    # (configured=True → status="empty_core_denominator", а не "measured").
+    assert out["brief_quality_status"] == "measured"
+    assert recorded["status"] == "measured"
+
+
+def test_finish_task_opens_vcs_once(monkeypatch, tmp_path):
+    """Бэклинк и съём делят одно соединение: PR-ссылка резолвится один раз."""
+    opened = []
+    svc = _service_with_board(monkeypatch, tmp_path, {}, on_vcs_open=opened.append)
+    svc.finish_task("PRI-1", "https://github.com/o/r/pull/7")
+    assert len(opened) == 1
+
+
+# --- Регрессия ревью Task 7: yield внутри except открытия VCS -----------------
+#
+# `_pr_session` — генератор-контекстменеджер. Протокол генераторов доставляет
+# исключение из тела `with`-блока обратно В ГЕНЕРАТОР через .throw() ровно в
+# точку yield. Если этот yield лежит внутри try/except, задуманного только для
+# ошибок ОТКРЫТИЯ VCS, исключение тела блока ловится той же веткой, логируется
+# под чужой причиной и пытается yield'нуть второй раз — что contextlib на выходе
+# подменяет на RuntimeError("generator didn't stop after throw()"), теряя
+# исходную ошибку. Тесты ниже бьют по `_pr_session` напрямую (без finish_task),
+# потому что это тот самый юнит, где сидел дефект.
+
+def test_pr_session_reraises_body_exception():
+    """Исключение из тела with-блока доходит наружу как есть, а не как
+    RuntimeError('generator didn't stop after throw()')."""
+    svc = _Svc(["fake"], vcs=_FakeVCS())
+    with pytest.raises(ValueError, match="boom-echo"):
+        with svc._pr_session(PR_URL) as (target, vcs, error):
+            assert vcs is not None
+            raise ValueError("boom-echo")
+
+
+def test_pr_session_open_failure_unchanged():
+    """Сбой ОТКРЫТИЯ VCS (а не тела блока) — поведение прежнее: (target, None,
+    текст ошибки), без исключения наружу."""
+    svc = _Svc(["fake"])   # _vcs_factory=None и _review_service=None → создание VCS падает
+    with svc._pr_session(PR_URL) as (target, vcs, error):
+        assert vcs is None
+        assert target is not None
+        assert error
+
+
+def test_pr_session_closes_vcs_once_when_service_owns_lifecycle():
+    """Закрытие — ровно один раз и только когда `_vcs_factory is None`
+    (владелец жизненного цикла — сам finish_task, не тестовая фабрика)."""
+    vcs = _FakeVCS()
+
+    class _RS:
+        def _create_vcs_provider(self, owner, name, **kwargs):
+            return vcs
+
+    svc = _Svc(["fake"])
+    svc._review_service = _RS()
+    with svc._pr_session(PR_URL) as (target, got_vcs, error):
+        assert got_vcs is vcs
+        assert vcs.closed is False   # ещё не закрыт внутри блока
+    assert vcs.closed is True        # закрыт по выходу
+
+
+def test_pr_session_does_not_close_test_owned_vcs():
+    """Тестовая `_vcs_factory` владеет жизненным циклом сама: `_pr_session` не закрывает."""
+    vcs = _FakeVCS()
+    svc = _Svc(["fake"], vcs=vcs)
+    with svc._pr_session(PR_URL) as (target, got_vcs, error):
+        assert got_vcs is vcs
+    assert vcs.closed is False
+
+
+def test_finish_task_backlink_failure_surfaces_original_reason(monkeypatch, tmp_path):
+    """End-to-end воспроизведение находки ревью: сбой `_apply_backlink` не
+    маскируется под RuntimeError generator-протокола — доска к этому моменту
+    уже записана, но причина ошибки в ответе — подлинная."""
+    recorded = {}
+    svc = _service_with_board(monkeypatch, tmp_path, recorded)
+
+    def _boom(*a, **k):
+        raise ValueError("boom-echo")
+
+    monkeypatch.setattr(svc, "_apply_backlink", _boom)
+    out = svc.finish_task("PRI-1", "https://github.com/o/r/pull/7")
+    assert out["status"] == "error"
+    assert "boom-echo" in out["reason"]
+    assert "didn't stop after throw" not in out["reason"]

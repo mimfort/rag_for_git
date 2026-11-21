@@ -2,6 +2,7 @@
 import pytest
 
 from reviewer.metrics.brief_quality import briefs
+from reviewer.metrics.brief_quality.config import DEFAULT
 
 BRIEF_WITH_TOKENS = """# Brief — PRI-42 пример
 
@@ -175,16 +176,16 @@ def test_marked_section_rejects_damaged_citation_markdown(broken):
 
 
 def test_extract_task_key_from_filename():
-    assert briefs.extract_task_key("2026-08-14-PRI-250-harness.md") == "PRI-250"
-    assert briefs.extract_task_key("2026-08-14-pri-42-x.md") == "PRI-42"
-    assert briefs.extract_task_key("2026-08-14-no-key.md") is None
+    assert briefs.extract_task_key("2026-08-14-PRI-250-harness.md", DEFAULT) == "PRI-250"
+    assert briefs.extract_task_key("2026-08-14-pri-42-x.md", DEFAULT) == "PRI-42"
+    assert briefs.extract_task_key("2026-08-14-no-key.md", DEFAULT) is None
 
 
 def test_load_briefs_reads_corpus(tmp_path):
     (tmp_path / "2026-01-01-PRI-7-a.md").write_text(BRIEF_WITH_TOKENS, encoding="utf-8")
     (tmp_path / "2026-01-02-plain.md").write_text("# Brief\n", encoding="utf-8")
 
-    records = briefs.load_briefs(tmp_path)
+    records = briefs.load_briefs(tmp_path, DEFAULT)
 
     assert [r.task_key for r in records] == ["PRI-7", None]
     assert records[0].token_block is not None
@@ -201,7 +202,7 @@ def test_load_briefs_retains_metadata_for_damaged_markdown(tmp_path, caplog):
     (tmp_path / damaged).write_text(text, encoding="utf-8")
     (tmp_path / "2026-01-02-PRI-8-valid.md").write_text(BRIEF_WITH_TOKENS, encoding="utf-8")
 
-    bad, good = briefs.load_briefs(tmp_path)
+    bad, good = briefs.load_briefs(tmp_path, DEFAULT)
 
     assert bad.task_key == "PRI-7" and bad.token_block is not None
     assert bad.citation_error

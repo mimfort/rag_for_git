@@ -111,20 +111,20 @@ def test_cochange_and_augmented_variants_are_not_registered():
 
 
 class AugmentProvider(FakeProvider):
-    """Провайдер ретрива для варианта similar_paths (PRI-257): запоминает флаг."""
+    """Провайдер ретрива для варианта similar_paths запоминает флаг и карточку."""
 
-    def code_multi(self, repo, branch, queries, limits, *, similar_paths=False):
-        self.calls.append((repo, branch, list(queries), limits, similar_paths))
+    def code_multi(self, repo, branch, queries, limits, *, similar_paths=False, task=None):
+        self.calls.append((repo, branch, list(queries), limits, similar_paths, task))
         return self.text
 
 
-def test_similar_paths_variant_enables_similar_flag():
+def test_similar_paths_variant_passes_flag_and_task():
     provider = AugmentProvider(HEADER)
     task, target = _inputs()
     assert variants.get_variant("similar_paths")(provider, task, target) == \
         {"reviewer/a.py"}
     call = provider.calls[0]
-    assert call[4] is True
+    assert call[4:] == (True, task.task)
 
 
 def test_parse_overrides_accepts_code_section():

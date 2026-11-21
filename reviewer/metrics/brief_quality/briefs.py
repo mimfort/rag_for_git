@@ -7,6 +7,8 @@ import re
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 
+from reviewer.metrics.brief_quality.config import BriefQualityConfig
+
 log = logging.getLogger(__name__)
 
 TOKENS_HEADER = "## Токены (этап solve-task)"
@@ -22,7 +24,6 @@ _MODEL_RE = re.compile(r"^Модель:\s*(.+)$")
 _BUCKETS_RE = re.compile(
     r"fresh-in\s+(\S+)\s*·\s*out\s+(\S+)\s*·\s*cache-write\s+(\S+)\s*·\s*cache-read\s+(\S+)"
 )
-_KEY_RE = re.compile(r"(PRI-\d+)", re.IGNORECASE)
 
 _BACKTICK_RE = re.compile(r"`([^`]+)`")
 _PATH_LINE_RE = re.compile(r"^([\w./\-]+\.\w+):([\d,\-\s]+)$")
@@ -228,9 +229,19 @@ def has_section(text: str, header: str) -> bool:
     return any(not fenced and line.strip() == header for line, fenced in _fenced_lines(text))
 
 
-def extract_task_key(filename: str) -> str | None:
-    """Ключ задачи из имени файла брифа ('…-PRI-250-…' -> 'PRI-250')."""
-    match = _KEY_RE.search(filename)
+def extract_task_key(filename: str, config: BriefQualityConfig) -> str | None:
+    """Ключ задачи из имени файла брифа ('…-PRI-250-…' -> 'PRI-250').
+
+    Паттерн — из конфига репозитория (`task_board.key_pattern`), иначе общий
+    `[A-Z]+-\\d+`. Невалидный паттерн, как и в `task_keys.extract_task_keys`,
+    даёт предупреждение и пустой результат, а не падение.
+    """
+    try:
+        rx = re.compile(f"({config.key_pattern})", re.IGNORECASE)
+    except re.error:
+        log.warning("Невалидный key_pattern %r — ключ брифа не извлекается", config.key_pattern)
+        return None
+    match = rx.search(filename)
     return match.group(1).upper() if match else None
 
 
@@ -246,7 +257,7 @@ class BriefRecord:
     citation_error: str | None = None
 
 
-def load_briefs(briefs_dir: pathlib.Path) -> list[BriefRecord]:
+def load_briefs(briefs_dir: pathlib.Path, config: BriefQualityConfig) -> list[BriefRecord]:
     """Прочитать весь корпус брифов каталога (по возрастанию имени файла)."""
     records: list[BriefRecord] = []
     for path in sorted(briefs_dir.glob("*.md")):
@@ -262,7 +273,7 @@ def load_briefs(briefs_dir: pathlib.Path) -> list[BriefRecord]:
         records.append(
             BriefRecord(
                 filename=path.name,
-                task_key=extract_task_key(path.name),
+                task_key=extract_task_key(path.name, config),
                 token_block=parse_token_block(text),
                 relevant_paths=relevant_paths,
                 test_paths=test_paths,
