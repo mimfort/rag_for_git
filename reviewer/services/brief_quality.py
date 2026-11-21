@@ -117,9 +117,9 @@ def measure(
     relative = f"{config.briefs_dir}/{brief.name}"
     try:
         text = brief.read_text(encoding="utf-8")
-    except (OSError, UnicodeError):
-        # UnicodeDecodeError — подкласс ValueError, не OSError: бриф в чужой
-        # кодировке иначе уронил бы вызывающий publish-поток.
+        predicted = briefs.extract_section_paths(text, briefs.RELEVANT_HEADER)
+        briefs.parse_rendered_citations(text, briefs.TEST_HEADER)
+    except (OSError, ValueError):
         log.warning("Не удалось прочитать бриф %s", relative, exc_info=True)
         return BriefQualityMeasurement(
             status=STATUS_BRIEF_UNREADABLE, task_key=task_key, brief_path=relative
@@ -129,7 +129,6 @@ def measure(
             status=STATUS_BRIEF_UNREADABLE, task_key=task_key, brief_path=relative
         )
 
-    predicted = briefs.extract_section_paths(text, briefs.RELEVANT_HEADER)
     # Знаменатель — ПОЛНЫЙ diff PR, а не отобранное на ревью подмножество:
     # `changed_status` строится из `vcs.get_changed_files(pr)` целиком (все
     # расширения, включая удалённые файлы), тогда как `changed_paths` — это

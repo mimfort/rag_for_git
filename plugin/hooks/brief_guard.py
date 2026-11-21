@@ -13,6 +13,7 @@ SKILL_MARKER = "skills/solve-task"
 BASE_DIR_MARKER = "Base directory for this skill:"
 SOLVE_ATTRIBUTION = "rag-reviewer:solve-task"
 CHECKED_SECTIONS = ("## Relevant code", "## Test exemplars")
+VERIFIED_MARKER = "<!-- reviewer:verified-citations -->"
 MCP_TOOL_PREFIXES = (
     "mcp__reviewer__",
     "mcp__plugin_rag-reviewer_reviewer__",
@@ -169,18 +170,23 @@ def path_is_observed(cited: str, observed: set[str]) -> bool:
 
 
 def guard_brief(text: str, observed: set[str]) -> tuple[str, list[str], list[str]]:
-    """Пометить неподтверждённые пути в проверяемых секциях brief."""
+    """Пометить неподтверждённые пути в секциях старого формата."""
     cited: list[str] = []
     missing: list[str] = []
     guarded_lines: list[str] = []
     active = False
+    first_content = False
 
     for line in text.splitlines(keepends=True):
         heading = line.rstrip("\r\n")
         if heading.startswith("## "):
             active = heading in CHECKED_SECTIONS
+            first_content = active
             guarded_lines.append(line)
             continue
+        if first_content and heading.strip():
+            first_content = False
+            active = heading != VERIFIED_MARKER
         if not active:
             guarded_lines.append(line)
             continue
@@ -210,7 +216,7 @@ def _under_briefs(path: str) -> bool:
 
 def _read_text(path: str) -> str | None:
     try:
-        with open(path, encoding="utf-8") as handle:
+        with open(path, encoding="utf-8", newline="") as handle:
             return handle.read()
     except OSError:
         return None
@@ -300,7 +306,7 @@ def _write_text(path: str, text: str) -> None:
     directory = os.path.dirname(path) or "."
     fd, temp_path = tempfile.mkstemp(dir=directory, suffix=".tmp")
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="") as handle:
             handle.write(text)
         os.replace(temp_path, path)
     except Exception:

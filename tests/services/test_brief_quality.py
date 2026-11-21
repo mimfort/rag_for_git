@@ -225,6 +225,30 @@ def test_brief_without_relevant_section_is_unreadable(tmp_path):
     assert result.status == "brief_unreadable"
 
 
+@pytest.mark.parametrize("header", ["Relevant code", "Test exemplars"])
+def test_damaged_marked_section_is_unreadable(tmp_path, header):
+    clone = _clone(tmp_path, text=(
+        "## Relevant code\n\n" if header != "Relevant code" else ""
+    ) + f"## {header}\n<!-- reviewer:verified-citations -->\n\n- invalid reference\n")
+    result = measure(
+        task_key="PRI-999", clone_path=clone,
+        changed_paths=["reviewer/web/api.py"], changed_status={"reviewer/web/api.py": "modified"},
+        config=DEFAULT,
+    )
+    assert result.status == "brief_unreadable"
+
+
+def test_empty_marked_code_section_is_measured(tmp_path):
+    clone = _clone(tmp_path, text="## Relevant code\n<!-- reviewer:verified-citations -->\n\n")
+    result = measure(
+        task_key="PRI-999", clone_path=clone,
+        changed_paths=["reviewer/web/api.py"], changed_status={"reviewer/web/api.py": "modified"},
+        config=DEFAULT,
+    )
+    assert result.status == "measured"
+    assert result.predicted == 0
+
+
 def test_latest_brief_wins_on_duplicate_keys(tmp_path):
     """Несколько брифов на один ключ → берётся лексикографически последний."""
     clone = _clone(tmp_path, name="2026-08-10-PRI-999-old.md")

@@ -45,6 +45,13 @@ class BriefCitationIn(BaseModel):
     line: int = Field(ge=1)
 
 
+class BriefReferenceIn(BriefCitationIn):
+    """One brief citation with a single-line reason and an optional role."""
+
+    reason: str
+    role: Literal["edit", "read"] | None = None
+
+
 class SummaryFragmentIn(BaseModel):
     """LLM-facing пофайловый фрагмент сводки подсистемы."""
 

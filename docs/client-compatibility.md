@@ -4,18 +4,26 @@ Reviewer skills use the same MCP tools in Codex, Claude Code, and other MCP clie
 
 ## Verify solve-task citations
 
-On the same MCP connection, call `prepare_task_context` with `include_brief_evidence=true`. Use the returned `brief_evidence_id` once you have the brief's citations:
+On the same MCP connection, call `prepare_task_context` with `include_brief_evidence=true`. Send the returned `brief_evidence_id` and the model's reference records to `verify_task_brief`.
 
 ```json
 {
   "evidence_id": "<brief_evidence_id>",
-  "citations": [
-    {"section": "code", "path": "reviewer/tasks/sync.py", "line": 67}
+  "references": [
+    {
+      "section": "code",
+      "path": "reviewer/tasks/sync.py",
+      "line": 67,
+      "reason": "Board synchronization entry point",
+      "role": "read"
+    }
   ]
 }
 ```
 
-Send that object to `verify_task_brief`. Use `test_exemplars` for citations from the test section. Pass paths and line numbers from the visible excerpts. The tool returns `verified`, `path_unseen`, `outside_excerpt`, or `section_unavailable` per citation. The token can expire or become unavailable after a server restart. Continue inspecting the captured tool output in that case. The server retains an index of numbered rows and never needs a second retrieval to check them.
+Use `test_exemplars` for the test section and take paths and line numbers from the visible excerpts. The optional role can be `read` or `edit`. The tool returns `verified`, `path_unseen`, `outside_excerpt`, or `section_unavailable` for each reference. For `render_status=ok` or `empty`, copy the returned `markdown` verbatim into the brief. An `empty` block has a valid code heading and zero references. For `invalid_format`, correct the records and retry.
+
+Clients using the original `citations` argument can still send only `section`, `path`, and `line` and receive the verification verdicts. When evidence expires or the server restarts, check the captured visible excerpts. Verification uses an index of numbered rows from the original response.
 
 ## Inspect code budget
 

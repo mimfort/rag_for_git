@@ -1,6 +1,10 @@
    When forming the Step 0 `prepare_task_context` call, add `include_brief_evidence=True`
    if the reviewer MCP server advertises `verify_task_brief`. Keep the returned
-   `brief_evidence_id` for Step 4 on the same connection.
+   `brief_evidence_id` in the orchestrator for Step 4 on the same reviewer MCP connection.
+   Check whether the verifier accepts `references` or only `citations` to choose the Step 4
+   verification call. Keep the visible snippets for manual grounding if the verifier or the
+   evidence ID is unavailable.
+
    When investigating missing code context, also pass `include_code_budget=True` if the
    server exposes that argument. Read `code_budget` to distinguish file selection from
    rendering losses. The counts cover every candidate path, independent of relevance.

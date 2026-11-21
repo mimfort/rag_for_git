@@ -73,6 +73,42 @@ def test_solve_task_includes_test_exemplars():
     assert "Test exemplars" in text         # секция скелета брифа
 
 
+def test_solve_task_uses_structured_reference_workflow():
+    text = _solve()
+    step4 = text.split("4. **Distill the solution brief.**", 1)[1]
+    verification = " ".join(step4.split("**Persist the brief", 1)[0].split())
+    for token in (
+        "`references`", "`section`", "`path`", "`line`", "`reason`", "`role`",
+        "`edit`", "`read`", "`code`", "`test_exemplars`", "`render_status`",
+        "`ok`", "`empty`", "`invalid_format`", "`evidence_unavailable`",
+    ):
+        assert token in verification
+    assert re.search(r"`verify_task_brief\(evidence_id=.*?, references=", verification)
+    assert re.search(r"copy (?:the )?`markdown`.*?without changes", verification, re.I)
+    assert "same reviewer MCP connection" in verification
+    persistence = " ".join(step4.split("**Persist the brief", 1)[1].split())
+    assert "read the saved file back" in persistence
+    assert 'matches the verifier\'s `markdown` exactly' in persistence
+
+
+def test_solve_task_legacy_verifier_checks_citations_when_available():
+    text = " ".join(_solve().split())
+    fallback = text.split("**Legacy fallback.**", 1)[1].split("**Persist the brief", 1)[0]
+    assert re.search(r"`verify_task_brief\(evidence_id=.*?, citations=", fallback)
+    assert "only entries with a `verified` verdict" in fallback
+
+
+def test_solve_task_legacy_fallback_checks_visible_rows():
+    text = _solve()
+    fallback = re.search(r"\*\*Legacy fallback\.\*\*(.*?)\*\*Persist the brief", text, re.S)
+    assert fallback
+    guidance = " ".join(fallback[1].split())
+    assert "fully visible numbered rows" in guidance
+    assert "row immediately before `[...truncated]`" in guidance
+    assert "the marker and all subsequent rows" in guidance
+    assert "Do not add `<!-- reviewer:verified-citations -->`" in fallback[1]
+
+
 def test_solve_task_lazy_expansion_present():
     """PRI-202: ленивый перевызов search_codebase с большим top_k под cliff/rails-хвост."""
     text = _solve()

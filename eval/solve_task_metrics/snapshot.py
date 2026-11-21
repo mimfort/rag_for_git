@@ -65,6 +65,7 @@ def build_snapshot(
     quality_rows: list = []
     report_rows: list = []
     misses: Counter = Counter()
+    with_ground_truth = 0
     sync_skipped = 0
     diff_failures = 0
 
@@ -73,6 +74,9 @@ def build_snapshot(
         sync_skipped += truth.sync_merges_skipped
         diff_failures += truth.diff_failures
         if not truth.changed:
+            continue
+        with_ground_truth += 1
+        if record.citation_error is not None:
             continue
         # Один путь проверяется дважды — как кандидат в ядро и как промах;
         # кэш на задачу убирает лишний git cat-file на каждый такой файл.
@@ -123,7 +127,7 @@ def build_snapshot(
             "briefs": len(records),
             "with_tokens": len(with_tokens),
             "with_key": len(with_key),
-            "with_ground_truth": len(quality_rows),
+            "with_ground_truth": with_ground_truth,
             "sync_merges_skipped": sync_skipped,
             "diff_failures": diff_failures,
         },

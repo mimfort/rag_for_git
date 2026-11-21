@@ -201,6 +201,18 @@ def test_duplicate_keys_counted_once(tmp_path):
     assert replay.corpus_keys(briefs, DEFAULT) == ["PRI-7"]
 
 
+def test_replay_keeps_corpus_key_when_only_the_citations_are_damaged(tmp_path):
+    (tmp_path / "2026-01-01-PRI-7-damaged.md").write_text(
+        "## Relevant code\n<!-- reviewer:verified-citations -->\n- неверная ссылка\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "2026-01-02-PRI-8-valid.md").write_text(
+        BRIEF.format(key="PRI-8"), encoding="utf-8",
+    )
+
+    assert replay.corpus_keys(tmp_path, DEFAULT) == ["PRI-7", "PRI-8"]
+
+
 def test_limit_truncates_corpus_and_marks_snapshot_partial(tmp_path):
     snap = _run(
         tmp_path,
