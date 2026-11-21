@@ -83,10 +83,13 @@ def locations(blocks, anchors):
 def score_case(row, brief, criteria, labels, eligible):
     query_norms = [normalize(query) for query in row["queries"]]
     excluded = {normalize(text) for text in row["excluded"]}
-    represented = [index for index, text in enumerate(criteria, 1)
-                   if any(normalize(text) in query for query in query_norms)]
-    documented = [index for index, text in enumerate(criteria, 1)
-                  if normalize(text) in excluded]
+    criterion_norms = [normalize(text) for text in criteria]
+    query_ordinals = [
+        [ordinal for ordinal, query in enumerate(query_norms, 1) if criterion in query]
+        for criterion in criterion_norms
+    ]
+    represented = [index for index, ordinals in enumerate(query_ordinals, 1) if ordinals]
+    documented = [index for index, text in enumerate(criterion_norms, 1) if text in excluded]
     blocks = context_blocks(row["context"])
     visible = {(path, line) for path, block in blocks for line in block}
     references = {(path, int(line)) for path, line in REFERENCE.findall(brief)}
@@ -108,7 +111,9 @@ def score_case(row, brief, criteria, labels, eligible):
         "group_count": sum("\n" in query for query in row["queries"][1:]),
         "criteria_total": len(criteria),
         "represented": represented,
+        "query_ordinals_by_criterion": query_ordinals,
         "documented": documented,
+        "exclusion_reason": "subquery_budget" if documented else None,
         "context_sha256": sha(row["context"]),
         "context_files": len({path for path, block in blocks if block}),
         "context_chars": len(row["context"]),
@@ -202,6 +207,10 @@ def build_results(work):
                 raise ValueError(f"{key}: размечен отсутствующий критерий")
             rows[key] = score_case(arm_rows[key], briefs[key], criteria, labels, eligible)
             rows[key]["parser_microseconds"] = retrieval["parser_microseconds"][arm][key]
+            if arm == "candidate" and key in AFFECTED:
+                accounted = set(rows[key]["represented"]) | set(rows[key]["documented"])
+                if len(accounted) != len(criteria):
+                    raise ValueError(f"{key}: для некоторых критериев нет запроса или причины")
             accounted = set(rows[key]["represented"]) | set(rows[key]["documented"])
             if arm == "candidate" and len(accounted) != len(criteria):
                 raise ValueError(f"{key}: не все критерии видны или объяснены")

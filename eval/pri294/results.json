@@ -175,7 +175,35 @@
             7,
             8
           ],
+          "query_ordinals_by_criterion": [
+            [
+              13
+            ],
+            [
+              14
+            ],
+            [
+              15
+            ],
+            [
+              16
+            ],
+            [
+              17
+            ],
+            [
+              18
+            ],
+            [
+              19
+            ],
+            [
+              20
+            ],
+            []
+          ],
           "documented": [],
+          "exclusion_reason": null,
           "context_sha256": "926b505fe07ecc4a137f8250116ae2025d3caad6e6b714e109ff1c73b19a2eea",
           "context_files": 20,
           "context_chars": 23847,
@@ -244,7 +272,36 @@
             6,
             7
           ],
+          "query_ordinals_by_criterion": [
+            [
+              14
+            ],
+            [
+              15
+            ],
+            [
+              16
+            ],
+            [
+              17
+            ],
+            [
+              18
+            ],
+            [
+              19
+            ],
+            [
+              20
+            ],
+            [],
+            [],
+            [],
+            [],
+            []
+          ],
           "documented": [],
+          "exclusion_reason": null,
           "context_sha256": "6ac904b0df42c9d4d826cba2bc97bce8efae1d195cf64267a4273d407d3bb5a3",
           "context_files": 20,
           "context_chars": 17508,
@@ -325,7 +382,40 @@
             8,
             9
           ],
+          "query_ordinals_by_criterion": [
+            [
+              12
+            ],
+            [
+              13
+            ],
+            [
+              14
+            ],
+            [
+              15
+            ],
+            [
+              16
+            ],
+            [
+              17
+            ],
+            [
+              18
+            ],
+            [
+              19
+            ],
+            [
+              20
+            ],
+            [],
+            [],
+            []
+          ],
           "documented": [],
+          "exclusion_reason": null,
           "context_sha256": "24b8e0c848e2423d612872b5008d2eeb7ea79f49736fac96e59e4adb7b400f73",
           "context_files": 20,
           "context_chars": 17790,
@@ -394,7 +484,36 @@
             6,
             7
           ],
+          "query_ordinals_by_criterion": [
+            [
+              14
+            ],
+            [
+              15
+            ],
+            [
+              16
+            ],
+            [
+              17
+            ],
+            [
+              18
+            ],
+            [
+              19
+            ],
+            [
+              20
+            ],
+            [],
+            [],
+            [],
+            [],
+            []
+          ],
           "documented": [],
+          "exclusion_reason": null,
           "context_sha256": "70cb1b934b49010aa05174ca8823846475a3b1b40157cfb345e6bff51dbd3e7e",
           "context_files": 20,
           "context_chars": 18745,
@@ -462,7 +581,37 @@
             5,
             6
           ],
+          "query_ordinals_by_criterion": [
+            [
+              15
+            ],
+            [
+              16
+            ],
+            [
+              17
+            ],
+            [
+              18
+            ],
+            [
+              19
+            ],
+            [
+              20
+            ],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            []
+          ],
           "documented": [],
+          "exclusion_reason": null,
           "context_sha256": "31a802e164ef637546fa08488e09a5a952017b9417ef93c61759df68c4c5c15c",
           "context_files": 20,
           "context_chars": 19839,
@@ -533,7 +682,40 @@
             8,
             9
           ],
+          "query_ordinals_by_criterion": [
+            [
+              12
+            ],
+            [
+              13
+            ],
+            [
+              14
+            ],
+            [
+              15
+            ],
+            [
+              16
+            ],
+            [
+              17
+            ],
+            [
+              18
+            ],
+            [
+              19
+            ],
+            [
+              20
+            ],
+            [],
+            [],
+            []
+          ],
           "documented": [],
+          "exclusion_reason": null,
           "context_sha256": "573d55a044968ceca8b655ead3cbfaf16c75c189f6466ab2d16ea9b5aef9d86d",
           "context_files": 20,
           "context_chars": 19324,
@@ -601,7 +783,33 @@
             5,
             6
           ],
+          "query_ordinals_by_criterion": [
+            [
+              15
+            ],
+            [
+              16
+            ],
+            [
+              17
+            ],
+            [
+              18
+            ],
+            [
+              19
+            ],
+            [
+              20
+            ],
+            [],
+            [],
+            [],
+            [],
+            []
+          ],
           "documented": [],
+          "exclusion_reason": null,
           "context_sha256": "6bc29194be49298dc2c7d48ddf42dcecae177d058731c5dabc2077a0d04476bd",
           "context_files": 20,
           "context_chars": 20621,
@@ -669,7 +877,16 @@
             1,
             2
           ],
+          "query_ordinals_by_criterion": [
+            [
+              2
+            ],
+            [
+              3
+            ]
+          ],
           "documented": [],
+          "exclusion_reason": null,
           "context_sha256": "6d45d190ce1550018294eb221771edbce9dc59e59ee042f72b49d29fdb43ac7f",
           "context_files": 19,
           "context_chars": 19199,
@@ -740,7 +957,34 @@
             7,
             8
           ],
+          "query_ordinals_by_criterion": [
+            [
+              8
+            ],
+            [
+              9
+            ],
+            [
+              10
+            ],
+            [
+              11
+            ],
+            [
+              12
+            ],
+            [
+              13
+            ],
+            [
+              14
+            ],
+            [
+              15
+            ]
+          ],
           "documented": [],
+          "exclusion_reason": null,
           "context_sha256": "eb0a4a7b7ce143c817ecea038c096d3df29a8bcb2f5ebe289f55db1b051f7b7e",
           "context_files": 20,
           "context_chars": 21668,
@@ -809,7 +1053,34 @@
             7,
             8
           ],
+          "query_ordinals_by_criterion": [
+            [
+              11
+            ],
+            [
+              12
+            ],
+            [
+              13
+            ],
+            [
+              14
+            ],
+            [
+              15
+            ],
+            [
+              16
+            ],
+            [
+              17
+            ],
+            [
+              18
+            ]
+          ],
           "documented": [],
+          "exclusion_reason": null,
           "context_sha256": "f679a1a284a609d999c5e21fef9ec3ee64310252a9c3ecc71bdd4fe71ae86550",
           "context_files": 20,
           "context_chars": 17959,
@@ -970,7 +1241,37 @@
             8,
             9
           ],
+          "query_ordinals_by_criterion": [
+            [
+              12
+            ],
+            [
+              13
+            ],
+            [
+              14
+            ],
+            [
+              15
+            ],
+            [
+              16
+            ],
+            [
+              17
+            ],
+            [
+              18
+            ],
+            [
+              19
+            ],
+            [
+              20
+            ]
+          ],
           "documented": [],
+          "exclusion_reason": null,
           "context_sha256": "ec36b9ce34de2b40bb132a5e59c7ad53f305a40aaf0d1da39bf6af777c6af9ea",
           "context_files": 20,
           "context_chars": 23817,
@@ -1069,7 +1370,46 @@
             11,
             12
           ],
+          "query_ordinals_by_criterion": [
+            [
+              11
+            ],
+            [
+              11
+            ],
+            [
+              12
+            ],
+            [
+              13
+            ],
+            [
+              14
+            ],
+            [
+              15
+            ],
+            [
+              16
+            ],
+            [
+              13
+            ],
+            [
+              17
+            ],
+            [
+              18
+            ],
+            [
+              19
+            ],
+            [
+              20
+            ]
+          ],
           "documented": [],
+          "exclusion_reason": null,
           "context_sha256": "1bf7961f5cd5dc15cefb80641110bc88587365dbe8a367a7e41e1fbf555ea35f",
           "context_files": 20,
           "context_chars": 17402,
@@ -1158,7 +1498,46 @@
             11,
             12
           ],
+          "query_ordinals_by_criterion": [
+            [
+              10
+            ],
+            [
+              11
+            ],
+            [
+              12
+            ],
+            [
+              13
+            ],
+            [
+              14
+            ],
+            [
+              15
+            ],
+            [
+              16
+            ],
+            [
+              17
+            ],
+            [
+              18
+            ],
+            [
+              13
+            ],
+            [
+              19
+            ],
+            [
+              20
+            ]
+          ],
           "documented": [],
+          "exclusion_reason": null,
           "context_sha256": "7826f05bf011a6bb1dc6f8a6180be09bdae751d93bac7345b27c7ae96c79bf9f",
           "context_files": 20,
           "context_chars": 19140,
@@ -1269,7 +1648,46 @@
             11,
             12
           ],
+          "query_ordinals_by_criterion": [
+            [
+              12
+            ],
+            [
+              13
+            ],
+            [
+              14
+            ],
+            [
+              15
+            ],
+            [
+              16
+            ],
+            [
+              12
+            ],
+            [
+              13
+            ],
+            [
+              17
+            ],
+            [
+              18
+            ],
+            [
+              14
+            ],
+            [
+              19
+            ],
+            [
+              20
+            ]
+          ],
           "documented": [],
+          "exclusion_reason": null,
           "context_sha256": "667981a210ef3b31a595095dec03ecdb61d65727e7bd5ed054152ee6c834e8a9",
           "context_files": 20,
           "context_chars": 19123,
@@ -1346,7 +1764,55 @@
             14,
             15
           ],
+          "query_ordinals_by_criterion": [
+            [
+              8
+            ],
+            [
+              9
+            ],
+            [
+              10
+            ],
+            [
+              11
+            ],
+            [
+              12
+            ],
+            [
+              13
+            ],
+            [
+              14
+            ],
+            [
+              15
+            ],
+            [
+              16
+            ],
+            [
+              17
+            ],
+            [
+              18
+            ],
+            [
+              8
+            ],
+            [
+              12
+            ],
+            [
+              19
+            ],
+            [
+              20
+            ]
+          ],
           "documented": [],
+          "exclusion_reason": null,
           "context_sha256": "eadfaed8b26bd2c5414f4657512d09c9ded63ad1c352aae52154995116a464a4",
           "context_files": 20,
           "context_chars": 19274,
@@ -1425,7 +1891,46 @@
             11,
             12
           ],
+          "query_ordinals_by_criterion": [
+            [
+              10
+            ],
+            [
+              11
+            ],
+            [
+              12
+            ],
+            [
+              13
+            ],
+            [
+              14
+            ],
+            [
+              15
+            ],
+            [
+              16
+            ],
+            [
+              17
+            ],
+            [
+              18
+            ],
+            [
+              18
+            ],
+            [
+              19
+            ],
+            [
+              20
+            ]
+          ],
           "documented": [],
+          "exclusion_reason": null,
           "context_sha256": "151ae5bc744cf7be2dc43fd549b883c7777f0adf8f8820b8a6d253a05fe85ac1",
           "context_files": 20,
           "context_chars": 19782,
@@ -1498,7 +2003,43 @@
             10,
             11
           ],
+          "query_ordinals_by_criterion": [
+            [
+              12
+            ],
+            [
+              13
+            ],
+            [
+              12
+            ],
+            [
+              14
+            ],
+            [
+              15
+            ],
+            [
+              16
+            ],
+            [
+              17
+            ],
+            [
+              18
+            ],
+            [
+              19
+            ],
+            [
+              19
+            ],
+            [
+              20
+            ]
+          ],
           "documented": [],
+          "exclusion_reason": null,
           "context_sha256": "3be0c161ba33730260ae1baa2849072144e7399e8c7d08b8f7d65c91d658e011",
           "context_files": 20,
           "context_chars": 20361,
@@ -1566,7 +2107,16 @@
             1,
             2
           ],
+          "query_ordinals_by_criterion": [
+            [
+              2
+            ],
+            [
+              3
+            ]
+          ],
           "documented": [],
+          "exclusion_reason": null,
           "context_sha256": "6d45d190ce1550018294eb221771edbce9dc59e59ee042f72b49d29fdb43ac7f",
           "context_files": 19,
           "context_chars": 19199,
@@ -1632,7 +2182,34 @@
             7,
             8
           ],
+          "query_ordinals_by_criterion": [
+            [
+              8
+            ],
+            [
+              9
+            ],
+            [
+              10
+            ],
+            [
+              11
+            ],
+            [
+              12
+            ],
+            [
+              13
+            ],
+            [
+              14
+            ],
+            [
+              15
+            ]
+          ],
           "documented": [],
+          "exclusion_reason": null,
           "context_sha256": "eb0a4a7b7ce143c817ecea038c096d3df29a8bcb2f5ebe289f55db1b051f7b7e",
           "context_files": 20,
           "context_chars": 21668,
@@ -1701,7 +2278,34 @@
             7,
             8
           ],
+          "query_ordinals_by_criterion": [
+            [
+              11
+            ],
+            [
+              12
+            ],
+            [
+              13
+            ],
+            [
+              14
+            ],
+            [
+              15
+            ],
+            [
+              16
+            ],
+            [
+              17
+            ],
+            [
+              18
+            ]
+          ],
           "documented": [],
+          "exclusion_reason": null,
           "context_sha256": "f679a1a284a609d999c5e21fef9ec3ee64310252a9c3ecc71bdd4fe71ae86550",
           "context_files": 20,
           "context_chars": 17959,
