@@ -58,6 +58,9 @@ from reviewer.graph.store import GraphStore
 from reviewer.index.freshness import update_base
 from reviewer.index.pathfilter import is_ignored
 from reviewer.index.refs import base_ref
+from reviewer.metrics.brief_quality import ground_truth
+from reviewer.metrics.brief_quality.config import BriefQualityConfig
+from reviewer.metrics.brief_quality.corpus import measure_corpus
 from reviewer.policy.policy import ReviewPolicy
 from reviewer.index.store import ChunkStore
 from reviewer.index.summary_store import SummaryStore
@@ -78,6 +81,7 @@ from reviewer.update_lifecycle import (
     sync_compose_file,
 )
 from reviewer.versioning import InstallMode, check_latest, detect_installation, upgrade_uv_tool
+from reviewer.web.history import ReviewHistory
 from reviewer.web.serve import DEFAULT_HOST, DEFAULT_PORT
 
 if TYPE_CHECKING:
@@ -1225,6 +1229,86 @@ def status(path: str, repo_tag: str | None, branch_opt: str | None,
     backend = ("scip-python (точный)" if _shutil.which("scip-python")
                else "tree-sitter (fallback, scip-python не найден)")
     click.echo(render_status(report, backend))
+
+
+def _render_measure(summary: Mapping[str, object]) -> str:
+    """Человекочитаемый отчёт по сводке `measure_corpus` (для click.echo)."""
+    fixed = {"briefs", "skipped_no_key", "skipped_no_merges", "rows", "write_failed"}
+    lines = [
+        f"Брифов обработано: {summary['briefs']}",
+        f"Строк записано: {summary['rows']}",
+        f"Пропущено без ключа задачи: {summary['skipped_no_key']}",
+        f"Пропущено без PR-мержей: {summary['skipped_no_merges']}",
+    ]
+    if summary.get("write_failed"):
+        lines.append(f"Сбоев записи в БД: {summary['write_failed']}")
+    statuses = {k: v for k, v in summary.items() if k not in fixed}
+    if statuses:
+        lines.append("По статусам:")
+        lines.extend(f"  {status}: {statuses[status]}" for status in sorted(statuses))
+    return "\n".join(lines)
+
+
+@cli.command("measure-briefs")
+@click.argument("path", default=".")
+@click.option("--repo", "repo_tag", default=None,
+              help="owner/name тег строк метрики; по умолчанию из git remote origin")
+@click.option("--briefs-dir", "briefs_dir", default=None,
+              help="каталог брифов относительно клона; по умолчанию docs/superpowers/briefs")
+@click.option("--json", "as_json", is_flag=True, default=False,
+              help="машиночитаемый JSON вместо текста")
+def measure_briefs(path: str, repo_tag: str | None, briefs_dir: str | None,
+                    as_json: bool) -> None:
+    """Пересчитать качество брифов по PR-мержам клона (не тратит Voyage)."""
+    s = Settings()
+    resolution = _resolve_repo(repo_tag, path, s)
+    if resolution.source == _SUBSTITUTED:
+        # Fail-open, как migrate-branches: команда ничего не индексирует, но
+        # молчать про чужой repo-тег в строках brief_quality тоже не должна.
+        click.echo("⚠ " + _substitution_note(path, resolution.repo), err=True)
+    # Слоистый резолв (env/home/committed), как у finish_task/publish_review —
+    # голое чтение файла клона молча теряло бы core_paths/key_pattern,
+    # заданные через home:review.yml или home:repos/<owner>/<name>.yml, и три
+    # точки съёма считали бы по разным линейкам для одного и того же PR.
+    # Committed-слой — из HEAD клона (git show, без сети, PRI-235); fail-soft
+    # по умолчанию (strict_committed=False) — недоступный/битый .review.yml не
+    # должен обнулять домашние слои и уж тем более ронять весь пересчёт корпуса.
+    #
+    # Почему ref = "HEAD", а не base_ref конкретного PR (как у finish_task/
+    # publish_review): эта команда считает КОРПУС, а не один PR, и её строки
+    # относятся к разным PR с разными base_ref — единственного «правильного»
+    # ref для всех строк не существует. Брать историческую политику каждого
+    # PR нельзя: это сетевой вызов на каждую строку, а команда обязана
+    # работать офлайн, и сделало бы собственный вывод внутренне несравнимым —
+    # строки считались бы разными линейками внутри одного прогона. Поэтому
+    # bulk-пересчёт сознательно берёт ОДНУ текущую линейку клона — HEAD;
+    # CommittedLayerFetcher проверяет ref через rev_parse до чтения, поэтому
+    # HEAD резолвится и на detached-клоне. Следствие: если оператор запускает
+    # команду с фичевой ветки со своим .review.yml, строки посчитаются её
+    # линейкой — это цена самосогласованности пересчёта, а не недосмотр.
+    fetch_committed = CommittedLayerFetcher(resolution.repo, clone_path=path)
+    policy_data, _policy_meta = resolve_policy_data(resolution.repo, "HEAD", fetch_committed)
+    config = BriefQualityConfig.from_review_yaml(policy_data, briefs_dir=briefs_dir)
+    history = ReviewHistory(s.pg_dsn, min_size=s.pg_pool_min_size, max_size=s.pg_pool_max_size)
+    try:
+        # Preflight: record_brief_quality гасит DB-сбои сама (fail-soft для
+        # publish_review/finish_task) — без явной проверки соединения ДО
+        # цикла команда молча отчиталась бы об успехе на лежащем Postgres.
+        # init_schema — единственный метод ReviewHistory без своего try/except.
+        history.init_schema()
+        summary = measure_corpus(path, resolution.repo, config,
+                                 ground_truth.git_runner(Path(path)), history)
+    except psycopg.OperationalError as e:
+        raise click.ClickException(f"Postgres недоступен: {e}")
+    finally:
+        history.close()
+    click.echo(json.dumps(summary, ensure_ascii=False) if as_json else _render_measure(summary))
+    write_failed = summary.get("write_failed", 0)
+    if write_failed:
+        # Postgres умер на середине прогона (после preflight) — исключение
+        # уже погашено внутри measure_and_record, сигналим по счётчику.
+        click.echo(f"⚠ Не записано в БД строк: {write_failed}", err=True)
+        raise SystemExit(1)
 
 
 @cli.command()

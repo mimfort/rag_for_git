@@ -76,6 +76,16 @@ COMMAND_PRESENTATION = {
         scenarios=("Обновление workflow skills",),
         keywords=("skills", "plugin", "codex"),
     ),
+    ("measure-briefs",): CommandPresentation(
+        summary="Пересчитать качество брифов",
+        details=(
+            "Считает core-recall/precision брифов по PR-мержам git-истории клона "
+            "и пишет строки brief_quality; Voyage не тратит."
+        ),
+        effects=(Effect.READ, Effect.WRITE),
+        scenarios=("Бэкофилл корпуса брифов", "Пересчёт после смены core_paths"),
+        keywords=("brief", "recall", "backfill", "metrics"),
+    ),
     ("migrate-branches",): CommandPresentation(
         summary="Мигрировать legacy base-index",
         details="Переименовывает legacy ref base в primary branch ref после обновления.",

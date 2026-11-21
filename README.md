@@ -469,6 +469,15 @@ context_limits:
     max_chunks_per_file: 1
     chars_per_file: 975
     max_augmented_files: 3
+
+metrics:
+  brief_quality:
+    core_paths:
+      - 'reviewer/**/*.py'
+      - 'plugin/**'
+      - '!plugin/**/*.md'
+      - '!eval/**'
+      - '*.py'
 ```
 
 `summary_paths.ignore` only filters which files feed subsystem-summary clustering — unlike
@@ -500,6 +509,13 @@ co-change (git file-pairs-changed-together) second source was built and measured
 34 mixed-in paths, a bulk-recall drop — and removed rather than kept disabled; only similar-diffs
 covers (median core-recall 0.5 → 0.75, precision 0.167 → 0.333, 28 hits on 35 paths). See
 `eval/replay_report.md`, "Приёмка PRI-257".
+
+`metrics.brief_quality.core_paths` (PRI-271) makes the online brief-quality metric's core-path
+ruleset repository-specific instead of hardcoded: a glob list (`**` crosses `/`, plain `*`/`?`
+don't) that any repository can tailor to its own production-path layout. No key means the
+metric falls back to this repository's own default ruleset (`DEFAULT_CORE_PATHS` in
+`reviewer/metrics/brief_quality/config.py`) and reports `configured: false`, which the metric
+tells apart from an explicit but empty list — see the "Quality" page section below.
 
 ### Layered repository policy
 
@@ -934,7 +950,9 @@ docker compose ps
 
 `reviewer check` validates configured credentials and service connectivity without spending
 Voyage quota. `status` compares the indexed SHA with the selected local ref and reports chunks,
-graph nodes, subsystem summaries, and commit drift for each tracked branch.
+graph nodes, subsystem summaries, and commit drift for each tracked branch. `reviewer measure-briefs`
+recomputes the solve-task brief quality metric across the whole brief corpus from git PR-merge
+history, also without touching Voyage.
 
 ### Index freshness and recovery
 
@@ -976,11 +994,15 @@ The **Quality** page shows the trend of the solve-task brief quality metric acro
 core-recall (precision is plotted per task on the trend chart; it has no median of its own), a bulk
 subsample (tasks with `expected_core >= 10`, the `BULK_CORE_THRESHOLD`) with a horizontal line for
 the offline baseline for before/after comparison, and a breakdown of misses by taxonomy.
-The data source is the `brief_quality` table, populated on every real `publish_review` call
-(written by `MCPReviewService`, not a separate process). If a task's brief is missing, or has no
-`## Relevant code` section at all, the measurement is skipped — no point shows up on the chart
-instead of a zero or an error. A section that exists but is empty is not a skip: it is a valid
-measurement with `predicted = 0`.
+The data source is the `brief_quality` table, populated at three points (PRI-270): every real
+`publish_review` call (writes `run_id`), `finish_task`, and the `reviewer measure-briefs` CLI
+command (the latter two write `run_id = NULL`). All three share one function,
+`reviewer.services.brief_quality.measure_and_record`; a row's identity is
+`(repo, pr_number, task_key)`, not "came from a review run" — an earlier measurement without a
+review and a later `publish_review` update the same row instead of creating two. If a task's
+brief is missing, or has no `## Relevant code` section at all, the measurement is skipped — no
+point shows up on the chart instead of a zero or an error. A section that exists but is empty is
+not a skip: it is a valid measurement with `predicted = 0`.
 
 The container keeps its internal listen port separate from the published loopback port. Build it
 once and choose both at runtime (replace `database` with a Postgres host reachable from the
