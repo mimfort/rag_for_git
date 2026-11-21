@@ -1,7 +1,10 @@
 """Portable solve-task verification through the reviewer MCP boundary."""
 import asyncio
 import json
+from types import SimpleNamespace
 from unittest.mock import MagicMock
+
+import pytest
 
 from reviewer.config.settings import Settings
 from reviewer.entrypoints.mcp_server import create_server
@@ -9,6 +12,7 @@ from reviewer.mcp import task_context
 from reviewer.mcp.brief_evidence import BriefEvidence
 from reviewer.mcp.schemas import BriefCitationIn
 from reviewer.mcp.service import MCPReviewService
+from reviewer.retrieval.retriever import ContextPack
 
 CODE = """// path with spaces.py#function (path with spaces.py:2-6)
     2 | def function():
@@ -66,6 +70,27 @@ def test_snapshots_are_isolated_bounded_and_expire():
 def test_no_id_without_line_evidence():
     evidence = BriefEvidence()
     assert evidence.save({"code": "(ничего не найдено)", "test_exemplars": None}) is None
+
+
+@pytest.mark.parametrize("section", ["code", "test_exemplars"])
+def test_rendered_truncation_with_a_note_excludes_partial_row(section):
+    item = SimpleNamespace(
+        node_id="module.py#function", path="module.py", start_line=7, end_line=9,
+        text="def function():\n    full_statement()\n    return result",
+    )
+    pack = ContextPack(items=[item], augment_note="— additional context")
+    full = pack.as_context(line_numbers=True)
+    pack.max_chars = full.index("return result") + len("return")
+    context = pack.as_context(line_numbers=True)
+    evidence = BriefEvidence()
+    key = evidence.save({section: context})
+
+    checked = evidence.verify(key, [
+        _citation("module.py", 8, section), _citation("module.py", 9, section),
+    ])
+    assert [citation["status"] for citation in checked["citations"]] == [
+        "verified", "outside_excerpt",
+    ]
 
 
 def test_prepare_and_verify_are_available_through_mcp_without_retrieval_twice(monkeypatch):

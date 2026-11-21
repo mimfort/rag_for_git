@@ -19,10 +19,10 @@ _TRUNCATED = "[...truncated]"
 
 def _visible_lines(text: str) -> dict[str, set[int]]:
     """Index actual numbered rows. A header may advertise more than was rendered."""
-    lines = text.splitlines()
-    if lines and lines[-1] == _TRUNCATED:
-        # as_context may have cut the preceding row in the middle.
-        lines = lines[:-2]
+    lines = text.split("\n")
+    if _TRUNCATED in lines:
+        # as_context may cut the preceding row and append notes after the marker.
+        lines = lines[:max(0, lines.index(_TRUNCATED) - 1)]
     visible: dict[str, set[int]] = {}
     path = None
     first = last = 0
