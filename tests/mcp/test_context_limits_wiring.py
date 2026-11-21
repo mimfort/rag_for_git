@@ -5,9 +5,16 @@ _resolve_context_limits fail-soft объединяет env, home-слои и com
 limits/hops/ceiling_override в `Retriever.search_base`.
 """
 import logging
+import subprocess
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
+
+from reviewer.config.layers import build_config_report, resolve_policy_data
 from reviewer.config.settings import Settings
+from reviewer.index.store import Retrieved
+from reviewer.mcp.schemas import BriefCitationIn
 from reviewer.mcp.service import MCPReviewService
 from reviewer.policy.context_limits import CodebaseLimits, CodeSectionLimits, ContextLimits
 
@@ -390,3 +397,266 @@ def test_search_codebase_multi_defaults_augment_kwargs_to_none() -> None:
 
     call = sm.call_args
     assert call.kwargs["augment_sources"] is None
+
+
+def test_git_file_limit_is_reported_from_effective_policy_layer(
+    isolated_xdg_config_home,
+) -> None:
+    path = isolated_xdg_config_home / "rag-reviewer/repos/o/r.yml"
+    path.parent.mkdir(parents=True)
+    path.write_text("context_limits: {code_section: {max_git_files: 3}}\n", encoding="utf-8")
+    data, meta = resolve_policy_data(
+        "o/r", "dev", lambda ref: "context_limits: {code_section: {max_git_files: 1}}",
+    )
+
+    report = build_config_report("o/r", "dev", _settings(), data, meta)
+
+    assert report["effective"]["context_limits"]["code_section"]["max_git_files"] == 3
+    assert report["sources"]["context_limits.code_section.max_git_files"] == "home:repos/o/r.yml"
+
+
+@pytest.mark.parametrize("value", ["4", "-1", "0.5", "true", "'2'"])
+def test_invalid_home_git_file_limit_preserves_committed_layer(
+    isolated_xdg_config_home, value: str,
+) -> None:
+    path = isolated_xdg_config_home / "rag-reviewer/repos/o/r.yml"
+    path.parent.mkdir(parents=True)
+    path.write_text(f"context_limits: {{code_section: {{max_git_files: {value}}}}}\n",
+                    encoding="utf-8")
+    data, meta = resolve_policy_data(
+        "o/r", "dev", lambda ref: "context_limits: {code_section: {max_git_files: 1}}",
+    )
+
+    report = build_config_report("o/r", "dev", _settings(), data, meta)
+
+    assert report["effective"]["context_limits"]["code_section"]["max_git_files"] == 1
+    assert report["sources"]["context_limits.code_section.max_git_files"] == ".review.yml"
+
+
+@pytest.mark.parametrize("value", ["4", "-1", "0.5", "true", "'2'"])
+def test_invalid_committed_git_file_limit_falls_back_to_default(value: str) -> None:
+    vcs = MagicMock()
+    vcs.get_file_at_ref.return_value = f"context_limits: {{code_section: {{max_git_files: {value}}}}}"
+    service = MCPReviewService(_settings(), MagicMock(), vcs_factory=lambda *_: vcs)
+
+    limits = service._resolve_context_limits("o/r", "dev")
+
+    assert limits.code_section.max_git_files == 0
+
+
+def _git(path: Path, *args: str) -> str:
+    return subprocess.run(
+        ["git", "-C", str(path), *args], check=True, capture_output=True, text=True,
+    ).stdout.strip()
+
+
+@pytest.fixture
+def lexical_clone(tmp_path) -> Path:
+    clone = tmp_path / "clone"
+    clone.mkdir()
+    _git(clone, "init", "-b", "dev")
+    _git(clone, "config", "user.email", "test@example.com")
+    _git(clone, "config", "user.name", "Test")
+    _git(clone, "remote", "add", "origin", "https://github.com/o/r.git")
+    (clone / ".review.yml").write_text(
+        "context_limits: {code_section: {max_files: 3, max_git_files: 2}}\n",
+        encoding="utf-8",
+    )
+    configs = clone / "configs"
+    configs.mkdir()
+    (configs / "schema.yml").write_text("schema:\n  sentinelword: committed\n",
+                                        encoding="utf-8")
+    (configs / "ignored.yml").write_text("sentinelword: private\n", encoding="utf-8")
+    _git(clone, "add", ".")
+    _git(clone, "commit", "-m", "Добавить конфигурацию")
+    return clone
+
+
+def _task_context_service(
+    *, registered_clone: Path | None = None, committed_policy: str | None = None,
+    task: dict | None = None,
+) -> MCPReviewService:
+    settings = _settings()
+    settings.review_branches = "dev,missing"
+    components = MagicMock()
+    components.store.get_repo_clone.return_value = str(registered_clone) if registered_clone else None
+    components.store.get_index_meta_row.return_value = None
+    components.graph.count_nodes.return_value = 0
+    components.summary_store.count_summaries.return_value = 0
+    components.task_service.get_task_context.return_value = ""
+    components.task_service.get_task.return_value = task
+    components.task_service.search_hits.return_value = []
+    components.task_service.render_hits.return_value = ""
+    retriever = components.retriever
+    retriever.graph = None
+    retriever.embedder.embed_queries.side_effect = lambda queries: [[0.1] for _ in queries]
+    retriever.store.hybrid_search.return_value = [
+        Retrieved("hybrid.py#f", "hybrid.py", "f", "function", 1, 1, "x = 1", 0.0, bm25_hit=True),
+        Retrieved(
+            "tests/test_hybrid.py#test_f", "tests/test_hybrid.py", "test_f", "function",
+            1, 1, "assert x == 1", 0.0, bm25_hit=True,
+        ),
+    ]
+    vcs = MagicMock()
+    vcs.get_file_at_ref.return_value = committed_policy
+    return MCPReviewService(settings, components, vcs_factory=lambda *_: vcs)
+
+
+def test_prepare_task_context_verifies_git_citation_from_selected_branch(
+    lexical_clone, isolated_xdg_config_home,
+) -> None:
+    policy = isolated_xdg_config_home / "rag-reviewer/repos/o/r.yml"
+    policy.parent.mkdir(parents=True)
+    policy.write_text("paths: {ignore: [configs/ignored.yml]}\n", encoding="utf-8")
+    sha = _git(lexical_clone, "rev-parse", "dev")
+    _git(lexical_clone, "switch", "-c", "other")
+    schema = lexical_clone / "configs/schema.yml"
+    schema.write_text("schema:\n  sentinelword: other-branch\n", encoding="utf-8")
+    _git(lexical_clone, "commit", "-am", "Изменить схему")
+    schema.write_text("schema:\n  sentinelword: worktree\n", encoding="utf-8")
+    task = {
+        "key": "ID-1", "title": "Investigate",
+        "description": "background\n" * 8 + "sentinelword",
+    }
+    service = _task_context_service(registered_clone=lexical_clone, task=task)
+
+    payload = service.prepare_task_context(
+        "o/r", "ID-1", "dev", warm_board=False, include_brief_evidence=True,
+        include_code_budget=True,
+    )
+
+    assert f"git-lexical@{sha}" in payload["code"]
+    assert "configs/schema.yml" in payload["code"]
+    assert "sentinelword: committed" in payload["code"]
+    assert "worktree" not in payload["code"]
+    assert "other-branch" not in payload["code"]
+    assert "configs/ignored.yml" not in payload["code"]
+    assert "configs/schema.yml" not in payload["test_exemplars"]
+    assert "tests/test_hybrid.py" in payload["test_exemplars"]
+    assert payload["code_budget"]["git_lexical_files"] == 1
+    assert payload["code_budget"]["visible_files"] == 2
+    checked = service.verify_task_brief(
+        payload["brief_evidence_id"],
+        [
+            BriefCitationIn(section="code", path="configs/schema.yml", line=2),
+            BriefCitationIn(section="code", path="configs/schema.yml", line=3),
+            BriefCitationIn(section="test_exemplars", path="configs/schema.yml", line=2),
+        ],
+    )
+    assert [citation["status"] for citation in checked["citations"]] == [
+        "verified", "outside_excerpt", "path_unseen",
+    ]
+
+
+def test_prepare_task_context_git_search_uses_free_text_with_explicit_clone(
+    lexical_clone,
+) -> None:
+    (lexical_clone / ".review.yml").write_text(
+        "paths: {ignore: [configs/ignored.yml]}\n", encoding="utf-8",
+    )
+    _git(lexical_clone, "commit", "-am", "Игнорировать конфигурацию")
+    service = _task_context_service(
+        committed_policy="context_limits: {code_section: {max_git_files: 2}}",
+    )
+
+    payload = service.prepare_task_context(
+        "o/r", "sentinelword", "dev", str(lexical_clone), warm_board=False,
+    )
+
+    assert "git-lexical@" in payload["code"]
+    assert "configs/schema.yml" in payload["code"]
+    assert "configs/ignored.yml" not in payload["code"]
+
+
+def test_prepare_task_context_uses_ignore_from_same_git_snapshot_despite_replace_ref(
+    lexical_clone,
+) -> None:
+    policy = lexical_clone / ".review.yml"
+    policy.write_text("paths: {ignore: [configs/ignored.yml]}\n", encoding="utf-8")
+    _git(lexical_clone, "commit", "-am", "Игнорировать конфигурацию")
+    sha = _git(lexical_clone, "rev-parse", "dev")
+    _git(lexical_clone, "switch", "-c", "replacement")
+    policy.write_text("paths: {ignore: []}\n", encoding="utf-8")
+    _git(lexical_clone, "commit", "-am", "Изменить политику")
+    _git(lexical_clone, "replace", sha, "replacement")
+    service = _task_context_service(
+        committed_policy="context_limits: {code_section: {max_git_files: 2}}",
+    )
+
+    payload = service.prepare_task_context(
+        "o/r", "sentinelword", "dev", str(lexical_clone), warm_board=False,
+    )
+
+    assert f"git-lexical@{sha}" in payload["code"]
+    assert "configs/schema.yml" in payload["code"]
+    assert "configs/ignored.yml" not in payload["code"]
+
+
+@pytest.mark.parametrize("invalid_policy", ["paths: [", "paths: {ignore: ignored.yml}"])
+def test_prepare_task_context_git_search_requires_readable_committed_ignore_policy(
+    lexical_clone, invalid_policy: str,
+) -> None:
+    (lexical_clone / ".review.yml").write_text(invalid_policy, encoding="utf-8")
+    _git(lexical_clone, "commit", "-am", "Добавить невалидную политику")
+    service = _task_context_service(
+        committed_policy="context_limits: {code_section: {max_git_files: 2}}",
+    )
+
+    payload = service.prepare_task_context(
+        "o/r", "sentinelword", "dev", str(lexical_clone), warm_board=False,
+    )
+
+    assert "hybrid.py" in payload["code"]
+    assert "git-lexical@" not in payload["code"]
+    assert any(gap["section"] == "code.git_lexical" for gap in payload["gaps"])
+
+
+@pytest.mark.parametrize("failure", ["missing_clone", "foreign_clone", "missing_branch"])
+def test_prepare_task_context_keeps_hybrid_results_when_git_fails(
+    lexical_clone, failure: str,
+) -> None:
+    branch = "missing" if failure == "missing_branch" else "dev"
+    if failure == "foreign_clone":
+        _git(lexical_clone, "remote", "set-url", "origin", "https://github.com/o/other.git")
+    service = _task_context_service(
+        registered_clone=None if failure == "missing_clone" else lexical_clone,
+        committed_policy="context_limits: {code_section: {max_git_files: 1}}",
+    )
+
+    payload = service.prepare_task_context("o/r", "sentinelword", branch, warm_board=False)
+
+    assert "hybrid.py" in payload["code"]
+    assert "git-lexical@" not in payload["code"]
+    assert any(gap["section"] == "code.git_lexical" for gap in payload["gaps"])
+
+
+def test_prepare_task_context_keeps_hybrid_results_without_git_matches(lexical_clone) -> None:
+    service = _task_context_service(registered_clone=lexical_clone)
+
+    payload = service.prepare_task_context("o/r", "unfindableword", "dev", warm_board=False)
+
+    assert "hybrid.py" in payload["code"]
+    assert "git-lexical@" not in payload["code"]
+    assert all(gap["section"] != "code.git_lexical" for gap in payload["gaps"])
+
+
+def test_prepare_task_context_default_git_quota_never_opens_explicit_clone(
+    tmp_path, monkeypatch,
+) -> None:
+    service = _task_context_service()
+
+    calls = []
+    real_run = subprocess.run
+
+    def record_run(args, *other, **kwargs):
+        if args[0] == "git":
+            calls.append(args)
+        return real_run(args, *other, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", record_run)
+    payload = service.prepare_task_context(
+        "o/r", "sentinelword", "dev", str(tmp_path), warm_board=False,
+    )
+
+    assert "hybrid.py" in payload["code"]
+    assert calls == []

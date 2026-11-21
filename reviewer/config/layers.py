@@ -19,6 +19,7 @@ import yaml
 from reviewer.config.deepmerge import ATOMIC_KEYS, leaf_paths, merge_layer
 from reviewer.config.fetch_errors import classify_fetch_error
 from reviewer.config.task_board import normalize_task_board_config
+from reviewer.policy.context_limits import valid_git_file_limit
 from reviewer.policy.policy import ReviewPolicy
 from reviewer.services.repo_id import normalize_repo
 
@@ -220,6 +221,7 @@ def _validate_context_limits_layer(value: object) -> bool:
             "max_chunks_per_file": _is_int,
             "chars_per_file": _is_int,
             "max_augmented_files": _is_int,
+            "max_git_files": valid_git_file_limit,
         },
     }
     for section, shape in sections.items():
@@ -569,6 +571,7 @@ def _validate_public_policy_data(effective: Mapping[str, object]) -> None:
                 "max_chunks_per_file": _is_int,
                 "chars_per_file": _is_int,
                 "max_augmented_files": _is_int,
+                "max_git_files": valid_git_file_limit,
             },
         ),
     })
