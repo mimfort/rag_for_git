@@ -1,0 +1,1235 @@
+{
+  "input_sha256": "4a9773cef65ef00d0bda3b1404337f5d035b7e1687a76d2c3dd32bcf087b8157",
+  "runs": [
+    {
+      "condition": "markdown",
+      "rep": 1,
+      "aggregate": {
+        "core": {
+          "matched": 18,
+          "total": 54,
+          "median_recall": 0.33333333333333337
+        },
+        "dependencies": {
+          "matched": 3,
+          "total": 16,
+          "median_recall": 0.16666666666666666
+        }
+      },
+      "format_error_briefs": 1,
+      "format_error_denominator": 6,
+      "missing_canonical_heading_briefs": 6,
+      "checked_references": 41,
+      "rejected_references": 7,
+      "tasks": [
+        {
+          "key": "PRI-170",
+          "coverage": {
+            "core": {
+              "matched": 7,
+              "total": 15,
+              "visible": 8
+            },
+            "dependencies": {
+              "matched": 1,
+              "total": 2,
+              "visible": 1
+            }
+          },
+          "off_label_paths": [
+            "reviewer/mcp/session_serde.py",
+            "reviewer/services/review_service.py"
+          ],
+          "counted_citations": [
+            [
+              "reviewer/tasks/sync.py",
+              20
+            ],
+            [
+              "reviewer/tasks/boards/base.py",
+              28
+            ],
+            [
+              "reviewer/tasks/boards/yougile.py",
+              107
+            ],
+            [
+              "reviewer/tasks/boards/youtrack.py",
+              117
+            ],
+            [
+              "reviewer/tasks/service.py",
+              17
+            ],
+            [
+              "reviewer/tasks/graph.py",
+              25
+            ],
+            [
+              "reviewer/services/review_service.py",
+              81
+            ],
+            [
+              "reviewer/mcp/session_serde.py",
+              41
+            ],
+            [
+              "reviewer/entrypoints/mcp_server.py",
+              134
+            ],
+            [
+              "reviewer/config/settings.py",
+              40
+            ],
+            [
+              "reviewer/tasks/boards/youtrack.py",
+              117
+            ],
+            [
+              "reviewer/tasks/boards/yougile.py",
+              107
+            ],
+            [
+              "reviewer/tasks/boards/base.py",
+              28
+            ],
+            [
+              "reviewer/tasks/graph.py",
+              25
+            ]
+          ],
+          "reference_statuses": {
+            "outside_excerpt": 2,
+            "path_unseen": 1,
+            "verified": 14
+          },
+          "format_errors": [],
+          "canonical_code_heading": false
+        },
+        {
+          "key": "PRI-202",
+          "coverage": {
+            "core": {
+              "matched": 2,
+              "total": 11,
+              "visible": 5
+            },
+            "dependencies": {
+              "matched": 1,
+              "total": 2,
+              "visible": 1
+            }
+          },
+          "off_label_paths": [
+            "reviewer/app.py",
+            "reviewer/entrypoints/cli.py"
+          ],
+          "counted_citations": [
+            [
+              "reviewer/retrieval/retriever.py",
+              77
+            ],
+            [
+              "reviewer/mcp/service.py",
+              395
+            ],
+            [
+              "reviewer/app.py",
+              36
+            ],
+            [
+              "reviewer/entrypoints/cli.py",
+              139
+            ],
+            [
+              "reviewer/config/settings.py",
+              15
+            ]
+          ],
+          "reference_statuses": {
+            "verified": 5
+          },
+          "format_errors": [],
+          "canonical_code_heading": false
+        },
+        {
+          "key": "PRI-221",
+          "coverage": {
+            "core": {
+              "matched": 0,
+              "total": 10,
+              "visible": 4
+            },
+            "dependencies": {
+              "matched": 0,
+              "total": 3,
+              "visible": 2
+            }
+          },
+          "off_label_paths": [],
+          "counted_citations": [],
+          "reference_statuses": {},
+          "format_errors": [
+            "brief_missing_or_repeated"
+          ],
+          "canonical_code_heading": false
+        },
+        {
+          "key": "PRI-179",
+          "coverage": {
+            "core": {
+              "matched": 1,
+              "total": 5,
+              "visible": 3
+            },
+            "dependencies": {
+              "matched": 1,
+              "total": 3,
+              "visible": 1
+            }
+          },
+          "off_label_paths": [
+            "reviewer/tasks/service.py"
+          ],
+          "counted_citations": [
+            [
+              "reviewer/mcp/service.py",
+              612
+            ],
+            [
+              "reviewer/tasks/service.py",
+              17
+            ],
+            [
+              "reviewer/graph/scip.py",
+              56
+            ]
+          ],
+          "reference_statuses": {
+            "outside_excerpt": 2,
+            "path_unseen": 1,
+            "verified": 3
+          },
+          "format_errors": [],
+          "canonical_code_heading": false
+        },
+        {
+          "key": "PRI-205",
+          "coverage": {
+            "core": {
+              "matched": 5,
+              "total": 7,
+              "visible": 5
+            },
+            "dependencies": {
+              "matched": 0,
+              "total": 3,
+              "visible": 1
+            }
+          },
+          "off_label_paths": [
+            "reviewer/tasks/boards/__init__.py"
+          ],
+          "counted_citations": [
+            [
+              "reviewer/tasks/boards/base.py",
+              24
+            ],
+            [
+              "reviewer/tasks/boards/youtrack.py",
+              130
+            ],
+            [
+              "reviewer/tasks/boards/yougile.py",
+              112
+            ],
+            [
+              "reviewer/tasks/boards/__init__.py",
+              10
+            ],
+            [
+              "reviewer/mcp/service.py",
+              299
+            ],
+            [
+              "reviewer/entrypoints/mcp_server.py",
+              120
+            ]
+          ],
+          "reference_statuses": {
+            "verified": 6
+          },
+          "format_errors": [],
+          "canonical_code_heading": false
+        },
+        {
+          "key": "PRI-207",
+          "coverage": {
+            "core": {
+              "matched": 3,
+              "total": 6,
+              "visible": 5
+            },
+            "dependencies": {
+              "matched": 0,
+              "total": 3,
+              "visible": 1
+            }
+          },
+          "off_label_paths": [
+            "reviewer/index/freshness.py",
+            "reviewer/index/store.py",
+            "reviewer/tasks/graph.py"
+          ],
+          "counted_citations": [
+            [
+              "reviewer/tasks/sync.py",
+              20
+            ],
+            [
+              "reviewer/tasks/boards/base.py",
+              24
+            ],
+            [
+              "reviewer/tasks/service.py",
+              17
+            ],
+            [
+              "reviewer/index/store.py",
+              129
+            ],
+            [
+              "reviewer/index/freshness.py",
+              18
+            ],
+            [
+              "reviewer/tasks/graph.py",
+              25
+            ]
+          ],
+          "reference_statuses": {
+            "outside_excerpt": 1,
+            "verified": 6
+          },
+          "format_errors": [],
+          "canonical_code_heading": false
+        }
+      ]
+    },
+    {
+      "condition": "structured",
+      "rep": 1,
+      "aggregate": {
+        "core": {
+          "matched": 22,
+          "total": 54,
+          "median_recall": 0.43333333333333335
+        },
+        "dependencies": {
+          "matched": 4,
+          "total": 16,
+          "median_recall": 0.3333333333333333
+        }
+      },
+      "format_error_briefs": 0,
+      "format_error_denominator": 6,
+      "missing_canonical_heading_briefs": 0,
+      "checked_references": 44,
+      "rejected_references": 9,
+      "tasks": [
+        {
+          "key": "PRI-170",
+          "coverage": {
+            "core": {
+              "matched": 7,
+              "total": 15,
+              "visible": 8
+            },
+            "dependencies": {
+              "matched": 1,
+              "total": 2,
+              "visible": 1
+            }
+          },
+          "off_label_paths": [
+            "reviewer/index/store.py"
+          ],
+          "counted_citations": [
+            [
+              "reviewer/tasks/boards/base.py",
+              28
+            ],
+            [
+              "reviewer/tasks/boards/yougile.py",
+              107
+            ],
+            [
+              "reviewer/tasks/boards/youtrack.py",
+              117
+            ],
+            [
+              "reviewer/tasks/sync.py",
+              20
+            ],
+            [
+              "reviewer/tasks/service.py",
+              17
+            ],
+            [
+              "reviewer/tasks/graph.py",
+              25
+            ],
+            [
+              "reviewer/index/store.py",
+              150
+            ],
+            [
+              "reviewer/config/settings.py",
+              40
+            ],
+            [
+              "reviewer/entrypoints/mcp_server.py",
+              134
+            ]
+          ],
+          "reference_statuses": {
+            "outside_excerpt": 1,
+            "path_unseen": 2,
+            "verified": 9
+          },
+          "format_errors": [],
+          "canonical_code_heading": true
+        },
+        {
+          "key": "PRI-202",
+          "coverage": {
+            "core": {
+              "matched": 1,
+              "total": 11,
+              "visible": 5
+            },
+            "dependencies": {
+              "matched": 1,
+              "total": 2,
+              "visible": 1
+            }
+          },
+          "off_label_paths": [
+            "reviewer/entrypoints/cli.py"
+          ],
+          "counted_citations": [
+            [
+              "reviewer/retrieval/retriever.py",
+              77
+            ],
+            [
+              "reviewer/config/settings.py",
+              15
+            ],
+            [
+              "reviewer/entrypoints/cli.py",
+              139
+            ]
+          ],
+          "reference_statuses": {
+            "outside_excerpt": 1,
+            "path_unseen": 1,
+            "verified": 3
+          },
+          "format_errors": [],
+          "canonical_code_heading": true
+        },
+        {
+          "key": "PRI-221",
+          "coverage": {
+            "core": {
+              "matched": 4,
+              "total": 10,
+              "visible": 4
+            },
+            "dependencies": {
+              "matched": 1,
+              "total": 3,
+              "visible": 2
+            }
+          },
+          "off_label_paths": [
+            "reviewer/config/provider_credentials.py",
+            "reviewer/mcp/session_store.py",
+            "reviewer/tasks/boards/__init__.py",
+            "reviewer/tasks/boards/registry.py"
+          ],
+          "counted_citations": [
+            [
+              "reviewer/config/settings.py",
+              38
+            ],
+            [
+              "reviewer/policy/policy.py",
+              13
+            ],
+            [
+              "reviewer/config/provider_credentials.py",
+              50
+            ],
+            [
+              "reviewer/tasks/boards/registry.py",
+              119
+            ],
+            [
+              "reviewer/tasks/boards/__init__.py",
+              16
+            ],
+            [
+              "reviewer/mcp/service.py",
+              114
+            ],
+            [
+              "reviewer/mcp/session_serde.py",
+              42
+            ],
+            [
+              "reviewer/mcp/session_store.py",
+              89
+            ],
+            [
+              "reviewer/entrypoints/cli.py",
+              306
+            ]
+          ],
+          "reference_statuses": {
+            "verified": 9
+          },
+          "format_errors": [],
+          "canonical_code_heading": true
+        },
+        {
+          "key": "PRI-179",
+          "coverage": {
+            "core": {
+              "matched": 1,
+              "total": 5,
+              "visible": 3
+            },
+            "dependencies": {
+              "matched": 1,
+              "total": 3,
+              "visible": 1
+            }
+          },
+          "off_label_paths": [
+            "reviewer/tasks/graph.py",
+            "reviewer/tasks/service.py"
+          ],
+          "counted_citations": [
+            [
+              "reviewer/tasks/graph.py",
+              25
+            ],
+            [
+              "reviewer/tasks/service.py",
+              17
+            ],
+            [
+              "reviewer/mcp/service.py",
+              612
+            ],
+            [
+              "reviewer/graph/scip.py",
+              56
+            ]
+          ],
+          "reference_statuses": {
+            "outside_excerpt": 1,
+            "path_unseen": 3,
+            "verified": 4
+          },
+          "format_errors": [],
+          "canonical_code_heading": true
+        },
+        {
+          "key": "PRI-205",
+          "coverage": {
+            "core": {
+              "matched": 5,
+              "total": 7,
+              "visible": 5
+            },
+            "dependencies": {
+              "matched": 0,
+              "total": 3,
+              "visible": 1
+            }
+          },
+          "off_label_paths": [
+            "reviewer/tasks/boards/__init__.py"
+          ],
+          "counted_citations": [
+            [
+              "reviewer/tasks/boards/base.py",
+              24
+            ],
+            [
+              "reviewer/tasks/boards/youtrack.py",
+              130
+            ],
+            [
+              "reviewer/tasks/boards/yougile.py",
+              112
+            ],
+            [
+              "reviewer/tasks/boards/__init__.py",
+              10
+            ],
+            [
+              "reviewer/mcp/service.py",
+              299
+            ],
+            [
+              "reviewer/entrypoints/mcp_server.py",
+              120
+            ]
+          ],
+          "reference_statuses": {
+            "verified": 6
+          },
+          "format_errors": [],
+          "canonical_code_heading": true
+        },
+        {
+          "key": "PRI-207",
+          "coverage": {
+            "core": {
+              "matched": 4,
+              "total": 6,
+              "visible": 5
+            },
+            "dependencies": {
+              "matched": 0,
+              "total": 3,
+              "visible": 1
+            }
+          },
+          "off_label_paths": [],
+          "counted_citations": [
+            [
+              "reviewer/tasks/boards/base.py",
+              24
+            ],
+            [
+              "reviewer/tasks/sync.py",
+              20
+            ],
+            [
+              "reviewer/tasks/store.py",
+              72
+            ],
+            [
+              "reviewer/tasks/service.py",
+              17
+            ]
+          ],
+          "reference_statuses": {
+            "verified": 4
+          },
+          "format_errors": [],
+          "canonical_code_heading": true
+        }
+      ]
+    },
+    {
+      "condition": "structured",
+      "rep": 2,
+      "aggregate": {
+        "core": {
+          "matched": 16,
+          "total": 54,
+          "median_recall": 0.26666666666666666
+        },
+        "dependencies": {
+          "matched": 2,
+          "total": 16,
+          "median_recall": 0.0
+        }
+      },
+      "format_error_briefs": 1,
+      "format_error_denominator": 6,
+      "missing_canonical_heading_briefs": 1,
+      "checked_references": 32,
+      "rejected_references": 9,
+      "tasks": [
+        {
+          "key": "PRI-170",
+          "coverage": {
+            "core": {
+              "matched": 5,
+              "total": 15,
+              "visible": 8
+            },
+            "dependencies": {
+              "matched": 1,
+              "total": 2,
+              "visible": 1
+            }
+          },
+          "off_label_paths": [],
+          "counted_citations": [
+            [
+              "reviewer/tasks/graph.py",
+              25
+            ],
+            [
+              "reviewer/tasks/service.py",
+              17
+            ],
+            [
+              "reviewer/tasks/sync.py",
+              20
+            ],
+            [
+              "reviewer/mcp/service.py",
+              272
+            ],
+            [
+              "reviewer/entrypoints/mcp_server.py",
+              134
+            ],
+            [
+              "reviewer/config/settings.py",
+              40
+            ]
+          ],
+          "reference_statuses": {
+            "outside_excerpt": 1,
+            "path_unseen": 1,
+            "verified": 6
+          },
+          "format_errors": [],
+          "canonical_code_heading": true
+        },
+        {
+          "key": "PRI-202",
+          "coverage": {
+            "core": {
+              "matched": 2,
+              "total": 11,
+              "visible": 5
+            },
+            "dependencies": {
+              "matched": 0,
+              "total": 2,
+              "visible": 1
+            }
+          },
+          "off_label_paths": [
+            "reviewer/app.py",
+            "reviewer/entrypoints/cli.py"
+          ],
+          "counted_citations": [
+            [
+              "reviewer/entrypoints/cli.py",
+              139
+            ],
+            [
+              "reviewer/app.py",
+              36
+            ],
+            [
+              "reviewer/retrieval/retriever.py",
+              77
+            ],
+            [
+              "reviewer/index/reranker.py",
+              14
+            ]
+          ],
+          "reference_statuses": {
+            "outside_excerpt": 2,
+            "verified": 4
+          },
+          "format_errors": [],
+          "canonical_code_heading": true
+        },
+        {
+          "key": "PRI-221",
+          "coverage": {
+            "core": {
+              "matched": 0,
+              "total": 10,
+              "visible": 4
+            },
+            "dependencies": {
+              "matched": 0,
+              "total": 3,
+              "visible": 2
+            }
+          },
+          "off_label_paths": [],
+          "counted_citations": [],
+          "reference_statuses": {},
+          "format_errors": [
+            "brief_missing_or_repeated"
+          ],
+          "canonical_code_heading": false
+        },
+        {
+          "key": "PRI-179",
+          "coverage": {
+            "core": {
+              "matched": 1,
+              "total": 5,
+              "visible": 3
+            },
+            "dependencies": {
+              "matched": 1,
+              "total": 3,
+              "visible": 1
+            }
+          },
+          "off_label_paths": [
+            "reviewer/tasks/service.py"
+          ],
+          "counted_citations": [
+            [
+              "reviewer/tasks/service.py",
+              17
+            ],
+            [
+              "reviewer/graph/scip.py",
+              56
+            ],
+            [
+              "reviewer/entrypoints/mcp_server.py",
+              208
+            ]
+          ],
+          "reference_statuses": {
+            "outside_excerpt": 1,
+            "path_unseen": 3,
+            "verified": 3
+          },
+          "format_errors": [],
+          "canonical_code_heading": true
+        },
+        {
+          "key": "PRI-205",
+          "coverage": {
+            "core": {
+              "matched": 5,
+              "total": 7,
+              "visible": 5
+            },
+            "dependencies": {
+              "matched": 0,
+              "total": 3,
+              "visible": 1
+            }
+          },
+          "off_label_paths": [
+            "reviewer/tasks/boards/__init__.py"
+          ],
+          "counted_citations": [
+            [
+              "reviewer/tasks/boards/base.py",
+              24
+            ],
+            [
+              "reviewer/tasks/boards/youtrack.py",
+              130
+            ],
+            [
+              "reviewer/tasks/boards/yougile.py",
+              112
+            ],
+            [
+              "reviewer/tasks/boards/__init__.py",
+              10
+            ],
+            [
+              "reviewer/mcp/service.py",
+              299
+            ],
+            [
+              "reviewer/entrypoints/mcp_server.py",
+              120
+            ]
+          ],
+          "reference_statuses": {
+            "verified": 6
+          },
+          "format_errors": [],
+          "canonical_code_heading": true
+        },
+        {
+          "key": "PRI-207",
+          "coverage": {
+            "core": {
+              "matched": 3,
+              "total": 6,
+              "visible": 5
+            },
+            "dependencies": {
+              "matched": 0,
+              "total": 3,
+              "visible": 1
+            }
+          },
+          "off_label_paths": [
+            "reviewer/tasks/graph.py"
+          ],
+          "counted_citations": [
+            [
+              "reviewer/tasks/boards/base.py",
+              24
+            ],
+            [
+              "reviewer/tasks/sync.py",
+              20
+            ],
+            [
+              "reviewer/tasks/service.py",
+              17
+            ],
+            [
+              "reviewer/tasks/graph.py",
+              25
+            ]
+          ],
+          "reference_statuses": {
+            "outside_excerpt": 1,
+            "verified": 4
+          },
+          "format_errors": [],
+          "canonical_code_heading": true
+        }
+      ]
+    },
+    {
+      "condition": "markdown",
+      "rep": 2,
+      "aggregate": {
+        "core": {
+          "matched": 25,
+          "total": 54,
+          "median_recall": 0.43333333333333335
+        },
+        "dependencies": {
+          "matched": 3,
+          "total": 16,
+          "median_recall": 0.16666666666666666
+        }
+      },
+      "format_error_briefs": 0,
+      "format_error_denominator": 6,
+      "missing_canonical_heading_briefs": 6,
+      "checked_references": 47,
+      "rejected_references": 10,
+      "tasks": [
+        {
+          "key": "PRI-170",
+          "coverage": {
+            "core": {
+              "matched": 7,
+              "total": 15,
+              "visible": 8
+            },
+            "dependencies": {
+              "matched": 0,
+              "total": 2,
+              "visible": 1
+            }
+          },
+          "off_label_paths": [
+            "reviewer/index/store.py"
+          ],
+          "counted_citations": [
+            [
+              "reviewer/tasks/sync.py",
+              26
+            ],
+            [
+              "reviewer/tasks/boards/base.py",
+              28
+            ],
+            [
+              "reviewer/tasks/boards/yougile.py",
+              107
+            ],
+            [
+              "reviewer/tasks/boards/youtrack.py",
+              117
+            ],
+            [
+              "reviewer/tasks/service.py",
+              17
+            ],
+            [
+              "reviewer/tasks/graph.py",
+              25
+            ],
+            [
+              "reviewer/entrypoints/mcp_server.py",
+              134
+            ],
+            [
+              "reviewer/tasks/graph.py",
+              41
+            ],
+            [
+              "reviewer/index/store.py",
+              150
+            ]
+          ],
+          "reference_statuses": {
+            "outside_excerpt": 2,
+            "path_unseen": 3,
+            "verified": 9
+          },
+          "format_errors": [],
+          "canonical_code_heading": false
+        },
+        {
+          "key": "PRI-202",
+          "coverage": {
+            "core": {
+              "matched": 3,
+              "total": 11,
+              "visible": 5
+            },
+            "dependencies": {
+              "matched": 1,
+              "total": 2,
+              "visible": 1
+            }
+          },
+          "off_label_paths": [
+            "reviewer/app.py",
+            "reviewer/entrypoints/cli.py"
+          ],
+          "counted_citations": [
+            [
+              "reviewer/config/settings.py",
+              15
+            ],
+            [
+              "reviewer/entrypoints/cli.py",
+              139
+            ],
+            [
+              "reviewer/retrieval/retriever.py",
+              77
+            ],
+            [
+              "reviewer/index/reranker.py",
+              14
+            ],
+            [
+              "reviewer/mcp/service.py",
+              395
+            ],
+            [
+              "reviewer/app.py",
+              36
+            ]
+          ],
+          "reference_statuses": {
+            "verified": 6
+          },
+          "format_errors": [],
+          "canonical_code_heading": false
+        },
+        {
+          "key": "PRI-221",
+          "coverage": {
+            "core": {
+              "matched": 4,
+              "total": 10,
+              "visible": 4
+            },
+            "dependencies": {
+              "matched": 1,
+              "total": 3,
+              "visible": 2
+            }
+          },
+          "off_label_paths": [
+            "reviewer/config/provider_credentials.py",
+            "reviewer/mcp/session_store.py",
+            "reviewer/tasks/boards/__init__.py"
+          ],
+          "counted_citations": [
+            [
+              "reviewer/config/settings.py",
+              38
+            ],
+            [
+              "reviewer/config/provider_credentials.py",
+              50
+            ],
+            [
+              "reviewer/policy/policy.py",
+              13
+            ],
+            [
+              "reviewer/mcp/service.py",
+              114
+            ],
+            [
+              "reviewer/mcp/session_serde.py",
+              42
+            ],
+            [
+              "reviewer/mcp/session_store.py",
+              89
+            ],
+            [
+              "reviewer/tasks/boards/__init__.py",
+              16
+            ],
+            [
+              "reviewer/entrypoints/cli.py",
+              306
+            ]
+          ],
+          "reference_statuses": {
+            "verified": 8
+          },
+          "format_errors": [],
+          "canonical_code_heading": false
+        },
+        {
+          "key": "PRI-179",
+          "coverage": {
+            "core": {
+              "matched": 2,
+              "total": 5,
+              "visible": 3
+            },
+            "dependencies": {
+              "matched": 1,
+              "total": 3,
+              "visible": 1
+            }
+          },
+          "off_label_paths": [],
+          "counted_citations": [
+            [
+              "reviewer/graph/store.py",
+              5
+            ],
+            [
+              "reviewer/graph/scip.py",
+              56
+            ],
+            [
+              "reviewer/mcp/service.py",
+              612
+            ]
+          ],
+          "reference_statuses": {
+            "outside_excerpt": 1,
+            "path_unseen": 3,
+            "verified": 3
+          },
+          "format_errors": [],
+          "canonical_code_heading": false
+        },
+        {
+          "key": "PRI-205",
+          "coverage": {
+            "core": {
+              "matched": 5,
+              "total": 7,
+              "visible": 5
+            },
+            "dependencies": {
+              "matched": 0,
+              "total": 3,
+              "visible": 1
+            }
+          },
+          "off_label_paths": [
+            "reviewer/tasks/boards/__init__.py"
+          ],
+          "counted_citations": [
+            [
+              "reviewer/tasks/boards/base.py",
+              24
+            ],
+            [
+              "reviewer/tasks/boards/youtrack.py",
+              130
+            ],
+            [
+              "reviewer/tasks/boards/yougile.py",
+              112
+            ],
+            [
+              "reviewer/tasks/boards/__init__.py",
+              10
+            ],
+            [
+              "reviewer/mcp/service.py",
+              299
+            ],
+            [
+              "reviewer/entrypoints/mcp_server.py",
+              120
+            ]
+          ],
+          "reference_statuses": {
+            "verified": 6
+          },
+          "format_errors": [],
+          "canonical_code_heading": false
+        },
+        {
+          "key": "PRI-207",
+          "coverage": {
+            "core": {
+              "matched": 4,
+              "total": 6,
+              "visible": 5
+            },
+            "dependencies": {
+              "matched": 0,
+              "total": 3,
+              "visible": 1
+            }
+          },
+          "off_label_paths": [
+            "reviewer/index/embeddings.py"
+          ],
+          "counted_citations": [
+            [
+              "reviewer/tasks/boards/base.py",
+              24
+            ],
+            [
+              "reviewer/tasks/sync.py",
+              20
+            ],
+            [
+              "reviewer/tasks/service.py",
+              17
+            ],
+            [
+              "reviewer/tasks/boards/youtrack.py",
+              131
+            ],
+            [
+              "reviewer/index/embeddings.py",
+              30
+            ]
+          ],
+          "reference_statuses": {
+            "outside_excerpt": 1,
+            "verified": 5
+          },
+          "format_errors": [],
+          "canonical_code_heading": false
+        }
+      ]
+    }
+  ]
+}
