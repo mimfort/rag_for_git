@@ -24,6 +24,7 @@ Tool discipline (shared):
 ## Session-less tools (`ask` / `solve-task`, no PR session)
 
 - `search_codebase(repo, query, branch?)` — hybrid semantic+lexical search;
+- `verify_task_brief(evidence_id, citations)` — check lines shown in a prepared task context;
 - `related_symbols(repo, node_id, branch?)` — graph neighbours;
 - `callers(repo, node_id, branch?)` — direct callers (impact);
 - `definition(repo, symbol, branch?)` — where a symbol is defined.

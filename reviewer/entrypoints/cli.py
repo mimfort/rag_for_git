@@ -11,7 +11,7 @@ import platform as _platform
 import re
 import shlex
 import shutil as _shutil
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TextIO
 
 import click
 import httpx
@@ -64,6 +64,8 @@ from reviewer.index.refs import base_ref
 from reviewer.metrics.brief_quality import ground_truth
 from reviewer.metrics.brief_quality.config import BriefQualityConfig
 from reviewer.metrics.brief_quality.corpus import measure_corpus
+from reviewer.metrics.client_usage import SOURCES as USAGE_SOURCES
+from reviewer.metrics.client_usage import measure_usage
 from reviewer.policy.policy import ReviewPolicy
 from reviewer.index.store import ChunkStore
 from reviewer.index.summary_store import SummaryStore
@@ -1314,6 +1316,19 @@ def measure_briefs(path: str, repo_tag: str | None, briefs_dir: str | None,
         # уже погашено внутри measure_and_record, сигналим по счётчику.
         click.echo(f"⚠ Не записано в БД строк: {write_failed}", err=True)
         raise SystemExit(1)
+
+
+@cli.command("measure-client-usage")
+@click.argument("events", type=click.File("r", encoding="utf-8"), default="-")
+@click.option("--source", type=click.Choice(USAGE_SOURCES), required=True, help="Формат JSONL")
+@click.option("--model", default=None, help="Модель для событий без имени модели")
+def measure_client_usage(events: TextIO, source: str, model: str | None) -> None:
+    """Суммировать расход токенов из JSONL локально, включая чтение из stdin."""
+    try:
+        result = measure_usage(events, source, model=model)
+    except ValueError as error:
+        raise click.ClickException(str(error)) from error
+    click.echo(json.dumps(result, ensure_ascii=False))
 
 
 @cli.command()

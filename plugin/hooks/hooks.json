@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/review_cost.py\""
+            "command": "root=\"${CLAUDE_PLUGIN_ROOT}\"; [ -f \"$root/hooks/review_cost.py\" ] || root=\"$root/plugin\"; exec python3 \"$root/hooks/review_cost.py\""
           }
         ]
       }
@@ -17,7 +17,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/brief_post_write.py\""
+            "command": "root=\"${CLAUDE_PLUGIN_ROOT}\"; [ -f \"$root/hooks/brief_post_write.py\" ] || root=\"$root/plugin\"; exec python3 \"$root/hooks/brief_post_write.py\""
           }
         ]
       },
@@ -26,7 +26,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/reviewer_defect.py\""
+            "command": "root=\"${CLAUDE_PLUGIN_ROOT}\"; [ -f \"$root/hooks/reviewer_defect.py\" ] || root=\"$root/plugin\"; exec python3 \"$root/hooks/reviewer_defect.py\""
           }
         ]
       }

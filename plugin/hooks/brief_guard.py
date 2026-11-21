@@ -18,6 +18,7 @@ MCP_TOOL_PREFIXES = (
     "mcp__plugin_rag-reviewer_reviewer__",
 )
 ALLOWED_LOGICAL_TOOLS = frozenset({
+    "prepare_task_context",
     "search_codebase",
     "related_symbols",
     "callers",
@@ -28,6 +29,9 @@ ALLOWED_TOOL_NAMES = frozenset(
     prefix + logical
     for prefix in MCP_TOOL_PREFIXES
     for logical in ALLOWED_LOGICAL_TOOLS
+)
+TASK_CONTEXT_TOOL_NAMES = frozenset(
+    prefix + "prepare_task_context" for prefix in MCP_TOOL_PREFIXES
 )
 
 _HEADER_RE = re.compile(
@@ -73,10 +77,33 @@ def find_window_start(lines: list[dict]) -> int:
     return start
 
 
+def _json_object(text: str) -> dict:
+    try:
+        value = json.loads(text)
+    except ValueError:
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def _retrieval_texts(text: str, tool_name: str) -> list[str]:
+    envelope = _json_object(text)
+    result = envelope.get("result")
+    if tool_name not in TASK_CONTEXT_TOOL_NAMES:
+        return [result if isinstance(result, str) else text]
+
+    if isinstance(result, str):
+        envelope = _json_object(result)
+    elif isinstance(result, dict):
+        envelope = result
+    # Board text, diagnostics and related tasks are not code evidence.
+    return [section for name in ("code", "test_exemplars")
+            if isinstance(section := envelope.get(name), str) and section]
+
+
 def tool_result_texts(lines: list[dict], start_idx: int) -> list[str]:
     """Собрать связанные результаты разрешённых retrieval-вызовов."""
     texts: list[str] = []
-    allowed_ids: set[str] = set()
+    allowed_tools: dict[str, str] = {}
     for line in lines[start_idx + 1:]:
         content = (line.get("message") or {}).get("content")
         if not isinstance(content, list):
@@ -86,27 +113,21 @@ def tool_result_texts(lines: list[dict], start_idx: int) -> list[str]:
                 continue
             if line.get("type") == "assistant" and block.get("type") == "tool_use":
                 tool_id = block.get("id")
+                tool_name = block.get("name")
                 if (
                     isinstance(tool_id, str)
-                    and block.get("name") in ALLOWED_TOOL_NAMES
+                    and tool_name in ALLOWED_TOOL_NAMES
                 ):
-                    allowed_ids.add(tool_id)
+                    allowed_tools[tool_id] = tool_name
                 continue
-            if (
-                line.get("type") != "user"
-                or block.get("type") != "tool_result"
-                or block.get("tool_use_id") not in allowed_ids
-            ):
+            if line.get("type") != "user" or block.get("type") != "tool_result":
+                continue
+            result_id = block.get("tool_use_id")
+            if not isinstance(result_id, str) or result_id not in allowed_tools:
                 continue
             text = _block_text(block.get("content"))
             if text:
-                try:
-                    envelope = json.loads(text)
-                except ValueError:
-                    envelope = None
-                if isinstance(envelope, dict) and isinstance(envelope.get("result"), str):
-                    text = envelope["result"]
-                texts.append(text)
+                texts.extend(_retrieval_texts(text, allowed_tools[result_id]))
     return texts
 
 

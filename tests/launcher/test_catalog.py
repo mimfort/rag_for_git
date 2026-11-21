@@ -18,6 +18,7 @@ VISIBLE_COMMANDS = {
     "install",
     "install-skills",
     "measure-briefs",
+    "measure-client-usage",
     "migrate-branches",
     "search",
     "serve",
