@@ -317,8 +317,8 @@ def build_task_context(deps, *, repo: str, key: str, branch: str,
                         lambda: deps.linked(key, project), "", "граф задач недоступен",
                         state, BACKEND_GRAPH),
         "similar": _safe(payload, "related.similar",
-                         lambda: deps.similar(query, project), "", "корпус задач недоступен",
-                         state),
+                         lambda: deps.similar(query, project, task=task), "",
+                         "корпус задач недоступен", state),
     }
     payload["subsystems"] = _safe(
         payload, "subsystems", lambda: deps.subsystems(repo, branch, query), None,

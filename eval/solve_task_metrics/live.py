@@ -130,7 +130,7 @@ class LiveRetrieval:
         return pack.as_context(line_numbers=True) or "(ничего не найдено)"
 
     def code_multi(self, repo: str, branch: str, queries: list, limits: dict | None,
-                   *, similar_paths: bool = False) -> str:
+                   *, similar_paths: bool = False, task: dict | None = None) -> str:
         """Мультизапросная выдача тем же продакшн-путём, что видит сборщик брифа.
 
         Подмешанный сигнал (PRI-257, только similar-diffs — co-change снят
@@ -159,7 +159,7 @@ class LiveRetrieval:
             # просто не состоится, и число подмешанных путей уедет вниз без
             # видимой причины. Поэтому отказ ловится и называется, а не гасится.
             try:
-                deps.similar(queries[0], None)
+                deps.similar(queries[0], None, task=task)
             except Exception:  # noqa: BLE001 — харнесс продолжает без подмешивания
                 log.warning("live: similar недоступен, подмешивание similar-diffs "
                             "в этом прогоне не состоится", exc_info=True)

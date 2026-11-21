@@ -80,7 +80,7 @@ def _similar_paths(provider, task: TaskInput, target: ReplayTarget) -> set:
     """
     queries = build_subqueries(task.task, task.query)
     text = provider.code_multi(target.repo, target.branch, queries, target.limits,
-                               similar_paths=True)
+                               similar_paths=True, task=task.task)
     return extract_context_paths(text)
 
 
