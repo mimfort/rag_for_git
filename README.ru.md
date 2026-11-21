@@ -321,7 +321,15 @@ New Chat или новую CLI-сессию. В IDE также выполнит�
 
 ### Сервисы и credentials
 
-`reviewer init` записывает выбранный env-файл, а `reviewer check` проверяет его. Порядок поиска:
+Команда `reviewer` без аргументов открывает меню. Можно вводить полное имя команды, например
+`reviewer init`. В форме стрелки ←/→ меняют значение переключателя. F3 открывает предпросмотр.
+
+`reviewer init` запрашивает недостающий ключ Voyage и, когда известен VCS, предлагает его
+ключ для ревью. При создании профиля репозитория пункт «Изменить ветки» в предпросмотре
+позволяет поправить план, сохраняя введённые ключи.
+Для хранилищ, досок задач и выбора провайдера используйте `reviewer init --advanced`.
+`reviewer init --dry-run` показывает план без записи. После настройки отдельного профиля его
+можно проверить командой `reviewer check --env-file ПУТЬ`. Порядок поиска профиля по умолчанию —
 `REVIEWER_ENV_FILE` → `$XDG_CONFIG_HOME/rag-reviewer/.env` → `./.env`.
 
 Основные группы:
@@ -335,7 +343,7 @@ New Chat или новую CLI-сессию. В IDE также выполнит�
 
 Публикуемые хостовые порты storage-сервисов Compose заданы переменными, а не литералами:
 `PARADEDB_PUBLISH_PORT` (дефолт `5433`), `NEO4J_BOLT_PUBLISH_PORT` (дефолт `7687`) и
-`NEO4J_HTTP_PUBLISH_PORT` (дефолт `7474`). Контейнерные порты фиксированы. `reviewer init`
+`NEO4J_HTTP_PUBLISH_PORT` (дефолт `7474`). Контейнерные порты фиксированы. `reviewer init --advanced`
 спрашивает их в группе хранилищ и выводит первые два из `PG_DSN` и `NEO4J_URI`, поэтому строка
 подключения и публикуемый порт не разъезжаются молча; расхождение на локальном хосте печатает
 предупреждение, но не блокирует.
@@ -417,7 +425,7 @@ Credentials остаются на сервере. **Credentials are not returned
 | GitLab | `GITLAB_URL`, `GITLAB_TOKEN` | PAT/project token with `api` scope | MR metadata, changes, notes, repository files, compare | discussions/notes и MR description backlink | authenticates `/api/v4/user` identity |
 
 Health check подтверждает URL/token authentication, но не каждое granular repository permission.
-Выбранные repository permissions проверяются реальным review. `reviewer init` показывает тот же
+Выбранные repository permissions проверяются реальным review. `reviewer init --advanced` показывает тот же
 contract перед запросом credentials только выбранного provider.
 
 ### Репозитории и ветки
@@ -475,6 +483,15 @@ context_limits:
     max_chunks_per_file: 1
     chars_per_file: 975
     max_augmented_files: 3
+
+metrics:
+  brief_quality:
+    core_paths:
+      - 'reviewer/**/*.py'
+      - 'plugin/**'
+      - '!plugin/**/*.md'
+      - '!eval/**'
+      - '*.py'
 ```
 
 `summary_paths.ignore` фильтрует только состав кластеризации сводок подсистем — в отличие от
@@ -505,6 +522,14 @@ git-фолбэк по ключу задачи). Это РЕЗЕРВ файлов
 (4 попадания в ядро на 34 подмешанных пути, просадка bulk-recall) и снят, а не оставлен
 выключенным; покрывает только similar-diffs (медиана core-recall 0.5 → 0.75, precision
 0.167 → 0.333, 28 попаданий на 35 путей). См. `eval/replay_report.md`, раздел «Приёмка PRI-257».
+
+`metrics.brief_quality.core_paths` (PRI-271) делает линейку ядра продакшн-путей онлайн-метрики
+качества брифа свойством репозитория, а не хардкодом: список glob-паттернов (`**` пересекает
+`/`, одиночные `*`/`?` — нет), который любой репозиторий настраивает под собственную раскладку
+продакшн-кода. Без ключа метрика откатывается на дефолтную линейку этого репозитория
+(`DEFAULT_CORE_PATHS` в `reviewer/metrics/brief_quality/config.py`) и отчитывается
+`configured: false` — метрика отличает это от явного, но пустого списка, см. раздел о странице
+«Quality» ниже.
 
 ### Слоистая политика репозитория
 
@@ -628,7 +653,7 @@ Server-side workflow — **store-first**:
    context tools.
 3. Client models не перечисляют provider напрямую и не передают credentials.
 
-MCP server сейчас предоставляет **42 tools**, включая batch-операцию нативных подзадач.
+MCP server сейчас предоставляет **44 tools**, включая batch-операцию нативных подзадач. Проверка ссылок, метрики и диагностика описаны в [памятке по совместимости клиентов](docs/client-compatibility.md).
 
 Legacy aliases остаются как **legacy metadata for older clients** на одно compatibility window:
 `TASK_BOARD_API_KEY → YOUGILE_API_KEY` и
@@ -874,7 +899,7 @@ input, output, cache write, cache read), а не суммируя сырые т�
 
 - **Когда:** синхронизировать доску перед task search или solve-task.
 - **Вызов:** `/rag-reviewer:sync-tasks`.
-- **Нужно:** запустите `reviewer init`, настройте provider по `docs/board-providers.md`, затем
+- **Нужно:** запустите `reviewer init --advanced`, настройте provider по `docs/board-providers.md`, затем
   проверьте его через `reviewer check`.
 - **Чтение/запись:** вызывает идемпотентный server-side `sync_board` в repo mode с canonical repo и
   tracked branch. Effective policy резолвит сервер; клиент её не реконструирует. Tool читает board
@@ -925,7 +950,9 @@ docker compose ps
 
 `reviewer check` проверяет credentials и подключение сервисов без расхода Voyage quota. `status`
 сравнивает indexed SHA с выбранным локальным ref и показывает chunks, graph nodes, сводки
-подсистем и commit drift каждой отслеживаемой ветки.
+подсистем и commit drift каждой отслеживаемой ветки. `reviewer measure-briefs` пересчитывает
+качество брифов по PR-мержам git-истории клона для всего корпуса брифов — тоже без обращений
+к Voyage.
 
 ### Свежесть индекса и восстановление
 
@@ -967,10 +994,15 @@ reviewer serve
 медиану core-recall (precision показан по задачам линией на графике, отдельной медианы у него нет),
 bulk-подвыборку (задачи с `expected_core >= 10`, порог `BULK_CORE_THRESHOLD`) с горизонталью
 офлайн-базы для сравнения «до/после», и разбивку промахов по таксономии. Источник данных — таблица
-`brief_quality`, которая пополняется при каждом реальном `publish_review` (пишет
-`MCPReviewService`, не отдельный процесс). Если бриф задачи не найден или в нём вовсе нет секции
-`## Relevant code` — измерение пропускается: точка не появляется на графике вместо нуля или
-ошибки. Присутствующая, но пустая секция — не пропуск, а валидное измерение с `predicted = 0`.
+`brief_quality`, которая пополняется в трёх точках (PRI-270): при каждом реальном
+`publish_review` (пишет `run_id`), в `finish_task` и командой CLI `reviewer measure-briefs`
+(обе последние пишут `run_id = NULL`). Все три идут через одну функцию —
+`reviewer.services.brief_quality.measure_and_record`; идентичность строки — `(repo, pr_number,
+task_key)`, а не факт прогона ревью, поэтому более ранний съём без ревью и более поздний
+`publish_review` обновляют одну и ту же строку, а не плодят две. Если бриф задачи не найден или
+в нём вовсе нет секции `## Relevant code` — измерение пропускается: точка не появляется на
+графике вместо нуля или ошибки. Присутствующая, но пустая секция — не пропуск, а валидное
+измерение с `predicted = 0`.
 
 В контейнерном сценарии внутренний listen-port отделён от опубликованного loopback-порта. Образ
 собирается один раз, оба порта выбираются при запуске (`database` замените на доступный из

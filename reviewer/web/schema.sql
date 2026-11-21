@@ -107,6 +107,7 @@ CREATE TABLE IF NOT EXISTS brief_quality (
     head_sha            TEXT,
     status              TEXT        NOT NULL,   -- measured | no_task_key | no_brief
                                                 -- | brief_unreadable | empty_core_denominator
+                                                -- | unconfigured_core_denominator
     brief_path          TEXT,
     expected            INT         NOT NULL DEFAULT 0,
     expected_core       INT         NOT NULL DEFAULT 0,
@@ -124,3 +125,41 @@ CREATE TABLE IF NOT EXISTS brief_quality (
 CREATE INDEX IF NOT EXISTS brief_quality_repo_created_at
     ON brief_quality (repo, created_at DESC);
 CREATE INDEX IF NOT EXISTS brief_quality_task_key ON brief_quality (task_key);
+
+-- PRI-270: съём метрики переехал из publish_review в finish_task и CLI, где
+-- прогона ревью нет вовсе, поэтому run_id перестаёт быть обязательным. FK с
+-- ON DELETE CASCADE при этом не трогаем: NULL ему не подчиняется.
+ALTER TABLE brief_quality ALTER COLUMN run_id DROP NOT NULL;
+
+-- Схлопывание дублей перед уникальным индексом: до PRI-270 идентичности у
+-- строки не было, и на деплое с историей их может оказаться несколько.
+-- Выживает последняя (максимальный id) — она же самая свежая.
+--
+-- Guard по существованию индекса обязателен: DELETE ниже — единственная DML
+-- в файле дешёвых idempotent-чеков (CREATE ... IF NOT EXISTS), а
+-- `_SCHEMA` целиком выполняется при КАЖДОМ старте reviewer serve/reviewer-mcp
+-- (`init_schema`). Уникальный индекс сам по себе не режет работу — он не
+-- используется как short-circuit (план — Hash Join двух полных Seq Scan),
+-- поэтому без guard'а каждый последующий рестарт платил бы растущий
+-- полный скан таблицы за гарантированно нулевой эффект (после первого
+-- успешного прогона дублей больше нет). Наличие индекса — надёжный сигнал
+-- «схлопывание уже случилось»: он создаётся один раз ниже и переживает
+-- рестарты.
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_indexes WHERE indexname = 'brief_quality_identity'
+    ) THEN
+        DELETE FROM brief_quality a
+            USING brief_quality b
+            WHERE a.repo = b.repo
+              AND a.pr_number = b.pr_number
+              AND COALESCE(a.task_key, '') = COALESCE(b.task_key, '')
+              AND a.id < b.id;
+    END IF;
+END $$;
+
+-- COALESCE обязателен: в SQL NULL ≠ NULL, и обычный UNIQUE не покрыл бы
+-- строки без task_key — а именно они пишутся при съёме без ключа задачи.
+CREATE UNIQUE INDEX IF NOT EXISTS brief_quality_identity
+    ON brief_quality (repo, pr_number, (COALESCE(task_key, '')));

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -592,6 +593,49 @@ def test_record_brief_quality_fail_soft_without_db():
         ) is None
 
 
+def test_record_brief_quality_sql_is_idempotent_and_nullable(monkeypatch):
+    """Запись обязана быть UPSERT'ом по идентичности строки, а run_id — необязательным.
+
+    Проверяется фактический SQL, отданный драйверу: без ON CONFLICT повторный
+    finish_task создаст вторую строку, а без COALESCE уникальность не покроет
+    строки с task_key IS NULL (в SQL NULL ≠ NULL).
+    """
+    captured = {}
+
+    class _Cur:
+        def fetchone(self):
+            return (1,)
+
+    class _Conn:
+        def execute(self, sql, params):
+            captured["sql"] = sql
+            captured["params"] = params
+            return _Cur()
+
+        def commit(self):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    history = ReviewHistory("postgresql://unused")
+    monkeypatch.setattr(history, "_connect", lambda: _Conn())
+    measurement = SimpleNamespace(
+        task_key="PRI-1", status="measured", brief_path="b.md", expected=1,
+        expected_core=1, predicted=1, hit_core=1, core_recall=1.0, raw_recall=1.0,
+        precision=1.0, misses={}, predicted_paths=(), expected_core_paths=(),
+        hit_core_paths=(),
+    )
+    assert history.record_brief_quality(None, "o/r", 7, "sha", measurement) == 1
+    assert "ON CONFLICT" in captured["sql"]
+    assert "COALESCE(task_key, '')" in captured["sql"]
+    assert "COALESCE(EXCLUDED.run_id, brief_quality.run_id)" in captured["sql"]
+    assert captured["params"]["run_id"] is None
+
+
 def test_brief_quality_trend_fail_soft_without_db():
     """Недоступная БД отдаёт пустой, но валидный по форме ответ."""
     from reviewer.web.history import ReviewHistory
@@ -733,6 +777,64 @@ def test_brief_quality_no_measurement_is_separate():
     assert data["trend"] == []
     assert data["aggregate"]["n_measured"] == 0
     assert data["no_measurement_by_status"] == {"no_brief": 1}
+
+
+@pytest.mark.integration
+def test_record_brief_quality_second_write_updates_row_and_keeps_run_id():
+    """Повтор съёма не плодит строку, а run_id дописывается позже (крит. 2 и 5 PRI-270).
+
+    repo уникален на прогон — как и в остальных integration-тестах файла,
+    единственный способ изолировать выборку от чужих строк истории.
+
+    Третий шаг (real₁ → real₂) — не то же самое, что None → real: он ловит
+    именно реверс аргументов `COALESCE(EXCLUDED.run_id, brief_quality.run_id)`.
+    С реверсом строка застряла бы на первом run_id навсегда, а сценарий
+    None → real этого не отличил бы от корректного поведения — EXCLUDED.run_id
+    там NULL в обоих случаях, и COALESCE отдал бы старое значение независимо
+    от порядка аргументов.
+    """
+    import uuid
+
+    from reviewer.services.brief_quality import BriefQualityMeasurement
+
+    repo = f"pri270/idem-{uuid.uuid4().hex[:8]}"
+    history = ReviewHistory(Settings().pg_dsn)
+    history.init_schema()
+    measurement = BriefQualityMeasurement(status="measured", task_key="PRI-1", core_recall=0.5)
+
+    history.record_brief_quality(None, repo, 7, "sha1", measurement)
+    history.record_brief_quality(None, repo, 7, "sha1", measurement)
+
+    with history._connect() as conn:
+        rows = conn.execute(
+            "SELECT run_id FROM brief_quality WHERE repo = %s AND pr_number = %s",
+            (repo, 7),
+        ).fetchall()
+    assert len(rows) == 1
+    assert rows[0][0] is None
+
+    run_id = history.record_run({**_sample_run(), "pr_number": 900004}, [])
+    history.record_brief_quality(run_id, repo, 7, "sha2", measurement)
+
+    with history._connect() as conn:
+        rows = conn.execute(
+            "SELECT run_id FROM brief_quality WHERE repo = %s AND pr_number = %s",
+            (repo, 7),
+        ).fetchall()
+    assert len(rows) == 1
+    assert rows[0][0] == run_id
+
+    run_id_2 = history.record_run({**_sample_run(), "pr_number": 900005}, [])
+    history.record_brief_quality(run_id_2, repo, 7, "sha3", measurement)
+
+    with history._connect() as conn:
+        rows = conn.execute(
+            "SELECT run_id FROM brief_quality WHERE repo = %s AND pr_number = %s",
+            (repo, 7),
+        ).fetchall()
+    assert len(rows) == 1
+    assert rows[0][0] == run_id_2
+    assert run_id_2 != run_id
 
 
 # ---------------------------------------------------------------------------

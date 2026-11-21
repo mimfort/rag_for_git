@@ -22,6 +22,7 @@ def build_snapshot(
     run_git,
     commit: str,
     taken_at: str,
+    config,
     transcripts=None,
 ) -> tuple:
     """Посчитать срез по корпусу брифов.
@@ -31,12 +32,15 @@ def build_snapshot(
         run_git: GitRunner (инъектируется, чтобы тесты шли без git-репозитория).
         commit: sha HEAD на момент прогона.
         taken_at: ISO-8601 метка времени прогона.
+        config: BriefQualityConfig репозитория — обязателен, передаётся вызывающим
+            явно; молчаливый дефолт (ядро rag_for_git) — тот тихий провал, ради
+            починки которого затевалась вся задача.
         transcripts: результат endtoend.scan_transcripts() или None.
 
     Returns:
         (срез, per-task строки для отчёта).
     """
-    records = briefs.load_briefs(briefs_dir)
+    records = briefs.load_briefs(briefs_dir, config)
     with_tokens = [r for r in records if r.token_block]
     # Один ключ = одна задача: два брифа с одним ключом (переписанный бриф,
     # вторая итерация) иначе дали бы задаче двойной вес в агрегате.
@@ -84,14 +88,14 @@ def build_snapshot(
         expected_core = {
             path
             for path in truth.changed
-            if classify.is_core_production_path(path) and existed(path)
+            if classify.is_core_production_path(path, config) and existed(path)
         }
         row = recall.evaluate_task(
             record.task_key, record.relevant_paths, truth.changed, expected_core
         )
         quality_rows.append(row)
         for missed in truth.changed - record.relevant_paths:
-            misses[classify.categorize_miss(missed, existed(missed))] += 1
+            misses[classify.categorize_miss(missed, existed(missed), config)] += 1
         report_rows.append(
             {
                 "key": row.task_key,
