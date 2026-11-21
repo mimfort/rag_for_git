@@ -56,6 +56,9 @@ def compare_task(service, key, task):
     deps = _TaskContextDeps(service, None)
     payload = service.prepare_task_context(REPO, key, BRANCH, warm_board=False)
     code = extract_context_paths(payload["code"])
+    test_exemplars = extract_context_paths(payload["test_exemplars"])
+    if not test_exemplars:
+        raise RuntimeError(f"No test exemplars for seeded task {key}")
     queries = _test_queries(task, key)
     searches = {
         "mixed": lambda: service._search_codebase_multi(
@@ -85,7 +88,7 @@ def compare_task(service, key, task):
         }
     if not code or not results["mixed"]["paths"]:
         raise RuntimeError(f"Missing comparison input for {key}")
-    if set(results["tests_only"]["paths"]) != extract_context_paths(payload["test_exemplars"]):
+    if set(results["tests_only"]["paths"]) != test_exemplars:
         raise RuntimeError(f"Section result differs from prepare_task_context for {key}")
     if results["tests_only"]["test_files"] != len(results["tests_only"]["paths"]):
         raise RuntimeError(f"Ordinary code in test-only results for {key}")
