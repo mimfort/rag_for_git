@@ -1,0 +1,488 @@
+{
+  "all-symbol-0": [
+    {
+      "model": "gpt-6-luna",
+      "reasoning_effort": "low",
+      "batch_elapsed_s": 45.503,
+      "usage": {
+        "input_tokens": 40931,
+        "cached_input_tokens": 0,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 1028,
+        "reasoning_output_tokens": 0
+      },
+      "briefs": [
+        {
+          "key": "PRI-228",
+          "brief": "Формировать батчи эмбеддингов Voyage с ограничением по токенам, задаваемым через конфигурацию и установщик; крупный фрагмент не должен срывать индексацию.\n\nRelevant code\n- reviewer/index/embeddings.py:13 — изменить разбиение документов на батчи по токенному бюджету и обработку слишком длинного фрагмента.\n- reviewer/app.py:81 — передать настройку токенного бюджета в VoyageEmbedder при сборке компонентов.\n- reviewer/config/settings.py:38 — добавить конфигурационное поле токенного бюджета.\n- reviewer/install.py:122 — добавить поле настройки в установочный сценарий.\n(dropped 24: остальные фрагменты относятся к поиску, задачам, графу, установке скиллов и не нужны для реализации токенных батчей.)",
+          "paths": [
+            "reviewer/index/embeddings.py",
+            "reviewer/app.py",
+            "reviewer/config/settings.py",
+            "reviewer/install.py"
+          ],
+          "invalid_references": [
+            [
+              "reviewer/config/settings.py",
+              38
+            ],
+            [
+              "reviewer/install.py",
+              122
+            ]
+          ]
+        },
+        {
+          "key": "PRI-235",
+          "brief": "Читать закоммиченный `.review.yml` из клона, сохранённого для репозитория, при показе конфигурации и в MCP; соблюдать порядок слоёв и обращаться к API как к резервному источнику.\n\nRelevant code\n- reviewer/entrypoints/cli.py:196 — задействовать резолв политики для `config show` с учётом доступного клона.\n- reviewer/config/layers.py:298 — сохранить приоритет слоёв при чтении закоммиченной политики и поддержать резервный fetch.\n- reviewer/mcp/service.py:167 — использовать привязку репозитория к клону при загрузке политики для MCP.\n- reviewer/app.py:81 — хранить привязку репозитория к локальному клону в доступных компонентах приложения.\n- reviewer/tasks/store.py:78 — сохранить и получать привязку репозитория к клону.\n- reviewer/entrypoints/mcp_server.py:26 — задействовать чтение политики из клона в MCP-пути.\n(dropped 24: остальные фрагменты не относятся к чтению закоммиченной политики, её источникам или хранению клона.)",
+          "paths": [
+            "reviewer/entrypoints/cli.py",
+            "reviewer/config/layers.py",
+            "reviewer/mcp/service.py",
+            "reviewer/app.py",
+            "reviewer/tasks/store.py",
+            "reviewer/entrypoints/mcp_server.py"
+          ],
+          "invalid_references": [
+            [
+              "reviewer/app.py",
+              81
+            ],
+            [
+              "reviewer/tasks/store.py",
+              78
+            ]
+          ]
+        },
+        {
+          "key": "PRI-251",
+          "brief": "Расширить `implementations`: для найденного класса или метода перечислять семейство однотипных классов и методов, включая Protocol; показывать родственные файлы в solve-task.\n\nRelevant code\n- reviewer/mcp/service.py:1791 — расширить поиск и форматирование implementations для классов, методов и Protocol.\n- reviewer/entrypoints/mcp_server.py:365 — сохранить доступ к расширенному обходу через MCP-инструмент.\n- reviewer/graph/store.py:171 — изменить обход графа для выдачи родственных символов и связей.\n- reviewer/graph/backend.py:64 — обеспечить построение связей наследования и реализаций, в том числе для Protocol.\n- reviewer/index/chunker.py:21 — учитывать определения классов и методов при извлечении символов.\n- reviewer/tools/code_tools.py:69 — включить связанные символы в инструменты контекста.\n- reviewer/tools/graph_format.py:32 — показать файлы, строки и определения связанных символов в выдаче solve-task.\n(dropped 25: остальные фрагменты не нужны для поиска семейств символов и отображения связанных файлов.)",
+          "paths": [
+            "reviewer/mcp/service.py",
+            "reviewer/entrypoints/mcp_server.py",
+            "reviewer/graph/store.py",
+            "reviewer/graph/backend.py",
+            "reviewer/index/chunker.py",
+            "reviewer/tools/code_tools.py",
+            "reviewer/tools/graph_format.py"
+          ],
+          "invalid_references": [
+            [
+              "reviewer/graph/store.py",
+              171
+            ],
+            [
+              "reviewer/graph/backend.py",
+              64
+            ]
+          ]
+        },
+        {
+          "key": "PRI-255",
+          "brief": "Разбивать требования задачи на подзапросы, пакетно получать эмбеддинги, объединять результаты через RRF и обходить граф от объединённого списка, сохраняя резервный путь при недоступности внешнего источника.\n\nRelevant code\n- reviewer/tasks/service.py:35 — реализовать разбиение требований и пакетный поиск задач с резервным путём.\n- reviewer/retrieval/retriever.py:123 — пакетно получить векторы подзапросов, объединить выдачу через RRF и использовать объединённые результаты как seed графового обхода.\n- reviewer/index/embeddings.py:162 — обеспечить пакетное получение query-эмбеддингов.\n- reviewer/graph/store.py:171 — поддержать графовый обход от объединённого списка символов.\n- reviewer/index/store.py:519 — получать узлы для объединённого списка результатов.\n- reviewer/entrypoints/mcp_server.py:206 — сохранить MCP-точку входа поиска задач.\n- reviewer/mcp/service.py:506 — связать контекст задачи с поиском и графовым обходом.\n- reviewer/tasks/boards/yougile.py:141 — сохранить резервный путь для требований из внешнего источника, включая вложенные материалы.\n(dropped 3: остальные фрагменты относятся к несвязанным конфигурации, хранилищам и служебным операциям.)",
+          "paths": [
+            "reviewer/tasks/service.py",
+            "reviewer/retrieval/retriever.py",
+            "reviewer/index/embeddings.py",
+            "reviewer/graph/store.py",
+            "reviewer/index/store.py",
+            "reviewer/entrypoints/mcp_server.py",
+            "reviewer/mcp/service.py",
+            "reviewer/tasks/boards/yougile.py"
+          ],
+          "invalid_references": []
+        }
+      ]
+    },
+    {
+      "model": "gpt-6-luna",
+      "reasoning_effort": "low",
+      "batch_elapsed_s": 46.329,
+      "usage": {
+        "input_tokens": 41843,
+        "cached_input_tokens": 0,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 976,
+        "reasoning_output_tokens": 0
+      },
+      "briefs": [
+        {
+          "key": "PRI-257",
+          "brief": "Подмешивать пути из diff похожих задач и Git-соизменяемости, ограничивая долю дополнительного контекста и сохраняя сортировку в пределах прежнего бюджета с деградацией при недоступной истории.\n\nRelevant code\n- reviewer/retrieval/retriever.py:130 — добавлять связанные пути в поиск и ранжирование контекста.\n- reviewer/services/review_service.py:114 — посмотреть, как сервис подключает историю ревью.\n- reviewer/web/history.py:142 — понять доступ к хранилищу истории, которое может быть недоступно.\n- reviewer/policy/context_limits.py:30 — учитывать файловые бюджеты контекстной секции.\n- reviewer/retrieval/multiquery.py:47 — сохранить ограничение размера блоков контекста.\n- reviewer/index/store.py:519 — получать содержимое узлов с учётом изменённых путей.\n- reviewer/graph/store.py:76 — учитывать существующее расширение контекста по графу.\n- reviewer/index/refs.py:10 — сохранить соглашение о ключе базового индекса.\n(dropped 16: нерелевантные CLI, конфигурация компонентов, задачи, доски, установка и вспомогательные утилиты.)",
+          "paths": [
+            "reviewer/retrieval/retriever.py",
+            "reviewer/services/review_service.py",
+            "reviewer/web/history.py",
+            "reviewer/policy/context_limits.py",
+            "reviewer/retrieval/multiquery.py",
+            "reviewer/index/store.py",
+            "reviewer/graph/store.py",
+            "reviewer/index/refs.py"
+          ],
+          "invalid_references": [
+            [
+              "reviewer/web/history.py",
+              142
+            ]
+          ]
+        },
+        {
+          "key": "PRI-260",
+          "brief": "Сливать настройки политики по отдельным листьям, чтобы частичный override не скрывал соседние лимиты, и показывать расхождение рабочей копии `.review.yml` с версией Git.\n\nRelevant code\n- reviewer/config/layers.py:315 — разрешать слои политики и происхождение значений.\n- reviewer/config/committed.py:53 — получать коммиченную политику из локального клона или VCS для сравнения.\n- reviewer/entrypoints/cli.py:240 — выводить effective policy и расхождение через `config show`.\n- reviewer/policy/policy.py:21 — определить структуру политики, включая лимиты.\n(dropped 20: нерелевантные закрытие ресурсов, графовые сводки, доски, синхронизация, хуки и прочие сервисы.)",
+          "paths": [
+            "reviewer/config/layers.py",
+            "reviewer/config/committed.py",
+            "reviewer/entrypoints/cli.py",
+            "reviewer/policy/policy.py"
+          ],
+          "invalid_references": []
+        },
+        {
+          "key": "PRI-205",
+          "brief": "Добавить общий серверный интерфейс для получения доступных целей завершения задач: YouTrack — поля и значения статусов, YouGile — колонки.\n\nRelevant code\n- reviewer/tasks/boards/base.py:171 — определить общий контракт доски для работы с целями.\n- reviewer/tasks/boards/youtrack.py:130 — реализовать обнаружение полей и значений статусов YouTrack.\n- reviewer/tasks/boards/yougile.py:112 — реализовать получение колонок YouGile.\n- reviewer/tasks/boards/__init__.py:10 — создавать провайдеры досок для общего интерфейса.\n- reviewer/mcp/service.py:299 — добавить серверный метод доступа к доступным целям.\n- reviewer/entrypoints/mcp_server.py:120 — предоставить интерфейс клиенту через MCP.\n- reviewer/tasks/sync.py:81 — учитывать выбранное поле статуса в существующей серверной работе с досками.\n(dropped 10: нерелевантные индексация, сборка ревью, установки и вспомогательные модули.)",
+          "paths": [
+            "reviewer/tasks/boards/base.py",
+            "reviewer/tasks/boards/youtrack.py",
+            "reviewer/tasks/boards/yougile.py",
+            "reviewer/tasks/boards/__init__.py",
+            "reviewer/mcp/service.py",
+            "reviewer/entrypoints/mcp_server.py",
+            "reviewer/tasks/sync.py"
+          ],
+          "invalid_references": [
+            [
+              "reviewer/tasks/boards/base.py",
+              171
+            ]
+          ]
+        },
+        {
+          "key": "PRI-207",
+          "brief": "При синхронизации заполнять недостающие проектные метаданные старых задач ниже watermark, сохраняя инкрементальность и не пересчитывая текстовые эмбеддинги.\n\nRelevant code\n- reviewer/tasks/sync.py:20 — менять логику обхода задач и watermark.\n- reviewer/tasks/boards/base.py:24 — проверить наличие проектного кода в нормализуемой задаче.\n- reviewer/tasks/service.py:17 — обновлять задачу и её метаданные без повторной индексации текста.\n- reviewer/tasks/store.py:72 — определить хранилище задач и операции над метаданными.\n- reviewer/tasks/graph.py:25 — обновлять проектную метку узла задачи в графе.\n- reviewer/index/store.py:129 — переиспользовать готовые векторы по хешу текста.\n- reviewer/index/freshness.py:18 — сохранить механизм обновления индекса с переиспользованием векторов.\n(dropped 16: нерелевантные обработка diff ревью, настройки, досочные REST детали и прочие независимые функции.)",
+          "paths": [
+            "reviewer/tasks/sync.py",
+            "reviewer/tasks/boards/base.py",
+            "reviewer/tasks/service.py",
+            "reviewer/tasks/store.py",
+            "reviewer/tasks/graph.py",
+            "reviewer/index/store.py",
+            "reviewer/index/freshness.py"
+          ],
+          "invalid_references": []
+        }
+      ]
+    },
+    {
+      "model": "gpt-6-luna",
+      "reasoning_effort": "low",
+      "batch_elapsed_s": 36.339,
+      "usage": {
+        "input_tokens": 37182,
+        "cached_input_tokens": 12672,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 800,
+        "reasoning_output_tokens": 0
+      },
+      "briefs": [
+        {
+          "key": "PRI-221",
+          "brief": "Добавить глобальную и per-repo домашнюю политику с приоритетом над проектной конфигурацией, отображением эффективных значений и источников, миграцией и без credentials в YAML.\n\nRelevant code\n- reviewer/config/settings.py:38 — настройки по умолчанию для review-политики.\n- reviewer/config/provider_credentials.py:50 — сбор credentials из настроек и env; важно сохранить их вне YAML.\n- reviewer/policy/policy.py:13 — структура полей review-политики.\n- reviewer/entrypoints/cli.py:306 — проверка настроенных провайдеров и credentials.\n- reviewer/entrypoints/mcp_server.py:209 — API-конфигурация доски; учитывать границу deploy-wide metadata.\n- reviewer/mcp/service.py:114 — сервис и передача настроек приложения.\n- reviewer/mcp/session_serde.py:42 — сериализация/восстановление политики в сессиях.\n- reviewer/tasks/boards/__init__.py:16 — создание провайдера и передача credentials отдельно от опций.\n- reviewer/tasks/boards/registry.py:119 — доступ к зарегистрированным провайдерам.\n(dropped 13: фрагменты про вложения YouGile, установку клиентов, граф импортов, доски задач и хранилища не относятся к слоям домашней review-политики.)",
+          "paths": [
+            "reviewer/config/settings.py",
+            "reviewer/config/provider_credentials.py",
+            "reviewer/policy/policy.py",
+            "reviewer/entrypoints/cli.py",
+            "reviewer/entrypoints/mcp_server.py",
+            "reviewer/mcp/service.py",
+            "reviewer/mcp/session_serde.py",
+            "reviewer/tasks/boards/__init__.py",
+            "reviewer/tasks/boards/registry.py"
+          ],
+          "invalid_references": []
+        },
+        {
+          "key": "PRI-234",
+          "brief": "При недоступном чтении коммиченного `.review.yml` через VCS резолвить домашние слои политики, сохраняя источники, диагностику и приоритеты настроек.\n\nRelevant code\n- reviewer/entrypoints/cli.py:189 — команда показа эффективной политики и обработка ошибки VCS.\n- reviewer/config/layers.py:257 — слияние домашних и коммиченного слоёв, источники и предупреждения.\n- reviewer/mcp/service.py:167 — сервис, где готовится review-контекст.\n- reviewer/services/review_service.py:114 — подготовка ревью и взаимодействие с VCS.\n- reviewer/policy/policy.py:86 — применение данных политики поверх настроек.\n(dropped 19: остальные фрагменты относятся к onboarding/веткам, хранилищам, закрытию ресурсов, задачам, графу, сборке контекста или другим независимым подсистемам.)",
+          "paths": [
+            "reviewer/entrypoints/cli.py",
+            "reviewer/config/layers.py",
+            "reviewer/mcp/service.py",
+            "reviewer/services/review_service.py",
+            "reviewer/policy/policy.py"
+          ],
+          "invalid_references": []
+        },
+        {
+          "key": "PRI-258",
+          "brief": "Подмешивать релевантные сводки подсистем в кандидаты секции code с ограниченной квотой и сохранять доступный частичный контекст, если хранилище сводок недоступно.\n\nRelevant code\n- reviewer/mcp/service.py:2782 — получение релевантных сводок и выбор по запросу.\n- reviewer/index/summary_store.py:47 — доступ к хранилищу сводок.\n- reviewer/entrypoints/mcp_server.py:501 — интерфейс получения сводок подсистем.\n- reviewer/mcp/task_context.py:69 — сбор секций контекста с обработкой сбоев по секциям.\n- reviewer/policy/context_limits.py:30 — бюджеты файлов и квота подмешанных кандидатов.\n- reviewer/retrieval/retriever.py:126 — основной retrieval для кандидатов контекста.\n- reviewer/retrieval/multiquery.py:130 — подмешивание дополнительных кандидатов и квотирование.\n(dropped 19: фрагменты о настройке домашней политики, досках задач, сериализации PR-сессий и иных независимых функциях не нужны для подмешивания сводок.)",
+          "paths": [
+            "reviewer/mcp/service.py",
+            "reviewer/index/summary_store.py",
+            "reviewer/entrypoints/mcp_server.py",
+            "reviewer/mcp/task_context.py",
+            "reviewer/policy/context_limits.py",
+            "reviewer/retrieval/retriever.py",
+            "reviewer/retrieval/multiquery.py"
+          ],
+          "invalid_references": []
+        }
+      ]
+    }
+  ],
+  "all-symbol-1": [
+    {
+      "model": "gpt-6-luna",
+      "reasoning_effort": "low",
+      "batch_elapsed_s": 34.852,
+      "usage": {
+        "input_tokens": 40646,
+        "cached_input_tokens": 12672,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 915,
+        "reasoning_output_tokens": 0
+      },
+      "briefs": [
+        {
+          "key": "PRI-228",
+          "brief": "Ограничить размер батчей Voyage бюджетом токенов из конфигурации, чтобы отдельный длинный фрагмент не прерывал индексацию.\n\nRelevant code\n- reviewer/index/embeddings.py:13 — изменить разбиение и отправку текстов в Voyage с учётом токенов.\n- reviewer/app.py:81 — передать настройку бюджета в VoyageEmbedder при сборке компонентов.\n- reviewer/index/freshness.py:18 — использовать эмбеддер при индексации новых фрагментов.\n- reviewer/config/settings.py:38 — добавить или определить конфигурационную настройку.\n- reviewer/install.py:122 — учесть настройку в установщике.\n\n(dropped 29: фрагменты относятся к поиску, задачам, графу, GC, провайдерам и другим несвязанным функциям.)",
+          "paths": [
+            "reviewer/index/embeddings.py",
+            "reviewer/app.py",
+            "reviewer/index/freshness.py",
+            "reviewer/config/settings.py",
+            "reviewer/install.py"
+          ],
+          "invalid_references": [
+            [
+              "reviewer/config/settings.py",
+              38
+            ],
+            [
+              "reviewer/install.py",
+              122
+            ]
+          ]
+        },
+        {
+          "key": "PRI-235",
+          "brief": "Загружать коммиченный `.review.yml` из сохранённого локального клона для config show и MCP, соблюдая приоритет слоёв и переходя к API при необходимости.\n\nRelevant code\n- reviewer/config/layers.py:298 — разрешить policy-слои и их приоритет.\n- reviewer/config/layers.py:1020 — существующий путь чтения коммиченной конфигурации через fetcher.\n- reviewer/entrypoints/cli.py:196 — задействовать чтение конфигурации в `config show`.\n- reviewer/entrypoints/cli.py:220 — определить источник пути к локальному клону для CLI.\n- reviewer/mcp/service.py:1365 — подключить локальный источник и API fallback в MCP-резолвере policy.\n- reviewer/config/settings.py:38 — конфигурация приложения, если нужна для передачи привязки репозитория к клону.\n\n(dropped 30: фрагменты относятся к индексированию задач, графу, провайдерам, закрытию ресурсов и другим несвязанным функциям.)",
+          "paths": [
+            "reviewer/config/layers.py",
+            "reviewer/config/layers.py",
+            "reviewer/entrypoints/cli.py",
+            "reviewer/entrypoints/cli.py",
+            "reviewer/mcp/service.py",
+            "reviewer/config/settings.py"
+          ],
+          "invalid_references": [
+            [
+              "reviewer/config/layers.py",
+              1020
+            ],
+            [
+              "reviewer/entrypoints/cli.py",
+              220
+            ]
+          ]
+        },
+        {
+          "key": "PRI-251",
+          "brief": "Расширить поиск implementations на семейства однотипных классов и методов, включая Protocol, и показывать родственные файлы в solve-task.\n\nRelevant code\n- reviewer/mcp/service.py:1791 — обработать результаты implementations для найденного символа.\n- reviewer/graph/store.py:108 — получить связанные реализации и наследников из графа.\n- reviewer/graph/backend.py:64 — формировать рёбра наследования классов, включая синтаксический обход.\n- reviewer/index/chunker.py:21 — распознавать определения классов и методов при индексации.\n- reviewer/tools/code_tools.py:69 — расширить выдачу связанных символов для solve-task.\n- reviewer/tools/graph_format.py:32 — форматировать связанные символы с путями и строками.\n\n(dropped 31: фрагменты относятся к конфигурации, задачам, embeddings, хранилищам и другим несвязанным функциям.)",
+          "paths": [
+            "reviewer/mcp/service.py",
+            "reviewer/graph/store.py",
+            "reviewer/graph/backend.py",
+            "reviewer/index/chunker.py",
+            "reviewer/tools/code_tools.py",
+            "reviewer/tools/graph_format.py"
+          ],
+          "invalid_references": [
+            [
+              "reviewer/graph/backend.py",
+              64
+            ]
+          ]
+        },
+        {
+          "key": "PRI-255",
+          "brief": "Разбивать требования задачи на подзапросы, пакетно получать их векторы, объединять результаты через RRF и обходить граф от объединённых символов с резервным путём при недоступности внешнего источника.\n\nRelevant code\n- reviewer/tasks/service.py:35 — реализовать оркестрацию обработки контекста задачи и пакетных эмбеддингов.\n- reviewer/retrieval/retriever.py:123 — адаптировать поиск, объединение выдачи и обход графа.\n- reviewer/tasks/store.py:252 — использовать гибридный поиск с RRF для запросов.\n- reviewer/graph/store.py:171 — обходить граф от объединённого списка символов.\n- reviewer/tasks/boards/yougile.py:141 — учитывать извлечение требований из текста задачи и вложенных файлов, если источник — YouGile.\n- reviewer/mcp/service.py:506 — связать получение контекста задачи с сервисом задач.\n\n(dropped 23: фрагменты про sidecar стоимости, конфигурацию Voyage, установщик, lifecycle и прочие посторонние функции.)",
+          "paths": [
+            "reviewer/tasks/service.py",
+            "reviewer/retrieval/retriever.py",
+            "reviewer/tasks/store.py",
+            "reviewer/graph/store.py",
+            "reviewer/tasks/boards/yougile.py",
+            "reviewer/mcp/service.py"
+          ],
+          "invalid_references": []
+        }
+      ]
+    },
+    {
+      "model": "gpt-6-luna",
+      "reasoning_effort": "low",
+      "batch_elapsed_s": 31.257,
+      "usage": {
+        "input_tokens": 41278,
+        "cached_input_tokens": 0,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 857,
+        "reasoning_output_tokens": 0
+      },
+      "briefs": [
+        {
+          "key": "PRI-257",
+          "brief": "Подмешивать в retrieval пути из diff похожих задач и Git-соизменяемости, удерживая долю подмешанного контекста в прежнем бюджете и сохраняя работу при недоступной истории.\n\nRelevant code\n- reviewer/retrieval/retriever.py:130 — добавить источники путей и ранжирование в поток retrieval.\n- reviewer/services/review_service.py:114 — использовать доступную историю ревью для сходства задач.\n- reviewer/gitutil.py:87 — опора для операций с Git и деградации при сбое.\n- reviewer/policy/context_limits.py:30 — учесть долю новых путей в лимитах секции контекста.\n- reviewer/retrieval/multiquery.py:47 — обрезать добавленные блоки в рамках бюджета.\n- reviewer/index/store.py:519 — получать контекстные узлы для выбранных путей.\n\n(dropped 14: фрагменты не относятся к источникам похожих задач, Git-соизменяемости или сборке ограниченного retrieval-контекста.)",
+          "paths": [
+            "reviewer/retrieval/retriever.py",
+            "reviewer/services/review_service.py",
+            "reviewer/gitutil.py",
+            "reviewer/policy/context_limits.py",
+            "reviewer/retrieval/multiquery.py",
+            "reviewer/index/store.py"
+          ],
+          "invalid_references": []
+        },
+        {
+          "key": "PRI-260",
+          "brief": "Сливать policy overrides по отдельным листьям, сохраняя соседние лимиты при частичных переопределениях, и показывать расхождение локального .review.yml с версией из Git.\n\nRelevant code\n- reviewer/config/layers.py:315 — объединение слоёв политики и метаданные происхождения значений.\n- reviewer/config/committed.py:92 — получить коммиченную версию конфигурации из Git.\n- reviewer/mcp/service.py:1658 — разрешить effective policy из локальных и коммиченных слоёв.\n- reviewer/entrypoints/cli.py:240 — показать policy и расхождение локальной конфигурации с Git.\n- reviewer/policy/policy.py:21 — модель настроек политики и лимитов.\n\n(dropped 19: фрагменты не участвуют в слиянии policy по листьям или сравнении локального и Git-файла.)",
+          "paths": [
+            "reviewer/config/layers.py",
+            "reviewer/config/committed.py",
+            "reviewer/mcp/service.py",
+            "reviewer/entrypoints/cli.py",
+            "reviewer/policy/policy.py"
+          ],
+          "invalid_references": []
+        },
+        {
+          "key": "PRI-205",
+          "brief": "Предоставить общий серверный интерфейс для получения целей завершения задач: полей и значений статусов YouTrack и колонок YouGile.\n\nRelevant code\n- reviewer/tasks/boards/youtrack.py:299 — получить поля статуса и доступные значения YouTrack.\n- reviewer/tasks/boards/yougile.py:251 — разрешить колонку YouGile по названию на доске.\n- reviewer/tasks/boards/__init__.py:10 — создавать провайдер доски по типу.\n- reviewer/mcp/service.py:299 — серверная оркестрация операций с доской.\n- reviewer/entrypoints/mcp_server.py:120 — экспортировать функциональность через MCP-инструмент.\n- reviewer/tasks/boards/base.py:171 — общий интерфейс провайдера доски.\n\n(dropped 14: фрагменты не относятся к обнаружению доступных целей или серверному интерфейсу досок.)",
+          "paths": [
+            "reviewer/tasks/boards/youtrack.py",
+            "reviewer/tasks/boards/yougile.py",
+            "reviewer/tasks/boards/__init__.py",
+            "reviewer/mcp/service.py",
+            "reviewer/entrypoints/mcp_server.py",
+            "reviewer/tasks/boards/base.py"
+          ],
+          "invalid_references": [
+            [
+              "reviewer/tasks/boards/youtrack.py",
+              299
+            ],
+            [
+              "reviewer/tasks/boards/base.py",
+              171
+            ]
+          ]
+        },
+        {
+          "key": "PRI-207",
+          "brief": "При синхронизации дополнять проектные метаданные старых задач ниже watermark, сохраняя инкрементальность и не пересчитывая текстовые эмбеддинги.\n\nRelevant code\n- reviewer/tasks/sync.py:29 — проход синхронизации, watermark и обработка задач.\n- reviewer/tasks/store.py:160 — обновлять проектные метаданные без повторной индексации текста.\n- reviewer/tasks/service.py:28 — оркестрировать индексацию нормализованных задач.\n- reviewer/tasks/boards/base.py:24 — сырая задача содержит проектный код для заполнения метаданных.\n\n(dropped 15: фрагменты не участвуют в синхронизации задач, проектных метаданных или сохранении эмбеддингов.)",
+          "paths": [
+            "reviewer/tasks/sync.py",
+            "reviewer/tasks/store.py",
+            "reviewer/tasks/service.py",
+            "reviewer/tasks/boards/base.py"
+          ],
+          "invalid_references": []
+        }
+      ]
+    },
+    {
+      "model": "gpt-6-luna",
+      "reasoning_effort": "low",
+      "batch_elapsed_s": 46.807,
+      "usage": {
+        "input_tokens": 36728,
+        "cached_input_tokens": 12672,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 1801,
+        "reasoning_output_tokens": 0
+      },
+      "briefs": [
+        {
+          "key": "PRI-221",
+          "brief": "Добавить глобальный и per-repo домашние слои политики с приоритетом над конфигурацией проекта, показывать эффективные значения и источники, поддержать миграцию и исключить credentials из YAML.\n\nRelevant code\n- reviewer/config/settings.py:38 — настройки политики по умолчанию, на которые опирается резолвинг.\n- reviewer/config/provider_credentials.py:50 — разрешение credentials из env/Settings и защита приоритетов источников.\n- reviewer/policy/policy.py:13 — структура ReviewPolicy и представление её значений.\n- reviewer/tasks/boards/yougile.py:345 — посторонняя логика сбора вложений YouGile; не относится к слоям политики.\n- reviewer/install.py:934 — обнаружение установленных клиентов не связано с политикой.\n- reviewer/graph/builder.py:14 — таблица импортов графа не связана с политикой.\n- reviewer/tasks/boards/youtrack.py:491 — чтение задачи YouTrack не связано с политикой.\n- reviewer/tasks/boards/base.py:19 — извлечение префикса задачи не связано с политикой.\n- reviewer/graph/store.py:108 — поиск реализаций в графе не связан с политикой.\n- reviewer/tasks/boards/asana.py:265 — разрешение проекта Asana не связано с политикой.\n- reviewer/app.py:38 — создание общих компонентов приложения не описывает разрешение политики.\n- reviewer/entrypoints/cli.py:306 — проверка провайдеров доски не связана с политикой.\n- reviewer/entrypoints/mcp_server.py:209 — выдача конфигурации доски не связана с политикой.\n- reviewer/mcp/service.py:400 — deploy-wide конфигурация доски не является слоем ReviewPolicy.\n- reviewer/mcp/session_serde.py:42 — сериализация политики сессии не относится к конфигурации слоёв.\n- reviewer/mcp/session_store.py:89 — загрузка сессий не связана с политикой.\n- reviewer/tasks/boards/__init__.py:16 — создание провайдера доски не связано с политикой.\n- reviewer/tasks/boards/registry.py:119 — поиск типа провайдера не связан с политикой.\n- reviewer/tasks/boards/trello.py:365 — дедупликация карточек Trello не связана с политикой.\n- reviewer/tasks/boards/weeek.py:509 — разбор задач Weeek не связан с политикой.\n(dropped 18: фрагменты относятся к доскам задач, графу, жизненному циклу компонентов или сессиям, а не к домашним слоям ReviewPolicy.)",
+          "paths": [
+            "reviewer/config/settings.py",
+            "reviewer/config/provider_credentials.py",
+            "reviewer/policy/policy.py",
+            "reviewer/tasks/boards/yougile.py",
+            "reviewer/install.py",
+            "reviewer/graph/builder.py",
+            "reviewer/tasks/boards/youtrack.py",
+            "reviewer/tasks/boards/base.py",
+            "reviewer/graph/store.py",
+            "reviewer/tasks/boards/asana.py",
+            "reviewer/app.py",
+            "reviewer/entrypoints/cli.py",
+            "reviewer/entrypoints/mcp_server.py",
+            "reviewer/mcp/service.py",
+            "reviewer/mcp/session_serde.py",
+            "reviewer/mcp/session_store.py",
+            "reviewer/tasks/boards/__init__.py",
+            "reviewer/tasks/boards/registry.py",
+            "reviewer/tasks/boards/trello.py",
+            "reviewer/tasks/boards/weeek.py"
+          ],
+          "invalid_references": []
+        },
+        {
+          "key": "PRI-234",
+          "brief": "При недоступности чтения коммиченного .review.yml через VCS применять домашние слои политики, сохраняя источники, диагностику и приоритеты остальных настроек.\n\nRelevant code\n- reviewer/config/onboarding.py:150 — запись репозиторного блока домашней конфигурации; релевантно сохранению/миграции домашних настроек.\n- reviewer/entrypoints/cli.py:189 — CLI-показ effective policy и обработка недоступного VCS.\n- reviewer/config/layers.py:257 — слияние домашнего и коммиченного слоёв с метаданными источников.\n- reviewer/mcp/service.py:1358 — резолвинг policy и чтение .review.yml через VCS; основное место обработки отказа.\n- reviewer/policy/policy.py:86 — применение разрешённых данных к эффективной ReviewPolicy.\n- reviewer/services/repo_id.py:12 — канонизация repo перед разрешением домашней конфигурации.\n- reviewer/services/review_service.py:114 — создание VCS-провайдера, используемого для чтения политики.\n- reviewer/tasks/store.py:106 — миграция схемы ссылок задач не относится к policy.\n- reviewer/vcs/base.py:18 — модель PullRequest не относится к чтению файла конфигурации.\n- reviewer/agent/assemble.py:39 — привязка цитат к строкам не связана с policy.\n- reviewer/graph/builder.py:14 — таблица импортов графа не связана с policy.\n- reviewer/app.py:62 — закрытие компонентов не связано с policy.\n- reviewer/config/branches.py:592 — публикация repository-блока для веток; только косвенно связана с домашней конфигурацией, но не с чтением policy при сбое VCS.\n- reviewer/entrypoints/mcp_server.py:26 — подготовка сессии делегирует загрузку policy сервису; полезна для понимания пути вызова.\n- reviewer/graph/store.py:18 — закрытие графа не связано с policy.\n- reviewer/index/store.py:87 — закрытие индексного хранилища не связано с policy.\n- reviewer/index/summary_store.py:68 — закрытие хранилища сводок не связано с policy.\n- reviewer/launcher/app.py:155 — очистка UI состояния не связана с policy.\n- reviewer/mcp/session_serde.py:63 — восстановление сериализованной сессии не меняет резолвинг слоёв.\n- reviewer/mcp/session_store.py:68 — закрытие хранилища сессий не связано с policy.\n(dropped 18: фрагменты не участвуют в VCS fallback или разрешении эффективной политики; кроме вызова prepare_review, который отмечен как путь потребителя.)",
+          "paths": [
+            "reviewer/config/onboarding.py",
+            "reviewer/entrypoints/cli.py",
+            "reviewer/config/layers.py",
+            "reviewer/mcp/service.py",
+            "reviewer/policy/policy.py",
+            "reviewer/services/repo_id.py",
+            "reviewer/services/review_service.py",
+            "reviewer/tasks/store.py",
+            "reviewer/vcs/base.py",
+            "reviewer/agent/assemble.py",
+            "reviewer/graph/builder.py",
+            "reviewer/app.py",
+            "reviewer/config/branches.py",
+            "reviewer/entrypoints/mcp_server.py",
+            "reviewer/graph/store.py",
+            "reviewer/index/store.py",
+            "reviewer/index/summary_store.py",
+            "reviewer/launcher/app.py",
+            "reviewer/mcp/session_serde.py",
+            "reviewer/mcp/session_store.py"
+          ],
+          "invalid_references": []
+        },
+        {
+          "key": "PRI-258",
+          "brief": "Добавлять релевантные сводки подсистем в кандидаты секции кода, ограничивать их долю и сохранять частичный контекст при недоступности хранилища сводок.\n\nRelevant code\n- reviewer/mcp/service.py:2782 — получение сводок подсистем и выбор выдачи по запросу/порогу.\n- reviewer/retrieval/retriever.py:126 — основной retrieval кандидатов и сбор контекста.\n- reviewer/policy/context_limits.py:30 — бюджет секции кода, включая лимит подмешанных файлов.\n- reviewer/index/summary_store.py:387 — удаление сводок; не относится к выборке кандидатов или fail-open.\n- reviewer/index/chunker.py:95 — хэш скелета для свежести сводок, полезен при определении актуальности.\n- reviewer/retrieval/multiquery.py:130 — логика подмешивания дополнительных кандидатов и квот.\n- reviewer/index/store.py:333 — состав базового индекса, используемый при построении подсистемных сводок.\n- reviewer/app.py:81 — сборка компонентов, включая хранилище сводок; полезно для пути зависимости.\n- reviewer/entrypoints/mcp_server.py:501 — MCP-точка выдачи сводок потребителю.\n- reviewer/graph/summaries.py:125 — вычисление ключа свежести сводки.\n- reviewer/index/embeddings.py:162 — эмбеддинг запроса для семантического поиска; может быть частью поиска кандидатов.\n- reviewer/mcp/task_context.py:69 — сборка payload секций контекста с независимыми fail-soft секциями.\n- plugin/hooks/reviewer_defect.py:261 — напоминание о дефекте инструмента не относится к retrieval.\n- reviewer/tasks/taskdoc.py:29 — рендеринг описания задачи не связан с секцией кода.\n- scripts/changelog_section.py:21 — поиск секции changelog не связан с retrieval.\n- reviewer/tasks/boards/markup.py:234 — преобразование HTML описаний доски не связано с retrieval.\n- reviewer/vcs/gitlab.py:17 — карта строк diff для GitLab не связана с retrieval.\n- reviewer/tasks/boards/graphql.py:37 — GraphQL запросы доски не связаны с retrieval.\n- reviewer/tasks/subtasks.py:703 — рендер дочерней задачи не связан с retrieval.\n(dropped 15: фрагменты относятся к политикам, доскам задач, changelog или другим несвязанным путям, а не к кандидатам секции кода.)",
+          "paths": [
+            "reviewer/mcp/service.py",
+            "reviewer/retrieval/retriever.py",
+            "reviewer/policy/context_limits.py",
+            "reviewer/index/summary_store.py",
+            "reviewer/index/chunker.py",
+            "reviewer/retrieval/multiquery.py",
+            "reviewer/index/store.py",
+            "reviewer/app.py",
+            "reviewer/entrypoints/mcp_server.py",
+            "reviewer/graph/summaries.py",
+            "reviewer/index/embeddings.py",
+            "reviewer/mcp/task_context.py",
+            "plugin/hooks/reviewer_defect.py",
+            "reviewer/tasks/taskdoc.py",
+            "scripts/changelog_section.py",
+            "reviewer/tasks/boards/markup.py",
+            "reviewer/vcs/gitlab.py",
+            "reviewer/tasks/boards/graphql.py",
+            "reviewer/tasks/subtasks.py"
+          ],
+          "invalid_references": []
+        }
+      ]
+    }
+  ]
+}

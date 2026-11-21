@@ -1,0 +1,38 @@
+{
+  "model": "gpt-6-luna",
+  "reasoning_effort": "low",
+  "batch_elapsed_s": 33.746,
+  "usage": {
+    "input_tokens": 25376,
+    "cached_input_tokens": 0,
+    "cache_write_input_tokens": 0,
+    "output_tokens": 132,
+    "reasoning_output_tokens": 0
+  },
+  "briefs": [
+    {
+      "key": "PRI-170",
+      "brief": "",
+      "paths": [],
+      "invalid_references": []
+    },
+    {
+      "key": "PRI-202",
+      "brief": "reviewer/entrypoints/mcp_server.py:216 — показывает существующую per-repo настройку лимита для выдачи subsystem summaries, полезную для согласования поведения retrieval.",
+      "paths": [],
+      "invalid_references": []
+    },
+    {
+      "key": "PRI-205",
+      "brief": "",
+      "paths": [],
+      "invalid_references": []
+    },
+    {
+      "key": "PRI-213",
+      "brief": "reviewer/tasks/store.py:27 — задаёт состав текста задачи и включает критерии и вложения; важен для сохранения канонического содержания при создании и последующем чтении задачи.",
+      "paths": [],
+      "invalid_references": []
+    }
+  ]
+}

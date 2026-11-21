@@ -1,0 +1,556 @@
+[
+  {
+    "key": "PRI-170",
+    "base_sha": "7bdc067aa45e57823285882a5bc3173253350db1",
+    "solution_sha": "e70ce0bd1587e70af0685ff7aebfae6dd1069fbc",
+    "input": "Привязать синхронизацию, чтение задач и обход их связей к проекту и типу доски из .review.yml конкретного репозитория. Курсор и очистка сирот должны сохранять изоляцию проектов. Показать последствия пустого project в настройке.",
+    "input_source": "https://ru.yougile.com/team/686c049c8af8/#PRI-170",
+    "split": "holdout",
+    "obligatory": [
+      {
+        "path": "plugin/skills/configure-review/SKILL.md",
+        "reason": "scoped board input and workflows"
+      },
+      {
+        "path": "plugin/skills/review-pr/SKILL.md",
+        "reason": "scoped board input and workflows"
+      },
+      {
+        "path": "plugin/skills/solve-task/SKILL.md",
+        "reason": "scoped board input and workflows"
+      },
+      {
+        "path": "plugin/skills/sync-tasks/SKILL.md",
+        "reason": "scoped board input and workflows"
+      },
+      {
+        "path": "reviewer/entrypoints/mcp_server.py",
+        "reason": "task provider, graph, storage and sync scopes"
+      },
+      {
+        "path": "reviewer/mcp/service.py",
+        "reason": "task provider, graph, storage and sync scopes"
+      },
+      {
+        "path": "reviewer/tasks/boards/__init__.py",
+        "reason": "task provider, graph, storage and sync scopes"
+      },
+      {
+        "path": "reviewer/tasks/boards/base.py",
+        "reason": "task provider, graph, storage and sync scopes"
+      },
+      {
+        "path": "reviewer/tasks/boards/yougile.py",
+        "reason": "task provider, graph, storage and sync scopes"
+      },
+      {
+        "path": "reviewer/tasks/boards/youtrack.py",
+        "reason": "task provider, graph, storage and sync scopes"
+      },
+      {
+        "path": "reviewer/tasks/graph.py",
+        "reason": "task provider, graph, storage and sync scopes"
+      },
+      {
+        "path": "reviewer/tasks/service.py",
+        "reason": "task provider, graph, storage and sync scopes"
+      },
+      {
+        "path": "reviewer/tasks/store.py",
+        "reason": "task provider, graph, storage and sync scopes"
+      },
+      {
+        "path": "reviewer/tasks/sync.py",
+        "reason": "task provider, graph, storage and sync scopes"
+      },
+      {
+        "path": "reviewer/index/schema.sql",
+        "reason": "task provider, graph, storage and sync scopes"
+      }
+    ],
+    "read_only": [
+      {
+        "path": "reviewer/config/settings.py",
+        "reason": "settings and policy resolution"
+      },
+      {
+        "path": "reviewer/policy/policy.py",
+        "reason": "settings and policy resolution"
+      }
+    ],
+    "bulk": true
+  },
+  {
+    "key": "PRI-179",
+    "base_sha": "aa17f64ff90d553b4c251689bfeb0ab8d14ecccf",
+    "solution_sha": "92412d358d15094d3ec7dec32d847dd51e428b80",
+    "input": "Добавить направленный поиск наследников и реализаций. Обход графа для solve-task должен показывать классы и переопределения, а обновление графа сохранять связь IMPLEMENTS.",
+    "input_source": "10e35943ec81dadc24102728f2ae1f7c95a287e8:docs/superpowers/briefs/2026-07-20-PRI-179-implements-edges-implementations-tool.md",
+    "split": "holdout",
+    "obligatory": [
+      {
+        "path": "reviewer/entrypoints/mcp_server.py",
+        "reason": "graph lookup, API and agent instructions"
+      },
+      {
+        "path": "reviewer/graph/store.py",
+        "reason": "graph lookup, API and agent instructions"
+      },
+      {
+        "path": "reviewer/mcp/service.py",
+        "reason": "graph lookup, API and agent instructions"
+      },
+      {
+        "path": "plugin/skills/_common/tool-usage.md",
+        "reason": "graph lookup, API and agent instructions"
+      },
+      {
+        "path": "plugin/skills/solve-task/SKILL.md",
+        "reason": "graph lookup, API and agent instructions"
+      }
+    ],
+    "read_only": [
+      {
+        "path": "reviewer/graph/builder.py",
+        "reason": "index graph construction and output formatting"
+      },
+      {
+        "path": "reviewer/graph/scip.py",
+        "reason": "index graph construction and output formatting"
+      },
+      {
+        "path": "reviewer/tools/graph_format.py",
+        "reason": "index graph construction and output formatting"
+      }
+    ],
+    "bulk": false
+  },
+  {
+    "key": "PRI-202",
+    "base_sha": "a7ae5931180666ac18a2c6f413c5e7b429588008",
+    "solution_sha": "0eefe8479b1a80d17448508b9edf31c5cbc2c069",
+    "input": "Сделать лимиты retrieval настраиваемыми для репозитория. Выбирать объём выдачи по плотности релевантных результатов и сообщать о хвосте, чтобы клиент мог расширить контекст.",
+    "input_source": "41ded2fc11df5792b3acb813ef163f45998acdcd:docs/superpowers/briefs/2026-07-01-PRI-202-configurable-context-limits.md",
+    "split": "holdout",
+    "obligatory": [
+      {
+        "path": "reviewer/entrypoints/mcp_server.py",
+        "reason": "query, rerank, persistence and policy"
+      },
+      {
+        "path": "reviewer/index/reranker.py",
+        "reason": "query, rerank, persistence and policy"
+      },
+      {
+        "path": "reviewer/index/store.py",
+        "reason": "query, rerank, persistence and policy"
+      },
+      {
+        "path": "reviewer/mcp/service.py",
+        "reason": "query, rerank, persistence and policy"
+      },
+      {
+        "path": "reviewer/mcp/session_serde.py",
+        "reason": "query, rerank, persistence and policy"
+      },
+      {
+        "path": "reviewer/policy/policy.py",
+        "reason": "query, rerank, persistence and policy"
+      },
+      {
+        "path": "reviewer/retrieval/retriever.py",
+        "reason": "query, rerank, persistence and policy"
+      },
+      {
+        "path": "reviewer/tasks/service.py",
+        "reason": "query, rerank, persistence and policy"
+      },
+      {
+        "path": "reviewer/tools/graph_format.py",
+        "reason": "query, rerank, persistence and policy"
+      },
+      {
+        "path": "plugin/skills/ask/SKILL.md",
+        "reason": "consumers of adjustable search"
+      },
+      {
+        "path": "plugin/skills/solve-task/SKILL.md",
+        "reason": "consumers of adjustable search"
+      }
+    ],
+    "read_only": [
+      {
+        "path": "reviewer/config/settings.py",
+        "reason": "settings and underlying chunk model"
+      },
+      {
+        "path": "reviewer/index/chunker.py",
+        "reason": "settings and underlying chunk model"
+      }
+    ],
+    "bulk": true
+  },
+  {
+    "key": "PRI-205",
+    "base_sha": "8d31abf79cc7aa63aa8807531403bc28cb6a1566",
+    "solution_sha": "8dd053c232d903f4895886ea36bdb24e96bc39a5",
+    "input": "Получать доступные цели завершения задач через общий серверный интерфейс. Поддержать поля и значения статусов YouTrack и колонки YouGile, чтобы клиент мог выбрать цель без ручного поиска в интерфейсе доски.",
+    "input_source": "1b177bb4eb5123be35a37c65ed1dbad86ef59cea:docs/superpowers/briefs/2026-07-02-PRI-205-server-side-done-target-discovery.md",
+    "split": "holdout",
+    "obligatory": [
+      {
+        "path": "reviewer/entrypoints/mcp_server.py",
+        "reason": "provider contract, adapters and MCP"
+      },
+      {
+        "path": "reviewer/mcp/service.py",
+        "reason": "provider contract, adapters and MCP"
+      },
+      {
+        "path": "reviewer/tasks/boards/base.py",
+        "reason": "provider contract, adapters and MCP"
+      },
+      {
+        "path": "reviewer/tasks/boards/yougile.py",
+        "reason": "provider contract, adapters and MCP"
+      },
+      {
+        "path": "reviewer/tasks/boards/youtrack.py",
+        "reason": "provider contract, adapters and MCP"
+      },
+      {
+        "path": "plugin/skills/configure-review/SKILL.md",
+        "reason": "setup and finish workflow"
+      },
+      {
+        "path": "plugin/skills/finish-task/SKILL.md",
+        "reason": "setup and finish workflow"
+      }
+    ],
+    "read_only": [
+      {
+        "path": "reviewer/config/settings.py",
+        "reason": "config and task read contract"
+      },
+      {
+        "path": "reviewer/policy/policy.py",
+        "reason": "config and task read contract"
+      },
+      {
+        "path": "reviewer/tasks/service.py",
+        "reason": "config and task read contract"
+      }
+    ],
+    "bulk": false
+  },
+  {
+    "key": "PRI-207",
+    "base_sha": "8dd053c232d903f4895886ea36bdb24e96bc39a5",
+    "solution_sha": "47140fa0788c880fc0d2d65b1af9068e281d123c",
+    "input": "При синхронизации заполнить отсутствующие проектные метаданные старых задач ниже watermark. Нужно сохранить инкрементальность и не пересчитывать текстовые векторы ради изменения метаданных.",
+    "input_source": "6493c69ec45c73c8b7148259cf2ed30b4dc83fa8:docs/superpowers/briefs/2026-07-03-PRI-207-watermark-sync-no-project-backfill.md",
+    "split": "holdout",
+    "obligatory": [
+      {
+        "path": "reviewer/tasks/boards/base.py",
+        "reason": "board metadata and sync persistence"
+      },
+      {
+        "path": "reviewer/tasks/boards/yougile.py",
+        "reason": "board metadata and sync persistence"
+      },
+      {
+        "path": "reviewer/tasks/boards/youtrack.py",
+        "reason": "board metadata and sync persistence"
+      },
+      {
+        "path": "reviewer/tasks/service.py",
+        "reason": "board metadata and sync persistence"
+      },
+      {
+        "path": "reviewer/tasks/store.py",
+        "reason": "board metadata and sync persistence"
+      },
+      {
+        "path": "reviewer/tasks/sync.py",
+        "reason": "board metadata and sync persistence"
+      }
+    ],
+    "read_only": [
+      {
+        "path": "reviewer/index/schema.sql",
+        "reason": "schema and MCP entry points"
+      },
+      {
+        "path": "reviewer/entrypoints/mcp_server.py",
+        "reason": "schema and MCP entry points"
+      },
+      {
+        "path": "reviewer/mcp/service.py",
+        "reason": "schema and MCP entry points"
+      }
+    ],
+    "bulk": false
+  },
+  {
+    "key": "PRI-213",
+    "base_sha": "bb958d6f7f50c2fc5e876ea1c873177153c6f4a2",
+    "solution_sha": "1a14374985f2183c11e9fdef34571f3a194c4c0c",
+    "input": "Добавить создание задачи на YouGile и YouTrack через сервер. Сохранять канонические проблему, шаги, критерии приёмки и контекст. Использовать выбранную цель и перечитать созданную задачу в store.",
+    "input_source": "7293243e1033e2abab5ee7378c9567c285c010f9:docs/superpowers/briefs/2026-07-23-PRI-213-create-task-on-board.md",
+    "split": "holdout",
+    "obligatory": [
+      {
+        "path": "reviewer/entrypoints/mcp_server.py",
+        "reason": "write interface, board adapters and sync"
+      },
+      {
+        "path": "reviewer/mcp/service.py",
+        "reason": "write interface, board adapters and sync"
+      },
+      {
+        "path": "reviewer/tasks/boards/base.py",
+        "reason": "write interface, board adapters and sync"
+      },
+      {
+        "path": "reviewer/tasks/boards/yougile.py",
+        "reason": "write interface, board adapters and sync"
+      },
+      {
+        "path": "reviewer/tasks/boards/youtrack.py",
+        "reason": "write interface, board adapters and sync"
+      },
+      {
+        "path": "reviewer/tasks/sync.py",
+        "reason": "write interface, board adapters and sync"
+      },
+      {
+        "path": "plugin/skills/solve-task/SKILL.md",
+        "reason": "current task workflow"
+      }
+    ],
+    "read_only": [
+      {
+        "path": "reviewer/config/settings.py",
+        "reason": "policy and task indexing"
+      },
+      {
+        "path": "reviewer/policy/policy.py",
+        "reason": "policy and task indexing"
+      },
+      {
+        "path": "reviewer/tasks/service.py",
+        "reason": "policy and task indexing"
+      }
+    ],
+    "bulk": false
+  },
+  {
+    "key": "PRI-221",
+    "base_sha": "53f487c87e22f7a438f859ce300d549ad5b5264f",
+    "solution_sha": "b254bb6d1f032fa172d2163e25db284168a4707a",
+    "input": "Добавить домашние глобальный и per-repo слои политики с приоритетом над конфигурацией по правилам проекта. Показывать эффективные значения и источники, поддержать миграцию и исключить credentials из YAML.",
+    "input_source": "8c3074a9bb5397604e9df1a964e343ccf36ac15b:docs/superpowers/briefs/2026-07-30-PRI-221-home-repository-config-layer.md",
+    "split": "holdout",
+    "obligatory": [
+      {
+        "path": "reviewer/entrypoints/cli.py",
+        "reason": "policy consumers, commands and persisted metadata"
+      },
+      {
+        "path": "reviewer/launcher/metadata.py",
+        "reason": "policy consumers, commands and persisted metadata"
+      },
+      {
+        "path": "reviewer/mcp/service.py",
+        "reason": "policy consumers, commands and persisted metadata"
+      },
+      {
+        "path": "reviewer/mcp/session_serde.py",
+        "reason": "policy consumers, commands and persisted metadata"
+      },
+      {
+        "path": "reviewer/policy/policy.py",
+        "reason": "policy consumers, commands and persisted metadata"
+      },
+      {
+        "path": "reviewer/services/repo_id.py",
+        "reason": "policy consumers, commands and persisted metadata"
+      },
+      {
+        "path": "reviewer/services/review_service.py",
+        "reason": "policy consumers, commands and persisted metadata"
+      },
+      {
+        "path": "reviewer/web/history.py",
+        "reason": "policy consumers, commands and persisted metadata"
+      },
+      {
+        "path": "reviewer/web/schema.sql",
+        "reason": "policy consumers, commands and persisted metadata"
+      },
+      {
+        "path": "plugin/skills/configure-review/SKILL.md",
+        "reason": "policy consumers, commands and persisted metadata"
+      }
+    ],
+    "read_only": [
+      {
+        "path": "reviewer/config/settings.py",
+        "reason": "settings, git and MCP boundary"
+      },
+      {
+        "path": "reviewer/gitutil.py",
+        "reason": "settings, git and MCP boundary"
+      },
+      {
+        "path": "reviewer/entrypoints/mcp_server.py",
+        "reason": "settings, git and MCP boundary"
+      }
+    ],
+    "bulk": true
+  },
+  {
+    "key": "PRI-234",
+    "base_sha": "6dfa2a6fa682b87185f467dd847fcd96fe01a211",
+    "solution_sha": "04e3446ecc09d12762231db40011cea4d357f5b1",
+    "input": "Если чтение коммиченного .review.yml через VCS недоступно, применить домашние слои политики. Сохранять источники, диагностику и приоритеты остальных настроек.",
+    "input_source": "a8b9f0da1905c361e16f9b8753169a629a60ac76:docs/superpowers/briefs/2026-08-10-PRI-234-vcs-failure-must-not-drop-local-policy-layers.md",
+    "split": "holdout",
+    "obligatory": [
+      {
+        "path": "reviewer/config/layers.py",
+        "reason": "layered resolution and callers"
+      },
+      {
+        "path": "reviewer/entrypoints/cli.py",
+        "reason": "layered resolution and callers"
+      },
+      {
+        "path": "reviewer/mcp/service.py",
+        "reason": "layered resolution and callers"
+      },
+      {
+        "path": "reviewer/services/review_service.py",
+        "reason": "layered resolution and callers"
+      }
+    ],
+    "read_only": [
+      {
+        "path": "reviewer/config/settings.py",
+        "reason": "settings, git and policy schema"
+      },
+      {
+        "path": "reviewer/gitutil.py",
+        "reason": "settings, git and policy schema"
+      },
+      {
+        "path": "reviewer/policy/policy.py",
+        "reason": "settings, git and policy schema"
+      }
+    ],
+    "bulk": false
+  },
+  {
+    "key": "PRI-258",
+    "base_sha": "10beb0d2513a3fc22235990e82eabc4927f669c4",
+    "solution_sha": "308b86bcbcb39c7e463c8d41ac218e2becf6484d",
+    "input": "Разворачивать релевантные сводки подсистем в кандидаты для секции кода. Ограничивать долю подмешивания и сохранять частичный контекст при недоступном хранилище сводок.",
+    "input_source": "eebfc3bbedca0e46e2cf7bdc3d983cc448dd3a42:docs/superpowers/briefs/2026-08-17-PRI-258-subsystem-cluster-expansion.md",
+    "split": "holdout",
+    "obligatory": [
+      {
+        "path": "reviewer/mcp/service.py",
+        "reason": "retrieval quotas, augment and context assembly"
+      },
+      {
+        "path": "reviewer/policy/context_limits.py",
+        "reason": "retrieval quotas, augment and context assembly"
+      },
+      {
+        "path": "reviewer/retrieval/augment.py",
+        "reason": "retrieval quotas, augment and context assembly"
+      },
+      {
+        "path": "reviewer/retrieval/multiquery.py",
+        "reason": "retrieval quotas, augment and context assembly"
+      }
+    ],
+    "read_only": [
+      {
+        "path": "reviewer/mcp/task_context.py",
+        "reason": "context construction and stored summaries"
+      },
+      {
+        "path": "reviewer/graph/summaries.py",
+        "reason": "context construction and stored summaries"
+      },
+      {
+        "path": "reviewer/index/summary_store.py",
+        "reason": "context construction and stored summaries"
+      }
+    ],
+    "bulk": false
+  },
+  {
+    "key": "PRI-276",
+    "base_sha": "0ada185c36d088a1df0f465f22b7398abddf35f5",
+    "solution_sha": "927344d6585f363214a8392115024484bd186e8f",
+    "input": "При доступном ParadeDB и недоступном Neo4j вернуть машиночитаемый пробел в prepare_task_context без повторных долгих обращений к графу. Сохранить ответы из доступных источников.",
+    "input_source": "17933f577b0069b6e768dab21f9fe05f16afc037:docs/superpowers/briefs/2026-08-30-PRI-276-neo4j-down-silent-gap.md",
+    "split": "holdout",
+    "obligatory": [
+      {
+        "path": "reviewer/app.py",
+        "reason": "dependencies, timeouts and fail-open diagnostics"
+      },
+      {
+        "path": "reviewer/config/settings.py",
+        "reason": "dependencies, timeouts and fail-open diagnostics"
+      },
+      {
+        "path": "reviewer/entrypoints/cli.py",
+        "reason": "dependencies, timeouts and fail-open diagnostics"
+      },
+      {
+        "path": "reviewer/graph/store.py",
+        "reason": "dependencies, timeouts and fail-open diagnostics"
+      },
+      {
+        "path": "reviewer/mcp/service.py",
+        "reason": "dependencies, timeouts and fail-open diagnostics"
+      },
+      {
+        "path": "reviewer/mcp/task_context.py",
+        "reason": "dependencies, timeouts and fail-open diagnostics"
+      },
+      {
+        "path": "reviewer/services/status.py",
+        "reason": "dependencies, timeouts and fail-open diagnostics"
+      },
+      {
+        "path": "reviewer/storage_health.py",
+        "reason": "dependencies, timeouts and fail-open diagnostics"
+      },
+      {
+        "path": "reviewer/tasks/service.py",
+        "reason": "dependencies, timeouts and fail-open diagnostics"
+      }
+    ],
+    "read_only": [
+      {
+        "path": "reviewer/index/store.py",
+        "reason": "store and MCP boundaries"
+      },
+      {
+        "path": "reviewer/retrieval/retriever.py",
+        "reason": "store and MCP boundaries"
+      },
+      {
+        "path": "reviewer/entrypoints/mcp_server.py",
+        "reason": "store and MCP boundaries"
+      }
+    ],
+    "bulk": false
+  }
+]

@@ -1,0 +1,1042 @@
+[
+  {
+    "key": "PRI-196",
+    "base_sha": "93de5f908c788f1c7a6ff8336e964f4f5f14406a",
+    "solution_sha": "c0e58c03e1c8147dc78c48530e637affe961de10",
+    "split": "tune",
+    "input": "Индексировать вложения задач YouTrack и YouGile при sync_board. Читаемые документы и файлы из чата должны попадать в поиск и ответ get_task. Ошибка одного файла должна пропускаться.",
+    "input_source": "120bf8f2e6aeed90f9f484a7da85b8e88907ccd0:docs/superpowers/briefs/2026-06-28-PRI-196-attachments-sync-board.md",
+    "obligatory": [
+      {
+        "path": "reviewer/tasks/boards/__init__.py",
+        "reason": "board adapters and contract"
+      },
+      {
+        "path": "reviewer/tasks/boards/base.py",
+        "reason": "board adapters and contract"
+      },
+      {
+        "path": "reviewer/tasks/boards/yougile.py",
+        "reason": "board adapters and contract"
+      },
+      {
+        "path": "reviewer/tasks/boards/youtrack.py",
+        "reason": "board adapters and contract"
+      },
+      {
+        "path": "reviewer/app.py",
+        "reason": "persistence, API and configuration"
+      },
+      {
+        "path": "reviewer/config/settings.py",
+        "reason": "persistence, API and configuration"
+      },
+      {
+        "path": "reviewer/entrypoints/mcp_server.py",
+        "reason": "persistence, API and configuration"
+      },
+      {
+        "path": "reviewer/tasks/service.py",
+        "reason": "persistence, API and configuration"
+      },
+      {
+        "path": "reviewer/tasks/store.py",
+        "reason": "persistence, API and configuration"
+      },
+      {
+        "path": "reviewer/index/schema.sql",
+        "reason": "persistence, API and configuration"
+      }
+    ],
+    "read_only": [
+      {
+        "path": "reviewer/tasks/sync.py",
+        "reason": "runs incremental normalization"
+      }
+    ],
+    "bulk": true
+  },
+  {
+    "key": "PRI-215",
+    "base_sha": "e3de3c88f6849f686d0d92c1f9d784697ed65eff",
+    "solution_sha": "dd3fb0cbd3e16234e0efa954f4b6194099acea9d",
+    "split": "holdout",
+    "input": "Сделать интеграцию с досками расширяемой. Зарегистрировать провайдеры через общий контракт с поддержкой Jira и сохранением поведения YouGile и YouTrack. Убрать жёстко заданные типы из CLI, MCP, конфигурации и навыков.",
+    "input_source": "aec8136a0561b25eba5b8eb911ec7dfbc0e48272:docs/superpowers/briefs/2026-07-23-PRI-215-extensible-board-providers.md",
+    "obligatory": [
+      {
+        "path": "reviewer/app.py",
+        "reason": "interfaces, wiring and existing adapters"
+      },
+      {
+        "path": "reviewer/config/settings.py",
+        "reason": "interfaces, wiring and existing adapters"
+      },
+      {
+        "path": "reviewer/entrypoints/cli.py",
+        "reason": "interfaces, wiring and existing adapters"
+      },
+      {
+        "path": "reviewer/entrypoints/mcp_server.py",
+        "reason": "interfaces, wiring and existing adapters"
+      },
+      {
+        "path": "reviewer/install.py",
+        "reason": "interfaces, wiring and existing adapters"
+      },
+      {
+        "path": "reviewer/mcp/service.py",
+        "reason": "interfaces, wiring and existing adapters"
+      },
+      {
+        "path": "reviewer/policy/policy.py",
+        "reason": "interfaces, wiring and existing adapters"
+      },
+      {
+        "path": "reviewer/tasks/sync.py",
+        "reason": "interfaces, wiring and existing adapters"
+      },
+      {
+        "path": "reviewer/tasks/boards/__init__.py",
+        "reason": "interfaces, wiring and existing adapters"
+      },
+      {
+        "path": "reviewer/tasks/boards/attachments.py",
+        "reason": "interfaces, wiring and existing adapters"
+      },
+      {
+        "path": "reviewer/tasks/boards/base.py",
+        "reason": "interfaces, wiring and existing adapters"
+      },
+      {
+        "path": "reviewer/tasks/boards/yougile.py",
+        "reason": "interfaces, wiring and existing adapters"
+      },
+      {
+        "path": "reviewer/tasks/boards/youtrack.py",
+        "reason": "interfaces, wiring and existing adapters"
+      },
+      {
+        "path": "plugin/skills/configure-review/SKILL.md",
+        "reason": "consumers of board types"
+      },
+      {
+        "path": "plugin/skills/create-task/SKILL.md",
+        "reason": "consumers of board types"
+      },
+      {
+        "path": "plugin/skills/finish-task/SKILL.md",
+        "reason": "consumers of board types"
+      },
+      {
+        "path": "plugin/skills/review-pr/SKILL.md",
+        "reason": "consumers of board types"
+      },
+      {
+        "path": "plugin/skills/solve-task/SKILL.md",
+        "reason": "consumers of board types"
+      },
+      {
+        "path": "plugin/skills/sync-codebase/SKILL.md",
+        "reason": "consumers of board types"
+      },
+      {
+        "path": "plugin/skills/sync-tasks/SKILL.md",
+        "reason": "consumers of board types"
+      }
+    ],
+    "read_only": [
+      {
+        "path": "reviewer/tasks/service.py",
+        "reason": "read and write-through task indexing"
+      },
+      {
+        "path": "reviewer/tasks/store.py",
+        "reason": "read and write-through task indexing"
+      }
+    ],
+    "bulk": true
+  },
+  {
+    "key": "PRI-223",
+    "base_sha": "dd3676eee62e76370f21a37ba99dfb506d9e4d30",
+    "solution_sha": "365560a81bb7dd7de1ffd2a7c967b64357604801",
+    "split": "tune",
+    "input": "Переработать reviewer init. Настраивать ветки по репозиторию, спрашивать только подходящие credentials, проверять доступ к VCS и описывать настройки существующих провайдеров досок.",
+    "input_source": "5f929b212b6240c0c124d99f57c2d07d1d5f904c:docs/superpowers/briefs/2026-08-07-PRI-223-redesign-reviewer-init.md",
+    "obligatory": [
+      {
+        "path": "reviewer/config/layers.py",
+        "reason": "setup orchestration, branch and clone consumers"
+      },
+      {
+        "path": "reviewer/entrypoints/cli.py",
+        "reason": "setup orchestration, branch and clone consumers"
+      },
+      {
+        "path": "reviewer/entrypoints/mcp_server.py",
+        "reason": "setup orchestration, branch and clone consumers"
+      },
+      {
+        "path": "reviewer/gitutil.py",
+        "reason": "setup orchestration, branch and clone consumers"
+      },
+      {
+        "path": "reviewer/install.py",
+        "reason": "setup orchestration, branch and clone consumers"
+      },
+      {
+        "path": "reviewer/launcher/metadata.py",
+        "reason": "setup orchestration, branch and clone consumers"
+      },
+      {
+        "path": "reviewer/mcp/service.py",
+        "reason": "setup orchestration, branch and clone consumers"
+      },
+      {
+        "path": "reviewer/services/branch.py",
+        "reason": "setup orchestration, branch and clone consumers"
+      },
+      {
+        "path": "reviewer/services/review_service.py",
+        "reason": "setup orchestration, branch and clone consumers"
+      },
+      {
+        "path": "reviewer/tasks/boards/asana.py",
+        "reason": "provider metadata and validation"
+      },
+      {
+        "path": "reviewer/tasks/boards/clickup.py",
+        "reason": "provider metadata and validation"
+      },
+      {
+        "path": "reviewer/tasks/boards/github.py",
+        "reason": "provider metadata and validation"
+      },
+      {
+        "path": "reviewer/tasks/boards/jira.py",
+        "reason": "provider metadata and validation"
+      },
+      {
+        "path": "reviewer/tasks/boards/kaiten.py",
+        "reason": "provider metadata and validation"
+      },
+      {
+        "path": "reviewer/tasks/boards/linear.py",
+        "reason": "provider metadata and validation"
+      },
+      {
+        "path": "reviewer/tasks/boards/registry.py",
+        "reason": "provider metadata and validation"
+      },
+      {
+        "path": "reviewer/tasks/boards/setup.py",
+        "reason": "provider metadata and validation"
+      },
+      {
+        "path": "reviewer/tasks/boards/trello.py",
+        "reason": "provider metadata and validation"
+      },
+      {
+        "path": "reviewer/tasks/boards/weeek.py",
+        "reason": "provider metadata and validation"
+      },
+      {
+        "path": "reviewer/tasks/boards/yandex_tracker.py",
+        "reason": "provider metadata and validation"
+      },
+      {
+        "path": "reviewer/tasks/boards/yougile.py",
+        "reason": "provider metadata and validation"
+      },
+      {
+        "path": "reviewer/tasks/boards/youtrack.py",
+        "reason": "provider metadata and validation"
+      },
+      {
+        "path": "plugin/skills/configure-review/SKILL.md",
+        "reason": "setup instructions used by agent"
+      }
+    ],
+    "read_only": [
+      {
+        "path": "reviewer/config/settings.py",
+        "reason": "credential source and config normalization"
+      },
+      {
+        "path": "reviewer/config/provider_credentials.py",
+        "reason": "credential source and config normalization"
+      },
+      {
+        "path": "reviewer/config/task_board.py",
+        "reason": "credential source and config normalization"
+      }
+    ],
+    "bulk": true
+  },
+  {
+    "key": "PRI-225",
+    "base_sha": "91a8227486b6cdd235f5e992c4d1930b011729ae",
+    "solution_sha": "c3feb0d3b321c9cc86eeaad3d76e56ba5ee44cfc",
+    "split": "holdout",
+    "input": "Добавить retention-фильтр задач в per-repo YAML. Исключать старые и архивные карточки до нормализации. При изменении фильтра пересматривать задачи ниже watermark. Сохранять поведение без фильтра.",
+    "input_source": "ff75d90c5b2a12b0b1667ce7bbc9a1fc0dac1cc4:docs/superpowers/briefs/2026-07-31-PRI-225-task-board-retention-filter.md",
+    "obligatory": [
+      {
+        "path": "reviewer/config/task_board.py",
+        "reason": "retention request, iteration contract and sync"
+      },
+      {
+        "path": "reviewer/entrypoints/mcp_server.py",
+        "reason": "retention request, iteration contract and sync"
+      },
+      {
+        "path": "reviewer/mcp/service.py",
+        "reason": "retention request, iteration contract and sync"
+      },
+      {
+        "path": "reviewer/tasks/service.py",
+        "reason": "retention request, iteration contract and sync"
+      },
+      {
+        "path": "reviewer/tasks/sync.py",
+        "reason": "retention request, iteration contract and sync"
+      },
+      {
+        "path": "reviewer/tasks/boards/base.py",
+        "reason": "retention request, iteration contract and sync"
+      },
+      {
+        "path": "reviewer/tasks/boards/asana.py",
+        "reason": "archive and date metadata from providers"
+      },
+      {
+        "path": "reviewer/tasks/boards/clickup.py",
+        "reason": "archive and date metadata from providers"
+      },
+      {
+        "path": "reviewer/tasks/boards/github.py",
+        "reason": "archive and date metadata from providers"
+      },
+      {
+        "path": "reviewer/tasks/boards/jira.py",
+        "reason": "archive and date metadata from providers"
+      },
+      {
+        "path": "reviewer/tasks/boards/kaiten.py",
+        "reason": "archive and date metadata from providers"
+      },
+      {
+        "path": "reviewer/tasks/boards/linear.py",
+        "reason": "archive and date metadata from providers"
+      },
+      {
+        "path": "reviewer/tasks/boards/trello.py",
+        "reason": "archive and date metadata from providers"
+      },
+      {
+        "path": "reviewer/tasks/boards/weeek.py",
+        "reason": "archive and date metadata from providers"
+      },
+      {
+        "path": "reviewer/tasks/boards/yandex_tracker.py",
+        "reason": "archive and date metadata from providers"
+      },
+      {
+        "path": "reviewer/tasks/boards/yougile.py",
+        "reason": "archive and date metadata from providers"
+      },
+      {
+        "path": "reviewer/tasks/boards/youtrack.py",
+        "reason": "archive and date metadata from providers"
+      },
+      {
+        "path": "plugin/skills/configure-review/SKILL.md",
+        "reason": "board settings and synchronization instructions"
+      },
+      {
+        "path": "plugin/skills/sync-tasks/SKILL.md",
+        "reason": "board settings and synchronization instructions"
+      }
+    ],
+    "read_only": [
+      {
+        "path": "reviewer/config/layers.py",
+        "reason": "policy resolution and persistence"
+      },
+      {
+        "path": "reviewer/tasks/store.py",
+        "reason": "policy resolution and persistence"
+      },
+      {
+        "path": "reviewer/tasks/boards/registry.py",
+        "reason": "policy resolution and persistence"
+      }
+    ],
+    "bulk": true
+  },
+  {
+    "key": "PRI-228",
+    "base_sha": "e6a42feb3cec7660cbffcdf3f5d542525d39fbf1",
+    "solution_sha": "259457b825e261175b96049da26e115069274fb6",
+    "split": "tune",
+    "input": "Формировать батчи эмбеддингов Voyage по токенам. Один очень большой фрагмент не должен ломать индексацию. Настройки передаются через конфигурацию и установщик.",
+    "input_source": "497e08193c5b452788c2a8cf1ff055ae4310a336:docs/superpowers/briefs/2026-08-11-PRI-228-token-budget-embedding-batches.md",
+    "obligatory": [
+      {
+        "path": "reviewer/index/embeddings.py",
+        "reason": "embedding, wiring and configuration"
+      },
+      {
+        "path": "reviewer/app.py",
+        "reason": "embedding, wiring and configuration"
+      },
+      {
+        "path": "reviewer/config/settings.py",
+        "reason": "embedding, wiring and configuration"
+      },
+      {
+        "path": "reviewer/install.py",
+        "reason": "embedding, wiring and configuration"
+      }
+    ],
+    "read_only": [
+      {
+        "path": "reviewer/index/freshness.py",
+        "reason": "callers and retry policy"
+      },
+      {
+        "path": "reviewer/index/_retry.py",
+        "reason": "callers and retry policy"
+      }
+    ],
+    "bulk": false
+  },
+  {
+    "key": "PRI-235",
+    "base_sha": "259457b825e261175b96049da26e115069274fb6",
+    "solution_sha": "922e92f8f61703d701f70c7090eeef27b1416901",
+    "split": "tune",
+    "input": "Читать закоммиченный .review.yml из локального клона в config show и MCP. Соблюдать приоритет слоёв и использовать API как резервный источник. Хранить привязку репозитория к клону.",
+    "input_source": "3dae378f6af2dffc242aa653de7535304d345bc2:docs/superpowers/briefs/2026-08-11-PRI-235-local-committed-policy-layer.md",
+    "obligatory": [
+      {
+        "path": "reviewer/config/layers.py",
+        "reason": "resolution, CLI, MCP and clone metadata"
+      },
+      {
+        "path": "reviewer/entrypoints/cli.py",
+        "reason": "resolution, CLI, MCP and clone metadata"
+      },
+      {
+        "path": "reviewer/mcp/service.py",
+        "reason": "resolution, CLI, MCP and clone metadata"
+      },
+      {
+        "path": "reviewer/index/store.py",
+        "reason": "resolution, CLI, MCP and clone metadata"
+      },
+      {
+        "path": "reviewer/index/schema.sql",
+        "reason": "resolution, CLI, MCP and clone metadata"
+      }
+    ],
+    "read_only": [
+      {
+        "path": "reviewer/gitutil.py",
+        "reason": "clone resolution entry points and policy parsing"
+      },
+      {
+        "path": "reviewer/policy/policy.py",
+        "reason": "clone resolution entry points and policy parsing"
+      }
+    ],
+    "bulk": false
+  },
+  {
+    "key": "PRI-238",
+    "base_sha": "8992284033687d707c7104f1318e129f2e551cea",
+    "solution_sha": "16a128b45c62296403372402d48008d95659659d",
+    "split": "tune",
+    "input": "В finish_task различать задачу, уже упомянутую в PR, и сбой добавления ссылки. Ответ инструмента должен позволять понять, требуется ли ручное действие.",
+    "input_source": "4673c6d95c583f1565adeade3200bf523db02d85:docs/superpowers/briefs/2026-08-11-PRI-238-task-link-status.md",
+    "obligatory": [
+      {
+        "path": "reviewer/entrypoints/mcp_server.py",
+        "reason": "link status output and consumer"
+      },
+      {
+        "path": "reviewer/mcp/service.py",
+        "reason": "link status output and consumer"
+      },
+      {
+        "path": "plugin/skills/finish-task/SKILL.md",
+        "reason": "link status output and consumer"
+      }
+    ],
+    "read_only": [
+      {
+        "path": "reviewer/vcs/base.py",
+        "reason": "update through VCS abstraction"
+      },
+      {
+        "path": "reviewer/vcs/github.py",
+        "reason": "update through VCS abstraction"
+      },
+      {
+        "path": "reviewer/vcs/gitlab.py",
+        "reason": "update through VCS abstraction"
+      }
+    ],
+    "bulk": false
+  },
+  {
+    "key": "PRI-239",
+    "base_sha": "7c7d52ebac9f5c393ec5ec35e851e644504954bd",
+    "solution_sha": "3963f89e6134d537bc9ba2e2f731d85dc1113afc",
+    "split": "tune",
+    "input": "Предлагать отчёт о дефекте reviewer после явного согласия. Анонимизировать сведения проекта, поддержать отключение и регистрацию в issues инструмента.",
+    "input_source": "77d2288b8f7275bbdba6a1bb2bef405b7c1641ad:docs/superpowers/briefs/2026-08-11-PRI-239-report-bug-channel.md",
+    "obligatory": [
+      {
+        "path": "reviewer/config/settings.py",
+        "reason": "policy, settings, setup and tool registration"
+      },
+      {
+        "path": "reviewer/entrypoints/mcp_server.py",
+        "reason": "policy, settings, setup and tool registration"
+      },
+      {
+        "path": "reviewer/install.py",
+        "reason": "policy, settings, setup and tool registration"
+      },
+      {
+        "path": "reviewer/mcp/service.py",
+        "reason": "policy, settings, setup and tool registration"
+      },
+      {
+        "path": "reviewer/policy/policy.py",
+        "reason": "policy, settings, setup and tool registration"
+      },
+      {
+        "path": "plugin/skills/review-pr/SKILL.md",
+        "reason": "policy, settings, setup and tool registration"
+      },
+      {
+        "path": "plugin/skills/solve-task/SKILL.md",
+        "reason": "policy, settings, setup and tool registration"
+      },
+      {
+        "path": "plugin/skills/summarize-subsystems/SKILL.md",
+        "reason": "policy, settings, setup and tool registration"
+      }
+    ],
+    "read_only": [
+      {
+        "path": "reviewer/config/layers.py",
+        "reason": "review policy layering and GitHub access"
+      },
+      {
+        "path": "reviewer/vcs/github.py",
+        "reason": "review policy layering and GitHub access"
+      }
+    ],
+    "bulk": false
+  },
+  {
+    "key": "PRI-241",
+    "base_sha": "30d9d2866590912ba42314b610d3e3b9cb04af2a",
+    "solution_sha": "a650c3a2de835a05e51c451d698e50e2fc0e0bf2",
+    "split": "holdout",
+    "input": "Параметризовать хостовые порты Postgres и Neo4j в compose и install-wizard. Инфраструктура должна запускаться рядом с уже занятыми стандартными портами.",
+    "input_source": "483fa76ad04eb2abccc308d3251c1a061efd41e3:docs/superpowers/briefs/2026-08-12-PRI-241-parametrize-storage-publish-ports.md",
+    "obligatory": [
+      {
+        "path": "docker-compose.yml",
+        "reason": "compose ports and install orchestration"
+      },
+      {
+        "path": "reviewer/entrypoints/cli.py",
+        "reason": "compose ports and install orchestration"
+      },
+      {
+        "path": "reviewer/install.py",
+        "reason": "compose ports and install orchestration"
+      }
+    ],
+    "read_only": [
+      {
+        "path": "reviewer/app.py",
+        "reason": "resolution of connection configuration"
+      },
+      {
+        "path": "reviewer/config/settings.py",
+        "reason": "resolution of connection configuration"
+      }
+    ],
+    "bulk": false
+  },
+  {
+    "key": "PRI-242",
+    "base_sha": "a650c3a2de835a05e51c451d698e50e2fc0e0bf2",
+    "solution_sha": "af5c91a55f7f344d42121af481362e4770b0d863",
+    "split": "tune",
+    "input": "Добавить reviewer start и reviewer stop для локальных Postgres и Neo4j. Учитывать расположение compose-файла и ждать готовности сервисов при запуске.",
+    "input_source": "e7906972a76a2ab5bab4c57405b6c6ec0bbff527:docs/superpowers/briefs/2026-08-12-PRI-242-reviewer-start-stop-infra-cli.md",
+    "obligatory": [
+      {
+        "path": "docker-compose.yml",
+        "reason": "command registration, deployment and launcher metadata"
+      },
+      {
+        "path": "reviewer/entrypoints/cli.py",
+        "reason": "command registration, deployment and launcher metadata"
+      },
+      {
+        "path": "reviewer/launcher/metadata.py",
+        "reason": "command registration, deployment and launcher metadata"
+      }
+    ],
+    "read_only": [
+      {
+        "path": "reviewer/install.py",
+        "reason": "existing setup and health checks"
+      },
+      {
+        "path": "reviewer/config/settings.py",
+        "reason": "existing setup and health checks"
+      }
+    ],
+    "bulk": false
+  },
+  {
+    "key": "PRI-245",
+    "base_sha": "492834c3ecc6d19d9ab6fe2a273c1b0c05ddcd00",
+    "solution_sha": "bb57fc90c9a939b436f0ea1ca15d7256b45488eb",
+    "split": "tune",
+    "input": "Снизить стоимость summarize-subsystems. Сопоставлять свежесть с тем, что видит модель, читать скелет вместо полных тел, исключать тесты из сводок и батчировать файловые задания.",
+    "input_source": "13b665864039542c03b7526a192394dec8619b2b:docs/superpowers/briefs/2026-08-13-PRI-245-cheaper-summarize-subsystems.md",
+    "obligatory": [
+      {
+        "path": "reviewer/config/layers.py",
+        "reason": "summary tools, freshness, skeleton and policy"
+      },
+      {
+        "path": "reviewer/entrypoints/mcp_server.py",
+        "reason": "summary tools, freshness, skeleton and policy"
+      },
+      {
+        "path": "reviewer/graph/summaries.py",
+        "reason": "summary tools, freshness, skeleton and policy"
+      },
+      {
+        "path": "reviewer/index/chunker.py",
+        "reason": "summary tools, freshness, skeleton and policy"
+      },
+      {
+        "path": "reviewer/index/store.py",
+        "reason": "summary tools, freshness, skeleton and policy"
+      },
+      {
+        "path": "reviewer/mcp/service.py",
+        "reason": "summary tools, freshness, skeleton and policy"
+      },
+      {
+        "path": "reviewer/policy/policy.py",
+        "reason": "summary tools, freshness, skeleton and policy"
+      },
+      {
+        "path": "reviewer/services/summary_fragments.py",
+        "reason": "summary tools, freshness, skeleton and policy"
+      },
+      {
+        "path": "plugin/skills/summarize-subsystems/SKILL.md",
+        "reason": "workflow"
+      }
+    ],
+    "read_only": [
+      {
+        "path": "reviewer/index/summary_store.py",
+        "reason": "summary persistence and graph rebuilding"
+      },
+      {
+        "path": "reviewer/services/graph_sync.py",
+        "reason": "summary persistence and graph rebuilding"
+      }
+    ],
+    "bulk": false
+  },
+  {
+    "key": "PRI-248",
+    "base_sha": "c7f1406369649edaf9fc190384765df4880099ae",
+    "solution_sha": "020bd635c3fac174355216a12aa3bd27b95e5a08",
+    "split": "tune",
+    "input": "Свернуть предварительную проверку и сбор solve-task в одну серверную операцию prepare_task_context. Сохранять частичный ответ, когда источник недоступен.",
+    "input_source": "75e2338b9c2bb48db2f0a219543b44bc0de3911a:docs/superpowers/briefs/2026-08-15-PRI-248-prepare-task-context.md",
+    "obligatory": [
+      {
+        "path": "reviewer/entrypoints/mcp_server.py",
+        "reason": "server and workflow"
+      },
+      {
+        "path": "reviewer/mcp/service.py",
+        "reason": "server and workflow"
+      },
+      {
+        "path": "plugin/skills/solve-task/SKILL.md",
+        "reason": "server and workflow"
+      }
+    ],
+    "read_only": [
+      {
+        "path": "reviewer/services/status.py",
+        "reason": "stores, status and retrieval used by the new operation"
+      },
+      {
+        "path": "reviewer/retrieval/retriever.py",
+        "reason": "stores, status and retrieval used by the new operation"
+      },
+      {
+        "path": "reviewer/tasks/service.py",
+        "reason": "stores, status and retrieval used by the new operation"
+      }
+    ],
+    "bulk": false
+  },
+  {
+    "key": "PRI-251",
+    "base_sha": "10ea00830cd96c94298b3ee5f0536b4bbfced767",
+    "solution_sha": "b911c526d232e3021564b337f3aba7cd6f3b4fb1",
+    "split": "tune",
+    "input": "По найденному символу перечислять семейство однотипных классов и методов. Обход implementations должен работать с классами и Protocol и показывать родственные файлы в solve-task.",
+    "input_source": "fe94808ff3ba798e82150ee701d598abebb85a63:docs/superpowers/briefs/2026-08-14-PRI-251-implementations-family-blind-spot.md",
+    "obligatory": [
+      {
+        "path": "reviewer/entrypoints/mcp_server.py",
+        "reason": "symbol family graph, API and skill"
+      },
+      {
+        "path": "reviewer/graph/backend.py",
+        "reason": "symbol family graph, API and skill"
+      },
+      {
+        "path": "reviewer/graph/builder.py",
+        "reason": "symbol family graph, API and skill"
+      },
+      {
+        "path": "reviewer/graph/store.py",
+        "reason": "symbol family graph, API and skill"
+      },
+      {
+        "path": "reviewer/mcp/service.py",
+        "reason": "symbol family graph, API and skill"
+      },
+      {
+        "path": "reviewer/services/graph_sync.py",
+        "reason": "symbol family graph, API and skill"
+      },
+      {
+        "path": "plugin/skills/solve-task/SKILL.md",
+        "reason": "symbol family graph, API and skill"
+      }
+    ],
+    "read_only": [
+      {
+        "path": "reviewer/graph/scip.py",
+        "reason": "SCIP resolution and retrieval endpoints"
+      },
+      {
+        "path": "reviewer/retrieval/retriever.py",
+        "reason": "SCIP resolution and retrieval endpoints"
+      }
+    ],
+    "bulk": false
+  },
+  {
+    "key": "PRI-252",
+    "base_sha": "b911c526d232e3021564b337f3aba7cd6f3b4fb1",
+    "solution_sha": "e89db7c1893060ab0a4f2b631bcc225f7909fe11",
+    "split": "tune",
+    "input": "Найти причину уменьшения числа рёбер SCIP на том же коде и сохранять раздельные счётчики типов рёбер. Проверить локальные символы и связи между файлами.",
+    "input_source": "983638a1e63fd3d44970ffd6d8185b6a32f930cb:docs/superpowers/briefs/2026-08-14-PRI-252-scip-graph-edge-count-regression.md",
+    "obligatory": [
+      {
+        "path": "reviewer/entrypoints/cli.py",
+        "reason": "SCIP and count persistence"
+      },
+      {
+        "path": "reviewer/graph/scip.py",
+        "reason": "SCIP and count persistence"
+      },
+      {
+        "path": "reviewer/index/store.py",
+        "reason": "SCIP and count persistence"
+      },
+      {
+        "path": "reviewer/index/schema.sql",
+        "reason": "SCIP and count persistence"
+      }
+    ],
+    "read_only": [
+      {
+        "path": "reviewer/graph/backend.py",
+        "reason": "graph construction and synchronization"
+      },
+      {
+        "path": "reviewer/services/graph_sync.py",
+        "reason": "graph construction and synchronization"
+      }
+    ],
+    "bulk": false
+  },
+  {
+    "key": "PRI-255",
+    "base_sha": "a1b28c157c94d230db372484b9da01389dc87869",
+    "solution_sha": "7d66a08baa462be1a2edde216dfbdc66a27fa68f",
+    "split": "tune",
+    "input": "Разбивать требования задачи на подзапросы, пакетно получать векторы, объединять выдачу RRF и обходить граф от объединённого списка. Сохранять резервный путь при недоступности внешнего источника.",
+    "input_source": "5e719db76c43d7d18054b8840e10a43f10e7de03:docs/superpowers/briefs/2026-08-17-PRI-255-multi-query-rrf.md",
+    "obligatory": [
+      {
+        "path": "reviewer/index/embeddings.py",
+        "reason": "existing query, service and embedding implementation"
+      },
+      {
+        "path": "reviewer/mcp/service.py",
+        "reason": "existing query, service and embedding implementation"
+      },
+      {
+        "path": "reviewer/mcp/task_context.py",
+        "reason": "existing query, service and embedding implementation"
+      }
+    ],
+    "read_only": [
+      {
+        "path": "reviewer/index/store.py",
+        "reason": "first-level hybrid, context rendering and evidence replay"
+      },
+      {
+        "path": "reviewer/retrieval/retriever.py",
+        "reason": "first-level hybrid, context rendering and evidence replay"
+      },
+      {
+        "path": "reviewer/policy/context_limits.py",
+        "reason": "first-level hybrid, context rendering and evidence replay"
+      }
+    ],
+    "bulk": false
+  },
+  {
+    "key": "PRI-256",
+    "base_sha": "7d66a08baa462be1a2edde216dfbdc66a27fa68f",
+    "solution_sha": "951e791246db4577a3913d07b75001bc32ff9969",
+    "split": "holdout",
+    "input": "Ограничивать секцию code количеством файлов и фрагментов на файл. Избегать повторов вложенных чанков и чрезмерно длинных блоков, не жертвуя большим числом разных путей.",
+    "input_source": "de2329fa33daaa34b742b5bc1cc6efac8c9d8eab:docs/superpowers/briefs/2026-08-17-PRI-256-file-diversification-code-section.md",
+    "obligatory": [
+      {
+        "path": "reviewer/config/layers.py",
+        "reason": "retrieval, config layers and MCP"
+      },
+      {
+        "path": "reviewer/mcp/service.py",
+        "reason": "retrieval, config layers and MCP"
+      },
+      {
+        "path": "reviewer/policy/context_limits.py",
+        "reason": "retrieval, config layers and MCP"
+      },
+      {
+        "path": "reviewer/retrieval/multiquery.py",
+        "reason": "retrieval, config layers and MCP"
+      },
+      {
+        "path": "plugin/skills/configure-review/SKILL.md",
+        "reason": "retrieval, config layers and MCP"
+      }
+    ],
+    "read_only": [
+      {
+        "path": "reviewer/retrieval/retriever.py",
+        "reason": "context rendering and chunk anchors"
+      },
+      {
+        "path": "reviewer/index/chunker.py",
+        "reason": "context rendering and chunk anchors"
+      }
+    ],
+    "bulk": false
+  },
+  {
+    "key": "PRI-257",
+    "base_sha": "951e791246db4577a3913d07b75001bc32ff9969",
+    "solution_sha": "10beb0d2513a3fc22235990e82eabc4927f669c4",
+    "split": "holdout",
+    "input": "Подмешивать пути из diff похожих задач и Git-соизменяемости. Ограничить долю подмешанного контекста, сортировать в рамках прежнего бюджета и обеспечить деградацию при недоступности истории.",
+    "input_source": "e0d90952134e1850b0d04e1f3c56755431fbff38:docs/superpowers/briefs/2026-08-17-PRI-257-similar-task-diffs-cochange.md",
+    "obligatory": [
+      {
+        "path": "reviewer/config/layers.py",
+        "reason": "retrieval, storage, task history and policy"
+      },
+      {
+        "path": "reviewer/gitutil.py",
+        "reason": "retrieval, storage, task history and policy"
+      },
+      {
+        "path": "reviewer/index/store.py",
+        "reason": "retrieval, storage, task history and policy"
+      },
+      {
+        "path": "reviewer/mcp/service.py",
+        "reason": "retrieval, storage, task history and policy"
+      },
+      {
+        "path": "reviewer/mcp/task_context.py",
+        "reason": "retrieval, storage, task history and policy"
+      },
+      {
+        "path": "reviewer/policy/context_limits.py",
+        "reason": "retrieval, storage, task history and policy"
+      },
+      {
+        "path": "reviewer/retrieval/multiquery.py",
+        "reason": "retrieval, storage, task history and policy"
+      },
+      {
+        "path": "reviewer/retrieval/retriever.py",
+        "reason": "retrieval, storage, task history and policy"
+      },
+      {
+        "path": "reviewer/tasks/service.py",
+        "reason": "retrieval, storage, task history and policy"
+      },
+      {
+        "path": "reviewer/tasks/store.py",
+        "reason": "retrieval, storage, task history and policy"
+      },
+      {
+        "path": "reviewer/web/history.py",
+        "reason": "retrieval, storage, task history and policy"
+      },
+      {
+        "path": "plugin/skills/configure-review/SKILL.md",
+        "reason": "configuration guidance"
+      }
+    ],
+    "read_only": [
+      {
+        "path": "reviewer/config/committed.py",
+        "reason": "policy loading and historical file matching"
+      },
+      {
+        "path": "reviewer/policy/policy.py",
+        "reason": "policy loading and historical file matching"
+      }
+    ],
+    "bulk": true
+  },
+  {
+    "key": "PRI-260",
+    "base_sha": "ca5498f63825d86766b4814806b5ba1631e23e17",
+    "solution_sha": "4a45b179a748f12e633a7defc54bc1caaf168416",
+    "split": "tune",
+    "input": "Сливать настройки политики по листьям, чтобы частичный overrides не скрывал соседние лимиты. Показывать, когда рабочая копия .review.yml расходится с Git.",
+    "input_source": "6e5103952dc55dfdb4a2d196eb74ad3cd34a353e:docs/superpowers/briefs/2026-08-18-PRI-260-policy-layer-leaf-shadowing.md",
+    "obligatory": [
+      {
+        "path": "reviewer/config/committed.py",
+        "reason": "policy layers, drift, CLI and MCP"
+      },
+      {
+        "path": "reviewer/config/layers.py",
+        "reason": "policy layers, drift, CLI and MCP"
+      },
+      {
+        "path": "reviewer/entrypoints/cli.py",
+        "reason": "policy layers, drift, CLI and MCP"
+      },
+      {
+        "path": "reviewer/mcp/service.py",
+        "reason": "policy layers, drift, CLI and MCP"
+      }
+    ],
+    "read_only": [
+      {
+        "path": "reviewer/policy/context_limits.py",
+        "reason": "context defaults and source reader"
+      },
+      {
+        "path": "reviewer/gitutil.py",
+        "reason": "context defaults and source reader"
+      }
+    ],
+    "bulk": false
+  },
+  {
+    "key": "PRI-267",
+    "base_sha": "22ff148c426ffcdbe075c31825b4b43d704e3710",
+    "solution_sha": "a6dc02d949eee23d6ebab2b430d8bc452349c106",
+    "split": "tune",
+    "input": "Устранить три независимых значения константы RRF k = 60 в поиске кода, поиске задач и объединении подзапросов.",
+    "input_source": "140dc6e61256fa4b10861d124617cb9e035d656c:docs/superpowers/briefs/2026-08-24-PRI-267-rrf-k-single-source.md",
+    "obligatory": [
+      {
+        "path": "reviewer/index/store.py",
+        "reason": "RRF consumers"
+      },
+      {
+        "path": "reviewer/retrieval/multiquery.py",
+        "reason": "RRF consumers"
+      },
+      {
+        "path": "reviewer/tasks/store.py",
+        "reason": "RRF consumers"
+      }
+    ],
+    "read_only": [
+      {
+        "path": "reviewer/mcp/service.py",
+        "reason": "production entry point and context limits"
+      },
+      {
+        "path": "reviewer/policy/context_limits.py",
+        "reason": "production entry point and context limits"
+      }
+    ],
+    "bulk": false
+  },
+  {
+    "key": "PRI-275",
+    "base_sha": "f587a559e86fa396cc771355f4d745231df9a1f4",
+    "solution_sha": "ebfa663cb96004d5c6ce49e9817233ff35100b9c",
+    "split": "holdout",
+    "input": "В prepare_task_context при недоступном Postgres тратятся два таймаута пула. Проверить получение пути клона и предварительную проверку, чтобы быстро вернуть диагностический пробел.",
+    "input_source": "3c47bad7449b6384ac2286d4e6e3507a97a26590:docs/superpowers/briefs/2026-08-31-PRI-275-clone-path-double-pool-timeout.md",
+    "obligatory": [
+      {
+        "path": "reviewer/mcp/service.py",
+        "reason": "preflight integration"
+      }
+    ],
+    "read_only": [
+      {
+        "path": "reviewer/mcp/task_context.py",
+        "reason": "preflight orchestration, timeout classification and store"
+      },
+      {
+        "path": "reviewer/services/status.py",
+        "reason": "preflight orchestration, timeout classification and store"
+      },
+      {
+        "path": "reviewer/storage_health.py",
+        "reason": "preflight orchestration, timeout classification and store"
+      },
+      {
+        "path": "reviewer/index/store.py",
+        "reason": "preflight orchestration, timeout classification and store"
+      }
+    ],
+    "bulk": false
+  }
+]
