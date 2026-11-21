@@ -141,6 +141,10 @@ def arm_mode(context, selected, archived, ranked, git_selected, scan_ms):
     }
 
 
+def read_batches(work, arm):
+    return [read(path) for path in sorted((work / f"luna-all-{arm}").glob("batch-*.json"))]
+
+
 def prepare(pri278, work, repo, arms):
     cases, archived = frozen_inputs(pri278)
     # Import here so copying the frozen control can run independently.
@@ -149,6 +153,10 @@ def prepare(pri278, work, repo, arms):
         from reviewer.retrieval.git_lexical import search_git
         from reviewer.retrieval.multiquery import reserve_git_excerpts
 
+    completed = {
+        arm: {row["key"] for batch in read_batches(work, arm) for row in batch["briefs"]}
+        for arm in arms
+    }
     off = ("off",) if "off" in arms else ()
     model_inputs = [{key: case[key] for key in ("key", "input", "split")} for case in cases]
     write(work / "corpus.json", model_inputs)
@@ -187,9 +195,10 @@ def prepare(pri278, work, repo, arms):
                 mode = arm_mode(context, selected, baseline, ranked, git_selected, scan_ms)
             label = f"all-{arm}"
             target = work / label / f"{key}.json"
-            if (target.exists() and any((work / f"luna-{label}").glob("batch-*.json"))
-                    and read(target)["modes"]["hybrid"]["context"] != mode["context"]):
-                raise ValueError(f"Prepared context changed after model runs: {label}/{key}")
+            if key in completed[arm] and (
+                not target.exists() or read(target)["modes"]["hybrid"]["context"] != mode["context"]
+            ):
+                raise ValueError(f"Prepared context missing or changed after model runs: {label}/{key}")
             write(target, {"key": key, "base_sha": ref, "modes": {"hybrid": mode}})
 
 
@@ -213,10 +222,9 @@ def gold_paths(repo, case):
 def model_briefs(work, arm, keys):
     label = f"all-{arm}"
     briefs, usage, settings = {}, Counter(), set()
-    batches = sorted((work / f"luna-{label}").glob("batch-*.json"))
+    batches = read_batches(work, arm)
     elapsed_s = []
-    for path in batches:
-        batch = read(path)
+    for batch in batches:
         settings.add((batch.get("model"), batch.get("reasoning_effort")))
         usage.update(batch.get("usage") or {})
         if "batch_elapsed_s" in batch:
