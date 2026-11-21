@@ -16,6 +16,7 @@ import json
 import os
 import platform
 import shutil
+import tempfile
 import tomllib
 from dataclasses import dataclass, field as _field
 from pathlib import Path, PureWindowsPath
@@ -315,6 +316,23 @@ def read_env(path: Path) -> dict[str, str]:
             key, _, value = line.partition("=")
             result[key.strip()] = value.strip()
     return result
+
+
+def write_env(path: Path, content: str) -> None:
+    """Publish a private env file atomically, following a user-configured symlink."""
+    destination = path.resolve()
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    staged = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            "w", encoding="utf-8", dir=destination.parent, delete=False,
+        ) as stream:
+            staged = Path(stream.name)
+            stream.write(content)
+        staged.replace(destination)
+    finally:
+        if staged is not None:
+            staged.unlink(missing_ok=True)
 
 
 _GROUP_HEADERS: dict[str, str] = {

@@ -235,7 +235,8 @@ def diversify_by_file(items: list, *, max_files: int, max_chunks_per_file: int) 
 def search_multi(retriever, repo: str, queries: list[str], *, limits=None,
                  section_limits=None, hops: int = 1, branch: str = "",
                  include_tests: bool = False, augment_sources=None,
-                 strict: bool = False, tests_only: bool = False) -> ContextPack:
+                 strict: bool = False, tests_only: bool = False,
+                 include_selection_stats: bool = False) -> ContextPack:
     """Мультизапросный ретрив по base-индексу ветки: N прогонов, RRF, обрезка.
 
     Реранкера и cliff-отсечки здесь нет — финальный ранкер RRF (см. докстринг
@@ -298,6 +299,7 @@ def search_multi(retriever, repo: str, queries: list[str], *, limits=None,
         items = [item for item in items if _is_test_path(item.path)]
     elif not include_tests:
         items = [item for item in items if not _is_test_path(item.path)]
+    candidates = {item.path for item in items} if include_selection_stats else None
     # Сначала — полная гибридная выдача на весь бюджет max_files, как если бы
     # augmented не существовало вовсе: это и есть тот «итоговый» набор путей,
     # против которого рычаг проверяет свою новизну (PRI-257, второй фикс по
@@ -305,9 +307,10 @@ def search_multi(retriever, repo: str, queries: list[str], *, limits=None,
     hybrid_final = diversify_by_file(_dedupe_overlapping(items),
                                      max_files=sec.max_files,
                                      max_chunks_per_file=sec.max_chunks_per_file)
+    hybrid_paths = {item.path for item in hybrid_final}
     augmented, note = _augment_items(
         retriever, repo, sources=None if tests_only else augment_sources, bref=bref,
-        known_paths={item.path for item in hybrid_final},
+        known_paths=hybrid_paths,
         include_tests=include_tests, rank_by_path=rank_by_path)
     # Резерв слотов: augmented — свой путь дедупа не требует (fetch_retrieved_
     # at_paths отдаёт по одному самому широкому чанку на путь, known_paths уже
@@ -316,5 +319,16 @@ def search_multi(retriever, repo: str, queries: list[str], *, limits=None,
     reserved = min(len(augmented), sec.max_files)
     augmented = augmented[:reserved]
     items = [*hybrid_final[:sec.max_files - reserved], *augmented]
+    stats = None
+    if candidates is not None and runs:
+        selected = {item.path for item in items}
+        unaugmented = {item.path for item in hybrid_final[:sec.max_files]}
+        stats = {
+            "file_limit": sec.max_files,
+            "candidate_files": len(candidates),
+            "omitted_by_file_limit": len(candidates - unaugmented),
+            "displaced_by_augmentation": len(unaugmented - selected),
+            "selected_files": len(selected),
+        }
     return ContextPack(items=[cap_block(item, sec.chars_per_file) for item in items],
-                       max_chars=sec.max_chars, augment_note=note)
+                       max_chars=sec.max_chars, augment_note=note, selection_stats=stats)

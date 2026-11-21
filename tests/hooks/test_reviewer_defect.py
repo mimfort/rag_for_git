@@ -20,9 +20,11 @@ def _load():
     module = importlib.util.module_from_spec(spec)
     previous = sys.dont_write_bytecode
     sys.dont_write_bytecode = True
+    sys.path.insert(0, str(HOOK_PATH.parent))
     try:
         spec.loader.exec_module(module)
     finally:
+        sys.path.pop(0)
         sys.dont_write_bytecode = previous
     return module
 

@@ -138,6 +138,21 @@ def _bm25(node_id: str, text: str = "body"):
     return item
 
 
+def test_budget_counts_files_after_final_slice_with_multiple_chunks_per_file():
+    hits = [_bm25("a.py#f"), _bm25("a.py#g"), _bm25("b.py#h")]
+    store = _FakeStore({"query": hits})
+    pack = search_multi(
+        _Retriever(store, _FakeEmbedder()), "o/n", ["query"],
+        section_limits=CodeSectionLimits(max_files=2, max_chunks_per_file=2),
+        include_selection_stats=True,
+    )
+    assert {item.path for item in pack.items} == {"a.py"}
+    assert pack.selection_stats == {
+        "file_limit": 2, "candidate_files": 2, "omitted_by_file_limit": 1,
+        "displaced_by_augmentation": 0, "selected_files": 1,
+    }
+
+
 def test_one_batched_embedding_call_per_assembly():
     embedder = _FakeEmbedder()
     store = _FakeStore({"q0": [_bm25("a.py#f")], "q1": [_bm25("b.py#g")]})

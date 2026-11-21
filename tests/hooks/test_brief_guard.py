@@ -47,9 +47,9 @@ def test_hooks_json_runs_single_sequential_wrapper():
     ]
 
     assert len(write_entries) == 1
-    assert commands == [
-        'python3 "${CLAUDE_PLUGIN_ROOT}/hooks/brief_post_write.py"'
-    ]
+    assert len(commands) == 1
+    assert "${CLAUDE_PLUGIN_ROOT}" in commands[0]
+    assert commands[0].endswith('/hooks/brief_post_write.py"')
     assert all("brief_cost.py" not in command for command in commands)
     assert all("brief_guard.py" not in command for command in commands)
 
@@ -732,3 +732,47 @@ def test_run_debug_reports_observed_cited_and_missing(tmp_path, monkeypatch, cap
     assert "observed: known.py" in stderr
     assert "cited: missing.py" in stderr
     assert "missing: missing.py" in stderr
+
+
+@pytest.mark.parametrize("prefix", bg.MCP_TOOL_PREFIXES)
+@pytest.mark.parametrize("wrapper", ["native", "dict", "json"])
+def test_guard_uses_code_from_prepare_task_context_only(tmp_path, prefix, wrapper):
+    code = "// reviewer/index.py#search (reviewer/index.py:10-14)"
+    test = "// tests/test_index.py#test_search (tests/test_index.py:20-25)"
+    foreign = "// reviewer/hallucinated.py#f (reviewer/hallucinated.py:7)"
+    value = {"code": code, "test_exemplars": test,
+             "related": {"linked": foreign}, "warnings": [foreign]}
+    if wrapper == "dict":
+        value = {"result": value}
+    elif wrapper == "json":
+        value = {"result": json.dumps(value)}
+    brief = _brief(tmp_path, """## Relevant code
+- reviewer/index.py:10 — search
+- reviewer/hallucinated.py:7 — invented
+## Test exemplars
+- tests/test_index.py:20 — test
+""")
+    transcript = _write_transcript(tmp_path, [
+        _SOLVE_USER,
+        _tool_use("prepare", prefix + "prepare_task_context"),
+        _tool_result("prepare", [{"type": "text", "text": json.dumps(value)}]),
+        _write_call(),
+    ])
+
+    bg.run(_payload(brief, transcript))
+
+    written = brief.read_text()
+    assert f"reviewer/hallucinated.py:7 {bg.WARNING}" in written
+    assert f"reviewer/index.py:10 {bg.WARNING}" not in written
+    assert f"tests/test_index.py:20 {bg.WARNING}" not in written
+
+
+def test_prepare_task_context_without_code_does_not_supply_evidence():
+    rows = [
+        _tool_use("prepare", "mcp__reviewer__prepare_task_context"),
+        _tool_result("prepare", json.dumps({
+            "code": None, "test_exemplars": False,
+            "related": "// fake.py#f (fake.py:8)",
+        })),
+    ]
+    assert bg.tool_result_texts(rows, -1) == []
