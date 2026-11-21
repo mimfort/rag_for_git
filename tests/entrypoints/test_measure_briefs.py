@@ -8,6 +8,7 @@ from click.testing import CliRunner
 from reviewer.entrypoints.cli import cli
 from reviewer.metrics.brief_quality.config import DEFAULT
 from reviewer.metrics.brief_quality.corpus import measure_corpus
+from reviewer.metrics.brief_quality.ground_truth import GitError
 
 
 def test_measure_corpus_writes_row_per_pr(tmp_path):
@@ -25,11 +26,7 @@ def test_measure_corpus_writes_row_per_pr(tmp_path):
                 "def Merge pull request #9 from o/feat/pri-1-follow-up\n"
             )
         if args[:2] == ["diff", "--name-status"]:
-            return "M\treviewer/app.py\n"
-        if args[:2] == ["diff", "--name-only"]:
-            # ground_truth.collect() сам сводит truth.changed по всем мержам
-            # задачи (тут не используется measure_corpus, но вызывается всегда).
-            return "reviewer/app.py\n"
+            return "M\0reviewer/app.py\0"
         raise AssertionError(args)
 
     rows = []
@@ -42,6 +39,24 @@ def test_measure_corpus_writes_row_per_pr(tmp_path):
     summary = measure_corpus(str(tmp_path), "o/r", DEFAULT, run_git, _History())
     assert rows == [(None, "o/r", 7, "measured"), (None, "o/r", 9, "measured")]
     assert summary["measured"] == 2 and summary["briefs"] == 1 and summary["rows"] == 2
+
+
+def test_measure_corpus_preserves_existing_rows_on_failed_git_diff(tmp_path):
+    briefs = tmp_path / "docs" / "superpowers" / "briefs"
+    briefs.mkdir(parents=True)
+    (briefs / "2026-09-01-PRI-1-x.md").write_text("# Brief\n", encoding="utf-8")
+
+    def run_git(args):
+        if args[0] == "log":
+            return "abc Merge pull request #7 from o/feat/pri-1\n"
+        raise GitError("missing parent")
+
+    history = MagicMock()
+    summary = measure_corpus(tmp_path, "o/r", DEFAULT, run_git, history)
+
+    assert summary["diff_failed"] == 1
+    assert summary["rows"] == 0
+    history.record_brief_quality.assert_not_called()
 
 
 def test_measure_corpus_counts_write_failures_separately(tmp_path):
@@ -57,9 +72,7 @@ def test_measure_corpus_counts_write_failures_separately(tmp_path):
         if args[0] == "log":
             return "abc Merge pull request #7 from o/feat/pri-1\n"
         if args[:2] == ["diff", "--name-status"]:
-            return "M\treviewer/app.py\n"
-        if args[:2] == ["diff", "--name-only"]:
-            return "reviewer/app.py\n"
+            return "M\0reviewer/app.py\0"
         raise AssertionError(args)
 
     class _FailingHistory:

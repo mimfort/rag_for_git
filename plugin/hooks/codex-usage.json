@@ -5,7 +5,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "root=\"${PLUGIN_ROOT}\"; [ -f \"$root/hooks/codex_usage.py\" ] || root=\"$root/plugin\"; exec python3 \"$root/hooks/codex_usage.py\""
+            "command": "root=\"${PLUGIN_ROOT}\"; [ -f \"$root/hooks/codex_usage.py\" ] || root=\"$root/plugin\"; exec python3 \"$root/hooks/codex_usage.py\"",
+            "commandWindows": "python -c \"import os, runpy; from pathlib import Path; root = Path(os.environ['PLUGIN_ROOT']); script = root / 'hooks' / 'codex_usage.py'; runpy.run_path(str(script if script.is_file() else root / 'plugin' / 'hooks' / script.name), run_name='__main__')\""
           }
         ]
       }

@@ -1,4 +1,6 @@
 """Unit-тесты ground truth: только настоящие PR-мержи считаются работой задачи."""
+import pytest
+
 from reviewer.metrics.brief_quality import ground_truth
 
 # Реальная форма граблей PRI-134: sync-мерж с тем же ключом в тексте тащит
@@ -40,21 +42,23 @@ def test_filter_pr_merges_empty_input():
 
 def test_changed_status_parses_name_status():
     def run_git(args):
-        assert args[:2] == ["diff", "--name-status"]
-        return "M\treviewer/app.py\nA\treviewer/new.py\nR100\told.py\tnew.py\n"
+        assert args[:3] == ["diff", "--name-status", "-z"]
+        return "M\0reviewer/модуль.py\0A\0reviewer/new.py\0R100\0old.py\0new\tname.py\0"
 
     assert ground_truth.changed_status("abc", run_git) == {
-        "reviewer/app.py": "modified",
+        "reviewer/модуль.py": "modified",
         "reviewer/new.py": "added",
-        "new.py": "renamed",
+        "new\tname.py": "renamed",
     }
 
 
-def test_changed_status_on_git_error_returns_empty():
+def test_changed_status_distinguishes_empty_diff_from_git_error():
     def fake_git(args):
         raise ground_truth.GitError("объект недоступен")
 
-    assert ground_truth.changed_status("abc", fake_git) == {}
+    assert ground_truth.changed_status("abc", lambda args: "") == {}
+    with pytest.raises(ground_truth.GitError, match="объект недоступен"):
+        ground_truth.changed_status("abc", fake_git)
 
 
 def test_merge_rows_parses_git_output():

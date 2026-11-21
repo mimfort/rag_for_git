@@ -28,12 +28,16 @@ def measure_corpus(clone_path, repo, config, run_git, history) -> dict:
         if not record.task_key:
             summary["skipped_no_key"] += 1
             continue
-        truth = ground_truth.collect(record.task_key, run_git)
-        if not truth.merges:
+        merges, _ = ground_truth.filter_pr_merges(ground_truth.merge_rows(record.task_key, run_git))
+        if not merges:
             summary["skipped_no_merges"] += 1
             continue
-        for merge in truth.merges:
-            status_map = ground_truth.changed_status(merge.sha, run_git)
+        for merge in merges:
+            try:
+                status_map = ground_truth.changed_status(merge.sha, run_git)
+            except ground_truth.GitError:
+                summary["diff_failed"] = summary.get("diff_failed", 0) + 1
+                continue
             status = brief_quality.measure_and_record(
                 task_key=record.task_key, repo=repo, pr_number=merge.number,
                 head_sha=merge.sha, changed_paths=list(status_map),
