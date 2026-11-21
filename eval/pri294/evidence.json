@@ -1,0 +1,202 @@
+{
+  "PRI-217": [
+    {
+      "criterion": 1,
+      "anchors": [
+        {
+          "path": "reviewer/tasks/boards/registry.py",
+          "contains": "def _validate_runtime_provider("
+        }
+      ]
+    },
+    {
+      "criterion": 9,
+      "anchors": [
+        {
+          "path": "pyproject.toml",
+          "contains": "version = \"0.7.0\""
+        }
+      ]
+    }
+  ],
+  "PRI-218": [
+    {
+      "criterion": 9,
+      "anchors": [
+        {
+          "path": "reviewer/launcher/controller.py",
+          "contains": "def cancel("
+        }
+      ]
+    },
+    {
+      "criterion": 10,
+      "anchors": [
+        {
+          "path": "reviewer/entrypoints/launcher.py",
+          "contains": "from reviewer.launcher.app import run_launcher"
+        }
+      ]
+    }
+  ],
+  "PRI-220": [
+    {
+      "criterion": 4,
+      "anchors": [
+        {
+          "path": "tests/docs/test_readme_onboarding.py",
+          "contains": "def test_each_registered_skill_has_its_own_heading_in_both_readmes("
+        }
+      ]
+    },
+    {
+      "criterion": 10,
+      "anchors": [
+        {
+          "path": "README.md",
+          "contains": "`finish-task` — close a task after its PR"
+        }
+      ]
+    }
+  ],
+  "PRI-221": [
+    {
+      "criterion": 3,
+      "anchors": [
+        {
+          "path": "reviewer/config/layers.py",
+          "contains": "def build_config_report("
+        }
+      ]
+    },
+    {
+      "criterion": 10,
+      "anchors": [
+        {
+          "path": "reviewer/config/layers.py",
+          "contains": "def migrate_repo_config("
+        }
+      ]
+    }
+  ],
+  "PRI-223": [
+    {
+      "criterion": 10,
+      "anchors": [
+        {
+          "path": "reviewer/entrypoints/cli.py",
+          "contains": "interactive = not yes and not dry_run"
+        }
+      ]
+    },
+    {
+      "criterion": 13,
+      "anchors": [
+        {
+          "path": "reviewer/entrypoints/cli.py",
+          "contains": "def _branches_report("
+        }
+      ]
+    }
+  ],
+  "PRI-243": [
+    {
+      "criterion": 6,
+      "anchors": [
+        {
+          "path": "plugin/skills/_profiles/execution-lite.md",
+          "contains": "Delta 1 — review per group"
+        }
+      ]
+    },
+    {
+      "criterion": 10,
+      "anchors": [
+        {
+          "path": "plugin/skills/solve-task/references/preflight.md",
+          "contains": "Defaults (fail-open)."
+        }
+      ]
+    }
+  ],
+  "PRI-269": [
+    {
+      "criterion": 7,
+      "anchors": [
+        {
+          "path": "eval/solve_task_metrics/report_merge.py",
+          "contains": "def ensure_mergeable("
+        }
+      ]
+    },
+    {
+      "criterion": 8,
+      "anchors": [
+        {
+          "path": "reviewer/storage_health.py",
+          "contains": "def classify_storage_failure("
+        }
+      ]
+    }
+  ],
+  "PRI-207": [
+    {
+      "criterion": 1,
+      "anchors": [
+        {
+          "path": "reviewer/tasks/store.py",
+          "contains": "proj = \"AND project = %(project)s\""
+        }
+      ]
+    },
+    {
+      "criterion": 2,
+      "anchors": [
+        {
+          "path": "reviewer/tasks/store.py",
+          "contains": "def update_meta_batch("
+        }
+      ]
+    }
+  ],
+  "PRI-215": [
+    {
+      "criterion": 1,
+      "anchors": [
+        {
+          "path": "reviewer/tasks/boards/registry.py",
+          "contains": "def configured_types("
+        }
+      ]
+    },
+    {
+      "criterion": 3,
+      "anchors": [
+        {
+          "path": "reviewer/tasks/boards/jira.py",
+          "contains": "def list_targets("
+        }
+      ]
+    }
+  ],
+  "PRI-225": [
+    {
+      "criterion": 2,
+      "anchors": [
+        {
+          "path": "reviewer/tasks/sync.py",
+          "contains": "decision = classify_task(sync_filter, raw, run_now_ms)"
+        }
+      ]
+    },
+    {
+      "criterion": 6,
+      "anchors": [
+        {
+          "path": "reviewer/tasks/sync.py",
+          "contains": "or cursor.old_filter != sync_filter"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,1741 @@
+{
+  "baseline_sha": "bfcefdf96b9ea67beea766aa75adf0acbbcbcdc2",
+  "candidate_measured_sha": "e2f1150a9edc6fbe0b6a9052972eb98343b03671",
+  "candidate_verified_queries_sha": "646518fb403f0c0b7705d09129927400b9ff5b53",
+  "index": [
+    "bfcefdf96b9ea67beea766aa75adf0acbbcbcdc2",
+    "2026-11-21T12:16:18.845339+00:00"
+  ],
+  "controls_identical_code": {
+    "PRI-207": true,
+    "PRI-215": true,
+    "PRI-225": true
+  },
+  "snapshot_sha256": "9da8712b6e6efbaebf3fb4850eb2fd435a525020f2de6671c388fae070aa1aa1",
+  "limits": {
+    "search_codebase": {
+      "floor": 4,
+      "ceiling": 15,
+      "ratio": 0.5,
+      "abs_floor": 0.3,
+      "candidate_pool": 30,
+      "ann_distance_max": 0.65
+    },
+    "search_tasks": {
+      "floor": 3,
+      "ceiling": 8
+    },
+    "graph": {
+      "hops": 1,
+      "callers_topk": 25
+    },
+    "code_section": {
+      "max_files": 20,
+      "max_chunks_per_file": 1,
+      "chars_per_file": 975,
+      "max_augmented_files": 3
+    }
+  },
+  "embedding": "voyage-code-3",
+  "embedding_prewarm_seconds": 24.438126,
+  "unique_query_count": 213,
+  "eligible_paths": [
+    "reviewer/config/layers.py",
+    "reviewer/entrypoints/cli.py",
+    "reviewer/entrypoints/launcher.py",
+    "reviewer/launcher/controller.py",
+    "reviewer/storage_health.py",
+    "reviewer/tasks/boards/jira.py",
+    "reviewer/tasks/boards/registry.py",
+    "reviewer/tasks/store.py",
+    "reviewer/tasks/sync.py"
+  ],
+  "arms": {
+    "baseline": {
+      "model_batches": [
+        {
+          "model": "gpt-6-luna",
+          "effort": "low",
+          "elapsed_seconds": 34.373263,
+          "usage": {
+            "input_tokens": 38607,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 702,
+            "reasoning_output_tokens": 0
+          }
+        },
+        {
+          "model": "gpt-6-luna",
+          "effort": "low",
+          "elapsed_seconds": 45.846859,
+          "usage": {
+            "input_tokens": 42055,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 945,
+            "reasoning_output_tokens": 0
+          }
+        },
+        {
+          "model": "gpt-6-luna",
+          "effort": "low",
+          "elapsed_seconds": 42.995085,
+          "usage": {
+            "input_tokens": 39555,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 775,
+            "reasoning_output_tokens": 0
+          }
+        },
+        {
+          "model": "gpt-6-luna",
+          "effort": "low",
+          "elapsed_seconds": 30.176544,
+          "usage": {
+            "input_tokens": 22368,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 365,
+            "reasoning_output_tokens": 0
+          }
+        }
+      ],
+      "affected": {
+        "criteria_total": 83,
+        "represented": 52,
+        "documented": 0,
+        "query_count": 140,
+        "group_count": 0,
+        "context_files_median": 20,
+        "context_chars_median": 19324,
+        "code_evidence": 2,
+        "brief_evidence": 2,
+        "brief_exact": 1,
+        "evidence_total": 14,
+        "eligible_evidence": 8,
+        "grounded_citations": 63,
+        "invalid_citations": 1,
+        "retrieval_seconds_median": 1.762525,
+        "parser_microseconds_median": 129.29
+      },
+      "control": {
+        "criteria_total": 18,
+        "represented": 18,
+        "documented": 0,
+        "query_count": 39,
+        "group_count": 0,
+        "context_files_median": 20,
+        "context_chars_median": 19199,
+        "code_evidence": 0,
+        "brief_evidence": 0,
+        "brief_exact": 0,
+        "evidence_total": 6,
+        "eligible_evidence": 6,
+        "grounded_citations": 20,
+        "invalid_citations": 1,
+        "retrieval_seconds_median": 0.965559,
+        "parser_microseconds_median": 91.96
+      },
+      "cases": {
+        "PRI-217": {
+          "query_sha256": [
+            "287ac29c4a2244df535ea272d95d4a358842d82a8f9dbfe96490ccc507d523d9",
+            "18e9469cd364b5435a4c43ec17bf085ee5df291a28bc643c9b508050acb43071",
+            "fe40a5885cc2791ecf8147b7308b22a3d1757a977720e70c35a03cd32880df04",
+            "acc90459b6ca706e62a2c5a3bf0369b0af65635e933a30816199c246f17e368e",
+            "8e84946365cdf6524a9cf257cefd54e968bbf9d7dfa5fc0019c392a54f7aed4f",
+            "9a3cfe967117d526884a42171660f1c8435d744ad030ccc4a45a3241e6fa8c77",
+            "3fbdcc3402f53f657eceb78322a97fe56dcf9fcf1b77e63f1e33e5ea1eb2c748",
+            "115138b8eb33cbdd89db38d6818f041adb7779fdd192b5ca0d5c360f6b008b28",
+            "70cde4c0abb66dfeb23b264a41503ec86e896ef39295e1f8bd951de741367db6",
+            "623a7e2c2f56f44a94640a1fc7bfdf11e0eddc623b3a652f300b52cc3f862db7",
+            "be5ca84abb17ad0ca04ddbb9ecb6977f8f1d5b9b662b915fd4acec070baa4749",
+            "007839f0787a01c418d1dbcbc692b0fd58258cf0d2fd133dda1543eadde5fa5c",
+            "96bc01ed5204646700b33dd68763c15f0c479998d1ba1a7a6235850675a8ae8d",
+            "88a2e769e63c366df7e591f5ff680be1e53f9995f428716ed7640adf0d1b76d9",
+            "1cd746df542b1c01e2a3e7f88603a55c2bb1a3d2c3f6d5350e9c332e5a951fcf",
+            "0f4c9d56c2db81c99e59f1dd50a0544b9b77d331521d3f76ac0cfb7a17304b7a",
+            "8cc9311beec5bd4085aea463bc354197c5a7fc0c592f727cd15b6d9401c70b59",
+            "d11f13449108703eb43fc3069a76d47429a6cafd13c98f45ada24b8b48c7147b",
+            "fbaf2c57ae4ae8ca82659de1f22805dd51737d3ad909fd135efa3d35f676c1ad",
+            "9bcbbbc6fc49722ab889a52723fd70a1740f2eab205f2522091b1b387530c179"
+          ],
+          "query_count": 20,
+          "group_count": 0,
+          "criteria_total": 9,
+          "represented": [
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8
+          ],
+          "documented": [],
+          "context_sha256": "926b505fe07ecc4a137f8250116ae2025d3caad6e6b714e109ff1c73b19a2eea",
+          "context_files": 20,
+          "context_chars": 23847,
+          "grounded_citations": 14,
+          "invalid_citations": [],
+          "evidence": [
+            {
+              "criterion": 1,
+              "eligible": true,
+              "code": [],
+              "brief_fragment": [],
+              "brief_exact": []
+            },
+            {
+              "criterion": 9,
+              "eligible": false,
+              "code": [],
+              "brief_fragment": [],
+              "brief_exact": []
+            }
+          ],
+          "retrieval_seconds": [
+            1.313232,
+            2.192362
+          ],
+          "parser_microseconds": [
+            98.58,
+            96.19,
+            97.35,
+            97.57,
+            91.6
+          ]
+        },
+        "PRI-218": {
+          "query_sha256": [
+            "e883f87f4955dc8251c9265afc9af2e862f84460e0788df4fd93a45136b48fc6",
+            "b57f9c8aca2f3135212159b1460f131f98833ab7cc2e0e4f8124e446b869f0bd",
+            "0b1398e626f396f45589b7239348c3f1e6e473c3300d657e3e28234e0a48926e",
+            "81c9136d99bea8947d7679d5904ee606a640ebb43e88ebe8b4306d70e97125ad",
+            "cb94f53fa3fb18629b879aa90a4e49641193482d2b479b49454e7c48180a2b78",
+            "54b63b71322b1d539e88a83674bb458d23fe80fa4cc9b9b3286a33fe6e4f7a46",
+            "f9328e0579a6be80db07b8f9452cbf7246d962bbb331a163bc2a2fa42a88f1c0",
+            "c52758db3eafbcd591962fc699ee988699304893cf78fc378f1c492c8905344b",
+            "672a6f76099c46ae61ceb382048b3504376ef6a162595c148848da6e02a11ce3",
+            "271021f01d07e8398b65622e0198d44714cf56eb2228985f4f1ff854975aef5a",
+            "307e52a10230b89ef66c40308409b4bbd8bbc3816f202bc2bf4920024b94420f",
+            "2a4559bf4da1640b056916c5d763fb14fff2924aef4d27edfda18eca1ae26459",
+            "62436e6aee3e85240dc91e22b3f1f359aeb5c845b468cb0b57dee911be11e618",
+            "290e15acb6f5a888d19d27021b570afbae8728cb6cd520d2039a4bab9ee4d58b",
+            "0d37257ad7827a656b33c27fd3c8b9dc8b8262e427e8a0fab9b48df0f7e8325e",
+            "55d9a1f09aa8c31c9747179821f08b2b597d7fd0673ea94dafd43ed8f9cd739c",
+            "8d6784eef17e0f1654b885cd0758f7f94b5b389b9500f0883e178e3e70d565a4",
+            "4e2cc8cdaffe902dd56ed25848aac7ee6e727bb4f37a4f75a9f2092c42456f55",
+            "0d38ed4c38cfb8e29d4b7b1e2139fbba188f4cf6d2190667c20693485bff1e52",
+            "dc7bbb97d2ecc95914996dc1c6f38e038959583d2777cee88717e5618458de9c"
+          ],
+          "query_count": 20,
+          "group_count": 0,
+          "criteria_total": 12,
+          "represented": [
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7
+          ],
+          "documented": [],
+          "context_sha256": "6ac904b0df42c9d4d826cba2bc97bce8efae1d195cf64267a4273d407d3bb5a3",
+          "context_files": 20,
+          "context_chars": 17508,
+          "grounded_citations": 8,
+          "invalid_citations": [],
+          "evidence": [
+            {
+              "criterion": 9,
+              "eligible": true,
+              "code": [],
+              "brief_fragment": [],
+              "brief_exact": []
+            },
+            {
+              "criterion": 10,
+              "eligible": true,
+              "code": [
+                [
+                  "reviewer/entrypoints/launcher.py",
+                  58
+                ]
+              ],
+              "brief_fragment": [
+                [
+                  "reviewer/entrypoints/launcher.py",
+                  57
+                ]
+              ],
+              "brief_exact": []
+            }
+          ],
+          "retrieval_seconds": [
+            2.379656,
+            3.335163
+          ],
+          "parser_microseconds": [
+            101.4,
+            102.22,
+            125.26,
+            120.96,
+            145.56
+          ]
+        },
+        "PRI-220": {
+          "query_sha256": [
+            "29147fdb0339bf3d65433be31a4017832f6ecf1596b228f422567373590fa4e0",
+            "8cb071076c23a198e4447e31dc33cdd2c408b6c36d1fa593fbc9f905ae292cde",
+            "8941b0622b255deec2e8ecf46d67d3fd4f0c4893567ba7ac15dd0632f1f296e0",
+            "dd8f55f2eb8ceafd2c7150fd979e9d8a1326d716bc370450ca1a3d61f43fdf21",
+            "51e68181d340b34a2dff38c5ca0b8aaefa62a9c12ea58ccfe213e269938249c1",
+            "089e42318f6bad8f7abe4b6c305e8c41aac6d3c047b3c78e25ae356355d305ca",
+            "ce9b8e66da6e58a3ebcb508be73d70238841f3a2a72675ead59da80c5382ce7b",
+            "58209af896e5662843851ea7fe17bb65963eca93ffd4c9106fd3acc47c43f888",
+            "e7e5af7f5c4ec0610e6a9092640c6836aa81355900073fc4939ac8a529573cbd",
+            "84541af2662ba4e49809a1b0689baed781a39f4bd9d552ad9deaed65959f94f8",
+            "c19d4cdeb26f43b9a344433173e5fad34c2d25561cece86f427762a1a8408df2",
+            "187e9bdf2829eca6d0492760facb6a4acab6487370b280ba4e733ed3140f13f4",
+            "207f6e3e04488fde045ddd2dda7af5ffd4135d3299f1be5ed002a2fa1a567845",
+            "4223cb4b8423fda1826e8e6dcb29dfd019bac21396e7465b750bcab6c4ca44aa",
+            "a68874bd7e1bd7f9a9b67c0ef6e6a61b8d65217a2052539c4a063d5f185057b2",
+            "f59ab0a1a234c5db5e1a262c4a167c4aa5f144fde16ac8e795786d3b387cafb3",
+            "cb95138c042a56375ecb0c26496b91ed39838c403bd74974eb5420f9db49e452",
+            "6e6014ebbea6b16453c5a3a69de881faf4b9dd69fcbd4a28fb854e0f6ee7951d",
+            "c9b03f22f786712bb2e77955b77d88024234e9fd1de736a1484ffde1f40996e8",
+            "49957ecb2df3941b8ea9bd90a73aef926965449e175cad3dfcae7343dafc39de"
+          ],
+          "query_count": 20,
+          "group_count": 0,
+          "criteria_total": 12,
+          "represented": [
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9
+          ],
+          "documented": [],
+          "context_sha256": "24b8e0c848e2423d612872b5008d2eeb7ea79f49736fac96e59e4adb7b400f73",
+          "context_files": 20,
+          "context_chars": 17790,
+          "grounded_citations": 2,
+          "invalid_citations": [],
+          "evidence": [
+            {
+              "criterion": 4,
+              "eligible": false,
+              "code": [],
+              "brief_fragment": [],
+              "brief_exact": []
+            },
+            {
+              "criterion": 10,
+              "eligible": false,
+              "code": [],
+              "brief_fragment": [],
+              "brief_exact": []
+            }
+          ],
+          "retrieval_seconds": [
+            2.596209,
+            1.785508
+          ],
+          "parser_microseconds": [
+            162.78,
+            133.79,
+            129.29,
+            127.07,
+            125.37
+          ]
+        },
+        "PRI-221": {
+          "query_sha256": [
+            "d9de35184970a7e262baf1c8c4b08fb0b0fa5c71ebb6b4d023cc245a364ab136",
+            "7cfda26195a6124eb58e7ecf7e0d91837fba9e97898d35d8572abad2b7535dba",
+            "6ae0ccede242ec34bf6fd95110125794a91009f525b0b3e8e88ba831b4f2697c",
+            "a788e6384d0bcb4d48cb84607df5d636edae099636015bf741a14cd344f2c107",
+            "1bb56ac7eaf8bf30b6f189041259c22a9c90539259b092f89eb9489b3f67a45b",
+            "1f6bf20e457af853c6eda2a1fbbda221980c9f4303d24e7fbc47e8d6d544db7d",
+            "90efd2aae05d1e3b21f0008eea36ef9821fb6b89633efd17256e294820e0f673",
+            "24d18ca09320d46c817d0b0b65947d1f97e0d93b63566e45bc2cbc48efccf93e",
+            "70fa1a0d04bfca302491a48cf662f68aa4a6b9a70671a7b623f5520f9b6f1e93",
+            "8abf800a893308754eff831846964a0906805d272ec65049fc5a91bf6975f1bd",
+            "1134270911eda793bdd9c6513ba0c134a094546862a944948b02228fe2d51131",
+            "393868072a667c40b302c487307f4fdd72f4b86f90cfe56bf2df0514e0061934",
+            "e6e5f45f756dd0fd17dfdaddf00d22a083c80eeb7579e66d48b615c21b50cd6d",
+            "cee52c97a0bb67f9759c208fa9bc81f4ef1c6fa0df2afa7a72f7f728ff14fc2b",
+            "a0928e307aa52edb1ea58c4c8e3f422dbdb58b16b80c217f13aa528867f8a5cb",
+            "d86ce0f768867634d27e7dcedd857a4230d1f33790b18f92326a9b7ccbd12fba",
+            "f4c93f30be1cab29e376e7d8ae67b67979b5fa5fa37c79ac8505f6ec64d4b207",
+            "e7e6023fd70f826a1f4c75120363f740372bc59e85e028cbf9f40a67645774f9",
+            "abf6eedbca9e4645a2163490c1d6586b8fbff6189603523dca6d6fc605fbba60",
+            "ebfd87112cee2cf574ed9281cf8969a80e2f33aa7d873cb3ae8473d42b656c6b"
+          ],
+          "query_count": 20,
+          "group_count": 0,
+          "criteria_total": 12,
+          "represented": [
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7
+          ],
+          "documented": [],
+          "context_sha256": "70cb1b934b49010aa05174ca8823846475a3b1b40157cfb345e6bff51dbd3e7e",
+          "context_files": 20,
+          "context_chars": 18745,
+          "grounded_citations": 20,
+          "invalid_citations": [],
+          "evidence": [
+            {
+              "criterion": 3,
+              "eligible": true,
+              "code": [],
+              "brief_fragment": [],
+              "brief_exact": []
+            },
+            {
+              "criterion": 10,
+              "eligible": true,
+              "code": [],
+              "brief_fragment": [],
+              "brief_exact": []
+            }
+          ],
+          "retrieval_seconds": [
+            1.893977,
+            1.846318
+          ],
+          "parser_microseconds": [
+            182.81,
+            184.19,
+            156.81,
+            151.88,
+            148.75
+          ]
+        },
+        "PRI-223": {
+          "query_sha256": [
+            "a44fc12ad52c50e1208e1eb655ad5c1530d803ca628407d05bc988ac0807899c",
+            "11378183a15b23ef60a8717b0499cfe34f0bf4e243a7d51ca37fb8e86c57584e",
+            "6c6e4e3f51499774fdbc1a1acbdb9a8ca50981fc9a2ba0ba434307808704c236",
+            "82d0ab4a9cef9f1b07ae7ec0ab2e03383cec62e92940015f9ca86a2ff3c71e78",
+            "75d313f983394896683b9ae8e6c2940626466f61863dfe9c20d0594a36240a69",
+            "c330ae4a4c219d9c93bf280f020f64deb2cf90990e3adac48b66129d2619d961",
+            "0af784d40d55b235ba786614bfa184958e8bf4baa8f7c186ecca52b3afe5896e",
+            "297228eb01bd90f4d875c001e33832614e6063fe1fdb67d80ada14e187313707",
+            "4f050636435b010a62935e2a6891d854f66fb847f5302383c591115e84d2ca69",
+            "5c91ed44872c19d4021ac4f0e206cecd7c07fa754870d651f44b504134c797d6",
+            "69b406a3cbc1b3b1c0efd35eb25b2631b28efba320813cf2f3e8a972523c8b75",
+            "972f8b9865ea7a07b84167e34a74756d7c29c40d802221bbf790aacb39e854f1",
+            "3ba047feaa68998e08893c4fe050592080cf040f0443a00d0fa0a46cb1b35180",
+            "bb54723db0aa618fc85d7732f2d26090deace5626ba6f2c3a38c62b59fefd6c5",
+            "5412fb14368a96baa071eb58014dac356451ad08b09e85498db6e63f8af7b78b",
+            "260d10bbd56218cc2007f54b50304592403f5c3df5f3227f3a7a22a381ff76b4",
+            "9c2420d59548136a5054de48e9ec38d3ddd77626638ce200c85669aab7d12291",
+            "cd1627f257278d935ab3565c978f996914d77875ab509cb11f5a34a2ff861ed0",
+            "12f9d9c4754c85ec609ed282cc706960fb1250f77d3fef59a5dbdd6a35c0ced0",
+            "b800b6e04bf5cef5589864ac25c54d31efa00827da7a1f817060ec441e548ae5"
+          ],
+          "query_count": 20,
+          "group_count": 0,
+          "criteria_total": 15,
+          "represented": [
+            1,
+            2,
+            3,
+            4,
+            5,
+            6
+          ],
+          "documented": [],
+          "context_sha256": "31a802e164ef637546fa08488e09a5a952017b9417ef93c61759df68c4c5c15c",
+          "context_files": 20,
+          "context_chars": 19839,
+          "grounded_citations": 12,
+          "invalid_citations": [],
+          "evidence": [
+            {
+              "criterion": 10,
+              "eligible": true,
+              "code": [],
+              "brief_fragment": [],
+              "brief_exact": []
+            },
+            {
+              "criterion": 13,
+              "eligible": true,
+              "code": [],
+              "brief_fragment": [],
+              "brief_exact": []
+            }
+          ],
+          "retrieval_seconds": [
+            1.222635,
+            1.448643
+          ],
+          "parser_microseconds": [
+            150.04,
+            152.19,
+            146.91,
+            148.22,
+            148.3
+          ]
+        },
+        "PRI-243": {
+          "query_sha256": [
+            "1da946aa2ed72d5cfd960614313376c69b5cc619b38fe55ee646ca65d04d7e00",
+            "6db6d908d5dbcb23816e1c5aeebe88c39300373ada5881a87136c4e66e11da58",
+            "c0c75d44aaffb2d04536c51e194dc3d3bb9315f98b0a9220ca89e8e9bdc2834d",
+            "0fe13c65f0fa03a1166c70df1dae437d87656a42481c05b9fc7ef22be338dd2e",
+            "6bb4bb6da1e8f29222821e0e687247084d31dd3f8dc6beb444cfc375a5e475d6",
+            "1a53b0b3eb7d238d2fddf4fde010831626819b6dc6930459bb12a8059f50f37d",
+            "c67853a796f5888dcb138c061ea6cffca73dbc89855537446cb08912cbfaa08f",
+            "7857a61511773944e901c3284ec659f736d6d326453f3c9e7053422b773dab6f",
+            "0b7e9d40713b97d5ce645749773a56f057faed63ab1d4ed65f4a037caead388e",
+            "d51737086450aa42fc25c0c8870e33fb06c7b9f25c7f2cae3eb7f3f9df312f93",
+            "c987f3d38a83a65139a71bc4fb6ffcebdb224c2ea058bb39d771a52d4ce6e8e4",
+            "31044b6b57f5188c97cf94d840af88df6efb2c8b87181467e756103edf7d59cd",
+            "a4454c260de1bb047e04b97ef089b341217d849c811ce99bc95bfc73cb4be504",
+            "04b4664a4bcddbe01081b73aab1e558c66a236a87f8918737e07acc923df3d2b",
+            "616ba48afac7220dd0c11bb1ab849e3688baf8053fc7f67a3ca73b7e0109990e",
+            "58db25260b9c2f05c96cc903305e73843301222b6ef55f302e578d6fbbb3390e",
+            "b37b30314eaac311175491402a2a05ab6aa282db75929739c56324df3232a6b3",
+            "32eb4e36d3af81647a502f16c92740c1037e6e1eabde4e112f6238cbc84247a9",
+            "f549e18ef1329851d81c9e7d3fd76393efe288909d9b1ae018bbe9b2e55bf383",
+            "64459dc0f0691535a23033746d7e6a99e0f1e2b0a7293234051f6b30b90b1fec"
+          ],
+          "query_count": 20,
+          "group_count": 0,
+          "criteria_total": 12,
+          "represented": [
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9
+          ],
+          "documented": [],
+          "context_sha256": "573d55a044968ceca8b655ead3cbfaf16c75c189f6466ab2d16ea9b5aef9d86d",
+          "context_files": 20,
+          "context_chars": 19324,
+          "grounded_citations": 0,
+          "invalid_citations": [],
+          "evidence": [
+            {
+              "criterion": 6,
+              "eligible": false,
+              "code": [],
+              "brief_fragment": [],
+              "brief_exact": []
+            },
+            {
+              "criterion": 10,
+              "eligible": false,
+              "code": [],
+              "brief_fragment": [],
+              "brief_exact": []
+            }
+          ],
+          "retrieval_seconds": [
+            1.523079,
+            1.527484
+          ],
+          "parser_microseconds": [
+            127.14,
+            120.64,
+            123.31,
+            127.08,
+            126.16
+          ]
+        },
+        "PRI-269": {
+          "query_sha256": [
+            "a1ba0b553c74d7f763ebd6cf71fa60f2d7937c302bb58ed4e68c9d7de23af1c7",
+            "bcd7a02dc80076670a5b0d7b254fd1792b1bb43aa6294d66c71350e1f6be902e",
+            "744bfe503e68cfec6f641df08503cc194bd8a835d5c6a41aa2958520aec36ef1",
+            "21429402a7bfa26041eced3d9cb2d186be87693961b8741139acd5262983857a",
+            "cb8be00089d0e5326c62586d2f5765f56f8df119be6b6b798ab7e6de85c65c70",
+            "829409db1e21e59877fbaaf71736ba3bc29e36265e8e80b67bb75b240e44bd18",
+            "86958270b6ad7b8cb23bae90cc3f22ac6e2bbd8bba224fe481477abcd71d86bf",
+            "09538f744cfaf91e26b45610ba77563f74e1a3982844d94a9d3d445b927c8d40",
+            "fd57abd34cbbe28034afe23bb8f512cefae1bbd9aeb976db001d6fd41099db8f",
+            "87a0f55bd5256152df5bca8aa109400d2e219a463437dc897f3c7083c18ada6f",
+            "16aa5c84330c22a220251cd8d8598302e471c477819748ebbe624ec59116ef14",
+            "63feb8d4f01ccbd462f7cb843faf1050eac9fafd200ed143f681054a0d0ff6ce",
+            "6a9a7ca94afb4284ab6194693631da9336b506e511a0191cd49ff3652866a3af",
+            "f083193986e32851fd8e998861d0094b687ec00c969dccafccfc4cc44ea2eadb",
+            "859414c89fd4b16b1d1297d2203d2d9319040576ec4fd38a6f7705c75045f6c4",
+            "8548ed140a470180e83e70845587560f83a014cd0fc24eb3d14c717a63ac55e1",
+            "c18c420735dff09837dee093a50e8c6251625dcd3bd515aed85de55a6e062d56",
+            "52f9707689335d3e3aa04a11f8b2a01807f9c1df6be4b5b459a46fcfe861048d",
+            "93fb2d67e592ef78bb30ab9779743030c2bcc42bcdd7ba945d7d2c0492c9cff4",
+            "a055c9b28fbbd1061c63dc90b7a9366459af92e4bf33ed2689f92751d76cbd20"
+          ],
+          "query_count": 20,
+          "group_count": 0,
+          "criteria_total": 11,
+          "represented": [
+            1,
+            2,
+            3,
+            4,
+            5,
+            6
+          ],
+          "documented": [],
+          "context_sha256": "6bc29194be49298dc2c7d48ddf42dcecae177d058731c5dabc2077a0d04476bd",
+          "context_files": 20,
+          "context_chars": 20621,
+          "grounded_citations": 7,
+          "invalid_citations": [
+            [
+              "eval/pri269_acceptance_report.md",
+              1
+            ]
+          ],
+          "evidence": [
+            {
+              "criterion": 7,
+              "eligible": false,
+              "code": [],
+              "brief_fragment": [],
+              "brief_exact": []
+            },
+            {
+              "criterion": 8,
+              "eligible": true,
+              "code": [
+                [
+                  "reviewer/storage_health.py",
+                  339
+                ]
+              ],
+              "brief_fragment": [
+                [
+                  "reviewer/storage_health.py",
+                  339
+                ]
+              ],
+              "brief_exact": [
+                [
+                  "reviewer/storage_health.py",
+                  339
+                ]
+              ]
+            }
+          ],
+          "retrieval_seconds": [
+            2.065182,
+            1.459867
+          ],
+          "parser_microseconds": [
+            200.68,
+            236.24,
+            221.66,
+            174.18,
+            177.44
+          ]
+        },
+        "PRI-207": {
+          "query_sha256": [
+            "b7a6ad54fbd5eceaddbf4d8e506fe79234487ef9af31a03cd7562872153a0a6b",
+            "ec86f37ba2552d7aa351880bec6b94a73f34719faf02b61f50462a209b8676cc",
+            "612ef0fa9dbf4a155117c9e6fbc043e4ed3732fe6e79a83d74d6b943b8771d8f",
+            "43009207e56b5ec92bef24272a1a6ea9c0c0426db8ccda555e8c51a95c550a16"
+          ],
+          "query_count": 4,
+          "group_count": 0,
+          "criteria_total": 2,
+          "represented": [
+            1,
+            2
+          ],
+          "documented": [],
+          "context_sha256": "6d45d190ce1550018294eb221771edbce9dc59e59ee042f72b49d29fdb43ac7f",
+          "context_files": 19,
+          "context_chars": 19199,
+          "grounded_citations": 4,
+          "invalid_citations": [
+            [
+              "reviewer/tasks/boards/base.py",
+              60
+            ]
+          ],
+          "evidence": [
+            {
+              "criterion": 1,
+              "eligible": true,
+              "code": [],
+              "brief_fragment": [],
+              "brief_exact": []
+            },
+            {
+              "criterion": 2,
+              "eligible": true,
+              "code": [],
+              "brief_fragment": [],
+              "brief_exact": []
+            }
+          ],
+          "retrieval_seconds": [
+            0.343146,
+            0.359638
+          ],
+          "parser_microseconds": [
+            72.86,
+            75.67,
+            102.42,
+            97.16,
+            120.87
+          ]
+        },
+        "PRI-215": {
+          "query_sha256": [
+            "e5a62a8253ba745e1a9ab9951ec24089b4127ac62c51212ad9698effdb92f334",
+            "7693437489b7b401419c37cb543561c48e5d75c2123253df20de75e5d5b65865",
+            "45dd7873f86e0788b27ed8a52388d050ebef7406554a83aecf657ad0bc6932e7",
+            "105412c11af4874cc715e654a7a321ee75b7fe3d6d41fd0dda0e2bcfe376ef59",
+            "076cc5918a8f82341e0dfa4078c99b437d817e4823f341f55bcf7ec9ce4c53f7",
+            "065e49e3f5c929f105c6e67370baf17bb49aaed32421ac01e8d33cf7ae1d15fa",
+            "abbaef1bd99dc84ce32d3573f1bd626eca2879698de3b48abefe998e8cc7e330",
+            "d276630313ad14e18148ce8f5034498e95ab06226dacb1655bf956648a0b60be",
+            "2716a3e8d5706e10e0a2136adb16a3879a6e7a533c26e4bedb38be637fa55c50",
+            "0dfa4257641469ba0590c0afdbe9e2064189445f28b7649eec4f3018479841f8",
+            "22579447bd97940ef79b94c6c261494e3527b8226dc6612b11836838e8f2f50c",
+            "35ec3f3e35adc6d26d23fd5b310f61a8956d338389c574891cd1eb3c7ffd6ea5",
+            "86cdd9ee8a2b5eab49b0f0553650c7280a0369fdbecb296aa2b5401f058e0a9f",
+            "b994baa428d67cb85b9f1243a06d632638d85c05dcab20d9b1b06c01390f28ba",
+            "304ffd78f038960849edaba54c109581126a606e6368a06383013c070a5095e1",
+            "d18c8d76b01310ed6d348323b22262186c2510bc791390ddc07f5284e4ea6f96"
+          ],
+          "query_count": 16,
+          "group_count": 0,
+          "criteria_total": 8,
+          "represented": [
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8
+          ],
+          "documented": [],
+          "context_sha256": "eb0a4a7b7ce143c817ecea038c096d3df29a8bcb2f5ebe289f55db1b051f7b7e",
+          "context_files": 20,
+          "context_chars": 21668,
+          "grounded_citations": 8,
+          "invalid_citations": [],
+          "evidence": [
+            {
+              "criterion": 1,
+              "eligible": true,
+              "code": [],
+              "brief_fragment": [],
+              "brief_exact": []
+            },
+            {
+              "criterion": 3,
+              "eligible": true,
+              "code": [],
+              "brief_fragment": [],
+              "brief_exact": []
+            }
+          ],
+          "retrieval_seconds": [
+            1.022808,
+            0.908311
+          ],
+          "parser_microseconds": [
+            111.83,
+            70.19,
+            74.87,
+            70.9,
+            73.22
+          ]
+        },
+        "PRI-225": {
+          "query_sha256": [
+            "4bc1b12fb47df2c7438887cb5b86845b136b216c7a5f70fa22958a1063c82b58",
+            "f2330c83c3019e70c51f32bf00d24bc45238f753fa81d6a099e7d35a6833cd79",
+            "2020968a0bdedc6ef4187c3eeadebe2be10bc543a89dc4c274661cd544fc66a1",
+            "a20bca5adb9d4578bc9b256f0ea8e1ebe3437a5d3696b4aa592de1d415650eed",
+            "cf3c86a8bd33299d3599421cc1a7cd04ca8924d1c41fd9c8da9c3430848fd059",
+            "94918b5d06168e27696cce3085d7b5debfe2cc91924f9f58af468e922e48a37b",
+            "0fac728bce872171f3d4f2005c4a5dd29341b00d12c7e5235e4a228a17481693",
+            "421def75270c9c8e7c151f7f4a4d5e988f59096c4a29f26cbbf600e371ac52b5",
+            "d3860c1350179dc4ea084204133930d45f969060d2f8a5642c18259472584c7e",
+            "b79db8f9050ec4e06569cbb1b0420f1df6f15c0d396ab1a6cb44e5b38eb65f82",
+            "933965c675b9760e694c8e9c34e05f4553c54633d4a24456e739b1433ab9fd50",
+            "0e5866e8f5d12dae30844d9772f21501dccc9331a881a59b9f3266a0e6e70224",
+            "4439ea53f6b95a7be5597cd7574142dd2c54bddf082883051db64d5a5427d6a0",
+            "766647514f76506df4e9cd79ba2b583c3f70c4d9738dc8b4d8f7db71b4378f34",
+            "2e94dd5bd67ef630f0dccee2e673fd38c9220517c1f99752f3df9e71446076bd",
+            "90f6ab18561b5b29e3921fb3af57b3366d721d7beb8d1f81a82a770a43920445",
+            "5ac9a0ab2242c5bf78b630f1a314ea6807d6b4b38fa938810bf0e6556df5fccc",
+            "177c7b6b9197c86b710e15b55ea0776f191e846384e03296d90e66945f60b491",
+            "9da0d16283e59bcc90e62a57da8bb681fd6e4a7db4b4aaabfc753718498963f8"
+          ],
+          "query_count": 19,
+          "group_count": 0,
+          "criteria_total": 8,
+          "represented": [
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8
+          ],
+          "documented": [],
+          "context_sha256": "f679a1a284a609d999c5e21fef9ec3ee64310252a9c3ecc71bdd4fe71ae86550",
+          "context_files": 20,
+          "context_chars": 17959,
+          "grounded_citations": 8,
+          "invalid_citations": [],
+          "evidence": [
+            {
+              "criterion": 2,
+              "eligible": true,
+              "code": [],
+              "brief_fragment": [],
+              "brief_exact": []
+            },
+            {
+              "criterion": 6,
+              "eligible": true,
+              "code": [],
+              "brief_fragment": [],
+              "brief_exact": []
+            }
+          ],
+          "retrieval_seconds": [
+            1.455031,
+            1.206347
+          ],
+          "parser_microseconds": [
+            92.84,
+            170.17,
+            91.96,
+            83.63,
+            80.93
+          ]
+        }
+      }
+    },
+    "candidate": {
+      "model_batches": [
+        {
+          "model": "gpt-6-luna",
+          "effort": "low",
+          "elapsed_seconds": 46.975188,
+          "usage": {
+            "input_tokens": 39337,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 1077,
+            "reasoning_output_tokens": 0
+          }
+        },
+        {
+          "model": "gpt-6-luna",
+          "effort": "low",
+          "elapsed_seconds": 36.489029,
+          "usage": {
+            "input_tokens": 40422,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 564,
+            "reasoning_output_tokens": 0
+          }
+        },
+        {
+          "model": "gpt-6-luna",
+          "effort": "low",
+          "elapsed_seconds": 47.259277,
+          "usage": {
+            "input_tokens": 39502,
+            "cached_input_tokens": 14976,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 1091,
+            "reasoning_output_tokens": 0
+          }
+        },
+        {
+          "model": "gpt-6-luna",
+          "effort": "low",
+          "elapsed_seconds": 30.379966,
+          "usage": {
+            "input_tokens": 22400,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 267,
+            "reasoning_output_tokens": 0
+          }
+        }
+      ],
+      "affected": {
+        "criteria_total": 83,
+        "represented": 83,
+        "documented": 0,
+        "query_count": 140,
+        "group_count": 11,
+        "context_files_median": 20,
+        "context_chars_median": 19274,
+        "code_evidence": 2,
+        "brief_evidence": 2,
+        "brief_exact": 1,
+        "evidence_total": 14,
+        "eligible_evidence": 8,
+        "grounded_citations": 56,
+        "invalid_citations": 18,
+        "retrieval_seconds_median": 1.511202,
+        "parser_microseconds_median": 279.2
+      },
+      "control": {
+        "criteria_total": 18,
+        "represented": 18,
+        "documented": 0,
+        "query_count": 39,
+        "group_count": 0,
+        "context_files_median": 20,
+        "context_chars_median": 19199,
+        "code_evidence": 0,
+        "brief_evidence": 0,
+        "brief_exact": 0,
+        "evidence_total": 6,
+        "eligible_evidence": 6,
+        "grounded_citations": 24,
+        "invalid_citations": 0,
+        "retrieval_seconds_median": 0.904733,
+        "parser_microseconds_median": 94.07
+      },
+      "cases": {
+        "PRI-217": {
+          "query_sha256": [
+            "287ac29c4a2244df535ea272d95d4a358842d82a8f9dbfe96490ccc507d523d9",
+            "18e9469cd364b5435a4c43ec17bf085ee5df291a28bc643c9b508050acb43071",
+            "fe40a5885cc2791ecf8147b7308b22a3d1757a977720e70c35a03cd32880df04",
+            "acc90459b6ca706e62a2c5a3bf0369b0af65635e933a30816199c246f17e368e",
+            "8e84946365cdf6524a9cf257cefd54e968bbf9d7dfa5fc0019c392a54f7aed4f",
+            "9a3cfe967117d526884a42171660f1c8435d744ad030ccc4a45a3241e6fa8c77",
+            "3fbdcc3402f53f657eceb78322a97fe56dcf9fcf1b77e63f1e33e5ea1eb2c748",
+            "115138b8eb33cbdd89db38d6818f041adb7779fdd192b5ca0d5c360f6b008b28",
+            "70cde4c0abb66dfeb23b264a41503ec86e896ef39295e1f8bd951de741367db6",
+            "623a7e2c2f56f44a94640a1fc7bfdf11e0eddc623b3a652f300b52cc3f862db7",
+            "be5ca84abb17ad0ca04ddbb9ecb6977f8f1d5b9b662b915fd4acec070baa4749",
+            "96bc01ed5204646700b33dd68763c15f0c479998d1ba1a7a6235850675a8ae8d",
+            "88a2e769e63c366df7e591f5ff680be1e53f9995f428716ed7640adf0d1b76d9",
+            "1cd746df542b1c01e2a3e7f88603a55c2bb1a3d2c3f6d5350e9c332e5a951fcf",
+            "0f4c9d56c2db81c99e59f1dd50a0544b9b77d331521d3f76ac0cfb7a17304b7a",
+            "8cc9311beec5bd4085aea463bc354197c5a7fc0c592f727cd15b6d9401c70b59",
+            "d11f13449108703eb43fc3069a76d47429a6cafd13c98f45ada24b8b48c7147b",
+            "fbaf2c57ae4ae8ca82659de1f22805dd51737d3ad909fd135efa3d35f676c1ad",
+            "9bcbbbc6fc49722ab889a52723fd70a1740f2eab205f2522091b1b387530c179",
+            "067d4ab6f0841c665ab3a1f8f92fa5df910a5c1da2d97aa8afd34211f7804732"
+          ],
+          "query_count": 20,
+          "group_count": 0,
+          "criteria_total": 9,
+          "represented": [
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9
+          ],
+          "documented": [],
+          "context_sha256": "ec36b9ce34de2b40bb132a5e59c7ad53f305a40aaf0d1da39bf6af777c6af9ea",
+          "context_files": 20,
+          "context_chars": 23817,
+          "grounded_citations": 14,
+          "invalid_citations": [
+            [
+              "README.md",
+              1
+            ],
+            [
+              "README.ru.md",
+              1
+            ],
+            [
+              "docs/board-providers.md",
+              9
+            ],
+            [
+              "pyproject.toml",
+              74
+            ],
+            [
+              "reviewer/tasks/boards/setup.py",
+              64
+            ],
+            [
+              "tests/tasks/boards/contract.py",
+              112
+            ]
+          ],
+          "evidence": [
+            {
+              "criterion": 1,
+              "eligible": true,
+              "code": [],
+              "brief_fragment": [],
+              "brief_exact": []
+            },
+            {
+              "criterion": 9,
+              "eligible": false,
+              "code": [],
+              "brief_fragment": [],
+              "brief_exact": []
+            }
+          ],
+          "retrieval_seconds": [
+            1.345936,
+            1.507721
+          ],
+          "parser_microseconds": [
+            192.29,
+            181.7,
+            182.85,
+            184.48,
+            187.87
+          ]
+        },
+        "PRI-218": {
+          "query_sha256": [
+            "e883f87f4955dc8251c9265afc9af2e862f84460e0788df4fd93a45136b48fc6",
+            "b57f9c8aca2f3135212159b1460f131f98833ab7cc2e0e4f8124e446b869f0bd",
+            "0b1398e626f396f45589b7239348c3f1e6e473c3300d657e3e28234e0a48926e",
+            "81c9136d99bea8947d7679d5904ee606a640ebb43e88ebe8b4306d70e97125ad",
+            "cb94f53fa3fb18629b879aa90a4e49641193482d2b479b49454e7c48180a2b78",
+            "54b63b71322b1d539e88a83674bb458d23fe80fa4cc9b9b3286a33fe6e4f7a46",
+            "f9328e0579a6be80db07b8f9452cbf7246d962bbb331a163bc2a2fa42a88f1c0",
+            "c52758db3eafbcd591962fc699ee988699304893cf78fc378f1c492c8905344b",
+            "672a6f76099c46ae61ceb382048b3504376ef6a162595c148848da6e02a11ce3",
+            "271021f01d07e8398b65622e0198d44714cf56eb2228985f4f1ff854975aef5a",
+            "56a8227f6677a584b6b4fe988603c70019ea2f533e771f642f93469a95cb5e4f",
+            "55d9a1f09aa8c31c9747179821f08b2b597d7fd0673ea94dafd43ed8f9cd739c",
+            "75e99ff33458b430415325cc934e3d7c9432a1d91e5b225e1f476a64d0f84ae9",
+            "4e2cc8cdaffe902dd56ed25848aac7ee6e727bb4f37a4f75a9f2092c42456f55",
+            "0d38ed4c38cfb8e29d4b7b1e2139fbba188f4cf6d2190667c20693485bff1e52",
+            "dc7bbb97d2ecc95914996dc1c6f38e038959583d2777cee88717e5618458de9c",
+            "4a0b7380fe5551bc10f27ef0b8f845f81d553b17e7990628df63a7b718b7e21a",
+            "8fd742d466ed14da2edd105b84be5fc3dadb5f6aee9377da39cbeb6ac514a8f3",
+            "9c494f4044cb9a524e8aaa3f8a29747e7d4d1c69bc91d5c350f7f2cb67f645c4",
+            "fd74e08a9d5049f79b8f15f278d908ff71d8e45f5255ca7a0d8f4c649b3baa4a"
+          ],
+          "query_count": 20,
+          "group_count": 2,
+          "criteria_total": 12,
+          "represented": [
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12
+          ],
+          "documented": [],
+          "context_sha256": "1bf7961f5cd5dc15cefb80641110bc88587365dbe8a367a7e41e1fbf555ea35f",
+          "context_files": 20,
+          "context_chars": 17402,
+          "grounded_citations": 9,
+          "invalid_citations": [
+            [
+              "pyproject.toml",
+              74
+            ]
+          ],
+          "evidence": [
+            {
+              "criterion": 9,
+              "eligible": true,
+              "code": [],
+              "brief_fragment": [],
+              "brief_exact": []
+            },
+            {
+              "criterion": 10,
+              "eligible": true,
+              "code": [
+                [
+                  "reviewer/entrypoints/launcher.py",
+                  58
+                ]
+              ],
+              "brief_fragment": [
+                [
+                  "reviewer/entrypoints/launcher.py",
+                  57
+                ]
+              ],
+              "brief_exact": []
+            }
+          ],
+          "retrieval_seconds": [
+            2.107137,
+            2.35743
+          ],
+          "parser_microseconds": [
+            198.94,
+            226.31,
+            215.87,
+            252.28,
+            270.44
+          ]
+        },
+        "PRI-220": {
+          "query_sha256": [
+            "29147fdb0339bf3d65433be31a4017832f6ecf1596b228f422567373590fa4e0",
+            "8cb071076c23a198e4447e31dc33cdd2c408b6c36d1fa593fbc9f905ae292cde",
+            "8941b0622b255deec2e8ecf46d67d3fd4f0c4893567ba7ac15dd0632f1f296e0",
+            "dd8f55f2eb8ceafd2c7150fd979e9d8a1326d716bc370450ca1a3d61f43fdf21",
+            "51e68181d340b34a2dff38c5ca0b8aaefa62a9c12ea58ccfe213e269938249c1",
+            "089e42318f6bad8f7abe4b6c305e8c41aac6d3c047b3c78e25ae356355d305ca",
+            "ce9b8e66da6e58a3ebcb508be73d70238841f3a2a72675ead59da80c5382ce7b",
+            "58209af896e5662843851ea7fe17bb65963eca93ffd4c9106fd3acc47c43f888",
+            "e7e5af7f5c4ec0610e6a9092640c6836aa81355900073fc4939ac8a529573cbd",
+            "187e9bdf2829eca6d0492760facb6a4acab6487370b280ba4e733ed3140f13f4",
+            "207f6e3e04488fde045ddd2dda7af5ffd4135d3299f1be5ed002a2fa1a567845",
+            "4223cb4b8423fda1826e8e6dcb29dfd019bac21396e7465b750bcab6c4ca44aa",
+            "6797bd73e9af80035bae203f48bff86e0e179e493324f3959bdb8e6a162a4e42",
+            "f59ab0a1a234c5db5e1a262c4a167c4aa5f144fde16ac8e795786d3b387cafb3",
+            "cb95138c042a56375ecb0c26496b91ed39838c403bd74974eb5420f9db49e452",
+            "6e6014ebbea6b16453c5a3a69de881faf4b9dd69fcbd4a28fb854e0f6ee7951d",
+            "c9b03f22f786712bb2e77955b77d88024234e9fd1de736a1484ffde1f40996e8",
+            "49957ecb2df3941b8ea9bd90a73aef926965449e175cad3dfcae7343dafc39de",
+            "9b68aeee8a9f39123d98523274780ee697d5880972a59715df1597b435d2ee04",
+            "d4051abf027f24571d1a2baa0be9950796a3c383f59c2a7d6cacfb8c56aa54de"
+          ],
+          "query_count": 20,
+          "group_count": 1,
+          "criteria_total": 12,
+          "represented": [
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12
+          ],
+          "documented": [],
+          "context_sha256": "7826f05bf011a6bb1dc6f8a6180be09bdae751d93bac7345b27c7ae96c79bf9f",
+          "context_files": 20,
+          "context_chars": 19140,
+          "grounded_citations": 2,
+          "invalid_citations": [
+            [
+              ".env.example",
+              1
+            ],
+            [
+              ".review.yml",
+              1
+            ],
+            [
+              "README.md",
+              1
+            ],
+            [
+              "README.ru.md",
+              1
+            ],
+            [
+              "docs/board-providers.md",
+              1
+            ],
+            [
+              "plugin/README.md",
+              1
+            ],
+            [
+              "plugin/skills/finish-task/SKILL.md",
+              2
+            ],
+            [
+              "pyproject.toml",
+              74
+            ],
+            [
+              "reviewer/tasks/taskdoc.py",
+              29
+            ]
+          ],
+          "evidence": [
+            {
+              "criterion": 4,
+              "eligible": false,
+              "code": [],
+              "brief_fragment": [],
+              "brief_exact": []
+            },
+            {
+              "criterion": 10,
+              "eligible": false,
+              "code": [],
+              "brief_fragment": [],
+              "brief_exact": []
+            }
+          ],
+          "retrieval_seconds": [
+            2.561865,
+            2.206712
+          ],
+          "parser_microseconds": [
+            305.68,
+            299.8,
+            279.2,
+            260.59,
+            275.8
+          ]
+        },
+        "PRI-221": {
+          "query_sha256": [
+            "d9de35184970a7e262baf1c8c4b08fb0b0fa5c71ebb6b4d023cc245a364ab136",
+            "7cfda26195a6124eb58e7ecf7e0d91837fba9e97898d35d8572abad2b7535dba",
+            "6ae0ccede242ec34bf6fd95110125794a91009f525b0b3e8e88ba831b4f2697c",
+            "a788e6384d0bcb4d48cb84607df5d636edae099636015bf741a14cd344f2c107",
+            "1bb56ac7eaf8bf30b6f189041259c22a9c90539259b092f89eb9489b3f67a45b",
+            "1f6bf20e457af853c6eda2a1fbbda221980c9f4303d24e7fbc47e8d6d544db7d",
+            "90efd2aae05d1e3b21f0008eea36ef9821fb6b89633efd17256e294820e0f673",
+            "24d18ca09320d46c817d0b0b65947d1f97e0d93b63566e45bc2cbc48efccf93e",
+            "70fa1a0d04bfca302491a48cf662f68aa4a6b9a70671a7b623f5520f9b6f1e93",
+            "8abf800a893308754eff831846964a0906805d272ec65049fc5a91bf6975f1bd",
+            "1134270911eda793bdd9c6513ba0c134a094546862a944948b02228fe2d51131",
+            "4385f5e4ef01e1eec45b358224c6e2bf292bc6a1f5bae576bc97ec2fe7fbf31e",
+            "0959c69f623d0233556cf6117c08414a79e7b9fa4f2487f13c8e7e9b08290c02",
+            "ed8a537b2a13c03f8845541a08d9ffa71ac9892171d705a136ef9b9e3d8a383b",
+            "f4c93f30be1cab29e376e7d8ae67b67979b5fa5fa37c79ac8505f6ec64d4b207",
+            "e7e6023fd70f826a1f4c75120363f740372bc59e85e028cbf9f40a67645774f9",
+            "4caf120797bb1ddec9fe36f288ccf9649fcb8f2cf72493f6edcc4568be0688e5",
+            "e7493e3b52e6e05904fb59e7de84c2aaafbc702a9a7e773af4ef19e33a4b036f",
+            "9de52fbdf1312857e5678fd8f44809cbb4561990c20515ebdd4b3b208e899810",
+            "61925edab891726cc0ae8a0967495e83c37a20a8a4af2d522c7f80fd324cddc5"
+          ],
+          "query_count": 20,
+          "group_count": 3,
+          "criteria_total": 12,
+          "represented": [
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12
+          ],
+          "documented": [],
+          "context_sha256": "667981a210ef3b31a595095dec03ecdb61d65727e7bd5ed054152ee6c834e8a9",
+          "context_files": 20,
+          "context_chars": 19123,
+          "grounded_citations": 5,
+          "invalid_citations": [],
+          "evidence": [
+            {
+              "criterion": 3,
+              "eligible": true,
+              "code": [],
+              "brief_fragment": [],
+              "brief_exact": []
+            },
+            {
+              "criterion": 10,
+              "eligible": true,
+              "code": [],
+              "brief_fragment": [],
+              "brief_exact": []
+            }
+          ],
+          "retrieval_seconds": [
+            2.035575,
+            1.757082
+          ],
+          "parser_microseconds": [
+            416.65,
+            347.55,
+            359.22,
+            322.52,
+            285.12
+          ]
+        },
+        "PRI-223": {
+          "query_sha256": [
+            "a44fc12ad52c50e1208e1eb655ad5c1530d803ca628407d05bc988ac0807899c",
+            "11378183a15b23ef60a8717b0499cfe34f0bf4e243a7d51ca37fb8e86c57584e",
+            "6c6e4e3f51499774fdbc1a1acbdb9a8ca50981fc9a2ba0ba434307808704c236",
+            "82d0ab4a9cef9f1b07ae7ec0ab2e03383cec62e92940015f9ca86a2ff3c71e78",
+            "75d313f983394896683b9ae8e6c2940626466f61863dfe9c20d0594a36240a69",
+            "c330ae4a4c219d9c93bf280f020f64deb2cf90990e3adac48b66129d2619d961",
+            "0af784d40d55b235ba786614bfa184958e8bf4baa8f7c186ecca52b3afe5896e",
+            "08e431195e3ce502b53a94ca1f1f5b7ff4d2d0a73e1d8696114c51e6a6102f61",
+            "260d10bbd56218cc2007f54b50304592403f5c3df5f3227f3a7a22a381ff76b4",
+            "9c2420d59548136a5054de48e9ec38d3ddd77626638ce200c85669aab7d12291",
+            "cd1627f257278d935ab3565c978f996914d77875ab509cb11f5a34a2ff861ed0",
+            "9e97c3407bb5a19969d37ebe74db9d69dd47dcdd61f0f802b831d1b65416caa2",
+            "b800b6e04bf5cef5589864ac25c54d31efa00827da7a1f817060ec441e548ae5",
+            "8d85805ebc9b636e25eaab48d9131355e234f6a6d1fdf897fd4965035bc91be5",
+            "2a54c643e9ba49ae4099df43c20b27f09acfeff3f23fb38c1035b65dbd3e7a53",
+            "5b058fa1582154cb20ec7aa31cfff676887e19b1f53010d9d5a4ce9a2e1dd041",
+            "13b14150a14dfe8aead320eafd93bde86e8a720c378693f7b1f6c2db2983c342",
+            "c18c99951abb5c5dfad3b6c32c589b1fb9239a2e815a0697499dbeac2a9cf0ad",
+            "814b48e33dd57635c9b6eb0814f10daad1faa4d26d76e4fe6732e9e58d297abd",
+            "b0f75125e5b151886c434af3d40249d24fa211bf79a0098a66a6361e27ce67f6"
+          ],
+          "query_count": 20,
+          "group_count": 2,
+          "criteria_total": 15,
+          "represented": [
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15
+          ],
+          "documented": [],
+          "context_sha256": "eadfaed8b26bd2c5414f4657512d09c9ded63ad1c352aae52154995116a464a4",
+          "context_files": 20,
+          "context_chars": 19274,
+          "grounded_citations": 7,
+          "invalid_citations": [
+            [
+              "reviewer/config/onboarding.py",
+              33
+            ]
+          ],
+          "evidence": [
+            {
+              "criterion": 10,
+              "eligible": true,
+              "code": [],
+              "brief_fragment": [],
+              "brief_exact": []
+            },
+            {
+              "criterion": 13,
+              "eligible": true,
+              "code": [],
+              "brief_fragment": [],
+              "brief_exact": []
+            }
+          ],
+          "retrieval_seconds": [
+            1.409149,
+            1.613255
+          ],
+          "parser_microseconds": [
+            281.39,
+            275.4,
+            277.88,
+            280.48,
+            284.79
+          ]
+        },
+        "PRI-243": {
+          "query_sha256": [
+            "1da946aa2ed72d5cfd960614313376c69b5cc619b38fe55ee646ca65d04d7e00",
+            "6db6d908d5dbcb23816e1c5aeebe88c39300373ada5881a87136c4e66e11da58",
+            "c0c75d44aaffb2d04536c51e194dc3d3bb9315f98b0a9220ca89e8e9bdc2834d",
+            "0fe13c65f0fa03a1166c70df1dae437d87656a42481c05b9fc7ef22be338dd2e",
+            "6bb4bb6da1e8f29222821e0e687247084d31dd3f8dc6beb444cfc375a5e475d6",
+            "1a53b0b3eb7d238d2fddf4fde010831626819b6dc6930459bb12a8059f50f37d",
+            "c67853a796f5888dcb138c061ea6cffca73dbc89855537446cb08912cbfaa08f",
+            "7857a61511773944e901c3284ec659f736d6d326453f3c9e7053422b773dab6f",
+            "0b7e9d40713b97d5ce645749773a56f057faed63ab1d4ed65f4a037caead388e",
+            "31044b6b57f5188c97cf94d840af88df6efb2c8b87181467e756103edf7d59cd",
+            "a4454c260de1bb047e04b97ef089b341217d849c811ce99bc95bfc73cb4be504",
+            "04b4664a4bcddbe01081b73aab1e558c66a236a87f8918737e07acc923df3d2b",
+            "616ba48afac7220dd0c11bb1ab849e3688baf8053fc7f67a3ca73b7e0109990e",
+            "58db25260b9c2f05c96cc903305e73843301222b6ef55f302e578d6fbbb3390e",
+            "b37b30314eaac311175491402a2a05ab6aa282db75929739c56324df3232a6b3",
+            "32eb4e36d3af81647a502f16c92740c1037e6e1eabde4e112f6238cbc84247a9",
+            "f549e18ef1329851d81c9e7d3fd76393efe288909d9b1ae018bbe9b2e55bf383",
+            "9492b9e96fd25fe90d29aef2f90e7cb2adba26a22ff47a85128ca1c2bfa3173f",
+            "2178726ae4080e2783fbfb39678f4402d10d6ffef1827d1ed2c4241af19cb250",
+            "d298ff07dd1678bef7ab6c1615ab790741894ad4384864eac60f8ddbde70babf"
+          ],
+          "query_count": 20,
+          "group_count": 1,
+          "criteria_total": 12,
+          "represented": [
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12
+          ],
+          "documented": [],
+          "context_sha256": "151ae5bc744cf7be2dc43fd549b883c7777f0adf8f8820b8a6d253a05fe85ac1",
+          "context_files": 20,
+          "context_chars": 19782,
+          "grounded_citations": 0,
+          "invalid_citations": [],
+          "evidence": [
+            {
+              "criterion": 6,
+              "eligible": false,
+              "code": [],
+              "brief_fragment": [],
+              "brief_exact": []
+            },
+            {
+              "criterion": 10,
+              "eligible": false,
+              "code": [],
+              "brief_fragment": [],
+              "brief_exact": []
+            }
+          ],
+          "retrieval_seconds": [
+            1.383818,
+            1.517448
+          ],
+          "parser_microseconds": [
+            247.8,
+            249.59,
+            250.89,
+            285.58,
+            291.08
+          ]
+        },
+        "PRI-269": {
+          "query_sha256": [
+            "a1ba0b553c74d7f763ebd6cf71fa60f2d7937c302bb58ed4e68c9d7de23af1c7",
+            "bcd7a02dc80076670a5b0d7b254fd1792b1bb43aa6294d66c71350e1f6be902e",
+            "744bfe503e68cfec6f641df08503cc194bd8a835d5c6a41aa2958520aec36ef1",
+            "21429402a7bfa26041eced3d9cb2d186be87693961b8741139acd5262983857a",
+            "cb8be00089d0e5326c62586d2f5765f56f8df119be6b6b798ab7e6de85c65c70",
+            "829409db1e21e59877fbaaf71736ba3bc29e36265e8e80b67bb75b240e44bd18",
+            "86958270b6ad7b8cb23bae90cc3f22ac6e2bbd8bba224fe481477abcd71d86bf",
+            "09538f744cfaf91e26b45610ba77563f74e1a3982844d94a9d3d445b927c8d40",
+            "fd57abd34cbbe28034afe23bb8f512cefae1bbd9aeb976db001d6fd41099db8f",
+            "87a0f55bd5256152df5bca8aa109400d2e219a463437dc897f3c7083c18ada6f",
+            "16aa5c84330c22a220251cd8d8598302e471c477819748ebbe624ec59116ef14",
+            "13246eff59bc1005e1db7d65cd41935c97f8f22b9807001e9247496054b11051",
+            "8548ed140a470180e83e70845587560f83a014cd0fc24eb3d14c717a63ac55e1",
+            "52f9707689335d3e3aa04a11f8b2a01807f9c1df6be4b5b459a46fcfe861048d",
+            "93fb2d67e592ef78bb30ab9779743030c2bcc42bcdd7ba945d7d2c0492c9cff4",
+            "a055c9b28fbbd1061c63dc90b7a9366459af92e4bf33ed2689f92751d76cbd20",
+            "1eb4b11e6235dc37e025985a3d6c48cc5d86668f8db7bb270a2950746ae7c2fe",
+            "7d774c7df44d9481a8fb1d4e109a5b3fbab7e9e8886be8361a24c5ec00e6c787",
+            "87160987e12c04ef421bf98a5033526ec5710905e4f0571194c6efd7e99f9ce5",
+            "35347b88f0f11d186eeb850e446aabe192702d50f6b68ca8d589c563afaa9406"
+          ],
+          "query_count": 20,
+          "group_count": 2,
+          "criteria_total": 11,
+          "represented": [
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11
+          ],
+          "documented": [],
+          "context_sha256": "3be0c161ba33730260ae1baa2849072144e7399e8c7d08b8f7d65c91d658e011",
+          "context_files": 20,
+          "context_chars": 20361,
+          "grounded_citations": 19,
+          "invalid_citations": [
+            [
+              "eval/pri269_acceptance_report.md",
+              1
+            ]
+          ],
+          "evidence": [
+            {
+              "criterion": 7,
+              "eligible": false,
+              "code": [],
+              "brief_fragment": [],
+              "brief_exact": []
+            },
+            {
+              "criterion": 8,
+              "eligible": true,
+              "code": [
+                [
+                  "reviewer/storage_health.py",
+                  339
+                ]
+              ],
+              "brief_fragment": [
+                [
+                  "reviewer/storage_health.py",
+                  339
+                ]
+              ],
+              "brief_exact": [
+                [
+                  "reviewer/storage_health.py",
+                  339
+                ]
+              ]
+            }
+          ],
+          "retrieval_seconds": [
+            1.437022,
+            1.282884
+          ],
+          "parser_microseconds": [
+            348.62,
+            342.82,
+            360.44,
+            346.82,
+            330.46
+          ]
+        },
+        "PRI-207": {
+          "query_sha256": [
+            "b7a6ad54fbd5eceaddbf4d8e506fe79234487ef9af31a03cd7562872153a0a6b",
+            "ec86f37ba2552d7aa351880bec6b94a73f34719faf02b61f50462a209b8676cc",
+            "612ef0fa9dbf4a155117c9e6fbc043e4ed3732fe6e79a83d74d6b943b8771d8f",
+            "43009207e56b5ec92bef24272a1a6ea9c0c0426db8ccda555e8c51a95c550a16"
+          ],
+          "query_count": 4,
+          "group_count": 0,
+          "criteria_total": 2,
+          "represented": [
+            1,
+            2
+          ],
+          "documented": [],
+          "context_sha256": "6d45d190ce1550018294eb221771edbce9dc59e59ee042f72b49d29fdb43ac7f",
+          "context_files": 19,
+          "context_chars": 19199,
+          "grounded_citations": 7,
+          "invalid_citations": [],
+          "evidence": [
+            {
+              "criterion": 1,
+              "eligible": true,
+              "code": [],
+              "brief_fragment": [],
+              "brief_exact": []
+            },
+            {
+              "criterion": 2,
+              "eligible": true,
+              "code": [],
+              "brief_fragment": [],
+              "brief_exact": []
+            }
+          ],
+          "retrieval_seconds": [
+            0.433467,
+            0.47536
+          ],
+          "parser_microseconds": [
+            71.8,
+            73.9,
+            93.75,
+            124.5,
+            92.21
+          ]
+        },
+        "PRI-215": {
+          "query_sha256": [
+            "e5a62a8253ba745e1a9ab9951ec24089b4127ac62c51212ad9698effdb92f334",
+            "7693437489b7b401419c37cb543561c48e5d75c2123253df20de75e5d5b65865",
+            "45dd7873f86e0788b27ed8a52388d050ebef7406554a83aecf657ad0bc6932e7",
+            "105412c11af4874cc715e654a7a321ee75b7fe3d6d41fd0dda0e2bcfe376ef59",
+            "076cc5918a8f82341e0dfa4078c99b437d817e4823f341f55bcf7ec9ce4c53f7",
+            "065e49e3f5c929f105c6e67370baf17bb49aaed32421ac01e8d33cf7ae1d15fa",
+            "abbaef1bd99dc84ce32d3573f1bd626eca2879698de3b48abefe998e8cc7e330",
+            "d276630313ad14e18148ce8f5034498e95ab06226dacb1655bf956648a0b60be",
+            "2716a3e8d5706e10e0a2136adb16a3879a6e7a533c26e4bedb38be637fa55c50",
+            "0dfa4257641469ba0590c0afdbe9e2064189445f28b7649eec4f3018479841f8",
+            "22579447bd97940ef79b94c6c261494e3527b8226dc6612b11836838e8f2f50c",
+            "35ec3f3e35adc6d26d23fd5b310f61a8956d338389c574891cd1eb3c7ffd6ea5",
+            "86cdd9ee8a2b5eab49b0f0553650c7280a0369fdbecb296aa2b5401f058e0a9f",
+            "b994baa428d67cb85b9f1243a06d632638d85c05dcab20d9b1b06c01390f28ba",
+            "304ffd78f038960849edaba54c109581126a606e6368a06383013c070a5095e1",
+            "d18c8d76b01310ed6d348323b22262186c2510bc791390ddc07f5284e4ea6f96"
+          ],
+          "query_count": 16,
+          "group_count": 0,
+          "criteria_total": 8,
+          "represented": [
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8
+          ],
+          "documented": [],
+          "context_sha256": "eb0a4a7b7ce143c817ecea038c096d3df29a8bcb2f5ebe289f55db1b051f7b7e",
+          "context_files": 20,
+          "context_chars": 21668,
+          "grounded_citations": 10,
+          "invalid_citations": [],
+          "evidence": [
+            {
+              "criterion": 1,
+              "eligible": true,
+              "code": [],
+              "brief_fragment": [],
+              "brief_exact": []
+            },
+            {
+              "criterion": 3,
+              "eligible": true,
+              "code": [],
+              "brief_fragment": [],
+              "brief_exact": []
+            }
+          ],
+          "retrieval_seconds": [
+            0.925602,
+            0.883864
+          ],
+          "parser_microseconds": [
+            94.07,
+            98.65,
+            94.22,
+            83.56,
+            89.3
+          ]
+        },
+        "PRI-225": {
+          "query_sha256": [
+            "4bc1b12fb47df2c7438887cb5b86845b136b216c7a5f70fa22958a1063c82b58",
+            "f2330c83c3019e70c51f32bf00d24bc45238f753fa81d6a099e7d35a6833cd79",
+            "2020968a0bdedc6ef4187c3eeadebe2be10bc543a89dc4c274661cd544fc66a1",
+            "a20bca5adb9d4578bc9b256f0ea8e1ebe3437a5d3696b4aa592de1d415650eed",
+            "cf3c86a8bd33299d3599421cc1a7cd04ca8924d1c41fd9c8da9c3430848fd059",
+            "94918b5d06168e27696cce3085d7b5debfe2cc91924f9f58af468e922e48a37b",
+            "0fac728bce872171f3d4f2005c4a5dd29341b00d12c7e5235e4a228a17481693",
+            "421def75270c9c8e7c151f7f4a4d5e988f59096c4a29f26cbbf600e371ac52b5",
+            "d3860c1350179dc4ea084204133930d45f969060d2f8a5642c18259472584c7e",
+            "b79db8f9050ec4e06569cbb1b0420f1df6f15c0d396ab1a6cb44e5b38eb65f82",
+            "933965c675b9760e694c8e9c34e05f4553c54633d4a24456e739b1433ab9fd50",
+            "0e5866e8f5d12dae30844d9772f21501dccc9331a881a59b9f3266a0e6e70224",
+            "4439ea53f6b95a7be5597cd7574142dd2c54bddf082883051db64d5a5427d6a0",
+            "766647514f76506df4e9cd79ba2b583c3f70c4d9738dc8b4d8f7db71b4378f34",
+            "2e94dd5bd67ef630f0dccee2e673fd38c9220517c1f99752f3df9e71446076bd",
+            "90f6ab18561b5b29e3921fb3af57b3366d721d7beb8d1f81a82a770a43920445",
+            "5ac9a0ab2242c5bf78b630f1a314ea6807d6b4b38fa938810bf0e6556df5fccc",
+            "177c7b6b9197c86b710e15b55ea0776f191e846384e03296d90e66945f60b491",
+            "9da0d16283e59bcc90e62a57da8bb681fd6e4a7db4b4aaabfc753718498963f8"
+          ],
+          "query_count": 19,
+          "group_count": 0,
+          "criteria_total": 8,
+          "represented": [
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8
+          ],
+          "documented": [],
+          "context_sha256": "f679a1a284a609d999c5e21fef9ec3ee64310252a9c3ecc71bdd4fe71ae86550",
+          "context_files": 20,
+          "context_chars": 17959,
+          "grounded_citations": 7,
+          "invalid_citations": [],
+          "evidence": [
+            {
+              "criterion": 2,
+              "eligible": true,
+              "code": [],
+              "brief_fragment": [],
+              "brief_exact": []
+            },
+            {
+              "criterion": 6,
+              "eligible": true,
+              "code": [],
+              "brief_fragment": [],
+              "brief_exact": []
+            }
+          ],
+          "retrieval_seconds": [
+            1.813451,
+            1.283422
+          ],
+          "parser_microseconds": [
+            104.97,
+            88.57,
+            153.61,
+            96.31,
+            92.74
+          ]
+        }
+      }
+    }
+  }
+}
