@@ -353,7 +353,8 @@ def create_server(service: MCPReviewService) -> FastMCP:
     def prepare_task_context(repo: str, key: str, branch: str | None = None,
                              path: str | None = None,
                              warm_board: bool = True,
-                             include_brief_evidence: bool = False) -> dict:
+                             include_brief_evidence: bool = False,
+                             include_code_budget: bool = False) -> dict:
         """Everything /solve-task needs to write a brief, in one call (no PR session).
         Returns {preflight, task_board, task, related{linked,similar}, subsystems,
         code, test_exemplars, gaps, warnings}. repo is "owner/name"; key is a board
@@ -363,8 +364,11 @@ def create_server(service: MCPReviewService) -> FastMCP:
         missing index yield a partial payload with entries in `gaps`. Relevance
         filtering and brief assembly stay with the caller. include_brief_evidence
         adds a short-lived brief_evidence_id when numbered excerpts are available.
+        include_code_budget adds file counts before selection and after rendering
+        when the code search ran.
         """
-        return service.prepare_task_context(repo, key, branch, path, warm_board, include_brief_evidence)
+        return service.prepare_task_context(
+            repo, key, branch, path, warm_board, include_brief_evidence, include_code_budget)
 
     @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False))
     def diagnose_tool_result(tool: str, response: str) -> dict:

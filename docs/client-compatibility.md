@@ -17,6 +17,10 @@ On the same MCP connection, call `prepare_task_context` with `include_brief_evid
 
 Send that object to `verify_task_brief`. Use `test_exemplars` for citations from the test section. Pass paths and line numbers from the visible excerpts. The tool returns `verified`, `path_unseen`, `outside_excerpt`, or `section_unavailable` per citation. The token can expire or become unavailable after a server restart. Continue inspecting the captured tool output in that case. The server retains an index of numbered rows and never needs a second retrieval to check them.
 
+## Inspect code budget
+
+Set `include_code_budget=true` on `prepare_task_context` for counts from the existing retrieval. The response's `code_budget` reports distinct candidate paths after graph expansion and test filtering, paths omitted by the file limit before augmentation, and paths displaced by augmentation. It compares the final selected files with the files that have a complete numbered row in the rendered code section. These counts cover all candidate paths. The response omits the field if every search failed.
+
 ## Measure token usage
 
 ```bash

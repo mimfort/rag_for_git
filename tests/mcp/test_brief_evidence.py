@@ -8,10 +8,12 @@ import pytest
 
 from reviewer.config.settings import Settings
 from reviewer.entrypoints.mcp_server import create_server
+from reviewer.index.store import Retrieved
 from reviewer.mcp import task_context
 from reviewer.mcp.brief_evidence import BriefEvidence
 from reviewer.mcp.schemas import BriefCitationIn
 from reviewer.mcp.service import MCPReviewService
+from reviewer.policy.context_limits import CodeSectionLimits, ContextLimits
 from reviewer.retrieval.retriever import ContextPack
 
 CODE = """// path with spaces.py#function (path with spaces.py:2-6)
@@ -117,5 +119,46 @@ def test_prepare_and_verify_are_available_through_mcp_without_retrieval_twice(mo
         })
         assert checked["citations"][0]["status"] == "verified"
         assert build.call_count == 2
+
+    asyncio.run(scenario())
+
+
+def test_prepare_reports_file_selection_and_rendering_only_on_request(monkeypatch):
+    service = MCPReviewService(Settings(), MagicMock())
+    monkeypatch.setattr(service, "_resolve_repo_branch", lambda repo, branch: (repo, "main"))
+    limits = ContextLimits(code_section=CodeSectionLimits(max_files=2, chars_per_file=16))
+    monkeypatch.setattr(service, "_resolve_context_limits", lambda *args: limits)
+    retriever = service.components.retriever
+    retriever.graph = None
+    retriever.embedder.embed_queries.return_value = [[0.1]]
+    retriever.store.hybrid_search.return_value = [
+        Retrieved(f"{path}#f", path, "f", "function", 1, 1, "x = 1", 0.0, bm25_hit=True)
+        for path in ("a.py", "b.py", "c.py")
+    ]
+    monkeypatch.setattr(
+        task_context, "build_task_context",
+        lambda deps, **kw: {"code": deps.code(kw["repo"], kw["branch"], ["query"])},
+    )
+    server = create_server(service)
+
+    async def scenario():
+        args = {"repo": "owner/repo", "key": "task", "warm_board": False}
+        plain = json.loads((await server.call_tool("prepare_task_context", args))[0].text)
+        checked = json.loads((await server.call_tool(
+            "prepare_task_context", dict(args, include_code_budget=True)
+        ))[0].text)
+        assert "code_budget" not in plain
+        assert checked["code"] == plain["code"]
+        assert checked["code_budget"] == {
+            "file_limit": 2, "candidate_files": 3, "omitted_by_file_limit": 1,
+            "displaced_by_augmentation": 0, "selected_files": 2,
+            "visible_files": 1, "hidden_by_rendering": 1,
+        }
+        assert retriever.store.hybrid_search.call_count == 2
+        retriever.store.hybrid_search.side_effect = RuntimeError("unavailable index")
+        failed = json.loads((await server.call_tool(
+            "prepare_task_context", dict(args, include_code_budget=True)
+        ))[0].text)
+        assert "code_budget" not in failed
 
     asyncio.run(scenario())

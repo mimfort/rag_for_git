@@ -24,7 +24,7 @@ from reviewer.config.settings import Settings
 from reviewer.config.task_board import migrate_legacy_board_args, normalize_task_sync_filter
 from reviewer.index.refs import base_ref
 from reviewer.mcp import task_context
-from reviewer.mcp.brief_evidence import BriefEvidence
+from reviewer.mcp.brief_evidence import BriefEvidence, _visible_lines
 from reviewer.mcp.schemas import BriefCitationIn, FindingIn, SummaryFragmentIn, VerdictIn
 from reviewer.mcp.session_serde import from_payload, to_payload
 from reviewer.mcp.session_store import SessionStore
@@ -1825,7 +1825,8 @@ class MCPReviewService:
                                branch: str | None = None,
                                include_tests: bool = False,
                                augment_sources: list | None = None,
-                               *, strict: bool = False) -> str:
+                               *, strict: bool = False,
+                               code_budget: dict[str, int] | None = None) -> str:
         """Мультизапросный ретрив секций контекста задачи (PRI-255).
 
         Приватный: публичный search_codebase остаётся однозапросным, чтобы
@@ -1850,18 +1851,25 @@ class MCPReviewService:
                 self.components.retriever, repo, queries,
                 limits=cl.search_codebase, section_limits=cl.code_section,
                 hops=cl.graph.hops, branch=resolved, include_tests=include_tests,
-                augment_sources=augment_sources, strict=strict)
+                augment_sources=augment_sources, strict=strict,
+                include_selection_stats=code_budget is not None)
         except Exception as exc:
             if strict and is_embedder_unavailable(exc):
                 raise
             log.warning("_search_codebase_multi: сбой поиска", exc_info=True)
             return "(ничего не найдено)"
-        return pack.as_context(line_numbers=True) or "(ничего не найдено)"
+        context = pack.as_context(line_numbers=True)
+        if code_budget is not None and pack.selection_stats is not None:
+            visible = len(_visible_lines(context))
+            code_budget.update(pack.selection_stats, visible_files=visible,
+                               hidden_by_rendering=pack.selection_stats["selected_files"] - visible)
+        return context or "(ничего не найдено)"
 
     def prepare_task_context(self, repo: str, key: str, branch: str | None = None,
                              path: str | None = None,
                              warm_board: bool = True,
-                             include_brief_evidence: bool = False) -> dict:
+                             include_brief_evidence: bool = False,
+                             include_code_budget: bool = False) -> dict:
         """Единый контекст задачи для solve-task: преflight + сбор, один вызов.
 
         Свёртка 8-12 детерминированных тул-раундов скилла. Ни один сбой
@@ -1878,12 +1886,15 @@ class MCPReviewService:
             payload["warnings"] = []
             return payload
         normalized_repo, resolved = rb
-        deps = _TaskContextDeps(self, path)
+        budget = {} if include_code_budget else None
+        deps = _TaskContextDeps(self, path, budget)
         payload = task_context.build_task_context(
             deps, repo=normalized_repo, key=key, branch=resolved,
             warm_board=warm_board)
         if include_brief_evidence and (evidence_id := self._brief_evidence.save(payload)):
             payload["brief_evidence_id"] = evidence_id
+        if budget:
+            payload["code_budget"] = budget
         return payload
 
     def verify_task_brief(self, evidence_id: str, citations: list[BriefCitationIn]) -> dict:
@@ -3559,9 +3570,11 @@ class _TaskContextDeps:
     подменяет фейк в юнит-тестах модуля сборки.
     """
 
-    def __init__(self, service: "MCPReviewService", path: str | None):
+    def __init__(self, service: "MCPReviewService", path: str | None,
+                 code_budget: dict[str, int] | None = None):
         self._service = service
         self._path = path
+        self._code_budget = code_budget
         self._similar_hits: list = []
         self.augment_gaps: list[str] = []
 
@@ -3680,8 +3693,9 @@ class _TaskContextDeps:
                                  paths=self._augment_paths(repo),
                                  quota=self._service._resolve_context_limits(
                                      repo, branch).code_section.max_augmented_files)]
+        kwargs = {"code_budget": self._code_budget} if self._code_budget is not None else {}
         return self._service._search_codebase_multi(
-            repo, queries, branch, False, augment_sources=sources, strict=True)
+            repo, queries, branch, False, augment_sources=sources, strict=True, **kwargs)
 
     def test_exemplars(self, repo: str, branch: str, queries: list) -> str:
         return self._service._search_codebase_multi(repo, queries, branch, True, strict=True)
