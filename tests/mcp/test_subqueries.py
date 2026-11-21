@@ -71,3 +71,71 @@ def test_degenerate_text_is_capped():
     items = "\n".join(f"{i}. пункт номер {i} про symbol_{i}" for i in range(1, 61))
     task = {"title": "T", "description": f"## Что сделать\n\n{items}\n"}
     assert len(build_subqueries(task, "база")) == MAX_SUBQUERIES
+
+
+def test_prose_criteria_and_multiline_items_keep_their_text():
+    task = {
+        "title": "Парсинг карточки",
+        "description": (
+            "## Что сделать\n\n"
+            "- Добавить проверку\n"
+            "  с подробным режимом.\n\n"
+            "  Результат сохранять в отчёте.\n\n"
+            "## Критерии приемки\n\n"
+            "Запуск возвращает код успеха,\nкогда проверка завершена.\n\n"
+            "1. Сохраняется итог\nв многострочном отчёте.\n\n"
+            "## Контекст\n\nЭту строку пропускаем."
+        ),
+    }
+    assert build_subqueries(task, "база") == [
+        "база",
+        "Добавить проверку с подробным режимом. Результат сохранять в отчёте.",
+        "Запуск возвращает код успеха, когда проверка завершена.",
+        "Сохраняется итог в многострочном отчёте.",
+    ]
+
+
+def test_fenced_markdown_does_not_change_the_section_or_create_criteria():
+    task = {
+        "description": (
+            "## Контекст\n\n~~~~md\n## Acceptance\n- Ложный критерий\n~~~~\n"
+            "## Acceptance\n- Проверка пройдена\n"
+        ),
+    }
+    assert build_subqueries(task, "база") == ["база", "Проверка пройдена"]
+
+
+def test_criteria_duplicated_across_sources_keep_their_priority():
+    steps = "\n".join(f"- Шаг {number}" for number in range(MAX_SUBQUERIES))
+    task = {
+        "description": (
+            f"## Что сделать\n{steps}\n- Тесты проходят.\n\n"
+            "## Acceptance\n- Тесты\n  проходят.\n"
+        ),
+        "criteria": ["тесты   проходят.", "  Отчёт приложен. "],
+    }
+
+    queries = build_subqueries(task, "база")
+    assert len(queries) == MAX_SUBQUERIES
+    assert queries.count("Тесты проходят.") == 1
+    assert "Отчёт приложен." in queries
+    assert "тесты проходят." not in queries
+
+
+def test_overflow_groups_related_criteria_and_keeps_unrelated_criteria():
+    steps = [f"Шаг {number}" for number in range(MAX_SUBQUERIES - 3)]
+    criteria = [
+        "Настройки проекта сохраняются после инициализации.",
+        "Настройки проекта загружаются при повторном запуске.",
+        "Вывод CLI содержит номер версии.",
+    ]
+    task = {
+        "description": "## Что сделать\n" + "\n".join(f"- {step}" for step in steps),
+        "criteria": criteria,
+    }
+
+    queries = build_subqueries(task, "база")
+    assert len(queries) == MAX_SUBQUERIES
+    assert any(all(criterion in query for criterion in criteria[:2]) for query in queries)
+    assert criteria[2] in queries
+    assert queries[:MAX_SUBQUERIES - 2] == ["база", *steps]

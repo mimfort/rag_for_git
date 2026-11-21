@@ -1,34 +1,31 @@
-"""Подзапросы ретрива из структуры и сущностей задачи (PRI-255).
-
-Один эмбеддинг на весь текст задачи не близок ни к одной из её тем, а
-хвостовые пункты «Что сделать» не ищутся вовсе. Модуль детерминированно
-разбирает текст на подзапросы: по пункту списка требований — свой запрос,
-плюс один пул технических идентификаторов из прозаической части.
-
-Ни сети, ни БД, ни LLM: расход токенов от этого модуля не растёт, а его
-поведение проверяется на текстах задач.
-"""
+"""Детерминированные подзапросы ретрива из требований и критериев задачи."""
 from __future__ import annotations
 
 import re
 
 MAX_SUBQUERIES = 20
-"""Предохранитель против вырожденного текста.
-
-Число подзапросов производно от размера задачи (пункты требований), но
-текст из шестидесяти пунктов не должен превращаться в шестьдесят обращений
-к хранилищу.
-"""
+"""Предохранитель против вырожденного текста и лишних обращений к хранилищу."""
 
 MAX_IDENTIFIERS = 12
 """Сколько идентификаторов попадает в пул. Дальше запрос теряет фокус."""
 
 MIN_IDENTIFIER_LEN = 4
+_MAX_GROUP_CHARS = 1_000
+_MIN_TOPIC_OVERLAP = 0.2
 
-_SECTION_RE = re.compile(r"(?i)^#{1,6}\s*.*(что сделать|критери|приёмк|acceptance)")
-_HEADING_RE = re.compile(r"^#{1,6}\s")
+_CRITERIA_RE = re.compile(r"критери|при[её]мк|acceptance", re.IGNORECASE)
+_REQUIREMENTS_RE = re.compile(r"что сделать|требовани|requirements", re.IGNORECASE)
+_HEADING_RE = re.compile(r"^ {0,3}#{1,6}[ \t]+")
 _ITEM_RE = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s+(.*\S)\s*$")
+_FENCE_RE = re.compile(r"^\s*(`{3,}|~{3,})(.*)$")
 _TOKEN_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_./]*")
+_TOPIC_RE = re.compile(r"[^\W\d]\w*(?:[./-]\w+)*")
+_TOPIC_STOPWORDS = {
+    "после", "перед", "когда", "если", "также", "только", "можно", "через",
+    "должен", "должна", "должны", "который", "которые",
+    "after", "before", "when", "with", "only", "must", "should",
+    "from", "into", "than", "that", "this", "these", "those",
+}
 
 
 def _is_identifier(token: str) -> bool:
@@ -42,72 +39,144 @@ def _is_identifier(token: str) -> bool:
     return token[:1].isupper() and any(c.isupper() for c in token[1:])
 
 
-def _items(text: str) -> list[str]:
-    """Пункты списков под заголовками требований и критериев приёмки."""
-    items: list[str] = []
-    in_section = False
-    for line in text.splitlines():
-        if _HEADING_RE.match(line):
-            in_section = bool(_SECTION_RE.match(line))
-            continue
-        if not in_section:
-            continue
-        match = _ITEM_RE.match(line)
-        if match:
-            items.append(match.group(1))
-    return items
+def _section_items(text: str) -> tuple[list[tuple[bool, str]], list[str]]:
+    """Вернуть пункты с признаком приёмки и строки для поиска идентификаторов."""
+    items: list[tuple[bool, str]] = []
+    prose: list[str] = []
+    in_section = is_criterion = is_list_item = False
+    lines: list[str] = []
+    after_blank = True
+    fence = ""
 
+    def flush() -> None:
+        if lines:
+            items.append((is_criterion, " ".join(lines)))
+            lines.clear()
 
-def _identifiers(text: str, items: list[str]) -> list[str]:
-    """Идентификаторы прозаической части: то, что не ушло в пункты списков."""
-    consumed = set(items)
-    found: list[str] = []
     for line in text.splitlines():
         stripped = line.strip()
-        match = _ITEM_RE.match(line)
-        if match and match.group(1) in consumed:
+        marker = _FENCE_RE.match(line)
+        if fence:
+            if marker and marker[1].startswith(fence) and not marker[2].strip():
+                fence = ""
+            elif stripped:
+                (lines if lines else prose).append(stripped)
             continue
-        if not stripped:
+        if marker:
+            fence = marker[1]
+            if after_blank and not line[0].isspace():
+                flush()
             continue
-        for token in _TOKEN_RE.findall(stripped):
-            if _is_identifier(token) and token not in found:
-                found.append(token)
-    return found
+
+        if _HEADING_RE.match(line):
+            flush()
+            is_criterion = bool(_CRITERIA_RE.search(stripped))
+            in_section = is_criterion or bool(_REQUIREMENTS_RE.search(stripped))
+            prose.append(line)
+            after_blank = True
+        elif not stripped:
+            after_blank = True
+        elif not in_section:
+            prose.append(line)
+        else:
+            item = _ITEM_RE.match(line)
+            if item:
+                flush()
+                lines.append(item[1])
+                is_list_item = True
+            elif lines and (not after_blank or (is_list_item and line[0].isspace())):
+                lines.append(stripped)
+            else:
+                flush()
+                (lines if is_criterion else prose).append(stripped)
+                is_list_item = False
+            after_blank = False
+    flush()
+    return items, prose
+
+
+def _identifiers(lines: list[str]) -> list[str]:
+    """Идентификаторы текста, который не вошёл в отдельные подзапросы."""
+    return list(dict.fromkeys(
+        token for line in lines for token in _TOKEN_RE.findall(line) if _is_identifier(token)
+    ))
+
+
+def _normalized(text: str) -> str:
+    return " ".join(text.split())
 
 
 def _dedup(queries: list[str]) -> list[str]:
-    """Убрать повторы, сохранив порядок: пункт может дословно повторить запрос."""
-    seen: set[str] = set()
-    out: list[str] = []
+    """Убрать повторы, сохранив первое написание и порядок."""
+    by_key: dict[str, str] = {}
     for query in queries:
-        norm = " ".join(query.split()).casefold()
-        if not norm or norm in seen:
-            continue
-        seen.add(norm)
-        out.append(query)
-    return out
+        key = _normalized(query).casefold()
+        if key:
+            by_key.setdefault(key, query)
+    return list(by_key.values())
 
 
-def build_subqueries(task: dict | None, base_query: str) -> list[str]:
-    """Набор подзапросов задачи; первый — продакшн-запрос целиком.
+def _topic_overlap(left: set[str], right: set[str]) -> float:
+    common = len(left & right)
+    # Длинный критерий может разворачивать ту же тему и добавлять детали.
+    return common / min(len(left), len(right)) if common >= 2 else 0.0
 
-    base_query приходит аргументом, а не берётся из task_context: тот модуль
-    импортирует этот, и обратный импорт замкнул бы цикл.
 
-    Вырожденный вход (нет задачи, нет списков) даёт ровно [base_query] —
-    поведение ретрива при этом тождественно однозапросному.
+def _group_criteria(criteria: list[str], slots: int, merges_needed: int,
+                    excluded: list[str]) -> list[str]:
+    """При нехватке слотов объединять пары с близкой лексикой."""
+    groups: list[str] = []
+    unpaired: dict[int, set[str]] = {}
+    for criterion in criteria:
+        terms = {term for term in _TOPIC_RE.findall(criterion.casefold()) if len(term) >= 4}
+        terms.difference_update(_TOPIC_STOPWORDS)
+        best_index = None
+        best_score = _MIN_TOPIC_OVERLAP
+        if merges_needed:
+            for index, other_terms in unpaired.items():
+                if len(groups[index]) + 1 + len(criterion) > _MAX_GROUP_CHARS:
+                    continue
+                score = _topic_overlap(terms, other_terms)
+                if score >= _MIN_TOPIC_OVERLAP and (best_index is None or score > best_score):
+                    best_index, best_score = index, score
+
+        if best_index is not None:
+            groups[best_index] += "\n" + criterion
+            del unpaired[best_index]
+            merges_needed -= 1
+        elif len(groups) < slots:
+            unpaired[len(groups)] = terms
+            groups.append(criterion)
+        else:
+            excluded.append(criterion)
+    return groups
+
+
+def build_subqueries(task: dict | None, base_query: str, *,
+                     excluded_criteria: list[str] | None = None) -> list[str]:
+    """Сохранить базовый запрос и отдать приёмке приоритет при нехватке слотов.
+
+    При наличии `excluded_criteria` дописать туда критерии, которым не хватило
+    места ни в собственном запросе, ни в паре с другим критерием.
     """
-    queries = [base_query]
+    base = _dedup([base_query])
     if not task:
-        return _dedup(queries)
-    text = "\n".join([
-        str(task.get("title") or ""),
-        str(task.get("description") or ""),
+        return base
+
+    text = "\n".join([str(task.get("title") or ""), str(task.get("description") or "")])
+    items, prose = _section_items(text)
+    items.extend((True, str(criterion)) for criterion in (task.get("criteria") or []))
+    normalized = [(is_criterion, _normalized(item)) for is_criterion, item in items]
+    queries = _dedup([
+        *base, *(item for _, item in normalized), " ".join(_identifiers(prose)[:MAX_IDENTIFIERS]),
     ])
-    items = _items(text)
-    items.extend(str(c) for c in (task.get("criteria") or []) if str(c).strip())
-    queries.extend(items)
-    identifiers = _identifiers(text, items)
-    if identifiers:
-        queries.append(" ".join(identifiers[:MAX_IDENTIFIERS]))
-    return _dedup(queries)[:MAX_SUBQUERIES]
+    if len(queries) <= MAX_SUBQUERIES:
+        return queries
+
+    criterion_keys = {item.casefold() for is_criterion, item in normalized if is_criterion}
+    criteria = [query for query in queries[len(base):] if query.casefold() in criterion_keys]
+    other = [query for query in queries[len(base):] if query.casefold() not in criterion_keys]
+    slots = MAX_SUBQUERIES - len(base)
+    groups = _group_criteria(criteria, slots, len(queries) - MAX_SUBQUERIES,
+                             excluded_criteria if excluded_criteria is not None else [])
+    return [*base, *other[:slots - len(groups)], *groups]

@@ -305,7 +305,7 @@ def test_board_less_task_degenerates_to_single_query():
 def test_test_queries_first_element_has_test_prefix_over_production_query():
     """Первый элемент _test_queries — продакшн-запрос с префиксом "как тестируется: "."""
     task = {"title": "T", "description": "D"}
-    first = task_context._test_queries(task, "PRI-1")[0]
+    first = task_context._test_queries(task_context._queries(task, "PRI-1"))[0]
     assert first == f"как тестируется: {task_context._query(task, 'PRI-1')}"
 
 
@@ -866,3 +866,28 @@ def test_every_embedder_section_is_actually_skipped_when_voyage_is_down():
     skipped = {g["section"] for g in payload["gaps"]
                if g["cause"] == "embedder_unavailable"}
     assert task_context._EMBEDDER_SECTIONS <= skipped
+
+
+def test_context_reports_criteria_that_cannot_fit_in_either_search():
+    criteria = [f"criterion_{i}" for i in range(21)]
+    seen = {}
+
+    class Deps(FakeDeps):
+        def code(self, repo, branch, queries):
+            seen["code"] = queries
+            return "code"
+
+        def test_exemplars(self, repo, branch, queries):
+            seen["tests"] = queries
+            return "tests"
+
+    payload = task_context.build_task_context(
+        Deps(task={"key": "ID-1", "title": "T", "criteria": criteria}),
+        repo="o/n", key="PRI-294", branch="dev", warm_board=False)
+
+    assert seen["code"] == ["T", *criteria[:19]]
+    assert seen["tests"] == [f"как тестируется: {query}" for query in seen["code"]]
+    assert payload["warnings"] == [
+        {"subqueries": {"excluded_criteria": criteria[19:], "reason": "subquery_budget"}},
+    ]
+    assert payload["gaps"] == []
