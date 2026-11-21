@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import click
@@ -78,6 +79,90 @@ def test_init_scope_global_never_detects_or_reads_repo(monkeypatch, tmp_path):
     assert result.exit_code == 0, result.output
     assert env.is_file()
     assert not config_root.exists()
+
+
+def test_quick_init_prompts_for_missing_keys_and_shows_compact_preview(monkeypatch, tmp_path):
+    env, _ = _isolate(monkeypatch, tmp_path)
+    monkeypatch.setattr(cli_module, "remote_url", lambda _repo: "git@github.com:owner/repo.git")
+
+    result = CliRunner().invoke(
+        cli, ["init", "--scope", "global"], input="voyage-example\ngithub-example\ny\n",
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Быстрая настройка" in result.output
+    assert "Предпросмотр настройки" in result.output
+    assert "Хранилища (Postgres / Neo4j)?" not in result.output
+    assert "Подключить provider доски задач" not in result.output
+    assert "VOYAGE_API_KEY=" not in result.output
+    assert "voyage-example" not in result.output and "github-example" not in result.output
+    assert "reviewer check" in result.output
+    assert "VOYAGE_API_KEY=voyage-example" in env.read_text()
+    assert "GITHUB_TOKEN=github-example" in env.read_text()
+    if os.name == "posix":
+        assert env.stat().st_mode & 0o777 == 0o600
+
+
+def test_quick_init_reuses_existing_env_without_prompts(monkeypatch, tmp_path):
+    env, _ = _isolate(monkeypatch, tmp_path)
+    monkeypatch.setattr(cli_module, "remote_url", lambda _repo: "git@github.com:owner/repo.git")
+    env.parent.mkdir()
+    env.write_text("# Custom comment\nVOYAGE_API_KEY=saved-voyage\nGITHUB_TOKEN=saved-github\n")
+    runner = CliRunner()
+    original = env.read_bytes()
+    _forbid_noninteractive_side_effects(monkeypatch)
+
+    result = runner.invoke(cli, ["init", "--scope", "global"])
+
+    assert result.exit_code == 0, result.output
+    assert "Изменений нет" in result.output
+    assert env.read_bytes() == original
+    assert "saved-voyage" not in result.output and "saved-github" not in result.output
+
+
+def test_quick_init_uses_env_override_and_can_cancel_before_writing(monkeypatch, tmp_path):
+    default_env, _ = _isolate(monkeypatch, tmp_path)
+    selected = tmp_path / "another profile" / ".env"
+    monkeypatch.setenv("REVIEWER_ENV_FILE", str(selected))
+    monkeypatch.setattr(cli_module, "remote_url", lambda _repo: None)
+    runner = CliRunner()
+
+    cancelled = runner.invoke(cli, ["init", "--scope", "global"], input="token\nn\n")
+    assert cancelled.exit_code == 0, cancelled.output
+    assert not selected.parent.exists()
+
+    saved = runner.invoke(cli, ["init", "--scope", "global"], input="token\ny\n")
+    assert saved.exit_code == 0, saved.output
+    assert f"reviewer check --env-file '{selected.resolve()}'" in saved.output
+    assert selected.is_file() and not default_env.exists()
+
+
+def test_quick_init_defers_unconfigured_self_hosted_gitlab_to_advanced(monkeypatch, tmp_path):
+    env, _ = _isolate(monkeypatch, tmp_path)
+    monkeypatch.setattr(cli_module, "remote_url", lambda _repo: "git@gitlab.example:team/repo.git")
+
+    result = CliRunner().invoke(cli, ["init", "--scope", "global"], input="voyage\ny\n")
+
+    assert result.exit_code == 0, result.output
+    assert "GitLab: подтвердите адрес сервера и ключ через reviewer init --advanced" in result.output
+    assert "Ключ GitLab для ревью" not in result.output
+    assert "gitlab.example" not in env.read_text()
+
+
+def test_check_reads_explicit_env_file(monkeypatch, tmp_path):
+    selected = tmp_path / "profile.env"
+    selected.touch()
+    calls = []
+
+    def settings_factory(**kwargs):
+        calls.append(kwargs)
+        raise click.ClickException("Переданный профиль обнаружен")
+
+    monkeypatch.setattr(cli_module, "Settings", settings_factory)
+    result = CliRunner().invoke(cli, ["check", "--env-file", str(selected)])
+
+    assert calls == [{"_env_file": selected}]
+    assert "Переданный профиль обнаружен" in result.output
 
 
 def test_init_scope_repo_does_not_read_or_rewrite_global_env(monkeypatch, tmp_path):
@@ -327,7 +412,7 @@ def test_init_existing_repo_block_is_noop_and_skips_branch_prompts(monkeypatch, 
     result = CliRunner().invoke(cli, ["init", "--scope", "repo"])
 
     assert result.exit_code == 0, result.output
-    assert len(confirmations) == 1
+    assert confirmations == []
     assert "action: noop" in result.output
     assert path.read_text(encoding="utf-8") == original
 
@@ -366,7 +451,7 @@ def test_init_final_rejection_or_abort_happens_before_first_write(
 
     monkeypatch.setattr(click, "confirm", confirm)
 
-    result = CliRunner().invoke(cli, ["init"])
+    result = CliRunner().invoke(cli, ["init", "--advanced"])
 
     assert result.exit_code == 0, result.output
     assert "Отменено" in result.output

@@ -333,7 +333,7 @@ def test_init_interactive_configures_selected_registry_provider(tmp_path, monkey
     monkeypatch.setattr("click.confirm", lambda *_args, **_kwargs: next(answers))
     monkeypatch.setattr("reviewer.entrypoints.cli._shutil.which", lambda _name: None)
 
-    result = CliRunner().invoke(cli, ["init", "--scope", "global"])
+    result = CliRunner().invoke(cli, ["init", "--scope", "global", "--advanced"])
 
     assert result.exit_code == 0, result.output
     assert configured == ["jira"]
@@ -394,7 +394,7 @@ def test_init_prompts_only_selected_vcs_provider(
     )
     monkeypatch.setattr("reviewer.entrypoints.cli._shutil.which", lambda _name: None)
 
-    result = CliRunner().invoke(cli, ["init", "--scope", "global"])
+    result = CliRunner().invoke(cli, ["init", "--scope", "global", "--advanced"])
 
     assert result.exit_code == 0, result.output
     assert set(seen) == prompted
@@ -431,7 +431,7 @@ def test_unselected_existing_vcs_credentials_survive(tmp_path, monkeypatch):
     )
     monkeypatch.setattr("reviewer.entrypoints.cli._shutil.which", lambda _name: None)
 
-    result = CliRunner().invoke(cli, ["init", "--scope", "global"])
+    result = CliRunner().invoke(cli, ["init", "--scope", "global", "--advanced"])
 
     assert result.exit_code == 0, result.output
     content = dest.read_text(encoding="utf-8")
@@ -461,7 +461,7 @@ def test_init_interactive_common_board_fields_do_not_require_rest_provider(
     monkeypatch.setattr("click.confirm", lambda *_args, **_kwargs: next(answers))
     monkeypatch.setattr("reviewer.entrypoints.cli._shutil.which", lambda _name: None)
 
-    result = CliRunner().invoke(cli, ["init", "--scope", "global"])
+    result = CliRunner().invoke(cli, ["init", "--scope", "global", "--advanced"])
 
     assert result.exit_code == 0, result.output
     assert seen_board_group == [

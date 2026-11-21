@@ -108,6 +108,13 @@ def test_command_requires_details_then_preview_then_confirm():
     assert controller.result.argv == ("status", "--repo", "a/x")
 
 
+def test_search_accepts_a_command_copied_with_the_reviewer_prefix():
+    controller = LauncherController(build_catalog(cli))
+    controller.set_query("  REVIEWER    config show  ")
+
+    assert controller.selected.path == ("config", "show")
+
+
 def test_search_filters_metadata_and_prioritizes_command_name():
     controller = LauncherController((_spec("gc"), _spec("status"), _spec("check")))
 

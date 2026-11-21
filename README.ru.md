@@ -321,7 +321,14 @@ New Chat или новую CLI-сессию. В IDE также выполнит�
 
 ### Сервисы и credentials
 
-`reviewer init` записывает выбранный env-файл, а `reviewer check` проверяет его. Порядок поиска:
+Команда `reviewer` без аргументов открывает меню. Можно вводить полное имя команды, например
+`reviewer init`. В форме F3 открывает предпросмотр, в том числе при фокусе на флаге.
+
+`reviewer init` запрашивает недостающий ключ Voyage и, когда известен VCS, предлагает его
+ключ для ревью. Мастер предлагает ветку репозитория и показывает краткое резюме перед записью.
+Для хранилищ, досок задач и выбора провайдера используйте `reviewer init --advanced`.
+`reviewer init --dry-run` показывает план без записи. После настройки отдельного профиля его
+можно проверить командой `reviewer check --env-file ПУТЬ`. Порядок поиска профиля по умолчанию —
 `REVIEWER_ENV_FILE` → `$XDG_CONFIG_HOME/rag-reviewer/.env` → `./.env`.
 
 Основные группы:
@@ -335,7 +342,7 @@ New Chat или новую CLI-сессию. В IDE также выполнит�
 
 Публикуемые хостовые порты storage-сервисов Compose заданы переменными, а не литералами:
 `PARADEDB_PUBLISH_PORT` (дефолт `5433`), `NEO4J_BOLT_PUBLISH_PORT` (дефолт `7687`) и
-`NEO4J_HTTP_PUBLISH_PORT` (дефолт `7474`). Контейнерные порты фиксированы. `reviewer init`
+`NEO4J_HTTP_PUBLISH_PORT` (дефолт `7474`). Контейнерные порты фиксированы. `reviewer init --advanced`
 спрашивает их в группе хранилищ и выводит первые два из `PG_DSN` и `NEO4J_URI`, поэтому строка
 подключения и публикуемый порт не разъезжаются молча; расхождение на локальном хосте печатает
 предупреждение, но не блокирует.
@@ -417,7 +424,7 @@ Credentials остаются на сервере. **Credentials are not returned
 | GitLab | `GITLAB_URL`, `GITLAB_TOKEN` | PAT/project token with `api` scope | MR metadata, changes, notes, repository files, compare | discussions/notes и MR description backlink | authenticates `/api/v4/user` identity |
 
 Health check подтверждает URL/token authentication, но не каждое granular repository permission.
-Выбранные repository permissions проверяются реальным review. `reviewer init` показывает тот же
+Выбранные repository permissions проверяются реальным review. `reviewer init --advanced` показывает тот же
 contract перед запросом credentials только выбранного provider.
 
 ### Репозитории и ветки
@@ -874,7 +881,7 @@ input, output, cache write, cache read), а не суммируя сырые т�
 
 - **Когда:** синхронизировать доску перед task search или solve-task.
 - **Вызов:** `/rag-reviewer:sync-tasks`.
-- **Нужно:** запустите `reviewer init`, настройте provider по `docs/board-providers.md`, затем
+- **Нужно:** запустите `reviewer init --advanced`, настройте provider по `docs/board-providers.md`, затем
   проверьте его через `reviewer check`.
 - **Чтение/запись:** вызывает идемпотентный server-side `sync_board` в repo mode с canonical repo и
   tracked branch. Effective policy резолвит сервер; клиент её не реконструирует. Tool читает board

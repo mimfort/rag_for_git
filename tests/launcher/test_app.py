@@ -6,6 +6,7 @@ import subprocess
 import sys
 import threading
 import time
+from dataclasses import replace
 from io import StringIO
 
 import click
@@ -744,6 +745,57 @@ def test_advanced_install_fields_scroll_in_24_by_80_terminal():
     assert output.dry_run_toggled.is_set(), rendered
     for name in ("path", "pin", "dry_run", "dry_run_toggled"):
         assert "Расширенные параметры: показаны" in output.focused_frames[name]
+
+
+def test_palette_scrolls_to_selected_command_in_small_terminal():
+    class SmallPaletteOutput(_SmallTerminalOutput):
+        def get_size(self) -> Size:
+            return Size(rows=14, columns=60)
+
+        def flush(self) -> None:
+            super().flush()
+            if self.frames and "› command-17" in self.frames[-1]:
+                selected_visible.set()
+
+    selected_visible = threading.Event()
+    output = SmallPaletteOutput()
+    commands = tuple(
+        replace(_spec("check"), path=(f"command-{index:02d}",)) for index in range(25)
+    )
+
+    def sender(pipe) -> None:
+        pipe.send_bytes(b"\x1b[B" * 17)
+        try:
+            if selected_visible.wait(2):
+                pipe.send_bytes(b"\r\r\r")
+        finally:
+            pipe.send_bytes(b"\x03")
+
+    with create_pipe_input() as pipe:
+        thread = threading.Thread(target=sender, args=(pipe,))
+        thread.start()
+        result = run_launcher(commands=commands, input=pipe, output=output)
+        thread.join()
+
+    assert selected_visible.is_set(), "\n".join(output.frames)
+    assert result.argv == ("command-17",)
+
+
+def test_f3_reaches_preview_from_a_form_with_only_flags():
+    @click.group()
+    def root():
+        pass
+
+    @root.command()
+    @click.option("--dry-run", is_flag=True)
+    def setup(dry_run):
+        pass
+
+    with create_pipe_input() as pipe:
+        pipe.send_bytes(b"\r\r\x1bOR\r\x03")
+        result = run_launcher(commands=build_catalog(root), input=pipe, output=DummyOutput())
+
+    assert result.argv == ("setup", "--dry-run")
 
 
 def test_advanced_install_has_compact_fallback_without_scrollable_pane(monkeypatch):
