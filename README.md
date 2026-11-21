@@ -320,6 +320,8 @@ Run `reviewer` without arguments to open the command menu. Search accepts comman
 such as `reviewer init --advanced`. Set launch options in the command form. Left and Right cycle
 through supported choices, and F3 opens the preview.
 
+Use Up and Down or Page Up and Page Down to scroll long commands in the preview.
+
 `reviewer init` asks for missing keys and previews the proposed configuration before saving.
 When creating a repository profile, use the edit-branches action in the preview to adjust the
 plan while keeping the keys you entered.

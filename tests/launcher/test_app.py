@@ -376,6 +376,46 @@ def test_regular_command_returns_argv_only_after_preview_confirm():
     assert result == LauncherResult(("status",), 0)
 
 
+def test_long_command_preview_scrolls_in_small_terminal():
+    query = " ".join(["preview-begin", *[f"queryword{i:03}" for i in range(100)], "preview-tail"])
+    with create_pipe_input() as pipe:
+        class PreviewOutput(_SmallTerminalOutput):
+            preview_frame = ""
+            scrolled_frame = ""
+
+            def get_size(self) -> Size:
+                return Size(rows=18, columns=66)
+
+            def flush(self) -> None:
+                super().flush()
+                if not self.frames:
+                    return
+                loop = get_app().loop
+                if loop is None:
+                    return
+                if len(self.frames) == 1:
+                    loop.call_later(5, pipe.send_bytes, b"\x03")
+                frame = self.frames[-1]
+                if "Проверьте команду перед запуском" not in frame:
+                    return
+                if "preview-begin" in frame and not self.preview_frame:
+                    self.preview_frame = frame
+                    loop.call_soon(pipe.send_bytes, b"\x1b[6~")
+                if "preview-tail" in frame and not self.scrolled_frame:
+                    self.scrolled_frame = frame
+                    loop.call_soon(pipe.send_bytes, b"\r")
+
+        output = PreviewOutput()
+        pipe.send_bytes(b"\r" + query.encode() + b"\x1bOR")
+        result = run_launcher(commands=(_spec("search"),), input=pipe, output=output)
+
+    assert output.preview_frame, output.frames
+    assert "preview-tail" not in output.preview_frame
+    assert output.scrolled_frame, output.frames
+    assert "Enter — подтвердить" in output.scrolled_frame
+    assert result == LauncherResult(("search", query), 0)
+
+
 def test_required_error_is_rendered_and_removed_after_field_edit():
     output = _TrackingOutput()
 
