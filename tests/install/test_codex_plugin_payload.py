@@ -1,6 +1,8 @@
 import hashlib
 import json
+import os
 import subprocess
+import sys
 from pathlib import Path, PurePosixPath
 
 import pytest
@@ -11,6 +13,7 @@ from reviewer.install_codex import (
     project_manifest_from,
     sync_plugin_metadata,
 )
+from reviewer.metrics.client_usage import measure_usage
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -272,6 +275,48 @@ def test_check_reports_missing_claude_manifest(tmp_path):
     (repo / "plugin" / ".claude-plugin" / "plugin.json").unlink()
 
     assert "Claude manifest is missing" in sync_plugin_metadata(repo, check=True)
+
+
+@pytest.mark.parametrize(
+    "command_key",
+    [
+        pytest.param("command", marks=pytest.mark.skipif(os.name == "nt", reason="POSIX command")),
+        "commandWindows",
+    ],
+)
+@pytest.mark.parametrize("plugin_root", [ROOT, ROOT / "plugin"])
+def test_registered_usage_hook_records_only_reported_counters(tmp_path, plugin_root, command_key):
+    manifest = json.loads((plugin_root / ".codex-plugin/plugin.json").read_text())
+    source = next(path for path in manifest["hooks"] if path.endswith("/codex-usage.json"))
+    config = json.loads((plugin_root / source).read_text())
+    command = config["hooks"]["PostModelRequest"][0]["hooks"][0][command_key]
+    request = {
+        "hook_event_name": "PostModelRequest", "status": "completed", "model": "gpt-6-luna",
+        "session_id": "test-session", "turn_id": "test-turn", "transcript_path": "/private/file",
+        "error": "provider details", "token_usage": {
+            "input_tokens": 50, "cached_input_tokens": 10, "output_tokens": 6,
+            "extra_field": "private data",
+        },
+    }
+    output = tmp_path / "usage.jsonl"
+    result = subprocess.run(
+        command, shell=True, capture_output=True, text=True, input=json.dumps(request),
+        env={
+            **os.environ,
+            "PATH": os.pathsep.join((str(Path(sys.executable).parent), os.environ.get("PATH", ""))),
+            "PLUGIN_ROOT": str(plugin_root),
+            "REVIEWER_CODEX_USAGE_FILE": str(output),
+        },
+        check=True,
+    )
+
+    assert not result.stdout
+    content = output.read_text()
+    assert "private" not in content and "provider details" not in content
+    assert json.loads(content)["turn_id"] == "test-turn"
+    assert measure_usage([content], "codex-hook")["usage"] == {
+        "fresh_in": 40, "output": 6, "cache_write": 0, "cache_read": 10,
+    }
 
 
 def test_repo_codex_payload_is_synchronized():

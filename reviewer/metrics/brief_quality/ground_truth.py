@@ -5,11 +5,13 @@ Git вызывается через инъектируемый callable (GitRunn
 """
 from __future__ import annotations
 
+import os
 import pathlib
 import re
 import subprocess
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Callable, NamedTuple
+from typing import NamedTuple
 
 GitRunner = Callable[[list], str]
 
@@ -60,12 +62,10 @@ def git_runner(repo_root: pathlib.Path) -> GitRunner:
     """GitRunner поверх subprocess для реального прогона."""
 
     def run(args: list) -> str:
-        result = subprocess.run(
-            ["git", *args], cwd=repo_root, capture_output=True, text=True
-        )
+        result = subprocess.run(["git", *args], cwd=repo_root, capture_output=True, check=False)
         if result.returncode != 0:
-            raise GitError(result.stderr.strip() or f"git {' '.join(args)}")
-        return result.stdout
+            raise GitError(os.fsdecode(result.stderr).strip() or f"git {' '.join(args)}")
+        return os.fsdecode(result.stdout)
 
     return run
 
@@ -101,23 +101,21 @@ def changed_files(sha: str, run_git: GitRunner) -> set:
 def changed_status(sha: str, run_git: GitRunner) -> dict:
     """Статусы файлов PR-мержа: путь → added|modified|removed|renamed|copied.
 
-    Источник — `git diff --name-status <sha>^1 <sha>`; для переименования и
+    Источник — `git diff --name-status -z <sha>^1 <sha>`; для переименования и
     копирования берётся НОВЫЙ путь, как и в `vcs.get_changed_files`, чтобы
-    офлайн и онлайн считали одним множеством.
+    офлайн и онлайн считали одним множеством. При сбое Git выбрасывается GitError.
     """
     letters = {"A": "added", "M": "modified", "D": "removed",
                "R": "renamed", "C": "copied", "T": "modified"}
-    try:
-        out = run_git(["diff", "--name-status", f"{sha}^1", sha])
-    except GitError:
-        return {}
+    out = run_git(["diff", "--name-status", "-z", f"{sha}^1", sha])
+    fields = iter(out.split("\0")[:-1])
     result: dict[str, str] = {}
-    for line in out.splitlines():
-        parts = line.split("\t")
-        if len(parts) < 2:
-            continue
-        status = letters.get(parts[0][0], "modified")
-        result[parts[-1]] = status
+    for status_field in fields:
+        kind = status_field[0]
+        path = next(fields)
+        if kind in {"R", "C"}:
+            path = next(fields)
+        result[path] = letters.get(kind, "modified")
     return result
 
 
