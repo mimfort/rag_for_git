@@ -37,7 +37,7 @@ from reviewer.mcp.schemas import (
 )
 from reviewer.mcp.session_serde import from_payload, to_payload
 from reviewer.mcp.session_store import SessionStore
-from reviewer.retrieval.retriever import ContextPack
+from reviewer.retrieval.retriever import ContextPack, SearchUnavailableError
 from reviewer.services.gc import purge_orphaned_overlays
 from reviewer.storage_health import is_embedder_unavailable, is_storage_unavailable
 from reviewer.services.review_service import (
@@ -509,7 +509,8 @@ class MCPReviewService:
         return self._invoke_tool(repo, pr, "get_changed_file_diff", {"path": path})
 
     def get_impact(self, repo: str, pr: int) -> str:
-        """Радиус поражения PR: изменённые сигнатуры → вызывающие вне диффа (impact-анализ)."""
+        """Радиус поражения: изменённые сигнатуры → обоснованные кандидаты вызывающих
+        внутри и вне изменённых файлов PR, плюс явные пробелы покрытия индекса."""
         return self._invoke_tool(repo, pr, "get_impact", {})
 
     def index_task(self, task: dict) -> dict:
@@ -1893,9 +1894,16 @@ class MCPReviewService:
             pack = self.components.retriever.search_base(
                 repo, query, limits=cl.search_codebase, hops=cl.graph.hops,
                 ceiling_override=top_k, branch=resolved, include_tests=include_tests)
+        except SearchUnavailableError as error:
+            log.warning("search_codebase: обязательный компонент недоступен", exc_info=True)
+            messages = {
+                "embeddings": "(поиск недоступен — embeddings)",
+                "storage": "(поиск недоступен — storage)",
+            }
+            return messages.get(error.component, "(поиск недоступен — внутренняя ошибка)")
         except Exception:
-            log.warning("search_codebase: сбой поиска", exc_info=True)
-            return "(ничего не найдено)"
+            log.warning("search_codebase: внутренний сбой поиска", exc_info=True)
+            return "(поиск недоступен — внутренняя ошибка)"
         return pack.as_context(line_numbers=True) or "(ничего не найдено)"
 
     def _search_codebase_multi(self, repo: str, queries: list[str],

@@ -16,6 +16,7 @@ from reviewer.config.settings import Settings
 from reviewer.mcp.service import MCPReviewService
 from reviewer.policy.context_limits import CodebaseLimits
 from reviewer.retrieval.augment import AugmentResult
+from reviewer.retrieval.retriever import SearchUnavailableError
 from reviewer.tasks.store import TaskHit
 from reviewer.vcs.base import (
     ChangedFile,
@@ -688,13 +689,45 @@ def test_search_codebase_delegates_to_retriever() -> None:
         line_numbers=True)
 
 
-def test_search_codebase_empty_or_error_returns_note() -> None:
-    """Пустой результат или сбой → '(ничего не найдено)'."""
+def test_search_codebase_empty_returns_not_found_note() -> None:
     svc = _make_mcp_service()
     svc.components.retriever.search_base.return_value.as_context.return_value = ""
+
     assert svc.search_codebase("a/b", "x") == "(ничего не найдено)"
-    svc.components.retriever.search_base.side_effect = RuntimeError("pg down")
-    assert svc.search_codebase("a/b", "x") == "(ничего не найдено)"
+
+
+@pytest.mark.parametrize(
+    ("error", "expected"),
+    [
+        (
+            SearchUnavailableError("embeddings"),
+            "(поиск недоступен — embeddings)",
+        ),
+        (
+            SearchUnavailableError("storage"),
+            "(поиск недоступен — storage)",
+        ),
+        (
+            SearchUnavailableError("future-component"),
+            "(поиск недоступен — внутренняя ошибка)",
+        ),
+        (
+            RuntimeError("postgresql://user:secret@host/db"),
+            "(поиск недоступен — внутренняя ошибка)",
+        ),
+    ],
+)
+def test_search_codebase_maps_failures_to_safe_notes(
+    error: Exception,
+    expected: str,
+) -> None:
+    svc = _make_mcp_service()
+    svc.components.retriever.search_base.side_effect = error
+
+    out = svc.search_codebase("a/b", "x")
+
+    assert out == expected
+    assert "secret" not in out
 
 
 def test_search_codebase_uses_explicit_repo() -> None:
