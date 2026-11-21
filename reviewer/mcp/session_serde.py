@@ -9,6 +9,7 @@ from __future__ import annotations
 from dataclasses import asdict
 
 from reviewer.agent.state import ReviewUnit
+from reviewer.metrics.brief_quality.config import BriefQualityConfig
 from reviewer.policy.context_limits import ContextLimits
 from reviewer.policy.policy import ReviewPolicy
 from reviewer.services.risk_paths import RiskPath
@@ -53,10 +54,18 @@ def _policy_from_payload(d: dict) -> ReviewPolicy:
     """
     fields = dict(d)
     context_limits = fields.pop("context_limits", None)
+    brief_quality = fields.pop("brief_quality", None)
     policy = ReviewPolicy(**fields)
     if context_limits is not None:
         policy.context_limits = ContextLimits.from_review_yaml(
             {"context_limits": context_limits})
+    if brief_quality is not None:
+        policy.brief_quality = BriefQualityConfig(
+            core_paths=tuple(brief_quality["core_paths"]),
+            key_pattern=brief_quality["key_pattern"],
+            briefs_dir=brief_quality["briefs_dir"],
+            configured=brief_quality["configured"],
+        )
     return policy
 
 

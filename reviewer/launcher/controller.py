@@ -76,7 +76,9 @@ class LauncherController:
         if self.screen is not Screen.PALETTE:
             return
         self.query = query
-        normalized = query.strip().casefold()
+        normalized = " ".join(query.casefold().split())
+        if normalized == "reviewer" or normalized.startswith("reviewer "):
+            normalized = normalized.partition(" ")[2]
         ranked = [
             (self._match_rank(command, normalized), position, command)
             for position, command in enumerate(self.commands)
