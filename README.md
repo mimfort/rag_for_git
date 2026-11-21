@@ -316,14 +316,16 @@ a New Chat or new CLI session. In an IDE, also use Reload Window.
 
 ### Required services and credentials
 
-Run `reviewer` without arguments to open the command menu. Search accepts full commands such as
-`reviewer init`. In a command form, Left and Right cycle through supported choices. F3 opens the
-preview.
+Run `reviewer` without arguments to open the command menu. Search accepts command names and flags,
+such as `reviewer init --advanced`. Set launch options in the command form. Left and Right cycle
+through supported choices, and F3 opens the preview.
 
 `reviewer init` asks for missing keys and previews the proposed configuration before saving.
 When creating a repository profile, use the edit-branches action in the preview to adjust the
 plan while keeping the keys you entered.
 Use `reviewer init --advanced` to choose providers or configure stores and task boards.
+Choose a task board provider by number. The Postgres connection string is entered with hidden
+input. Press Enter to keep the saved value or use the default.
 `reviewer init --dry-run` prints the plan without writing. Use `reviewer check --env-file PATH`
 to validate a separate setup profile. Default env file resolution
 order is `REVIEWER_ENV_FILE` → `$XDG_CONFIG_HOME/rag-reviewer/.env` → `./.env`.
