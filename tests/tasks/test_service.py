@@ -1,3 +1,6 @@
+import pytest
+from neo4j.exceptions import ServiceUnavailable
+
 from reviewer.tasks.graph import PRRef
 from reviewer.tasks.service import TaskService
 from reviewer.tasks.store import build_task_text, task_content_hash
@@ -313,6 +316,24 @@ def test_search_tasks_shows_rank_and_precise_score():
 def test_get_task_context_graph_none():
     out = TaskService(_FakeStore(), None, _FakeEmbedder()).get_task_context("ID-1")
     assert out == "(task graph unavailable)"
+
+
+def test_get_task_context_reraises_storage_failure():
+    """PRI-276: недоступность графа обязана дойти до классификатора, а не стать нотой."""
+    class DownGraph(_FakeGraph):
+        def task_context(self, key, project=""):
+            raise ServiceUnavailable("no routing servers")
+
+    svc = TaskService(_FakeStore(), DownGraph(context={}), _FakeEmbedder())
+    with pytest.raises(ServiceUnavailable):
+        svc.get_task_context("ID-1")
+
+
+def test_get_task_context_still_swallows_other_failures():
+    """Прочий сбой обхода — по-прежнему нота: меняется поведение только для хранилища."""
+    svc = TaskService(_FakeStore(), _FakeGraph(context={}, raise_on={"task_context"}),
+                      _FakeEmbedder())
+    assert svc.get_task_context("ID-1") == "(task graph unavailable)"
 
 
 def test_get_task_context_not_found():

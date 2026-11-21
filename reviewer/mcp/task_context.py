@@ -12,10 +12,15 @@
 from __future__ import annotations
 
 import logging
+from functools import cache
 
 from reviewer.mcp.subqueries import build_subqueries
 from reviewer.storage_health import (
-    CAUSE_STORAGE_UNAVAILABLE, CAUSE_UNKNOWN, is_storage_unavailable, storage_remedy,
+    BACKEND_GRAPH, BACKEND_POSTGRES, CAUSE_EMBEDDER_UNAVAILABLE,
+    CAUSE_STORAGE_UNAVAILABLE, CAUSE_UNKNOWN, DETAIL_AUTH_FAILED,
+    DETAIL_MISSING_DATABASE, DETAIL_POOL_EXHAUSTED, SOURCE_EMBEDDER,
+    StorageDiagnosis, classify_storage_failure, is_embedder_unavailable,
+    is_storage_unavailable, storage_backend,
 )
 
 log = logging.getLogger(__name__)
@@ -26,63 +31,194 @@ SECTIONS = (
 )
 
 STORAGE_REASON = "хранилище не отвечает"
-SKIPPED_REASON = "пропущено: хранилище не отвечает"
+SKIPPED_REASON = f"пропущено: {STORAGE_REASON}"
+
+EMBEDDER_REASON = "эмбеддер не отвечает"
+EMBEDDER_SKIPPED_REASON = f"пропущено: {EMBEDDER_REASON}"
+
+# Базовая формулировка по источнику: у эмбеддера своя, потому что «хранилище
+# не отвечает» про него — неправда, а именно эта неправда и была дефектом.
+_SOURCE_REASONS = {
+    SOURCE_EMBEDDER: (EMBEDDER_REASON, EMBEDDER_SKIPPED_REASON),
+}
+_DEFAULT_REASONS = (STORAGE_REASON, SKIPPED_REASON)
+
+# Секции, которым нужен эмбеддер. Разметка явная, а не выведенная: preflight,
+# task_board, warm_board, task и related.linked его не трогают вовсе, и замыкать
+# их отказом Voyage значило бы терять данные, которые собрались бы без него.
+# `subsystems` входит сюда, хотя эмбеддер ей нужен не всегда:
+# `get_subsystem_summaries` зовёт `embed_query` только когда сводок больше
+# `summary_topk_threshold` (дефолт 20), а ниже порога отдаёт их все без Voyage.
+# Размен сознательный. Исключить секцию значило бы заплатить ВТОРОЙ отказ
+# эмбеддера на каждом репозитории крупнее порога — ровно ту цену, ради отказа
+# от которой замыкание и заведено. Цена обратного выбора уже: репозиторий с
+# 20 и менее кластерами теряет неранжированный список, который собрался бы.
+_EMBEDDER_SECTIONS = frozenset({
+    "related.similar", "subsystems", "code", "test_exemplars",
+})
+
+# Формулировки распознанных классов. Живут здесь, а не в storage_health: их
+# читает LLM и вставляет в бриф, а у CLI свой адресат и свои строки.
+DETAIL_REASONS = {
+    DETAIL_AUTH_FAILED: "хранилище отвергло учётные данные",
+    DETAIL_MISSING_DATABASE: "базы данных не существует",
+    DETAIL_POOL_EXHAUSTED: "свободных соединений в пуле не осталось",
+}
 
 
 def gap(section: str, reason: str, *, cause: str = CAUSE_UNKNOWN,
-        remedy: str | None = None) -> dict:
+        cause_detail: str | None = None, remedy: str | None = None) -> dict:
     """Структурная запись о пробеле: секция, причина и её класс, без секретов.
 
     `cause` — машиночитаемый класс причины: скилл и тесты ветвятся по нему, а не
-    по прозе `reason`. `remedy` — команда-лекарство, когда она есть и уместна.
+    по прозе `reason`. `cause_detail` — уточнение внутри класса, когда оно
+    установлено (PRI-277). `remedy` — команда-лекарство, когда она есть и уместна.
     """
-    return {"section": section, "reason": reason, "cause": cause, "remedy": remedy}
+    return {"section": section, "reason": reason, "cause": cause,
+            "cause_detail": cause_detail, "remedy": remedy}
 
 
 class _StorageState:
-    """Взведён ли флаг «хранилище не отвечает» и какое лекарство называть.
+    """Какие хранилища не отвечают и каков вердикт по первому сбою каждого.
 
-    Флаг живёт на один вызов `build_task_context`: первая же недоступность
-    хранилища отменяет остальные store-секции, иначе каждая добавила бы к
-    времени ответа собственный таймаут пула (30 с × 8 секций).
+    Флаги живут на один вызов `build_task_context`: первая же недоступность
+    хранилища отменяет остальные секции ЭТОГО хранилища, иначе каждая добавила
+    бы к времени ответа собственный таймаут пула (30 с × 8 секций).
+
+    Множество, а не один флаг (PRI-276): у графа и Postgres разные секции, и
+    отказ Neo4j не должен отменять поиск по коду. Вердикт хранится по бэкенду —
+    у неверного пароля Postgres и остановленного Neo4j причины разные, и один
+    вердикт на двоих приписал бы одному чужое лекарство.
+
+    Вердикт считается лениво, при первом реальном сбое: до PRI-277 лекарство
+    фиксировалось на старте, когда исключения ещё нет, и потому не могло
+    зависеть от причины.
+
+    Источник, а не только хранилище (PRI-272): эмбеддер отказывает независимо
+    от Postgres и Neo4j, и его отказ обязан отменять ровно те секции, которым
+    он нужен. Класс причины хранится рядом с вердиктом — «лежит хранилище» и
+    «не отвечает эмбеддер» это разные классы, а не разные детали одного.
     """
 
-    def __init__(self, remedy: str | None) -> None:
-        self.remedy = remedy
-        self.down = False
+    def __init__(self, endpoints: tuple[str, ...]) -> None:
+        self.endpoints = endpoints
+        self.down: set[str] = set()
+        self.diagnoses: dict[str, StorageDiagnosis] = {}
+        self.causes: dict[str, str] = {}
+
+    def mark(self, source: str, exc: BaseException | None = None) -> StorageDiagnosis:
+        """Взвести флаг источника; вердикт считается по его первому сбою.
+
+        `exc` необязателен: недоступность эмбеддера может прийти не броском, а
+        структурным полем свода синка (секция `task`), и тогда классифицировать
+        нечего — класс известен из самого источника.
+        """
+        self.down.add(source)
+        if source not in self.diagnoses:
+            if source == SOURCE_EMBEDDER:
+                self.diagnoses[source] = StorageDiagnosis(None, None, None)
+                self.causes[source] = CAUSE_EMBEDDER_UNAVAILABLE
+            else:
+                self.diagnoses[source] = (
+                    classify_storage_failure(exc, *self.endpoints)
+                    if exc is not None else StorageDiagnosis(None, None, None))
+                self.causes[source] = CAUSE_STORAGE_UNAVAILABLE
+        return self.diagnoses[source]
+
+    def cause_of(self, source: str) -> str:
+        """Класс причины по источнику; `unknown`, пока источник не помечен."""
+        return self.causes.get(source, CAUSE_UNKNOWN)
+
+    def is_down(self, source: str) -> bool:
+        return source in self.down
 
 
-def _storage_gap(payload: dict, section: str, reason: str, state: _StorageState) -> None:
-    """Записать в gaps пробел, вызванный недоступностью хранилища.
+def _source_gap(payload: dict, section: str, state: _StorageState, source: str,
+                *, skipped: bool) -> None:
+    """Записать в gaps пробел, вызванный недоступностью источника.
 
-    Общая точка для трёх мест, различающихся только `reason`: skip- и except-
-    ветки `_safe`, а также `elif warm_board and not board` в build_task_context.
+    Общая точка для трёх мест, различающихся только тем, пропущена секция или
+    реально упала: skip- и except-ветки `_safe`, а также ветка
+    `elif warm_board and not board` в build_task_context. Вердикт, класс и
+    базовая формулировка берутся по источнику секции, а не общие на вызов.
     """
-    payload["gaps"].append(gap(section, reason, cause=CAUSE_STORAGE_UNAVAILABLE,
-                               remedy=state.remedy))
+    diagnosis = state.diagnoses.get(source)
+    base, skipped_base = _SOURCE_REASONS.get(source, _DEFAULT_REASONS)
+    reason = skipped_base if skipped else base
+    payload["gaps"].append(gap(
+        section, _reason_with_detail(reason, diagnosis),
+        cause=state.cause_of(source),
+        cause_detail=diagnosis.detail if diagnosis is not None else None,
+        remedy=diagnosis.remedy if diagnosis is not None else None))
+
+
+def _reason_with_detail(base: str, diagnosis: StorageDiagnosis | None) -> str:
+    """Причина с учётом вердикта: класс замещает общую формулировку, отрывок дополняет.
+
+    Подстановка работает и для `SKIPPED_REASON`, потому что тот собран из
+    `STORAGE_REASON`: «пропущено: хранилище не отвечает» превращается в
+    «пропущено: базы данных не существует», а не теряет отметку о пропуске.
+    """
+    if diagnosis is None:
+        return base
+    if diagnosis.detail:
+        return base.replace(STORAGE_REASON, DETAIL_REASONS[diagnosis.detail])
+    if diagnosis.redacted:
+        return f"{base}: {diagnosis.redacted}"
+    return base
 
 
 def _safe(payload: dict, section: str, produce, default, reason: str,
-          state: _StorageState):
+          state: _StorageState, backend: str = BACKEND_POSTGRES):
     """Собрать секцию fail-open: сбой → default + запись в gaps.
 
-    При взведённом `state.down` источник не вызывается вовсе — секция получает
-    свой default и запись о пропуске, поэтому payload по-прежнему содержит все
-    ключи `SECTIONS`.
+    `backend` — хранилище секции; дефолт Postgres, потому что своё хранилище он
+    у всех секций, кроме `related.linked`. При взведённом флаге ЭТОГО бэкенда
+    источник не вызывается вовсе — секция получает свой default и запись
+    о пропуске, поэтому payload по-прежнему содержит все ключи `SECTIONS`.
+
+    Какой бэкенд упал, решает тип исключения, а не разметка секции: она отвечает
+    на другой вопрос — кого пропускать.
     """
-    if state.down:
-        _storage_gap(payload, section, SKIPPED_REASON, state)
+    if section in _EMBEDDER_SECTIONS and state.is_down(SOURCE_EMBEDDER):
+        _source_gap(payload, section, state, SOURCE_EMBEDDER, skipped=True)
+        return default
+    if state.is_down(backend):
+        _source_gap(payload, section, state, backend, skipped=True)
         return default
     try:
         return produce()
     except Exception as exc:  # noqa: BLE001 — источник секции недоступен, это штатный случай
         log.warning("prepare_task_context: секция %s недоступна", section, exc_info=True)
-        if is_storage_unavailable(exc):
-            state.down = True
-            _storage_gap(payload, section, STORAGE_REASON, state)
+        if is_embedder_unavailable(exc):
+            state.mark(SOURCE_EMBEDDER, exc)
+            _source_gap(payload, section, state, SOURCE_EMBEDDER, skipped=False)
+        elif is_storage_unavailable(exc):
+            failed = storage_backend(exc) or backend
+            state.mark(failed, exc)
+            _source_gap(payload, section, state, failed, skipped=False)
         else:
             payload["gaps"].append(gap(section, reason))
         return default
+
+
+def _absorb_graph_error(preflight, state: _StorageState):
+    """Взвести флаг графа по ошибке, которую preflight проглотил внутри себя.
+
+    Preflight обязан остаться собранной секцией (`graph_nodes=None` — валидная
+    деградация, на ней стоит CLI `status`), поэтому исключение приходит не
+    броском, а ключом словаря. Ключ извлекается: payload читает LLM, объекту
+    исключения там места нет.
+
+    Упавший preflight (None вместо словаря) и провайдер без этого ключа проходят
+    функцию без изменений.
+    """
+    if not isinstance(preflight, dict):
+        return preflight
+    error = preflight.pop("graph_error", None)
+    if error is not None and is_storage_unavailable(error):
+        state.mark(BACKEND_GRAPH, error)
+    return preflight
 
 
 def _query(task: dict | None, key: str) -> str:
@@ -99,34 +235,35 @@ def _query(task: dict | None, key: str) -> str:
     return f"{title}. {head}".strip(". ").strip() or key
 
 
-def _queries(task: dict | None, key: str) -> list[str]:
+def _queries(task: dict | None, key: str, *,
+             excluded_criteria: list[str] | None = None) -> list[str]:
     """Набор подзапросов секции code: продакшн-запрос плюс структура задачи.
 
     Первый элемент — ровно _query(task, key), поэтому на задаче без списков
     набор вырождается в один запрос и ретрив ведёт себя как раньше.
     """
-    return build_subqueries(task, _query(task, key))
+    return build_subqueries(task, _query(task, key), excluded_criteria=excluded_criteria)
 
 
-def _test_queries(task: dict | None, key: str) -> list[str]:
-    """Те же подзапросы, но про тесты области — префиксом "как тестируется: "."""
-    return [f"как тестируется: {query}" for query in _queries(task, key)]
+def _test_queries(queries: list[str]) -> list[str]:
+    """Префикс тестового поиска для каждого подзапроса задачи."""
+    return [f"как тестируется: {query}" for query in queries]
 
 
-def _remedy(deps) -> str | None:
-    """Лекарство по эндпоинтам хранилищ, если провайдер умеет их назвать.
+def _endpoints(deps) -> tuple[str, ...]:
+    """Эндпоинты хранилищ, если провайдер умеет их назвать.
 
     Читается через `getattr`, как `augment_gaps`: модуль намеренно не знает про
     Settings, а старый провайдер без этого метода обязан продолжать работать.
     """
     getter = getattr(deps, "storage_endpoints", None)
     if not callable(getter):
-        return None
+        return ()
     try:
-        return storage_remedy(*(getter() or ()))
+        return tuple(getter() or ())
     except Exception:  # noqa: BLE001 — источник эндпоинтов недоступен, это не повод падать
         log.warning("prepare_task_context: эндпоинты хранилищ недоступны", exc_info=True)
-        return None
+        return ()
 
 
 def build_task_context(deps, *, repo: str, key: str, branch: str,
@@ -135,11 +272,12 @@ def build_task_context(deps, *, repo: str, key: str, branch: str,
     payload: dict = {section: None for section in SECTIONS}
     payload["gaps"] = []
     payload["warnings"] = []
-    state = _StorageState(_remedy(deps))
+    state = _StorageState(_endpoints(deps))
 
-    payload["preflight"] = _safe(
-        payload, "preflight", lambda: deps.preflight(repo, branch), None,
-        "статус индекса недоступен", state)
+    payload["preflight"] = _absorb_graph_error(
+        _safe(payload, "preflight", lambda: deps.preflight(repo, branch), None,
+              "статус индекса недоступен", state),
+        state)
     board = _safe(
         payload, "task_board", lambda: deps.task_board(repo, branch), None,
         "конфиг доски не разрешён", state)
@@ -152,9 +290,13 @@ def build_task_context(deps, *, repo: str, key: str, branch: str,
             "прогрев доски не выполнен", state)
         if result is not None:
             payload["warnings"].append({"warm_board": result})
+        if isinstance(result, dict) and result.get("embedder_failed"):
+            # Синк уже назвал класс структурно; исключения здесь нет и быть не
+            # может — index_batch отработал его сам, отметив задачи к повтору.
+            state.mark(SOURCE_EMBEDDER)
     elif warm_board and not board:
-        if state.down:
-            _storage_gap(payload, "warm_board", SKIPPED_REASON, state)
+        if state.is_down(BACKEND_POSTGRES):
+            _source_gap(payload, "warm_board", state, BACKEND_POSTGRES, skipped=True)
         else:
             payload["gaps"].append(gap("warm_board", "доска не настроена"))
 
@@ -162,27 +304,44 @@ def build_task_context(deps, *, repo: str, key: str, branch: str,
                  "задача не прочитана из стора", state)
     payload["task"] = task
     if task is None and not any(g["section"] == "task" for g in payload["gaps"]):
-        payload["gaps"].append(gap("task", "задачи нет в сторе"))
+        if state.is_down(SOURCE_EMBEDDER):
+            # «Задачи нет в сторе» указывает на доску, а виноват эмбеддер: задача
+            # на доске есть, её не удалось проиндексировать.
+            payload["gaps"].append(gap(
+                "task", f"задача не проиндексирована: {EMBEDDER_REASON}",
+                cause=state.cause_of(SOURCE_EMBEDDER)))
+        else:
+            payload["gaps"].append(gap("task", "задачи нет в сторе"))
 
     query = _query(task, key)
     payload["related"] = {
         "linked": _safe(payload, "related.linked",
                         lambda: deps.linked(key, project), "", "граф задач недоступен",
-                        state),
+                        state, BACKEND_GRAPH),
         "similar": _safe(payload, "related.similar",
-                         lambda: deps.similar(query, project), "", "корпус задач недоступен",
-                         state),
+                         lambda: deps.similar(query, project, task=task), "",
+                         "корпус задач недоступен", state),
     }
     payload["subsystems"] = _safe(
         payload, "subsystems", lambda: deps.subsystems(repo, branch, query), None,
         "сводки подсистем недоступны", state)
+    excluded: list[str] = []
+
+    @cache
+    def queries() -> list[str]:
+        return build_subqueries(task, query, excluded_criteria=excluded)
+
     payload["code"] = _safe(
-        payload, "code", lambda: deps.code(repo, branch, _queries(task, key)), "",
+        payload, "code", lambda: deps.code(repo, branch, queries()), "",
         "поиск по коду недоступен", state)
     for reason in getattr(deps, "augment_gaps", []) or []:
         payload["gaps"].append(gap("code.augment", reason))
     payload["test_exemplars"] = _safe(
         payload, "test_exemplars",
-        lambda: deps.test_exemplars(repo, branch, _test_queries(task, key)), "",
+        lambda: deps.test_exemplars(repo, branch, _test_queries(queries())), "",
         "поиск по тестам недоступен", state)
+    if excluded:
+        payload["warnings"].append({"subqueries": {
+            "excluded_criteria": excluded, "reason": "subquery_budget",
+        }})
     return payload

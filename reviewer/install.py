@@ -16,6 +16,7 @@ import json
 import os
 import platform
 import shutil
+import tempfile
 import tomllib
 from dataclasses import dataclass, field as _field
 from pathlib import Path, PureWindowsPath
@@ -264,6 +265,7 @@ WIZARD_GROUPS: list[EnvGroup] = [
                 key="PG_DSN",
                 prompt_text="PG_DSN",
                 default="postgresql://reviewer:reviewer@localhost:5433/reviewer",
+                secret=True,
             ),
             EnvField(key="NEO4J_URI", prompt_text="NEO4J_URI", default="neo4j://localhost:7687"),
             EnvField(key="NEO4J_USER", prompt_text="NEO4J_USER", default="neo4j"),
@@ -315,6 +317,23 @@ def read_env(path: Path) -> dict[str, str]:
             key, _, value = line.partition("=")
             result[key.strip()] = value.strip()
     return result
+
+
+def write_env(path: Path, content: str) -> None:
+    """Publish a private env file atomically, following a user-configured symlink."""
+    destination = path.resolve()
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    staged = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            "w", encoding="utf-8", dir=destination.parent, delete=False,
+        ) as stream:
+            staged = Path(stream.name)
+            stream.write(content)
+        staged.replace(destination)
+    finally:
+        if staged is not None:
+            staged.unlink(missing_ok=True)
 
 
 _GROUP_HEADERS: dict[str, str] = {
@@ -507,13 +526,15 @@ def prompt_groups(
 
             if field.secret:
                 if cur:
-                    label = f"{field.prompt_text} (уже задан — Enter чтобы оставить)"
-                    val = click.prompt(label, default="", hide_input=True, show_default=False)
-                    values[field.key] = val if val else cur
+                    suffix = " (уже задан — Enter чтобы оставить)"
+                elif effective_default:
+                    suffix = " (Enter — значение по умолчанию)"
                 else:
-                    val = click.prompt(field.prompt_text, default="", hide_input=True,
-                                       show_default=False)
-                    values[field.key] = val
+                    suffix = ""
+                value = click.prompt(
+                    field.prompt_text + suffix, default="", hide_input=True, show_default=False,
+                )
+                values[field.key] = value or effective_default
             else:
                 values[field.key] = click.prompt(field.prompt_text, default=effective_default)
 

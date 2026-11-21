@@ -27,6 +27,10 @@ class GraphLimits:
     callers_topk: int = 25
 
 
+def valid_git_file_limit(value: object) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and 0 <= value <= 3
+
+
 @dataclass(frozen=True)
 class CodeSectionLimits:
     """Бюджет секции code контекста задачи (PRI-256). Единица бюджета — файл.
@@ -59,6 +63,11 @@ class CodeSectionLimits:
     max_chunks_per_file: int = 1  # чанков на один файл
     chars_per_file: int = 975    # доля символов на файл (операционный бюджет — на исходный текст блока; пол PRI-259)
     max_augmented_files: int = 3  # сколько файлов секции может занять подмешанный сигнал (PRI-257)
+    max_git_files: int = 0  # квота файлов из Git-снимка (PRI-298)
+
+    def __post_init__(self) -> None:
+        if not valid_git_file_limit(self.max_git_files):
+            raise ValueError("max_git_files должен быть целым числом от 0 до 3")
 
     @property
     def max_chars(self) -> int:
@@ -117,5 +126,6 @@ class ContextLimits:
                     cs.get("chars_per_file", CodeSectionLimits.chars_per_file)),
                 max_augmented_files=int(
                     cs.get("max_augmented_files", CodeSectionLimits.max_augmented_files)),
+                max_git_files=cs.get("max_git_files", CodeSectionLimits.max_git_files),
             ),
         )

@@ -21,6 +21,7 @@ from reviewer.retrieval.retriever import (
     ContextPack, _dedupe_overlapping, _is_test_path,
 )
 from reviewer.rrf import RRF_K
+from reviewer.storage_health import is_embedder_unavailable
 
 log = logging.getLogger(__name__)
 
@@ -67,22 +68,38 @@ def cap_block(item, max_chars: int):
         end_line=item.start_line + max(len(kept) - 1, 0))
 
 
-def _embed_pairs(embedder, queries: list[str]) -> list[tuple]:
+def _embed_pairs(embedder, queries: list[str], *, strict: bool = False) -> list[tuple]:
     """Пары (запрос, вектор) одним батчем; при сбое — только первый подзапрос.
 
     Откат идёт по первому подзапросу намеренно: он и есть продакшн-запрос
     целиком, поэтому деградация возвращает сегодняшнее поведение, а не пустоту.
+
+    `strict` (PRI-272) — распознанный отказ эмбеддера пробрасывается вызывающему
+    вместо тихого отката; проверяется в ОБОИХ except. Батчевый вызов может
+    упасть по причине, не связанной с эмбеддером (тогда откат на одиночный
+    запрос — штатное поведение, и ему дают сработать), а одиночный откат уже
+    бьёт напрямую в эмбеддер. В батчевом except проброс идёт ДО отката: если
+    предикат уже признал сервис недоступным, второй вызов к тому же мёртвому
+    сервису — лишняя задержка на пути, где ответ пользователю всё равно будет
+    назвавшей причину ошибкой. RateLimitError предикат не считает
+    недоступностью (штатный троттлинг free tier, retry уже есть в
+    with_voyage_retry) — этот сценарий по-прежнему откатывается на одиночный
+    запрос, даже при strict=True.
     """
     if not queries:
         return []
     try:
         return list(zip(queries, embedder.embed_queries(queries), strict=True))
-    except Exception:  # noqa: BLE001 — квота Voyage кончилась, это штатный случай
+    except Exception as exc:  # noqa: BLE001 — квота Voyage кончилась, это штатный случай
+        if strict and is_embedder_unavailable(exc):
+            raise
         log.warning("multiquery: батч-эмбеддинг недоступен — откат на один запрос",
                     exc_info=True)
         try:
             return [(queries[0], embedder.embed_query(queries[0]))]
-        except Exception:  # noqa: BLE001
+        except Exception as exc2:  # noqa: BLE001
+            if strict and is_embedder_unavailable(exc2):
+                raise
             log.warning("multiquery: эмбеддинг запроса недоступен", exc_info=True)
             return []
 
@@ -215,9 +232,35 @@ def diversify_by_file(items: list, *, max_files: int, max_chunks_per_file: int) 
     return kept
 
 
+def reserve_git_excerpts(items: list, excerpts: list, *, max_files: int,
+                         max_chunks_per_file: int) -> list:
+    """Поместить новые Git-пути после гибрида в пределах общего бюджета файлов."""
+    if not excerpts:
+        return items
+    if max_files <= 0 or max_chunks_per_file <= 0:
+        return []
+    known = {item.path for item in items}
+    selected = []
+    for excerpt in excerpts:
+        if excerpt.path in known:
+            continue
+        selected.append(excerpt)
+        known.add(excerpt.path)
+        if len(selected) == max_files:
+            break
+    if not selected:
+        return items
+    hybrid = diversify_by_file(items, max_files=max_files - len(selected),
+                               max_chunks_per_file=max_chunks_per_file)
+    return [*hybrid, *selected]
+
+
 def search_multi(retriever, repo: str, queries: list[str], *, limits=None,
                  section_limits=None, hops: int = 1, branch: str = "",
-                 include_tests: bool = False, augment_sources=None) -> ContextPack:
+                 include_tests: bool = False, augment_sources=None,
+                 strict: bool = False, tests_only: bool = False,
+                 include_selection_stats: bool = False,
+                 git_excerpts: list | None = None) -> ContextPack:
     """Мультизапросный ретрив по base-индексу ветки: N прогонов, RRF, обрезка.
 
     Реранкера и cliff-отсечки здесь нет — финальный ранкер RRF (см. докстринг
@@ -230,6 +273,9 @@ def search_multi(retriever, repo: str, queries: list[str], *, limits=None,
     тексте блока); section_limits.max_chars — лишь страховочный потолок после
     рендера.
 
+    `tests_only` оставляет тестовые пути после расширения графа и отключает
+    подмешивание. Этот режим имеет приоритет над `include_tests`.
+
     Источники подмешивания приходят списком AugmentSource (обобщение PRI-258):
     у каждого своё имя и своя файловая квота — РЕЗЕРВ слотов внутри max_files,
     а не потолок на остаток. Резерв фактический: без найденных кандидатов
@@ -238,12 +284,22 @@ def search_multi(retriever, repo: str, queries: list[str], *, limits=None,
     но ранжировал слишком низко для попадания в max_files, — это и есть тот
     файл, который рычаг обязан промоутить.
 
-    В проде источник ОДИН — similar-diffs (PRI-257). Два других опробованы и
-    сняты по замеру: co-change (PRI-257) и состав кластеров сводок подсистем
+    Git-фрагменты занимают слоты в гибридной части после фактического
+    резерва similar-diffs (PRI-298).
+
+    Из путевых источников, выбирающих чанки из индекса, используется
+    similar-diffs (PRI-257). Два других сняты по замеру: co-change (PRI-257)
+    и состав кластеров сводок подсистем
     (PRI-258). Полный разбор всех механик бюджета, каждая из которых поодиночке
     обнуляла рычаг на живом замере, — см.
     .superpowers/sdd/2026-08-17-pri-257-augmented-candidates/step8-measurement.md
     и раздел «Приёмка PRI-258» в eval/replay_report.md.
+
+    `strict` (PRI-272) — проброс распознанного отказа эмбеддера вызывающему;
+    см. `_embed_pairs`. Единственный продакшн-вызывающий с `strict=True` —
+    `MCPReviewService._search_codebase_multi` (секции `code`/`test_exemplars`
+    сборки контекста задачи); остальные пути (`search_codebase`, /ask,
+    ревью PR, офлайн-эвал) не меняются, дефолт `False`.
     """
     from reviewer.policy.context_limits import CodebaseLimits, CodeSectionLimits
     lim = limits or CodebaseLimits()
@@ -255,7 +311,7 @@ def search_multi(retriever, repo: str, queries: list[str], *, limits=None,
     # отката _embed_pairs при сбое батча).
     deduped_queries = list(dict.fromkeys(queries))
     runs: list[list] = []
-    for query, qvec in _embed_pairs(retriever.embedder, deduped_queries):
+    for query, qvec in _embed_pairs(retriever.embedder, deduped_queries, strict=strict):
         try:
             runs.append(_run(retriever.store, repo, query, qvec, lim, bref))
         except Exception:  # noqa: BLE001 — сбой одного прогона не роняет сборку
@@ -267,8 +323,12 @@ def search_multi(retriever, repo: str, queries: list[str], *, limits=None,
     rank_by_path: dict[str, int] = {}
     for rank, item in enumerate(items):
         rank_by_path.setdefault(item.path, rank)
-    if not include_tests:
+    if tests_only:
+        git_excerpts = None
+        items = [item for item in items if _is_test_path(item.path)]
+    elif not include_tests:
         items = [item for item in items if not _is_test_path(item.path)]
+    candidates = {item.path for item in items} if include_selection_stats else None
     # Сначала — полная гибридная выдача на весь бюджет max_files, как если бы
     # augmented не существовало вовсе: это и есть тот «итоговый» набор путей,
     # против которого рычаг проверяет свою новизну (PRI-257, второй фикс по
@@ -276,9 +336,10 @@ def search_multi(retriever, repo: str, queries: list[str], *, limits=None,
     hybrid_final = diversify_by_file(_dedupe_overlapping(items),
                                      max_files=sec.max_files,
                                      max_chunks_per_file=sec.max_chunks_per_file)
+    hybrid_paths = {item.path for item in hybrid_final}
     augmented, note = _augment_items(
-        retriever, repo, sources=augment_sources, bref=bref,
-        known_paths={item.path for item in hybrid_final},
+        retriever, repo, sources=None if tests_only else augment_sources, bref=bref,
+        known_paths=hybrid_paths,
         include_tests=include_tests, rank_by_path=rank_by_path)
     # Резерв слотов: augmented — свой путь дедупа не требует (fetch_retrieved_
     # at_paths отдаёт по одному самому широкому чанку на путь, known_paths уже
@@ -286,6 +347,43 @@ def search_multi(retriever, repo: str, queries: list[str], *, limits=None,
     # ровно на фактически занятый резерв и подмешиваем augmented напрямую.
     reserved = min(len(augmented), sec.max_files)
     augmented = augmented[:reserved]
-    items = [*hybrid_final[:sec.max_files - reserved], *augmented]
+    augmented_paths = {item.path for item in augmented}
+    hybrid_budget = sec.max_files - reserved
+    unaugmented_hybrid = hybrid_final[:sec.max_files]
+    reserved_hybrid = hybrid_final[:hybrid_budget]
+    with_git = reserved_hybrid
+    # При добавлении Git-фрагментов оба резерва считаются по различным путям.
+    if git_excerpts and hybrid_budget > 0 and sec.max_chunks_per_file > 0:
+        file_hybrid = diversify_by_file(
+            hybrid_final, max_files=hybrid_budget,
+            max_chunks_per_file=sec.max_chunks_per_file,
+        )
+        occupied = augmented_paths | {item.path for item in file_hybrid}
+        new_excerpts = [item for item in git_excerpts if item.path not in occupied]
+        if new_excerpts:
+            unaugmented_hybrid = hybrid_final
+            reserved_hybrid = file_hybrid
+            with_git = reserve_git_excerpts(
+                reserved_hybrid, new_excerpts, max_files=hybrid_budget,
+                max_chunks_per_file=sec.max_chunks_per_file,
+            )
+    items = [*with_git, *augmented]
+    stats = None
+    if candidates is not None and (runs or git_excerpts):
+        selected = {item.path for item in items}
+        unaugmented = {item.path for item in unaugmented_hybrid}
+        hybrid_paths = {item.path for item in reserved_hybrid}
+        stats = {
+            "file_limit": sec.max_files,
+            "candidate_files": len(candidates),
+            "omitted_by_file_limit": len(candidates - unaugmented),
+            "displaced_by_augmentation": len(unaugmented - hybrid_paths - augmented_paths),
+            "selected_files": len(selected),
+        }
+        if git_excerpts:
+            stats.update(
+                displaced_by_git_lexical=len(hybrid_paths - selected),
+                git_lexical_files=len(selected - hybrid_paths - augmented_paths),
+            )
     return ContextPack(items=[cap_block(item, sec.chars_per_file) for item in items],
-                       max_chars=sec.max_chars, augment_note=note)
+                       max_chars=sec.max_chars, augment_note=note, selection_stats=stats)

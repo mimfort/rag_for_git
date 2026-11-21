@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+import psycopg_pool
 import pytest
 
 from reviewer.config.settings import Settings
@@ -35,6 +36,13 @@ def _settings() -> Settings:
     s.github_token = "test"
     s.review_session_persist = False     # unit-тесты не трогают Postgres-таблицу сессий
     s.default_repo = ""                  # изолируем от локального .env (DEFAULT_REPO)
+    # Набор отслеживаемых веток приходит оттуда же: у оператора в
+    # ~/.config/rag-reviewer/.env лежит REVIEW_BRANCHES=main,dev, в CI переменной
+    # нет и остаётся дефолтный ["main"]. Без пина тест, называющий ветку явно,
+    # зелен только на машине разработчика: в CI _resolve_repo_branch отсекает его
+    # нотой «ветка не отслеживается» ДО проверяемого поведения, и утверждение
+    # проверяет не то, ради чего написано.
+    s.review_branches = "main,dev"
     # изолируем доску от локального .env целиком (иначе настроенный TASK_BOARD_*
     # в ~/.config/rag-reviewer/.env протекает в payload и ломает unconfigured-кейс)
     s.task_board_type = ""
@@ -641,6 +649,27 @@ def test_task_tool_delegates() -> None:
     svc.components.task_service.get_task_context.assert_called_once_with("ID-1", project=None)
 
 
+def test_public_get_task_context_keeps_note_on_storage_failure():
+    """PRI-276: публичный контракт тула цел — нота, а не исключение."""
+    from neo4j.exceptions import ServiceUnavailable
+
+    svc = _make_mcp_service()
+    svc.components.task_service.get_task_context.side_effect = ServiceUnavailable("down")
+    assert svc.get_task_context("ID-1") == "(task graph unavailable)"
+
+
+def test_task_context_deps_linked_lets_storage_failure_through():
+    """А провайдер секции отдаёт исключение в _safe, минуя обёртку с нотой."""
+    from neo4j.exceptions import ServiceUnavailable
+
+    from reviewer.mcp.service import _TaskContextDeps
+
+    svc = _make_mcp_service()
+    svc.components.task_service.get_task_context.side_effect = ServiceUnavailable("down")
+    with pytest.raises(ServiceUnavailable):
+        _TaskContextDeps(svc, None).linked("ID-1", "PRI")
+
+
 def test_search_codebase_delegates_to_retriever() -> None:
     """search_codebase зовёт retriever.search_base (include_tests=False)
     и рендерит ContextPack с номерами строк."""
@@ -700,9 +729,10 @@ def test_search_codebase_rejects_untracked_branch() -> None:
 # Тесты _search_codebase_multi (PRI-255) — мультизапросный близнец search_codebase
 # ---------------------------------------------------------------------------
 
-def test_search_codebase_multi_delegates_to_search_multi() -> None:
+@pytest.mark.parametrize("tests_only", [False, True])
+def test_search_codebase_multi_delegates_to_search_multi(tests_only: bool) -> None:
     """_search_codebase_multi зовёт search_multi с queries, retriever'ом, branch,
-    include_tests и рендерит результат построчно.
+    режимами отбора тестов и рендерит результат построчно.
 
     Резолв лимитов из эффективной .review.yml-политики (а не дефолт-константы)
     закрыт отдельно — test_search_codebase_multi_passes_limits_and_hops в
@@ -711,7 +741,8 @@ def test_search_codebase_multi_delegates_to_search_multi() -> None:
     svc = _make_mcp_service()
     with patch("reviewer.retrieval.multiquery.search_multi") as sm:
         sm.return_value.as_context.return_value = "auth.py#logout\nbody"
-        out = svc._search_codebase_multi("a/b", ["q1", "q2"], include_tests=True)
+        out = svc._search_codebase_multi(
+            "a/b", ["q1", "q2"], include_tests=True, tests_only=tests_only)
         assert "auth.py#logout" in out
         call = sm.call_args
         assert call.args[0] is svc.components.retriever
@@ -719,6 +750,7 @@ def test_search_codebase_multi_delegates_to_search_multi() -> None:
         assert call.args[2] == ["q1", "q2"]
         assert call.kwargs["branch"] == svc.settings.primary_branch()
         assert call.kwargs["include_tests"] is True
+        assert call.kwargs["tests_only"] is tests_only
         sm.return_value.as_context.assert_called_once_with(line_numbers=True)
 
 
@@ -742,6 +774,104 @@ def test_search_codebase_multi_rejects_untracked_branch() -> None:
         sm.assert_not_called()
 
 
+class _FailingRetriever:
+    """Ретривер, у которого уже доступ к `.embedder` бросает `exc`.
+
+    Бьёт ровно в границу `_search_codebase_multi`: сбой приходит снизу, а
+    поведение проверяется на её уровне, без участия внутренностей search_multi.
+    Сквозной путь — через `_EmbedderFailingRetriever` ниже.
+    """
+
+    def __init__(self, exc: BaseException) -> None:
+        self._exc = exc
+
+    @property
+    def embedder(self):
+        raise self._exc
+
+
+class _EmbedderFailingRetriever:
+    """Ретривер с настоящим эмбеддером, чьи методы бросают `exc`.
+
+    Отличие от `_FailingRetriever` содержательное: там исключение рождается на
+    доступе к атрибуту, здесь — внутри `embed_queries`/`embed_query`, то есть
+    там же, где его рождает мёртвый Voyage. Ровно на этом шве задача один раз
+    уже оказалась неработающей: `_embed_pairs` гасил оба уровня, и `strict`
+    в `_search_codebase_multi` не мог сработать ни разу, хотя обе половины
+    по отдельности были покрыты и зелены.
+    """
+
+    class _Embedder:
+        def __init__(self, exc: BaseException) -> None:
+            self._exc = exc
+
+        def embed_queries(self, queries):
+            raise self._exc
+
+        def embed_query(self, query):
+            raise self._exc
+
+    def __init__(self, exc: BaseException) -> None:
+        self.embedder = self._Embedder(exc)
+        self.store = None
+        self.graph = None
+
+
+def _service_with_failing_retriever(exc: BaseException) -> MCPReviewService:
+    svc = _make_mcp_service()
+    svc.components.retriever = _FailingRetriever(exc)
+    return svc
+
+
+def test_search_codebase_multi_swallows_embedder_failure_by_default():
+    """Приватный мультизапрос по умолчанию нем — как и был."""
+    from voyageai.error import APIError
+
+    svc = _service_with_failing_retriever(APIError("HTTP code 403"))
+    assert svc._search_codebase_multi("o/n", ["q"], "dev") == "(ничего не найдено)"
+
+
+def test_search_codebase_multi_reraises_embedder_failure_when_strict():
+    from voyageai.error import APIError
+
+    svc = _service_with_failing_retriever(APIError("HTTP code 403"))
+    with pytest.raises(APIError):
+        svc._search_codebase_multi("o/n", ["q"], "dev", strict=True)
+
+
+def test_search_codebase_multi_reraises_through_the_whole_seam_when_strict():
+    """Сквозной путь: _search_codebase_multi → search_multi → _embed_pairs.
+
+    Обе половины покрыты по отдельности, но именно их стык однажды и разошёлся:
+    граничный тест выше бьёт в `_search_codebase_multi`, тесты multiquery — в
+    `search_multi`, а мёртвый Voyage бросает внутри методов эмбеддера, ниже их
+    обоих. Здесь исключение проходит все три уровня целиком.
+    """
+    from voyageai.error import APIError
+
+    svc = _make_mcp_service()
+    svc.components.retriever = _EmbedderFailingRetriever(APIError("HTTP code 403"))
+
+    with pytest.raises(APIError):
+        svc._search_codebase_multi("o/n", ["q"], "dev", strict=True)
+
+
+def test_search_codebase_multi_seam_stays_soft_without_strict():
+    """Тот же сквозной путь без strict остаётся немым — контракт не изменился."""
+    from voyageai.error import APIError
+
+    svc = _make_mcp_service()
+    svc.components.retriever = _EmbedderFailingRetriever(APIError("HTTP code 403"))
+
+    assert svc._search_codebase_multi("o/n", ["q"], "dev") == "(ничего не найдено)"
+
+
+def test_search_codebase_multi_stays_soft_on_other_failures_when_strict():
+    svc = _service_with_failing_retriever(RuntimeError("boom"))
+    assert svc._search_codebase_multi(
+        "o/n", ["q"], "dev", strict=True) == "(ничего не найдено)"
+
+
 def test_task_context_deps_code_passes_include_tests_false() -> None:
     """_TaskContextDeps.code зовёт _search_codebase_multi с include_tests=False.
 
@@ -761,6 +891,7 @@ def test_task_context_deps_code_passes_include_tests_false() -> None:
 
     call = fake_service._search_codebase_multi.call_args
     assert call.args == ("o/r", ["q1", "q2"], "dev", False)
+    assert call.kwargs["strict"] is True
     sources = call.kwargs["augment_sources"]
     assert len(sources) == 1
     assert sources[0].name == "similar-diffs"
@@ -787,7 +918,7 @@ def test_task_context_deps_similar_stores_hits_and_renders_once() -> None:
     result = deps.similar("query", "PRI")
 
     fake_service.components.task_service.search_hits.assert_called_once_with(
-        "query", project="PRI")
+        "query", project="PRI", strict=True)
     fake_service.components.task_service.render_hits.assert_called_once_with(hits)
     assert result == "1. ID-311 ..."
     assert deps._similar_hits == hits
@@ -850,8 +981,7 @@ def test_task_context_deps_history_failure_is_a_gap_not_an_exception() -> None:
     assert collect.call_args.kwargs["history"] is None
 
 
-def test_task_context_deps_test_exemplars_passes_include_tests_true() -> None:
-    """_TaskContextDeps.test_exemplars зовёт _search_codebase_multi с include_tests=True."""
+def test_task_context_deps_test_exemplars_requests_only_tests() -> None:
     from reviewer.mcp.service import _TaskContextDeps
 
     fake_service = MagicMock()
@@ -861,7 +991,7 @@ def test_task_context_deps_test_exemplars_passes_include_tests_true() -> None:
     result = deps.test_exemplars("o/r", "dev", ["q1", "q2"])
 
     fake_service._search_codebase_multi.assert_called_once_with(
-        "o/r", ["q1", "q2"], "dev", True)
+        "o/r", ["q1", "q2"], "dev", tests_only=True, strict=True)
     assert result == "tests-out"
 
 
@@ -1130,3 +1260,76 @@ def test_prepare_review_payload_omits_empty_structural_summary(
     out = svc.prepare_review("o/r", 7)
 
     assert "structural_summary" not in out["units"][0]
+
+
+# ---------------------------------------------------------------------------
+# Тесты PRI-275: preflight не платит второй таймаут пула за мёртвый Postgres
+# ---------------------------------------------------------------------------
+
+def test_task_context_deps_preflight_raises_and_stops_after_one_store_call() -> None:
+    """_TaskContextDeps.preflight при недоступном сторе делает ОДИН заход в стор.
+
+    Тип исключения обязан быть psycopg_pool.PoolTimeout, а не голый
+    psycopg.OperationalError: это намеренный контракт с соседней задачей
+    PRI-274 — если она выведет PoolTimeout из is_storage_unavailable, этот
+    тест обязан покраснеть.
+    """
+    from reviewer.mcp.service import _TaskContextDeps
+
+    calls: list[str] = []
+
+    class _CountingStore:
+        def get_repo_clone(self, repo: str) -> str | None:
+            calls.append("get_repo_clone")
+            raise psycopg_pool.PoolTimeout("couldn't get a connection after 30.00 sec")
+
+        def get_index_meta_row(self, repo: str, ref: str):
+            calls.append("get_index_meta_row")
+            return None
+
+        def count_chunks(self, repo: str, ref: str) -> int:
+            calls.append("count_chunks")
+            return 0
+
+    svc = _make_mcp_service()
+    svc.components.store = _CountingStore()
+    deps = _TaskContextDeps(svc, None)
+
+    with pytest.raises(psycopg_pool.PoolTimeout):
+        deps.preflight("o/r", "dev")
+
+    assert calls == ["get_repo_clone"]
+
+
+def test_task_context_deps_preflight_stays_fail_soft_on_non_storage_clone_failure() -> None:
+    """Не-storage сбой чтения пути к клону остаётся fail-soft: preflight не падает.
+
+    RuntimeError не распознаётся is_storage_unavailable, поэтому strict=True
+    у _repo_clone_path его не пробрасывает — путь клона резолвится в пустую
+    строку, и build_status_report вызывается как обычно.
+    """
+    from reviewer.mcp.service import _TaskContextDeps
+    from reviewer.services.status import BranchStatus, RepoStatus
+
+    class _BrokenCloneStore:
+        def get_repo_clone(self, repo: str) -> str | None:
+            raise RuntimeError("битая строка")
+
+    svc = _make_mcp_service()
+    svc.components.store = _BrokenCloneStore()
+
+    fake_report = RepoStatus(
+        repo="o/r",
+        branches=[BranchStatus(branch="dev", ref="base:dev", indexed_sha="abc",
+                               updated_at=None, chunks=5, graph_nodes=3, drift=0)],
+        overlays=[])
+
+    with patch("reviewer.services.status.build_status_report") as build_report:
+        build_report.return_value = fake_report
+        deps = _TaskContextDeps(svc, None)
+        result = deps.preflight("o/r", "dev")
+
+    assert result["indexed_sha"] == "abc"
+    # clone_path — пятый позиционный аргумент build_status_report; пустая
+    # строка подтверждает, что сбой чтения пути молча проглочен (fail-soft).
+    assert build_report.call_args.args[4] == ""

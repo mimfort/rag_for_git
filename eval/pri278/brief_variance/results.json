@@ -1,0 +1,598 @@
+{
+  "original": {
+    "paired": {
+      "n": 20,
+      "same_files": 6,
+      "core_changed": 8,
+      "abs_core_delta_median": 0.0,
+      "abs_core_delta_p90": 0.19999999999999996,
+      "abs_dependency_delta_median": 0.0,
+      "jaccard_median": 0.746031746031746
+    },
+    "total": 20,
+    "per_task": [
+      {
+        "key": "PRI-196",
+        "bulk": true,
+        "runs": [
+          "tune-30",
+          "all-pool-30"
+        ],
+        "input_sha256": "f13ff3b0a401ee3119f1c2d8cf6f8955749e1a153b7fd7736de38e8722f7c364",
+        "core_before": 0.3,
+        "core_after": 0.3,
+        "dependency_before": 1.0,
+        "dependency_after": 1.0,
+        "equal": true,
+        "jaccard": 1.0,
+        "paths_left": [],
+        "paths_right": []
+      },
+      {
+        "key": "PRI-215",
+        "bulk": true,
+        "runs": [
+          "holdout-30",
+          "all-pool-30"
+        ],
+        "input_sha256": "d9be2d86b2cfccddd72a2afbd087698b72249a20f307998b78ccefc0ebe6c58f",
+        "core_before": 0.35,
+        "core_after": 0.45,
+        "dependency_before": 0.0,
+        "dependency_after": 0.0,
+        "equal": false,
+        "jaccard": 0.7777777777777778,
+        "paths_left": [],
+        "paths_right": [
+          "reviewer/entrypoints/mcp_server.py",
+          "reviewer/policy/policy.py"
+        ]
+      },
+      {
+        "key": "PRI-223",
+        "bulk": true,
+        "runs": [
+          "tune-30",
+          "all-pool-30"
+        ],
+        "input_sha256": "bfc04c9828b8b477a41bdb512da9d98deedce1ce368f16131c4d512288f0442f",
+        "core_before": 0.17391304347826086,
+        "core_after": 0.30434782608695654,
+        "dependency_before": 0.6666666666666666,
+        "dependency_after": 0.6666666666666666,
+        "equal": false,
+        "jaccard": 0.6,
+        "paths_left": [],
+        "paths_right": [
+          "reviewer/config/layers.py",
+          "reviewer/gitutil.py",
+          "reviewer/services/review_service.py",
+          "reviewer/tasks/boards/base.py"
+        ]
+      },
+      {
+        "key": "PRI-225",
+        "bulk": true,
+        "runs": [
+          "holdout-30",
+          "all-pool-30"
+        ],
+        "input_sha256": "ea829f17784cbcfe80c9f4b7ae44e2138a6194eec1731aeddaed85ab24e8d077",
+        "core_before": 0.10526315789473684,
+        "core_after": 0.15789473684210525,
+        "dependency_before": 0.0,
+        "dependency_after": 0.0,
+        "equal": false,
+        "jaccard": 0.6666666666666666,
+        "paths_left": [],
+        "paths_right": [
+          "reviewer/entrypoints/cli.py",
+          "reviewer/mcp/service.py"
+        ]
+      },
+      {
+        "key": "PRI-228",
+        "bulk": false,
+        "runs": [
+          "tune-30",
+          "all-pool-30"
+        ],
+        "input_sha256": "009b18d94986367dc7401a39cfc01002e51ef348cbe974d1971c004bc4f26769",
+        "core_before": 0.5,
+        "core_after": 0.5,
+        "dependency_before": 1.0,
+        "dependency_after": 0.0,
+        "equal": false,
+        "jaccard": 0.4,
+        "paths_left": [
+          "reviewer/index/_retry.py",
+          "reviewer/index/freshness.py"
+        ],
+        "paths_right": [
+          "reviewer/tasks/service.py"
+        ]
+      },
+      {
+        "key": "PRI-235",
+        "bulk": false,
+        "runs": [
+          "tune-30",
+          "all-pool-30"
+        ],
+        "input_sha256": "1b294cca92eee703e83298ab878221bcd964d7690a8566149d8f0e4883521392",
+        "core_before": 0.6,
+        "core_after": 0.6,
+        "dependency_before": 0.0,
+        "dependency_after": 0.0,
+        "equal": false,
+        "jaccard": 0.6,
+        "paths_left": [
+          "reviewer/config/settings.py",
+          "reviewer/entrypoints/mcp_server.py"
+        ],
+        "paths_right": []
+      },
+      {
+        "key": "PRI-238",
+        "bulk": false,
+        "runs": [
+          "tune-30",
+          "all-pool-30"
+        ],
+        "input_sha256": "6fefa2ae49131e275f11c953dba732b880ea32c4ce3ae192ac5ae441d5479ab2",
+        "core_before": 0.6666666666666666,
+        "core_after": 0.6666666666666666,
+        "dependency_before": 0.0,
+        "dependency_after": 0.0,
+        "equal": false,
+        "jaccard": 0.8333333333333334,
+        "paths_left": [
+          "reviewer/services/review_service.py"
+        ],
+        "paths_right": []
+      },
+      {
+        "key": "PRI-239",
+        "bulk": false,
+        "runs": [
+          "tune-30",
+          "all-pool-30"
+        ],
+        "input_sha256": "3af35bf6a5c2449a7f9307c07f8b29e38b43d45ce36e099389763ccadaa28d86",
+        "core_before": 0.25,
+        "core_after": 0.25,
+        "dependency_before": 0.0,
+        "dependency_after": 0.0,
+        "equal": true,
+        "jaccard": 1.0,
+        "paths_left": [],
+        "paths_right": []
+      },
+      {
+        "key": "PRI-241",
+        "bulk": false,
+        "runs": [
+          "holdout-30",
+          "all-pool-30"
+        ],
+        "input_sha256": "9eee7fb10dc807dd49318da6364d006068458498decb31153e27afb071716a51",
+        "core_before": 0.3333333333333333,
+        "core_after": 0.6666666666666666,
+        "dependency_before": 0.5,
+        "dependency_after": 0.5,
+        "equal": false,
+        "jaccard": 0.3333333333333333,
+        "paths_left": [
+          "reviewer/graph/store.py",
+          "reviewer/index/store.py",
+          "reviewer/web/app.py"
+        ],
+        "paths_right": [
+          "reviewer/install.py"
+        ]
+      },
+      {
+        "key": "PRI-242",
+        "bulk": false,
+        "runs": [
+          "tune-30",
+          "all-pool-30"
+        ],
+        "input_sha256": "55f2695de2900ee19da22194b4f98fd556d9954d230d60b41c264670097c68fe",
+        "core_before": 0.3333333333333333,
+        "core_after": 0.3333333333333333,
+        "dependency_before": 1.0,
+        "dependency_after": 1.0,
+        "equal": true,
+        "jaccard": 1.0,
+        "paths_left": [],
+        "paths_right": []
+      },
+      {
+        "key": "PRI-245",
+        "bulk": false,
+        "runs": [
+          "tune-30",
+          "all-pool-30"
+        ],
+        "input_sha256": "df8b748f3b6cf71f4b12fcd878c9f23f6fa79a8d47a13afcfb7b9a585a7d27f6",
+        "core_before": 0.3333333333333333,
+        "core_after": 0.3333333333333333,
+        "dependency_before": 0.5,
+        "dependency_after": 0.5,
+        "equal": false,
+        "jaccard": 0.8333333333333334,
+        "paths_left": [],
+        "paths_right": [
+          "reviewer/index/embeddings.py"
+        ]
+      },
+      {
+        "key": "PRI-248",
+        "bulk": false,
+        "runs": [
+          "tune-30",
+          "all-pool-30"
+        ],
+        "input_sha256": "a8bad777c37b73573cca32ca3c41061e9f381e0ce9fe9a7c5e79cfbcc3979796",
+        "core_before": 0.3333333333333333,
+        "core_after": 0.3333333333333333,
+        "dependency_before": 0.3333333333333333,
+        "dependency_after": 0.3333333333333333,
+        "equal": false,
+        "jaccard": 0.2857142857142857,
+        "paths_left": [
+          "reviewer/mcp/session_serde.py"
+        ],
+        "paths_right": [
+          "reviewer/app.py",
+          "reviewer/entrypoints/cli.py",
+          "reviewer/tasks/subtasks.py",
+          "reviewer/tasks/sync.py"
+        ]
+      },
+      {
+        "key": "PRI-251",
+        "bulk": false,
+        "runs": [
+          "tune-30",
+          "all-pool-30"
+        ],
+        "input_sha256": "2f5df39cd3fd78be49b5cc69d654a20783aea72d63c216db32a449c07387125d",
+        "core_before": 0.2857142857142857,
+        "core_after": 0.42857142857142855,
+        "dependency_before": 0.0,
+        "dependency_after": 0.5,
+        "equal": false,
+        "jaccard": 0.7142857142857143,
+        "paths_left": [],
+        "paths_right": [
+          "reviewer/graph/store.py",
+          "reviewer/retrieval/retriever.py"
+        ]
+      },
+      {
+        "key": "PRI-252",
+        "bulk": false,
+        "runs": [
+          "tune-30",
+          "all-pool-30"
+        ],
+        "input_sha256": "1775b20e62846717bd50fac238711f1b6f919cab4c6525e6f39399bbe32c05cc",
+        "core_before": 0.25,
+        "core_after": 0.25,
+        "dependency_before": 1.0,
+        "dependency_after": 1.0,
+        "equal": false,
+        "jaccard": 0.625,
+        "paths_left": [
+          "reviewer/tools/impact.py"
+        ],
+        "paths_right": [
+          "reviewer/tools/code_tools.py",
+          "reviewer/tools/graph_format.py"
+        ]
+      },
+      {
+        "key": "PRI-255",
+        "bulk": false,
+        "runs": [
+          "tune-30",
+          "all-pool-30"
+        ],
+        "input_sha256": "35ea93fafe6396d0a2bd7561034a83c3328f1c2d1a41cfd3f634146f7b0faef7",
+        "core_before": 0.3333333333333333,
+        "core_after": 0.6666666666666666,
+        "dependency_before": 0.6666666666666666,
+        "dependency_after": 0.6666666666666666,
+        "equal": false,
+        "jaccard": 0.6,
+        "paths_left": [],
+        "paths_right": [
+          "reviewer/app.py",
+          "reviewer/mcp/service.py",
+          "reviewer/tasks/service.py",
+          "reviewer/tasks/store.py"
+        ]
+      },
+      {
+        "key": "PRI-256",
+        "bulk": false,
+        "runs": [
+          "holdout-30",
+          "all-pool-30"
+        ],
+        "input_sha256": "652d58d374401f4e18b081fbd27d08cf7b5bc7ce3792618e2e482ce9c4fcbe7c",
+        "core_before": 0.4,
+        "core_after": 0.6,
+        "dependency_before": 1.0,
+        "dependency_after": 1.0,
+        "equal": false,
+        "jaccard": 0.8571428571428571,
+        "paths_left": [],
+        "paths_right": [
+          "reviewer/mcp/service.py"
+        ]
+      },
+      {
+        "key": "PRI-257",
+        "bulk": true,
+        "runs": [
+          "holdout-30",
+          "all-pool-30"
+        ],
+        "input_sha256": "6b9d152640c6b4c27fbe3e3b9a5884b113389e15a4f5f206d5a6babf11ad4477",
+        "core_before": 0.4166666666666667,
+        "core_after": 0.25,
+        "dependency_before": 0.0,
+        "dependency_after": 0.0,
+        "equal": false,
+        "jaccard": 0.375,
+        "paths_left": [
+          "reviewer/gitutil.py",
+          "reviewer/graph/store.py",
+          "reviewer/index/store.py",
+          "reviewer/retrieval/multiquery.py"
+        ],
+        "paths_right": [
+          "reviewer/mcp/service.py"
+        ]
+      },
+      {
+        "key": "PRI-260",
+        "bulk": false,
+        "runs": [
+          "tune-30",
+          "all-pool-30"
+        ],
+        "input_sha256": "5c89e4863f5dfd520297e04b88eb6c3365caf2fa5fb803c4c092461853d9bcb3",
+        "core_before": 0.75,
+        "core_after": 0.75,
+        "dependency_before": 0.0,
+        "dependency_after": 0.0,
+        "equal": true,
+        "jaccard": 1.0,
+        "paths_left": [],
+        "paths_right": []
+      },
+      {
+        "key": "PRI-267",
+        "bulk": false,
+        "runs": [
+          "tune-30",
+          "all-pool-30"
+        ],
+        "input_sha256": "ff25dbc98e9796773df7a4b6abd062647cdda78bcc4ebd578acc7ae60b2cfe58",
+        "core_before": 1.0,
+        "core_after": 1.0,
+        "dependency_before": 0.0,
+        "dependency_after": 0.0,
+        "equal": true,
+        "jaccard": 1.0,
+        "paths_left": [],
+        "paths_right": []
+      },
+      {
+        "key": "PRI-275",
+        "bulk": false,
+        "runs": [
+          "holdout-30",
+          "all-pool-30"
+        ],
+        "input_sha256": "a08af90b2820ed1e727000eb4ecc864f1b46eb98a0517f77fb68f0966364b986",
+        "core_before": 1.0,
+        "core_after": 1.0,
+        "dependency_before": 0.5,
+        "dependency_after": 0.5,
+        "equal": true,
+        "jaccard": 1.0,
+        "paths_left": [],
+        "paths_right": []
+      }
+    ]
+  },
+  "independent": {
+    "paired": {
+      "n": 8,
+      "same_files": 2,
+      "core_changed": 5,
+      "abs_core_delta_median": 0.0787878787878788,
+      "abs_core_delta_p90": 0.5,
+      "abs_dependency_delta_median": 0.16666666666666666,
+      "jaccard_median": 0.6826923076923077
+    },
+    "total": 10,
+    "per_task": [
+      {
+        "key": "PRI-170",
+        "bulk": true,
+        "runs": [
+          "all-30",
+          "all-tail-0"
+        ],
+        "input_sha256": "5aa9c77fc49368b9aa0a719822e1aaa310f26c3b6f189c5f8e3bdb0b52e2239f",
+        "core_before": 0.5333333333333333,
+        "core_after": 0.4666666666666667,
+        "dependency_before": 0.5,
+        "dependency_after": 0.0,
+        "equal": false,
+        "jaccard": 0.6153846153846154,
+        "paths_left": [
+          "reviewer/config/settings.py",
+          "reviewer/mcp/service.py"
+        ],
+        "paths_right": [
+          "reviewer/index/store.py",
+          "reviewer/mcp/session_serde.py",
+          "reviewer/services/review_service.py"
+        ]
+      },
+      {
+        "key": "PRI-202",
+        "bulk": true,
+        "runs": [
+          "all-30",
+          "all-tail-0"
+        ],
+        "input_sha256": "febf67028d2dd0b0fb03361483d86486c8ffed896d6a5c045dd116a4e3c898d9",
+        "core_before": 0.2727272727272727,
+        "core_after": 0.36363636363636365,
+        "dependency_before": 0.5,
+        "dependency_after": 0.0,
+        "equal": false,
+        "jaccard": 0.5555555555555556,
+        "paths_left": [
+          "reviewer/config/settings.py",
+          "reviewer/index/embeddings.py"
+        ],
+        "paths_right": [
+          "reviewer/tasks/service.py",
+          "reviewer/tools/code_tools.py"
+        ]
+      },
+      {
+        "key": "PRI-205",
+        "bulk": false,
+        "runs": [
+          "all-30",
+          "all-tail-0"
+        ],
+        "input_sha256": "330e8bc174490baf9121b9a3e2f95d26430e333d0d25c88782e85107a41050a3",
+        "core_before": 0.7142857142857143,
+        "core_after": 0.7142857142857143,
+        "dependency_before": 0.0,
+        "dependency_after": 0.0,
+        "equal": true,
+        "jaccard": 1.0,
+        "paths_left": [],
+        "paths_right": []
+      },
+      {
+        "key": "PRI-207",
+        "bulk": false,
+        "runs": [
+          "all-30",
+          "all-deps-1"
+        ],
+        "input_sha256": "67b614e826673104f3583b392ebc58e32bba8a3c2e74f6fb6bf33c1b9d1db997",
+        "core_before": 0.6666666666666666,
+        "core_after": 0.6666666666666666,
+        "dependency_before": 0.0,
+        "dependency_after": 0.0,
+        "equal": true,
+        "jaccard": 1.0,
+        "paths_left": [],
+        "paths_right": []
+      },
+      {
+        "key": "PRI-213",
+        "bulk": false,
+        "runs": [
+          "all-30",
+          "all-tail-0"
+        ],
+        "input_sha256": "397b7a21d456bfa703ea4e464001cccbfcb0451356a90745043cdab6b778a46a",
+        "core_before": 0.42857142857142855,
+        "core_after": 0.2857142857142857,
+        "dependency_before": 0.3333333333333333,
+        "dependency_after": 0.3333333333333333,
+        "equal": false,
+        "jaccard": 0.75,
+        "paths_left": [
+          "reviewer/tasks/boards/yougile.py"
+        ],
+        "paths_right": []
+      },
+      {
+        "key": "PRI-221",
+        "bulk": true,
+        "runs": [
+          "all-30",
+          "all-symbol-0"
+        ],
+        "input_sha256": "bff65233b0d485a7f391ea364407722287d3395feea36b9330fb2c161ed38394",
+        "core_before": 0.3,
+        "core_after": 0.4,
+        "dependency_before": 0.3333333333333333,
+        "dependency_after": 0.6666666666666666,
+        "equal": false,
+        "jaccard": 0.5555555555555556,
+        "paths_left": [],
+        "paths_right": [
+          "reviewer/entrypoints/cli.py",
+          "reviewer/entrypoints/mcp_server.py",
+          "reviewer/tasks/boards/__init__.py",
+          "reviewer/tasks/boards/registry.py"
+        ]
+      },
+      {
+        "key": "PRI-234",
+        "bulk": false,
+        "runs": [
+          "all-30",
+          "all-symbol-0"
+        ],
+        "input_sha256": "c4ea5d224122fd541988530660db71a25565f58dd2607c0d848bf112372bcbee",
+        "core_before": 0.5,
+        "core_after": 1.0,
+        "dependency_before": 0.3333333333333333,
+        "dependency_after": 0.3333333333333333,
+        "equal": false,
+        "jaccard": 0.6,
+        "paths_left": [],
+        "paths_right": [
+          "reviewer/mcp/service.py",
+          "reviewer/services/review_service.py"
+        ]
+      },
+      {
+        "key": "PRI-258",
+        "bulk": false,
+        "runs": [
+          "all-30",
+          "all-symbol-0"
+        ],
+        "input_sha256": "74cfacd59477ece288247d13a77f83fa85e5edca779585487ed4f2ec5dbc20c7",
+        "core_before": 0.75,
+        "core_after": 0.75,
+        "dependency_before": 1.0,
+        "dependency_after": 0.6666666666666666,
+        "equal": false,
+        "jaccard": 0.875,
+        "paths_left": [
+          "reviewer/graph/summaries.py"
+        ],
+        "paths_right": []
+      }
+    ]
+  },
+  "combined": {
+    "n": 28,
+    "same_files": 8,
+    "core_changed": 13,
+    "abs_core_delta_median": 0.0,
+    "abs_core_delta_p90": 0.3333333333333333,
+    "abs_dependency_delta_median": 0.0,
+    "jaccard_median": 0.7321428571428572
+  }
+}

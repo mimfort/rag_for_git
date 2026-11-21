@@ -92,10 +92,15 @@ def has_block(text: str) -> bool:
 def upsert_block(text: str, block: str) -> str:
     """Заменить существующий блок по HEADER либо дописать в конец. Идемпотентно."""
     block = block.rstrip("\n")
-    if not has_block(text):
-        body = text.rstrip("\n")
-        return f"{body}\n\n{block}\n"
     lines = text.splitlines()
+    if not has_block(text):
+        if not text.endswith(("\n", "\r")):
+            separator = "\n\n"
+        elif len(lines) > 1 and not lines[-1]:
+            separator = ""
+        else:
+            separator = "\r" if text.endswith("\r") else "\n"
+        return f"{text}{separator}{block}\n"
     out: list[str] = []
     i, n = 0, len(lines)
     while i < n:
@@ -177,7 +182,7 @@ def _find_review_yml(cwd: str):
 
 def _read_text(path):
     try:
-        with open(path, encoding="utf-8") as handle:
+        with open(path, encoding="utf-8", newline="") as handle:
             return handle.read()
     except OSError:
         return None
@@ -187,7 +192,7 @@ def _write_text(path, text) -> None:
     directory = os.path.dirname(path) or "."
     fd, tmp = tempfile.mkstemp(dir=directory, suffix=".tmp")
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="") as handle:
             handle.write(text)
         os.replace(tmp, path)
     except Exception:

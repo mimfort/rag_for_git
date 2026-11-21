@@ -3,12 +3,21 @@ from neo4j import GraphDatabase
 
 
 class GraphStore:
-    def __init__(self, uri: str, user: str, password: str):
+    def __init__(self, uri: str, user: str, password: str, *,
+                 connection_timeout: float = 5.0,
+                 acquisition_timeout: float = 10.0,
+                 max_retry_time: float = 5.0):
         # notifications_min_severity="OFF" глушит notification-спам драйвера
         # (напр. «relationship type IMPLEMENTS does not exist», когда граф наполнен
         # только частью типов рёбер) — на выполнение запросов это не влияет.
+        # Таймауты заданы явно (PRI-276): с дефолтами драйвера (30/60/30 с) каждый
+        # заход в недоступный граф стоит десятки секунд, и молчание выходит дороже
+        # отказа. Драйвер шарится с TaskGraph, поэтому рычаг покрывает оба пути.
         self._driver = GraphDatabase.driver(
-            uri, auth=(user, password), notifications_min_severity="OFF")
+            uri, auth=(user, password), notifications_min_severity="OFF",
+            connection_timeout=connection_timeout,
+            connection_acquisition_timeout=acquisition_timeout,
+            max_transaction_retry_time=max_retry_time)
 
     @property
     def driver(self):

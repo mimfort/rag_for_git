@@ -1,5 +1,7 @@
 """Unit-тесты ground truth: только настоящие PR-мержи считаются работой задачи."""
-from eval.solve_task_metrics import ground_truth as gt
+import pytest
+
+from reviewer.metrics.brief_quality import ground_truth
 
 # Реальная форма граблей PRI-134: sync-мерж с тем же ключом в тексте тащит
 # чужие файлы и раздувает знаменатель.
@@ -11,21 +13,52 @@ ROWS = [
 ]
 
 
-def test_filter_pr_merges_keeps_only_real_pr_merges():
-    shas, skipped = gt.filter_pr_merges(ROWS)
+def test_filter_pr_merges_extracts_number():
+    rows = [
+        ("abc", "Merge pull request #232 from mimfort/feat/pri-275"),
+        ("def", "Merge remote-tracking branch 'origin/dev' into feat/pri-275"),
+    ]
+    merges, skipped = ground_truth.filter_pr_merges(rows)
+    assert [(m.sha, m.number) for m in merges] == [("abc", 232)]
+    assert skipped == 1
 
-    assert shas == ["aaa111", "ddd444"]
+
+def test_filter_pr_merges_keeps_only_real_pr_merges():
+    merges, skipped = ground_truth.filter_pr_merges(ROWS)
+
+    assert [m.sha for m in merges] == ["aaa111", "ddd444"]
     assert skipped == 2
 
 
 def test_filter_pr_merges_counts_sync_merges_instead_of_silently_dropping():
-    _, skipped = gt.filter_pr_merges(ROWS[1:3])
+    _, skipped = ground_truth.filter_pr_merges(ROWS[1:3])
 
     assert skipped == 2
 
 
 def test_filter_pr_merges_empty_input():
-    assert gt.filter_pr_merges([]) == ([], 0)
+    assert ground_truth.filter_pr_merges([]) == ([], 0)
+
+
+def test_changed_status_parses_name_status():
+    def run_git(args):
+        assert args[:3] == ["diff", "--name-status", "-z"]
+        return "M\0reviewer/модуль.py\0A\0reviewer/new.py\0R100\0old.py\0new\tname.py\0"
+
+    assert ground_truth.changed_status("abc", run_git) == {
+        "reviewer/модуль.py": "modified",
+        "reviewer/new.py": "added",
+        "new\tname.py": "renamed",
+    }
+
+
+def test_changed_status_distinguishes_empty_diff_from_git_error():
+    def fake_git(args):
+        raise ground_truth.GitError("объект недоступен")
+
+    assert ground_truth.changed_status("abc", lambda args: "") == {}
+    with pytest.raises(ground_truth.GitError, match="объект недоступен"):
+        ground_truth.changed_status("abc", fake_git)
 
 
 def test_merge_rows_parses_git_output():
@@ -38,7 +71,7 @@ def test_merge_rows_parses_git_output():
             "\n"
         )
 
-    assert gt.merge_rows("PRI-134", fake_git) == [
+    assert ground_truth.merge_rows("PRI-134", fake_git) == [
         ("aaa111", "Merge pull request #148 from mimfort/feature/pri-134-x"),
         ("bbb222", "merge: dev в feature/pri-134-x"),
     ]
@@ -49,7 +82,10 @@ def test_changed_files_splits_names():
         assert args[:2] == ["diff", "--name-only"]
         return "reviewer/a.py\ntests/test_a.py\n\n"
 
-    assert gt.changed_files("aaa111", fake_git) == {"reviewer/a.py", "tests/test_a.py"}
+    assert ground_truth.changed_files("aaa111", fake_git) == {
+        "reviewer/a.py",
+        "tests/test_a.py",
+    }
 
 
 def test_collect_uses_only_pr_merges_for_changed_files():
@@ -67,9 +103,10 @@ def test_collect_uses_only_pr_merges_for_changed_files():
             return "reviewer/a.py\n"
         raise AssertionError(f"неожиданный вызов git: {args}")
 
-    result = gt.collect("PRI-134", fake_git)
+    result = ground_truth.collect("PRI-134", fake_git)
 
     assert result.merge_shas == ["aaa111"]
+    assert [(m.sha, m.number) for m in result.merges] == [("aaa111", 148)]
     assert result.sync_merges_skipped == 1
     assert result.changed == {"reviewer/a.py"}
     assert result.parent_ref == "aaa111^1"
@@ -80,8 +117,9 @@ def test_collect_without_merges_is_empty():
     def fake_git(args):
         return ""
 
-    result = gt.collect("PRI-999", fake_git)
+    result = ground_truth.collect("PRI-999", fake_git)
 
+    assert result.merges == []
     assert result.merge_shas == []
     assert result.changed == set()
     assert result.parent_ref is None
@@ -92,21 +130,21 @@ def test_path_existed_true_when_git_exits_zero():
         assert args[:2] == ["cat-file", "-e"]
         return ""
 
-    assert gt.path_existed("aaa111^1", "reviewer/a.py", fake_git) is True
+    assert ground_truth.path_existed("aaa111^1", "reviewer/a.py", fake_git) is True
 
 
 def test_path_existed_false_when_git_raises():
     def fake_git(args):
-        raise gt.GitError("нет такого объекта")
+        raise ground_truth.GitError("нет такого объекта")
 
-    assert gt.path_existed("aaa111^1", "reviewer/new.py", fake_git) is False
+    assert ground_truth.path_existed("aaa111^1", "reviewer/new.py", fake_git) is False
 
 
 def test_path_existed_without_parent_assumes_existing():
     def fake_git(args):
         raise AssertionError("git не должен вызываться без parent_ref")
 
-    assert gt.path_existed(None, "reviewer/a.py", fake_git) is True
+    assert ground_truth.path_existed(None, "reviewer/a.py", fake_git) is True
 
 
 def test_collect_counts_diff_failures():
@@ -115,9 +153,9 @@ def test_collect_counts_diff_failures():
     def fake_git(args):
         if args[0] == "log":
             return "aaa111 Merge pull request #1 from o/b\n"
-        raise gt.GitError("объект недоступен")
+        raise ground_truth.GitError("объект недоступен")
 
-    truth = gt.collect("PRI-1", fake_git)
+    truth = ground_truth.collect("PRI-1", fake_git)
 
     assert truth.changed == set()
     assert truth.diff_failures == 1

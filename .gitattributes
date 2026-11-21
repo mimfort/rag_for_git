@@ -1,3 +1,4 @@
 # The Codex plugin version includes a digest of this text-only payload.
 plugin/** text eol=lf
 assets/icon.svg text eol=lf
+reviewer/bugreport/diagnostics.py text eol=lf

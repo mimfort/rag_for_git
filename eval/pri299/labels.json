@@ -1,0 +1,108 @@
+{
+  "PRI-170": {
+    "core": [
+      "plugin/skills/configure-review/SKILL.md",
+      "plugin/skills/review-pr/SKILL.md",
+      "plugin/skills/solve-task/SKILL.md",
+      "plugin/skills/sync-tasks/SKILL.md",
+      "reviewer/entrypoints/mcp_server.py",
+      "reviewer/index/schema.sql",
+      "reviewer/mcp/service.py",
+      "reviewer/tasks/boards/__init__.py",
+      "reviewer/tasks/boards/base.py",
+      "reviewer/tasks/boards/yougile.py",
+      "reviewer/tasks/boards/youtrack.py",
+      "reviewer/tasks/graph.py",
+      "reviewer/tasks/service.py",
+      "reviewer/tasks/store.py",
+      "reviewer/tasks/sync.py"
+    ],
+    "dependencies": [
+      "reviewer/config/settings.py",
+      "reviewer/policy/policy.py"
+    ]
+  },
+  "PRI-202": {
+    "core": [
+      "plugin/skills/ask/SKILL.md",
+      "plugin/skills/solve-task/SKILL.md",
+      "reviewer/entrypoints/mcp_server.py",
+      "reviewer/index/reranker.py",
+      "reviewer/index/store.py",
+      "reviewer/mcp/service.py",
+      "reviewer/mcp/session_serde.py",
+      "reviewer/policy/policy.py",
+      "reviewer/retrieval/retriever.py",
+      "reviewer/tasks/service.py",
+      "reviewer/tools/graph_format.py"
+    ],
+    "dependencies": [
+      "reviewer/config/settings.py",
+      "reviewer/index/chunker.py"
+    ]
+  },
+  "PRI-221": {
+    "core": [
+      "plugin/skills/configure-review/SKILL.md",
+      "reviewer/entrypoints/cli.py",
+      "reviewer/launcher/metadata.py",
+      "reviewer/mcp/service.py",
+      "reviewer/mcp/session_serde.py",
+      "reviewer/policy/policy.py",
+      "reviewer/services/repo_id.py",
+      "reviewer/services/review_service.py",
+      "reviewer/web/history.py",
+      "reviewer/web/schema.sql"
+    ],
+    "dependencies": [
+      "reviewer/config/settings.py",
+      "reviewer/entrypoints/mcp_server.py",
+      "reviewer/gitutil.py"
+    ]
+  },
+  "PRI-179": {
+    "core": [
+      "plugin/skills/_common/tool-usage.md",
+      "plugin/skills/solve-task/SKILL.md",
+      "reviewer/entrypoints/mcp_server.py",
+      "reviewer/graph/store.py",
+      "reviewer/mcp/service.py"
+    ],
+    "dependencies": [
+      "reviewer/graph/builder.py",
+      "reviewer/graph/scip.py",
+      "reviewer/tools/graph_format.py"
+    ]
+  },
+  "PRI-205": {
+    "core": [
+      "plugin/skills/configure-review/SKILL.md",
+      "plugin/skills/finish-task/SKILL.md",
+      "reviewer/entrypoints/mcp_server.py",
+      "reviewer/mcp/service.py",
+      "reviewer/tasks/boards/base.py",
+      "reviewer/tasks/boards/yougile.py",
+      "reviewer/tasks/boards/youtrack.py"
+    ],
+    "dependencies": [
+      "reviewer/config/settings.py",
+      "reviewer/policy/policy.py",
+      "reviewer/tasks/service.py"
+    ]
+  },
+  "PRI-207": {
+    "core": [
+      "reviewer/tasks/boards/base.py",
+      "reviewer/tasks/boards/yougile.py",
+      "reviewer/tasks/boards/youtrack.py",
+      "reviewer/tasks/service.py",
+      "reviewer/tasks/store.py",
+      "reviewer/tasks/sync.py"
+    ],
+    "dependencies": [
+      "reviewer/entrypoints/mcp_server.py",
+      "reviewer/index/schema.sql",
+      "reviewer/mcp/service.py"
+    ]
+  }
+}

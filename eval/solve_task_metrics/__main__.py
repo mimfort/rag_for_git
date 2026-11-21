@@ -8,6 +8,9 @@ import argparse
 import datetime as dt
 import pathlib
 import sys
+from dataclasses import dataclass
+
+import yaml
 
 from . import (
     endtoend,
@@ -24,15 +27,65 @@ from . import (
     subquery_stats,
     variants,
 )
+from .config import BriefQualityConfig
 
-REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
-BRIEFS_DIR = REPO_ROOT / "docs" / "superpowers" / "briefs"
-EVAL_DIR = REPO_ROOT / "eval"
-HISTORY_PATH = EVAL_DIR / history.HISTORY_PATH_NAME
-REPORT_PATH = EVAL_DIR / "solve_task_metrics_report.md"
-REPLAY_HISTORY_PATH = EVAL_DIR / replay_history.HISTORY_PATH_NAME
-REPLAY_REPORT_PATH = EVAL_DIR / "replay_report.md"
+DEFAULT_REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 TRANSCRIPTS_ROOT = pathlib.Path.home() / ".claude" / "projects"
+
+
+@dataclass(frozen=True)
+class HarnessPaths:
+    """Пути прогона: всё привязано к целевому клону, а не к этому репозиторию."""
+
+    repo: pathlib.Path
+    briefs: pathlib.Path
+    eval_dir: pathlib.Path
+    history: pathlib.Path
+    report: pathlib.Path
+    replay_history: pathlib.Path
+    replay_report: pathlib.Path
+
+
+def resolve_paths(repo_path, briefs_dir) -> HarnessPaths:
+    """Пути прогона относительно ЦЕЛЕВОГО клона, а не этого репозитория."""
+    repo = pathlib.Path(repo_path)
+    # `repo / briefs_dir` — не только конкатенация: pathlib сама разруливает
+    # относительный/абсолютный случай (`Path("/a") / "b/c"` → "/a/b/c", а
+    # `Path("/a") / "/x"` → "/x"), поэтому третьей ветки для абсолютного пути
+    # не нужно — её отсутствие и было дефектом фикс-раунда 1.
+    briefs = repo / briefs_dir if briefs_dir else repo / "docs" / "superpowers" / "briefs"
+    eval_dir = repo / "eval"
+    return HarnessPaths(
+        repo=repo,
+        briefs=briefs,
+        eval_dir=eval_dir,
+        history=eval_dir / history.HISTORY_PATH_NAME,
+        report=eval_dir / "solve_task_metrics_report.md",
+        replay_history=eval_dir / replay_history.HISTORY_PATH_NAME,
+        replay_report=eval_dir / "replay_report.md",
+    )
+
+
+def resolve_config(repo_path, briefs_dir):
+    """Конфиг метрики из .review.yml ЦЕЛЕВОГО клона; без файла — дефолт.
+
+    Намеренно без домашних слоёв (`home:review.yml`/`home:repos/...`), в
+    отличие от CLI `reviewer measure-briefs`: харнесс обязан считать
+    произвольный чужой клон на машине, где reviewer вообще может быть не
+    настроен (нет `~/.config/rag-reviewer/`, нет установленного пакета) —
+    не «чинить» по образцу CLI без такого же ограничения.
+    """
+    review = pathlib.Path(repo_path) / ".review.yml"
+    data = yaml.safe_load(review.read_text(encoding="utf-8")) if review.exists() else {}
+    relative = str(pathlib.Path(briefs_dir)) if briefs_dir else None
+    return BriefQualityConfig.from_review_yaml(data or {}, briefs_dir=relative)
+
+
+def _add_repo_options(parser) -> None:
+    parser.add_argument("--repo-path", default=str(DEFAULT_REPO_ROOT),
+                        help="клон, по которому считать (по умолчанию — этот репозиторий)")
+    parser.add_argument("--briefs-dir", default=None,
+                        help="каталог брифов относительно клона")
 
 
 def _head_commit(run_git) -> str:
@@ -42,29 +95,32 @@ def _head_commit(run_git) -> str:
         return "unknown"
 
 
-def cmd_snapshot(_args) -> int:
+def cmd_snapshot(args) -> int:
+    paths = resolve_paths(args.repo_path, args.briefs_dir)
+    config = resolve_config(args.repo_path, args.briefs_dir)
     try:
-        report_merge.ensure_mergeable(REPORT_PATH)
+        report_merge.ensure_mergeable(paths.report)
     except report_merge.MarkerMissing as error:
         print(str(error))
         return 1
-    run_git = ground_truth.git_runner(REPO_ROOT)
+    run_git = ground_truth.git_runner(paths.repo)
     taken_at = dt.datetime.now(dt.timezone.utc).isoformat()
     transcripts = endtoend.scan_transcripts(TRANSCRIPTS_ROOT)
     snap, rows = snapshot_mod.build_snapshot(
-        briefs_dir=BRIEFS_DIR,
+        briefs_dir=paths.briefs,
         run_git=run_git,
         commit=_head_commit(run_git),
         taken_at=taken_at,
+        config=config,
         transcripts=transcripts,
     )
-    history.append_snapshot(HISTORY_PATH, snap)
-    REPORT_PATH.write_text(
-        report_merge.merge_file(REPORT_PATH, report.render(snap, rows)),
+    history.append_snapshot(paths.history, snap)
+    paths.report.write_text(
+        report_merge.merge_file(paths.report, report.render(snap, rows)),
         encoding="utf-8",
     )
-    print(f"Срез сохранён: {HISTORY_PATH}")
-    print(f"Отчёт записан: {REPORT_PATH}")
+    print(f"Срез сохранён: {paths.history}")
+    print(f"Отчёт записан: {paths.report}")
     print(
         f"Полная цена «под ключ» измерена для {snap['endtoend']['measured']} задач "
         "(остальные — транскрипт локально недоступен)"
@@ -84,7 +140,7 @@ def _fmt(value) -> str:
 
 
 def cmd_compare(args) -> int:
-    snapshots = history.load_snapshots(HISTORY_PATH)
+    snapshots = history.load_snapshots(resolve_paths(DEFAULT_REPO_ROOT, None).history)
     old, new = history.select_pair(snapshots, args.back)
     if old is None:
         print(
@@ -109,7 +165,7 @@ def cmd_compare(args) -> int:
 
 def cmd_stats(args) -> int:
     """Тренд последних N срезов одной таблицей — без пересчёта метрик."""
-    snapshots = history.load_snapshots(HISTORY_PATH)
+    snapshots = history.load_snapshots(resolve_paths(DEFAULT_REPO_ROOT, None).history)
     if not snapshots:
         print("История пуста; сначала прогоните snapshot.")
         return 1
@@ -136,12 +192,15 @@ def cmd_stats(args) -> int:
 
 
 def cmd_forecast(args) -> int:
-    run_git = ground_truth.git_runner(REPO_ROOT)
+    paths = resolve_paths(args.repo_path, args.briefs_dir)
+    config = resolve_config(args.repo_path, args.briefs_dir)
+    run_git = ground_truth.git_runner(paths.repo)
     _, rows = snapshot_mod.build_snapshot(
-        briefs_dir=BRIEFS_DIR,
+        briefs_dir=paths.briefs,
         run_git=run_git,
         commit=_head_commit(run_git),
         taken_at=dt.datetime.now(dt.timezone.utc).isoformat(),
+        config=config,
     )
     items = forecast.build(rows)
     if args.core_files is None:
@@ -225,20 +284,23 @@ def cmd_steps(_args) -> int:
 
 
 def _replay_side(provider, args, run_git, commit, taken_at, repo, branch,
-                 variant_name, limits) -> dict:
+                 variant_name, limits, paths, config) -> dict:
     """Прогнать одну сторону A/B и сохранить снимок."""
     target = variants.ReplayTarget(repo=repo, branch=branch, limits=limits)
     snap = replay_mod.run_replay(
-        provider=provider, run_git=run_git, briefs_dir=BRIEFS_DIR,
+        provider=provider, run_git=run_git, briefs_dir=paths.briefs,
         target=target, variant_name=variant_name, commit=commit,
-        taken_at=taken_at, limit=args.limit, seed_mode=args.context_seeds,
+        taken_at=taken_at, config=config,
+        limit=args.limit, seed_mode=args.context_seeds,
     )
-    replay_history.append(REPLAY_HISTORY_PATH, snap)
+    replay_history.append(paths.replay_history, snap)
     return snap
 
 
 def cmd_replay(args) -> int:
     """Прогнать ретрив по корпусу и сравнить варианты (PRI-254)."""
+    paths = resolve_paths(args.repo_path, args.briefs_dir)
+    config = resolve_config(args.repo_path, args.briefs_dir)
     try:
         variants.get_variant(args.variant)
         limits = variants.parse_overrides(args.set)
@@ -253,7 +315,7 @@ def cmd_replay(args) -> int:
     if args.baseline:
         try:
             baseline_snap = replay_history.select(
-                replay_history.load(REPLAY_HISTORY_PATH), args.baseline
+                replay_history.load(paths.replay_history), args.baseline
             )
         except (replay_history.SnapshotNotFound,
                 replay_history.PartialSnapshotRejected) as error:
@@ -261,14 +323,14 @@ def cmd_replay(args) -> int:
             return 1
 
     try:
-        report_merge.ensure_mergeable(REPLAY_REPORT_PATH)
+        report_merge.ensure_mergeable(paths.replay_report)
     except report_merge.MarkerMissing as error:
         print(str(error))
         return 1
 
     from . import live  # ленивый импорт: живые зависимости только здесь
 
-    run_git = ground_truth.git_runner(REPO_ROOT)
+    run_git = ground_truth.git_runner(paths.repo)
     commit = _head_commit(run_git)
     taken_at = dt.datetime.now(dt.timezone.utc).isoformat()
     provider, repo, branch = live.open_live(args.repo, args.branch)
@@ -277,24 +339,24 @@ def cmd_replay(args) -> int:
             print("Прогон стороны «до» (baseline)…")
             baseline_snap = _replay_side(
                 provider, args, run_git, commit, taken_at, repo, branch,
-                "baseline", None,
+                "baseline", None, paths, config,
             )
         print(f"Прогон варианта «{args.variant}»…")
         snap = _replay_side(
             provider, args, run_git, commit, taken_at, repo, branch,
-            args.variant, limits,
+            args.variant, limits, paths, config,
         )
     finally:
         provider.close()
 
-    REPLAY_REPORT_PATH.write_text(
+    paths.replay_report.write_text(
         report_merge.merge_file(
-            REPLAY_REPORT_PATH, replay_report.render(snap, baseline_snap)
+            paths.replay_report, replay_report.render(snap, baseline_snap)
         ),
         encoding="utf-8",
     )
-    print(f"Снимок сохранён: {REPLAY_HISTORY_PATH}")
-    print(f"Отчёт записан: {REPLAY_REPORT_PATH}")
+    print(f"Снимок сохранён: {paths.replay_history}")
+    print(f"Отчёт записан: {paths.replay_report}")
     # Ветка и sha индекса печатаются рядом с числом намеренно: прогон по
     # первичной ветке при работе в другой даёт корректное, но не то число,
     # и без этой строки его легко принять за baseline своей ветки.
@@ -318,10 +380,12 @@ def cmd_subqueries(args) -> int:
     """Распределение числа подзапросов по корпусу (PRI-255, критерий 1)."""
     from . import live  # ленивый импорт: живые зависимости только здесь
 
+    paths = resolve_paths(args.repo_path, args.briefs_dir)
+    config = resolve_config(args.repo_path, args.briefs_dir)
     provider, repo, branch = live.open_live(args.repo, args.branch)
     with provider:
         rows = []
-        for key in replay_mod.corpus_keys(BRIEFS_DIR):
+        for key in replay_mod.corpus_keys(paths.briefs, config):
             task = provider.task(key)
             rows.append((key, task, provider.query(task, key)))
     print(f"Корпус: {len(rows)} задач, репозиторий {repo}@{branch}")
@@ -336,7 +400,8 @@ def build_parser() -> argparse.ArgumentParser:
         description="Офлайн-метрики этапа solve-task: цена, качество ретрива, тренд.",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
-    subparsers.add_parser("snapshot", help="пересчитать метрики и сохранить срез")
+    snapshot_parser = subparsers.add_parser("snapshot", help="пересчитать метрики и сохранить срез")
+    _add_repo_options(snapshot_parser)
     stats_parser = subparsers.add_parser(
         "stats", help="тренд последних срезов таблицей (без пересчёта)"
     )
@@ -369,6 +434,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="предполагаемое число файлов ядра у задачи",
     )
+    _add_repo_options(forecast_parser)
     replay_parser = subparsers.add_parser(
         "replay",
         help="прогнать ретрив по корпусу заново и сравнить варианты (A/B)",
@@ -411,6 +477,7 @@ def build_parser() -> argparse.ArgumentParser:
     replay_parser.add_argument(
         "--branch", default=None, help="ветка; по умолчанию первичная"
     )
+    _add_repo_options(replay_parser)
     subqueries_parser = subparsers.add_parser(
         "subqueries",
         help="распределение числа подзапросов ретрива по размеру задачи",
@@ -421,6 +488,7 @@ def build_parser() -> argparse.ArgumentParser:
     subqueries_parser.add_argument(
         "--branch", default=None, help="ветка; по умолчанию первичная"
     )
+    _add_repo_options(subqueries_parser)
     return parser
 
 

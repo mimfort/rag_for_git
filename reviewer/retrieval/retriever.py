@@ -91,6 +91,7 @@ class ContextPack:
     tail_meta: object = None        # TailMeta | None (PRI-202); ленивая заметка о хвосте
     degraded_reason: DegradedReason | None = None
     augment_note: str | None = None   # PRI-257: сколько файлов подмешано и откуда
+    selection_stats: dict[str, int] | None = None
 
     def as_context(self, line_numbers: bool = False) -> str:
         parts = []

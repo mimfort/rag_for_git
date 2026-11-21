@@ -93,7 +93,10 @@ def build_components(settings: Settings, connect: bool = True) -> Components:
                                   batch_size=settings.embedding_batch_size,
                                   token_budget=settings.embedding_token_budget)
         reranker = VoyageReranker(client=vclient, model=settings.rerank_model)
-        graph = GraphStore(settings.neo4j_uri, settings.neo4j_user, settings.neo4j_password) \
+        graph = GraphStore(settings.neo4j_uri, settings.neo4j_user, settings.neo4j_password,
+                           connection_timeout=settings.neo4j_connection_timeout,
+                           acquisition_timeout=settings.neo4j_acquisition_timeout,
+                           max_retry_time=settings.neo4j_max_retry_time) \
             if connect else None
         if graph is not None:
             created.append(graph)

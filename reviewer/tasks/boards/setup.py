@@ -65,9 +65,10 @@ class ClickSetupIO:
     def choose(self, text: str, choices: Sequence[SetupChoice]) -> str:
         import click
 
-        rendered = [f"{choice.label} [{choice.value}]" for choice in choices]
-        selected = click.prompt(text, type=click.Choice(rendered))
-        return choices[rendered.index(selected)].value
+        for number, choice in enumerate(choices, 1):
+            click.echo(f"  {number}. {choice.label} [{choice.value}]")
+        selected = click.prompt(text, type=click.IntRange(1, len(choices)))
+        return choices[selected - 1].value
 
     def open_url(self, url: str) -> None:
         import click

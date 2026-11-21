@@ -32,9 +32,13 @@ IMPORT_RE = re.compile(
 # функции без Postgres/Neo4j/Voyage. chunk_python — tree-sitter-разбор в памяти
 # (на тексте, прочитанном инъектированным run_git, а не живым клиентом),
 # is_core_production_path — та же чистая классификация путей, что у classify.py.
+# config.py (PRI-271) — тот же класс: чистый ре-экспорт неизменяемого датакласса
+# BriefQualityConfig, без ввода-вывода вообще. ground_truth.py (PRI-271) — тоже
+# чистый ре-экспорт: git приходит инъектируемым run_git, не живым клиентом.
 ALLOWED = {
     "briefs.py", "classify.py", "recall.py", "live.py", "variants.py",
-    "subquery_stats.py", "context_core.py", "context_seeds.py",
+    "subquery_stats.py", "context_core.py", "context_seeds.py", "config.py",
+    "ground_truth.py",
 }
 
 
@@ -169,12 +173,14 @@ def test_code_multi_similar_paths_flag_uses_production_deps(monkeypatch):
     from eval.solve_task_metrics.live import LiveRetrieval
     from reviewer.mcp import service as service_mod
 
+    similar_calls = []
+
     class FakeDeps:
         def __init__(self, service, path):
-            self.similar_calls: list = []
+            pass
 
-        def similar(self, query, project):
-            self.similar_calls.append((query, project))
+        def similar(self, query, project, *, task=None):
+            similar_calls.append((query, project, task))
 
         def _augment_paths(self, repo):
             return ["a.py"]
@@ -193,8 +199,10 @@ def test_code_multi_similar_paths_flag_uses_production_deps(monkeypatch):
 
     service = FakeService()
     provider = LiveRetrieval(object(), object(), service)
-    provider.code_multi("o/n", "dev", ["q1", "q2"], None, similar_paths=True)
+    task = {"key": "ID-388", "aliases": ["PRI-295"]}
+    provider.code_multi("o/n", "dev", ["q1", "q2"], None, similar_paths=True, task=task)
 
+    assert similar_calls == [("q1", None, task)]
     assert len(service.captured) == 1
     assert service.captured[0].name == "similar-diffs"
     assert service.captured[0].paths == ["a.py"]
@@ -212,7 +220,7 @@ def test_code_multi_with_overrides_forwards_augment_signals(monkeypatch):
         def __init__(self, service, path):
             pass
 
-        def similar(self, query, project):
+        def similar(self, query, project, *, task=None):
             pass
 
         def _augment_paths(self, repo):
@@ -274,3 +282,55 @@ def test_open_live_wires_and_closes_components():
         assert preflight["chunks"] == 0
     finally:
         provider.close()
+
+
+def test_code_multi_survives_similar_failure_but_records_it(monkeypatch):
+    """M7: strict=True пробивает отказ эмбеддера мимо `_safe` — харнесс не падает.
+
+    В проде `deps.similar` защищён `_safe`, здесь защиты нет: с PRI-272 отказ
+    эмбеддера выходит наружу и ронял бы прогон там, где раньше была тихая
+    деградация. Молчаливое подавление тоже не годится — подмешивание просто не
+    состоялось бы, а число подмешанных путей уехало бы вниз без видимой
+    причины; поэтому сбой переживается и остаётся названным.
+    """
+    from reviewer.policy.context_limits import ContextLimits
+    from reviewer.retrieval import multiquery
+    from voyageai.error import APIError
+
+    from eval.solve_task_metrics.live import LiveRetrieval
+    from reviewer.mcp import service as service_mod
+
+    class FakeDeps:
+        def __init__(self, service, path):
+            pass
+
+        def similar(self, query, project, *, task=None):
+            raise APIError("HTTP code 403")
+
+        def _augment_paths(self, repo):
+            return []
+
+    monkeypatch.setattr(service_mod, "_TaskContextDeps", FakeDeps)
+
+    class FakeService:
+        def _resolve_context_limits(self, repo, branch):
+            return ContextLimits()
+
+    class FakeComponents:
+        retriever = object()
+
+    def fake_search_multi(retriever, repo, queries, **kwargs):
+        class Pack:
+            def as_context(self, line_numbers=True):
+                return "текст"
+
+        return Pack()
+
+    monkeypatch.setattr(multiquery, "search_multi", fake_search_multi)
+    provider = LiveRetrieval(object(), FakeComponents(), FakeService())
+
+    out = provider.code_multi("o/n", "dev", ["q"], {"code_section": {"max_files": 4}},
+                              similar_paths=True)
+
+    assert out == "текст"
+    assert provider.failures == ["similar: o/n"]

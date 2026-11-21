@@ -60,7 +60,7 @@ def allowed_names_for(seeds, seed_mode: str) -> set:
     return seeds.called_names
 
 
-def context_denominator_defined(changed_paths) -> bool:
+def context_denominator_defined(changed_paths, config) -> bool:
     """Мог ли обход быть засеян в принципе.
 
     Сиды строятся через `chunk_python`, а граф хранит символы только для
@@ -73,7 +73,7 @@ def context_denominator_defined(changed_paths) -> bool:
     неопределимость маскируется пустой выдачей графа.
     """
     return any(
-        classify.is_core_production_path(path) and path.endswith(".py")
+        classify.is_core_production_path(path, config) and path.endswith(".py")
         for path in changed_paths
     )
 
@@ -95,7 +95,7 @@ def _median(values: list):
     return statistics.median(values) if values else None
 
 
-def corpus_keys(briefs_dir: pathlib.Path) -> list:
+def corpus_keys(briefs_dir: pathlib.Path, config) -> list:
     """Ключи задач корпуса в порядке брифов, по одному на ключ.
 
     Дедуп обязателен: два брифа одного ключа (переписанный бриф, вторая
@@ -103,7 +103,7 @@ def corpus_keys(briefs_dir: pathlib.Path) -> list:
     """
     seen: set = set()
     keys: list = []
-    for record in briefs.load_briefs(briefs_dir):
+    for record in briefs.load_briefs(briefs_dir, config):
         if not record.task_key or record.task_key in seen:
             continue
         seen.add(record.task_key)
@@ -136,7 +136,7 @@ def _task_row(key: str, status: str, **fields) -> dict:
 
 
 def _evaluate(key: str, predicted: set, truth, run_git, context_core_paths: set,
-              context_failed: bool = False) -> dict:
+              config, context_failed: bool = False) -> dict:
     """Посчитать одну задачу той же линейкой, что build_snapshot."""
     existed_cache: dict = {}
 
@@ -150,7 +150,7 @@ def _evaluate(key: str, predicted: set, truth, run_git, context_core_paths: set,
     expected_core = {
         path
         for path in truth.changed
-        if classify.is_core_production_path(path) and existed(path)
+        if classify.is_core_production_path(path, config) and existed(path)
     }
     row = recall.evaluate_task(
         key, predicted, truth.changed, expected_core,
@@ -161,7 +161,7 @@ def _evaluate(key: str, predicted: set, truth, run_git, context_core_paths: set,
         context_status = STATUS_CONTEXT_FAILED
     elif context_core_paths:
         context_status = STATUS_MEASURED
-    elif not context_denominator_defined(truth.changed):
+    elif not context_denominator_defined(truth.changed, config):
         context_status = STATUS_UNDEFINED_CONTEXT
     else:
         context_status = STATUS_EMPTY_CONTEXT
@@ -195,6 +195,7 @@ def run_replay(
     variant_name: str,
     commit: str,
     taken_at: str,
+    config,
     limit: int | None = None,
     seed_mode: str = SEED_MODE_LINES_SIGNATURE,
 ) -> dict:
@@ -202,9 +203,12 @@ def run_replay(
 
     Ни один отказ не прерывает прогон и не исчезает молча: у каждой задачи
     корпуса есть именованный статус (см. STATUSES).
+
+    `config` обязателен: молчаливый дефолт (ядро rag_for_git) — тот тихий
+    провал, ради починки которого затевалась вся задача.
     """
     strategy = variants.get_variant(variant_name)
-    keys = corpus_keys(briefs_dir)
+    keys = corpus_keys(briefs_dir, config)
     partial = bool(limit) and limit < len(keys)
     if limit:
         keys = keys[:limit]
@@ -233,17 +237,18 @@ def run_replay(
             continue
         context_failed = False
         try:
-            seeds = context_seeds.collect_seeds(truth, run_git)
+            seeds = context_seeds.collect_seeds(truth, run_git, config)
             core_now = context_core.derive_context_core(
                 seeds.symbols,
-                {p for p in truth.changed if classify.is_core_production_path(p)},
+                {p for p in truth.changed if classify.is_core_production_path(p, config)},
                 lambda ids: provider.neighbors(target.repo, target.branch, ids),
+                config,
                 allowed_names=allowed_names_for(seeds, seed_mode),
             )
         except Exception:  # noqa: BLE001 — недоступный граф не роняет прогон корпуса
             core_now = set()
             context_failed = True
-        row = _evaluate(key, predicted, truth, run_git, core_now,
+        row = _evaluate(key, predicted, truth, run_git, core_now, config,
                         context_failed=context_failed)
         if task is None:
             # Задача есть в корпусе брифов, но не в сторе: запрос выродился в

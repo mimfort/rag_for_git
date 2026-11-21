@@ -23,6 +23,11 @@ class BranchStatus:
     graph_nodes: int | None
     drift: int | None
     summaries: int | None = None
+    # Исключение, проглоченное при чтении графа (PRI-276): секция отчёта остаётся
+    # целой (graph_nodes=None), но потребитель может узнать причину и не платить
+    # второй таймаут. В render_status_json намеренно не входит — не сериализуется
+    # и машиночитаемому контракту не принадлежит.
+    graph_error: BaseException | None = None
 
 
 @dataclass
@@ -61,10 +66,12 @@ def build_status_report(store, graph, repo: str, branches: list[str],
         sha = row[0] if row else None
         updated_at = row[1] if row else None
         chunks = store.count_chunks(repo, ref)
+        graph_error: BaseException | None = None
         try:
             graph_nodes = graph.count_nodes(repo, branch)
-        except Exception:  # noqa: BLE001 — Neo4j недоступен, граф недоступен
+        except Exception as exc:  # noqa: BLE001 — Neo4j недоступен, граф недоступен
             graph_nodes = None
+            graph_error = exc
         try:
             summaries = summary_store.count_summaries(repo, branch) if summary_store else None
         except Exception:  # noqa: BLE001 — стор сводок недоступен
@@ -72,7 +79,8 @@ def build_status_report(store, graph, repo: str, branches: list[str],
         drift = _drift(repo_path, sha, branch) if sha else None
         branch_statuses.append(BranchStatus(
             branch=branch, ref=ref, indexed_sha=sha, updated_at=updated_at,
-            chunks=chunks, graph_nodes=graph_nodes, drift=drift, summaries=summaries))
+            chunks=chunks, graph_nodes=graph_nodes, drift=drift, summaries=summaries,
+            graph_error=graph_error))
     overlays = [
         OverlayStatus(ref=r, chunks=store.count_chunks(repo, r))
         for r in store.list_refs(repo)

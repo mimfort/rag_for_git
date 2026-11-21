@@ -1,4 +1,6 @@
 """search_tasks остаётся рендером поверх структурных хитов (PRI-257)."""
+import pytest
+
 from reviewer.tasks.store import TaskHit
 
 
@@ -33,3 +35,32 @@ def test_render_format_unchanged():
 def test_empty_hits_and_unavailable_source_differ():
     assert _Svc([]).search_tasks("q") == "(no similar tasks found)"
     assert _Svc(None).search_tasks("q") == "(task search unavailable)"
+
+
+class _EmbedderRaising:
+    def __init__(self, exc):
+        self._exc = exc
+
+    def embed_query(self, query):
+        raise self._exc
+
+
+def _svc(exc):
+    return TaskService(None, None, _EmbedderRaising(exc))
+
+
+def test_search_hits_swallows_embedder_failure_by_default():
+    """Публичный путь остаётся немым: /ask и грунтовка на этом стоят."""
+    from voyageai.error import APIError
+    assert _svc(APIError("HTTP code 403")).search_hits("q") is None
+
+
+def test_search_hits_reraises_embedder_failure_when_strict():
+    from voyageai.error import APIError
+    with pytest.raises(APIError):
+        _svc(APIError("HTTP code 403")).search_hits("q", strict=True)
+
+
+def test_search_hits_stays_soft_on_other_failures_when_strict():
+    """Строгость адресная: непонятный сбой по-прежнему гасится."""
+    assert _svc(RuntimeError("boom")).search_hits("q", strict=True) is None

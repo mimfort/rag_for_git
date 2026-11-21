@@ -316,7 +316,20 @@ a New Chat or new CLI session. In an IDE, also use Reload Window.
 
 ### Required services and credentials
 
-Run `reviewer init` to write the selected env file and `reviewer check` to validate it. Resolution
+Run `reviewer` without arguments to open the command menu. Search accepts command names and flags,
+such as `reviewer init --advanced`. Set launch options in the command form. Left and Right cycle
+through supported choices, and F3 opens the preview.
+
+Use Up and Down or Page Up and Page Down to scroll long commands in the preview.
+
+`reviewer init` asks for missing keys and previews the proposed configuration before saving.
+When creating a repository profile, use the edit-branches action in the preview to adjust the
+plan while keeping the keys you entered.
+Use `reviewer init --advanced` to choose providers or configure stores and task boards.
+Choose a task board provider by number. The Postgres connection string is entered with hidden
+input. Press Enter to keep the saved value or use the default.
+`reviewer init --dry-run` prints the plan without writing. Use `reviewer check --env-file PATH`
+to validate a separate setup profile. Default env file resolution
 order is `REVIEWER_ENV_FILE` → `$XDG_CONFIG_HOME/rag-reviewer/.env` → `./.env`.
 
 Important groups:
@@ -330,7 +343,7 @@ Important groups:
 
 Published host ports of the Compose storage services are variables, not literals:
 `PARADEDB_PUBLISH_PORT` (default `5433`), `NEO4J_BOLT_PUBLISH_PORT` (default `7687`) and
-`NEO4J_HTTP_PUBLISH_PORT` (default `7474`). Container ports stay fixed. `reviewer init` asks for
+`NEO4J_HTTP_PUBLISH_PORT` (default `7474`). Container ports stay fixed. `reviewer init --advanced` asks for
 them in the storage group and derives the first two from `PG_DSN` and `NEO4J_URI`, so the client
 string and the published port cannot drift apart silently; a mismatch on a local host prints a
 warning without blocking.
@@ -410,7 +423,7 @@ in committed `.review.yml`. Pass `--repo owner/name` when no usable git remote i
 | GitLab | `GITLAB_URL`, `GITLAB_TOKEN` | PAT/project token with `api` scope | MR metadata, changes, notes, repository files, compare | discussions/notes and MR description backlink | authenticates `/api/v4/user` identity |
 
 The health check proves URL/token authentication, not every granular repository permission. The
-selected repository permissions are exercised by an actual review. `reviewer init` shows the same
+selected repository permissions are exercised by an actual review. `reviewer init --advanced` shows the same
 contract before prompting only for the selected provider's credentials.
 
 ### Repositories and branches
@@ -469,6 +482,15 @@ context_limits:
     max_chunks_per_file: 1
     chars_per_file: 975
     max_augmented_files: 3
+
+metrics:
+  brief_quality:
+    core_paths:
+      - 'reviewer/**/*.py'
+      - 'plugin/**'
+      - '!plugin/**/*.md'
+      - '!eval/**'
+      - '*.py'
 ```
 
 `summary_paths.ignore` only filters which files feed subsystem-summary clustering — unlike
@@ -500,6 +522,13 @@ co-change (git file-pairs-changed-together) second source was built and measured
 34 mixed-in paths, a bulk-recall drop — and removed rather than kept disabled; only similar-diffs
 covers (median core-recall 0.5 → 0.75, precision 0.167 → 0.333, 28 hits on 35 paths). See
 `eval/replay_report.md`, "Приёмка PRI-257".
+
+`metrics.brief_quality.core_paths` (PRI-271) makes the online brief-quality metric's core-path
+ruleset repository-specific instead of hardcoded: a glob list (`**` crosses `/`, plain `*`/`?`
+don't) that any repository can tailor to its own production-path layout. No key means the
+metric falls back to this repository's own default ruleset (`DEFAULT_CORE_PATHS` in
+`reviewer/metrics/brief_quality/config.py`) and reports `configured: false`, which the metric
+tells apart from an explicit but empty list — see the "Quality" page section below.
 
 ### Layered repository policy
 
@@ -622,7 +651,7 @@ The server-side flow is **store-first**:
 2. Skills call `get_task(key, project=...)`; linked tasks/PRs/code come from task context tools.
 3. Client models never enumerate the provider directly and never send credentials.
 
-The MCP server currently exposes **42 tools**, including the native-subtask batch operation.
+The MCP server currently exposes **44 tools**, including the native-subtask batch operation. See the [client compatibility guide](docs/client-compatibility.md) for verification, usage, and diagnostics.
 
 Legacy aliases remain **legacy metadata for older clients** for one compatibility window:
 `TASK_BOARD_API_KEY → YOUGILE_API_KEY` and
@@ -685,14 +714,35 @@ namespaced skills with `$rag-reviewer:...`.
   empty search) is reported per-section in `gaps` instead of aborting the skill. Graph expansions
   (`get_related_symbols`, `callers`, `implementations`, `family`, …) and `get_pr_diff` stay
   separate calls made at the LLM's discretion, since they depend on what the brief turns up.
-- **A storage outage is a signal, not silence:** when Postgres or Neo4j is unreachable, the first
-  failing section classifies the exception *by type* (`reviewer/storage_health.py` — never by its
-  text, which can carry a DSN with a password) and short-circuits the rest: every remaining section
-  gets its default plus a `gaps` entry, instead of each paying its own 30-second pool timeout. Every
-  `gaps` entry carries `cause` (`storage_unavailable` | `unknown`) and `remedy` (the command that
-  fixes it, or `null` when the storages are remote), so the skill branches on a machine-readable
-  class rather than on prose. The server never starts containers — it names the cure, and
-  `solve-task` asks the user whether to run it. The same flag stops `index_batch` from walking a
+- **An unavailable source is a signal, not silence:** when a source is unreachable, the first
+  failing section short-circuits the rest *of that source*: every remaining section gets its default
+  plus a `gaps` entry, instead of each paying its own 30-second pool timeout. The breaker is keyed
+  by source — `postgres`, `graph`, `embedder` — so a dead embedder never cancels sections that only
+  need Postgres, and vice versa. The *class* of unavailability is decided by exception type
+  (`is_storage_unavailable`, `is_embedder_unavailable`), but the cause *within* the storage class —
+  a wrong password or a missing database, as opposed to stopped containers — is decided by text
+  (`classify_storage_failure`): a failure during connection setup gives libpq nothing to return, so
+  SQLSTATE is empty and there is no code to branch on. The one detail decided by type instead is an
+  exhausted connection pool: `PoolTimeout` stays inside the storage class (removing it would cost
+  the breaker its ability to trip on the first failure) but may carry `cause_detail: pool_exhausted`,
+  because the containers are up and the real cure is a bigger pool or less concurrency. The type
+  alone is not enough there: production only reaches Postgres through the pool, and a stopped
+  container surfaces as the very same `PoolTimeout`, so the branch adds one observation — a single
+  direct `psycopg.connect(dsn, connect_timeout=2)` outside the pool. Connected means the pool really
+  is busy; failed means the *probe's* exception is classified instead, so a stopped container keeps
+  its `reviewer start` and a stale password still reads as `auth_failed`. Raw text only
+  ever reaches the caller when the cause couldn't be named, and even then only redacted
+  (`reviewer/storage_health.py`). Every `gaps` entry carries `cause` (`storage_unavailable` |
+  `embedder_unavailable` | `unknown`), `cause_detail` (`auth_failed` | `missing_database` |
+  `pool_exhausted` | `null`), and `remedy` — empty not only for remote storages but also once a
+  cause is named, since the containers are already up and the cure doesn't apply — so the skill
+  branches on machine-readable fields rather than on prose. A dead embedder is its own class, not a
+  detail of the storage one: Voyage is not a storage, and `reviewer start` does not fix it. Voyage
+  throttling (`RateLimitError`) is deliberately excluded — on the free tier it is a normal state
+  that `with_voyage_retry` already handles — and so are request-validation failures
+  (`InvalidRequestError` 400, `MalformedRequestError` 422, `VideoProcessingError`): a rejected
+  request is not a dead service, and treating it as one would silently gut half the task context. The server never starts containers — it names the cure,
+  and `solve-task` asks the user whether to run it. The same flag stops `index_batch` from walking a
   dead pool task by task and from spending Voyage quota it has nowhere to store.
 - **Multi-query retrieval for `code`:** the `code` and `test_exemplars` sections are searched with a
   *set* of subqueries, not one query over the whole task text. Subqueries are extracted
@@ -848,7 +898,7 @@ namespaced skills with `$rag-reviewer:...`.
 
 - **When:** synchronize a configured board before task search or solve-task.
 - **Invoke:** `/rag-reviewer:sync-tasks`.
-- **Needs:** use `reviewer init`, configure the selected provider as documented in
+- **Needs:** use `reviewer init --advanced`, configure the selected provider as documented in
   `docs/board-providers.md`, then validate it with `reviewer check`.
 - **Reads/writes:** calls idempotent server-side `sync_board` in repo mode with canonical repo and
   tracked branch. The server resolves effective policy; the client does not reconstruct it. It reads
@@ -913,7 +963,9 @@ docker compose ps
 
 `reviewer check` validates configured credentials and service connectivity without spending
 Voyage quota. `status` compares the indexed SHA with the selected local ref and reports chunks,
-graph nodes, subsystem summaries, and commit drift for each tracked branch.
+graph nodes, subsystem summaries, and commit drift for each tracked branch. `reviewer measure-briefs`
+recomputes the solve-task brief quality metric across the whole brief corpus from git PR-merge
+history, also without touching Voyage.
 
 ### Index freshness and recovery
 
@@ -955,11 +1007,15 @@ The **Quality** page shows the trend of the solve-task brief quality metric acro
 core-recall (precision is plotted per task on the trend chart; it has no median of its own), a bulk
 subsample (tasks with `expected_core >= 10`, the `BULK_CORE_THRESHOLD`) with a horizontal line for
 the offline baseline for before/after comparison, and a breakdown of misses by taxonomy.
-The data source is the `brief_quality` table, populated on every real `publish_review` call
-(written by `MCPReviewService`, not a separate process). If a task's brief is missing, or has no
-`## Relevant code` section at all, the measurement is skipped — no point shows up on the chart
-instead of a zero or an error. A section that exists but is empty is not a skip: it is a valid
-measurement with `predicted = 0`.
+The data source is the `brief_quality` table, populated at three points (PRI-270): every real
+`publish_review` call (writes `run_id`), `finish_task`, and the `reviewer measure-briefs` CLI
+command (the latter two write `run_id = NULL`). All three share one function,
+`reviewer.services.brief_quality.measure_and_record`; a row's identity is
+`(repo, pr_number, task_key)`, not "came from a review run" — an earlier measurement without a
+review and a later `publish_review` update the same row instead of creating two. If a task's
+brief is missing, or has no `## Relevant code` section at all, the measurement is skipped — no
+point shows up on the chart instead of a zero or an error. A section that exists but is empty is
+not a skip: it is a valid measurement with `predicted = 0`.
 
 The container keeps its internal listen port separate from the published loopback port. Build it
 once and choose both at runtime (replace `database` with a Postgres host reachable from the

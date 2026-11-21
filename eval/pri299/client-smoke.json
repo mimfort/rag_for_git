@@ -1,0 +1,48 @@
+{
+  "codex": {
+    "version": "codex-cli 0.170.0",
+    "inference": "live",
+    "render_status": "ok",
+    "verdicts": [
+      "verified",
+      "outside_excerpt",
+      "verified"
+    ],
+    "code": [
+      [
+        "src/module.py",
+        3
+      ]
+    ],
+    "test_exemplars": [
+      [
+        "tests/test_module.py",
+        7
+      ]
+    ],
+    "markdown_sha256": "2733e570e6529fcbba874fdd849d0d34124e91fa2ecd04badef80ac5668e2d41"
+  },
+  "claude": {
+    "version": "2.1.309 (Claude Code)",
+    "inference": "local Messages API fixture",
+    "render_status": "ok",
+    "verdicts": [
+      "verified",
+      "outside_excerpt",
+      "verified"
+    ],
+    "code": [
+      [
+        "src/module.py",
+        3
+      ]
+    ],
+    "test_exemplars": [
+      [
+        "tests/test_module.py",
+        7
+      ]
+    ],
+    "markdown_sha256": "2733e570e6529fcbba874fdd849d0d34124e91fa2ecd04badef80ac5668e2d41"
+  }
+}

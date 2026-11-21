@@ -8,7 +8,7 @@
 """
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator
 
@@ -33,6 +33,23 @@ class FixIn(BaseModel):
     start_line: int | None = None
     end_line: int | None = None
     replacement: str | None = None
+
+
+class BriefCitationIn(BaseModel):
+    """One path and line cited from a section of the prepared solve-task context."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    section: Literal["code", "test_exemplars"]
+    path: str = Field(min_length=1)
+    line: int = Field(ge=1)
+
+
+class BriefReferenceIn(BriefCitationIn):
+    """One brief citation with a single-line reason and an optional role."""
+
+    reason: str
+    role: Literal["edit", "read"] | None = None
 
 
 class SummaryFragmentIn(BaseModel):

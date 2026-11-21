@@ -22,6 +22,7 @@ def build_snapshot(
     run_git,
     commit: str,
     taken_at: str,
+    config,
     transcripts=None,
 ) -> tuple:
     """Посчитать срез по корпусу брифов.
@@ -31,12 +32,15 @@ def build_snapshot(
         run_git: GitRunner (инъектируется, чтобы тесты шли без git-репозитория).
         commit: sha HEAD на момент прогона.
         taken_at: ISO-8601 метка времени прогона.
+        config: BriefQualityConfig репозитория — обязателен, передаётся вызывающим
+            явно; молчаливый дефолт (ядро rag_for_git) — тот тихий провал, ради
+            починки которого затевалась вся задача.
         transcripts: результат endtoend.scan_transcripts() или None.
 
     Returns:
         (срез, per-task строки для отчёта).
     """
-    records = briefs.load_briefs(briefs_dir)
+    records = briefs.load_briefs(briefs_dir, config)
     with_tokens = [r for r in records if r.token_block]
     # Один ключ = одна задача: два брифа с одним ключом (переписанный бриф,
     # вторая итерация) иначе дали бы задаче двойной вес в агрегате.
@@ -61,6 +65,7 @@ def build_snapshot(
     quality_rows: list = []
     report_rows: list = []
     misses: Counter = Counter()
+    with_ground_truth = 0
     sync_skipped = 0
     diff_failures = 0
 
@@ -69,6 +74,9 @@ def build_snapshot(
         sync_skipped += truth.sync_merges_skipped
         diff_failures += truth.diff_failures
         if not truth.changed:
+            continue
+        with_ground_truth += 1
+        if record.citation_error is not None:
             continue
         # Один путь проверяется дважды — как кандидат в ядро и как промах;
         # кэш на задачу убирает лишний git cat-file на каждый такой файл.
@@ -84,14 +92,14 @@ def build_snapshot(
         expected_core = {
             path
             for path in truth.changed
-            if classify.is_core_production_path(path) and existed(path)
+            if classify.is_core_production_path(path, config) and existed(path)
         }
         row = recall.evaluate_task(
             record.task_key, record.relevant_paths, truth.changed, expected_core
         )
         quality_rows.append(row)
         for missed in truth.changed - record.relevant_paths:
-            misses[classify.categorize_miss(missed, existed(missed))] += 1
+            misses[classify.categorize_miss(missed, existed(missed), config)] += 1
         report_rows.append(
             {
                 "key": row.task_key,
@@ -119,7 +127,7 @@ def build_snapshot(
             "briefs": len(records),
             "with_tokens": len(with_tokens),
             "with_key": len(with_key),
-            "with_ground_truth": len(quality_rows),
+            "with_ground_truth": with_ground_truth,
             "sync_merges_skipped": sync_skipped,
             "diff_failures": diff_failures,
         },

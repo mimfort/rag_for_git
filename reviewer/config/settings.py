@@ -79,6 +79,13 @@ class Settings(BaseSettings):
     neo4j_uri: str = "neo4j://localhost:7687"
     neo4j_user: str = "neo4j"
     neo4j_password: str = "reviewerpass"
+    # Таймауты драйвера Neo4j (PRI-276). Дефолты драйвера — 30/60/30 с, и на
+    # мёртвом хранилище каждый заход платит их полностью: именно ретраи
+    # транзакции дали основную часть наблюдавшихся 162 с. Единиц секунд хватает
+    # локальному и типичному удалённому Neo4j; env — выход для медленной сети.
+    neo4j_connection_timeout: float = 5.0
+    neo4j_acquisition_timeout: float = 10.0
+    neo4j_max_retry_time: float = 5.0
     graph_backend: GraphBackend = "auto"   # auto|scip|treesitter
     summary_cluster_depth: int = 2   # глубина пути кластера подсистемы (PRI-159); env
     # SUMMARY_CLUSTER_DEPTH; per-repo override в .review.yml; смена = полный пересбор сводок (PRI-166)

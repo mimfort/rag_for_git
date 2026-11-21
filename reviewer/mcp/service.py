@@ -4,9 +4,12 @@
 между вызовами prepare_review и publish_review одного PR.
 """
 import logging
+from collections import OrderedDict
 from collections.abc import Callable, Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
+from time import monotonic
 from typing import TYPE_CHECKING
 
 from reviewer.agent.assemble import (
@@ -24,11 +27,19 @@ from reviewer.config.settings import Settings
 from reviewer.config.task_board import migrate_legacy_board_args, normalize_task_sync_filter
 from reviewer.index.refs import base_ref
 from reviewer.mcp import task_context
-from reviewer.mcp.schemas import FindingIn, SummaryFragmentIn, VerdictIn
+from reviewer.mcp.brief_evidence import BriefEvidence, _visible_lines
+from reviewer.mcp.schemas import (
+    BriefCitationIn,
+    BriefReferenceIn,
+    FindingIn,
+    SummaryFragmentIn,
+    VerdictIn,
+)
 from reviewer.mcp.session_serde import from_payload, to_payload
 from reviewer.mcp.session_store import SessionStore
 from reviewer.retrieval.retriever import ContextPack
 from reviewer.services.gc import purge_orphaned_overlays
+from reviewer.storage_health import is_embedder_unavailable, is_storage_unavailable
 from reviewer.services.review_service import (
     BranchNotTrackedError,
     PreparedReview,
@@ -74,10 +85,13 @@ from reviewer.vcs.diff import commentable_lines
 if TYPE_CHECKING:
     from reviewer.config.layers import ResolutionMeta
     from reviewer.graph.summaries import Cluster, Member
-    from reviewer.policy.context_limits import ContextLimits
+    from reviewer.index.store import Retrieved
+    from reviewer.policy.context_limits import CodeSectionLimits, ContextLimits
     from reviewer.policy.policy import ReviewPolicy
 
 log = logging.getLogger(__name__)
+
+_ResolvedPolicy = tuple["ReviewPolicy", "ResolutionMeta"]
 
 WALKTHROUGH_MARKER = "<!-- ai-walkthrough -->"
 
@@ -145,6 +159,10 @@ def normalize_client_step(step: dict) -> dict:
 # _TOUCH_INTERVAL_S. Тулы зовутся LLM-темпом; при TTL в часах минутная
 # гранулярность ничего не теряет и убирает бессмысленно частые UPDATE.
 _TOUCH_INTERVAL_S = 60
+# При переиндексации чанки могут меняться до записи новых метаданных.
+_SUMMARY_HASH_CACHE_TTL_S = 30
+_SUMMARY_HASH_CACHE_SIZE = 32
+_MISSING_SUMMARY_EXAMPLES_LIMIT = 8
 _SUBTASK_RECOVERY_WARNING = (
     "subtask operation failed; durable recovery used a safe fallback"
 )
@@ -259,7 +277,11 @@ class MCPReviewService:
             board_credentials or ProviderCredentialSource.from_settings(settings)
         )
         self._sessions: dict[tuple[str, int], _Session] = {}
+        self._brief_evidence = BriefEvidence()
         self._session_store: SessionStore | None = None
+        self._summary_hash_cache: OrderedDict[
+            tuple[str, str, tuple[str, datetime], str], tuple[float, dict[str, str]]
+        ] = OrderedDict()
         # PRI-239: порог шума канала репорта багов. Не более одного предложения на
         # симптом за жизнь процесса, отказ пользователя запоминается. In-memory —
         # ровно как сессии ревью: «сессия» здесь и есть процесс reviewer-mcp.
@@ -504,8 +526,18 @@ class MCPReviewService:
         return self.components.task_service.search_tasks(query, top_k, project=project)
 
     def get_task_context(self, key: str, project: str | None = None) -> str:
-        """Граф-контекст задачи. При project — соседи только этого проекта."""
-        return self.components.task_service.get_task_context(key, project=project)
+        """Граф-контекст задачи. При project — соседи только этого проекта.
+
+        Нота при недоступном хранилище ставится здесь, а не в TaskService
+        (PRI-276): контракт тула — строка, а провайдеру секции нужно исключение.
+        """
+        try:
+            return self.components.task_service.get_task_context(key, project=project)
+        except Exception as exc:  # noqa: BLE001 — недоступное хранилище графа, штатный случай
+            if not is_storage_unavailable(exc):
+                raise
+            log.warning("get_task_context: хранилище графа недоступно", exc_info=True)
+            return "(task graph unavailable)"
 
     def get_task(self, key: str, project: str | None = None) -> dict | None:
         """Нормализованный TaskBrief из стора. При project — только из этого проекта."""
@@ -1083,7 +1115,46 @@ class MCPReviewService:
         )
         return request, registry, credentials
 
-    def _backlink_pr(self, pr_url: str, key: str, task_url: str) -> tuple[str, list[str]]:
+    @contextmanager
+    def _pr_session(self, pr_url: str):
+        """Открыть VCS по ссылке на PR один раз на все операции finish_task.
+
+        Никогда не бросает: отдаёт (target, vcs, error). Ни бэклинк, ни съём
+        метрики не смеют уронить finish_task — доска к этому моменту уже
+        записана, и её успех не отменяется ничем из последующего.
+        """
+        from reviewer.tasks.pr_backlink import parse_pr_url
+
+        target = parse_pr_url(pr_url)
+        if target is None:
+            yield None, None, f"{pr_url!r} не распознан как ссылка на PR/MR"
+            return
+        vcs = None
+        try:
+            vcs = (self._vcs_factory(target.owner, target.repo) if self._vcs_factory
+                   else self._review_service._create_vcs_provider(
+                       target.owner, target.repo,
+                       platform=target.platform, base_url=target.base_url))
+        except Exception as exc:  # noqa: BLE001 — открытие VCS не смеет уронить finish_task
+            log.warning("не удалось открыть VCS для %s", pr_url, exc_info=True)
+            yield target, None, str(exc)
+            return
+        # `yield` — ВНЕ try/except открытия: исключение из тела `with`-блока
+        # (протокол генераторов доставляет его сюда через .throw()) не должно
+        # попадать в except выше — иначе оно ловится как «не удалось открыть
+        # VCS», логируется под чужой причиной, и генератор пытается yield'нуть
+        # второй раз, что contextlib подменяет на RuntimeError("generator
+        # didn't stop after throw()"), теряя исходную ошибку вызывающего кода.
+        try:
+            yield target, vcs, None
+        finally:
+            if vcs is not None and self._vcs_factory is None:
+                try:
+                    vcs.close()
+                except Exception:
+                    log.warning("не удалось закрыть VCS после finish_task", exc_info=True)
+
+    def _apply_backlink(self, target, vcs, key: str, task_url: str) -> tuple[str, list[str]]:
         """Дописать ссылку на задачу в начало тела PR. Возвращает (status, warnings).
 
         status — один из трёх исходов: "added" (записали сейчас), "already_present"
@@ -1093,21 +1164,13 @@ class MCPReviewService:
 
         Обратная сторона связи: finish пишет PR-ссылку в задачу, здесь — ссылку
         на задачу в PR. Полностью fail-soft: доска к этому моменту уже записана,
-        поэтому ни одна ошибка правки PR не отменяет успех finish_task."""
-        from reviewer.tasks.pr_backlink import apply_backlink, parse_pr_url
+        поэтому ни одна ошибка правки PR не отменяет успех finish_task. VCS уже
+        открыт вызывающим (`_pr_session`) — здесь только применение бэклинка."""
+        from reviewer.tasks.pr_backlink import apply_backlink
         if not task_url:
             return "failed", ["ссылка на задачу не добавлена в PR: url задачи не резолвится "
                               "(task_board.url_template не задан)"]
-        target = parse_pr_url(pr_url)
-        if target is None:
-            return "failed", ["ссылка на задачу не добавлена в PR: "
-                              f"{pr_url!r} не распознан как ссылка на PR/MR"]
-        vcs = None
         try:
-            vcs = (self._vcs_factory(target.owner, target.repo) if self._vcs_factory
-                   else self._review_service._create_vcs_provider(
-                       target.owner, target.repo,
-                       platform=target.platform, base_url=target.base_url))
             body = apply_backlink(vcs.get_pull_request(target.number).body, key, task_url)
             if body is None:
                 return "already_present", []   # ссылка уже на месте — идемпотентный no-op
@@ -1116,12 +1179,35 @@ class MCPReviewService:
         except Exception as exc:
             log.warning("бэклинк задачи в PR не удался", exc_info=True)
             return "failed", [f"ссылка на задачу не добавлена в PR: {exc}"]
-        finally:
-            if vcs is not None and self._vcs_factory is None:
-                try:
-                    vcs.close()
-                except Exception:
-                    log.warning("не удалось закрыть VCS после бэклинка", exc_info=True)
+
+    def _record_finish_task_metric(self, target, vcs, key: str) -> str | None:
+        """Снять качество брифа по факту закрытия задачи (PRI-270).
+
+        Знаменатель — ПОЛНЫЙ дифф PR, как и на публикации ревью: иначе числа
+        двух точек съёма посчитаны разными линейками. Полностью fail-soft:
+        закрытие задачи важнее наблюдаемости за самим reviewer.
+        """
+        from reviewer.services import brief_quality
+
+        repo = f"{target.owner}/{target.repo}"
+        try:
+            changed = vcs.get_changed_files(target.number)
+            status_map = {item.path: item.status for item in changed}
+            pr = vcs.get_pull_request(target.number)
+            # base_ref РЕАЛЬНОГО PR, а не первичная ветка репозитория: .review.yml
+            # берётся из целевой ветки PR (см. _record_brief_quality/publish_review) —
+            # иначе на PR в неглавную ветку эта точка съёма считает по чужому конфигу.
+            policy, _meta = self._resolve_policy(repo, pr.base_ref)
+            return brief_quality.measure_and_record(
+                task_key=key, repo=repo, pr_number=target.number, head_sha=pr.head_sha,
+                changed_paths=list(status_map), changed_status=status_map,
+                clone_path=self._repo_clone_path(repo), config=policy.brief_quality,
+                history=self._review_service._ensure_history(), run_id=None,
+            )
+        except Exception:  # noqa: BLE001 — наблюдаемость не роняет закрытие задачи
+            log.warning("Не удалось снять качество брифа на finish_task для %s", repo,
+                        exc_info=True)
+            return None
 
     def sync_board(
         self,
@@ -1420,8 +1506,16 @@ class MCPReviewService:
                     target=target,
                 )
                 brief = self._write_through(resolved.provider, key)
-                link_status, link_warnings = self._backlink_pr(
-                    pr_url, key, (brief or {}).get("url") or "")
+                task_url = (brief or {}).get("url") or ""
+                metric_status = None
+                with self._pr_session(pr_url) as (target, vcs, error):
+                    if vcs is None:
+                        link_status, link_warnings = "failed", [
+                            f"ссылка на задачу не добавлена в PR: {error}"]
+                    else:
+                        link_status, link_warnings = self._apply_backlink(
+                            target, vcs, key, task_url)
+                        metric_status = self._record_finish_task_metric(target, vcs, key)
                 result.setdefault("warnings", []).extend(migration_warnings)
                 result["warnings"].extend(link_warnings)
                 return self._safe_board_payload(
@@ -1433,6 +1527,9 @@ class MCPReviewService:
                         # task_link_status — три различимых исхода (PRI-238).
                         "task_link_added": link_status == "added",
                         "task_link_status": link_status,
+                        # Съём качества брифа на закрытии задачи (PRI-270): вторая,
+                        # более частая точка измерения — рядом с publish_review.
+                        "brief_quality_status": metric_status,
                         **result,
                     },
                     resolved.secrets,
@@ -1637,26 +1734,40 @@ class MCPReviewService:
         except ValueError as exc:
             return f"({exc})"
 
-    def _repo_clone_path(self, repo: str) -> str | None:
+    def _repo_clone_path(self, repo: str, *, strict: bool = False) -> str | None:
         """Путь к локальному клону репо из индекса, если он там записан (PRI-235).
 
-        Пишет его `reviewer index`, который и так выполняется из клона. Fail-soft:
-        недоступный Postgres или индекс, построенный до миграции, просто лишают
-        резолв локального пути — коммиченный слой уйдёт читаться через VCS.
-        Годность самого пути проверяет CommittedLayerFetcher: MCP-сервер может
-        работать не на той машине, где индексировали.
+        Пишет его `reviewer index`, который и так выполняется из клона. Fail-soft
+        по умолчанию: недоступный Postgres или индекс, построенный до миграции,
+        просто лишают резолв локального пути — коммиченный слой уйдёт читаться
+        через VCS. Годность самого пути проверяет CommittedLayerFetcher: MCP-сервер
+        может работать не на той машине, где индексировали.
+
+        `strict=True` (PRI-275) пробрасывает недоступность хранилища вызывающему,
+        который умеет её обработать (взвести флаг и не платить второй таймаут
+        пула за секции, которые всё равно будут пропущены) — остальные сбои
+        (индекс без миграции, битая строка и т.п.) остаются fail-soft и здесь.
         """
         store = getattr(self.components, "store", None)
         if store is None:
             return None
         try:
             return store.get_repo_clone(repo)
-        except Exception:  # noqa: BLE001 — путь вторичен, VCS остаётся фолбэком
+        except Exception as exc:  # noqa: BLE001 — путь вторичен, VCS остаётся фолбэком
+            if strict and is_storage_unavailable(exc):
+                raise
             log.warning("Не удалось прочитать путь к клону для %s", repo)
             return None
 
-    def _resolve_policy(self, repo: str, branch: str) -> tuple["ReviewPolicy", "ResolutionMeta"]:
-        """Резолвит effective policy из env, home-слоёв и committed `.review.yml`."""
+    def _resolve_policy(
+        self, repo: str, branch: str, *,
+        fetch_committed: Callable[[str], str | None] | None = None,
+    ) -> _ResolvedPolicy:
+        """Резолвит effective policy из env, home-слоёв и committed `.review.yml`.
+
+        Git-источник передаёт loader закреплённого снимка и требует успешного
+        чтения коммиченного слоя перед применением фильтра путей.
+        """
         from reviewer.config.committed import CommittedLayerFetcher
         from reviewer.config.layers import resolve_policy_data
         from reviewer.policy.policy import ReviewPolicy
@@ -1676,24 +1787,21 @@ class MCPReviewService:
             return lambda ref: vcs.get_file_at_ref(".review.yml", ref)
 
         try:
-            fetch_committed = CommittedLayerFetcher(
-                repo,
-                clone_path=self._repo_clone_path(repo),
-                vcs_fetch_factory=vcs_fetch_factory,
-            )
-            # strict_committed=False намеренно: у _resolve_policy четыре
-            # потребителя, и три из них (_resolve_summary_layout,
-            # _resolve_summary_topk_threshold, _resolve_context_limits) уже
-            # обёрнуты в собственный fail-soft с откатом на env-дефолты.
-            # Строгий режим здесь заставил бы их молча потерять
-            # home:repos/<repo>.yml — то есть воспроизвёл бы исходный баг
-            # PRI-234 этажом выше. Ревью остаётся громким за счёт
-            # ReviewService.prepare.
+            fetch = fetch_committed
+            if fetch is None:
+                fetch = CommittedLayerFetcher(
+                    repo,
+                    clone_path=self._repo_clone_path(repo),
+                    vcs_fetch_factory=vcs_fetch_factory,
+                )
+            # Обычные потребители сохраняют домашние слои при сбое VCS
+            # (PRI-234). Git-источник пропускает выдачу при сбое чтения политики
+            # снимка, поскольку в ней может быть фильтр путей.
             data, meta = resolve_policy_data(
                 repo,
                 branch,
-                fetch_committed,
-                strict_committed=False,
+                fetch,
+                strict_committed=fetch_committed is not None,
             )
             for warning in meta.warnings:
                 log.warning("Слой policy пропущен: %s", warning)
@@ -1705,63 +1813,52 @@ class MCPReviewService:
                 except Exception:
                     log.warning("_resolve_policy: не удалось закрыть VCS", exc_info=True)
 
+    def _resolve_summary_policy(self, repo: str, branch: str) -> _ResolvedPolicy:
+        """Получить общий policy для порога ANN и layout с откатом на env."""
+        from reviewer.config.layers import ResolutionMeta
+        from reviewer.policy.policy import ReviewPolicy
+
+        try:
+            return self._resolve_policy(repo, branch)
+        except Exception:
+            log.warning("_resolve_summary_policy: fail-soft → env-дефолт")
+            return (
+                ReviewPolicy(
+                    summary_cluster_depth=self.settings.summary_cluster_depth,
+                    summary_topk_threshold=self.settings.summary_topk_threshold,
+                ),
+                ResolutionMeta(sources={}, shadowed={}, warnings=()),
+            )
+
     def _resolve_summary_layout(
-        self, repo: str, branch: str
+        self, repo: str, branch: str, *, resolution: _ResolvedPolicy | None = None,
     ) -> tuple[int, dict[str, int], list[str], str]:
-        """Резолв layout-политики сводок: глубина, overrides, ignore-фильтр, источник.
-
-        ``ignore`` возвращается уже нормализованным ``normalize_summary_paths_ignore``
-        (страп пробелов/'/', дедуп, сортировка) — так обе точки применения
-        фильтра (``_summary_state`` через ``canonicalize_layout`` и
-        ``_current_subsystem_hashes`` напрямую) видят одно и то же значение;
-        двойная нормализация идемпотентна.
-
-        Fail-soft: при сбое резолва политики — env-глубина и ДЕФОЛТНЫЙ фильтр,
-        а не пустой. Пустой фильтр при сбое молча вернул бы тестовые кластеры
-        и сделал бы стоимость прохода недетерминированной.
-        """
+        """Резолв layout-политики сводок: глубина, overrides, ignore-фильтр, источник."""
         from reviewer.config.layers import source_of
         from reviewer.graph.summaries import normalize_summary_paths_ignore
-        from reviewer.policy.policy import DEFAULT_SUMMARY_PATHS_IGNORE
 
-        default = self.settings.summary_cluster_depth
-        try:
-            policy, meta = self._resolve_policy(repo, branch)
-            # source_of — общий хелпер (reviewer/config/layers.py): meta.sources
-            # листовой гранулярности (PRI-260), "summary_cluster_depth_overrides"
-            # — mapping, и голый .get() по верхнему ключу после PRI-260 всегда
-            # возвращал бы "env", даже когда overrides заданы слоем.
-            depth_source = meta.sources.get("summary_cluster_depth", "env")
-            source = (
-                depth_source
-                if depth_source != "env"
-                else source_of(meta.sources, "summary_cluster_depth_overrides")
-            )
-            return (
-                policy.summary_cluster_depth,
-                policy.summary_cluster_depth_overrides,
-                normalize_summary_paths_ignore(policy.summary_paths_ignore),
-                source,
-            )
-        except Exception:
-            log.warning("_resolve_summary_layout: fail-soft → env-дефолт")
-            return (
-                default,
-                {},
-                normalize_summary_paths_ignore(DEFAULT_SUMMARY_PATHS_IGNORE),
-                "env",
-            )
+        policy, meta = resolution or self._resolve_summary_policy(repo, branch)
+        # Overrides задаются отображением, поэтому источник — по листовому пути.
+        depth_source = meta.sources.get("summary_cluster_depth", "env")
+        source = (
+            depth_source
+            if depth_source != "env"
+            else source_of(meta.sources, "summary_cluster_depth_overrides")
+        )
+        return (
+            policy.summary_cluster_depth,
+            policy.summary_cluster_depth_overrides,
+            normalize_summary_paths_ignore(policy.summary_paths_ignore),
+            source,
+        )
 
-    def _resolve_summary_topk_threshold(self, repo: str, branch: str) -> tuple[int, str]:
+    def _resolve_summary_topk_threshold(
+        self, repo: str, branch: str, *, resolution: _ResolvedPolicy | None = None,
+    ) -> tuple[int, str]:
         """Резолв порога масштаба приора сводок с сохранением env-дефолта."""
-        default = self.settings.summary_topk_threshold
-        try:
-            policy, meta = self._resolve_policy(repo, branch)
-            source = meta.sources.get("summary_topk_threshold", "env")
-            return policy.summary_topk_threshold, source
-        except Exception:
-            log.warning("_resolve_summary_topk_threshold: fail-soft → env-дефолт")
-            return default, "env"
+        policy, meta = resolution or self._resolve_summary_policy(repo, branch)
+        source = meta.sources.get("summary_topk_threshold", "env")
+        return policy.summary_topk_threshold, source
 
     def _resolve_context_limits(self, repo: str, branch: str) -> "ContextLimits":
         """Лимиты контекста из всех policy-слоёв. Fail-soft → дефолт-константы."""
@@ -1804,7 +1901,12 @@ class MCPReviewService:
     def _search_codebase_multi(self, repo: str, queries: list[str],
                                branch: str | None = None,
                                include_tests: bool = False,
-                               augment_sources: list | None = None) -> str:
+                               augment_sources: list | None = None,
+                               *, strict: bool = False,
+                               tests_only: bool = False,
+                               code_budget: dict[str, int] | None = None,
+                               context_limits: "ContextLimits | None" = None,
+                               git_excerpts: "list[Retrieved] | None" = None) -> str:
         """Мультизапросный ретрив секций контекста задачи (PRI-255).
 
         Приватный: публичный search_codebase остаётся однозапросным, чтобы
@@ -1812,27 +1914,44 @@ class MCPReviewService:
 
         augment_sources (PRI-257/258) — именованные источники кандидатов со
         своими квотами; см. search_multi.
+
+        `tests_only` включает отбор тестовых путей для секции `test_exemplars`.
+
+        `strict` (PRI-272) — keyword-only, как у `_repo_clone_path` (PRI-275)
+        и `TaskService.search_hits`: при нём распознанный отказ эмбеддера
+        пробрасывается вызывающему. Включает его только `_TaskContextDeps`
+        (секции `code`/`test_exemplars`); публичный search_codebase не меняется.
         """
         from reviewer.retrieval.multiquery import search_multi
         rb = self._resolve_repo_branch(repo, branch)
         if isinstance(rb, str):
             return rb
         repo, resolved = rb
-        cl = self._resolve_context_limits(repo, resolved)
+        cl = context_limits or self._resolve_context_limits(repo, resolved)
         try:
             pack = search_multi(
                 self.components.retriever, repo, queries,
                 limits=cl.search_codebase, section_limits=cl.code_section,
                 hops=cl.graph.hops, branch=resolved, include_tests=include_tests,
-                augment_sources=augment_sources)
-        except Exception:
+                augment_sources=augment_sources, strict=strict, tests_only=tests_only,
+                include_selection_stats=code_budget is not None, git_excerpts=git_excerpts)
+        except Exception as exc:
+            if strict and is_embedder_unavailable(exc):
+                raise
             log.warning("_search_codebase_multi: сбой поиска", exc_info=True)
             return "(ничего не найдено)"
-        return pack.as_context(line_numbers=True) or "(ничего не найдено)"
+        context = pack.as_context(line_numbers=True)
+        if code_budget is not None and pack.selection_stats is not None:
+            visible = len(_visible_lines(context))
+            code_budget.update(pack.selection_stats, visible_files=visible,
+                               hidden_by_rendering=pack.selection_stats["selected_files"] - visible)
+        return context or "(ничего не найдено)"
 
     def prepare_task_context(self, repo: str, key: str, branch: str | None = None,
                              path: str | None = None,
-                             warm_board: bool = True) -> dict:
+                             warm_board: bool = True,
+                             include_brief_evidence: bool = False,
+                             include_code_budget: bool = False) -> dict:
         """Единый контекст задачи для solve-task: преflight + сбор, один вызов.
 
         Свёртка 8-12 детерминированных тул-раундов скилла. Ни один сбой
@@ -1849,10 +1968,33 @@ class MCPReviewService:
             payload["warnings"] = []
             return payload
         normalized_repo, resolved = rb
-        deps = _TaskContextDeps(self, path)
-        return task_context.build_task_context(
+        budget = {} if include_code_budget else None
+        deps = _TaskContextDeps(self, path, budget)
+        payload = task_context.build_task_context(
             deps, repo=normalized_repo, key=key, branch=resolved,
             warm_board=warm_board)
+        if deps.git_gap:
+            payload["gaps"].append(task_context.gap("code.git_lexical", deps.git_gap))
+        if include_brief_evidence and (evidence_id := self._brief_evidence.save(payload)):
+            payload["brief_evidence_id"] = evidence_id
+        if budget:
+            payload["code_budget"] = budget
+        return payload
+
+    def verify_task_brief(
+        self,
+        evidence_id: str,
+        citations: list[BriefCitationIn] | None = None,
+        references: list[BriefReferenceIn] | None = None,
+    ) -> dict:
+        if (citations is None) == (references is None):
+            checked = self._brief_evidence.verify(evidence_id, [])
+            if checked["status"] == "ok":
+                return {**checked, "render_status": "invalid_format", "markdown": None}
+            return checked
+        if references is not None:
+            return self._brief_evidence.verify_references(evidence_id, references)
+        return self._brief_evidence.verify(evidence_id, citations or [])
 
     def related_symbols(self, repo: str, node_id: str,
                         branch: str | None = None) -> str:
@@ -2731,16 +2873,31 @@ class MCPReviewService:
         return out
 
     def _current_subsystem_hashes(
-        self, repo: str, branch: str
+        self, repo: str, branch: str, *, resolution: _ResolvedPolicy | None = None,
     ) -> dict[str, str] | None:
-        from reviewer.graph.summaries import Member, build_clusters
+        from reviewer.graph.summaries import Member, build_clusters, canonicalize_layout
         from reviewer.index.pathfilter import is_ignored
 
+        store = self.components.store
+        cache = self._summary_hash_cache
+        ref = base_ref(branch)
         try:
-            raw = self.components.store.list_base_members(repo, branch)
+            depth, overrides, ignore, _ = self._resolve_summary_layout(
+                repo, branch, resolution=resolution,
+            )
+            overrides, ignore, layout_token = canonicalize_layout(depth, overrides, ignore)
+            generation = store.get_index_meta_row(repo, ref)
+            now = monotonic()
+            cache_key = (repo, branch, generation, layout_token) if generation is not None else None
+            if cache_key is not None:
+                cached = cache.get(cache_key)
+                if cached is not None and now < cached[0]:
+                    cache.move_to_end(cache_key)
+                    return cached[1]
+
+            raw = store.list_base_members(repo, branch)
             if not raw:
                 return None
-            depth, overrides, ignore, _ = self._resolve_summary_layout(repo, branch)
             members = [
                 Member(
                     node_id=f"{path}#{symbol}",
@@ -2759,7 +2916,15 @@ class MCPReviewService:
                 min_size=1,
                 depth_overrides=overrides,
             )
-            return {cluster.key: cluster.source_hash for cluster in clusters}
+            hashes = {cluster.key: cluster.source_hash for cluster in clusters}
+            if store.get_index_meta_row(repo, ref) != generation:
+                return None
+            if cache_key is not None:
+                cache[cache_key] = (now + _SUMMARY_HASH_CACHE_TTL_S, hashes)
+                cache.move_to_end(cache_key)
+                if len(cache) > _SUMMARY_HASH_CACHE_SIZE:
+                    cache.popitem(last=False)
+            return hashes
         except Exception:
             log.warning(
                 "get_subsystem_summaries: не удалось вычислить свежесть",
@@ -2767,32 +2932,66 @@ class MCPReviewService:
             )
             return None
 
+    @staticmethod
     def _annotate_summary_staleness(
-        self, repo: str, branch: str, summaries: list[dict]
+        summaries: list[dict], current: dict[str, str] | None
     ) -> list[dict]:
-        if not summaries:
-            return []
-        current = self._current_subsystem_hashes(repo, branch)
         return [
             {
                 **summary,
                 "stale": (
                     None
                     if current is None
-                    else summary.get("source_hash") != current.get(summary["cluster_key"])
+                    else (
+                        summary["cluster_key"] not in current
+                        or summary.get("source_hash") != current[summary["cluster_key"]]
+                    )
                 ),
             }
             for summary in summaries
         ]
 
+    def _summary_list_note(
+        self, repo: str, branch: str, summaries: list[dict], current: dict[str, str] | None,
+        *, use_ann: bool,
+    ) -> str:
+        notes = []
+        if not summaries:
+            notes.append("ANN не вернул сводок." if use_ann else "Сводок нет.")
+        if current is None:
+            notes.append("Свежесть сводок недоступна без снимка хешей base-индекса.")
+            return " ".join(notes)
+
+        stale_count = sum(summary["stale"] is True for summary in summaries)
+        if stale_count:
+            notes.append(f"Устаревших сводок в выдаче: {stale_count}.")
+        if use_ann:
+            try:
+                stored = self.components.summary_store.get_source_hashes(repo, branch).keys()
+            except Exception:
+                log.warning("get_subsystem_summaries: каталог сводок недоступен", exc_info=True)
+                notes.append("Каталог сводок недоступен.")
+                return " ".join(notes)
+        else:
+            stored = {summary["cluster_key"] for summary in summaries}
+
+        missing = sorted(current.keys() - stored)
+        if missing:
+            examples = ", ".join(missing[:_MISSING_SUMMARY_EXAMPLES_LIMIT])
+            notes.append(
+                f"Текущих кластеров без сохранённой сводки: {len(missing)} (примеры: {examples})."
+            )
+        return " ".join(notes)
+
     def get_subsystem_summaries(self, repo: str, branch: str | None = None,
                                 cluster_key: str | None = None, query: str | None = None,
                                 top_k: int | None = None) -> dict:
-        """Дешёвый приор: предрасчитанные summary подсистем (fail-open у потребителя).
+        """Вернуть предрасчитанные сводки с отметками свежести.
 
-        cluster_key → одна сводка. Иначе: при query И числе сводок > порога масштаба
-        (effective `summary_topk_threshold` layered policy) — ANN top-k по близости
-        (PRI-167); иначе (без query или ≤ порога) — все (бэк-компат)."""
+        cluster_key → одна сводка. Иначе при query и числе сводок выше порога
+        возвращается ANN top-k со свежими кандидатами первыми. В остальных
+        случаях возвращаются все сводки в порядке хранилища.
+        """
         rb = self._resolve_repo_branch(repo, branch)
         if isinstance(rb, str):
             return {"summaries": [], "note": rb}
@@ -2800,22 +2999,36 @@ class MCPReviewService:
         store = self.components.summary_store
         if cluster_key:
             summary = store.get_summary(repo, resolved, cluster_key)
-            annotated = self._annotate_summary_staleness(
-                repo, resolved, [summary] if summary is not None else []
-            )
-            return {"summary": annotated[0] if annotated else None}
+            if summary is None:
+                return {"summary": None}
+            current = self._current_subsystem_hashes(repo, resolved)
+            return {"summary": self._annotate_summary_staleness([summary], current)[0]}
+
+        use_ann = False
+        resolution = None
         if query:
-            threshold, _ = self._resolve_summary_topk_threshold(repo, resolved)
-            if store.count_summaries(repo, resolved) > threshold:
-                qvec = self.components.embedder.embed_query(query)
-                summaries = store.search_summaries(repo, resolved, qvec, top_k or 8)
-                return {
-                    "summaries": [{**summary, "stale": None} for summary in summaries]
-                }
-        summaries = store.get_summaries(repo, resolved)
-        return {
-            "summaries": self._annotate_summary_staleness(repo, resolved, summaries)
-        }
+            resolution = self._resolve_summary_policy(repo, resolved)
+            threshold, _ = self._resolve_summary_topk_threshold(
+                repo, resolved, resolution=resolution,
+            )
+            use_ann = store.count_summaries(repo, resolved) > threshold
+        if use_ann:
+            qvec = self.components.embedder.embed_query(query)
+            summaries = store.search_summaries(repo, resolved, qvec, top_k or 8)
+        else:
+            summaries = store.get_summaries(repo, resolved)
+        if not summaries and not query:
+            return {"summaries": []}
+
+        current = self._current_subsystem_hashes(repo, resolved, resolution=resolution)
+        annotated = self._annotate_summary_staleness(summaries, current)
+        if use_ann:
+            annotated.sort(key=lambda summary: summary["stale"] is not False)
+        result = {"summaries": annotated}
+        note = self._summary_list_note(repo, resolved, annotated, current, use_ann=use_ann)
+        if note:
+            result["note"] = note
+        return result
 
     def prune_subsystem_summaries(
         self,
@@ -3227,11 +3440,10 @@ class MCPReviewService:
         run_id: int,
         task_key: str | None,
     ) -> None:
-        """Посчитать и сохранить качество брифа solve-task (PRI-249).
+        """Съём качества брифа на публикации ревью (PRI-249).
 
-        Полностью fail-soft: метрика — наблюдение за самим reviewer, и ни один
-        её сбой не смеет повлиять на результат ревью. Ключ задачи берётся из
-        аргумента publish_review, иначе из уже отрезолвленного task_keys.primary.
+        Гейт вызова и его семантика не меняются; сам расчёт и запись живут в
+        reviewer.services.brief_quality.measure_and_record, общем с finish_task.
         """
         try:
             from reviewer.services import brief_quality
@@ -3239,17 +3451,12 @@ class MCPReviewService:
             key = task_key
             if not key and p.task_keys:
                 key = p.task_keys.get("primary")
-            measurement = brief_quality.measure(
-                task_key=key,
-                clone_path=self._repo_clone_path(repo),
-                changed_paths=p.changed_paths,
-                changed_status=p.changed_status,
-            )
-            history = self._review_service._ensure_history()
-            if history is None:
-                return
-            history.record_brief_quality(
-                run_id, repo, pr, p.prq.head_sha, measurement
+            policy, _meta = self._resolve_policy(repo, p.prq.base_ref)
+            brief_quality.measure_and_record(
+                task_key=key, repo=repo, pr_number=pr, head_sha=p.prq.head_sha,
+                changed_paths=p.changed_paths, changed_status=p.changed_status,
+                clone_path=self._repo_clone_path(repo), config=policy.brief_quality,
+                history=self._review_service._ensure_history(), run_id=run_id,
             )
         except Exception:  # noqa: BLE001 — наблюдаемость не роняет ревью
             log.warning("Не удалось посчитать качество брифа для %s pr:%s", repo, pr, exc_info=True)
@@ -3524,14 +3731,25 @@ class _TaskContextDeps:
     подменяет фейк в юнит-тестах модуля сборки.
     """
 
-    def __init__(self, service: "MCPReviewService", path: str | None):
+    def __init__(self, service: "MCPReviewService", path: str | None,
+                 code_budget: dict[str, int] | None = None):
         self._service = service
         self._path = path
+        self._code_budget = code_budget
         self._similar_hits: list = []
+        self._task: dict | None = None
         self.augment_gaps: list[str] = []
+        self.git_gap: str | None = None
 
     def _clone_path(self, repo: str) -> str:
-        return self._path or self._service._repo_clone_path(repo) or ""
+        """Путь к локальному клону, строго относительно недоступности хранилища.
+
+        Вызывается внутри `_safe`-секции preflight (`task_context.py`), который
+        умеет взвести флаг и записать gap по проброшенному исключению — поэтому
+        здесь `strict=True`: до PRI-275 сбой глотался тут же, `build_status_report`
+        всё равно шёл читать стор дальше и платил второй таймаут пула.
+        """
+        return self._path or self._service._repo_clone_path(repo, strict=True) or ""
 
     def preflight(self, repo: str, branch: str) -> dict:
         from reviewer.services.status import build_status_report
@@ -3548,13 +3766,17 @@ class _TaskContextDeps:
             "summaries": status.summaries,
             "chunks": status.chunks,
             "graph_nodes": status.graph_nodes,
+            # Причина пропуска графа: build_task_context извлечёт ключ и замкнёт
+            # граф, не платя второй таймаут (PRI-276). В payload не попадает.
+            "graph_error": status.graph_error,
         }
 
     def storage_endpoints(self) -> tuple[str, ...]:
-        """Эндпоинты хранилищ для решения об уместности совета `reviewer start`.
+        """Эндпоинты хранилищ для классификации причины и уместности совета.
 
         Settings доступен здесь законно: модуль сборки контекста про него не
-        знает намеренно и получает уже готовое лекарство.
+        знает намеренно и получает лишь сырые эндпоинты — класс причины и
+        лекарство считает лениво, по факту сбоя, `classify_storage_failure`.
         """
         settings = self._service.settings
         return tuple(value for value in (settings.pg_dsn, settings.neo4j_uri) if value)
@@ -3570,20 +3792,25 @@ class _TaskContextDeps:
         return self._service.sync_board(repo=repo, branch=branch, purge_orphaned=False)
 
     def task(self, key: str, project: str | None) -> dict | None:
-        return self._service.get_task(key, project=project)
+        self._task = self._service.get_task(key, project=project)
+        return self._task
 
     def linked(self, key: str, project: str | None) -> str:
-        return self._service.get_task_context(key, project=project)
+        """Граф-контекст задачи без ноты: исключение обязано дойти до `_safe`.
 
-    def similar(self, query: str, project: str | None) -> str:
-        """Похожие задачи. Побочно запоминает структурные хиты для секции code.
-
-        Хиты берутся из ОДНОГО поиска: второй вызов означал бы второй
-        embed_query и лишний расход квоты Voyage (3 RPM / 10K TPM). Порядок
-        вызовов (similar до code) закреплён тестом build_task_context.
+        Зовём task_service напрямую, минуя обёртку сервиса: та ставит ноту ради
+        публичного контракта тула, и здесь она обнулила бы сигнал (PRI-276).
         """
+        return self._service.components.task_service.get_task_context(key, project=project)
+
+    def similar(self, query: str, project: str | None, *, task: dict | None = None) -> str:
+        """Один поиск для видимой выдачи и сбора diff-путей похожих задач."""
         service = self._service.components.task_service
-        hits = service.search_hits(query, project=project)
+        hits = service.search_hits(query, project=project, strict=True)
+        if task and hits:
+            task_keys = {task["key"], *(task.get("aliases") or [])}
+            hits = [hit for hit in hits
+                    if task_keys.isdisjoint((hit.key, *hit.aliases))]
         self._similar_hits = list(hits or [])
         return service.render_hits(hits)
 
@@ -3621,16 +3848,68 @@ class _TaskContextDeps:
             return []
 
     def subsystems(self, repo: str, branch: str, query: str) -> dict:
-        return self._service.get_subsystem_summaries(repo, branch, None, query, None)
+        result = self._service.get_subsystem_summaries(repo, branch, query=query)
+        return {
+            **result,
+            "summaries": [
+                summary for summary in result["summaries"] if summary.get("stale") is not True
+            ],
+        }
 
-    def code(self, repo: str, branch: str, queries: list) -> str:
+    def _git_excerpts(
+        self, repo: str, branch: str, queries: list[str], limits: "CodeSectionLimits",
+    ) -> "list[Retrieved]":
+        from reviewer.config.committed import POLICY_FILE, validate_clone
+        from reviewer.policy.context_limits import valid_git_file_limit
+
+        quota = limits.max_git_files
+        if not valid_git_file_limit(quota) or not quota:
+            return []
+        limit = min(quota, limits.max_files)
+        if limit <= 0:
+            return []
+        from reviewer.retrieval.git_lexical import read_git_blob, resolve_git_commit, search_git
+
+        task = self._task or {}
+        query = "\n".join(str(task.get(key) or "") for key in ("title", "description")).strip()
+        if not query:
+            query = next(iter(queries), "")
+        try:
+            clone = validate_clone(self._clone_path(repo), repo)
+            if clone is None:
+                self.git_gap = "локальный Git-клон репозитория недоступен"
+                return []
+            sha = resolve_git_commit(clone, branch)
+            policy, _ = self._service._resolve_policy(
+                repo, branch, fetch_committed=lambda _: read_git_blob(clone, sha, POLICY_FILE),
+            )
+            ignore = policy.ignore
+            if not isinstance(ignore, list) or any(not isinstance(value, str) for value in ignore):
+                self.git_gap = "фильтр paths.ignore для Git-снимка недоступен"
+                return []
+            return search_git(
+                clone, sha, query, ignore=ignore, limit=limit,
+                chars_per_file=limits.chars_per_file,
+            )
+        except Exception as exc:  # noqa: BLE001 — Git-источник дополняет гибридный поиск
+            log.warning("Лексический поиск по Git недоступен: %s", type(exc).__name__)
+            self.git_gap = "лексический поиск по Git-снимку недоступен"
+            return []
+
+    def code(self, repo: str, branch: str, queries: list[str]) -> str:
         from reviewer.retrieval.augment import AugmentSource
+
+        paths = self._augment_paths(repo)
+        limits = self._service._resolve_context_limits(repo, branch)
         sources = [AugmentSource(name="similar-diffs",
-                                 paths=self._augment_paths(repo),
-                                 quota=self._service._resolve_context_limits(
-                                     repo, branch).code_section.max_augmented_files)]
+                                 paths=paths,
+                                 quota=limits.code_section.max_augmented_files)]
+        excerpts = self._git_excerpts(repo, branch, queries, limits.code_section)
         return self._service._search_codebase_multi(
-            repo, queries, branch, False, augment_sources=sources)
+            repo, queries, branch, False, augment_sources=sources, strict=True,
+            context_limits=limits, git_excerpts=excerpts, code_budget=self._code_budget,
+        )
 
     def test_exemplars(self, repo: str, branch: str, queries: list) -> str:
-        return self._service._search_codebase_multi(repo, queries, branch, True)
+        return self._service._search_codebase_multi(
+            repo, queries, branch, tests_only=True, strict=True)

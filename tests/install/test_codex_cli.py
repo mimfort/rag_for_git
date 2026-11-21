@@ -109,7 +109,7 @@ def test_interactive_init_uses_the_canonical_codex_flow(monkeypatch, tmp_path):
     )
     result = CliRunner().invoke(
         cli,
-        ["init", "--scope", "global", "--path", str(tmp_path / ".env")],
+        ["init", "--scope", "global", "--advanced", "--path", str(tmp_path / ".env")],
     )
     assert result.exit_code == 0, result.output
     assert captured and captured[0].include_mcp is True

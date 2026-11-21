@@ -44,3 +44,6 @@ data/
 *.log
 sync_results.jsonl
 tasks.json
+
+# Локальная ВКР
+/diploma/ВКР_Задорожный_4319.docx

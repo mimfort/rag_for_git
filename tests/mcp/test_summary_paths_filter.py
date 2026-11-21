@@ -46,6 +46,7 @@ def _service(raw_members):
     settings.github_token = "test"
     components = MagicMock()
     components.store.list_base_members.return_value = raw_members
+    components.store.get_index_meta_row.return_value = None
     components.summary_store.get_fragments.return_value = []
     components.summary_store.get_completed_depth.return_value = None
     components.summary_store.get_completed_layout.return_value = None
@@ -118,7 +119,7 @@ def test_service_filters_members_in_both_cluster_paths(monkeypatch):
     service = _service(raw)
     monkeypatch.setattr(
         service, "_resolve_summary_layout",
-        lambda repo, branch: (2, {}, ["tests"], ".review.yml"),
+        lambda repo, branch, **kwargs: (2, {}, ["tests"], ".review.yml"),
     )
     state = service._summary_state("owner/name", "dev")
     hashes = service._current_subsystem_hashes("owner/name", "dev")

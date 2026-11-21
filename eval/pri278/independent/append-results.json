@@ -1,0 +1,130 @@
+{
+  "comparisons": {
+    "all": {
+      "n": 10,
+      "before": {
+        "n": 10,
+        "median_recall_at_10": 0.39230769230769236,
+        "median_ndcg_at_10": 0.5369517552897283,
+        "median_core_recall": 0.5777777777777777,
+        "median_context_recall": 0.3333333333333333,
+        "median_context_chars": 15228.0,
+        "median_source_chars": 11490.0,
+        "p95_ms": 9723.523
+      },
+      "after": {
+        "n": 10,
+        "median_recall_at_10": 0.39230769230769236,
+        "median_ndcg_at_10": 0.5369517552897283,
+        "median_core_recall": 0.5777777777777777,
+        "median_context_recall": 0.3333333333333333,
+        "median_context_chars": 16405.0,
+        "median_source_chars": 12888.0,
+        "p95_ms": 993.972
+      },
+      "core_delta_median": 0.0,
+      "core_delta_mean": 0.0,
+      "core_up": 0,
+      "core_down": 0,
+      "context_delta_mean": 0.0
+    },
+    "ordinary": {
+      "n": 7,
+      "before": {
+        "n": 7,
+        "median_recall_at_10": 0.42857142857142855,
+        "median_ndcg_at_10": 0.5388856921828065,
+        "median_core_recall": 0.6666666666666666,
+        "median_context_recall": 0.3333333333333333,
+        "median_context_chars": 14666,
+        "median_source_chars": 11325,
+        "p95_ms": 9723.523
+      },
+      "after": {
+        "n": 7,
+        "median_recall_at_10": 0.42857142857142855,
+        "median_ndcg_at_10": 0.5388856921828065,
+        "median_core_recall": 0.6666666666666666,
+        "median_context_recall": 0.3333333333333333,
+        "median_context_chars": 15790,
+        "median_source_chars": 11655,
+        "p95_ms": 993.972
+      },
+      "core_delta_median": 0.0,
+      "core_delta_mean": 0.0,
+      "core_up": 0,
+      "core_down": 0,
+      "context_delta_mean": 0.0
+    },
+    "bulk": {
+      "n": 3,
+      "before": {
+        "n": 3,
+        "median_recall_at_10": 0.29411764705882354,
+        "median_ndcg_at_10": 0.485813635742251,
+        "median_core_recall": 0.4,
+        "median_context_recall": 0.0,
+        "median_context_chars": 17856,
+        "median_source_chars": 13664,
+        "p95_ms": 895.691
+      },
+      "after": {
+        "n": 3,
+        "median_recall_at_10": 0.29411764705882354,
+        "median_ndcg_at_10": 0.485813635742251,
+        "median_core_recall": 0.4,
+        "median_context_recall": 0.0,
+        "median_context_chars": 17856,
+        "median_source_chars": 13664,
+        "p95_ms": 488.945
+      },
+      "core_delta_median": 0.0,
+      "core_delta_mean": 0.0,
+      "core_up": 0,
+      "core_down": 0,
+      "context_delta_mean": 0.0
+    }
+  },
+  "additions": [
+    {
+      "key": "PRI-170",
+      "proposals": [],
+      "accepted": [],
+      "core": [],
+      "dependencies": [],
+      "unlabeled": []
+    },
+    {
+      "key": "PRI-202",
+      "proposals": [],
+      "accepted": [],
+      "core": [],
+      "dependencies": [],
+      "unlabeled": []
+    },
+    {
+      "key": "PRI-205",
+      "proposals": [],
+      "accepted": [],
+      "core": [],
+      "dependencies": [],
+      "unlabeled": []
+    },
+    {
+      "key": "PRI-213",
+      "proposals": [],
+      "accepted": [],
+      "core": [],
+      "dependencies": [],
+      "unlabeled": []
+    }
+  ],
+  "usage": {
+    "input_tokens": 25376,
+    "cached_input_tokens": 0,
+    "cache_write_input_tokens": 0,
+    "output_tokens": 132,
+    "reasoning_output_tokens": 0
+  },
+  "model": "gpt-6-luna"
+}

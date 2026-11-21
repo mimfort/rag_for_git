@@ -8,7 +8,10 @@ import threading
 from collections.abc import Callable
 from functools import partial
 
+import click
 from prompt_toolkit.application import Application
+from prompt_toolkit.data_structures import Point
+from prompt_toolkit.filters import Condition
 from prompt_toolkit.formatted_text import StyleAndTextTuples
 from prompt_toolkit.input import Input
 from prompt_toolkit.key_binding import KeyBindings
@@ -47,6 +50,7 @@ _EFFECT_LABELS = {
     "network": "сеть",
     "destructive": "удаление",
 }
+_STARTER_ORDER = {("init",): 0, ("check",): 1, ("install",): 2}
 
 
 class _LauncherUI:
@@ -71,7 +75,9 @@ class _LauncherUI:
         self.parameter_widgets: dict[str, AnyContainer] = {}
         self.flag_controls: dict[FormattedTextControl, str] = {}
         self.flag_buttons: dict[str, Button] = {}
+        self.choice_actions: dict[FormattedTextControl, Callable[[], None]] = {}
         self._field_handlers: dict[TextArea, Callable[..., None]] = {}
+        self.preview_body: AnyContainer | None = None
         self.checking_update = False
         self.version_check: VersionCheck | None = None
         self.update_error: str | None = None
@@ -108,7 +114,9 @@ class _LauncherUI:
             self._start_update_check(event)
             return
         self.controller.open_preview()
-        if self.controller.errors:
+        if self.controller.prepared is not None and self.controller.screen is Screen.PREVIEW:
+            self._open_preview(event, self.controller.prepared.preview)
+        elif self.controller.errors:
             first_error = next(iter(self.controller.errors))
             widget = self.parameter_widgets.get(first_error)
             if widget is not None:
@@ -140,6 +148,10 @@ class _LauncherUI:
                 self.version_check = None
                 self.update_error = None
             self.controller.screen = Screen.DETAILS
+        elif self.controller.screen is Screen.PREVIEW:
+            self.controller.back()
+            event.app.layout.focus_last()
+            self.preview_body = None
         else:
             self.controller.back()
         if self.controller.screen is Screen.PALETTE:
@@ -165,6 +177,7 @@ class _LauncherUI:
         self.query_field.buffer.on_text_changed -= self._query_handler
         self.query_field.text = ""
         self._drop_form()
+        self.preview_body = None
         self.controller.scrub_transient_state()
 
     def _revoke_updates(self) -> None:
@@ -185,12 +198,19 @@ class _LauncherUI:
             event.app.layout.focus(self.form_widgets[0])
         event.app.invalidate()
 
-    def focused_flag(self, event: KeyPressEvent) -> bool:
-        """Переключить флаг, если фокус установлен на его кнопке."""
-        name = self.flag_controls.get(event.app.layout.current_control)
-        if name is None:
+    def activate_focused_option(self, event: KeyPressEvent) -> bool:
+        """Обработать Enter на переключателе флага или допустимого значения."""
+        if self.controller.screen is not Screen.DETAILS:
             return False
-        self._toggle_flag(name)
+        control = event.app.layout.current_control
+        name = self.flag_controls.get(control)
+        choice_action = self.choice_actions.get(control)
+        if name is not None:
+            self._toggle_flag(name)
+        elif choice_action is not None:
+            choice_action()
+        else:
+            return False
         event.app.invalidate()
         return True
 
@@ -203,9 +223,13 @@ class _LauncherUI:
                 Label("reviewer — выбор команды"),
                 self.query_field,
                 Window(
-                    FormattedTextControl(self._command_rows),
+                    FormattedTextControl(
+                        self._command_rows,
+                        get_cursor_position=lambda: Point(0, self.controller.selected_index),
+                    ),
                     height=Dimension(min=3, max=12),
                     wrap_lines=False,
+                    always_hide_cursor=True,
                 ),
                 Label(self._selected_description),
                 Label("↑/↓ — выбор · Enter — параметры · Esc — выход"),
@@ -259,7 +283,8 @@ class _LauncherUI:
             form = _ScrollablePane(body)
         advanced = "скрыты" if not self.controller.show_advanced else "показаны"
         footer = Label(
-            f"Расширенные параметры: {advanced} (F2) · Tab — следующее поле · Enter — preview"
+            f"Расширенные параметры: {advanced} (F2) · Tab — следующее поле\n"
+            "←/→ — выбор значения · Enter — выбрать или продолжить · F3 — предпросмотр"
         )
         return HSplit(
             [
@@ -286,13 +311,37 @@ class _LauncherUI:
             text for text in (self._parameter_hint(parameter), self._error_text(parameter)) if text
         )
 
+    def _open_preview(self, event: KeyPressEvent, preview: str) -> None:
+        if _ScrollablePane is None:
+            field = TextArea(text=preview, read_only=True, scrollbar=True, height=Dimension(min=1))
+            self.preview_body = field
+            event.app.layout.focus(field)
+            return
+        command = Window(
+            FormattedTextControl(preview, focusable=True),
+            wrap_lines=True,
+            always_hide_cursor=True,
+        )
+        self.preview_body = _ScrollablePane(
+            command, keep_cursor_visible=False, keep_focused_window_visible=False,
+        )
+        event.app.layout.focus(command)
+
+    def scroll_preview(self, event: KeyPressEvent, delta: int, *, page: bool = False) -> None:
+        pane = self.preview_body
+        if _ScrollablePane is not None and isinstance(pane, _ScrollablePane):
+            # Half a screen leaves context from the previous view.
+            step = max(1, event.app.output.get_size().rows // 2) if page else 1
+            pane.vertical_scroll = max(0, pane.vertical_scroll + delta * step)
+            event.app.invalidate()
+
     def _preview(self) -> AnyContainer:
-        preview = self.controller.prepared.preview if self.controller.prepared else ""
+        navigation = "←/→ · Home/End" if isinstance(self.preview_body, TextArea) else "↑/↓ · PgUp/PgDn"
         return HSplit(
             [
                 Label("Проверьте команду перед запуском:"),
-                Label(preview),
-                Label("Enter — подтвердить · Esc — вернуться к параметрам"),
+                self.preview_body if self.preview_body is not None else Label(""),
+                Label(f"{navigation} — прокрутка\nEnter — подтвердить · Esc — вернуться к параметрам"),
             ],
             padding=1,
         )
@@ -359,6 +408,10 @@ class _LauncherUI:
                 self.flag_buttons[parameter.name] = button
                 self.parameter_widgets[parameter.name] = button
                 self.form_widgets.append(button)
+            elif self._is_choice_selector(parameter):
+                button = self._build_choice_selector(parameter)
+                self.parameter_widgets[parameter.name] = button
+                self.form_widgets.append(button)
             else:
                 field = TextArea(
                     text=self._display_value(parameter, self.controller.values.get(parameter.name)),
@@ -376,6 +429,50 @@ class _LauncherUI:
             if hint:
                 self.form_widgets.append(Label(hint))
             self.form_widgets.append(Label(partial(self._error_text, parameter)))
+
+    @staticmethod
+    def _is_choice_selector(parameter: ParameterSpec) -> bool:
+        click_type = parameter.source.type
+        return (
+            bool(parameter.choices)
+            and isinstance(click_type, click.Choice)
+            and all(isinstance(choice, str) for choice in click_type.choices)
+            and parameter.nargs == 1 and not parameter.multiple and not parameter.sensitive
+        )
+
+    def _build_choice_selector(self, parameter: ParameterSpec) -> Button:
+        name = parameter.name
+        choices: tuple[str | None, ...] = parameter.choices
+        if not parameter.required and not isinstance(parameter.default, str):
+            choices = (None, *choices)
+
+        def caption() -> str:
+            value = self.controller.values.get(name)
+            label = "не задано" if value is None else str(value)
+            return f"{self._parameter_label(parameter)}: {label}"
+
+        def cycle(delta: int) -> None:
+            value = self.controller.values.get(name)
+            index = choices.index(value) if value in choices else (-1 if delta > 0 else 0)
+            self.controller.set_value(name, choices[(index + delta) % len(choices)])
+            button.text = caption()
+
+        next_choice = partial(cycle, 1)
+        button = Button(caption(), handler=next_choice, width=32, left_symbol="‹ ", right_symbol=" ›")
+        bindings = KeyBindings()
+
+        @bindings.add("left")
+        def previous_choice(event: KeyPressEvent) -> None:
+            cycle(-1)
+
+        @bindings.add("right")
+        @bindings.add(" ")
+        def select_next(event: KeyPressEvent) -> None:
+            next_choice()
+
+        button.control.key_bindings = bindings
+        self.choice_actions[button.control] = next_choice
+        return button
 
     def _drop_form(self) -> None:
         """Отцепить callbacks, очистить TextArea и удалить ссылки на форму."""
@@ -395,6 +492,7 @@ class _LauncherUI:
         self.parameter_widgets.clear()
         self.flag_controls.clear()
         self.flag_buttons.clear()
+        self.choice_actions.clear()
         self._field_handlers.clear()
 
     def _error_text(self, parameter: ParameterSpec) -> str:
@@ -569,6 +667,9 @@ def _parse_occurrences(text: str) -> tuple[tuple[str, ...], ...]:
 
 def _bindings(ui: _LauncherUI) -> KeyBindings:
     bindings = KeyBindings()
+    scrollable_preview = Condition(
+        lambda: _ScrollablePane is not None and isinstance(ui.preview_body, _ScrollablePane)
+    )
 
     @bindings.add("c-c")
     def cancel_interrupt(event: KeyPressEvent) -> None:
@@ -580,11 +681,25 @@ def _bindings(ui: _LauncherUI) -> KeyBindings:
 
     @bindings.add("up")
     def move_up(event: KeyPressEvent) -> None:
-        ui.controller.move(-1)
+        if ui.controller.screen is Screen.PREVIEW:
+            ui.scroll_preview(event, -1)
+        else:
+            ui.controller.move(-1)
 
     @bindings.add("down")
     def move_down(event: KeyPressEvent) -> None:
-        ui.controller.move(1)
+        if ui.controller.screen is Screen.PREVIEW:
+            ui.scroll_preview(event, 1)
+        else:
+            ui.controller.move(1)
+
+    @bindings.add("pageup", filter=scrollable_preview)
+    def page_up(event: KeyPressEvent) -> None:
+        ui.scroll_preview(event, -1, page=True)
+
+    @bindings.add("pagedown", filter=scrollable_preview)
+    def page_down(event: KeyPressEvent) -> None:
+        ui.scroll_preview(event, 1, page=True)
 
     @bindings.add("tab")
     def focus_next(event: KeyPressEvent) -> None:
@@ -598,9 +713,14 @@ def _bindings(ui: _LauncherUI) -> KeyBindings:
     def toggle_advanced(event: KeyPressEvent) -> None:
         ui.toggle_advanced(event)
 
+    @bindings.add("f3")
+    def preview(event: KeyPressEvent) -> None:
+        if ui.controller.screen is Screen.DETAILS:
+            ui.submit_details(event)
+
     @bindings.add("enter", eager=True)
     def submit(event: KeyPressEvent) -> None:
-        if ui.focused_flag(event):
+        if ui.activate_focused_option(event):
             return
         if ui.controller.screen is Screen.PALETTE:
             ui.open_selected(event)
@@ -621,7 +741,11 @@ def run_launcher(
     version_checker: Callable[..., VersionCheck] | None = None,
 ) -> LauncherResult:
     """Запустить command palette и вернуть argv только после подтверждения."""
-    controller = LauncherController(commands or build_catalog(cli))
+    if commands is None:
+        commands = tuple(sorted(
+            build_catalog(cli), key=lambda item: _STARTER_ORDER.get(item.path, len(_STARTER_ORDER)),
+        ))
+    controller = LauncherController(commands)
     ui = _LauncherUI(
         controller,
         installation_detector=installation_detector or detect_installation,

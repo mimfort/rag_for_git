@@ -1,0 +1,391 @@
+input_pool	key	split	bulk	kind	path	first_loss	bm25_rank	ann_rank	fused	qualified	hybrid_file_rank	rerank_chunk_rank	graph_rescue	index	in_file_budget	in_context	in_luna_brief	in_rerank_context
+30	PRI-196	tune	True	core	reviewer/app.py	kept			False	False			True	True	True	True	True	False
+30	PRI-196	tune	True	core	reviewer/config/settings.py	brief	5		True	True	5		False	True	True	True	False	False
+30	PRI-196	tune	True	core	reviewer/entrypoints/mcp_server.py	brief			False	False			True	True	True	True	False	False
+30	PRI-196	tune	True	core	reviewer/index/schema.sql	not_indexed			False	False			False	False	False	False	False	False
+30	PRI-196	tune	True	core	reviewer/tasks/boards/__init__.py	initial_pool			False	False			False	True	False	False	False	False
+30	PRI-196	tune	True	core	reviewer/tasks/boards/base.py	kept	4		True	True	4		False	True	True	True	True	False
+30	PRI-196	tune	True	core	reviewer/tasks/boards/yougile.py	fusion_cap		26	False	False			False	True	False	False	False	False
+30	PRI-196	tune	True	core	reviewer/tasks/boards/youtrack.py	initial_pool			False	False			False	True	False	False	False	False
+30	PRI-196	tune	True	core	reviewer/tasks/service.py	kept	9	6	True	True	6		False	True	True	True	True	False
+30	PRI-196	tune	True	core	reviewer/tasks/store.py	initial_pool			False	False			False	True	False	False	False	False
+30	PRI-196	tune	True	read	reviewer/tasks/sync.py	kept		1	True	True	2		False	True	True	True	True	False
+60	PRI-196	tune	True	core	reviewer/app.py	brief			False	False			True	True	True	True	False	False
+60	PRI-196	tune	True	core	reviewer/config/settings.py	brief	5		True	True	6		False	True	True	True	False	False
+60	PRI-196	tune	True	core	reviewer/entrypoints/mcp_server.py	brief	40	39	True	True	2		False	True	True	True	False	False
+60	PRI-196	tune	True	core	reviewer/index/schema.sql	not_indexed			False	False			False	False	False	False	False	False
+60	PRI-196	tune	True	core	reviewer/tasks/boards/__init__.py	fusion_cap	54		False	False			False	True	False	False	False	False
+60	PRI-196	tune	True	core	reviewer/tasks/boards/base.py	kept	4		True	True	5		False	True	True	True	True	False
+60	PRI-196	tune	True	core	reviewer/tasks/boards/yougile.py	fusion_cap		26	False	False			False	True	False	False	False	False
+60	PRI-196	tune	True	core	reviewer/tasks/boards/youtrack.py	fusion_cap	53		False	False			False	True	False	False	False	False
+60	PRI-196	tune	True	core	reviewer/tasks/service.py	kept	9	6	True	True	7		False	True	True	True	True	False
+60	PRI-196	tune	True	core	reviewer/tasks/store.py	initial_pool			False	False			False	True	False	False	False	False
+60	PRI-196	tune	True	read	reviewer/tasks/sync.py	kept		1	True	True	3		False	True	True	True	True	False
+30	PRI-215	holdout	True	core	plugin/skills/configure-review/SKILL.md	not_indexed			False	False			False	False	False	False	False	False
+30	PRI-215	holdout	True	core	plugin/skills/create-task/SKILL.md	not_indexed			False	False			False	False	False	False	False	False
+30	PRI-215	holdout	True	core	plugin/skills/finish-task/SKILL.md	not_indexed			False	False			False	False	False	False	False	False
+30	PRI-215	holdout	True	core	plugin/skills/review-pr/SKILL.md	not_indexed			False	False			False	False	False	False	False	False
+30	PRI-215	holdout	True	core	plugin/skills/solve-task/SKILL.md	not_indexed			False	False			False	False	False	False	False	False
+30	PRI-215	holdout	True	core	plugin/skills/sync-codebase/SKILL.md	not_indexed			False	False			False	False	False	False	False	False
+30	PRI-215	holdout	True	core	plugin/skills/sync-tasks/SKILL.md	not_indexed			False	False			False	False	False	False	False	False
+30	PRI-215	holdout	True	core	reviewer/app.py	initial_pool			False	False			False	True	False	False	False	False
+30	PRI-215	holdout	True	core	reviewer/config/settings.py	kept	2	4	True	True	1		False	True	True	True	True	False
+30	PRI-215	holdout	True	core	reviewer/entrypoints/cli.py	initial_pool			False	False			False	True	False	False	False	False
+30	PRI-215	holdout	True	core	reviewer/entrypoints/mcp_server.py	kept			False	False			True	True	True	True	True	False
+30	PRI-215	holdout	True	core	reviewer/install.py	initial_pool			False	False			False	True	False	False	False	False
+30	PRI-215	holdout	True	core	reviewer/mcp/service.py	kept	18	21	False	False			True	True	True	True	True	False
+30	PRI-215	holdout	True	core	reviewer/policy/policy.py	kept			False	False			True	True	True	True	True	False
+30	PRI-215	holdout	True	core	reviewer/tasks/boards/__init__.py	kept	28	10	True	True	3		False	True	True	True	True	False
+30	PRI-215	holdout	True	core	reviewer/tasks/boards/attachments.py	initial_pool			False	False			False	True	False	False	False	False
+30	PRI-215	holdout	True	core	reviewer/tasks/boards/base.py	kept	7	6	True	True	2		False	True	True	True	True	False
+30	PRI-215	holdout	True	core	reviewer/tasks/boards/yougile.py	kept		18	False	False			True	True	True	True	True	False
+30	PRI-215	holdout	True	core	reviewer/tasks/boards/youtrack.py	kept	20	30	False	False			True	True	True	True	True	False
+30	PRI-215	holdout	True	core	reviewer/tasks/sync.py	kept			False	False			True	True	True	True	True	False
+30	PRI-215	holdout	True	read	reviewer/tasks/service.py	initial_pool			False	False			False	True	False	False	False	False
+30	PRI-215	holdout	True	read	reviewer/tasks/store.py	brief			False	False			True	True	True	True	False	False
+60	PRI-215	holdout	True	core	plugin/skills/configure-review/SKILL.md	not_indexed			False	False			False	False	False	False	False	False
+60	PRI-215	holdout	True	core	plugin/skills/create-task/SKILL.md	not_indexed			False	False			False	False	False	False	False	False
+60	PRI-215	holdout	True	core	plugin/skills/finish-task/SKILL.md	not_indexed			False	False			False	False	False	False	False	False
+60	PRI-215	holdout	True	core	plugin/skills/review-pr/SKILL.md	not_indexed			False	False			False	False	False	False	False	False
+60	PRI-215	holdout	True	core	plugin/skills/solve-task/SKILL.md	not_indexed			False	False			False	False	False	False	False	False
+60	PRI-215	holdout	True	core	plugin/skills/sync-codebase/SKILL.md	not_indexed			False	False			False	False	False	False	False	False
+60	PRI-215	holdout	True	core	plugin/skills/sync-tasks/SKILL.md	not_indexed			False	False			False	False	False	False	False	False
+60	PRI-215	holdout	True	core	reviewer/app.py	initial_pool			False	False			False	True	False	False	False	False
+60	PRI-215	holdout	True	core	reviewer/config/settings.py	kept	2	4	True	True	1		False	True	True	True	True	False
+60	PRI-215	holdout	True	core	reviewer/entrypoints/cli.py	fusion_cap	56		False	False			False	True	False	False	False	False
+60	PRI-215	holdout	True	core	reviewer/entrypoints/mcp_server.py	kept			False	False			True	True	True	True	True	False
+60	PRI-215	holdout	True	core	reviewer/install.py	initial_pool			False	False			False	True	False	False	False	False
+60	PRI-215	holdout	True	core	reviewer/mcp/service.py	kept	18	21	True	True	4		False	True	True	True	True	False
+60	PRI-215	holdout	True	core	reviewer/policy/policy.py	kept			False	False			True	True	True	True	True	False
+60	PRI-215	holdout	True	core	reviewer/tasks/boards/__init__.py	kept	28	10	True	True	3		False	True	True	True	True	False
+60	PRI-215	holdout	True	core	reviewer/tasks/boards/attachments.py	initial_pool			False	False			False	True	False	False	False	False
+60	PRI-215	holdout	True	core	reviewer/tasks/boards/base.py	kept	7	6	True	True	2		False	True	True	True	True	False
+60	PRI-215	holdout	True	core	reviewer/tasks/boards/yougile.py	kept		18	False	False			True	True	True	True	True	False
+60	PRI-215	holdout	True	core	reviewer/tasks/boards/youtrack.py	kept	20	30	False	False			True	True	True	True	True	False
+60	PRI-215	holdout	True	core	reviewer/tasks/sync.py	kept		56	False	False			True	True	True	True	True	False
+60	PRI-215	holdout	True	read	reviewer/tasks/service.py	initial_pool			False	False			False	True	False	False	False	False
+60	PRI-215	holdout	True	read	reviewer/tasks/store.py	initial_pool			False	False			False	True	False	False	False	False
+30	PRI-223	tune	True	core	plugin/skills/configure-review/SKILL.md	not_indexed			False	False			False	False	False	False	False	False
+30	PRI-223	tune	True	core	reviewer/config/layers.py	kept			False	False			True	True	True	True	True	False
+30	PRI-223	tune	True	core	reviewer/entrypoints/cli.py	kept	5	11	True	True	2		False	True	True	True	True	False
+30	PRI-223	tune	True	core	reviewer/entrypoints/mcp_server.py	brief			False	False			True	True	True	True	False	False
+30	PRI-223	tune	True	core	reviewer/gitutil.py	kept	23		False	False			True	True	True	True	True	False
+30	PRI-223	tune	True	core	reviewer/install.py	kept	1		True	True	3		False	True	True	True	True	False
+30	PRI-223	tune	True	core	reviewer/launcher/metadata.py	not_indexed			False	False			False	False	False	False	False	False
+30	PRI-223	tune	True	core	reviewer/mcp/service.py	file_budget	2	6	True	True	4		False	True	False	False	False	False
+30	PRI-223	tune	True	core	reviewer/services/branch.py	initial_pool			False	False			False	True	False	False	False	False
+30	PRI-223	tune	True	core	reviewer/services/review_service.py	kept		12	True	True	8		False	True	True	True	True	False
+30	PRI-223	tune	True	core	reviewer/tasks/boards/asana.py	file_budget			False	False			True	True	False	False	False	False
+30	PRI-223	tune	True	core	reviewer/tasks/boards/clickup.py	file_budget			False	False			True	True	False	False	False	False
+30	PRI-223	tune	True	core	reviewer/tasks/boards/github.py	kept	3		True	True	5		False	True	True	True	True	False
+30	PRI-223	tune	True	core	reviewer/tasks/boards/jira.py	file_budget			False	False			True	True	False	False	False	False
+30	PRI-223	tune	True	core	reviewer/tasks/boards/kaiten.py	kept	8		True	True	7		False	True	True	True	True	False
+30	PRI-223	tune	True	core	reviewer/tasks/boards/linear.py	fusion_cap	29		False	False			False	True	False	False	False	False
+30	PRI-223	tune	True	core	reviewer/tasks/boards/registry.py	file_budget			False	False			True	True	False	False	False	False
+30	PRI-223	tune	True	core	reviewer/tasks/boards/setup.py	file_budget			False	False			True	True	False	False	False	False
+30	PRI-223	tune	True	core	reviewer/tasks/boards/trello.py	file_budget	21		False	False			True	True	False	False	False	False
+30	PRI-223	tune	True	core	reviewer/tasks/boards/weeek.py	file_budget			False	False			True	True	False	False	False	False
+30	PRI-223	tune	True	core	reviewer/tasks/boards/yandex_tracker.py	initial_pool			False	False			False	True	False	False	False	False
+30	PRI-223	tune	True	core	reviewer/tasks/boards/yougile.py	file_budget			False	False			True	True	False	False	False	False
+30	PRI-223	tune	True	core	reviewer/tasks/boards/youtrack.py	file_budget			False	False			True	True	False	False	False	False
+30	PRI-223	tune	True	read	reviewer/config/provider_credentials.py	kept			False	False			True	True	True	True	True	False
+30	PRI-223	tune	True	read	reviewer/config/settings.py	kept	12	4	True	True	1		False	True	True	True	True	False
+30	PRI-223	tune	True	read	reviewer/config/task_board.py	initial_pool			False	False			False	True	False	False	False	False
+60	PRI-223	tune	True	core	plugin/skills/configure-review/SKILL.md	not_indexed			False	False			False	False	False	False	False	False
+60	PRI-223	tune	True	core	reviewer/config/layers.py	brief			False	False			True	True	True	True	False	False
+60	PRI-223	tune	True	core	reviewer/entrypoints/cli.py	kept	5	11	True	True	2		False	True	True	True	True	False
+60	PRI-223	tune	True	core	reviewer/entrypoints/mcp_server.py	brief			False	False			True	True	True	True	False	False
+60	PRI-223	tune	True	core	reviewer/gitutil.py	brief	23		False	False			True	True	True	True	False	False
+60	PRI-223	tune	True	core	reviewer/install.py	kept	1		True	True	3		False	True	True	True	True	False
+60	PRI-223	tune	True	core	reviewer/launcher/metadata.py	not_indexed			False	False			False	False	False	False	False	False
+60	PRI-223	tune	True	core	reviewer/mcp/service.py	file_budget	2	6	True	True	4		False	True	False	False	False	False
+60	PRI-223	tune	True	core	reviewer/services/branch.py	initial_pool			False	False			False	True	False	False	False	False
+60	PRI-223	tune	True	core	reviewer/services/review_service.py	kept	55	12	True	True	8		False	True	True	True	True	False
+60	PRI-223	tune	True	core	reviewer/tasks/boards/asana.py	file_budget	33		False	False			True	True	False	False	False	False
+60	PRI-223	tune	True	core	reviewer/tasks/boards/clickup.py	file_budget			False	False			True	True	False	False	False	False
+60	PRI-223	tune	True	core	reviewer/tasks/boards/github.py	kept	3		True	True	5		False	True	True	True	True	False
+60	PRI-223	tune	True	core	reviewer/tasks/boards/jira.py	file_budget			False	False			True	True	False	False	False	False
+60	PRI-223	tune	True	core	reviewer/tasks/boards/kaiten.py	kept	8		True	True	7		False	True	True	True	True	False
+60	PRI-223	tune	True	core	reviewer/tasks/boards/linear.py	fusion_cap	29		False	False			False	True	False	False	False	False
+60	PRI-223	tune	True	core	reviewer/tasks/boards/registry.py	file_budget		50	False	False			True	True	False	False	False	False
+60	PRI-223	tune	True	core	reviewer/tasks/boards/setup.py	file_budget		48	False	False			True	True	False	False	False	False
+60	PRI-223	tune	True	core	reviewer/tasks/boards/trello.py	file_budget	21		False	False			True	True	False	False	False	False
+60	PRI-223	tune	True	core	reviewer/tasks/boards/weeek.py	file_budget	34		False	False			True	True	False	False	False	False
+60	PRI-223	tune	True	core	reviewer/tasks/boards/yandex_tracker.py	initial_pool			False	False			False	True	False	False	False	False
+60	PRI-223	tune	True	core	reviewer/tasks/boards/yougile.py	file_budget	44		False	False			True	True	False	False	False	False
+60	PRI-223	tune	True	core	reviewer/tasks/boards/youtrack.py	file_budget	36		False	False			True	True	False	False	False	False
+60	PRI-223	tune	True	read	reviewer/config/provider_credentials.py	kept			False	False			True	True	True	True	True	False
+60	PRI-223	tune	True	read	reviewer/config/settings.py	kept	12	4	True	True	1		False	True	True	True	True	False
+60	PRI-223	tune	True	read	reviewer/config/task_board.py	initial_pool			False	False			False	True	False	False	False	False
+30	PRI-225	holdout	True	core	plugin/skills/configure-review/SKILL.md	not_indexed			False	False			False	False	False	False	False	False
+30	PRI-225	holdout	True	core	plugin/skills/sync-tasks/SKILL.md	not_indexed			False	False			False	False	False	False	False	False
+30	PRI-225	holdout	True	core	reviewer/config/task_board.py	initial_pool			False	False			False	True	False	False	False	False
+30	PRI-225	holdout	True	core	reviewer/entrypoints/mcp_server.py	brief			False	False			True	True	True	True	False	False
+30	PRI-225	holdout	True	core	reviewer/mcp/service.py	kept	3		True	True	4		False	True	True	True	True	False
+30	PRI-225	holdout	True	core	reviewer/tasks/boards/asana.py	file_budget			False	False			True	True	False	False	False	False
+30	PRI-225	holdout	True	core	reviewer/tasks/boards/base.py	kept	1	14	True	True	1		False	True	True	True	True	False
+30	PRI-225	holdout	True	core	reviewer/tasks/boards/clickup.py	file_budget			False	False			True	True	False	False	False	False
+30	PRI-225	holdout	True	core	reviewer/tasks/boards/github.py	file_budget	22		False	False			True	True	False	False	False	False
+30	PRI-225	holdout	True	core	reviewer/tasks/boards/jira.py	file_budget			False	False			True	True	False	False	False	False
+30	PRI-225	holdout	True	core	reviewer/tasks/boards/kaiten.py	file_budget	20		False	False			True	True	False	False	False	False
+30	PRI-225	holdout	True	core	reviewer/tasks/boards/linear.py	kept	13		True	True	8		False	True	True	True	True	False
+30	PRI-225	holdout	True	core	reviewer/tasks/boards/trello.py	file_budget		18	False	False			True	True	False	False	False	False
+30	PRI-225	holdout	True	core	reviewer/tasks/boards/weeek.py	file_budget		24	False	False			True	True	False	False	False	False
+30	PRI-225	holdout	True	core	reviewer/tasks/boards/yandex_tracker.py	file_budget		28	False	False			True	True	False	False	False	False
+30	PRI-225	holdout	True	core	reviewer/tasks/boards/yougile.py	file_budget			False	False			True	True	False	False	False	False
+30	PRI-225	holdout	True	core	reviewer/tasks/boards/youtrack.py	file_budget	23		False	False			True	True	False	False	False	False
+30	PRI-225	holdout	True	core	reviewer/tasks/service.py	file_budget	2		True	True	3		False	True	False	False	False	False
+30	PRI-225	holdout	True	core	reviewer/tasks/sync.py	file_budget		16	False	False			True	True	False	False	False	False
+30	PRI-225	holdout	True	read	reviewer/config/layers.py	initial_pool			False	False			False	True	False	False	False	False
+30	PRI-225	holdout	True	read	reviewer/tasks/boards/registry.py	file_budget			False	False			True	True	False	False	False	False
+30	PRI-225	holdout	True	read	reviewer/tasks/store.py	file_budget			False	False			True	True	False	False	False	False
+60	PRI-225	holdout	True	core	plugin/skills/configure-review/SKILL.md	not_indexed			False	False			False	False	False	False	False	False
+60	PRI-225	holdout	True	core	plugin/skills/sync-tasks/SKILL.md	not_indexed			False	False			False	False	False	False	False	False
+60	PRI-225	holdout	True	core	reviewer/config/task_board.py	initial_pool			False	False			False	True	False	False	False	False
+60	PRI-225	holdout	True	core	reviewer/entrypoints/mcp_server.py	brief	56		False	False			True	True	True	True	False	False
+60	PRI-225	holdout	True	core	reviewer/mcp/service.py	brief	3	47	True	True	5		False	True	True	True	False	False
+60	PRI-225	holdout	True	core	reviewer/tasks/boards/asana.py	file_budget			False	False			True	True	False	False	False	False
+60	PRI-225	holdout	True	core	reviewer/tasks/boards/base.py	kept	1	14	True	True	1		False	True	True	True	True	False
+60	PRI-225	holdout	True	core	reviewer/tasks/boards/clickup.py	file_budget	55	40	False	False			True	True	False	False	False	False
+60	PRI-225	holdout	True	core	reviewer/tasks/boards/github.py	file_budget	22	43	False	False			True	True	False	False	False	False
+60	PRI-225	holdout	True	core	reviewer/tasks/boards/jira.py	file_budget			False	False			True	True	False	False	False	False
+60	PRI-225	holdout	True	core	reviewer/tasks/boards/kaiten.py	file_budget	20	35	False	False			True	True	False	False	False	False
+60	PRI-225	holdout	True	core	reviewer/tasks/boards/linear.py	kept	13	52	True	True	3		False	True	True	True	True	False
+60	PRI-225	holdout	True	core	reviewer/tasks/boards/trello.py	file_budget		18	False	False			True	True	False	False	False	False
+60	PRI-225	holdout	True	core	reviewer/tasks/boards/weeek.py	file_budget		24	False	False			True	True	False	False	False	False
+60	PRI-225	holdout	True	core	reviewer/tasks/boards/yandex_tracker.py	file_budget		28	False	False			True	True	False	False	False	False
+60	PRI-225	holdout	True	core	reviewer/tasks/boards/yougile.py	file_budget		45	False	False			True	True	False	False	False	False
+60	PRI-225	holdout	True	core	reviewer/tasks/boards/youtrack.py	file_budget	23		False	False			True	True	False	False	False	False
+60	PRI-225	holdout	True	core	reviewer/tasks/service.py	file_budget	2	39	True	True	4		False	True	False	False	False	False
+60	PRI-225	holdout	True	core	reviewer/tasks/sync.py	file_budget		16	False	False			True	True	False	False	False	False
+60	PRI-225	holdout	True	read	reviewer/config/layers.py	initial_pool			False	False			False	True	False	False	False	False
+60	PRI-225	holdout	True	read	reviewer/tasks/boards/registry.py	file_budget			False	False			True	True	False	False	False	False
+60	PRI-225	holdout	True	read	reviewer/tasks/store.py	file_budget			False	False			True	True	False	False	False	False
+30	PRI-228	tune	False	core	reviewer/app.py	kept			False	False			True	True	True	True	True	False
+30	PRI-228	tune	False	core	reviewer/config/settings.py	initial_pool			False	False			False	True	False	False	False	False
+30	PRI-228	tune	False	core	reviewer/index/embeddings.py	kept	2	2	True	True	1		False	True	True	True	True	False
+30	PRI-228	tune	False	core	reviewer/install.py	brief	1		True	True	3		False	True	True	True	False	False
+30	PRI-228	tune	False	read	reviewer/index/_retry.py	brief			False	False			True	True	True	True	False	False
+30	PRI-228	tune	False	read	reviewer/index/freshness.py	brief		5	True	True	5		False	True	True	True	False	False
+60	PRI-228	tune	False	core	reviewer/app.py	kept			False	False			True	True	True	True	True	False
+60	PRI-228	tune	False	core	reviewer/config/settings.py	fusion_cap	42	52	False	False			False	True	False	False	False	False
+60	PRI-228	tune	False	core	reviewer/index/embeddings.py	kept	2	2	True	True	1		False	True	True	True	True	False
+60	PRI-228	tune	False	core	reviewer/install.py	brief	1		True	True	4		False	True	True	True	False	False
+60	PRI-228	tune	False	read	reviewer/index/_retry.py	brief	37		False	False			True	True	True	True	False	False
+60	PRI-228	tune	False	read	reviewer/index/freshness.py	brief		5	True	True	6		False	True	True	True	False	False
+30	PRI-235	tune	False	core	reviewer/config/layers.py	kept		9	True	True	5		False	True	True	True	True	False
+30	PRI-235	tune	False	core	reviewer/entrypoints/cli.py	kept	11	3	True	True	1		False	True	True	True	True	False
+30	PRI-235	tune	False	core	reviewer/index/schema.sql	not_indexed			False	False			False	False	False	False	False	False
+30	PRI-235	tune	False	core	reviewer/index/store.py	brief			False	False			True	True	True	True	False	False
+30	PRI-235	tune	False	core	reviewer/mcp/service.py	kept	6	19	True	True	2		False	True	True	True	True	False
+30	PRI-235	tune	False	read	reviewer/gitutil.py	initial_pool			False	False			False	True	False	False	False	False
+30	PRI-235	tune	False	read	reviewer/policy/policy.py	brief			False	False			True	True	True	True	False	False
+60	PRI-235	tune	False	core	reviewer/config/layers.py	kept	36	9	True	True	3		False	True	True	True	True	False
+60	PRI-235	tune	False	core	reviewer/entrypoints/cli.py	kept	11	3	True	True	1		False	True	True	True	True	False
+60	PRI-235	tune	False	core	reviewer/index/schema.sql	not_indexed			False	False			False	False	False	False	False	False
+60	PRI-235	tune	False	core	reviewer/index/store.py	brief			False	False			True	True	True	True	False	False
+60	PRI-235	tune	False	core	reviewer/mcp/service.py	brief	6	19	True	True	2		False	True	True	True	False	False
+60	PRI-235	tune	False	read	reviewer/gitutil.py	initial_pool			False	False			False	True	False	False	False	False
+60	PRI-235	tune	False	read	reviewer/policy/policy.py	brief			False	False			True	True	True	True	False	False
+30	PRI-238	tune	False	core	plugin/skills/finish-task/SKILL.md	not_indexed			False	False			False	False	False	False	False	False
+30	PRI-238	tune	False	core	reviewer/entrypoints/mcp_server.py	kept			False	False			True	True	True	True	True	False
+30	PRI-238	tune	False	core	reviewer/mcp/service.py	kept	1	6	True	True	1		False	True	True	True	True	False
+30	PRI-238	tune	False	read	reviewer/vcs/base.py	file_budget			False	False			True	True	False	False	False	False
+30	PRI-238	tune	False	read	reviewer/vcs/github.py	file_budget			False	False			True	True	False	False	False	False
+30	PRI-238	tune	False	read	reviewer/vcs/gitlab.py	file_budget			False	False			True	True	False	False	False	False
+60	PRI-238	tune	False	core	plugin/skills/finish-task/SKILL.md	not_indexed			False	False			False	False	False	False	False	False
+60	PRI-238	tune	False	core	reviewer/entrypoints/mcp_server.py	kept	43		False	False			True	True	True	True	True	False
+60	PRI-238	tune	False	core	reviewer/mcp/service.py	kept	1	6	True	True	1		False	True	True	True	True	False
+60	PRI-238	tune	False	read	reviewer/vcs/base.py	file_budget			False	False			True	True	False	False	False	False
+60	PRI-238	tune	False	read	reviewer/vcs/github.py	file_budget			False	False			True	True	False	False	False	False
+60	PRI-238	tune	False	read	reviewer/vcs/gitlab.py	file_budget			False	False			True	True	False	False	False	False
+30	PRI-239	tune	False	core	plugin/skills/review-pr/SKILL.md	not_indexed			False	False			False	False	False	False	False	False
+30	PRI-239	tune	False	core	plugin/skills/solve-task/SKILL.md	not_indexed			False	False			False	False	False	False	False	False
+30	PRI-239	tune	False	core	plugin/skills/summarize-subsystems/SKILL.md	not_indexed			False	False			False	False	False	False	False	False
+30	PRI-239	tune	False	core	reviewer/config/settings.py	fusion_cap		18	False	False			False	True	False	False	False	False
+30	PRI-239	tune	False	core	reviewer/entrypoints/mcp_server.py	kept	25	1	True	True	1		False	True	True	True	True	False
+30	PRI-239	tune	False	core	reviewer/install.py	brief	13		True	True	12		False	True	True	True	False	False
+30	PRI-239	tune	False	core	reviewer/mcp/service.py	kept	14	2	True	True	2		False	True	True	True	True	False
+30	PRI-239	tune	False	core	reviewer/policy/policy.py	brief			False	False			True	True	True	True	False	False
+30	PRI-239	tune	False	read	reviewer/config/layers.py	brief	6		True	True	4		False	True	True	True	False	False
+30	PRI-239	tune	False	read	reviewer/vcs/github.py	file_budget			False	False			True	True	False	False	False	False
+60	PRI-239	tune	False	core	plugin/skills/review-pr/SKILL.md	not_indexed			False	False			False	False	False	False	False	False
+60	PRI-239	tune	False	core	plugin/skills/solve-task/SKILL.md	not_indexed			False	False			False	False	False	False	False	False
+60	PRI-239	tune	False	core	plugin/skills/summarize-subsystems/SKILL.md	not_indexed			False	False			False	False	False	False	False	False
+60	PRI-239	tune	False	core	reviewer/config/settings.py	fusion_cap	44	18	False	False			False	True	False	False	False	False
+60	PRI-239	tune	False	core	reviewer/entrypoints/mcp_server.py	kept	25	1	True	True	2		False	True	True	True	True	False
+60	PRI-239	tune	False	core	reviewer/install.py	brief	13		True	True	12		False	True	True	True	False	False
+60	PRI-239	tune	False	core	reviewer/mcp/service.py	kept	14	2	True	True	1		False	True	True	True	True	False
+60	PRI-239	tune	False	core	reviewer/policy/policy.py	file_budget		58	False	False			True	True	False	False	False	False
+60	PRI-239	tune	False	read	reviewer/config/layers.py	brief	6		True	True	4		False	True	True	True	False	False
+60	PRI-239	tune	False	read	reviewer/vcs/github.py	file_budget		52	False	False			True	True	False	False	False	False
+30	PRI-241	holdout	False	core	docker-compose.yml	not_indexed			False	False			False	False	False	False	False	False
+30	PRI-241	holdout	False	core	reviewer/entrypoints/cli.py	kept	4		True	True	2		False	True	True	True	True	False
+30	PRI-241	holdout	False	core	reviewer/install.py	kept	1		True	True	1		False	True	True	True	True	False
+30	PRI-241	holdout	False	read	reviewer/app.py	brief			False	False			True	True	True	True	False	False
+30	PRI-241	holdout	False	read	reviewer/config/settings.py	kept			False	False			True	True	True	True	True	False
+60	PRI-241	holdout	False	core	docker-compose.yml	not_indexed			False	False			False	False	False	False	False	False
+60	PRI-241	holdout	False	core	reviewer/entrypoints/cli.py	brief	4	60	True	True	1		False	True	True	True	False	False
+60	PRI-241	holdout	False	core	reviewer/install.py	kept	1		True	True	2		False	True	True	True	True	False
+60	PRI-241	holdout	False	read	reviewer/app.py	brief			False	False			True	True	True	True	False	False
+60	PRI-241	holdout	False	read	reviewer/config/settings.py	kept			False	False			True	True	True	True	True	False
+30	PRI-242	tune	False	core	docker-compose.yml	not_indexed			False	False			False	False	False	False	False	False
+30	PRI-242	tune	False	core	reviewer/entrypoints/cli.py	kept	16	11	True	True	1		False	True	True	True	True	False
+30	PRI-242	tune	False	core	reviewer/launcher/metadata.py	not_indexed			False	False			False	False	False	False	False	False
+30	PRI-242	tune	False	read	reviewer/config/settings.py	kept	12		True	True	5		False	True	True	True	True	False
+30	PRI-242	tune	False	read	reviewer/install.py	kept	3		True	True	3		False	True	True	True	True	False
+60	PRI-242	tune	False	core	docker-compose.yml	not_indexed			False	False			False	False	False	False	False	False
+60	PRI-242	tune	False	core	reviewer/entrypoints/cli.py	kept	16	11	True	True	1		False	True	True	True	True	False
+60	PRI-242	tune	False	core	reviewer/launcher/metadata.py	not_indexed			False	False			False	False	False	False	False	False
+60	PRI-242	tune	False	read	reviewer/config/settings.py	kept	12	33	True	True	5		False	True	True	True	True	False
+60	PRI-242	tune	False	read	reviewer/install.py	kept	3		True	True	3		False	True	True	True	True	False
+30	PRI-245	tune	False	core	plugin/skills/summarize-subsystems/SKILL.md	not_indexed			False	False			False	False	False	False	False	False
+30	PRI-245	tune	False	core	reviewer/config/layers.py	initial_pool			False	False			False	True	False	False	False	False
+30	PRI-245	tune	False	core	reviewer/entrypoints/mcp_server.py	brief	6	13	True	True	3		False	True	True	True	False	False
+30	PRI-245	tune	False	core	reviewer/graph/summaries.py	kept			False	False			True	True	True	True	True	False
+30	PRI-245	tune	False	core	reviewer/index/chunker.py	initial_pool			False	False			False	True	False	False	False	False
+30	PRI-245	tune	False	core	reviewer/index/store.py	kept			False	False			True	True	True	True	True	False
+30	PRI-245	tune	False	core	reviewer/mcp/service.py	kept	2	4	True	True	1		False	True	True	True	True	False
+30	PRI-245	tune	False	core	reviewer/policy/policy.py	brief			False	False			True	True	True	True	False	False
+30	PRI-245	tune	False	core	reviewer/services/summary_fragments.py	initial_pool			False	False			False	True	False	False	False	False
+30	PRI-245	tune	False	read	reviewer/index/summary_store.py	kept		17	False	False			True	True	True	True	True	False
+30	PRI-245	tune	False	read	reviewer/services/graph_sync.py	initial_pool			False	False			False	True	False	False	False	False
+60	PRI-245	tune	False	core	plugin/skills/summarize-subsystems/SKILL.md	not_indexed			False	False			False	False	False	False	False	False
+60	PRI-245	tune	False	core	reviewer/config/layers.py	initial_pool			False	False			False	True	False	False	False	False
+60	PRI-245	tune	False	core	reviewer/entrypoints/mcp_server.py	kept	6	13	True	True	1		False	True	True	True	True	False
+60	PRI-245	tune	False	core	reviewer/graph/summaries.py	kept			False	False			True	True	True	True	True	False
+60	PRI-245	tune	False	core	reviewer/index/chunker.py	fusion_cap	36		False	False			False	True	False	False	False	False
+60	PRI-245	tune	False	core	reviewer/index/store.py	kept	56		False	False			True	True	True	True	True	False
+60	PRI-245	tune	False	core	reviewer/mcp/service.py	brief	2	4	True	True	2		False	True	True	True	False	False
+60	PRI-245	tune	False	core	reviewer/policy/policy.py	brief			False	False			True	True	True	True	False	False
+60	PRI-245	tune	False	core	reviewer/services/summary_fragments.py	initial_pool			False	False			False	True	False	False	False	False
+60	PRI-245	tune	False	read	reviewer/index/summary_store.py	kept		17	False	False			True	True	True	True	True	False
+60	PRI-245	tune	False	read	reviewer/services/graph_sync.py	initial_pool			False	False			False	True	False	False	False	False
+30	PRI-248	tune	False	core	plugin/skills/solve-task/SKILL.md	not_indexed			False	False			False	False	False	False	False	False
+30	PRI-248	tune	False	core	reviewer/entrypoints/mcp_server.py	fusion_cap	30		False	False			False	True	False	False	False	False
+30	PRI-248	tune	False	core	reviewer/mcp/service.py	kept	1		True	True	1		False	True	True	True	True	False
+30	PRI-248	tune	False	read	reviewer/retrieval/retriever.py	brief		5	True	True	4		False	True	True	True	False	False
+30	PRI-248	tune	False	read	reviewer/services/status.py	initial_pool			False	False			False	True	False	False	False	False
+30	PRI-248	tune	False	read	reviewer/tasks/service.py	kept		9	True	True	8		False	True	True	True	True	False
+60	PRI-248	tune	False	core	plugin/skills/solve-task/SKILL.md	not_indexed			False	False			False	False	False	False	False	False
+60	PRI-248	tune	False	core	reviewer/entrypoints/mcp_server.py	fusion_cap	30	48	False	False			False	True	False	False	False	False
+60	PRI-248	tune	False	core	reviewer/mcp/service.py	kept	1	45	True	True	1		False	True	True	True	True	False
+60	PRI-248	tune	False	read	reviewer/retrieval/retriever.py	brief		5	True	True	4		False	True	True	True	False	False
+60	PRI-248	tune	False	read	reviewer/services/status.py	initial_pool			False	False			False	True	False	False	False	False
+60	PRI-248	tune	False	read	reviewer/tasks/service.py	kept	39	9	True	True	8		False	True	True	True	True	False
+30	PRI-251	tune	False	core	plugin/skills/solve-task/SKILL.md	not_indexed			False	False			False	False	False	False	False	False
+30	PRI-251	tune	False	core	reviewer/entrypoints/mcp_server.py	kept	9	5	True	True	4		False	True	True	True	True	False
+30	PRI-251	tune	False	core	reviewer/graph/backend.py	initial_pool			False	False			False	True	False	False	False	False
+30	PRI-251	tune	False	core	reviewer/graph/builder.py	fusion_cap		24	False	False			False	True	False	False	False	False
+30	PRI-251	tune	False	core	reviewer/graph/store.py	kept		3	True	True	2		False	True	True	True	True	False
+30	PRI-251	tune	False	core	reviewer/mcp/service.py	kept	28	1	True	True	1		False	True	True	True	True	False
+30	PRI-251	tune	False	core	reviewer/services/graph_sync.py	initial_pool			False	False			False	True	False	False	False	False
+30	PRI-251	tune	False	read	reviewer/graph/scip.py	initial_pool			False	False			False	True	False	False	False	False
+30	PRI-251	tune	False	read	reviewer/retrieval/retriever.py	kept			False	False			True	True	True	True	True	False
+60	PRI-251	tune	False	core	plugin/skills/solve-task/SKILL.md	not_indexed			False	False			False	False	False	False	False	False
+60	PRI-251	tune	False	core	reviewer/entrypoints/mcp_server.py	kept	9	5	True	True	3		False	True	True	True	True	False
+60	PRI-251	tune	False	core	reviewer/graph/backend.py	initial_pool			False	False			False	True	False	False	False	False
+60	PRI-251	tune	False	core	reviewer/graph/builder.py	fusion_cap		24	False	False			False	True	False	False	False	False
+60	PRI-251	tune	False	core	reviewer/graph/store.py	kept	60	3	True	True	2		False	True	True	True	True	False
+60	PRI-251	tune	False	core	reviewer/mcp/service.py	kept	28	1	True	True	1		False	True	True	True	True	False
+60	PRI-251	tune	False	core	reviewer/services/graph_sync.py	initial_pool			False	False			False	True	False	False	False	False
+60	PRI-251	tune	False	read	reviewer/graph/scip.py	fusion_cap		55	False	False			False	True	False	False	False	False
+60	PRI-251	tune	False	read	reviewer/retrieval/retriever.py	kept	32	31	False	False			True	True	True	True	True	False
+30	PRI-252	tune	False	core	reviewer/entrypoints/cli.py	brief	7		True	True	6		False	True	True	True	False	False
+30	PRI-252	tune	False	core	reviewer/graph/scip.py	kept	18		False	False			True	True	True	True	True	False
+30	PRI-252	tune	False	core	reviewer/index/schema.sql	not_indexed			False	False			False	False	False	False	False	False
+30	PRI-252	tune	False	core	reviewer/index/store.py	initial_pool			False	False			False	True	False	False	False	False
+30	PRI-252	tune	False	read	reviewer/graph/backend.py	kept	3	17	True	True	1		False	True	True	True	True	False
+30	PRI-252	tune	False	read	reviewer/services/graph_sync.py	kept			False	False			True	True	True	True	True	False
+60	PRI-252	tune	False	core	reviewer/entrypoints/cli.py	brief	7		True	True	8		False	True	True	True	False	False
+60	PRI-252	tune	False	core	reviewer/graph/scip.py	kept	18		False	False			True	True	True	True	True	False
+60	PRI-252	tune	False	core	reviewer/index/schema.sql	not_indexed			False	False			False	False	False	False	False	False
+60	PRI-252	tune	False	core	reviewer/index/store.py	initial_pool			False	False			False	True	False	False	False	False
+60	PRI-252	tune	False	read	reviewer/graph/backend.py	kept	3	17	True	True	1		False	True	True	True	True	False
+60	PRI-252	tune	False	read	reviewer/services/graph_sync.py	kept	60		False	False			True	True	True	True	True	False
+30	PRI-255	tune	False	core	reviewer/index/embeddings.py	kept			False	False			True	True	True	True	True	False
+30	PRI-255	tune	False	core	reviewer/mcp/service.py	kept	2		True	True	2		False	True	True	True	True	False
+30	PRI-255	tune	False	core	reviewer/mcp/task_context.py	initial_pool			False	False			False	True	False	False	False	False
+30	PRI-255	tune	False	read	reviewer/index/store.py	kept			False	False			True	True	True	True	True	False
+30	PRI-255	tune	False	read	reviewer/policy/context_limits.py	file_budget			False	False			True	True	False	False	False	False
+30	PRI-255	tune	False	read	reviewer/retrieval/retriever.py	kept		1	True	True	1		False	True	True	True	True	False
+60	PRI-255	tune	False	core	reviewer/index/embeddings.py	kept			False	False			True	True	True	True	True	False
+60	PRI-255	tune	False	core	reviewer/mcp/service.py	brief	2	46	True	True	2		False	True	True	True	False	False
+60	PRI-255	tune	False	core	reviewer/mcp/task_context.py	initial_pool			False	False			False	True	False	False	False	False
+60	PRI-255	tune	False	read	reviewer/index/store.py	kept		47	False	False			True	True	True	True	True	False
+60	PRI-255	tune	False	read	reviewer/policy/context_limits.py	brief	50		False	False			True	True	True	True	False	False
+60	PRI-255	tune	False	read	reviewer/retrieval/retriever.py	kept		1	True	True	1		False	True	True	True	True	False
+30	PRI-256	holdout	False	core	plugin/skills/configure-review/SKILL.md	not_indexed			False	False			False	False	False	False	False	False
+30	PRI-256	holdout	False	core	reviewer/config/layers.py	initial_pool			False	False			False	True	False	False	False	False
+30	PRI-256	holdout	False	core	reviewer/mcp/service.py	kept	8		True	True	9		False	True	True	True	True	False
+30	PRI-256	holdout	False	core	reviewer/policy/context_limits.py	kept	12	6	True	True	1		False	True	True	True	True	False
+30	PRI-256	holdout	False	core	reviewer/retrieval/multiquery.py	kept			False	False			True	True	True	True	True	False
+30	PRI-256	holdout	False	read	reviewer/index/chunker.py	kept		9	True	True	11		False	True	True	True	True	False
+30	PRI-256	holdout	False	read	reviewer/retrieval/retriever.py	kept		8	True	True	10		False	True	True	True	True	False
+60	PRI-256	holdout	False	core	plugin/skills/configure-review/SKILL.md	not_indexed			False	False			False	False	False	False	False	False
+60	PRI-256	holdout	False	core	reviewer/config/layers.py	initial_pool			False	False			False	True	False	False	False	False
+60	PRI-256	holdout	False	core	reviewer/mcp/service.py	brief	8		True	True	10		False	True	True	True	False	False
+60	PRI-256	holdout	False	core	reviewer/policy/context_limits.py	kept	12	6	True	True	1		False	True	True	True	True	False
+60	PRI-256	holdout	False	core	reviewer/retrieval/multiquery.py	brief			False	False			True	True	True	True	False	False
+60	PRI-256	holdout	False	read	reviewer/index/chunker.py	kept	52	9	True	True	12		False	True	True	True	True	False
+60	PRI-256	holdout	False	read	reviewer/retrieval/retriever.py	kept		8	True	True	11		False	True	True	True	True	False
+30	PRI-257	holdout	True	core	plugin/skills/configure-review/SKILL.md	not_indexed			False	False			False	False	False	False	False	False
+30	PRI-257	holdout	True	core	reviewer/config/layers.py	initial_pool			False	False			False	True	False	False	False	False
+30	PRI-257	holdout	True	core	reviewer/gitutil.py	brief	11		True	True	11		False	True	True	True	False	False
+30	PRI-257	holdout	True	core	reviewer/index/store.py	brief			False	False			True	True	True	True	False	False
+30	PRI-257	holdout	True	core	reviewer/mcp/service.py	kept	19	9	True	True	9		False	True	True	True	True	False
+30	PRI-257	holdout	True	core	reviewer/mcp/task_context.py	initial_pool			False	False			False	True	False	False	False	False
+30	PRI-257	holdout	True	core	reviewer/policy/context_limits.py	kept	4		True	True	5		False	True	True	True	True	False
+30	PRI-257	holdout	True	core	reviewer/retrieval/multiquery.py	brief	12		True	True	13		False	True	True	True	False	False
+30	PRI-257	holdout	True	core	reviewer/retrieval/retriever.py	kept		1	True	True	1		False	True	True	True	True	False
+30	PRI-257	holdout	True	core	reviewer/tasks/service.py	brief		10	True	True	10		False	True	True	True	False	False
+30	PRI-257	holdout	True	core	reviewer/tasks/store.py	initial_pool			False	False			False	True	False	False	False	False
+30	PRI-257	holdout	True	core	reviewer/web/history.py	file_budget	2		True	True	3		False	True	False	False	False	False
+30	PRI-257	holdout	True	read	reviewer/config/committed.py	initial_pool			False	False			False	True	False	False	False	False
+30	PRI-257	holdout	True	read	reviewer/policy/policy.py	initial_pool			False	False			False	True	False	False	False	False
+60	PRI-257	holdout	True	core	plugin/skills/configure-review/SKILL.md	not_indexed			False	False			False	False	False	False	False	False
+60	PRI-257	holdout	True	core	reviewer/config/layers.py	initial_pool			False	False			False	True	False	False	False	False
+60	PRI-257	holdout	True	core	reviewer/gitutil.py	kept	11		True	True	12		False	True	True	True	True	False
+60	PRI-257	holdout	True	core	reviewer/index/store.py	kept	37		False	False			True	True	True	True	True	False
+60	PRI-257	holdout	True	core	reviewer/mcp/service.py	kept	19	9	True	True	10		False	True	True	True	True	False
+60	PRI-257	holdout	True	core	reviewer/mcp/task_context.py	fusion_cap		40	False	False			False	True	False	False	False	False
+60	PRI-257	holdout	True	core	reviewer/policy/context_limits.py	kept	4	58	True	True	1		False	True	True	True	True	False
+60	PRI-257	holdout	True	core	reviewer/retrieval/multiquery.py	kept	12	31	True	True	14		False	True	True	True	True	False
+60	PRI-257	holdout	True	core	reviewer/retrieval/retriever.py	kept		1	True	True	3		False	True	True	True	True	False
+60	PRI-257	holdout	True	core	reviewer/tasks/service.py	kept	56	10	True	True	11		False	True	True	True	True	False
+60	PRI-257	holdout	True	core	reviewer/tasks/store.py	initial_pool			False	False			False	True	False	False	False	False
+60	PRI-257	holdout	True	core	reviewer/web/history.py	file_budget	2	55	True	True	5		False	True	False	False	False	False
+60	PRI-257	holdout	True	read	reviewer/config/committed.py	fusion_cap	44		False	False			False	True	False	False	False	False
+60	PRI-257	holdout	True	read	reviewer/policy/policy.py	initial_pool			False	False			False	True	False	False	False	False
+30	PRI-260	tune	False	core	reviewer/config/committed.py	kept	6		True	True	7		False	True	True	True	True	False
+30	PRI-260	tune	False	core	reviewer/config/layers.py	kept		5	True	True	5		False	True	True	True	True	False
+30	PRI-260	tune	False	core	reviewer/entrypoints/cli.py	kept	7	1	True	True	1		False	True	True	True	True	False
+30	PRI-260	tune	False	core	reviewer/mcp/service.py	brief	12	3	True	True	2		False	True	True	True	False	False
+30	PRI-260	tune	False	read	reviewer/gitutil.py	brief	13		True	True	10		False	True	True	True	False	False
+30	PRI-260	tune	False	read	reviewer/policy/context_limits.py	initial_pool			False	False			False	True	False	False	False	False
+60	PRI-260	tune	False	core	reviewer/config/committed.py	kept	6		True	True	7		False	True	True	True	True	False
+60	PRI-260	tune	False	core	reviewer/config/layers.py	kept		5	True	True	5		False	True	True	True	True	False
+60	PRI-260	tune	False	core	reviewer/entrypoints/cli.py	kept	7	1	True	True	1		False	True	True	True	True	False
+60	PRI-260	tune	False	core	reviewer/mcp/service.py	brief	12	3	True	True	2		False	True	True	True	False	False
+60	PRI-260	tune	False	read	reviewer/gitutil.py	brief	13		True	True	10		False	True	True	True	False	False
+60	PRI-260	tune	False	read	reviewer/policy/context_limits.py	fusion_cap	41	36	False	False			False	True	False	False	False	False
+30	PRI-267	tune	False	core	reviewer/index/store.py	kept	5		True	True	4		False	True	True	True	True	False
+30	PRI-267	tune	False	core	reviewer/retrieval/multiquery.py	kept	4	2	True	True	2		False	True	True	True	True	False
+30	PRI-267	tune	False	core	reviewer/tasks/store.py	kept	2	1	True	True	1		False	True	True	True	True	False
+30	PRI-267	tune	False	read	reviewer/mcp/service.py	brief	18		False	False			True	True	True	True	False	False
+30	PRI-267	tune	False	read	reviewer/policy/context_limits.py	brief		4	True	True	3		False	True	True	True	False	False
+60	PRI-267	tune	False	core	reviewer/index/store.py	kept	5		True	True	6		False	True	True	True	True	False
+60	PRI-267	tune	False	core	reviewer/retrieval/multiquery.py	kept	4	2	True	True	2		False	True	True	True	True	False
+60	PRI-267	tune	False	core	reviewer/tasks/store.py	kept	2	1	True	True	1		False	True	True	True	True	False
+60	PRI-267	tune	False	read	reviewer/mcp/service.py	brief	18	32	False	False			True	True	True	True	False	False
+60	PRI-267	tune	False	read	reviewer/policy/context_limits.py	brief		4	True	True	5		False	True	True	True	False	False
+30	PRI-275	holdout	False	core	reviewer/mcp/service.py	kept	9	2	True	True	1		False	True	True	True	True	False
+30	PRI-275	holdout	False	read	reviewer/index/store.py	kept	14	1	True	True	4		False	True	True	True	True	False
+30	PRI-275	holdout	False	read	reviewer/mcp/task_context.py	kept	21		False	False			True	True	True	True	True	False
+30	PRI-275	holdout	False	read	reviewer/services/status.py	brief			False	False			True	True	True	True	False	False
+30	PRI-275	holdout	False	read	reviewer/storage_health.py	initial_pool			False	False			False	True	False	False	False	False
+60	PRI-275	holdout	False	core	reviewer/mcp/service.py	kept	9	2	True	True	1		False	True	True	True	True	False
+60	PRI-275	holdout	False	read	reviewer/index/store.py	kept	14	1	True	True	4		False	True	True	True	True	False
+60	PRI-275	holdout	False	read	reviewer/mcp/task_context.py	kept	21		False	False			True	True	True	True	True	False
+60	PRI-275	holdout	False	read	reviewer/services/status.py	initial_pool			False	False			False	True	False	False	False	False
+60	PRI-275	holdout	False	read	reviewer/storage_health.py	fusion_cap	35		False	False			False	True	False	False	False	False

@@ -1,7 +1,27 @@
 """prepare_task_context: форма payload и посекционный fail-open (PRI-248)."""
-import psycopg
+from unittest.mock import MagicMock
 
+import psycopg
+import psycopg_pool
+import pytest
+from neo4j.exceptions import ServiceUnavailable
+
+from reviewer import storage_health as sh
+from reviewer.config.settings import Settings
 from reviewer.mcp import task_context
+from reviewer.mcp.service import MCPReviewService, _TaskContextDeps
+from reviewer.tasks.service import TaskService
+from reviewer.tasks.store import TaskHit
+
+
+@pytest.fixture(autouse=True)
+def _live_server_probe(monkeypatch):
+    """Проба ветки PoolTimeout не должна открывать сокет в unit-тесте.
+
+    Дефолт — «сервер отвечает», то есть пул действительно занят. Тест, которому
+    нужен остановленный контейнер, подменяет пробу своей, падающей.
+    """
+    monkeypatch.setattr(sh, "_probe_postgres", lambda dsn: None)
 
 
 class FakeDeps:
@@ -19,9 +39,12 @@ class FakeDeps:
         return value
 
     def preflight(self, repo, branch):
-        return self._result("preflight", {
+        payload = self._result("preflight", {
             "branch": branch, "indexed_sha": "abc", "drift": 0,
             "summaries": 40, "chunks": 7110, "graph_nodes": 7362})
+        if isinstance(payload, dict) and "graph_error" in self._overrides:
+            payload = {**payload, "graph_error": self._overrides["graph_error"]}
+        return payload
 
     def storage_endpoints(self):
         return ("postgresql://u:p@127.0.0.1:5433/reviewer", "bolt://localhost:7687")
@@ -40,7 +63,7 @@ class FakeDeps:
     def linked(self, key, project):
         return self._result("linked", "Task PRI-248\n  Linked tasks: ...")
 
-    def similar(self, query, project):
+    def similar(self, query, project, *, task=None):
         return self._result("similar", "1. ID-300 ...")
 
     def subsystems(self, repo, branch, query):
@@ -116,12 +139,39 @@ def test_postgres_down_empties_retrieval_sections():
 
 
 def test_neo4j_down_empties_linked_only():
+    """Критерий 5: настоящее neo4j-исключение, а не RuntimeError."""
     payload = task_context.build_task_context(
-        FakeDeps(linked=RuntimeError("no neo4j")), repo="o/n", key="PRI-248",
-        branch="dev", warm_board=False)
+        FakeDeps(linked=ServiceUnavailable("no routing servers")), repo="o/n",
+        key="PRI-276", branch="dev", warm_board=False)
     assert payload["related"]["linked"] == ""
     assert payload["related"]["similar"]
-    assert "related.linked" in _gap_sections(payload)
+    entry = next(g for g in payload["gaps"] if g["section"] == "related.linked")
+    assert entry["cause"] == "storage_unavailable"
+    assert entry["remedy"] == "reviewer start"
+
+
+def test_neo4j_down_keeps_postgres_sections():
+    """Критерий 4: теряется ровно related.linked, Postgres-секции собраны полностью."""
+    deps = FakeDeps(linked=ServiceUnavailable("no routing servers"))
+    payload = task_context.build_task_context(
+        deps, repo="o/n", key="PRI-276", branch="dev", warm_board=False)
+    assert payload["code"] and payload["test_exemplars"]
+    assert payload["subsystems"] and payload["related"]["similar"]
+    assert [g["section"] for g in payload["gaps"]] == ["related.linked"]
+
+
+def test_both_stores_down_keep_separate_diagnoses():
+    """Вердикты не сливаются: причина Postgres не приписывается графу."""
+    deps = FakeDeps(
+        preflight=psycopg.OperationalError(
+            'connection failed: FATAL:  password authentication failed for user "reviewer"'),
+        linked=ServiceUnavailable("no routing servers"))
+    payload = task_context.build_task_context(
+        deps, repo="o/n", key="PRI-276", branch="dev", warm_board=False)
+    pg_entry = next(g for g in payload["gaps"] if g["section"] == "preflight")
+    graph_entry = next(g for g in payload["gaps"] if g["section"] == "related.linked")
+    assert pg_entry["cause_detail"] == "auth_failed"
+    assert graph_entry["cause_detail"] is None
 
 
 def test_no_index_marks_gap_and_keeps_going():
@@ -147,6 +197,50 @@ def test_task_missing_is_a_gap_not_an_error():
         branch="dev", warm_board=False)
     assert payload["task"] is None
     assert "task" in _gap_sections(payload)
+
+
+@pytest.mark.parametrize("key", ["PRI-295", "ID-388", "свободный текст"])
+def test_context_similar_filters_current_task_before_render_and_augment(key, monkeypatch):
+    task = {"key": "ID-388", "aliases": ["PRI-295", "BOARD-295"], "title": "T"}
+    neighbors = [TaskHit(f"ID-{i}", "T", "open", 0.02, [f"PRI-{i}"])
+                 for i in range(1, 9)]
+    current = TaskHit("ID-388", "T", "open", 0.03, ["PRI-295"])
+    alias_hit = TaskHit("BOARD-295", "T", "open", 0.02)
+    hit_with_alias = TaskHit("LEGACY-1", "T", "open", 0.02, ["BOARD-295"])
+    hits = [current, neighbors[0], alias_hit, hit_with_alias, *neighbors[1:]]
+
+    store = MagicMock()
+    store.search.return_value = hits
+    embedder = MagicMock()
+    svc = MagicMock()
+    svc.components.task_service = TaskService(store, None, embedder)
+    resolved_task = task if key in ("PRI-295", "ID-388") else None
+    svc.get_task.return_value = resolved_task
+    history = svc._review_service._ensure_history.return_value
+    history.diff_paths_for_tasks.return_value = {
+        "PRI-295": ["own.py"],
+        "BOARD-295": ["own-alias.py"],
+        "PRI-1": ["neighbor.py"],
+    }
+
+    deps = _TaskContextDeps(svc, None)
+    monkeypatch.setattr(deps, "preflight", lambda repo, branch: {})
+    monkeypatch.setattr(deps, "task_board", lambda repo, branch: {"project": "PRI"})
+    payload = task_context.build_task_context(
+        deps, repo="o/n", key=key, branch="dev", warm_board=False)
+
+    expected_hits = neighbors if resolved_task else hits
+    rendered_keys = [line.split()[1] for line in payload["related"]["similar"].splitlines()
+                     if line and line[0].isdigit()]
+    assert rendered_keys == [hit.key for hit in expected_hits[:8]]
+    embedder.embed_query.assert_called_once_with("T" if resolved_task else key)
+    store.search.assert_called_once()
+    history.diff_paths_for_tasks.assert_called_once_with(
+        [identity for hit in expected_hits for identity in [hit.key, *hit.aliases]])
+    sources = svc._search_codebase_multi.call_args_list[0].kwargs["augment_sources"]
+    expected_paths = ["neighbor.py"] if resolved_task else [
+        "own.py", "neighbor.py", "own-alias.py"]
+    assert sources[0].paths == expected_paths
 
 
 def test_board_less_query_falls_back_to_user_formulation():
@@ -257,7 +351,7 @@ def test_board_less_task_degenerates_to_single_query():
 def test_test_queries_first_element_has_test_prefix_over_production_query():
     """Первый элемент _test_queries — продакшн-запрос с префиксом "как тестируется: "."""
     task = {"title": "T", "description": "D"}
-    first = task_context._test_queries(task, "PRI-1")[0]
+    first = task_context._test_queries(task_context._queries(task, "PRI-1"))[0]
     assert first == f"как тестируется: {task_context._query(task, 'PRI-1')}"
 
 
@@ -332,11 +426,15 @@ def test_other_failure_keeps_cause_unknown():
 
 
 def test_storage_failure_short_circuits_remaining_sections():
-    """Критерий 1: остальные store-секции не вызываются — иначе +30 с каждая."""
+    """Критерий 1 PRI-268: Postgres-секции не вызываются — иначе +30 с каждая.
+
+    related.linked живёт в другом хранилище и Postgres-сбоем не замыкается
+    (PRI-276): при живом Neo4j секция собирается, вместо того чтобы теряться зря.
+    """
     deps = FakeDeps(preflight=psycopg.OperationalError("connection refused"))
     payload = task_context.build_task_context(
         deps, repo="o/n", key="PRI-268", branch="dev", warm_board=False)
-    assert deps.calls == ["preflight"]
+    assert deps.calls == ["preflight", "linked"]
     assert set(payload) == set(task_context.SECTIONS)
     assert all(g["cause"] == "storage_unavailable" for g in payload["gaps"])
 
@@ -379,13 +477,13 @@ def test_deps_without_storage_endpoints_still_work():
 
 
 def test_existing_gaps_keep_section_and_reason():
-    """Расширение аддитивно: прежние ключи записи на месте."""
+    """Расширение аддитивно: прежние ключи записи на месте, добавлен cause_detail."""
     payload = task_context.build_task_context(
         FakeDeps(subsystems=RuntimeError("нет сводок")), repo="o/n",
         key="PRI-268", branch="dev", warm_board=False)
     entry = next(g for g in payload["gaps"] if g["section"] == "subsystems")
     assert entry["reason"] == "сводки подсистем недоступны"
-    assert set(entry) == {"section", "reason", "cause", "remedy"}
+    assert set(entry) == {"section", "reason", "cause", "cause_detail", "remedy"}
 
 
 def test_warm_board_gap_reflects_storage_down_not_misconfigured_board():
@@ -399,7 +497,10 @@ def test_warm_board_gap_reflects_storage_down_not_misconfigured_board():
         deps, repo="o/n", key="PRI-268", branch="dev", warm_board=True)
     entry = next(g for g in payload["gaps"] if g["section"] == "warm_board")
     assert entry["cause"] == task_context.CAUSE_STORAGE_UNAVAILABLE
-    assert entry["reason"] == task_context.SKIPPED_REASON
+    # PRI-277: нераспознанный сбой дописывает вымаранный отрывок к SKIPPED_REASON
+    # (см. test_unrecognised_failure_carries_redacted_excerpt) — поэтому не
+    # точное равенство, а префикс.
+    assert entry["reason"].startswith(task_context.SKIPPED_REASON)
     assert entry["remedy"] == "reviewer start"
 
 
@@ -430,3 +531,409 @@ def test_broken_storage_endpoints_source_does_not_break_build():
     entry = next(g for g in payload["gaps"] if g["section"] == "preflight")
     assert entry["cause"] == task_context.CAUSE_STORAGE_UNAVAILABLE
     assert entry["remedy"] is None
+
+
+# ---------------------------------------------------------------------------
+# Тесты PRI-277: класс причины отдельно от уместности лекарства
+# ---------------------------------------------------------------------------
+
+def _refuse_connection(dsn: str) -> None:
+    """Проба остановленного контейнера: порт закрыт."""
+    raise psycopg.OperationalError(
+        "connection to server at 127.0.0.1, port 5433 failed: Connection refused")
+
+
+def _preflight_gap(exc):
+    """Запись gaps секции preflight при заданном сбое источника."""
+    payload = task_context.build_task_context(
+        FakeDeps(preflight=exc), repo="o/n", key="PRI-277", branch="dev",
+        warm_board=False)
+    return next(g for g in payload["gaps"] if g["section"] == "preflight")
+
+
+def test_auth_failure_is_named_and_loses_remedy():
+    """Критерий 1 и 2: неверный пароль отличим и не получает совета."""
+    entry = _preflight_gap(psycopg.OperationalError(
+        'FATAL:  password authentication failed for user "reviewer"'))
+    assert entry["cause"] == "storage_unavailable"      # критерий 4: не переклассифицируем
+    assert entry["cause_detail"] == "auth_failed"
+    assert entry["remedy"] is None
+    assert "учётные данные" in entry["reason"]
+
+
+def test_missing_database_is_named_and_loses_remedy():
+    entry = _preflight_gap(psycopg.OperationalError(
+        'FATAL:  database "nosuchdb" does not exist'))
+    assert entry["cause"] == "storage_unavailable"
+    assert entry["cause_detail"] == "missing_database"
+    assert entry["remedy"] is None
+
+
+def test_stopped_containers_still_get_remedy_and_no_detail():
+    """Третий случай остаётся отличимым от первых двух с другой стороны."""
+    entry = _preflight_gap(psycopg.OperationalError("Connection refused"))
+    assert entry["cause_detail"] is None
+    assert entry["remedy"] == "reviewer start"
+
+
+def test_stopped_containers_keep_remedy_on_the_production_exception_type(monkeypatch):
+    """Тот же случай на ПРОДОВОМ типе: пул отдаёт PoolTimeout, а не отказ соединения.
+
+    Соседний тест выше моделирует остановленный контейнер голым
+    `OperationalError`, которого прод по этому пути не производит: в Postgres
+    он ходит только через пул. Именно этот зазор между фейком и продом пропустил
+    дефект C1 — деталь `pool_exhausted` приписывалась лежачему хранилищу, и
+    `reviewer start` исчезал.
+    """
+    monkeypatch.setattr(sh, "_probe_postgres", _refuse_connection)
+    entry = _preflight_gap(
+        psycopg_pool.PoolTimeout("couldn't get a connection after 30.00 sec"))
+    assert entry["cause"] == "storage_unavailable"
+    assert entry["cause_detail"] is None
+    assert entry["remedy"] == "reviewer start"
+
+
+def test_unrecognised_failure_carries_redacted_excerpt():
+    """Нераспознанный сбой перестаёт быть немым, но секретов не несёт."""
+    entry = _preflight_gap(psycopg.OperationalError(
+        "connection to server at 127.0.0.1, port 5433 failed: no space left on device"))
+    assert "no space left on device" in entry["reason"]
+    assert "127.0.0.1" not in entry["reason"]
+
+
+def test_skipped_sections_reuse_the_same_verdict():
+    """Все записи одного прогона согласованы: вердикт считается один раз."""
+    payload = task_context.build_task_context(
+        FakeDeps(preflight=psycopg.OperationalError(
+            'FATAL:  password authentication failed for user "reviewer"')),
+        repo="o/n", key="PRI-277", branch="dev", warm_board=False)
+    assert all(g["cause_detail"] == "auth_failed" for g in payload["gaps"])
+    skipped = next(g for g in payload["gaps"] if g["section"] == "code")
+    assert skipped["reason"].startswith("пропущено: ")
+    assert skipped["remedy"] is None
+
+
+def test_non_storage_gap_has_empty_detail():
+    """Аддитивность: запись не про хранилище получает пятый ключ пустым."""
+    payload = task_context.build_task_context(
+        FakeDeps(subsystems=RuntimeError("нет сводок")), repo="o/n",
+        key="PRI-277", branch="dev", warm_board=False)
+    entry = next(g for g in payload["gaps"] if g["section"] == "subsystems")
+    assert entry["cause"] == "unknown"
+    assert entry["cause_detail"] is None
+
+
+def test_reason_never_carries_password_without_storage_endpoints():
+    """Найдено финальным ревью: без `storage_endpoints` `reason` не должен нести пароль.
+
+    До фикса `classify_storage_failure` без эндпоинтов вымарывать было нечем, и
+    `_redact` возвращал текст исключения как есть — пароль из conninfo уходил в
+    `reason` записи `gaps` целиком (критерий 3 нарушался молча).
+    """
+    class OldDeps(FakeDeps):
+        storage_endpoints = None
+
+    exc = psycopg.OperationalError(
+        "connection to server at 127.0.0.1, port 5433 failed: Connection refused"
+        " (conninfo: postgresql://reviewer:s3cretpw@127.0.0.1:5433/reviewer)")
+    deps = OldDeps(preflight=exc)
+    payload = task_context.build_task_context(
+        deps, repo="o/n", key="PRI-277", branch="dev", warm_board=False)
+    entry = next(g for g in payload["gaps"] if g["section"] == "preflight")
+    assert "s3cretpw" not in entry["reason"]
+    assert entry["cause_detail"] is None
+    assert entry["remedy"] is None
+
+
+# ---------------------------------------------------------------------------
+# Тесты PRI-276: preflight взводит флаг графа, не платя второй таймаут
+# ---------------------------------------------------------------------------
+
+def test_graph_error_from_preflight_skips_linked_without_calling_graph():
+    """Критерий 3: второй заход в мёртвый граф не делается вовсе."""
+    deps = FakeDeps(graph_error=ServiceUnavailable("no routing servers"))
+    payload = task_context.build_task_context(
+        deps, repo="o/n", key="PRI-276", branch="dev", warm_board=False)
+    assert "linked" not in deps.calls
+    entry = next(g for g in payload["gaps"] if g["section"] == "related.linked")
+    assert entry["cause"] == "storage_unavailable"
+    assert payload["related"]["linked"] == ""
+    assert payload["code"] and payload["test_exemplars"]
+
+
+def test_graph_error_does_not_leak_into_payload():
+    """Объекту исключения в payload делать нечего: его читает LLM."""
+    deps = FakeDeps(graph_error=ServiceUnavailable("no routing servers"))
+    payload = task_context.build_task_context(
+        deps, repo="o/n", key="PRI-276", branch="dev", warm_board=False)
+    assert "graph_error" not in payload["preflight"]
+    assert payload["preflight"]["drift"] == 0
+
+
+def test_non_storage_graph_error_is_ignored():
+    """Не всякая ошибка графа — недоступность: замыкать нечего, секция вызывается."""
+    deps = FakeDeps(graph_error=RuntimeError("cypher blew up"))
+    payload = task_context.build_task_context(
+        deps, repo="o/n", key="PRI-276", branch="dev", warm_board=False)
+    assert "linked" in deps.calls
+    assert payload["related"]["linked"]
+
+
+# ---------------------------------------------------------------------------
+# Тесты PRI-275: preflight не платит второй таймаут пула за мёртвый Postgres
+# ---------------------------------------------------------------------------
+
+def test_storage_down_makes_single_store_call_and_keeps_classification(monkeypatch):
+    """build_task_context с НАСТОЯЩИМ _TaskContextDeps поверх фейкового components.store.
+
+    До PRI-275 проглоченный сбой clone_path заставлял preflight читать
+    get_index_meta_row/count_chunks ПОСЛЕ уже упавшего get_repo_clone — второй
+    таймаут пула. Теперь strict=True на _repo_clone_path пробрасывает сбой
+    до этих вызовов, и в стор делается ровно один заход.
+
+    Сервис — настоящий MCPReviewService (а не MagicMock целиком): иначе
+    _repo_clone_path был бы автосгенерированным моком без реальной strict-логики,
+    и тест проверял бы не тот код, ради которого написан.
+
+    Лежачее хранилище обязано получить `reviewer start`: сбой приходит продовым
+    типом `PoolTimeout` (в Postgres прод ходит только через пул), а проба сервера
+    показывает закрытый порт. Правка этого ожидания на `remedy is None` при
+    реализации PRI-274 и была тем, что скрыло дефект C1: тест выглядел как
+    согласование, а на деле снял единственную проверку лекарства на продовом типе.
+    """
+    calls: list[str] = []
+
+    class _CountingStore:
+        def get_repo_clone(self, repo: str) -> str | None:
+            calls.append("get_repo_clone")
+            raise psycopg_pool.PoolTimeout("couldn't get a connection after 30.00 sec")
+
+        def get_index_meta_row(self, repo: str, ref: str):
+            calls.append("get_index_meta_row")
+            return None
+
+        def count_chunks(self, repo: str, ref: str) -> int:
+            calls.append("count_chunks")
+            return 0
+
+        def list_refs(self, repo: str) -> list[str]:
+            calls.append("list_refs")
+            return []
+
+    monkeypatch.setattr(sh, "_probe_postgres", _refuse_connection)
+    settings = Settings()
+    # loopback-эндпоинты обязательны, иначе classify_storage_failure не назовёт
+    # remedy: storage_endpoints() читает их из settings.pg_dsn/neo4j_uri.
+    settings.pg_dsn = "postgresql://u:p@127.0.0.1:5433/reviewer"
+    settings.neo4j_uri = "bolt://localhost:7687"
+    components = MagicMock()
+    components.store = _CountingStore()
+    service = MCPReviewService(settings, components)
+    deps = _TaskContextDeps(service, None)
+
+    payload = task_context.build_task_context(
+        deps, repo="o/r", key="PRI-275", branch="dev", warm_board=False)
+
+    assert calls == ["get_repo_clone"]
+    for section in task_context.SECTIONS:
+        assert section in payload
+    entry = next(g for g in payload["gaps"] if g["section"] == "preflight")
+    assert entry["cause"] == "storage_unavailable"
+    assert entry["cause_detail"] is None
+    assert entry["remedy"] == "reviewer start"
+
+
+# ---------------------------------------------------------------------------
+# Тесты Task 2 (PRI-274/PRI-272): замыкание обобщается с хранилищ на источники
+# ---------------------------------------------------------------------------
+
+def _build(**overrides):
+    return task_context.build_task_context(
+        FakeDeps(**overrides), repo="o/n", key="PRI-274", branch="dev",
+        warm_board=True)
+
+
+def _gap(payload, section):
+    return next(g for g in payload["gaps"] if g["section"] == section)
+
+
+def test_embedder_failure_gets_own_cause():
+    """Сбой эмбеддера — свой класс, не storage_unavailable и не unknown."""
+    from voyageai.error import APIError
+
+    payload = _build(subsystems=APIError("HTTP code 403"))
+
+    entry = _gap(payload, "subsystems")
+    assert entry["cause"] == "embedder_unavailable"
+    assert entry["remedy"] is None
+    assert entry["cause_detail"] is None
+    assert "эмбеддер" in entry["reason"]
+
+
+def test_embedder_failure_does_not_close_storage_sections():
+    """Мёртвый эмбеддер не отменяет секции, которым нужен только Postgres."""
+    from voyageai.error import APIError
+
+    payload = _build(subsystems=APIError("HTTP code 403"))
+
+    assert payload["task_board"] is not None
+    assert payload["task"] is not None
+    assert "related.linked" not in _gap_sections(payload)
+
+
+def test_embedder_closure_skips_later_embedder_sections():
+    """Второй заход в мёртвый эмбеддер не делается: секция пропускается."""
+    from voyageai.error import APIError
+
+    deps = FakeDeps(similar=APIError("HTTP code 403"))
+    payload = task_context.build_task_context(
+        deps, repo="o/n", key="PRI-274", branch="dev", warm_board=True)
+
+    assert "code" not in deps.calls
+    assert "test_exemplars" not in deps.calls
+    entry = _gap(payload, "code")
+    assert entry["cause"] == "embedder_unavailable"
+    assert entry["reason"].startswith("пропущено")
+
+
+def test_embedder_closure_does_not_skip_postgres_sections():
+    """Замыкание адресное: секции, которым эмбеддер не нужен, всё равно идут."""
+    from voyageai.error import APIError
+
+    deps = FakeDeps(similar=APIError("HTTP code 403"))
+    task_context.build_task_context(
+        deps, repo="o/n", key="PRI-274", branch="dev", warm_board=True)
+
+    assert "task" in deps.calls
+    assert "linked" in deps.calls
+    assert deps.calls.count("similar") == 1
+
+
+def test_pool_exhaustion_reports_detail_and_no_remedy():
+    """Исчерпание пула: класс storage_unavailable, но лекарство не советуется.
+
+    Пул назван занятым только потому, что проба (фикстура `_live_server_probe`)
+    соединилась с сервером; на закрытом порту тот же тип исключения даёт другой
+    вердикт — см. `test_stopped_containers_keep_remedy_on_the_production_exception_type`.
+    """
+    entry = _preflight_gap(
+        psycopg_pool.PoolTimeout("couldn't get a connection after 30.00 sec"))
+
+    assert entry["cause"] == "storage_unavailable"
+    assert entry["cause_detail"] == "pool_exhausted"
+    assert entry["remedy"] is None
+    assert "пул" in entry["reason"]
+
+
+# ---------------------------------------------------------------------------
+# Тесты Task 5 (PRI-274/PRI-272): секция task берёт причину из синка
+# ---------------------------------------------------------------------------
+
+def test_task_gap_blames_embedder_not_the_board():
+    """Задачи нет в сторе, потому что её туда не пустил упавший синк.
+
+    Секция `task` не бросает вовсе, поэтому проброс её не лечит: причина
+    рождается этажом выше, в своде warm_board.
+    """
+    payload = _build(
+        warm_board={"enumerated": 126, "changed": 3, "failed": 3,
+                    "embedder_failed": True},
+        task=None)
+
+    entry = _gap(payload, "task")
+    assert entry["cause"] == "embedder_unavailable"
+    assert "эмбеддер" in entry["reason"]
+    assert "нет в сторе" not in entry["reason"]
+
+
+def test_task_gap_stays_board_shaped_without_embedder_failure():
+    """Без сбоя эмбеддера формулировка прежняя — задачи действительно нет."""
+    payload = _build(
+        warm_board={"enumerated": 126, "changed": 0, "failed": 0,
+                    "embedder_failed": False},
+        task=None)
+
+    entry = _gap(payload, "task")
+    assert entry["cause"] == "unknown"
+    assert entry["reason"] == "задачи нет в сторе"
+
+
+def test_legacy_warm_board_summary_without_the_flag_still_works():
+    """Свод без нового ключа (старый деплой) проходит без исключения."""
+    payload = _build(warm_board={"enumerated": 10, "changed": 0}, task=None)
+    assert _gap(payload, "task")["reason"] == "задачи нет в сторе"
+
+
+# ---------------------------------------------------------------------------
+# M5 (финальное ревью PRI-274/272): имена в _EMBEDDER_SECTIONS не выдуманы
+# ---------------------------------------------------------------------------
+
+def _sections_passed_to_safe(monkeypatch) -> set[str]:
+    """Имена секций, реально доехавшие до `_safe` за один сбор контекста."""
+    seen: set[str] = set()
+    original = task_context._safe
+
+    def spy(payload, section, produce, default, reason, state,
+            backend=sh.BACKEND_POSTGRES):
+        seen.add(section)
+        return original(payload, section, produce, default, reason, state, backend)
+
+    monkeypatch.setattr(task_context, "_safe", spy)
+    task_context.build_task_context(
+        FakeDeps(), repo="o/n", key="PRI-272", branch="dev", warm_board=True)
+    return seen
+
+
+def test_embedder_sections_are_real_section_names(monkeypatch):
+    """Опечатка в наборе тихо отключила бы замыкание для этой секции.
+
+    Регрессия была бы невидима: payload остался бы правильным, вернулся бы лишь
+    лишний таймаут Voyage — ни тест, ни глаз этого не поймали бы. Поэтому набор
+    сверяется не с копией литерала, а с фактическими именами, которые
+    `build_task_context` передаёт в `_safe`.
+    """
+    seen = _sections_passed_to_safe(monkeypatch)
+    unknown = task_context._EMBEDDER_SECTIONS - seen
+    assert not unknown, f"секций с такими именами не существует: {unknown}"
+
+
+def test_every_embedder_section_is_actually_skipped_when_voyage_is_down():
+    """Обратная сторона: каждое имя из набора действительно замыкается.
+
+    Первая проверка ловит опечатку, эта — молчаливую потерю разметки: имя может
+    существовать и всё равно не участвовать в замыкании, если ветка `_safe`
+    разъедется с набором.
+    """
+    from voyageai.error import APIError
+
+    payload = task_context.build_task_context(
+        FakeDeps(similar=APIError("HTTP code 403")), repo="o/n", key="PRI-272",
+        branch="dev", warm_board=True)
+    skipped = {g["section"] for g in payload["gaps"]
+               if g["cause"] == "embedder_unavailable"}
+    assert task_context._EMBEDDER_SECTIONS <= skipped
+
+
+def test_context_reports_criteria_that_cannot_fit_in_either_search():
+    criteria = [f"criterion_{i}" for i in range(21)]
+    seen = {}
+
+    class Deps(FakeDeps):
+        def code(self, repo, branch, queries):
+            seen["code"] = queries
+            return "code"
+
+        def test_exemplars(self, repo, branch, queries):
+            seen["tests"] = queries
+            return "tests"
+
+    payload = task_context.build_task_context(
+        Deps(task={"key": "ID-1", "title": "T", "criteria": criteria}),
+        repo="o/n", key="PRI-294", branch="dev", warm_board=False)
+
+    assert seen["code"] == ["T", *criteria[:19]]
+    assert seen["tests"] == [f"как тестируется: {query}" for query in seen["code"]]
+    assert payload["warnings"] == [
+        {"subqueries": {"excluded_criteria": criteria[19:], "reason": "subquery_budget"}},
+    ]
+    assert payload["gaps"] == []

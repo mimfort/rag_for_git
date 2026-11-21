@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import pytest
+import click
 from click.testing import CliRunner
 from reviewer import install as inst
 from reviewer.entrypoints.cli import cli
@@ -333,7 +334,7 @@ def test_init_interactive_configures_selected_registry_provider(tmp_path, monkey
     monkeypatch.setattr("click.confirm", lambda *_args, **_kwargs: next(answers))
     monkeypatch.setattr("reviewer.entrypoints.cli._shutil.which", lambda _name: None)
 
-    result = CliRunner().invoke(cli, ["init", "--scope", "global"])
+    result = CliRunner().invoke(cli, ["init", "--scope", "global", "--advanced"])
 
     assert result.exit_code == 0, result.output
     assert configured == ["jira"]
@@ -394,7 +395,7 @@ def test_init_prompts_only_selected_vcs_provider(
     )
     monkeypatch.setattr("reviewer.entrypoints.cli._shutil.which", lambda _name: None)
 
-    result = CliRunner().invoke(cli, ["init", "--scope", "global"])
+    result = CliRunner().invoke(cli, ["init", "--scope", "global", "--advanced"])
 
     assert result.exit_code == 0, result.output
     assert set(seen) == prompted
@@ -431,7 +432,7 @@ def test_unselected_existing_vcs_credentials_survive(tmp_path, monkeypatch):
     )
     monkeypatch.setattr("reviewer.entrypoints.cli._shutil.which", lambda _name: None)
 
-    result = CliRunner().invoke(cli, ["init", "--scope", "global"])
+    result = CliRunner().invoke(cli, ["init", "--scope", "global", "--advanced"])
 
     assert result.exit_code == 0, result.output
     content = dest.read_text(encoding="utf-8")
@@ -461,7 +462,7 @@ def test_init_interactive_common_board_fields_do_not_require_rest_provider(
     monkeypatch.setattr("click.confirm", lambda *_args, **_kwargs: next(answers))
     monkeypatch.setattr("reviewer.entrypoints.cli._shutil.which", lambda _name: None)
 
-    result = CliRunner().invoke(cli, ["init", "--scope", "global"])
+    result = CliRunner().invoke(cli, ["init", "--scope", "global", "--advanced"])
 
     assert result.exit_code == 0, result.output
     assert seen_board_group == [
@@ -616,6 +617,24 @@ PUBLISH_PORT_DEFAULTS = {
     "NEO4J_BOLT_PUBLISH_PORT": "7687",
     "NEO4J_HTTP_PUBLISH_PORT": "7474",
 }
+
+
+def test_storage_prompts_hide_dsn_and_keep_current_and_default_secrets():
+    group = next(g for g in inst.WIZARD_GROUPS if g.title == "Хранилища (Postgres / Neo4j)")
+    dsn = "postgresql://reviewer:private-example@localhost:5455/reviewer"
+    captured = {}
+
+    @click.command()
+    def configure():
+        captured.update(inst.prompt_groups([group], {"PG_DSN": dsn}, yes=False))
+
+    result = CliRunner().invoke(configure, input="y\n" + "\n" * len(group.fields))
+
+    assert result.exit_code == 0, result.output
+    assert "private-example" not in result.output
+    assert captured["PG_DSN"] == dsn
+    assert captured["NEO4J_PASSWORD"] == "reviewerpass"
+    assert captured["PARADEDB_PUBLISH_PORT"] == "5455"
 
 
 def test_storage_group_declares_publish_ports_with_compose_defaults():

@@ -1,4 +1,6 @@
 """RRF-слияние выдач подзапросов и обрезка блока рендера (PRI-255)."""
+import pytest
+
 from reviewer.index.store import Retrieved
 from reviewer.policy.context_limits import CodebaseLimits, CodeSectionLimits
 from reviewer.retrieval.augment import AugmentSource
@@ -65,18 +67,24 @@ def test_cap_block_does_not_mutate_source():
 
 
 class _FakeEmbedder:
-    def __init__(self, fail_batch: bool = False):
+    def __init__(self, fail_batch: bool = False, batch_exc=None, single_exc=None):
         self.batches: list = []
         self.singles: list = []
         self._fail_batch = fail_batch
+        self._batch_exc = batch_exc
+        self._single_exc = single_exc
 
     def embed_queries(self, texts):
+        if self._batch_exc is not None:
+            raise self._batch_exc
         if self._fail_batch:
             raise RuntimeError("нет квоты")
         self.batches.append(list(texts))
         return [[0.1] * 8 for _ in texts]
 
     def embed_query(self, text):
+        if self._single_exc is not None:
+            raise self._single_exc
         self.singles.append(text)
         return [0.1] * 8
 
@@ -130,6 +138,21 @@ def _bm25(node_id: str, text: str = "body"):
     return item
 
 
+def test_budget_counts_files_after_final_slice_with_multiple_chunks_per_file():
+    hits = [_bm25("a.py#f"), _bm25("a.py#g"), _bm25("b.py#h")]
+    store = _FakeStore({"query": hits})
+    pack = search_multi(
+        _Retriever(store, _FakeEmbedder()), "o/n", ["query"],
+        section_limits=CodeSectionLimits(max_files=2, max_chunks_per_file=2),
+        include_selection_stats=True,
+    )
+    assert {item.path for item in pack.items} == {"a.py"}
+    assert pack.selection_stats == {
+        "file_limit": 2, "candidate_files": 2, "omitted_by_file_limit": 1,
+        "displaced_by_augmentation": 0, "selected_files": 1,
+    }
+
+
 def test_one_batched_embedding_call_per_assembly():
     embedder = _FakeEmbedder()
     store = _FakeStore({"q0": [_bm25("a.py#f")], "q1": [_bm25("b.py#g")]})
@@ -162,6 +185,79 @@ def test_failed_batch_falls_back_to_single_query():
     assert pack.items
 
 
+def test_embedder_failure_reraises_when_strict():
+    """PRI-272: распознанный отказ эмбеддера (и в батче, и в одиночном откате)
+    пробрасывается наружу вызывающему при strict=True — иначе секции code/
+    test_exemplars никогда не увидят его причину, только пустую выдачу."""
+    from voyageai.error import APIError
+    embedder = _FakeEmbedder(batch_exc=APIError("HTTP code 403"),
+                             single_exc=APIError("HTTP code 403"))
+    store = _FakeStore({})
+    with pytest.raises(APIError):
+        search_multi(_Retriever(store, embedder), "o/n", ["q0"],
+                    limits=CodebaseLimits(), branch="dev", strict=True)
+
+
+def test_strict_batch_failure_does_not_pay_a_second_call():
+    """I2: батчевый проброс проверяется ОТДЕЛЬНО — одиночный откат его не заменяет.
+
+    Смысл именно этой половины — не платить второй сетевой таймаут мёртвому
+    Voyage. Одиночный вызов здесь исправен: если проброс в батчевом except снять,
+    откат отработает, исключение наружу не выйдет, и тест покраснеет — а раньше
+    его прикрывал проброс из второго except, потому что исключение подавалось в
+    оба уровня сразу.
+    """
+    from voyageai.error import APIError
+    embedder = _FakeEmbedder(batch_exc=APIError("HTTP code 403"))
+    store = _FakeStore({"q0": [_bm25("a.py#f")]})
+    with pytest.raises(APIError):
+        search_multi(_Retriever(store, embedder), "o/n", ["q0", "q1"],
+                     limits=CodebaseLimits(), branch="dev", strict=True)
+    assert embedder.singles == [], "второй заход в мёртвый эмбеддер не делается"
+
+
+def test_strict_single_fallback_failure_reraises():
+    """I2: одиночный проброс проверяется ОТДЕЛЬНО — батчевый до него не доходит.
+
+    Батч падает RateLimitError: предикат недоступностью его не считает, поэтому
+    батчевый проброс молчит и откат штатно срабатывает. Уже он бьёт напрямую в
+    эмбеддер, и без второго проброса `_embed_pairs` вернул бы [] — секция отдала
+    бы «(ничего не найдено)», а gap с `embedder_unavailable` не появился бы
+    вовсе, то есть дефект PRI-272 воспроизвёлся бы в исходной форме.
+    """
+    from voyageai.error import APIError, RateLimitError
+    embedder = _FakeEmbedder(batch_exc=RateLimitError("HTTP code 429"),
+                             single_exc=APIError("HTTP code 403"))
+    store = _FakeStore({"q0": [_bm25("a.py#f")]})
+    with pytest.raises(APIError):
+        search_multi(_Retriever(store, embedder), "o/n", ["q0", "q1"],
+                     limits=CodebaseLimits(), branch="dev", strict=True)
+
+
+def test_embedder_failure_stays_soft_by_default():
+    """Тот же отказ без strict — прежнее поведение: пустая (но не упавшая) выдача."""
+    from voyageai.error import APIError
+    embedder = _FakeEmbedder(batch_exc=APIError("HTTP code 403"),
+                             single_exc=APIError("HTTP code 403"))
+    store = _FakeStore({})
+    pack = search_multi(_Retriever(store, embedder), "o/n", ["q0"],
+                        limits=CodebaseLimits(), branch="dev")
+    assert pack.items == []
+
+
+def test_rate_limit_batch_failure_still_falls_back_when_strict():
+    """RateLimitError — штатный троттлинг, а не недоступность (предикат его не
+    признаёт): откат на одиночный запрос обязан сработать как обычно, даже
+    при strict=True — это и есть деградация, ради которой откат существует."""
+    from voyageai.error import RateLimitError
+    embedder = _FakeEmbedder(batch_exc=RateLimitError("HTTP code 429"))
+    store = _FakeStore({"q0": [_bm25("a.py#f")]})
+    pack = search_multi(_Retriever(store, embedder), "o/n", ["q0", "q1"],
+                        limits=CodebaseLimits(), branch="dev", strict=True)
+    assert embedder.singles == ["q0"], "откат идёт по первому подзапросу"
+    assert {it.path for it in pack.items} == {"a.py"}
+
+
 def test_failed_run_is_skipped_and_others_merge():
     store = _FakeStore({"q0": [_bm25("a.py#f")], "q1": [_bm25("b.py#g")]}, fail_for="q0")
     pack = search_multi(_Retriever(store, _FakeEmbedder()), "o/n", ["q0", "q1"],
@@ -176,7 +272,40 @@ def test_tests_are_filtered_unless_requested():
     assert {it.path for it in without.items} == {"a.py"}
     with_tests = search_multi(retriever, "o/n", ["q0"], limits=CodebaseLimits(),
                               branch="dev", include_tests=True)
-    assert "tests/test_a.py" in {it.path for it in with_tests.items}
+    assert {it.path for it in with_tests.items} == {"a.py", "tests/test_a.py"}
+
+
+def test_tests_only_reserves_file_budget_for_lower_ranked_test_path():
+    store = _FakeStore({"q0": [_bm25("a.py#f"), _bm25("tests/support.py#helper")]})
+    pack = search_multi(
+        _Retriever(store, _FakeEmbedder()), "o/n", ["q0"], branch="dev",
+        section_limits=CodeSectionLimits(max_files=1), tests_only=True)
+    assert [item.path for item in pack.items] == ["tests/support.py"]
+
+
+def test_tests_only_keeps_graph_neighbor_of_production_seed():
+    store = _FakeStore(
+        {"q0": [_bm25("a.py#f")]},
+        nodes_by_id={"tests/test_a.py#t": _hit("tests/test_a.py#t")},
+    )
+    graph = _FakeGraph(nodes=["tests/test_a.py#t"])
+    pack = search_multi(
+        _Retriever(store, _FakeEmbedder(), graph=graph), "o/n", ["q0"], branch="dev",
+        section_limits=CodeSectionLimits(max_files=1), tests_only=True)
+    assert [item.path for item in pack.items] == ["tests/test_a.py"]
+
+
+def test_tests_only_returns_empty_without_test_candidates_in_search_pool():
+    store = _FakeStore(
+        {"q0": [_bm25("a.py#f")]},
+        nodes_by_path={"b.py": _hit("b.py#f"), "tests/test_b.py": _hit("tests/test_b.py#t")},
+    )
+    pack = search_multi(
+        _Retriever(store, _FakeEmbedder()), "o/n", ["q0"], branch="dev",
+        include_tests=True, tests_only=True,
+        augment_sources=[AugmentSource(
+            name="similar-diffs", paths=["b.py", "tests/test_b.py"], quota=2)])
+    assert pack.as_context() == ""
 
 
 def test_ann_prefilter_drops_distant_non_lexical_hit():

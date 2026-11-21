@@ -8,15 +8,24 @@ import logging
 import sys
 
 from mcp.server.fastmcp import FastMCP
+from mcp.types import ToolAnnotations
 
-from reviewer.mcp.schemas import FindingIn, SubtasksIn, SummaryFragmentIn, VerdictIn
+from reviewer.bugreport.diagnostics import diagnose
+from reviewer.mcp.schemas import (
+    BriefCitationIn,
+    BriefReferenceIn,
+    FindingIn,
+    SubtasksIn,
+    SummaryFragmentIn,
+    VerdictIn,
+)
 from reviewer.mcp.service import MCPReviewService
 
 log = logging.getLogger(__name__)
 
 
 def create_server(service: MCPReviewService) -> FastMCP:
-    """Создать и вернуть сконфигурированный FastMCP-сервер с 42 тулами.
+    """Создать и вернуть сконфигурированный FastMCP-сервер.
 
     Все тулы — обычные def (sync), а не async: сервис не потокобезопасен
     и рассчитан на последовательное исполнение sync-тулов FastMCP в event loop.
@@ -350,7 +359,9 @@ def create_server(service: MCPReviewService) -> FastMCP:
     @mcp.tool()
     def prepare_task_context(repo: str, key: str, branch: str | None = None,
                              path: str | None = None,
-                             warm_board: bool = True) -> dict:
+                             warm_board: bool = True,
+                             include_brief_evidence: bool = False,
+                             include_code_budget: bool = False) -> dict:
         """Everything /solve-task needs to write a brief, in one call (no PR session).
         Returns {preflight, task_board, task, related{linked,similar}, subsystems,
         code, test_exemplars, gaps, warnings}. repo is "owner/name"; key is a board
@@ -358,8 +369,45 @@ def create_server(service: MCPReviewService) -> FastMCP:
         primary tracked branch. warm_board=True runs an incremental board sync first.
         Never raises on a missing source: an unreachable board, a down Neo4j or a
         missing index yield a partial payload with entries in `gaps`. Relevance
-        filtering and brief assembly stay with the caller."""
-        return service.prepare_task_context(repo, key, branch, path, warm_board)
+        filtering and brief assembly stay with the caller. include_brief_evidence
+        adds a short-lived brief_evidence_id when numbered excerpts are available.
+        include_code_budget adds file counts before selection and after rendering
+        when the code search ran.
+        """
+        return service.prepare_task_context(
+            repo, key, branch, path, warm_board, include_brief_evidence, include_code_budget)
+
+    @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False))
+    def diagnose_tool_result(tool: str, response: str) -> dict:
+        """Classify an unexpected reviewer MCP result without publishing a report.
+
+        Use the logical reviewer tool name and its error/status result (JSON or text).
+        Returns clear or suspected_defect with a class and deduplication signature.
+        External services and client configuration errors are excluded.
+        """
+        return diagnose(tool, response)
+
+    @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False))
+    def verify_task_brief(
+        evidence_id: str,
+        citations: list[BriefCitationIn] | None = None,
+        references: list[BriefReferenceIn] | None = None,
+    ) -> dict:
+        """Check brief path:line citations against code or test_exemplars from one payload.
+
+        Pass brief_evidence_id from prepare_task_context(include_brief_evidence=True)
+        on the same server connection and supply exactly one of citations or references.
+        Each citation gets verified, path_unseen,
+        outside_excerpt, or section_unavailable. An expired or absent ID gives
+        evidence_unavailable. The tool checks only numbered lines visible in the
+        selected section and does not search again.
+
+        References have a non-empty single-line reason and an optional edit/read role.
+        This mode returns the verdicts in citations, plus render_status and markdown.
+        Copy markdown verbatim for ok or empty. For invalid_format, correct the inputs
+        and retry.
+        """
+        return service.verify_task_brief(evidence_id, citations, references)
 
     @mcp.tool()
     def related_symbols(repo: str, node_id: str, branch: str | None = None) -> str:
@@ -506,13 +554,14 @@ def create_server(service: MCPReviewService) -> FastMCP:
         """Cheap high-level prior for ask / PR-walkthrough: precomputed subsystem
         summaries. cluster_key → one full summary (or null). Otherwise: with `query`
         AND when the summary count exceeds the scale threshold (SUMMARY_TOPK_THRESHOLD,
-        per-repo .review.yml), returns the top-k summaries nearest the query by
-        embedding; without `query` or at/below the threshold, returns all (back-compat).
-        top_k defaults to 8. Empty when none built (consumer is fail-open).
-        No PR session; branch defaults to primary. Every returned summary has source_hash
-        and stale: true when its stored hash differs from the current cluster, false when
-        it matches, null when freshness is not computed (including the scaled ANN path)
-        or unavailable."""
+        per-repo .review.yml), selects the top-k summaries nearest the query by
+        embedding and puts fresh candidates first, preserving embedding rank within
+        each group. Without `query` or at/below the threshold, returns all in storage
+        order. top_k defaults to 8. No PR session; branch defaults to primary.
+        Every returned summary includes source_hash and stale: true when the current
+        cluster is absent or its hash differs, false when the hash matches, and null
+        when freshness is unavailable. A list response may include a note describing
+        stale candidates, missing stored summaries, empty results or unavailable sources."""
         return service.get_subsystem_summaries(repo, branch, cluster_key, query, top_k)
 
     @mcp.tool()
