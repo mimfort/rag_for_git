@@ -1890,6 +1890,7 @@ class MCPReviewService:
                                include_tests: bool = False,
                                augment_sources: list | None = None,
                                *, strict: bool = False,
+                               tests_only: bool = False,
                                code_budget: dict[str, int] | None = None) -> str:
         """Мультизапросный ретрив секций контекста задачи (PRI-255).
 
@@ -1898,6 +1899,8 @@ class MCPReviewService:
 
         augment_sources (PRI-257/258) — именованные источники кандидатов со
         своими квотами; см. search_multi.
+
+        `tests_only` включает отбор тестовых путей для секции `test_exemplars`.
 
         `strict` (PRI-272) — keyword-only, как у `_repo_clone_path` (PRI-275)
         и `TaskService.search_hits`: при нём распознанный отказ эмбеддера
@@ -1915,7 +1918,7 @@ class MCPReviewService:
                 self.components.retriever, repo, queries,
                 limits=cl.search_codebase, section_limits=cl.code_section,
                 hops=cl.graph.hops, branch=resolved, include_tests=include_tests,
-                augment_sources=augment_sources, strict=strict,
+                augment_sources=augment_sources, strict=strict, tests_only=tests_only,
                 include_selection_stats=code_budget is not None)
         except Exception as exc:
             if strict and is_embedder_unavailable(exc):
@@ -3832,4 +3835,5 @@ class _TaskContextDeps:
             repo, queries, branch, False, augment_sources=sources, strict=True, **kwargs)
 
     def test_exemplars(self, repo: str, branch: str, queries: list) -> str:
-        return self._service._search_codebase_multi(repo, queries, branch, True, strict=True)
+        return self._service._search_codebase_multi(
+            repo, queries, branch, tests_only=True, strict=True)
