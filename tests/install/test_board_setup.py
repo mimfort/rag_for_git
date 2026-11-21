@@ -4,17 +4,36 @@ import json
 import logging
 from dataclasses import replace
 
+import click
+from click.testing import CliRunner
 import httpx
 import pytest
 
 from reviewer.tasks.boards.errors import BoardProviderError
 from reviewer.tasks.boards.jira import provider_spec as jira_provider_spec
 from reviewer.tasks.boards.setup import (
+    ClickSetupIO,
     SetupChoice,
     acquire_yougile_key,
     configure_board_provider,
 )
 from reviewer.tasks.boards.youtrack import provider_spec as youtrack_provider_spec
+
+
+def test_numbered_choice_retries_invalid_input_and_returns_provider_id():
+    @click.command()
+    def choose():
+        click.echo(ClickSetupIO().choose("Номер провайдера", [
+            SetupChoice("jira", "Jira Cloud"),
+            SetupChoice("yougile", "YouGile"),
+        ]))
+
+    result = CliRunner().invoke(choose, input="oops\n9\n2\n")
+
+    assert result.exit_code == 0, result.output
+    assert "1. Jira Cloud" in result.output
+    assert "2. YouGile" in result.output
+    assert result.output.rstrip().endswith("yougile")
 
 
 class FakeIO:

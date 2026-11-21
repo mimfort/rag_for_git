@@ -180,13 +180,24 @@ class LauncherController:
             *command.keywords,
             command.details,
             *command.scenarios,
+            *(flag for parameter in command.params
+              for flag in (*parameter.option_strings, *parameter.secondary_strings)),
+            *(parameter.description for parameter in command.params if parameter.description),
         )
+        normalized = tuple(field.casefold() for field in fields)
         matches = [
             (*score, position)
-            for position, text in enumerate(fields)
-            if (score := _fuzzy_score(text.casefold(), query)) is not None
+            for position, text in enumerate(normalized)
+            if (score := _fuzzy_score(text, query)) is not None
         ]
-        return min(matches) if matches else None
+        best = min(matches, default=None)
+        if best is not None and best[0] < 3:
+            return best
+        terms = query.split()
+        if len(terms) > 1 and all(any(term in text for text in normalized) for term in terms):
+            path_words = normalized[0].split()
+            return (3, -sum(term in path_words for term in terms))
+        return (4, *best[1:]) if best is not None else None
 
     def _validate(self) -> dict[str, str]:
         errors: dict[str, str] = {}
