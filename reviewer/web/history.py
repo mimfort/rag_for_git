@@ -525,7 +525,7 @@ class ReviewHistory:
 
     def record_brief_quality(
         self,
-        run_id: int,
+        run_id: int | None,
         repo: str,
         pr_number: int,
         head_sha: str | None,
@@ -536,6 +536,12 @@ class ReviewHistory:
         Строки со status != 'measured' пишутся намеренно: «точки измерения не
         было и вот почему» — диагностический сигнал, а молчание неотличимо от
         сломанной метрики.
+
+        Идемпотентна по `(repo, pr_number, COALESCE(task_key, ''))` (PRI-270):
+        `finish_task` и CLI снимают метрику без прогона ревью и пишут
+        `run_id=NULL`, не затирая уже проставленный `run_id` строки, которую
+        ранее создал `publish_review` — а `publish_review`, наоборот, дописывает
+        `run_id` в строку, созданную более ранним съёмом без ревью.
         """
         sql = """
         INSERT INTO brief_quality (
@@ -549,7 +555,24 @@ class ReviewHistory:
             %(expected)s, %(expected_core)s, %(predicted)s, %(hit_core)s,
             %(core_recall)s, %(raw_recall)s, %(precision)s,
             %(misses)s, %(predicted_paths)s, %(expected_core_paths)s, %(hit_core_paths)s
-        ) RETURNING id
+        ) ON CONFLICT (repo, pr_number, (COALESCE(task_key, ''))) DO UPDATE SET
+            created_at          = now(),
+            head_sha            = EXCLUDED.head_sha,
+            status              = EXCLUDED.status,
+            brief_path          = EXCLUDED.brief_path,
+            expected            = EXCLUDED.expected,
+            expected_core       = EXCLUDED.expected_core,
+            predicted           = EXCLUDED.predicted,
+            hit_core            = EXCLUDED.hit_core,
+            core_recall         = EXCLUDED.core_recall,
+            raw_recall          = EXCLUDED.raw_recall,
+            precision           = EXCLUDED.precision,
+            misses              = EXCLUDED.misses,
+            predicted_paths     = EXCLUDED.predicted_paths,
+            expected_core_paths = EXCLUDED.expected_core_paths,
+            hit_core_paths      = EXCLUDED.hit_core_paths,
+            run_id              = COALESCE(EXCLUDED.run_id, brief_quality.run_id)
+        RETURNING id
         """
         try:
             params = {

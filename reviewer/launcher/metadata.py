@@ -53,12 +53,12 @@ COMMAND_PRESENTATION = {
         keywords=("rag", "graph", "branch"),
     ),
     ("init",): CommandPresentation(
-        summary="Настроить reviewer",
+        summary="Начать настройку",
         details=(
-            "Планирует и настраивает global .env и per-repo branch config "
-            "с preview до записи."
+            "Настраивает global .env и per-repo branch config с preview до записи. "
+            "Для хранилищ и досок задач включите --advanced."
         ),
-        effects=(Effect.WRITE,),
+        effects=(Effect.WRITE, Effect.NETWORK),
         scenarios=("Первичная настройка", "Добавление репозитория", "Смена credentials"),
         keywords=("config", "env", "repository", "wizard"),
     ),
@@ -75,6 +75,16 @@ COMMAND_PRESENTATION = {
         effects=(Effect.WRITE, Effect.NETWORK),
         scenarios=("Обновление workflow skills",),
         keywords=("skills", "plugin", "codex"),
+    ),
+    ("measure-briefs",): CommandPresentation(
+        summary="Пересчитать качество брифов",
+        details=(
+            "Считает core-recall/precision брифов по PR-мержам git-истории клона "
+            "и пишет строки brief_quality; Voyage не тратит."
+        ),
+        effects=(Effect.READ, Effect.WRITE),
+        scenarios=("Бэкофилл корпуса брифов", "Пересчёт после смены core_paths"),
+        keywords=("brief", "recall", "backfill", "metrics"),
     ),
     ("measure-client-usage",): CommandPresentation(
         summary="Посчитать токены клиента",
@@ -147,6 +157,13 @@ COMMAND_PRESENTATION = {
 
 PARAMETER_PRESENTATION = {
     ("check", "board_project_values"): ParameterPresentation(ParamSection.ADVANCED),
+    ("check", "env_file"): ParameterPresentation(ParamSection.ADVANCED),
+    ("init", "path_opt"): ParameterPresentation(ParamSection.ADVANCED),
+    ("init", "repo_opt"): ParameterPresentation(ParamSection.ADVANCED),
+    ("init", "yes"): ParameterPresentation(ParamSection.ADVANCED),
+    ("init", "scope"): ParameterPresentation(
+        description="all — общий .env и репозиторий · global — только .env · repo — только ветки",
+    ),
     ("index", "ref"): ParameterPresentation(ParamSection.ADVANCED),
     ("index", "branch_opt"): ParameterPresentation(ParamSection.ADVANCED),
     ("search", "branch_opt"): ParameterPresentation(ParamSection.ADVANCED),
