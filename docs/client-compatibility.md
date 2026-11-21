@@ -38,4 +38,4 @@ The command reports totals, model breakdown, and the number of records. It reads
 
 ## Diagnose reviewer results
 
-When a reviewer result looks inconsistent, call `diagnose_tool_result` with its logical tool name and the error/status envelope or traceback as a JSON string. If the result matches a reviewer-specific traceback or a known status contract violation, the tool returns `suspected_defect`, a kind, and a signature. Examples of ordinary infrastructure failures return `clear`. This operation is read-only. A distinct, explicitly approved report-bug action can publish a report.
+When a reviewer result looks inconsistent, call `diagnose_tool_result` with its logical tool name and the result or traceback as a JSON string. Complete reviewer MCP tool events from `codex exec --json` and App Server are accepted directly. If the result matches a reviewer-specific traceback or a known status contract violation, the tool returns `suspected_defect`, a kind, and a signature. Ordinary external failures such as authentication errors return `clear`. This operation is read-only. A distinct, explicitly approved report-bug action can publish a report.

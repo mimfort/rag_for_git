@@ -1,4 +1,4 @@
-"""Pure reviewer diagnostics shared by MCP tools and the Claude Code wrapper."""
+"""Pure reviewer diagnostics shared by MCP tools and native hook wrappers."""
 
 from __future__ import annotations
 
@@ -123,6 +123,26 @@ def _response_dict(response: object) -> dict | None:
     return None
 
 
+def _codex_tool_response(payload: dict, tool: str) -> object:
+    """Extract the result from a Codex JSONL or App Server tool event."""
+    if payload.get("type") == "item.completed":
+        item = payload.get("item")
+    elif payload.get("method") == "item/completed":
+        params = payload.get("params")
+        item = params.get("item") if isinstance(params, dict) else None
+    elif payload.get("type") in ("mcp_tool_call", "mcpToolCall"):
+        item = payload
+    else:
+        return payload
+    if not isinstance(item, dict) or item.get("type") not in ("mcp_tool_call", "mcpToolCall"):
+        return None
+    server = item.get("server")
+    if item.get("tool") != tool or f"mcp__{server}__" not in MCP_TOOL_PREFIXES:
+        return None
+    result = item.get("result")
+    return result if result is not None else item.get("error")
+
+
 def _unwrap(payload: dict | None) -> dict | None:
     """Read the structured status in standard MCP and exported Codex results."""
     if payload is None or "status" in payload:
@@ -163,8 +183,9 @@ def detect(tool_name: str, response: object) -> tuple[str, str] | None:
     tool = logical_tool(tool_name)
     if not tool:
         return None
-    decoded = _response_dict(response)
-    rendered = decoded if decoded is not None else response
+    event = _response_dict(response)
+    rendered = _codex_tool_response(event, tool) if event is not None else response
+    decoded = _response_dict(rendered)
     payload = _unwrap(decoded)
     if is_foreign(rendered) or (payload is not decoded and is_foreign(payload)):
         return None
