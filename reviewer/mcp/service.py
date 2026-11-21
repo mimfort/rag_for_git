@@ -4,10 +4,12 @@
 между вызовами prepare_review и publish_review одного PR.
 """
 import logging
+from collections import OrderedDict
 from collections.abc import Callable, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
+from time import monotonic
 from typing import TYPE_CHECKING
 
 from reviewer.agent.assemble import (
@@ -83,6 +85,8 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
+_ResolvedPolicy = tuple["ReviewPolicy", "ResolutionMeta"]
+
 WALKTHROUGH_MARKER = "<!-- ai-walkthrough -->"
 
 # PRI-209: ограничиваем размер трейса сессии в памяти, чтобы избежать
@@ -149,6 +153,10 @@ def normalize_client_step(step: dict) -> dict:
 # _TOUCH_INTERVAL_S. Тулы зовутся LLM-темпом; при TTL в часах минутная
 # гранулярность ничего не теряет и убирает бессмысленно частые UPDATE.
 _TOUCH_INTERVAL_S = 60
+# При переиндексации чанки могут меняться до записи новых метаданных.
+_SUMMARY_HASH_CACHE_TTL_S = 30
+_SUMMARY_HASH_CACHE_SIZE = 32
+_MISSING_SUMMARY_EXAMPLES_LIMIT = 8
 _SUBTASK_RECOVERY_WARNING = (
     "subtask operation failed; durable recovery used a safe fallback"
 )
@@ -265,6 +273,9 @@ class MCPReviewService:
         self._sessions: dict[tuple[str, int], _Session] = {}
         self._brief_evidence = BriefEvidence()
         self._session_store: SessionStore | None = None
+        self._summary_hash_cache: OrderedDict[
+            tuple[str, str, tuple[str, datetime], str], tuple[float, dict[str, str]]
+        ] = OrderedDict()
         # PRI-239: порог шума канала репорта багов. Не более одного предложения на
         # симптом за жизнь процесса, отказ пользователя запоминается. In-memory —
         # ровно как сессии ревью: «сессия» здесь и есть процесс reviewer-mcp.
@@ -1745,7 +1756,7 @@ class MCPReviewService:
     def _resolve_policy(
         self, repo: str, branch: str, *,
         fetch_committed: Callable[[str], str | None] | None = None,
-    ) -> tuple["ReviewPolicy", "ResolutionMeta"]:
+    ) -> _ResolvedPolicy:
         """Резолвит effective policy из env, home-слоёв и committed `.review.yml`.
 
         Git-источник передаёт loader закреплённого снимка и требует успешного
@@ -1796,63 +1807,52 @@ class MCPReviewService:
                 except Exception:
                     log.warning("_resolve_policy: не удалось закрыть VCS", exc_info=True)
 
+    def _resolve_summary_policy(self, repo: str, branch: str) -> _ResolvedPolicy:
+        """Получить общий policy для порога ANN и layout с откатом на env."""
+        from reviewer.config.layers import ResolutionMeta
+        from reviewer.policy.policy import ReviewPolicy
+
+        try:
+            return self._resolve_policy(repo, branch)
+        except Exception:
+            log.warning("_resolve_summary_policy: fail-soft → env-дефолт")
+            return (
+                ReviewPolicy(
+                    summary_cluster_depth=self.settings.summary_cluster_depth,
+                    summary_topk_threshold=self.settings.summary_topk_threshold,
+                ),
+                ResolutionMeta(sources={}, shadowed={}, warnings=()),
+            )
+
     def _resolve_summary_layout(
-        self, repo: str, branch: str
+        self, repo: str, branch: str, *, resolution: _ResolvedPolicy | None = None,
     ) -> tuple[int, dict[str, int], list[str], str]:
-        """Резолв layout-политики сводок: глубина, overrides, ignore-фильтр, источник.
-
-        ``ignore`` возвращается уже нормализованным ``normalize_summary_paths_ignore``
-        (страп пробелов/'/', дедуп, сортировка) — так обе точки применения
-        фильтра (``_summary_state`` через ``canonicalize_layout`` и
-        ``_current_subsystem_hashes`` напрямую) видят одно и то же значение;
-        двойная нормализация идемпотентна.
-
-        Fail-soft: при сбое резолва политики — env-глубина и ДЕФОЛТНЫЙ фильтр,
-        а не пустой. Пустой фильтр при сбое молча вернул бы тестовые кластеры
-        и сделал бы стоимость прохода недетерминированной.
-        """
+        """Резолв layout-политики сводок: глубина, overrides, ignore-фильтр, источник."""
         from reviewer.config.layers import source_of
         from reviewer.graph.summaries import normalize_summary_paths_ignore
-        from reviewer.policy.policy import DEFAULT_SUMMARY_PATHS_IGNORE
 
-        default = self.settings.summary_cluster_depth
-        try:
-            policy, meta = self._resolve_policy(repo, branch)
-            # source_of — общий хелпер (reviewer/config/layers.py): meta.sources
-            # листовой гранулярности (PRI-260), "summary_cluster_depth_overrides"
-            # — mapping, и голый .get() по верхнему ключу после PRI-260 всегда
-            # возвращал бы "env", даже когда overrides заданы слоем.
-            depth_source = meta.sources.get("summary_cluster_depth", "env")
-            source = (
-                depth_source
-                if depth_source != "env"
-                else source_of(meta.sources, "summary_cluster_depth_overrides")
-            )
-            return (
-                policy.summary_cluster_depth,
-                policy.summary_cluster_depth_overrides,
-                normalize_summary_paths_ignore(policy.summary_paths_ignore),
-                source,
-            )
-        except Exception:
-            log.warning("_resolve_summary_layout: fail-soft → env-дефолт")
-            return (
-                default,
-                {},
-                normalize_summary_paths_ignore(DEFAULT_SUMMARY_PATHS_IGNORE),
-                "env",
-            )
+        policy, meta = resolution or self._resolve_summary_policy(repo, branch)
+        # Overrides задаются отображением, поэтому источник — по листовому пути.
+        depth_source = meta.sources.get("summary_cluster_depth", "env")
+        source = (
+            depth_source
+            if depth_source != "env"
+            else source_of(meta.sources, "summary_cluster_depth_overrides")
+        )
+        return (
+            policy.summary_cluster_depth,
+            policy.summary_cluster_depth_overrides,
+            normalize_summary_paths_ignore(policy.summary_paths_ignore),
+            source,
+        )
 
-    def _resolve_summary_topk_threshold(self, repo: str, branch: str) -> tuple[int, str]:
+    def _resolve_summary_topk_threshold(
+        self, repo: str, branch: str, *, resolution: _ResolvedPolicy | None = None,
+    ) -> tuple[int, str]:
         """Резолв порога масштаба приора сводок с сохранением env-дефолта."""
-        default = self.settings.summary_topk_threshold
-        try:
-            policy, meta = self._resolve_policy(repo, branch)
-            source = meta.sources.get("summary_topk_threshold", "env")
-            return policy.summary_topk_threshold, source
-        except Exception:
-            log.warning("_resolve_summary_topk_threshold: fail-soft → env-дефолт")
-            return default, "env"
+        policy, meta = resolution or self._resolve_summary_policy(repo, branch)
+        source = meta.sources.get("summary_topk_threshold", "env")
+        return policy.summary_topk_threshold, source
 
     def _resolve_context_limits(self, repo: str, branch: str) -> "ContextLimits":
         """Лимиты контекста из всех policy-слоёв. Fail-soft → дефолт-константы."""
@@ -1897,6 +1897,7 @@ class MCPReviewService:
                                include_tests: bool = False,
                                augment_sources: list | None = None,
                                *, strict: bool = False,
+                               tests_only: bool = False,
                                code_budget: dict[str, int] | None = None,
                                context_limits: "ContextLimits | None" = None,
                                git_excerpts: "list[Retrieved] | None" = None) -> str:
@@ -1907,6 +1908,8 @@ class MCPReviewService:
 
         augment_sources (PRI-257/258) — именованные источники кандидатов со
         своими квотами; см. search_multi.
+
+        `tests_only` включает отбор тестовых путей для секции `test_exemplars`.
 
         `strict` (PRI-272) — keyword-only, как у `_repo_clone_path` (PRI-275)
         и `TaskService.search_hits`: при нём распознанный отказ эмбеддера
@@ -1924,7 +1927,7 @@ class MCPReviewService:
                 self.components.retriever, repo, queries,
                 limits=cl.search_codebase, section_limits=cl.code_section,
                 hops=cl.graph.hops, branch=resolved, include_tests=include_tests,
-                augment_sources=augment_sources, strict=strict,
+                augment_sources=augment_sources, strict=strict, tests_only=tests_only,
                 include_selection_stats=code_budget is not None, git_excerpts=git_excerpts)
         except Exception as exc:
             if strict and is_embedder_unavailable(exc):
@@ -2852,16 +2855,31 @@ class MCPReviewService:
         return out
 
     def _current_subsystem_hashes(
-        self, repo: str, branch: str
+        self, repo: str, branch: str, *, resolution: _ResolvedPolicy | None = None,
     ) -> dict[str, str] | None:
-        from reviewer.graph.summaries import Member, build_clusters
+        from reviewer.graph.summaries import Member, build_clusters, canonicalize_layout
         from reviewer.index.pathfilter import is_ignored
 
+        store = self.components.store
+        cache = self._summary_hash_cache
+        ref = base_ref(branch)
         try:
-            raw = self.components.store.list_base_members(repo, branch)
+            depth, overrides, ignore, _ = self._resolve_summary_layout(
+                repo, branch, resolution=resolution,
+            )
+            overrides, ignore, layout_token = canonicalize_layout(depth, overrides, ignore)
+            generation = store.get_index_meta_row(repo, ref)
+            now = monotonic()
+            cache_key = (repo, branch, generation, layout_token) if generation is not None else None
+            if cache_key is not None:
+                cached = cache.get(cache_key)
+                if cached is not None and now < cached[0]:
+                    cache.move_to_end(cache_key)
+                    return cached[1]
+
+            raw = store.list_base_members(repo, branch)
             if not raw:
                 return None
-            depth, overrides, ignore, _ = self._resolve_summary_layout(repo, branch)
             members = [
                 Member(
                     node_id=f"{path}#{symbol}",
@@ -2880,7 +2898,15 @@ class MCPReviewService:
                 min_size=1,
                 depth_overrides=overrides,
             )
-            return {cluster.key: cluster.source_hash for cluster in clusters}
+            hashes = {cluster.key: cluster.source_hash for cluster in clusters}
+            if store.get_index_meta_row(repo, ref) != generation:
+                return None
+            if cache_key is not None:
+                cache[cache_key] = (now + _SUMMARY_HASH_CACHE_TTL_S, hashes)
+                cache.move_to_end(cache_key)
+                if len(cache) > _SUMMARY_HASH_CACHE_SIZE:
+                    cache.popitem(last=False)
+            return hashes
         except Exception:
             log.warning(
                 "get_subsystem_summaries: не удалось вычислить свежесть",
@@ -2888,32 +2914,66 @@ class MCPReviewService:
             )
             return None
 
+    @staticmethod
     def _annotate_summary_staleness(
-        self, repo: str, branch: str, summaries: list[dict]
+        summaries: list[dict], current: dict[str, str] | None
     ) -> list[dict]:
-        if not summaries:
-            return []
-        current = self._current_subsystem_hashes(repo, branch)
         return [
             {
                 **summary,
                 "stale": (
                     None
                     if current is None
-                    else summary.get("source_hash") != current.get(summary["cluster_key"])
+                    else (
+                        summary["cluster_key"] not in current
+                        or summary.get("source_hash") != current[summary["cluster_key"]]
+                    )
                 ),
             }
             for summary in summaries
         ]
 
+    def _summary_list_note(
+        self, repo: str, branch: str, summaries: list[dict], current: dict[str, str] | None,
+        *, use_ann: bool,
+    ) -> str:
+        notes = []
+        if not summaries:
+            notes.append("ANN не вернул сводок." if use_ann else "Сводок нет.")
+        if current is None:
+            notes.append("Свежесть сводок недоступна без снимка хешей base-индекса.")
+            return " ".join(notes)
+
+        stale_count = sum(summary["stale"] is True for summary in summaries)
+        if stale_count:
+            notes.append(f"Устаревших сводок в выдаче: {stale_count}.")
+        if use_ann:
+            try:
+                stored = self.components.summary_store.get_source_hashes(repo, branch).keys()
+            except Exception:
+                log.warning("get_subsystem_summaries: каталог сводок недоступен", exc_info=True)
+                notes.append("Каталог сводок недоступен.")
+                return " ".join(notes)
+        else:
+            stored = {summary["cluster_key"] for summary in summaries}
+
+        missing = sorted(current.keys() - stored)
+        if missing:
+            examples = ", ".join(missing[:_MISSING_SUMMARY_EXAMPLES_LIMIT])
+            notes.append(
+                f"Текущих кластеров без сохранённой сводки: {len(missing)} (примеры: {examples})."
+            )
+        return " ".join(notes)
+
     def get_subsystem_summaries(self, repo: str, branch: str | None = None,
                                 cluster_key: str | None = None, query: str | None = None,
                                 top_k: int | None = None) -> dict:
-        """Дешёвый приор: предрасчитанные summary подсистем (fail-open у потребителя).
+        """Вернуть предрасчитанные сводки с отметками свежести.
 
-        cluster_key → одна сводка. Иначе: при query И числе сводок > порога масштаба
-        (effective `summary_topk_threshold` layered policy) — ANN top-k по близости
-        (PRI-167); иначе (без query или ≤ порога) — все (бэк-компат)."""
+        cluster_key → одна сводка. Иначе при query и числе сводок выше порога
+        возвращается ANN top-k со свежими кандидатами первыми. В остальных
+        случаях возвращаются все сводки в порядке хранилища.
+        """
         rb = self._resolve_repo_branch(repo, branch)
         if isinstance(rb, str):
             return {"summaries": [], "note": rb}
@@ -2921,22 +2981,36 @@ class MCPReviewService:
         store = self.components.summary_store
         if cluster_key:
             summary = store.get_summary(repo, resolved, cluster_key)
-            annotated = self._annotate_summary_staleness(
-                repo, resolved, [summary] if summary is not None else []
-            )
-            return {"summary": annotated[0] if annotated else None}
+            if summary is None:
+                return {"summary": None}
+            current = self._current_subsystem_hashes(repo, resolved)
+            return {"summary": self._annotate_summary_staleness([summary], current)[0]}
+
+        use_ann = False
+        resolution = None
         if query:
-            threshold, _ = self._resolve_summary_topk_threshold(repo, resolved)
-            if store.count_summaries(repo, resolved) > threshold:
-                qvec = self.components.embedder.embed_query(query)
-                summaries = store.search_summaries(repo, resolved, qvec, top_k or 8)
-                return {
-                    "summaries": [{**summary, "stale": None} for summary in summaries]
-                }
-        summaries = store.get_summaries(repo, resolved)
-        return {
-            "summaries": self._annotate_summary_staleness(repo, resolved, summaries)
-        }
+            resolution = self._resolve_summary_policy(repo, resolved)
+            threshold, _ = self._resolve_summary_topk_threshold(
+                repo, resolved, resolution=resolution,
+            )
+            use_ann = store.count_summaries(repo, resolved) > threshold
+        if use_ann:
+            qvec = self.components.embedder.embed_query(query)
+            summaries = store.search_summaries(repo, resolved, qvec, top_k or 8)
+        else:
+            summaries = store.get_summaries(repo, resolved)
+        if not summaries and not query:
+            return {"summaries": []}
+
+        current = self._current_subsystem_hashes(repo, resolved, resolution=resolution)
+        annotated = self._annotate_summary_staleness(summaries, current)
+        if use_ann:
+            annotated.sort(key=lambda summary: summary["stale"] is not False)
+        result = {"summaries": annotated}
+        note = self._summary_list_note(repo, resolved, annotated, current, use_ann=use_ann)
+        if note:
+            result["note"] = note
+        return result
 
     def prune_subsystem_summaries(
         self,
@@ -3756,7 +3830,13 @@ class _TaskContextDeps:
             return []
 
     def subsystems(self, repo: str, branch: str, query: str) -> dict:
-        return self._service.get_subsystem_summaries(repo, branch, None, query, None)
+        result = self._service.get_subsystem_summaries(repo, branch, query=query)
+        return {
+            **result,
+            "summaries": [
+                summary for summary in result["summaries"] if summary.get("stale") is not True
+            ],
+        }
 
     def _git_excerpts(
         self, repo: str, branch: str, queries: list[str], limits: "CodeSectionLimits",
@@ -3813,4 +3893,5 @@ class _TaskContextDeps:
         )
 
     def test_exemplars(self, repo: str, branch: str, queries: list) -> str:
-        return self._service._search_codebase_multi(repo, queries, branch, True, strict=True)
+        return self._service._search_codebase_multi(
+            repo, queries, branch, tests_only=True, strict=True)
