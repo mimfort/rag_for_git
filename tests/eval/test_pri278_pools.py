@@ -116,7 +116,13 @@ def test_frozen_corpus_reproduces_pool_comparison():
     result, files = pool_report.score(cases, runs, saved_briefs, batches)
     historical = report.read(pool_report.OUTPUT / "results.json")
 
-    assert result["comparisons"]["code"] == historical["comparisons"]["code"]
+    expected_code = historical["comparisons"]["code"]
+    # log2 and float summation can differ at the last bit across platforms and Python versions.
+    for comparison in expected_code.values():
+        for side in ("before", "after"):
+            scores = comparison[side]
+            scores["median_ndcg_at_10"] = pytest.approx(scores["median_ndcg_at_10"], rel=0, abs=1e-15)
+    assert result["comparisons"]["code"] == expected_code
     assert result["brief_coverage_version"] == "visible-lines-v2"
     paired = result["comparisons"]["brief"]["all"]
     assert paired["n"] == 20
