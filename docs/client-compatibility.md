@@ -21,11 +21,14 @@ Send that object to `verify_task_brief`. Use `test_exemplars` for citations from
 
 ```bash
 reviewer measure-client-usage --source codex-exec --model gpt-6-luna events.jsonl
+reviewer measure-client-usage --source codex-app-server --model gpt-6-luna notifications.jsonl
 reviewer measure-client-usage --source claude-code transcript.jsonl
 reviewer measure-client-usage --source normalized < usage.jsonl
 ```
 
-For Codex, record standard output from `codex exec --json` and use completed turns. The adapter separates cached input from the total and counts output once, including reasoning. Claude Code already reports the four components. For repeated Claude snapshots with the same message ID, the last usage record wins. Other clients and SDKs can export one completed usage record per line in this format:
+For batch Codex runs, capture standard output from `codex exec --json`. App Server clients can write JSON-RPC notifications in arrival order. The adapter reads `thread/tokenUsage/updated`, takes the first visible request for each thread and then each increase in cumulative usage. Repeated snapshots count once. Capture a contiguous interval per thread. An increase between snapshots includes any requests between them. Use `--model` for a single-model capture because App Server usage notifications omit the model name. Both Codex adapters separate cached input from total input and count reasoning within output.
+
+Claude Code already reports the four components. For repeated Claude snapshots with the same message ID, the last usage record wins. Other clients and SDKs can export one completed usage record per line in this format.
 
 ```json
 {"type":"llm_usage","model":"example","usage":{"fresh_in":100,"output":20,"cache_write":0,"cache_read":50}}

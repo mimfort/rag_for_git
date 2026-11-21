@@ -46,6 +46,44 @@ def test_normalized_events_from_other_clients_can_be_grouped():
     assert report["by_model"] == {"a": a, "b": b}
 
 
+def codex_snapshot(thread, total, last):
+    return {
+        "method": "thread/tokenUsage/updated",
+        "params": {"threadId": thread, "tokenUsage": {"total": total, "last": last}},
+    }
+
+
+def test_codex_app_server_resumed_stream_counts_last_and_then_deltas_once():
+    first = codex_snapshot(
+        "resumed",
+        {"inputTokens": 50, "cachedInputTokens": 17, "outputTokens": 10},
+        {"inputTokens": 15, "cachedInputTokens": 3, "outputTokens": 4},
+    )
+    second = codex_snapshot(
+        "resumed",
+        {"inputTokens": 75, "cachedInputTokens": 25, "outputTokens": 16},
+        {"inputTokens": 10, "cachedInputTokens": 4, "outputTokens": 2},
+    )
+    new_usage = {"inputTokens": 8, "cachedInputTokens": 2,
+                 "cacheWriteInputTokens": 1, "outputTokens": 5}
+    separate = codex_snapshot("new", new_usage, new_usage)
+    report = measure_usage(events(first, separate, second, second), "codex-app-server",
+                           model="gpt-6-luna")
+
+    assert report["records"] == 3
+    assert report["usage"] == {"fresh_in": 34, "output": 15, "cache_write": 1, "cache_read": 13}
+    assert report["by_model"] == {"gpt-6-luna": report["usage"]}
+
+
+def test_codex_app_server_rejects_backwards_snapshots():
+    first = {"inputTokens": 15, "cachedInputTokens": 8, "outputTokens": 5}
+    older = {"inputTokens": 10, "cachedInputTokens": 7, "outputTokens": 4}
+
+    with pytest.raises(ValueError, match=r"line 2: cumulative usage decreased"):
+        measure_usage(events(codex_snapshot("one", first, first),
+                             codex_snapshot("one", older, older)), "codex-app-server")
+
+
 @pytest.mark.parametrize("usage", [
     {"input_tokens": 4, "cached_input_tokens": 5, "output_tokens": 1},
     {"input_tokens": -1, "output_tokens": 1},
