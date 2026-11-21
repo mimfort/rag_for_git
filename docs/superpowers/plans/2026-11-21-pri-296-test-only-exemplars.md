@@ -20,12 +20,12 @@ Exercise a test ranked below ordinary code, a graph-only test, a result with no 
 
 ## Task 1 — Test-only selection
 
-- [ ] Extend `tests/retrieval/test_multiquery.py` with a regression for filtering before the file budget, graph candidates and no matches. Update the service wiring check in `tests/mcp/test_service.py`. Run and confirm the expected failures.
-- [ ] Add the private keyword `tests_only` to `reviewer/retrieval/multiquery.py` and `reviewer/mcp/service.py`. Enable it only for `_TaskContextDeps.test_exemplars`, and prevent ordinary paths from entering through augmentation.
-- [ ] Run the retrieval and MCP tests, including the existing public mixed-search contract.
+- [x] Extend `tests/retrieval/test_multiquery.py` with a regression for filtering before the file budget, graph candidates and no matches. Update the service wiring check in `tests/mcp/test_service.py`. Run and confirm the expected failures.
+- [x] Add the private keyword `tests_only` to `reviewer/retrieval/multiquery.py` and `reviewer/mcp/service.py`. Enable it only for `_TaskContextDeps.test_exemplars`, and prevent ordinary paths from entering through augmentation.
+- [x] Run the retrieval and MCP tests, including the existing public mixed-search contract.
 
 ## Task 2 — Acceptance measurements
 
-- [ ] Record a test-path reference set for each task based on the indexed code and the card. Run paired searches with the same index, queries, and limit for PRI-278, PRI-291, and PRI-256.
-- [ ] Record test share, coverage of labeled test paths, overlap with the code section, and measured latency in `eval/pri296/report.md`. Document the reproduction procedure and the scope of the measurements.
-- [ ] Run the unit suite and check the changes against the design and card.
+- [x] Record a test-path reference set for each task based on the indexed code and the card. Run paired searches with the same index, queries, and limit for PRI-278, PRI-291, and PRI-256.
+- [x] Record test share, coverage of labeled test paths, overlap with the code section, and measured latency in `eval/pri296/report.md`. Document the reproduction procedure and the scope of the measurements.
+- [x] Run the unit suite and check the changes against the design and card.
