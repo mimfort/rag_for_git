@@ -200,3 +200,36 @@ def test_git_preserves_reserved_similar_diff_slot_and_reports_displacement():
         "git_lexical_files": 2,
         "selected_files": 4,
     }
+
+
+def test_git_and_similar_diff_reserve_files_when_hybrid_paths_have_multiple_chunks():
+    a, b, c, d, e, augmented = (_item(f"{name}.py") for name in "abcdex")
+    a2, b2 = _item(a.path, 5), _item(b.path, 5)
+    lexical = _item("schema.sql")
+    retriever = SimpleNamespace(
+        graph=None,
+        embedder=SimpleNamespace(embed_queries=lambda queries: [[0.1] for _ in queries]),
+        store=SimpleNamespace(
+            hybrid_search=lambda *args, **kwargs: [a, a2, b, b2, c, d, e],
+            fetch_retrieved_at_paths=lambda *args, **kwargs: [augmented],
+        ),
+    )
+    pack = search_multi(
+        retriever, "owner/repo", ["query"],
+        section_limits=CodeSectionLimits(max_files=5, max_chunks_per_file=2),
+        augment_sources=[AugmentSource("similar-diffs", [augmented.path], 1)],
+        git_excerpts=[lexical], include_selection_stats=True,
+    )
+    assert [item.node_id for item in pack.items] == [
+        a.node_id, a2.node_id, b.node_id, b2.node_id, c.node_id,
+        lexical.node_id, augmented.node_id,
+    ]
+    assert pack.selection_stats == {
+        "file_limit": 5,
+        "candidate_files": 5,
+        "omitted_by_file_limit": 0,
+        "displaced_by_augmentation": 1,
+        "displaced_by_git_lexical": 1,
+        "git_lexical_files": 1,
+        "selected_files": 5,
+    }

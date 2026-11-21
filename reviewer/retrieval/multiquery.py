@@ -341,18 +341,30 @@ def search_multi(retriever, repo: str, queries: list[str], *, limits=None,
     reserved = min(len(augmented), sec.max_files)
     augmented = augmented[:reserved]
     augmented_paths = {item.path for item in augmented}
-    reserved_hybrid = hybrid_final[:sec.max_files - reserved]
+    hybrid_budget = sec.max_files - reserved
+    unaugmented_hybrid = hybrid_final[:sec.max_files]
+    reserved_hybrid = hybrid_final[:hybrid_budget]
     with_git = reserved_hybrid
-    if git_excerpts:
-        with_git = reserve_git_excerpts(
-            reserved_hybrid, [item for item in git_excerpts if item.path not in augmented_paths],
-            max_files=sec.max_files - reserved, max_chunks_per_file=sec.max_chunks_per_file,
+    # При добавлении Git-фрагментов оба резерва считаются по различным путям.
+    if git_excerpts and hybrid_budget > 0 and sec.max_chunks_per_file > 0:
+        file_hybrid = diversify_by_file(
+            hybrid_final, max_files=hybrid_budget,
+            max_chunks_per_file=sec.max_chunks_per_file,
         )
+        occupied = augmented_paths | {item.path for item in file_hybrid}
+        new_excerpts = [item for item in git_excerpts if item.path not in occupied]
+        if new_excerpts:
+            unaugmented_hybrid = hybrid_final
+            reserved_hybrid = file_hybrid
+            with_git = reserve_git_excerpts(
+                reserved_hybrid, new_excerpts, max_files=hybrid_budget,
+                max_chunks_per_file=sec.max_chunks_per_file,
+            )
     items = [*with_git, *augmented]
     stats = None
     if candidates is not None and (runs or git_excerpts):
         selected = {item.path for item in items}
-        unaugmented = {item.path for item in hybrid_final[:sec.max_files]}
+        unaugmented = {item.path for item in unaugmented_hybrid}
         hybrid_paths = {item.path for item in reserved_hybrid}
         stats = {
             "file_limit": sec.max_files,

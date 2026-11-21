@@ -50,6 +50,10 @@ class _Git:
     def __init__(self, repo_path: str | os.PathLike[str]) -> None:
         self.command = ["git", "--no-replace-objects", "-C", os.fspath(repo_path)]
         self.env = {**os.environ, "GIT_NO_LAZY_FETCH": "1", "GIT_ALLOW_PROTOCOL": ""}
+        # Эти режимы меняют интерпретацию явно заданного :(top,literal).
+        for name in ("GIT_LITERAL_PATHSPECS", "GIT_GLOB_PATHSPECS",
+                     "GIT_NOGLOB_PATHSPECS", "GIT_ICASE_PATHSPECS"):
+            self.env.pop(name, None)
         self.deadline = monotonic() + _GIT_TIMEOUT
 
     def _remaining(self) -> float:

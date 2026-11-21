@@ -548,8 +548,9 @@ def test_prepare_task_context_verifies_git_citation_from_selected_branch(
     ]
 
 
+@pytest.mark.parametrize("pathspec_env", [None, "GIT_LITERAL_PATHSPECS"])
 def test_prepare_task_context_git_search_uses_free_text_with_explicit_clone(
-    lexical_clone,
+    lexical_clone, pathspec_env, monkeypatch,
 ) -> None:
     (lexical_clone / ".review.yml").write_text(
         "paths: {ignore: [configs/ignored.yml]}\n", encoding="utf-8",
@@ -558,6 +559,8 @@ def test_prepare_task_context_git_search_uses_free_text_with_explicit_clone(
     service = _task_context_service(
         committed_policy="context_limits: {code_section: {max_git_files: 2}}",
     )
+    if pathspec_env:
+        monkeypatch.setenv(pathspec_env, "1")
 
     payload = service.prepare_task_context(
         "o/r", "sentinelword", "dev", str(lexical_clone), warm_board=False,
