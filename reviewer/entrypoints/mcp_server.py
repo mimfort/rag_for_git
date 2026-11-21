@@ -11,7 +11,14 @@ from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
 
 from reviewer.bugreport.diagnostics import diagnose
-from reviewer.mcp.schemas import BriefCitationIn, FindingIn, SubtasksIn, SummaryFragmentIn, VerdictIn
+from reviewer.mcp.schemas import (
+    BriefCitationIn,
+    BriefReferenceIn,
+    FindingIn,
+    SubtasksIn,
+    SummaryFragmentIn,
+    VerdictIn,
+)
 from reviewer.mcp.service import MCPReviewService
 
 log = logging.getLogger(__name__)
@@ -381,16 +388,26 @@ def create_server(service: MCPReviewService) -> FastMCP:
         return diagnose(tool, response)
 
     @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False))
-    def verify_task_brief(evidence_id: str, citations: list[BriefCitationIn]) -> dict:
+    def verify_task_brief(
+        evidence_id: str,
+        citations: list[BriefCitationIn] | None = None,
+        references: list[BriefReferenceIn] | None = None,
+    ) -> dict:
         """Check brief path:line citations against code or test_exemplars from one payload.
 
         Pass brief_evidence_id from prepare_task_context(include_brief_evidence=True)
-        on the same server connection. Each citation gets verified, path_unseen,
+        on the same server connection and supply exactly one of citations or references.
+        Each citation gets verified, path_unseen,
         outside_excerpt, or section_unavailable. An expired or absent ID gives
         evidence_unavailable. The tool checks only numbered lines visible in the
         selected section and does not search again.
+
+        References have a non-empty single-line reason and an optional edit/read role.
+        This mode returns the verdicts in citations, plus render_status and markdown.
+        Copy markdown verbatim for ok or empty. For invalid_format, correct the inputs
+        and retry.
         """
-        return service.verify_task_brief(evidence_id, citations)
+        return service.verify_task_brief(evidence_id, citations, references)
 
     @mcp.tool()
     def related_symbols(repo: str, node_id: str, branch: str | None = None) -> str:

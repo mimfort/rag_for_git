@@ -66,7 +66,7 @@ def _brief(tmp_path, body):
     briefs = tmp_path / "docs" / "superpowers" / "briefs"
     briefs.mkdir(parents=True)
     brief = briefs / "task.md"
-    brief.write_text(body, encoding="utf-8")
+    brief.write_text(body, encoding="utf-8", newline="")
     return brief
 
 
@@ -431,6 +431,37 @@ def test_run_marks_only_missing_evidence_and_is_idempotent(tmp_path):
 
     assert bg.run(payload) == 0
     assert brief.read_bytes() == first
+
+
+@pytest.mark.parametrize(
+    ("verified_section", "legacy_section", "blank"),
+    [
+        ("Relevant code", "Test exemplars", ""),
+        ("Test exemplars", "Relevant code", "\r\n"),
+    ],
+)
+def test_run_preserves_verified_section_beside_legacy_section(
+    tmp_path, verified_section, legacy_section, blank,
+):
+    canonical = (
+        f"## {verified_section}\r\n"
+        f"{blank}<!-- reviewer:verified-citations -->\r\n\r\n"
+        "- `pkg/source.py:3` — Править: reason mentions other.py:9\r\n"
+    )
+    legacy = f"## {legacy_section}\n- missing.py:2"
+    brief = _brief(tmp_path, canonical + "\n" + legacy + "\n")
+    transcript = _write_transcript(
+        tmp_path,
+        [
+            _SOLVE_USER,
+            *_retrieval_rows("// known.py#known (known.py:1-3)"),
+            _write_call(),
+        ],
+    )
+
+    assert bg.run(_payload(brief, transcript)) == 0
+
+    assert brief.read_bytes() == f"{canonical}\n{legacy} {bg.WARNING}\n".encode()
 
 
 def test_run_noop_without_evidence_or_with_truncated_result(tmp_path):

@@ -25,7 +25,13 @@ from reviewer.config.task_board import migrate_legacy_board_args, normalize_task
 from reviewer.index.refs import base_ref
 from reviewer.mcp import task_context
 from reviewer.mcp.brief_evidence import BriefEvidence, _visible_lines
-from reviewer.mcp.schemas import BriefCitationIn, FindingIn, SummaryFragmentIn, VerdictIn
+from reviewer.mcp.schemas import (
+    BriefCitationIn,
+    BriefReferenceIn,
+    FindingIn,
+    SummaryFragmentIn,
+    VerdictIn,
+)
 from reviewer.mcp.session_serde import from_payload, to_payload
 from reviewer.mcp.session_store import SessionStore
 from reviewer.retrieval.retriever import ContextPack
@@ -1897,8 +1903,20 @@ class MCPReviewService:
             payload["code_budget"] = budget
         return payload
 
-    def verify_task_brief(self, evidence_id: str, citations: list[BriefCitationIn]) -> dict:
-        return self._brief_evidence.verify(evidence_id, citations)
+    def verify_task_brief(
+        self,
+        evidence_id: str,
+        citations: list[BriefCitationIn] | None = None,
+        references: list[BriefReferenceIn] | None = None,
+    ) -> dict:
+        if (citations is None) == (references is None):
+            checked = self._brief_evidence.verify(evidence_id, [])
+            if checked["status"] == "ok":
+                return {**checked, "render_status": "invalid_format", "markdown": None}
+            return checked
+        if references is not None:
+            return self._brief_evidence.verify_references(evidence_id, references)
+        return self._brief_evidence.verify(evidence_id, citations or [])
 
     def related_symbols(self, repo: str, node_id: str,
                         branch: str | None = None) -> str:

@@ -1,13 +1,18 @@
 """Чтение корпуса брифов: блок токенов, пути секций, ключ задачи."""
 from __future__ import annotations
 
+import logging
 import pathlib
 import re
+from collections.abc import Iterator
 from dataclasses import dataclass, field
+
+log = logging.getLogger(__name__)
 
 TOKENS_HEADER = "## Токены (этап solve-task)"
 RELEVANT_HEADER = "## Relevant code"
 TEST_HEADER = "## Test exemplars"
+VERIFIED_CITATIONS_MARKER = "<!-- reviewer:verified-citations -->"
 SIDECHAIN_MARK = "В т.ч. sidechain-сабагент:"
 
 BUCKET_KEYS = ("fresh_in", "output", "cache_write", "cache_read")
@@ -23,6 +28,11 @@ _BACKTICK_RE = re.compile(r"`([^`]+)`")
 _PATH_LINE_RE = re.compile(r"^([\w./\-]+\.\w+):([\d,\-\s]+)$")
 _BARE_PATH_RE = re.compile(r"^[\w./\-]+\.\w+$")
 _LINE_SUFFIX_RE = re.compile(r"^(.+?):(\d[\d,\-\s]*)$")
+_ROLE_PREFIX_RE = re.compile(r"^(?:\*\*)?(?:Править|Прочитать)(?::?\*\*)?(?:\s*:\s*|\s+)")
+_RENDERED_OPENING_RE = re.compile(r"^- (`+)")
+_BACKTICK_RUN_RE = re.compile(r"`+")
+_POSITIVE_LINE_RE = re.compile(r"[1-9][0-9]*")
+_FENCE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
 _KNOWN_EXT_NO_DOT_NAMES = {"Dockerfile", "Makefile"}
 
 
@@ -58,19 +68,38 @@ class TokenBlock:
         return sum(sum(b.values()) for b in self.sidechain_by_model.values())
 
 
+def _fenced_lines(text: str) -> Iterator[tuple[str, bool]]:
+    """Отметить строки блоков кода, включая сами ограничители."""
+    fence = ""
+    for line in text.splitlines():
+        candidate = _FENCE_RE.match(line)
+        if fence:
+            if candidate and candidate[1].startswith(fence) and not candidate[2].strip(" \t"):
+                fence = ""
+            yield line, True
+            continue
+        if candidate and (candidate[1][0] == "~" or "`" not in candidate[2]):
+            fence = candidate[1]
+        yield line, bool(fence)
+
+
+def _section_bodies(text: str, header: str) -> Iterator[list[tuple[str, bool]]]:
+    """Строки секций между заголовками вне блоков кода."""
+    body = None
+    for line, fenced in _fenced_lines(text):
+        if not fenced and line.startswith("## ") and body is not None:
+            yield body
+            body = None
+        if not fenced and line.strip() == header and body is None:
+            body = []
+        elif body is not None:
+            body.append((line, fenced))
+    if body is not None:
+        yield body
+
+
 def _section_body(text: str, header: str) -> list[str]:
-    """Строки секции от её заголовка до следующего '## ' либо конца текста."""
-    lines = text.splitlines()
-    try:
-        start = next(i for i, ln in enumerate(lines) if ln.strip() == header)
-    except StopIteration:
-        return []
-    end = len(lines)
-    for i in range(start + 1, len(lines)):
-        if lines[i].startswith("## "):
-            end = i
-            break
-    return lines[start + 1 : end]
+    return [line for line, fenced in next(_section_bodies(text, header), []) if not fenced]
 
 
 def parse_token_block(text: str) -> TokenBlock | None:
@@ -127,8 +156,52 @@ def _leading_path(token: str) -> str | None:
     return None
 
 
+def _parse_rendered_citation(row: str) -> tuple[str, int]:
+    if not (opening := _RENDERED_OPENING_RE.match(row)):
+        raise ValueError("Expected a citation at the start of a marked bullet")
+    # In CommonMark the first matching run closes the span, including on malformed rows.
+    closing = next(
+        (run for run in _BACKTICK_RUN_RE.finditer(row, opening.end()) if run[0] == opening[1]),
+        None,
+    )
+    if closing is None:
+        raise ValueError("Unclosed citation in a marked bullet")
+    suffix = row[closing.end():]
+    reason = suffix.removeprefix(" — ")
+    if reason == suffix or not reason.strip() or "\x00" in reason:
+        raise ValueError("Expected an explanation after the citation")
+    label = row[opening.end():closing.start()]
+    if label.startswith(" ") and label.endswith(" "):
+        label = label[1:-1]
+    path, _, line = label.rpartition(":")
+    if not path or "\x00" in path or not _POSITIVE_LINE_RE.fullmatch(line):
+        raise ValueError("Expected path:line in a marked citation")
+    return path, int(line)
+
+
+def parse_rendered_citations(text: str, header: str) -> list[tuple[str, int]] | None:
+    """Read ordered path/line pairs from a marked section, or None for historical Markdown."""
+    bodies = list(_section_bodies(text, header))
+    marked = next(
+        (
+            body for body in bodies
+            if any(not fenced and line.strip() == VERIFIED_CITATIONS_MARKER for line, fenced in body)
+        ),
+        None,
+    )
+    if marked is None:
+        return None
+    rows = [line for line, _ in marked if line.strip()]
+    if len(bodies) != 1 or rows[0].strip() != VERIFIED_CITATIONS_MARKER:
+        raise ValueError(f"Misplaced or ambiguous citation marker under {header}")
+    return [_parse_rendered_citation(row) for row in rows[1:]]
+
+
 def extract_section_paths(text: str, header: str) -> set[str]:
     """Множество путей из bullet-секции брифа; строки '(dropped N: …)' пропускаются."""
+    if (rendered := parse_rendered_citations(text, header)) is not None:
+        return {path for path, _ in rendered}
+
     paths: set[str] = set()
     for raw in _section_body(text, header):
         line = raw.strip()
@@ -138,10 +211,9 @@ def extract_section_paths(text: str, header: str) -> set[str]:
             continue
         for fragment in _BACKTICK_RE.findall(line):
             paths.update(_paths_from_backtick(fragment))
-        body = line[1:].strip()
-        first_token = body.split()[0] if body.split() else ""
-        leading = _leading_path(first_token)
-        if leading:
+        body = _ROLE_PREFIX_RE.sub("", line[1:].strip(), count=1)
+        tokens = body.split(maxsplit=1)
+        if tokens and (leading := _leading_path(tokens[0])):
             paths.add(leading)
     return paths
 
@@ -153,7 +225,7 @@ def has_section(text: str, header: str) -> bool:
     как источник предсказаний) от «секция есть, но пуста» (валидное измерение
     с predicted=0). extract_section_paths оба случая отдаёт пустым множеством.
     """
-    return any(line.strip() == header for line in text.splitlines())
+    return any(not fenced and line.strip() == header for line, fenced in _fenced_lines(text))
 
 
 def extract_task_key(filename: str) -> str | None:
@@ -171,6 +243,7 @@ class BriefRecord:
     token_block: TokenBlock | None
     relevant_paths: set[str]
     test_paths: set[str]
+    citation_error: str | None = None
 
 
 def load_briefs(briefs_dir: pathlib.Path) -> list[BriefRecord]:
@@ -178,13 +251,22 @@ def load_briefs(briefs_dir: pathlib.Path) -> list[BriefRecord]:
     records: list[BriefRecord] = []
     for path in sorted(briefs_dir.glob("*.md")):
         text = path.read_text(encoding="utf-8")
+        citation_error = None
+        try:
+            relevant_paths = extract_section_paths(text, RELEVANT_HEADER)
+            test_paths = extract_section_paths(text, TEST_HEADER)
+        except ValueError as error:
+            citation_error = str(error)
+            log.warning("Не удалось прочитать ссылки брифа %s (%s)", path, citation_error)
+            relevant_paths, test_paths = set(), set()
         records.append(
             BriefRecord(
                 filename=path.name,
                 task_key=extract_task_key(path.name),
                 token_block=parse_token_block(text),
-                relevant_paths=extract_section_paths(text, RELEVANT_HEADER),
-                test_paths=extract_section_paths(text, TEST_HEADER),
+                relevant_paths=relevant_paths,
+                test_paths=test_paths,
+                citation_error=citation_error,
             )
         )
     return records

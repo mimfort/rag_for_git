@@ -47,6 +47,31 @@ def test_build_snapshot_counts_corpus_and_metrics(tmp_path):
     assert snap["quality"]["core_recall_median"] == 1.0
 
 
+def test_build_snapshot_excludes_damaged_predictions_from_quality(tmp_path):
+    damaged = BRIEF.replace(
+        "- `reviewer/a.py:1` — трогаем",
+        "<!-- reviewer:verified-citations -->\n- повреждённый пункт",
+    )
+    (tmp_path / "2026-01-01-PRI-7-damaged.md").write_text(damaged, encoding="utf-8")
+    (tmp_path / "2026-01-02-PRI-8-valid.md").write_text(BRIEF, encoding="utf-8")
+
+    snap, rows = snapshot.build_snapshot(
+        briefs_dir=tmp_path,
+        run_git=_fake_git,
+        commit="deadbee",
+        taken_at="2026-08-14T00:00:00+00:00",
+    )
+
+    assert snap["corpus"]["briefs"] == 2
+    assert snap["corpus"]["with_tokens"] == 2
+    assert snap["corpus"]["with_key"] == 2
+    assert snap["corpus"]["with_ground_truth"] == 2
+    assert [row["key"] for row in rows] == ["PRI-8"]
+    assert snap["quality"]["n_measured"] == 1
+    assert snap["quality"]["core_recall_median"] == 1.0
+    assert snap["misses"]["новый файл (не существовал до PR)"] == 1
+
+
 def test_build_snapshot_weighted_cost_is_below_raw(tmp_path):
     (tmp_path / "2026-01-01-PRI-7-x.md").write_text(BRIEF, encoding="utf-8")
 

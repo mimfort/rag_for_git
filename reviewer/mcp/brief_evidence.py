@@ -6,14 +6,18 @@ import re
 import secrets
 import time
 from collections import OrderedDict
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
+from html import escape
 from threading import Lock
 
-from reviewer.mcp.schemas import BriefCitationIn
+from reviewer.mcp.schemas import BriefCitationIn, BriefReferenceIn
+from reviewer.metrics.brief_quality import briefs
 
-_SECTIONS = ("code", "test_exemplars")
+_HEADERS = {"code": briefs.RELEVANT_HEADER, "test_exemplars": briefs.TEST_HEADER}
+_ROLE_LABELS = {"edit": "Править: ", "read": "Прочитать: "}
 _HEADER = re.compile(r"^// .+ \((?P<path>.+):(?P<first>\d+)-(?P<last>\d+)\)$")
 _NUMBERED = re.compile(r"^\s*(\d+) \|")
+_BACKTICKS = re.compile(r"`+")
 _TRUNCATED = "[...truncated]"
 
 
@@ -40,6 +44,39 @@ def _visible_lines(text: str) -> dict[str, set[int]]:
     return visible
 
 
+def _render_reference(reference: BriefReferenceIn) -> str:
+    label = f"{reference.path}:{reference.line}"
+    if label.splitlines() != [label] or "\x00" in label:
+        raise ValueError("A citation must fit on one line")
+    fence = "`" * (1 + max((len(run) for run in _BACKTICKS.findall(label)), default=0))
+    # CommonMark removes one padding space on each side, keeping the path intact.
+    if label.startswith(("`", " ")):
+        label = f" {label} "
+    role = _ROLE_LABELS[reference.role] if reference.role else ""
+    return f"- {fence}{label}{fence} — {role}{escape(reference.reason.strip(), quote=False)}"
+
+
+def _render_references(references: list[BriefReferenceIn]) -> str:
+    groups = {
+        header: [reference for reference in references if reference.section == section]
+        for section, header in _HEADERS.items()
+    }
+    if not groups[briefs.TEST_HEADER]:
+        del groups[briefs.TEST_HEADER]
+    sections = []
+    for header, group in groups.items():
+        rows = [header, briefs.VERIFIED_CITATIONS_MARKER]
+        if group:
+            rows.extend(["", *map(_render_reference, group)])
+        sections.append("\n".join(rows))
+    markdown = "\n\n".join(sections) + "\n"
+    for header, group in groups.items():
+        expected = [(reference.path, reference.line) for reference in group]
+        if briefs.parse_rendered_citations(markdown, header) != expected:
+            raise ValueError("Rendered citations differ from verified references")
+    return markdown
+
+
 class BriefEvidence:
     """Bounded process-local index of what the user received, without source text."""
 
@@ -57,7 +94,7 @@ class BriefEvidence:
 
     def save(self, payload: Mapping[str, object]) -> str | None:
         sections: dict[str, dict[str, set[int]]] = {}
-        for name in _SECTIONS:
+        for name in _HEADERS:
             text = payload.get(name)
             if isinstance(text, str) and (visible := _visible_lines(text)):
                 sections[name] = visible
@@ -70,7 +107,7 @@ class BriefEvidence:
                 self._entries.popitem(last=False)
         return key
 
-    def verify(self, key: str, citations: list[BriefCitationIn]) -> dict:
+    def verify(self, key: str, citations: Sequence[BriefCitationIn]) -> dict:
         with self._lock:
             entry = self._entries.get(key)
             if entry is None:
@@ -92,3 +129,22 @@ class BriefEvidence:
                 status = "verified"
             checked.append({**citation.model_dump(), "status": status})
         return {"status": "ok", "citations": checked}
+
+    def verify_references(self, evidence_id: str, references: list[BriefReferenceIn]) -> dict:
+        checked = self.verify(evidence_id, references)
+        if checked["status"] != "ok":
+            return checked
+        verified = [
+            reference for reference, verdict in zip(references, checked["citations"], strict=True)
+            if verdict["status"] == "verified"
+        ]
+        try:
+            if any(
+                not reason.strip() or reason.splitlines() != [reason] or "\x00" in reason
+                for reason in (reference.reason for reference in references)
+            ):
+                raise ValueError("A reference reason must be a non-empty single line")
+            markdown = _render_references(verified)
+        except ValueError:
+            return {**checked, "render_status": "invalid_format", "markdown": None}
+        return {**checked, "render_status": "ok" if verified else "empty", "markdown": markdown}
