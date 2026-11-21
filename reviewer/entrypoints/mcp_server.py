@@ -506,13 +506,14 @@ def create_server(service: MCPReviewService) -> FastMCP:
         """Cheap high-level prior for ask / PR-walkthrough: precomputed subsystem
         summaries. cluster_key → one full summary (or null). Otherwise: with `query`
         AND when the summary count exceeds the scale threshold (SUMMARY_TOPK_THRESHOLD,
-        per-repo .review.yml), returns the top-k summaries nearest the query by
-        embedding; without `query` or at/below the threshold, returns all (back-compat).
-        top_k defaults to 8. Empty when none built (consumer is fail-open).
-        No PR session; branch defaults to primary. Every returned summary has source_hash
-        and stale: true when its stored hash differs from the current cluster, false when
-        it matches, null when freshness is not computed (including the scaled ANN path)
-        or unavailable."""
+        per-repo .review.yml), selects the top-k summaries nearest the query by
+        embedding and puts fresh candidates first, preserving embedding rank within
+        each group. Without `query` or at/below the threshold, returns all in storage
+        order. top_k defaults to 8. No PR session; branch defaults to primary.
+        Every returned summary includes source_hash and stale: true when the current
+        cluster is absent or its hash differs, false when the hash matches, and null
+        when freshness is unavailable. A list response may include a note describing
+        stale candidates, missing stored summaries, empty results or unavailable sources."""
         return service.get_subsystem_summaries(repo, branch, cluster_key, query, top_k)
 
     @mcp.tool()

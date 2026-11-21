@@ -1,12 +1,16 @@
 """Unit-тесты MCP-методов community summaries (PRI-159). Фейки вместо Postgres/Neo4j."""
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock
 
 import pytest
 
+from reviewer.config.layers import ResolutionMeta
 from reviewer.config.settings import Settings
-from reviewer.mcp.service import MCPReviewService
+from reviewer.mcp import service as mcp_service
+from reviewer.mcp.service import MCPReviewService, _TaskContextDeps
+from reviewer.policy.policy import ReviewPolicy
 from reviewer.services.summary_fragments import _GENERATION
 
 
@@ -18,11 +22,14 @@ def _settings() -> Settings:
 
 
 def _svc(components) -> MCPReviewService:
+    components.store.get_index_meta_row.return_value = None
     svc = MCPReviewService(_settings(), components)
     # изолируем резолв repo/ветки и depth от .env / сети
     svc._resolve_repo_branch = lambda repo, branch: ("o/n", "dev")
-    svc._resolve_summary_layout = lambda repo, branch: (2, {}, [], "env")
-    svc._resolve_summary_topk_threshold = lambda repo, branch: (20, "env")
+    svc._resolve_policy = lambda repo, branch: (
+        ReviewPolicy(summary_paths_ignore=[]),
+        ResolutionMeta(sources={}, shadowed={}, warnings=()),
+    )
     return svc
 
 
@@ -1479,21 +1486,313 @@ def test_settings_default_summary_topk_threshold_is_20():
     assert _settings().summary_topk_threshold == 20
 
 
-def test_get_subsystem_summaries_query_above_threshold_returns_topk():
+def _summary_row(cluster_key: str, source_hash: str) -> dict:
+    return {
+        "cluster_key": cluster_key,
+        "title": cluster_key,
+        "summary": f"Сводка {cluster_key}",
+        "source_hash": source_hash,
+        "updated_at": "2026-06-23T00:00:00+00:00",
+    }
+
+
+def _summary_freshness(key: str, skeleton_hash: str = "sk") -> str:
+    from reviewer.graph.summaries import compute_source_hash
+
+    return compute_source_hash([(f"{key}/a.py#A", skeleton_hash)])
+
+
+def test_get_subsystem_summaries_query_prioritizes_fresh_within_ann_topk():
     c = MagicMock()
-    c.summary_store.count_summaries.return_value = 25            # > порога 20
-    c.summary_store.search_summaries.return_value = [
-        {"cluster_key": "auth", "title": "Авторизация", "summary": "...",
-         "source_hash": "stored", "updated_at": "2026-06-23T00:00:00+00:00"}]
+    c.store.list_base_members.return_value = [
+        (f"{key}/a.py", "A", "h", 1, "sk")
+        for key in ("old/index", "fresh/code", "fresh/graph", "missing/tests", "outside/ann")
+    ]
+    c.summary_store.count_summaries.return_value = 25
     c.embedder.embed_query.return_value = [0.1, 0.2]
+    rows = [
+        _summary_row("old/index", "old"),
+        _summary_row("fresh/code", _summary_freshness("fresh/code")),
+        _summary_row("gone/cluster", "old"),
+        _summary_row("fresh/graph", _summary_freshness("fresh/graph")),
+    ]
+    c.summary_store.search_summaries.return_value = rows
+    c.summary_store.get_source_hashes.return_value = {
+        **{row["cluster_key"]: row["source_hash"] for row in rows},
+        "outside/ann": _summary_freshness("outside/ann"),
+    }
     svc = _svc(c)
+
     out = svc.get_subsystem_summaries("o/n", "dev", query="как работает логин")
-    assert out["summaries"][0]["cluster_key"] == "auth"
-    assert out["summaries"][0]["stale"] is None
+
+    assert out["summaries"] == [
+        {**rows[1], "stale": False},
+        {**rows[3], "stale": False},
+        {**rows[0], "stale": True},
+        {**rows[2], "stale": True},
+    ]
+    assert "Устаревших сводок в выдаче: 2" in out["note"]
+    assert "missing/tests" in out["note"]
+    assert "outside/ann" not in out["note"]
     c.embedder.embed_query.assert_called_once_with("как работает логин")
-    assert c.summary_store.search_summaries.call_args.args[3] == 8   # top_k по умолчанию
+    c.summary_store.search_summaries.assert_called_once_with("o/n", "dev", [0.1, 0.2], 8)
     c.summary_store.get_summaries.assert_not_called()
-    c.store.list_base_members.assert_not_called()
+
+    context = _TaskContextDeps(svc, None).subsystems("o/n", "dev", "как работает логин")
+    assert context == {"summaries": out["summaries"][:2], "note": out["note"]}
+
+
+@pytest.fixture
+def versioned_summary_service():
+    c = MagicMock()
+    row = _summary_row("reviewer/index", _summary_freshness("reviewer/index"))
+    svc = _svc(c)
+    c.store.get_index_meta_row.return_value = (
+        "sha", datetime(2026, 11, 21, tzinfo=timezone.utc)
+    )
+    c.store.list_base_members.return_value = [
+        ("reviewer/index/a.py", "A", "h", 1, "sk")
+    ]
+    c.summary_store.get_summary.return_value = row
+    c.summary_store.get_summaries.return_value = [row]
+    c.summary_store.count_summaries.return_value = 25
+    c.summary_store.search_summaries.return_value = [row]
+    c.summary_store.get_source_hashes.return_value = {
+        row["cluster_key"]: row["source_hash"],
+    }
+    return svc, c
+
+
+@pytest.mark.parametrize("changed", ["sha", "updated_at"])
+def test_hash_snapshot_is_shared_and_invalidated_by_index_generation(
+    versioned_summary_service, changed,
+):
+    svc, c = versioned_summary_service
+
+    ann = svc.get_subsystem_summaries("o/n", "dev", query="индекс")
+    full = svc.get_subsystem_summaries("o/n", "dev")
+    single = svc.get_subsystem_summaries("o/n", "dev", cluster_key="reviewer/index")
+
+    assert ann["summaries"][0]["stale"] is False
+    assert full["summaries"][0]["stale"] is False
+    assert single["summary"]["stale"] is False
+    c.store.list_base_members.assert_called_once_with("o/n", "dev")
+    c.store.get_index_meta_row.assert_called_with("o/n", "base:dev")
+
+    sha, indexed_at = c.store.get_index_meta_row.return_value
+    c.store.get_index_meta_row.return_value = (
+        ("next-sha", indexed_at)
+        if changed == "sha"
+        else (sha, indexed_at + timedelta(seconds=1))
+    )
+    c.store.list_base_members.return_value = [
+        ("reviewer/index/a.py", "A", "changed", 1, "new-sk")
+    ]
+
+    out = svc.get_subsystem_summaries("o/n", "dev", query="индекс")
+
+    assert out["summaries"][0]["stale"] is True
+    assert c.store.list_base_members.call_count == 2
+
+
+def test_hash_snapshot_uses_canonical_layout(versioned_summary_service):
+    svc, c = versioned_summary_service
+    svc._resolve_summary_layout = lambda repo, branch, **kwargs: (
+        2, {"/reviewer/": 2}, ["/tests", "tests"], ".review.yml"
+    )
+    query = "индекс"
+
+    assert svc.get_subsystem_summaries("o/n", "dev", query=query)["summaries"][0]["stale"] is False
+    svc._resolve_summary_layout = lambda repo, branch, **kwargs: (2, {"reviewer": 2}, ["tests"], "home")
+
+    assert svc.get_subsystem_summaries("o/n", "dev", query=query)["summaries"][0]["stale"] is False
+    c.store.list_base_members.assert_called_once()
+
+    svc._resolve_summary_layout = lambda repo, branch, **kwargs: (2, {"reviewer": 1}, ["tests"], "home")
+
+    assert svc.get_subsystem_summaries("o/n", "dev", query=query)["summaries"][0]["stale"] is True
+    assert c.store.list_base_members.call_count == 2
+
+
+def test_hash_snapshot_keeps_repositories_and_branches_separate(versioned_summary_service):
+    svc, c = versioned_summary_service
+    svc._resolve_repo_branch = lambda repo, branch: (repo, branch)
+    original_members = c.store.list_base_members.return_value
+    c.store.list_base_members.side_effect = lambda repo, branch: (
+        original_members if (repo, branch) == ("o/n", "dev") else
+        [("reviewer/index/a.py", "A", "changed", 1, "new-sk")]
+    )
+
+    assert svc.get_subsystem_summaries("o/n", "dev")["summaries"][0]["stale"] is False
+    assert svc.get_subsystem_summaries("o/n", "main")["summaries"][0]["stale"] is True
+    assert svc.get_subsystem_summaries("o/other", "dev")["summaries"][0]["stale"] is True
+
+
+def test_hash_snapshot_expires_even_without_index_metadata_change(
+    versioned_summary_service, monkeypatch,
+):
+    svc, c = versioned_summary_service
+    now = 100.0
+    monkeypatch.setattr(mcp_service, "monotonic", lambda: now, raising=False)
+
+    assert svc.get_subsystem_summaries("o/n", "dev")["summaries"][0]["stale"] is False
+    c.store.list_base_members.return_value = [
+        ("reviewer/index/a.py", "A", "changed", 1, "new-sk")
+    ]
+
+    now += 29
+    assert svc.get_subsystem_summaries("o/n", "dev")["summaries"][0]["stale"] is False
+    now += 1
+    assert svc.get_subsystem_summaries("o/n", "dev")["summaries"][0]["stale"] is True
+
+
+def test_legacy_index_with_no_metadata_does_not_cache_hashes(versioned_summary_service):
+    svc, c = versioned_summary_service
+    c.store.get_index_meta_row.return_value = None
+
+    out = svc.get_subsystem_summaries("o/n", "dev", query="индекс")
+    assert out["summaries"][0]["stale"] is False
+
+    c.store.list_base_members.return_value = [
+        ("reviewer/index/a.py", "A", "changed", 1, "new-sk")
+    ]
+    out = svc.get_subsystem_summaries("o/n", "dev", query="индекс")
+    assert out["summaries"][0]["stale"] is True
+
+
+@pytest.mark.parametrize("had_metadata", [True, False])
+def test_index_generation_changing_during_read_leaves_freshness_unknown(
+    versioned_summary_service, had_metadata,
+):
+    svc, c = versioned_summary_service
+    sha, indexed_at = c.store.get_index_meta_row.return_value
+    previous = (sha, indexed_at) if had_metadata else None
+    current = (sha, indexed_at + timedelta(seconds=1))
+    c.store.get_index_meta_row.side_effect = [previous, current, current, current]
+
+    raced = svc.get_subsystem_summaries("o/n", "dev", query="индекс")
+    assert raced["summaries"][0]["stale"] is None
+    assert "Свежесть сводок недоступна" in raced["note"]
+
+    recovered = svc.get_subsystem_summaries("o/n", "dev", query="индекс")
+    assert recovered["summaries"][0]["stale"] is False
+    assert c.store.list_base_members.call_count == 2
+
+
+def test_task_context_keeps_unknown_summaries_when_hash_read_fails(versioned_summary_service):
+    svc, c = versioned_summary_service
+    deps = _TaskContextDeps(svc, None)
+    row = c.summary_store.search_summaries.return_value[0]
+    members = c.store.list_base_members.return_value
+    c.store.list_base_members.side_effect = [RuntimeError("index unavailable"), members]
+
+    out = deps.subsystems("o/n", "dev", "индекс")
+
+    assert out["summaries"] == [{**row, "stale": None}]
+    assert "Свежесть сводок недоступна" in out["note"]
+    assert "снимка хешей base-индекса" in out["note"]
+    assert "без сохранённой сводки" not in out["note"]
+
+    recovered = deps.subsystems("o/n", "dev", "индекс")
+    assert recovered["summaries"] == [{**row, "stale": False}]
+
+
+def test_ann_catalog_failure_preserves_classified_candidates(versioned_summary_service):
+    svc, c = versioned_summary_service
+    row = _summary_row("gone/cluster", "old")
+    c.summary_store.search_summaries.return_value = [row]
+    c.summary_store.get_source_hashes.side_effect = RuntimeError("catalog unavailable")
+
+    out = svc.get_subsystem_summaries("o/n", "dev", query="индекс")
+
+    assert out["summaries"] == [{**row, "stale": True}]
+    assert "Устаревших сводок в выдаче: 1" in out["note"]
+    assert "Каталог сводок недоступен" in out["note"]
+    assert "без сохранённой сводки" not in out["note"]
+
+
+def test_empty_ann_distinguishes_existing_summaries_from_missing_ones(versioned_summary_service):
+    svc, c = versioned_summary_service
+    c.summary_store.search_summaries.return_value = []
+    c.store.list_base_members.return_value.append(("missing/tests/a.py", "A", "h2", 1, "sk"))
+
+    out = svc.get_subsystem_summaries("o/n", "dev", query="индекс")
+
+    assert out["summaries"] == []
+    assert "ANN не вернул сводок" in out["note"]
+    assert "missing/tests" in out["note"]
+    assert "reviewer/index" not in out["note"]
+    assert "Устаревших сводок" not in out["note"]
+
+
+def test_missing_summaries_note_counts_all_clusters_with_bounded_examples(
+    versioned_summary_service,
+):
+    svc, c = versioned_summary_service
+    c.store.list_base_members.return_value.extend(
+        (f"missing/{number:02}/a.py", "A", "h2", 1, "sk")
+        for number in range(11, -1, -1)
+    )
+
+    out = svc.get_subsystem_summaries("o/n", "dev", query="индекс")
+
+    note = out["note"]
+    assert "без сохранённой сводки: 12" in note
+    assert ", ".join(f"missing/{number:02}" for number in range(8)) in note
+    assert all(f"missing/{number:02}" not in note for number in range(8, 12))
+
+
+def test_task_context_omits_stale_summaries_in_small_full_result(versioned_summary_service):
+    svc, c = versioned_summary_service
+    fresh = c.summary_store.get_summaries.return_value[0]
+    stale = _summary_row("gone/cluster", "old")
+    c.summary_store.get_summaries.return_value = [stale, fresh]
+    c.summary_store.count_summaries.return_value = 2
+
+    direct = svc.get_subsystem_summaries("o/n", "dev", query="индекс")
+    context = _TaskContextDeps(svc, None).subsystems("o/n", "dev", "индекс")
+
+    assert direct["summaries"] == [{**stale, "stale": True}, {**fresh, "stale": False}]
+    assert context["summaries"] == [{**fresh, "stale": False}]
+    assert context["note"] == direct["note"]
+    assert "Устаревших сводок в выдаче: 1" in context["note"]
+    c.summary_store.get_source_hashes.assert_not_called()
+
+
+def test_task_context_reports_missing_summaries_when_full_result_is_empty(
+    versioned_summary_service,
+):
+    svc, c = versioned_summary_service
+    c.summary_store.count_summaries.return_value = 0
+    c.summary_store.get_summaries.return_value = []
+
+    out = _TaskContextDeps(svc, None).subsystems("o/n", "dev", "индекс")
+
+    assert out["summaries"] == []
+    assert "Сводок нет" in out["note"]
+    assert "reviewer/index" in out["note"]
+
+
+def test_get_subsystem_summaries_resolves_policy_once_for_threshold_and_layout():
+    vcs = MagicMock()
+    vcs.get_file_at_ref.return_value = "summary_cluster_depth: 1\nsummary_topk_threshold: 5"
+    svc = _svc_with_vcs(vcs)
+    c = svc.components
+    c.store.get_repo_clone.return_value = None
+    c.store.get_index_meta_row.return_value = None
+    c.store.list_base_members.return_value = [
+        ("reviewer/index/a.py", "A", "h", 1, "sk")
+    ]
+    c.summary_store.count_summaries.return_value = 10
+    row = _summary_row("reviewer", _summary_freshness("reviewer/index"))
+    c.summary_store.search_summaries.return_value = [row]
+    c.summary_store.get_source_hashes.return_value = {row["cluster_key"]: row["source_hash"]}
+
+    out = svc.get_subsystem_summaries("o/n", "dev", query="индекс")
+
+    assert out["summaries"] == [{**row, "stale": False}]
+    c.summary_store.get_summaries.assert_not_called()
+    vcs.get_file_at_ref.assert_called_once_with(".review.yml", "dev")
 
 
 def test_get_subsystem_summaries_query_below_threshold_returns_all():
@@ -1533,7 +1832,7 @@ def test_current_subsystem_hashes_rejects_conflicting_raw_layout_aliases():
     ]
     c.graph = None
     svc = _svc(c)
-    svc._resolve_summary_layout = lambda repo, branch: (
+    svc._resolve_summary_layout = lambda repo, branch, **kwargs: (
         2,
         {"/x/": 1, "x": 2},
         [],
