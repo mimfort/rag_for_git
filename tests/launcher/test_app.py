@@ -376,6 +376,45 @@ def test_regular_command_returns_argv_only_after_preview_confirm():
     assert result == LauncherResult(("status",), 0)
 
 
+def test_long_command_preview_scrolls_in_small_terminal():
+    query = " ".join(["preview-begin", *[f"queryword{i:03}" for i in range(100)], "preview-tail"])
+    preview_opened = threading.Event()
+    tail_rendered = threading.Event()
+
+    class PreviewOutput(_TrackingOutput):
+        def get_size(self) -> Size:
+            return Size(rows=18, columns=66)
+
+        def write(self, data: str) -> None:
+            super().write(data)
+            _, heading, preview = self._rendered().partition("Проверьте команду перед запуском")
+            if heading and "preview-begin" in preview:
+                preview_opened.set()
+            if heading and "preview-tail" in preview:
+                tail_rendered.set()
+
+    output = PreviewOutput()
+    with create_pipe_input() as pipe:
+        def navigate() -> None:
+            if preview_opened.wait(2):
+                pipe.send_bytes(b"\x1b[6~")
+            if tail_rendered.wait(2):
+                pipe.send_bytes(b"\r")
+            pipe.send_bytes(b"\x03")
+
+        pipe.send_bytes(b"\r" + query.encode() + b"\x1bOR")
+        thread = threading.Thread(target=navigate)
+        thread.start()
+        result = run_launcher(commands=(_spec("search"),), input=pipe, output=output)
+        thread.join()
+
+    assert preview_opened.is_set()
+    assert tail_rendered.is_set()
+    assert "Enter — подтвердить" in output.stream.getvalue()
+    assert "Window too small" not in output.stream.getvalue()
+    assert result == LauncherResult(("search", query), 0)
+
+
 def test_required_error_is_rendered_and_removed_after_field_edit():
     output = _TrackingOutput()
 

@@ -11,6 +11,7 @@ from functools import partial
 import click
 from prompt_toolkit.application import Application
 from prompt_toolkit.data_structures import Point
+from prompt_toolkit.filters import Condition
 from prompt_toolkit.formatted_text import StyleAndTextTuples
 from prompt_toolkit.input import Input
 from prompt_toolkit.key_binding import KeyBindings
@@ -76,6 +77,7 @@ class _LauncherUI:
         self.flag_buttons: dict[str, Button] = {}
         self.choice_actions: dict[FormattedTextControl, Callable[[], None]] = {}
         self._field_handlers: dict[TextArea, Callable[..., None]] = {}
+        self.preview_body: AnyContainer | None = None
         self.checking_update = False
         self.version_check: VersionCheck | None = None
         self.update_error: str | None = None
@@ -112,7 +114,9 @@ class _LauncherUI:
             self._start_update_check(event)
             return
         self.controller.open_preview()
-        if self.controller.errors:
+        if self.controller.prepared is not None and self.controller.screen is Screen.PREVIEW:
+            self._open_preview(event, self.controller.prepared.preview)
+        elif self.controller.errors:
             first_error = next(iter(self.controller.errors))
             widget = self.parameter_widgets.get(first_error)
             if widget is not None:
@@ -144,6 +148,10 @@ class _LauncherUI:
                 self.version_check = None
                 self.update_error = None
             self.controller.screen = Screen.DETAILS
+        elif self.controller.screen is Screen.PREVIEW:
+            self.controller.back()
+            event.app.layout.focus_last()
+            self.preview_body = None
         else:
             self.controller.back()
         if self.controller.screen is Screen.PALETTE:
@@ -169,6 +177,7 @@ class _LauncherUI:
         self.query_field.buffer.on_text_changed -= self._query_handler
         self.query_field.text = ""
         self._drop_form()
+        self.preview_body = None
         self.controller.scrub_transient_state()
 
     def _revoke_updates(self) -> None:
@@ -302,13 +311,37 @@ class _LauncherUI:
             text for text in (self._parameter_hint(parameter), self._error_text(parameter)) if text
         )
 
+    def _open_preview(self, event: KeyPressEvent, preview: str) -> None:
+        if _ScrollablePane is None:
+            field = TextArea(text=preview, read_only=True, scrollbar=True, height=Dimension(min=1))
+            self.preview_body = field
+            event.app.layout.focus(field)
+            return
+        command = Window(
+            FormattedTextControl(preview, focusable=True),
+            wrap_lines=True,
+            always_hide_cursor=True,
+        )
+        self.preview_body = _ScrollablePane(
+            command, keep_cursor_visible=False, keep_focused_window_visible=False,
+        )
+        event.app.layout.focus(command)
+
+    def scroll_preview(self, event: KeyPressEvent, delta: int, *, page: bool = False) -> None:
+        pane = self.preview_body
+        if _ScrollablePane is not None and isinstance(pane, _ScrollablePane):
+            # Half a screen leaves context from the previous view.
+            step = max(1, event.app.output.get_size().rows // 2) if page else 1
+            pane.vertical_scroll = max(0, pane.vertical_scroll + delta * step)
+            event.app.invalidate()
+
     def _preview(self) -> AnyContainer:
-        preview = self.controller.prepared.preview if self.controller.prepared else ""
+        navigation = "←/→ · Home/End" if isinstance(self.preview_body, TextArea) else "↑/↓ · PgUp/PgDn"
         return HSplit(
             [
                 Label("Проверьте команду перед запуском:"),
-                Label(preview),
-                Label("Enter — подтвердить · Esc — вернуться к параметрам"),
+                self.preview_body if self.preview_body is not None else Label(""),
+                Label(f"{navigation} — прокрутка\nEnter — подтвердить · Esc — вернуться к параметрам"),
             ],
             padding=1,
         )
@@ -634,6 +667,9 @@ def _parse_occurrences(text: str) -> tuple[tuple[str, ...], ...]:
 
 def _bindings(ui: _LauncherUI) -> KeyBindings:
     bindings = KeyBindings()
+    scrollable_preview = Condition(
+        lambda: _ScrollablePane is not None and isinstance(ui.preview_body, _ScrollablePane)
+    )
 
     @bindings.add("c-c")
     def cancel_interrupt(event: KeyPressEvent) -> None:
@@ -645,11 +681,25 @@ def _bindings(ui: _LauncherUI) -> KeyBindings:
 
     @bindings.add("up")
     def move_up(event: KeyPressEvent) -> None:
-        ui.controller.move(-1)
+        if ui.controller.screen is Screen.PREVIEW:
+            ui.scroll_preview(event, -1)
+        else:
+            ui.controller.move(-1)
 
     @bindings.add("down")
     def move_down(event: KeyPressEvent) -> None:
-        ui.controller.move(1)
+        if ui.controller.screen is Screen.PREVIEW:
+            ui.scroll_preview(event, 1)
+        else:
+            ui.controller.move(1)
+
+    @bindings.add("pageup", filter=scrollable_preview)
+    def page_up(event: KeyPressEvent) -> None:
+        ui.scroll_preview(event, -1, page=True)
+
+    @bindings.add("pagedown", filter=scrollable_preview)
+    def page_down(event: KeyPressEvent) -> None:
+        ui.scroll_preview(event, 1, page=True)
 
     @bindings.add("tab")
     def focus_next(event: KeyPressEvent) -> None:
