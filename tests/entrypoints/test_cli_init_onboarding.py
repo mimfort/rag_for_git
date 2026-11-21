@@ -149,6 +149,37 @@ def test_quick_init_defers_unconfigured_self_hosted_gitlab_to_advanced(monkeypat
     assert "gitlab.example" not in env.read_text()
 
 
+def test_quick_init_can_edit_branches_from_preview_without_asking_for_credentials_again(
+    monkeypatch, tmp_path,
+):
+    env, config_root = _isolate(monkeypatch, tmp_path)
+    monkeypatch.setattr(cli_module, "detect_repository", lambda *_a, **_kw: _detection(tmp_path))
+    monkeypatch.setattr(cli_module, "remote_url", lambda _repo: None)
+    result = CliRunner().invoke(
+        cli, ["init"], input="voyage-example\n2\nrelease\nrelease,dev\n2\n\n\n1\n",
+    )
+
+    assert result.exit_code == 0, result.output
+    assert result.output.count("Ключ Voyage для индекса") == 1
+    assert "Основная ветка — release" in result.output
+    config = yaml.safe_load(_repo_path(config_root).read_text())
+    assert config["repository"] == {"primary_branch": "release", "index_branches": ["release", "dev"]}
+    assert "VOYAGE_API_KEY=voyage-example" in env.read_text()
+    assert "voyage-example" not in result.output
+
+
+def test_quick_init_can_cancel_after_editing_branches(monkeypatch, tmp_path):
+    env, config_root = _isolate(monkeypatch, tmp_path)
+    monkeypatch.setattr(cli_module, "detect_repository", lambda *_a, **_kw: _detection(tmp_path))
+    monkeypatch.setattr(cli_module, "remote_url", lambda _repo: None)
+    result = CliRunner().invoke(cli, ["init"], input="voyage-example\n2\nrelease\n\n0\n")
+
+    assert result.exit_code == 0, result.output
+    assert "Основная ветка — release" in result.output
+    assert "Отменено" in result.output
+    assert not env.exists() and not config_root.exists()
+
+
 def test_check_reads_explicit_env_file(monkeypatch, tmp_path):
     selected = tmp_path / "profile.env"
     selected.touch()

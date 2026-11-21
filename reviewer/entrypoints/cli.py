@@ -36,6 +36,7 @@ from reviewer.config.layers import (
 )
 from reviewer.config.onboarding import (
     RepositoryConfigPlan,
+    RepositoryDetection,
     apply_repository_config,
     detect_repository,
     parse_branch_csv,
@@ -1639,6 +1640,29 @@ def _quick_init_values(inst, current: dict[str, str]) -> tuple[dict[str, str], s
     return values, "\n".join(statuses), values != defaults
 
 
+def _prompt_repository_branches(
+    detection: RepositoryDetection, plan: RepositoryConfigPlan, settings: Settings,
+) -> RepositoryConfigPlan:
+    while True:
+        primary = click.prompt("Primary branch", default=plan.primary).strip()
+        if primary:
+            break
+        click.echo("Основная ветка должна иметь имя.")
+    default_index = plan.index if primary == plan.primary else (primary,)
+    while True:
+        raw_index = click.prompt("Index branches (CSV)", default=",".join(default_index))
+        try:
+            index = parse_branch_csv(raw_index, primary)
+        except ValueError as exc:
+            click.echo(f"Некорректные ветки: {exc}")
+            continue
+        return plan_repository_config(
+            detection, settings=settings,
+            primary=primary if primary != detection.primary else None,
+            index=index,
+        )
+
+
 @cli.command()
 @click.option("--path", "path_opt", default=None,
               help="куда писать .env (по умолчанию ~/.config/rag-reviewer/.env)")
@@ -1682,6 +1706,7 @@ def init(
             raise click.ClickException(str(exc)) from exc
     global_plan: _GlobalInitPlan | None = None
     repo_plan: RepositoryConfigPlan | None = None
+    detection: RepositoryDetection | None = None
     settings: Settings | None = None
     try:
         if run_global:
@@ -1836,44 +1861,31 @@ def init(
                         f"Primary candidate: {detection.primary} "
                         f"({detection.primary_source})"
                     )
-                    primary = click.prompt(
-                        "Primary branch",
-                        default=initial_plan.primary,
-                    ).strip()
-                    default_index = (
-                        initial_plan.index
-                        if primary == initial_plan.primary
-                        else (primary,)
-                    )
-                    while True:
-                        raw_index = click.prompt(
-                            "Index branches (CSV)",
-                            default=",".join(default_index),
-                        )
-                        try:
-                            index = parse_branch_csv(raw_index, primary)
-                        except ValueError as exc:
-                            click.echo(f"Некорректные ветки: {exc}")
-                            continue
-                        break
-                    repo_plan = plan_repository_config(
-                        detection,
-                        settings=settings,
-                        primary=(primary if primary != initial_plan.primary else None),
-                        index=index,
-                    )
+                    repo_plan = _prompt_repository_branches(detection, initial_plan, settings)
 
         _render_init_preview(global_plan, repo_plan, compact=quick and run_global)
         if dry_run:
             return
         plans = [plan for plan in (global_plan, repo_plan) if plan is not None]
         has_changes = any(plan.action != "noop" for plan in plans)
-        if interactive and has_changes and not click.confirm(
-            "\nЗаписать показанные изменения?",
-            default=True,
-        ):
-            click.echo("Отменено — файлы не изменены.")
-            return
+        if interactive and has_changes:
+            if quick and run_global and repo_plan is not None and repo_plan.action != "noop":
+                assert detection is not None and settings is not None
+                while True:
+                    action = click.prompt(
+                        "\n1 — сохранить · 2 — изменить ветки · 0 — отменить",
+                        type=click.Choice(("1", "2", "0")), default="1", show_choices=False,
+                    )
+                    if action != "2":
+                        confirmed = action == "1"
+                        break
+                    repo_plan = _prompt_repository_branches(detection, repo_plan, settings)
+                    _render_init_preview(global_plan, repo_plan, compact=True)
+            else:
+                confirmed = click.confirm("\nЗаписать показанные изменения?", default=True)
+            if not confirmed:
+                click.echo("Отменено — файлы не изменены.")
+                return
         if interactive and plans and not has_changes:
             click.echo("Изменений нет. Текущая конфигурация сохранена.")
             return

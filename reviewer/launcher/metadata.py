@@ -154,6 +154,9 @@ PARAMETER_PRESENTATION = {
     ("init", "path_opt"): ParameterPresentation(ParamSection.ADVANCED),
     ("init", "repo_opt"): ParameterPresentation(ParamSection.ADVANCED),
     ("init", "yes"): ParameterPresentation(ParamSection.ADVANCED),
+    ("init", "scope"): ParameterPresentation(
+        description="all — общий .env и репозиторий · global — только .env · repo — только ветки",
+    ),
     ("index", "ref"): ParameterPresentation(ParamSection.ADVANCED),
     ("index", "branch_opt"): ParameterPresentation(ParamSection.ADVANCED),
     ("search", "branch_opt"): ParameterPresentation(ParamSection.ADVANCED),
