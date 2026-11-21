@@ -257,7 +257,40 @@ def test_tests_are_filtered_unless_requested():
     assert {it.path for it in without.items} == {"a.py"}
     with_tests = search_multi(retriever, "o/n", ["q0"], limits=CodebaseLimits(),
                               branch="dev", include_tests=True)
-    assert "tests/test_a.py" in {it.path for it in with_tests.items}
+    assert {it.path for it in with_tests.items} == {"a.py", "tests/test_a.py"}
+
+
+def test_tests_only_reserves_file_budget_for_lower_ranked_test_path():
+    store = _FakeStore({"q0": [_bm25("a.py#f"), _bm25("tests/support.py#helper")]})
+    pack = search_multi(
+        _Retriever(store, _FakeEmbedder()), "o/n", ["q0"], branch="dev",
+        section_limits=CodeSectionLimits(max_files=1), tests_only=True)
+    assert [item.path for item in pack.items] == ["tests/support.py"]
+
+
+def test_tests_only_keeps_graph_neighbor_of_production_seed():
+    store = _FakeStore(
+        {"q0": [_bm25("a.py#f")]},
+        nodes_by_id={"tests/test_a.py#t": _hit("tests/test_a.py#t")},
+    )
+    graph = _FakeGraph(nodes=["tests/test_a.py#t"])
+    pack = search_multi(
+        _Retriever(store, _FakeEmbedder(), graph=graph), "o/n", ["q0"], branch="dev",
+        section_limits=CodeSectionLimits(max_files=1), tests_only=True)
+    assert [item.path for item in pack.items] == ["tests/test_a.py"]
+
+
+def test_tests_only_returns_empty_without_test_candidates_in_search_pool():
+    store = _FakeStore(
+        {"q0": [_bm25("a.py#f")]},
+        nodes_by_path={"b.py": _hit("b.py#f"), "tests/test_b.py": _hit("tests/test_b.py#t")},
+    )
+    pack = search_multi(
+        _Retriever(store, _FakeEmbedder()), "o/n", ["q0"], branch="dev",
+        include_tests=True, tests_only=True,
+        augment_sources=[AugmentSource(
+            name="similar-diffs", paths=["b.py", "tests/test_b.py"], quota=2)])
+    assert pack.as_context() == ""
 
 
 def test_ann_prefilter_drops_distant_non_lexical_hit():

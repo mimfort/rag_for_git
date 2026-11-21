@@ -729,9 +729,10 @@ def test_search_codebase_rejects_untracked_branch() -> None:
 # Тесты _search_codebase_multi (PRI-255) — мультизапросный близнец search_codebase
 # ---------------------------------------------------------------------------
 
-def test_search_codebase_multi_delegates_to_search_multi() -> None:
+@pytest.mark.parametrize("tests_only", [False, True])
+def test_search_codebase_multi_delegates_to_search_multi(tests_only: bool) -> None:
     """_search_codebase_multi зовёт search_multi с queries, retriever'ом, branch,
-    include_tests и рендерит результат построчно.
+    режимами отбора тестов и рендерит результат построчно.
 
     Резолв лимитов из эффективной .review.yml-политики (а не дефолт-константы)
     закрыт отдельно — test_search_codebase_multi_passes_limits_and_hops в
@@ -740,7 +741,8 @@ def test_search_codebase_multi_delegates_to_search_multi() -> None:
     svc = _make_mcp_service()
     with patch("reviewer.retrieval.multiquery.search_multi") as sm:
         sm.return_value.as_context.return_value = "auth.py#logout\nbody"
-        out = svc._search_codebase_multi("a/b", ["q1", "q2"], include_tests=True)
+        out = svc._search_codebase_multi(
+            "a/b", ["q1", "q2"], include_tests=True, tests_only=tests_only)
         assert "auth.py#logout" in out
         call = sm.call_args
         assert call.args[0] is svc.components.retriever
@@ -748,6 +750,7 @@ def test_search_codebase_multi_delegates_to_search_multi() -> None:
         assert call.args[2] == ["q1", "q2"]
         assert call.kwargs["branch"] == svc.settings.primary_branch()
         assert call.kwargs["include_tests"] is True
+        assert call.kwargs["tests_only"] is tests_only
         sm.return_value.as_context.assert_called_once_with(line_numbers=True)
 
 
@@ -978,8 +981,7 @@ def test_task_context_deps_history_failure_is_a_gap_not_an_exception() -> None:
     assert collect.call_args.kwargs["history"] is None
 
 
-def test_task_context_deps_test_exemplars_passes_include_tests_true() -> None:
-    """_TaskContextDeps.test_exemplars зовёт _search_codebase_multi с include_tests=True."""
+def test_task_context_deps_test_exemplars_requests_only_tests() -> None:
     from reviewer.mcp.service import _TaskContextDeps
 
     fake_service = MagicMock()
@@ -989,7 +991,7 @@ def test_task_context_deps_test_exemplars_passes_include_tests_true() -> None:
     result = deps.test_exemplars("o/r", "dev", ["q1", "q2"])
 
     fake_service._search_codebase_multi.assert_called_once_with(
-        "o/r", ["q1", "q2"], "dev", True, strict=True)
+        "o/r", ["q1", "q2"], "dev", tests_only=True, strict=True)
     assert result == "tests-out"
 
 
