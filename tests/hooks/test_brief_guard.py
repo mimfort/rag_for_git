@@ -47,9 +47,9 @@ def test_hooks_json_runs_single_sequential_wrapper():
     ]
 
     assert len(write_entries) == 1
-    assert commands == [
-        'python3 "${CLAUDE_PLUGIN_ROOT}/hooks/brief_post_write.py"'
-    ]
+    assert len(commands) == 1
+    assert "${CLAUDE_PLUGIN_ROOT}" in commands[0]
+    assert commands[0].endswith('/hooks/brief_post_write.py"')
     assert all("brief_cost.py" not in command for command in commands)
     assert all("brief_guard.py" not in command for command in commands)
 

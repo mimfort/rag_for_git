@@ -127,6 +127,11 @@ def expected_plugin_version(repo_root: Path) -> str:
 def project_manifest_from(canonical: dict) -> dict:
     projected = copy.deepcopy(canonical)
     projected["skills"] = "./plugin/skills/"
+    if isinstance(projected.get("hooks"), list):
+        projected["hooks"] = [
+            f"./plugin/{entry[2:]}" if isinstance(entry, str) and entry.startswith("./") else entry
+            for entry in projected["hooks"]
+        ]
     interface = projected.setdefault("interface", {})
     interface["composerIcon"] = "./plugin/assets/icon.svg"
     projected.pop("mcpServers", None)

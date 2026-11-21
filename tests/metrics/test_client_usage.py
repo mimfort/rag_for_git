@@ -84,6 +84,22 @@ def test_codex_app_server_rejects_backwards_snapshots():
                              codex_snapshot("one", older, older)), "codex-app-server")
 
 
+def test_codex_post_model_requests_count_reported_model_and_ignore_missing_usage():
+    first = {"hook_event_name": "PostModelRequest", "model": "gpt-6-luna",
+             "status": "completed", "token_usage": {"input_tokens": 12, "output_tokens": 5,
+                                                    "cached_input_tokens": 8}}
+    retry = {**first, "status": "failed", "token_usage": None}
+    last = {**first, "model": "gpt-6-sol",
+            "token_usage": {"input_tokens": 10, "output_tokens": 2,
+                            "reasoning_output_tokens": 2}}
+    report = measure_usage(events(first, retry, last), "codex-hook")
+
+    assert report["records"] == 2
+    assert report["usage"] == {"fresh_in": 14, "output": 7, "cache_write": 0, "cache_read": 8}
+    assert report["by_model"]["gpt-6-luna"]["output"] == 5
+    assert report["by_model"]["gpt-6-sol"]["output"] == 2
+
+
 @pytest.mark.parametrize("usage", [
     {"input_tokens": 4, "cached_input_tokens": 5, "output_tokens": 1},
     {"input_tokens": -1, "output_tokens": 1},

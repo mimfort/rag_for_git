@@ -1,6 +1,6 @@
 # Client compatibility
 
-Reviewer skills use the same MCP tools in Codex, Claude Code, and other MCP clients. Tool availability depends on the connected reviewer server version. Claude Code's native hooks additionally handle automatic transcript capture and diagnostic reminders.
+Reviewer skills use the same MCP tools in Codex, Claude Code, and other MCP clients. Tool availability depends on the connected reviewer server version. Native hooks can emit diagnostic reminders. Claude Code captures usage from its transcript, and Codex can capture usage from model request events.
 
 ## Verify solve-task citations
 
@@ -22,6 +22,7 @@ Send that object to `verify_task_brief`. Use `test_exemplars` for citations from
 ```bash
 reviewer measure-client-usage --source codex-exec --model gpt-6-luna events.jsonl
 reviewer measure-client-usage --source codex-app-server --model gpt-6-luna notifications.jsonl
+reviewer measure-client-usage --source codex-hook requests.jsonl
 reviewer measure-client-usage --source claude-code transcript.jsonl
 reviewer measure-client-usage --source normalized < usage.jsonl
 ```
@@ -35,6 +36,18 @@ Claude Code already reports the four components. For repeated Claude snapshots w
 ```
 
 The command reports totals, model breakdown, and the number of records. It reads only the supplied input. Scope the input to the task or stage being measured. Capturing completed usage and collecting ongoing turn usage depend on what the client exposes.
+
+### Automatic Codex capture
+
+With the Codex plugin enabled and its `PostModelRequest` hook trusted, select a local output file for one solve-task run.
+
+```bash
+reviewer_usage_file=$(mktemp)
+REVIEWER_CODEX_USAGE_FILE="$reviewer_usage_file" codex exec -m gpt-6-luna 'Use rag-reviewer:solve-task for PRI-278. Produce the brief.'
+reviewer measure-client-usage --source codex-hook "$reviewer_usage_file"
+```
+
+The hook appends reported per-request counters and their model, session, turn, and status. It omits prompts, tool inputs, and error details. A separate file per invocation keeps review and solve-task runs separate. The hook is idle when `REVIEWER_CODEX_USAGE_FILE` is unset. Native capture was exercised with Codex CLI 0.170.0 on macOS.
 
 ## Diagnose reviewer results
 

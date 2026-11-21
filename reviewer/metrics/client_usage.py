@@ -7,7 +7,7 @@ from collections.abc import Iterable, Mapping
 
 from reviewer.metrics.brief_quality.briefs import BUCKET_KEYS
 
-SOURCES = ("codex-exec", "codex-app-server", "claude-code", "normalized")
+SOURCES = ("codex-exec", "codex-app-server", "codex-hook", "claude-code", "normalized")
 
 _CODEX_FIELDS = {
     "codex-exec": ("input_tokens", "output_tokens", "cached_input_tokens",
@@ -76,6 +76,13 @@ def _usage(event: Mapping, source: str) -> tuple[str | None, str | None, dict] |
         if not isinstance(usage, Mapping):
             raise ValueError("completed turn is missing usage")
         return event.get("model"), None, _codex_usage(usage, source)
+    if source == "codex-hook" and event.get("hook_event_name") == "PostModelRequest":
+        usage = event.get("token_usage")
+        if usage is None:
+            return None
+        if not isinstance(usage, Mapping):
+            raise ValueError("hook token_usage must be an object")
+        return event.get("model"), None, _codex_usage(usage, "codex-exec")
     if source == "claude-code" and kind == "assistant":
         message = event.get("message")
         if not isinstance(message, Mapping) or message.get("usage") is None:
