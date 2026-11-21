@@ -232,10 +232,34 @@ def diversify_by_file(items: list, *, max_files: int, max_chunks_per_file: int) 
     return kept
 
 
+def reserve_git_excerpts(items: list, excerpts: list, *, max_files: int,
+                         max_chunks_per_file: int) -> list:
+    """Поместить новые Git-пути после гибрида в пределах общего бюджета файлов."""
+    if not excerpts:
+        return items
+    if max_files <= 0 or max_chunks_per_file <= 0:
+        return []
+    known = {item.path for item in items}
+    selected = []
+    for excerpt in excerpts:
+        if excerpt.path in known:
+            continue
+        selected.append(excerpt)
+        known.add(excerpt.path)
+        if len(selected) == max_files:
+            break
+    if not selected:
+        return items
+    hybrid = diversify_by_file(items, max_files=max_files - len(selected),
+                               max_chunks_per_file=max_chunks_per_file)
+    return [*hybrid, *selected]
+
+
 def search_multi(retriever, repo: str, queries: list[str], *, limits=None,
                  section_limits=None, hops: int = 1, branch: str = "",
                  include_tests: bool = False, augment_sources=None,
-                 strict: bool = False, include_selection_stats: bool = False) -> ContextPack:
+                 strict: bool = False, include_selection_stats: bool = False,
+                 git_excerpts: list | None = None) -> ContextPack:
     """Мультизапросный ретрив по base-индексу ветки: N прогонов, RRF, обрезка.
 
     Реранкера и cliff-отсечки здесь нет — финальный ранкер RRF (см. докстринг
@@ -256,8 +280,12 @@ def search_multi(retriever, repo: str, queries: list[str], *, limits=None,
     но ранжировал слишком низко для попадания в max_files, — это и есть тот
     файл, который рычаг обязан промоутить.
 
-    В проде источник ОДИН — similar-diffs (PRI-257). Два других опробованы и
-    сняты по замеру: co-change (PRI-257) и состав кластеров сводок подсистем
+    Git-фрагменты занимают слоты в гибридной части после фактического
+    резерва similar-diffs (PRI-298).
+
+    Из путевых источников, выбирающих чанки из индекса, используется
+    similar-diffs (PRI-257). Два других сняты по замеру: co-change (PRI-257)
+    и состав кластеров сводок подсистем
     (PRI-258). Полный разбор всех механик бюджета, каждая из которых поодиночке
     обнуляла рычаг на живом замере, — см.
     .superpowers/sdd/2026-08-17-pri-257-augmented-candidates/step8-measurement.md
@@ -312,17 +340,31 @@ def search_multi(retriever, repo: str, queries: list[str], *, limits=None,
     # ровно на фактически занятый резерв и подмешиваем augmented напрямую.
     reserved = min(len(augmented), sec.max_files)
     augmented = augmented[:reserved]
-    items = [*hybrid_final[:sec.max_files - reserved], *augmented]
+    augmented_paths = {item.path for item in augmented}
+    reserved_hybrid = hybrid_final[:sec.max_files - reserved]
+    with_git = reserved_hybrid
+    if git_excerpts:
+        with_git = reserve_git_excerpts(
+            reserved_hybrid, [item for item in git_excerpts if item.path not in augmented_paths],
+            max_files=sec.max_files - reserved, max_chunks_per_file=sec.max_chunks_per_file,
+        )
+    items = [*with_git, *augmented]
     stats = None
-    if candidates is not None and runs:
+    if candidates is not None and (runs or git_excerpts):
         selected = {item.path for item in items}
         unaugmented = {item.path for item in hybrid_final[:sec.max_files]}
+        hybrid_paths = {item.path for item in reserved_hybrid}
         stats = {
             "file_limit": sec.max_files,
             "candidate_files": len(candidates),
             "omitted_by_file_limit": len(candidates - unaugmented),
-            "displaced_by_augmentation": len(unaugmented - selected),
+            "displaced_by_augmentation": len(unaugmented - hybrid_paths - augmented_paths),
             "selected_files": len(selected),
         }
+        if git_excerpts:
+            stats.update(
+                displaced_by_git_lexical=len(hybrid_paths - selected),
+                git_lexical_files=len(selected - hybrid_paths - augmented_paths),
+            )
     return ContextPack(items=[cap_block(item, sec.chars_per_file) for item in items],
                        max_chars=sec.max_chars, augment_note=note, selection_stats=stats)
