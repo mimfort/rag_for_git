@@ -15,8 +15,8 @@ _MIN_TOPIC_OVERLAP = 0.2
 
 _CRITERIA_RE = re.compile(r"критери|при[её]мк|acceptance", re.IGNORECASE)
 _REQUIREMENTS_RE = re.compile(r"что сделать|требовани|requirements", re.IGNORECASE)
-_HEADING_RE = re.compile(r"^ {0,3}#{1,6}[ \t]+")
-_ITEM_RE = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s+(.*\S)\s*$")
+_HEADING_RE = re.compile(r"^ {0,3}(#{1,6})[ \t]+")
+_ITEM_RE = re.compile(r"^([ \t]*)(?:[-*+]|\d+[.)])[ \t]+(.*\S)\s*$")
 _FENCE_RE = re.compile(r"^\s*(`{3,}|~{3,})(.*)$")
 _TOKEN_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_./]*")
 _TOPIC_RE = re.compile(r"[^\W\d]\w*(?:[./-]\w+)*")
@@ -43,15 +43,19 @@ def _section_items(text: str) -> tuple[list[tuple[bool, str]], list[str]]:
     """Вернуть пункты с признаком приёмки и строки для поиска идентификаторов."""
     items: list[tuple[bool, str]] = []
     prose: list[str] = []
-    in_section = is_criterion = is_list_item = False
+    in_section = False
+    acceptance_depth: int | None = None
+    item_content_column: int | None = None
     lines: list[str] = []
     after_blank = True
     fence = ""
 
     def flush() -> None:
+        nonlocal item_content_column
         if lines:
-            items.append((is_criterion, " ".join(lines)))
+            items.append((acceptance_depth is not None, " ".join(lines)))
             lines.clear()
+        item_content_column = None
 
     for line in text.splitlines():
         stripped = line.strip()
@@ -64,14 +68,19 @@ def _section_items(text: str) -> tuple[list[tuple[bool, str]], list[str]]:
             continue
         if marker:
             fence = marker[1]
-            if after_blank and not line[0].isspace():
+            if after_blank and not line[0].isspace() and acceptance_depth is None:
                 flush()
             continue
 
-        if _HEADING_RE.match(line):
+        heading = _HEADING_RE.match(line)
+        if heading:
             flush()
-            is_criterion = bool(_CRITERIA_RE.search(stripped))
-            in_section = is_criterion or bool(_REQUIREMENTS_RE.search(stripped))
+            depth = len(heading[1])
+            if acceptance_depth is not None and depth <= acceptance_depth:
+                acceptance_depth = None
+            if acceptance_depth is None and _CRITERIA_RE.search(stripped):
+                acceptance_depth = depth
+            in_section = acceptance_depth is not None or bool(_REQUIREMENTS_RE.search(stripped))
             prose.append(line)
             after_blank = True
         elif not stripped:
@@ -81,15 +90,20 @@ def _section_items(text: str) -> tuple[list[tuple[bool, str]], list[str]]:
         else:
             item = _ITEM_RE.match(line)
             if item:
-                flush()
-                lines.append(item[1])
-                is_list_item = True
-            elif lines and (not after_blank or (is_list_item and line[0].isspace())):
+                indent = len(item[1].expandtabs(4))
+                nested_criterion = (acceptance_depth is not None
+                                    and item_content_column is not None
+                                    and indent >= item_content_column)
+                if not nested_criterion:
+                    flush()
+                    item_content_column = len(line[:item.start(2)].expandtabs(4))
+                lines.append(item[2])
+            elif lines and (not after_blank
+                            or (item_content_column is not None and line[0].isspace())):
                 lines.append(stripped)
             else:
                 flush()
-                (lines if is_criterion else prose).append(stripped)
-                is_list_item = False
+                (lines if acceptance_depth is not None else prose).append(stripped)
             after_blank = False
     flush()
     return items, prose

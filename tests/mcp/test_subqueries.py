@@ -139,3 +139,57 @@ def test_overflow_groups_related_criteria_and_keeps_unrelated_criteria():
     assert any(all(criterion in query for criterion in criteria[:2]) for query in queries)
     assert criteria[2] in queries
     assert queries[:MAX_SUBQUERIES - 2] == ["база", *steps]
+
+
+def test_criteria_continue_under_deeper_headings_until_peer_section():
+    task = {
+        "description": (
+            "## Acceptance\n"
+            "### CLI\n"
+            "- Exits with status 4.\n"
+            "### Configuration\n"
+            "- Remembers the project.\n"
+            "## Context\n"
+            "### Follow-up\n"
+            "- Consider more options.\n"
+        )
+    }
+
+    assert build_subqueries(task, "base") == [
+        "base", "Exits with status 4.", "Remembers the project.",
+    ]
+
+
+def test_fenced_output_after_blank_line_is_part_of_criterion():
+    task = {
+        "description": (
+            "## Acceptance\n\n"
+            "The command prints\n\n"
+            "```text\nexpected output\n```\n\n"
+            "The log stays empty.\n"
+        )
+    }
+
+    assert build_subqueries(task, "base") == [
+        "base", "The command prints expected output", "The log stays empty.",
+    ]
+
+
+def test_nested_list_items_remain_part_of_their_acceptance_criterion():
+    task = {
+        "description": (
+            "## Requirements\n"
+            "1. Add tests\n"
+            "   - Adapt fixtures.\n"
+            "## Acceptance\n"
+            "1. Report includes\n"
+            "   - parsed headers\n"
+            "   - decoded payload\n"
+            "2. Other output stays the same.\n"
+        )
+    }
+
+    assert build_subqueries(task, "base") == [
+        "base", "Add tests", "Adapt fixtures.", "Report includes parsed headers decoded payload",
+        "Other output stays the same.",
+    ]
