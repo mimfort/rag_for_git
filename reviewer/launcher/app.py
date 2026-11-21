@@ -9,6 +9,7 @@ from collections.abc import Callable
 from functools import partial
 
 from prompt_toolkit.application import Application
+from prompt_toolkit.data_structures import Point
 from prompt_toolkit.formatted_text import StyleAndTextTuples
 from prompt_toolkit.input import Input
 from prompt_toolkit.key_binding import KeyBindings
@@ -47,6 +48,7 @@ _EFFECT_LABELS = {
     "network": "сеть",
     "destructive": "удаление",
 }
+_STARTER_ORDER = {("init",): 0, ("check",): 1, ("install",): 2}
 
 
 class _LauncherUI:
@@ -187,6 +189,8 @@ class _LauncherUI:
 
     def focused_flag(self, event: KeyPressEvent) -> bool:
         """Переключить флаг, если фокус установлен на его кнопке."""
+        if self.controller.screen is not Screen.DETAILS:
+            return False
         name = self.flag_controls.get(event.app.layout.current_control)
         if name is None:
             return False
@@ -203,9 +207,13 @@ class _LauncherUI:
                 Label("reviewer — выбор команды"),
                 self.query_field,
                 Window(
-                    FormattedTextControl(self._command_rows),
+                    FormattedTextControl(
+                        self._command_rows,
+                        get_cursor_position=lambda: Point(0, self.controller.selected_index),
+                    ),
                     height=Dimension(min=3, max=12),
                     wrap_lines=False,
+                    always_hide_cursor=True,
                 ),
                 Label(self._selected_description),
                 Label("↑/↓ — выбор · Enter — параметры · Esc — выход"),
@@ -259,7 +267,8 @@ class _LauncherUI:
             form = _ScrollablePane(body)
         advanced = "скрыты" if not self.controller.show_advanced else "показаны"
         footer = Label(
-            f"Расширенные параметры: {advanced} (F2) · Tab — следующее поле · Enter — preview"
+            f"Расширенные параметры: {advanced} (F2) · Tab — следующее поле\n"
+            "Enter — переключить флаг или открыть предпросмотр · F3 — предпросмотр"
         )
         return HSplit(
             [
@@ -598,6 +607,11 @@ def _bindings(ui: _LauncherUI) -> KeyBindings:
     def toggle_advanced(event: KeyPressEvent) -> None:
         ui.toggle_advanced(event)
 
+    @bindings.add("f3")
+    def preview(event: KeyPressEvent) -> None:
+        if ui.controller.screen is Screen.DETAILS:
+            ui.submit_details(event)
+
     @bindings.add("enter", eager=True)
     def submit(event: KeyPressEvent) -> None:
         if ui.focused_flag(event):
@@ -621,7 +635,11 @@ def run_launcher(
     version_checker: Callable[..., VersionCheck] | None = None,
 ) -> LauncherResult:
     """Запустить command palette и вернуть argv только после подтверждения."""
-    controller = LauncherController(commands or build_catalog(cli))
+    if commands is None:
+        commands = tuple(sorted(
+            build_catalog(cli), key=lambda item: _STARTER_ORDER.get(item.path, len(_STARTER_ORDER)),
+        ))
+    controller = LauncherController(commands)
     ui = _LauncherUI(
         controller,
         installation_detector=installation_detector or detect_installation,

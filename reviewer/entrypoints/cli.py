@@ -5,9 +5,11 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 import json
 import logging
+import os
 from pathlib import Path
 import platform as _platform
 import re
+import shlex
 import shutil as _shutil
 from typing import TYPE_CHECKING
 
@@ -855,9 +857,11 @@ def _parse_board_projects(values: tuple[str, ...]) -> dict[str, str]:
     metavar="TYPE=PROJECT",
     help="Проект для provider validation; опцию можно повторять.",
 )
-def check(board_project_values: tuple[str, ...]) -> None:
+@click.option("--env-file", type=click.Path(exists=True, dir_okay=False, path_type=Path),
+              help="Проверить выбранный .env.")
+def check(board_project_values: tuple[str, ...], env_file: Path | None = None) -> None:
     """Проверить готовность окружения и настроенных внешних providers."""
-    s = Settings()
+    s = Settings(_env_file=env_file) if env_file is not None else Settings()
     board_projects = _parse_board_projects(board_project_values)
     failed = False
     storage_remedy_hint: str | None = None
@@ -1527,8 +1531,24 @@ class _GlobalInitPlan:
 def _render_init_preview(
     global_plan: _GlobalInitPlan | None,
     repo_plan: RepositoryConfigPlan | None,
+    *,
+    compact: bool = False,
 ) -> None:
     """Показать все target-планы до первой записи, не раскрывая env secrets."""
+    if compact:
+        actions = {
+            "create": "будет создан", "update": "будет обновлён",
+            "append": "будет дополнен", "noop": "уже настроен",
+        }
+        click.echo("\nПредпросмотр настройки")
+        if global_plan is not None:
+            click.echo(f"Общий .env — {global_plan.path} ({actions[global_plan.action]})")
+            click.echo(global_plan.preview)
+        if repo_plan is not None:
+            click.echo(f"Профиль {repo_plan.repo} — {repo_plan.path} ({actions[repo_plan.action]})")
+            click.echo(f"Основная ветка — {repo_plan.primary}")
+            click.echo(f"Ветки для индекса — {', '.join(repo_plan.index)}")
+        return
     click.echo("# reviewer init preview")
     if global_plan is not None:
         click.echo(f"\nfile: {global_plan.path}")
@@ -1579,6 +1599,46 @@ def _prompt_vcs_provider(inst, spec, current: Mapping[str, str]) -> dict[str, st
     return inst.prompt_groups([group], current=dict(current), yes=False)
 
 
+def _quick_init_values(inst, current: dict[str, str]) -> tuple[dict[str, str], str, bool]:
+    """Collect missing keys for local onboarding using the existing defaults."""
+    from reviewer.services.repo_id import derive_vcs_from_remote
+
+    values = inst.prompt_groups(inst.WIZARD_GROUPS, current=current, yes=True)
+    defaults = values.copy()
+    if not values["VOYAGE_API_KEY"]:
+        values["VOYAGE_API_KEY"] = click.prompt(
+            "Ключ Voyage для индекса (Enter — позже)",
+            default="", hide_input=True, show_default=False,
+        ).strip()
+
+    detected = derive_vcs_from_remote(remote_url(".") or "")
+    provider = detected[0] if detected else current.get("VCS_PROVIDER")
+    spec = inst.VCS_SETUPS.get(provider)
+    storage = "сохранённые параметры" if {"PG_DSN", "NEO4J_URI"} & current.keys() else (
+        "локальные ParadeDB и Neo4j"
+    )
+    statuses = [
+        "Voyage: ключ задан" if values["VOYAGE_API_KEY"] else "Voyage: ключ нужен для индекса",
+        f"Хранилища: {storage}",
+    ]
+    if detected and provider == "gitlab" and detected[1] != values["GITLAB_URL"].rstrip("/"):
+        statuses.append("GitLab: подтвердите адрес сервера и ключ через reviewer init --advanced")
+    elif spec is not None:
+        if not current.get("VCS_PROVIDER"):
+            values["VCS_PROVIDER"] = spec.provider
+        for token in (field for field in spec.credential_fields if field.secret):
+            if not values[token.key]:
+                click.echo(f"Инструкция для ключа {spec.label} — {spec.help_url}")
+                values[token.key] = click.prompt(
+                    f"Ключ {spec.label} для ревью (Enter — позже)",
+                    default="", hide_input=True, show_default=False,
+                ).strip()
+            statuses.append(
+                f"{spec.label}: " + ("ключ задан" if values[token.key] else "ключ пропущен")
+            )
+    return values, "\n".join(statuses), values != defaults
+
+
 @cli.command()
 @click.option("--path", "path_opt", default=None,
               help="куда писать .env (по умолчанию ~/.config/rag-reviewer/.env)")
@@ -1594,14 +1654,17 @@ def _prompt_vcs_provider(inst, spec, current: Mapping[str, str]) -> dict[str, st
     help="этапы настройки: global .env, repo branch config или оба",
 )
 @click.option("--repo", "repo_opt", default=None, help="owner/name для repo stage")
+@click.option("--advanced", is_flag=True,
+              help="Настроить хранилища, VCS, доску задач и ветки по шагам.")
 def init(
     path_opt: str | None,
     yes: bool,
     dry_run: bool,
     scope: str,
     repo_opt: str | None,
+    advanced: bool,
 ) -> None:
-    """Настроить global .env и per-repo ветки с preview до записи."""
+    """Быстро настроить reviewer и показать изменения перед записью."""
     import subprocess
     from reviewer import install as inst
     from reviewer.tasks.boards import setup as board_setup
@@ -1611,6 +1674,7 @@ def init(
     run_global = scope in {"all", "global"}
     run_repo = scope in {"all", "repo"}
     interactive = not yes and not dry_run
+    quick = interactive and not advanced
     if run_repo and repo_opt is not None:
         try:
             repo_opt = _resolve_config_repo(repo_opt)
@@ -1621,12 +1685,16 @@ def init(
     settings: Settings | None = None
     try:
         if run_global:
-            dest = Path(path_opt).expanduser() if path_opt else inst.default_env_path()
+            env_path = path_opt or os.environ.get("REVIEWER_ENV_FILE")
+            dest = Path(env_path).expanduser() if env_path else inst.default_env_path()
             current = inst.read_env(dest)
             wizard_keys = {field.key for group in inst.WIZARD_GROUPS for field in group.fields}
             groups = inst.WIZARD_GROUPS
 
-            if interactive:
+            if quick:
+                click.echo("Быстрая настройка reviewer")
+                values, quick_preview, quick_changed = _quick_init_values(inst, current)
+            elif interactive:
                 click.echo(f"Настройка rag-reviewer: {dest}")
                 click.echo("─" * 52)
                 vcs_group = next(group for group in groups if group.title == "VCS")
@@ -1701,20 +1769,27 @@ def init(
             for warning in inst.publish_port_warnings(values):
                 click.echo(f"⚠ {warning}")
             content = inst.render_env(values, extra)
-            if dest.is_file() and dest.read_text(encoding="utf-8") == content:
+            existing = dest.read_text(encoding="utf-8") if dest.is_file() else None
+            if existing is not None and (existing == content or (quick and not quick_changed)):
                 action = "noop"
             else:
-                action = "update" if dest.is_file() else "create"
+                action = "update" if existing is not None else "create"
             global_plan = _GlobalInitPlan(
                 path=dest,
                 content=content,
-                preview=inst.render_env_preview(values, extra),
-                source=f"existing:{dest}" if dest.is_file() else "wizard defaults/input",
+                preview=quick_preview if quick else inst.render_env_preview(values, extra),
+                source=f"existing:{dest}" if existing is not None else "wizard defaults/input",
                 action=action,
             )
 
         if run_repo:
-            settings = Settings(_env_file=None) if scope == "repo" else Settings()
+            if scope == "repo":
+                settings = Settings(_env_file=None)
+            elif path_opt or os.environ.get("REVIEWER_ENV_FILE"):
+                assert global_plan is not None
+                settings = Settings(_env_file=global_plan.path)
+            else:
+                settings = Settings()
             detection = detect_repository(
                 ".",
                 repo_opt,
@@ -1751,7 +1826,7 @@ def init(
                     detection,
                     settings=settings,
                 )
-                if initial_plan.action == "noop" or not interactive:
+                if initial_plan.action == "noop" or not interactive or (quick and run_global):
                     repo_plan = initial_plan
                 else:
                     click.echo(
@@ -1788,14 +1863,19 @@ def init(
                         index=index,
                     )
 
-        _render_init_preview(global_plan, repo_plan)
+        _render_init_preview(global_plan, repo_plan, compact=quick and run_global)
         if dry_run:
             return
-        if interactive and not click.confirm(
+        plans = [plan for plan in (global_plan, repo_plan) if plan is not None]
+        has_changes = any(plan.action != "noop" for plan in plans)
+        if interactive and has_changes and not click.confirm(
             "\nЗаписать показанные изменения?",
             default=True,
         ):
             click.echo("Отменено — файлы не изменены.")
+            return
+        if interactive and plans and not has_changes:
+            click.echo("Изменений нет. Текущая конфигурация сохранена.")
             return
     except click.Abort:
         click.echo("\nОтменено — файлы не изменены.")
@@ -1808,8 +1888,7 @@ def init(
     if global_plan is not None:
         try:
             if global_plan.action != "noop":
-                global_plan.path.parent.mkdir(parents=True, exist_ok=True)
-                global_plan.path.write_text(global_plan.content, encoding="utf-8")
+                inst.write_env(global_plan.path, global_plan.content)
         except Exception as exc:  # noqa: BLE001 — error не должен раскрыть env content
             raise click.ClickException(
                 f"Не удалось записать {global_plan.path}: {type(exc).__name__}"
@@ -1835,17 +1914,23 @@ def init(
         _render_config_report(_branches_report(effective))
         click.echo(f"Полный отчёт: reviewer config show --repo {repo_plan.repo}")
 
-    if run_global and interactive and click.confirm(
+    if global_plan is None:
+        return
+    check_command = ["reviewer", "check"]
+    if path_opt or os.environ.get("REVIEWER_ENV_FILE"):
+        check_command.extend(("--env-file", str(global_plan.path.resolve())))
+    if interactive and advanced and click.confirm(
         "\nЗапустить reviewer check сейчас?",
         default=True,
     ):
-        subprocess.run(["reviewer", "check"], check=False)
-    elif run_global and interactive:
-        click.echo("Запустите: reviewer check")
-    elif run_global:
-        click.echo("Готово. Запустите: reviewer check")
+        subprocess.run(check_command, check=False)
+    else:
+        click.echo(f"Проверка после запуска хранилищ и индексации — {shlex.join(check_command)}")
 
-    if run_global and interactive and _shutil.which("codex") and click.confirm(
+    if quick:
+        click.echo("Подключение клиента — reviewer install --list")
+        click.echo("Хранилища, доска и дополнительные параметры — reviewer init --advanced")
+    if interactive and advanced and _shutil.which("codex") and click.confirm(
         "\nУстановить или обновить rag-reviewer для Codex?", default=True
     ):
         result = _run_codex_target(include_mcp=True, dry_run=False)

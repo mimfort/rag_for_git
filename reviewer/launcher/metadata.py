@@ -53,12 +53,12 @@ COMMAND_PRESENTATION = {
         keywords=("rag", "graph", "branch"),
     ),
     ("init",): CommandPresentation(
-        summary="Настроить reviewer",
+        summary="Начать настройку",
         details=(
-            "Планирует и настраивает global .env и per-repo branch config "
-            "с preview до записи."
+            "Настраивает global .env и per-repo branch config с preview до записи. "
+            "Для хранилищ и досок задач включите --advanced."
         ),
-        effects=(Effect.WRITE,),
+        effects=(Effect.WRITE, Effect.NETWORK),
         scenarios=("Первичная настройка", "Добавление репозитория", "Смена credentials"),
         keywords=("config", "env", "repository", "wizard"),
     ),
@@ -150,6 +150,10 @@ COMMAND_PRESENTATION = {
 
 PARAMETER_PRESENTATION = {
     ("check", "board_project_values"): ParameterPresentation(ParamSection.ADVANCED),
+    ("check", "env_file"): ParameterPresentation(ParamSection.ADVANCED),
+    ("init", "path_opt"): ParameterPresentation(ParamSection.ADVANCED),
+    ("init", "repo_opt"): ParameterPresentation(ParamSection.ADVANCED),
+    ("init", "yes"): ParameterPresentation(ParamSection.ADVANCED),
     ("index", "ref"): ParameterPresentation(ParamSection.ADVANCED),
     ("index", "branch_opt"): ParameterPresentation(ParamSection.ADVANCED),
     ("search", "branch_opt"): ParameterPresentation(ParamSection.ADVANCED),

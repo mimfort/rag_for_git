@@ -316,7 +316,13 @@ a New Chat or new CLI session. In an IDE, also use Reload Window.
 
 ### Required services and credentials
 
-Run `reviewer init` to write the selected env file and `reviewer check` to validate it. Resolution
+Run `reviewer` without arguments to open the command menu. Search accepts full commands such as
+`reviewer init`. In a command form, F3 opens the preview even when a flag has focus.
+
+`reviewer init` asks for missing keys and previews the proposed configuration before saving.
+Use `reviewer init --advanced` to choose providers or configure stores and task boards.
+`reviewer init --dry-run` prints the plan without writing. Use `reviewer check --env-file PATH`
+to validate a separate setup profile. Default env file resolution
 order is `REVIEWER_ENV_FILE` → `$XDG_CONFIG_HOME/rag-reviewer/.env` → `./.env`.
 
 Important groups:
@@ -330,7 +336,7 @@ Important groups:
 
 Published host ports of the Compose storage services are variables, not literals:
 `PARADEDB_PUBLISH_PORT` (default `5433`), `NEO4J_BOLT_PUBLISH_PORT` (default `7687`) and
-`NEO4J_HTTP_PUBLISH_PORT` (default `7474`). Container ports stay fixed. `reviewer init` asks for
+`NEO4J_HTTP_PUBLISH_PORT` (default `7474`). Container ports stay fixed. `reviewer init --advanced` asks for
 them in the storage group and derives the first two from `PG_DSN` and `NEO4J_URI`, so the client
 string and the published port cannot drift apart silently; a mismatch on a local host prints a
 warning without blocking.
@@ -410,7 +416,7 @@ in committed `.review.yml`. Pass `--repo owner/name` when no usable git remote i
 | GitLab | `GITLAB_URL`, `GITLAB_TOKEN` | PAT/project token with `api` scope | MR metadata, changes, notes, repository files, compare | discussions/notes and MR description backlink | authenticates `/api/v4/user` identity |
 
 The health check proves URL/token authentication, not every granular repository permission. The
-selected repository permissions are exercised by an actual review. `reviewer init` shows the same
+selected repository permissions are exercised by an actual review. `reviewer init --advanced` shows the same
 contract before prompting only for the selected provider's credentials.
 
 ### Repositories and branches
@@ -885,7 +891,7 @@ namespaced skills with `$rag-reviewer:...`.
 
 - **When:** synchronize a configured board before task search or solve-task.
 - **Invoke:** `/rag-reviewer:sync-tasks`.
-- **Needs:** use `reviewer init`, configure the selected provider as documented in
+- **Needs:** use `reviewer init --advanced`, configure the selected provider as documented in
   `docs/board-providers.md`, then validate it with `reviewer check`.
 - **Reads/writes:** calls idempotent server-side `sync_board` in repo mode with canonical repo and
   tracked branch. The server resolves effective policy; the client does not reconstruct it. It reads
