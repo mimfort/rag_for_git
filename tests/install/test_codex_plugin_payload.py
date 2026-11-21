@@ -182,6 +182,7 @@ def test_payload_digest_orders_files_by_relative_path_parts(tmp_path, monkeypatc
 def test_real_payload_declares_lf_checkout_policy():
     paths = (
         "assets/icon.svg",
+        "reviewer/bugreport/diagnostics.py",
         "plugin/.codex-plugin/plugin.json",
         "plugin/README.md",
         "plugin/assets/icon.svg",
