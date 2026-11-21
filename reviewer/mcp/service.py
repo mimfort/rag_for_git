@@ -3617,15 +3617,14 @@ class _TaskContextDeps:
         """
         return self._service.components.task_service.get_task_context(key, project=project)
 
-    def similar(self, query: str, project: str | None) -> str:
-        """Похожие задачи. Побочно запоминает структурные хиты для секции code.
-
-        Хиты берутся из ОДНОГО поиска: второй вызов означал бы второй
-        embed_query и лишний расход квоты Voyage (3 RPM / 10K TPM). Порядок
-        вызовов (similar до code) закреплён тестом build_task_context.
-        """
+    def similar(self, query: str, project: str | None, *, task: dict | None = None) -> str:
+        """Один поиск для видимой выдачи и сбора diff-путей похожих задач."""
         service = self._service.components.task_service
         hits = service.search_hits(query, project=project, strict=True)
+        if task and hits:
+            task_keys = {task["key"], *(task.get("aliases") or [])}
+            hits = [hit for hit in hits
+                    if task_keys.isdisjoint((hit.key, *hit.aliases))]
         self._similar_hits = list(hits or [])
         return service.render_hits(hits)
 

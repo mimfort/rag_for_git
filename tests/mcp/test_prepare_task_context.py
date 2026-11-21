@@ -10,6 +10,8 @@ from reviewer import storage_health as sh
 from reviewer.config.settings import Settings
 from reviewer.mcp import task_context
 from reviewer.mcp.service import MCPReviewService, _TaskContextDeps
+from reviewer.tasks.service import TaskService
+from reviewer.tasks.store import TaskHit
 
 
 @pytest.fixture(autouse=True)
@@ -61,7 +63,7 @@ class FakeDeps:
     def linked(self, key, project):
         return self._result("linked", "Task PRI-248\n  Linked tasks: ...")
 
-    def similar(self, query, project):
+    def similar(self, query, project, *, task=None):
         return self._result("similar", "1. ID-300 ...")
 
     def subsystems(self, repo, branch, query):
@@ -195,6 +197,50 @@ def test_task_missing_is_a_gap_not_an_error():
         branch="dev", warm_board=False)
     assert payload["task"] is None
     assert "task" in _gap_sections(payload)
+
+
+@pytest.mark.parametrize("key", ["PRI-295", "ID-388", "свободный текст"])
+def test_context_similar_filters_current_task_before_render_and_augment(key, monkeypatch):
+    task = {"key": "ID-388", "aliases": ["PRI-295", "BOARD-295"], "title": "T"}
+    neighbors = [TaskHit(f"ID-{i}", "T", "open", 0.02, [f"PRI-{i}"])
+                 for i in range(1, 9)]
+    current = TaskHit("ID-388", "T", "open", 0.03, ["PRI-295"])
+    alias_hit = TaskHit("BOARD-295", "T", "open", 0.02)
+    hit_with_alias = TaskHit("LEGACY-1", "T", "open", 0.02, ["BOARD-295"])
+    hits = [current, neighbors[0], alias_hit, hit_with_alias, *neighbors[1:]]
+
+    store = MagicMock()
+    store.search.return_value = hits
+    embedder = MagicMock()
+    svc = MagicMock()
+    svc.components.task_service = TaskService(store, None, embedder)
+    resolved_task = task if key in ("PRI-295", "ID-388") else None
+    svc.get_task.return_value = resolved_task
+    history = svc._review_service._ensure_history.return_value
+    history.diff_paths_for_tasks.return_value = {
+        "PRI-295": ["own.py"],
+        "BOARD-295": ["own-alias.py"],
+        "PRI-1": ["neighbor.py"],
+    }
+
+    deps = _TaskContextDeps(svc, None)
+    monkeypatch.setattr(deps, "preflight", lambda repo, branch: {})
+    monkeypatch.setattr(deps, "task_board", lambda repo, branch: {"project": "PRI"})
+    payload = task_context.build_task_context(
+        deps, repo="o/n", key=key, branch="dev", warm_board=False)
+
+    expected_hits = neighbors if resolved_task else hits
+    rendered_keys = [line.split()[1] for line in payload["related"]["similar"].splitlines()
+                     if line and line[0].isdigit()]
+    assert rendered_keys == [hit.key for hit in expected_hits[:8]]
+    embedder.embed_query.assert_called_once_with("T" if resolved_task else key)
+    store.search.assert_called_once()
+    history.diff_paths_for_tasks.assert_called_once_with(
+        [identity for hit in expected_hits for identity in [hit.key, *hit.aliases]])
+    sources = svc._search_codebase_multi.call_args_list[0].kwargs["augment_sources"]
+    expected_paths = ["neighbor.py"] if resolved_task else [
+        "own.py", "neighbor.py", "own-alias.py"]
+    assert sources[0].paths == expected_paths
 
 
 def test_board_less_query_falls_back_to_user_formulation():

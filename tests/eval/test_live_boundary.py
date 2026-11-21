@@ -169,12 +169,14 @@ def test_code_multi_similar_paths_flag_uses_production_deps(monkeypatch):
     from eval.solve_task_metrics.live import LiveRetrieval
     from reviewer.mcp import service as service_mod
 
+    similar_calls = []
+
     class FakeDeps:
         def __init__(self, service, path):
-            self.similar_calls: list = []
+            pass
 
-        def similar(self, query, project):
-            self.similar_calls.append((query, project))
+        def similar(self, query, project, *, task=None):
+            similar_calls.append((query, project, task))
 
         def _augment_paths(self, repo):
             return ["a.py"]
@@ -193,8 +195,10 @@ def test_code_multi_similar_paths_flag_uses_production_deps(monkeypatch):
 
     service = FakeService()
     provider = LiveRetrieval(object(), object(), service)
-    provider.code_multi("o/n", "dev", ["q1", "q2"], None, similar_paths=True)
+    task = {"key": "ID-388", "aliases": ["PRI-295"]}
+    provider.code_multi("o/n", "dev", ["q1", "q2"], None, similar_paths=True, task=task)
 
+    assert similar_calls == [("q1", None, task)]
     assert len(service.captured) == 1
     assert service.captured[0].name == "similar-diffs"
     assert service.captured[0].paths == ["a.py"]
@@ -212,7 +216,7 @@ def test_code_multi_with_overrides_forwards_augment_signals(monkeypatch):
         def __init__(self, service, path):
             pass
 
-        def similar(self, query, project):
+        def similar(self, query, project, *, task=None):
             pass
 
         def _augment_paths(self, repo):
@@ -296,7 +300,7 @@ def test_code_multi_survives_similar_failure_but_records_it(monkeypatch):
         def __init__(self, service, path):
             pass
 
-        def similar(self, query, project):
+        def similar(self, query, project, *, task=None):
             raise APIError("HTTP code 403")
 
         def _augment_paths(self, repo):
