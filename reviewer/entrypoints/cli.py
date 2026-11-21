@@ -5,11 +5,13 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 import json
 import logging
+import os
 from pathlib import Path
 import platform as _platform
 import re
+import shlex
 import shutil as _shutil
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TextIO
 
 import click
 import httpx
@@ -34,6 +36,7 @@ from reviewer.config.layers import (
 )
 from reviewer.config.onboarding import (
     RepositoryConfigPlan,
+    RepositoryDetection,
     apply_repository_config,
     detect_repository,
     parse_branch_csv,
@@ -58,6 +61,11 @@ from reviewer.graph.store import GraphStore
 from reviewer.index.freshness import update_base
 from reviewer.index.pathfilter import is_ignored
 from reviewer.index.refs import base_ref
+from reviewer.metrics.brief_quality import ground_truth
+from reviewer.metrics.brief_quality.config import BriefQualityConfig
+from reviewer.metrics.brief_quality.corpus import measure_corpus
+from reviewer.metrics.client_usage import SOURCES as USAGE_SOURCES
+from reviewer.metrics.client_usage import measure_usage
 from reviewer.policy.policy import ReviewPolicy
 from reviewer.index.store import ChunkStore
 from reviewer.index.summary_store import SummaryStore
@@ -78,6 +86,7 @@ from reviewer.update_lifecycle import (
     sync_compose_file,
 )
 from reviewer.versioning import InstallMode, check_latest, detect_installation, upgrade_uv_tool
+from reviewer.web.history import ReviewHistory
 from reviewer.web.serve import DEFAULT_HOST, DEFAULT_PORT
 
 if TYPE_CHECKING:
@@ -851,9 +860,11 @@ def _parse_board_projects(values: tuple[str, ...]) -> dict[str, str]:
     metavar="TYPE=PROJECT",
     help="Проект для provider validation; опцию можно повторять.",
 )
-def check(board_project_values: tuple[str, ...]) -> None:
+@click.option("--env-file", type=click.Path(exists=True, dir_okay=False, path_type=Path),
+              help="Проверить выбранный .env.")
+def check(board_project_values: tuple[str, ...], env_file: Path | None = None) -> None:
     """Проверить готовность окружения и настроенных внешних providers."""
-    s = Settings()
+    s = Settings(_env_file=env_file) if env_file is not None else Settings()
     board_projects = _parse_board_projects(board_project_values)
     failed = False
     storage_remedy_hint: str | None = None
@@ -1227,6 +1238,99 @@ def status(path: str, repo_tag: str | None, branch_opt: str | None,
     click.echo(render_status(report, backend))
 
 
+def _render_measure(summary: Mapping[str, object]) -> str:
+    """Человекочитаемый отчёт по сводке `measure_corpus` (для click.echo)."""
+    fixed = {"briefs", "skipped_no_key", "skipped_no_merges", "rows", "write_failed"}
+    lines = [
+        f"Брифов обработано: {summary['briefs']}",
+        f"Строк записано: {summary['rows']}",
+        f"Пропущено без ключа задачи: {summary['skipped_no_key']}",
+        f"Пропущено без PR-мержей: {summary['skipped_no_merges']}",
+    ]
+    if summary.get("write_failed"):
+        lines.append(f"Сбоев записи в БД: {summary['write_failed']}")
+    statuses = {k: v for k, v in summary.items() if k not in fixed}
+    if statuses:
+        lines.append("По статусам:")
+        lines.extend(f"  {status}: {statuses[status]}" for status in sorted(statuses))
+    return "\n".join(lines)
+
+
+@cli.command("measure-briefs")
+@click.argument("path", default=".")
+@click.option("--repo", "repo_tag", default=None,
+              help="owner/name тег строк метрики; по умолчанию из git remote origin")
+@click.option("--briefs-dir", "briefs_dir", default=None,
+              help="каталог брифов относительно клона; по умолчанию docs/superpowers/briefs")
+@click.option("--json", "as_json", is_flag=True, default=False,
+              help="машиночитаемый JSON вместо текста")
+def measure_briefs(path: str, repo_tag: str | None, briefs_dir: str | None,
+                    as_json: bool) -> None:
+    """Пересчитать качество брифов по PR-мержам клона (не тратит Voyage)."""
+    s = Settings()
+    resolution = _resolve_repo(repo_tag, path, s)
+    if resolution.source == _SUBSTITUTED:
+        # Fail-open, как migrate-branches: команда ничего не индексирует, но
+        # молчать про чужой repo-тег в строках brief_quality тоже не должна.
+        click.echo("⚠ " + _substitution_note(path, resolution.repo), err=True)
+    # Слоистый резолв (env/home/committed), как у finish_task/publish_review —
+    # голое чтение файла клона молча теряло бы core_paths/key_pattern,
+    # заданные через home:review.yml или home:repos/<owner>/<name>.yml, и три
+    # точки съёма считали бы по разным линейкам для одного и того же PR.
+    # Committed-слой — из HEAD клона (git show, без сети, PRI-235); fail-soft
+    # по умолчанию (strict_committed=False) — недоступный/битый .review.yml не
+    # должен обнулять домашние слои и уж тем более ронять весь пересчёт корпуса.
+    #
+    # Почему ref = "HEAD", а не base_ref конкретного PR (как у finish_task/
+    # publish_review): эта команда считает КОРПУС, а не один PR, и её строки
+    # относятся к разным PR с разными base_ref — единственного «правильного»
+    # ref для всех строк не существует. Брать историческую политику каждого
+    # PR нельзя: это сетевой вызов на каждую строку, а команда обязана
+    # работать офлайн, и сделало бы собственный вывод внутренне несравнимым —
+    # строки считались бы разными линейками внутри одного прогона. Поэтому
+    # bulk-пересчёт сознательно берёт ОДНУ текущую линейку клона — HEAD;
+    # CommittedLayerFetcher проверяет ref через rev_parse до чтения, поэтому
+    # HEAD резолвится и на detached-клоне. Следствие: если оператор запускает
+    # команду с фичевой ветки со своим .review.yml, строки посчитаются её
+    # линейкой — это цена самосогласованности пересчёта, а не недосмотр.
+    fetch_committed = CommittedLayerFetcher(resolution.repo, clone_path=path)
+    policy_data, _policy_meta = resolve_policy_data(resolution.repo, "HEAD", fetch_committed)
+    config = BriefQualityConfig.from_review_yaml(policy_data, briefs_dir=briefs_dir)
+    history = ReviewHistory(s.pg_dsn, min_size=s.pg_pool_min_size, max_size=s.pg_pool_max_size)
+    try:
+        # Preflight: record_brief_quality гасит DB-сбои сама (fail-soft для
+        # publish_review/finish_task) — без явной проверки соединения ДО
+        # цикла команда молча отчиталась бы об успехе на лежащем Postgres.
+        # init_schema — единственный метод ReviewHistory без своего try/except.
+        history.init_schema()
+        summary = measure_corpus(path, resolution.repo, config,
+                                 ground_truth.git_runner(Path(path)), history)
+    except psycopg.OperationalError as e:
+        raise click.ClickException(f"Postgres недоступен: {e}")
+    finally:
+        history.close()
+    click.echo(json.dumps(summary, ensure_ascii=False) if as_json else _render_measure(summary))
+    write_failed = summary.get("write_failed", 0)
+    if write_failed:
+        # Postgres умер на середине прогона (после preflight) — исключение
+        # уже погашено внутри measure_and_record, сигналим по счётчику.
+        click.echo(f"⚠ Не записано в БД строк: {write_failed}", err=True)
+        raise SystemExit(1)
+
+
+@cli.command("measure-client-usage")
+@click.argument("events", type=click.File("r", encoding="utf-8"), default="-")
+@click.option("--source", type=click.Choice(USAGE_SOURCES), required=True, help="Формат JSONL")
+@click.option("--model", default=None, help="Модель для событий без имени модели")
+def measure_client_usage(events: TextIO, source: str, model: str | None) -> None:
+    """Суммировать расход токенов из JSONL локально, включая чтение из stdin."""
+    try:
+        result = measure_usage(events, source, model=model)
+    except ValueError as error:
+        raise click.ClickException(str(error)) from error
+    click.echo(json.dumps(result, ensure_ascii=False))
+
+
 @cli.command()
 def gc() -> None:
     """Вычистить осиротевшие overlay pr:N и просроченные сессии ревью.
@@ -1443,8 +1547,24 @@ class _GlobalInitPlan:
 def _render_init_preview(
     global_plan: _GlobalInitPlan | None,
     repo_plan: RepositoryConfigPlan | None,
+    *,
+    compact: bool = False,
 ) -> None:
     """Показать все target-планы до первой записи, не раскрывая env secrets."""
+    if compact:
+        actions = {
+            "create": "будет создан", "update": "будет обновлён",
+            "append": "будет дополнен", "noop": "уже настроен",
+        }
+        click.echo("\nПредпросмотр настройки")
+        if global_plan is not None:
+            click.echo(f"Общий .env — {global_plan.path} ({actions[global_plan.action]})")
+            click.echo(global_plan.preview)
+        if repo_plan is not None:
+            click.echo(f"Профиль {repo_plan.repo} — {repo_plan.path} ({actions[repo_plan.action]})")
+            click.echo(f"Основная ветка — {repo_plan.primary}")
+            click.echo(f"Ветки для индекса — {', '.join(repo_plan.index)}")
+        return
     click.echo("# reviewer init preview")
     if global_plan is not None:
         click.echo(f"\nfile: {global_plan.path}")
@@ -1495,6 +1615,69 @@ def _prompt_vcs_provider(inst, spec, current: Mapping[str, str]) -> dict[str, st
     return inst.prompt_groups([group], current=dict(current), yes=False)
 
 
+def _quick_init_values(inst, current: dict[str, str]) -> tuple[dict[str, str], str, bool]:
+    """Collect missing keys for local onboarding using the existing defaults."""
+    from reviewer.services.repo_id import derive_vcs_from_remote
+
+    values = inst.prompt_groups(inst.WIZARD_GROUPS, current=current, yes=True)
+    defaults = values.copy()
+    if not values["VOYAGE_API_KEY"]:
+        values["VOYAGE_API_KEY"] = click.prompt(
+            "Ключ Voyage для индекса (Enter — позже)",
+            default="", hide_input=True, show_default=False,
+        ).strip()
+
+    detected = derive_vcs_from_remote(remote_url(".") or "")
+    provider = detected[0] if detected else current.get("VCS_PROVIDER")
+    spec = inst.VCS_SETUPS.get(provider)
+    storage = "сохранённые параметры" if {"PG_DSN", "NEO4J_URI"} & current.keys() else (
+        "локальные ParadeDB и Neo4j"
+    )
+    statuses = [
+        "Voyage: ключ задан" if values["VOYAGE_API_KEY"] else "Voyage: ключ нужен для индекса",
+        f"Хранилища: {storage}",
+    ]
+    if detected and provider == "gitlab" and detected[1] != values["GITLAB_URL"].rstrip("/"):
+        statuses.append("GitLab: подтвердите адрес сервера и ключ через reviewer init --advanced")
+    elif spec is not None:
+        if not current.get("VCS_PROVIDER"):
+            values["VCS_PROVIDER"] = spec.provider
+        for token in (field for field in spec.credential_fields if field.secret):
+            if not values[token.key]:
+                click.echo(f"Инструкция для ключа {spec.label} — {spec.help_url}")
+                values[token.key] = click.prompt(
+                    f"Ключ {spec.label} для ревью (Enter — позже)",
+                    default="", hide_input=True, show_default=False,
+                ).strip()
+            statuses.append(
+                f"{spec.label}: " + ("ключ задан" if values[token.key] else "ключ пропущен")
+            )
+    return values, "\n".join(statuses), values != defaults
+
+
+def _prompt_repository_branches(
+    detection: RepositoryDetection, plan: RepositoryConfigPlan, settings: Settings,
+) -> RepositoryConfigPlan:
+    while True:
+        primary = click.prompt("Primary branch", default=plan.primary).strip()
+        if primary:
+            break
+        click.echo("Основная ветка должна иметь имя.")
+    default_index = plan.index if primary == plan.primary else (primary,)
+    while True:
+        raw_index = click.prompt("Index branches (CSV)", default=",".join(default_index))
+        try:
+            index = parse_branch_csv(raw_index, primary)
+        except ValueError as exc:
+            click.echo(f"Некорректные ветки: {exc}")
+            continue
+        return plan_repository_config(
+            detection, settings=settings,
+            primary=primary if primary != detection.primary else None,
+            index=index,
+        )
+
+
 @cli.command()
 @click.option("--path", "path_opt", default=None,
               help="куда писать .env (по умолчанию ~/.config/rag-reviewer/.env)")
@@ -1510,14 +1693,17 @@ def _prompt_vcs_provider(inst, spec, current: Mapping[str, str]) -> dict[str, st
     help="этапы настройки: global .env, repo branch config или оба",
 )
 @click.option("--repo", "repo_opt", default=None, help="owner/name для repo stage")
+@click.option("--advanced", is_flag=True,
+              help="Настроить хранилища, VCS, доску задач и ветки по шагам.")
 def init(
     path_opt: str | None,
     yes: bool,
     dry_run: bool,
     scope: str,
     repo_opt: str | None,
+    advanced: bool,
 ) -> None:
-    """Настроить global .env и per-repo ветки с preview до записи."""
+    """Быстро настроить reviewer и показать изменения перед записью."""
     import subprocess
     from reviewer import install as inst
     from reviewer.tasks.boards import setup as board_setup
@@ -1527,6 +1713,7 @@ def init(
     run_global = scope in {"all", "global"}
     run_repo = scope in {"all", "repo"}
     interactive = not yes and not dry_run
+    quick = interactive and not advanced
     if run_repo and repo_opt is not None:
         try:
             repo_opt = _resolve_config_repo(repo_opt)
@@ -1534,15 +1721,20 @@ def init(
             raise click.ClickException(str(exc)) from exc
     global_plan: _GlobalInitPlan | None = None
     repo_plan: RepositoryConfigPlan | None = None
+    detection: RepositoryDetection | None = None
     settings: Settings | None = None
     try:
         if run_global:
-            dest = Path(path_opt).expanduser() if path_opt else inst.default_env_path()
+            env_path = path_opt or os.environ.get("REVIEWER_ENV_FILE")
+            dest = Path(env_path).expanduser() if env_path else inst.default_env_path()
             current = inst.read_env(dest)
             wizard_keys = {field.key for group in inst.WIZARD_GROUPS for field in group.fields}
             groups = inst.WIZARD_GROUPS
 
-            if interactive:
+            if quick:
+                click.echo("Быстрая настройка reviewer")
+                values, quick_preview, quick_changed = _quick_init_values(inst, current)
+            elif interactive:
                 click.echo(f"Настройка rag-reviewer: {dest}")
                 click.echo("─" * 52)
                 vcs_group = next(group for group in groups if group.title == "VCS")
@@ -1617,20 +1809,27 @@ def init(
             for warning in inst.publish_port_warnings(values):
                 click.echo(f"⚠ {warning}")
             content = inst.render_env(values, extra)
-            if dest.is_file() and dest.read_text(encoding="utf-8") == content:
+            existing = dest.read_text(encoding="utf-8") if dest.is_file() else None
+            if existing is not None and (existing == content or (quick and not quick_changed)):
                 action = "noop"
             else:
-                action = "update" if dest.is_file() else "create"
+                action = "update" if existing is not None else "create"
             global_plan = _GlobalInitPlan(
                 path=dest,
                 content=content,
-                preview=inst.render_env_preview(values, extra),
-                source=f"existing:{dest}" if dest.is_file() else "wizard defaults/input",
+                preview=quick_preview if quick else inst.render_env_preview(values, extra),
+                source=f"existing:{dest}" if existing is not None else "wizard defaults/input",
                 action=action,
             )
 
         if run_repo:
-            settings = Settings(_env_file=None) if scope == "repo" else Settings()
+            if scope == "repo":
+                settings = Settings(_env_file=None)
+            elif path_opt or os.environ.get("REVIEWER_ENV_FILE"):
+                assert global_plan is not None
+                settings = Settings(_env_file=global_plan.path)
+            else:
+                settings = Settings()
             detection = detect_repository(
                 ".",
                 repo_opt,
@@ -1667,7 +1866,7 @@ def init(
                     detection,
                     settings=settings,
                 )
-                if initial_plan.action == "noop" or not interactive:
+                if initial_plan.action == "noop" or not interactive or (quick and run_global):
                     repo_plan = initial_plan
                 else:
                     click.echo(
@@ -1677,41 +1876,33 @@ def init(
                         f"Primary candidate: {detection.primary} "
                         f"({detection.primary_source})"
                     )
-                    primary = click.prompt(
-                        "Primary branch",
-                        default=initial_plan.primary,
-                    ).strip()
-                    default_index = (
-                        initial_plan.index
-                        if primary == initial_plan.primary
-                        else (primary,)
-                    )
-                    while True:
-                        raw_index = click.prompt(
-                            "Index branches (CSV)",
-                            default=",".join(default_index),
-                        )
-                        try:
-                            index = parse_branch_csv(raw_index, primary)
-                        except ValueError as exc:
-                            click.echo(f"Некорректные ветки: {exc}")
-                            continue
-                        break
-                    repo_plan = plan_repository_config(
-                        detection,
-                        settings=settings,
-                        primary=(primary if primary != initial_plan.primary else None),
-                        index=index,
-                    )
+                    repo_plan = _prompt_repository_branches(detection, initial_plan, settings)
 
-        _render_init_preview(global_plan, repo_plan)
+        _render_init_preview(global_plan, repo_plan, compact=quick and run_global)
         if dry_run:
             return
-        if interactive and not click.confirm(
-            "\nЗаписать показанные изменения?",
-            default=True,
-        ):
-            click.echo("Отменено — файлы не изменены.")
+        plans = [plan for plan in (global_plan, repo_plan) if plan is not None]
+        has_changes = any(plan.action != "noop" for plan in plans)
+        if interactive and has_changes:
+            if quick and run_global and repo_plan is not None and repo_plan.action != "noop":
+                assert detection is not None and settings is not None
+                while True:
+                    action = click.prompt(
+                        "\n1 — сохранить · 2 — изменить ветки · 0 — отменить",
+                        type=click.Choice(("1", "2", "0")), default="1", show_choices=False,
+                    )
+                    if action != "2":
+                        confirmed = action == "1"
+                        break
+                    repo_plan = _prompt_repository_branches(detection, repo_plan, settings)
+                    _render_init_preview(global_plan, repo_plan, compact=True)
+            else:
+                confirmed = click.confirm("\nЗаписать показанные изменения?", default=True)
+            if not confirmed:
+                click.echo("Отменено — файлы не изменены.")
+                return
+        if interactive and plans and not has_changes:
+            click.echo("Изменений нет. Текущая конфигурация сохранена.")
             return
     except click.Abort:
         click.echo("\nОтменено — файлы не изменены.")
@@ -1724,8 +1915,7 @@ def init(
     if global_plan is not None:
         try:
             if global_plan.action != "noop":
-                global_plan.path.parent.mkdir(parents=True, exist_ok=True)
-                global_plan.path.write_text(global_plan.content, encoding="utf-8")
+                inst.write_env(global_plan.path, global_plan.content)
         except Exception as exc:  # noqa: BLE001 — error не должен раскрыть env content
             raise click.ClickException(
                 f"Не удалось записать {global_plan.path}: {type(exc).__name__}"
@@ -1751,17 +1941,23 @@ def init(
         _render_config_report(_branches_report(effective))
         click.echo(f"Полный отчёт: reviewer config show --repo {repo_plan.repo}")
 
-    if run_global and interactive and click.confirm(
+    if global_plan is None:
+        return
+    check_command = ["reviewer", "check"]
+    if path_opt or os.environ.get("REVIEWER_ENV_FILE"):
+        check_command.extend(("--env-file", str(global_plan.path.resolve())))
+    if interactive and advanced and click.confirm(
         "\nЗапустить reviewer check сейчас?",
         default=True,
     ):
-        subprocess.run(["reviewer", "check"], check=False)
-    elif run_global and interactive:
-        click.echo("Запустите: reviewer check")
-    elif run_global:
-        click.echo("Готово. Запустите: reviewer check")
+        subprocess.run(check_command, check=False)
+    else:
+        click.echo(f"Проверка после запуска хранилищ и индексации — {shlex.join(check_command)}")
 
-    if run_global and interactive and _shutil.which("codex") and click.confirm(
+    if quick:
+        click.echo("Подключение клиента — reviewer install --list")
+        click.echo("Хранилища, доска и дополнительные параметры — reviewer init --advanced")
+    if interactive and advanced and _shutil.which("codex") and click.confirm(
         "\nУстановить или обновить rag-reviewer для Codex?", default=True
     ):
         result = _run_codex_target(include_mcp=True, dry_run=False)

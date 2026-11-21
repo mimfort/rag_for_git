@@ -6,6 +6,7 @@
 import logging
 from collections import OrderedDict
 from collections.abc import Callable, Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from time import monotonic
@@ -26,7 +27,8 @@ from reviewer.config.settings import Settings
 from reviewer.config.task_board import migrate_legacy_board_args, normalize_task_sync_filter
 from reviewer.index.refs import base_ref
 from reviewer.mcp import task_context
-from reviewer.mcp.schemas import FindingIn, SummaryFragmentIn, VerdictIn
+from reviewer.mcp.brief_evidence import BriefEvidence, _visible_lines
+from reviewer.mcp.schemas import BriefCitationIn, FindingIn, SummaryFragmentIn, VerdictIn
 from reviewer.mcp.session_serde import from_payload, to_payload
 from reviewer.mcp.session_store import SessionStore
 from reviewer.retrieval.retriever import ContextPack
@@ -268,6 +270,7 @@ class MCPReviewService:
             board_credentials or ProviderCredentialSource.from_settings(settings)
         )
         self._sessions: dict[tuple[str, int], _Session] = {}
+        self._brief_evidence = BriefEvidence()
         self._session_store: SessionStore | None = None
         self._summary_hash_cache: OrderedDict[
             tuple[str, str, tuple[str, datetime], str], tuple[float, dict[str, str]]
@@ -1105,7 +1108,46 @@ class MCPReviewService:
         )
         return request, registry, credentials
 
-    def _backlink_pr(self, pr_url: str, key: str, task_url: str) -> tuple[str, list[str]]:
+    @contextmanager
+    def _pr_session(self, pr_url: str):
+        """Открыть VCS по ссылке на PR один раз на все операции finish_task.
+
+        Никогда не бросает: отдаёт (target, vcs, error). Ни бэклинк, ни съём
+        метрики не смеют уронить finish_task — доска к этому моменту уже
+        записана, и её успех не отменяется ничем из последующего.
+        """
+        from reviewer.tasks.pr_backlink import parse_pr_url
+
+        target = parse_pr_url(pr_url)
+        if target is None:
+            yield None, None, f"{pr_url!r} не распознан как ссылка на PR/MR"
+            return
+        vcs = None
+        try:
+            vcs = (self._vcs_factory(target.owner, target.repo) if self._vcs_factory
+                   else self._review_service._create_vcs_provider(
+                       target.owner, target.repo,
+                       platform=target.platform, base_url=target.base_url))
+        except Exception as exc:  # noqa: BLE001 — открытие VCS не смеет уронить finish_task
+            log.warning("не удалось открыть VCS для %s", pr_url, exc_info=True)
+            yield target, None, str(exc)
+            return
+        # `yield` — ВНЕ try/except открытия: исключение из тела `with`-блока
+        # (протокол генераторов доставляет его сюда через .throw()) не должно
+        # попадать в except выше — иначе оно ловится как «не удалось открыть
+        # VCS», логируется под чужой причиной, и генератор пытается yield'нуть
+        # второй раз, что contextlib подменяет на RuntimeError("generator
+        # didn't stop after throw()"), теряя исходную ошибку вызывающего кода.
+        try:
+            yield target, vcs, None
+        finally:
+            if vcs is not None and self._vcs_factory is None:
+                try:
+                    vcs.close()
+                except Exception:
+                    log.warning("не удалось закрыть VCS после finish_task", exc_info=True)
+
+    def _apply_backlink(self, target, vcs, key: str, task_url: str) -> tuple[str, list[str]]:
         """Дописать ссылку на задачу в начало тела PR. Возвращает (status, warnings).
 
         status — один из трёх исходов: "added" (записали сейчас), "already_present"
@@ -1115,21 +1157,13 @@ class MCPReviewService:
 
         Обратная сторона связи: finish пишет PR-ссылку в задачу, здесь — ссылку
         на задачу в PR. Полностью fail-soft: доска к этому моменту уже записана,
-        поэтому ни одна ошибка правки PR не отменяет успех finish_task."""
-        from reviewer.tasks.pr_backlink import apply_backlink, parse_pr_url
+        поэтому ни одна ошибка правки PR не отменяет успех finish_task. VCS уже
+        открыт вызывающим (`_pr_session`) — здесь только применение бэклинка."""
+        from reviewer.tasks.pr_backlink import apply_backlink
         if not task_url:
             return "failed", ["ссылка на задачу не добавлена в PR: url задачи не резолвится "
                               "(task_board.url_template не задан)"]
-        target = parse_pr_url(pr_url)
-        if target is None:
-            return "failed", ["ссылка на задачу не добавлена в PR: "
-                              f"{pr_url!r} не распознан как ссылка на PR/MR"]
-        vcs = None
         try:
-            vcs = (self._vcs_factory(target.owner, target.repo) if self._vcs_factory
-                   else self._review_service._create_vcs_provider(
-                       target.owner, target.repo,
-                       platform=target.platform, base_url=target.base_url))
             body = apply_backlink(vcs.get_pull_request(target.number).body, key, task_url)
             if body is None:
                 return "already_present", []   # ссылка уже на месте — идемпотентный no-op
@@ -1138,12 +1172,35 @@ class MCPReviewService:
         except Exception as exc:
             log.warning("бэклинк задачи в PR не удался", exc_info=True)
             return "failed", [f"ссылка на задачу не добавлена в PR: {exc}"]
-        finally:
-            if vcs is not None and self._vcs_factory is None:
-                try:
-                    vcs.close()
-                except Exception:
-                    log.warning("не удалось закрыть VCS после бэклинка", exc_info=True)
+
+    def _record_finish_task_metric(self, target, vcs, key: str) -> str | None:
+        """Снять качество брифа по факту закрытия задачи (PRI-270).
+
+        Знаменатель — ПОЛНЫЙ дифф PR, как и на публикации ревью: иначе числа
+        двух точек съёма посчитаны разными линейками. Полностью fail-soft:
+        закрытие задачи важнее наблюдаемости за самим reviewer.
+        """
+        from reviewer.services import brief_quality
+
+        repo = f"{target.owner}/{target.repo}"
+        try:
+            changed = vcs.get_changed_files(target.number)
+            status_map = {item.path: item.status for item in changed}
+            pr = vcs.get_pull_request(target.number)
+            # base_ref РЕАЛЬНОГО PR, а не первичная ветка репозитория: .review.yml
+            # берётся из целевой ветки PR (см. _record_brief_quality/publish_review) —
+            # иначе на PR в неглавную ветку эта точка съёма считает по чужому конфигу.
+            policy, _meta = self._resolve_policy(repo, pr.base_ref)
+            return brief_quality.measure_and_record(
+                task_key=key, repo=repo, pr_number=target.number, head_sha=pr.head_sha,
+                changed_paths=list(status_map), changed_status=status_map,
+                clone_path=self._repo_clone_path(repo), config=policy.brief_quality,
+                history=self._review_service._ensure_history(), run_id=None,
+            )
+        except Exception:  # noqa: BLE001 — наблюдаемость не роняет закрытие задачи
+            log.warning("Не удалось снять качество брифа на finish_task для %s", repo,
+                        exc_info=True)
+            return None
 
     def sync_board(
         self,
@@ -1442,8 +1499,16 @@ class MCPReviewService:
                     target=target,
                 )
                 brief = self._write_through(resolved.provider, key)
-                link_status, link_warnings = self._backlink_pr(
-                    pr_url, key, (brief or {}).get("url") or "")
+                task_url = (brief or {}).get("url") or ""
+                metric_status = None
+                with self._pr_session(pr_url) as (target, vcs, error):
+                    if vcs is None:
+                        link_status, link_warnings = "failed", [
+                            f"ссылка на задачу не добавлена в PR: {error}"]
+                    else:
+                        link_status, link_warnings = self._apply_backlink(
+                            target, vcs, key, task_url)
+                        metric_status = self._record_finish_task_metric(target, vcs, key)
                 result.setdefault("warnings", []).extend(migration_warnings)
                 result["warnings"].extend(link_warnings)
                 return self._safe_board_payload(
@@ -1455,6 +1520,9 @@ class MCPReviewService:
                         # task_link_status — три различимых исхода (PRI-238).
                         "task_link_added": link_status == "added",
                         "task_link_status": link_status,
+                        # Съём качества брифа на закрытии задачи (PRI-270): вторая,
+                        # более частая точка измерения — рядом с publish_review.
+                        "brief_quality_status": metric_status,
                         **result,
                     },
                     resolved.secrets,
@@ -1821,7 +1889,8 @@ class MCPReviewService:
                                branch: str | None = None,
                                include_tests: bool = False,
                                augment_sources: list | None = None,
-                               *, strict: bool = False) -> str:
+                               *, strict: bool = False,
+                               code_budget: dict[str, int] | None = None) -> str:
         """Мультизапросный ретрив секций контекста задачи (PRI-255).
 
         Приватный: публичный search_codebase остаётся однозапросным, чтобы
@@ -1846,17 +1915,25 @@ class MCPReviewService:
                 self.components.retriever, repo, queries,
                 limits=cl.search_codebase, section_limits=cl.code_section,
                 hops=cl.graph.hops, branch=resolved, include_tests=include_tests,
-                augment_sources=augment_sources, strict=strict)
+                augment_sources=augment_sources, strict=strict,
+                include_selection_stats=code_budget is not None)
         except Exception as exc:
             if strict and is_embedder_unavailable(exc):
                 raise
             log.warning("_search_codebase_multi: сбой поиска", exc_info=True)
             return "(ничего не найдено)"
-        return pack.as_context(line_numbers=True) or "(ничего не найдено)"
+        context = pack.as_context(line_numbers=True)
+        if code_budget is not None and pack.selection_stats is not None:
+            visible = len(_visible_lines(context))
+            code_budget.update(pack.selection_stats, visible_files=visible,
+                               hidden_by_rendering=pack.selection_stats["selected_files"] - visible)
+        return context or "(ничего не найдено)"
 
     def prepare_task_context(self, repo: str, key: str, branch: str | None = None,
                              path: str | None = None,
-                             warm_board: bool = True) -> dict:
+                             warm_board: bool = True,
+                             include_brief_evidence: bool = False,
+                             include_code_budget: bool = False) -> dict:
         """Единый контекст задачи для solve-task: преflight + сбор, один вызов.
 
         Свёртка 8-12 детерминированных тул-раундов скилла. Ни один сбой
@@ -1873,10 +1950,19 @@ class MCPReviewService:
             payload["warnings"] = []
             return payload
         normalized_repo, resolved = rb
-        deps = _TaskContextDeps(self, path)
-        return task_context.build_task_context(
+        budget = {} if include_code_budget else None
+        deps = _TaskContextDeps(self, path, budget)
+        payload = task_context.build_task_context(
             deps, repo=normalized_repo, key=key, branch=resolved,
             warm_board=warm_board)
+        if include_brief_evidence and (evidence_id := self._brief_evidence.save(payload)):
+            payload["brief_evidence_id"] = evidence_id
+        if budget:
+            payload["code_budget"] = budget
+        return payload
+
+    def verify_task_brief(self, evidence_id: str, citations: list[BriefCitationIn]) -> dict:
+        return self._brief_evidence.verify(evidence_id, citations)
 
     def related_symbols(self, repo: str, node_id: str,
                         branch: str | None = None) -> str:
@@ -3322,11 +3408,10 @@ class MCPReviewService:
         run_id: int,
         task_key: str | None,
     ) -> None:
-        """Посчитать и сохранить качество брифа solve-task (PRI-249).
+        """Съём качества брифа на публикации ревью (PRI-249).
 
-        Полностью fail-soft: метрика — наблюдение за самим reviewer, и ни один
-        её сбой не смеет повлиять на результат ревью. Ключ задачи берётся из
-        аргумента publish_review, иначе из уже отрезолвленного task_keys.primary.
+        Гейт вызова и его семантика не меняются; сам расчёт и запись живут в
+        reviewer.services.brief_quality.measure_and_record, общем с finish_task.
         """
         try:
             from reviewer.services import brief_quality
@@ -3334,17 +3419,12 @@ class MCPReviewService:
             key = task_key
             if not key and p.task_keys:
                 key = p.task_keys.get("primary")
-            measurement = brief_quality.measure(
-                task_key=key,
-                clone_path=self._repo_clone_path(repo),
-                changed_paths=p.changed_paths,
-                changed_status=p.changed_status,
-            )
-            history = self._review_service._ensure_history()
-            if history is None:
-                return
-            history.record_brief_quality(
-                run_id, repo, pr, p.prq.head_sha, measurement
+            policy, _meta = self._resolve_policy(repo, p.prq.base_ref)
+            brief_quality.measure_and_record(
+                task_key=key, repo=repo, pr_number=pr, head_sha=p.prq.head_sha,
+                changed_paths=p.changed_paths, changed_status=p.changed_status,
+                clone_path=self._repo_clone_path(repo), config=policy.brief_quality,
+                history=self._review_service._ensure_history(), run_id=run_id,
             )
         except Exception:  # noqa: BLE001 — наблюдаемость не роняет ревью
             log.warning("Не удалось посчитать качество брифа для %s pr:%s", repo, pr, exc_info=True)
@@ -3619,9 +3699,11 @@ class _TaskContextDeps:
     подменяет фейк в юнит-тестах модуля сборки.
     """
 
-    def __init__(self, service: "MCPReviewService", path: str | None):
+    def __init__(self, service: "MCPReviewService", path: str | None,
+                 code_budget: dict[str, int] | None = None):
         self._service = service
         self._path = path
+        self._code_budget = code_budget
         self._similar_hits: list = []
         self.augment_gaps: list[str] = []
 
@@ -3746,8 +3828,9 @@ class _TaskContextDeps:
                                  paths=self._augment_paths(repo),
                                  quota=self._service._resolve_context_limits(
                                      repo, branch).code_section.max_augmented_files)]
+        kwargs = {"code_budget": self._code_budget} if self._code_budget is not None else {}
         return self._service._search_codebase_multi(
-            repo, queries, branch, False, augment_sources=sources, strict=True)
+            repo, queries, branch, False, augment_sources=sources, strict=True, **kwargs)
 
     def test_exemplars(self, repo: str, branch: str, queries: list) -> str:
         return self._service._search_codebase_multi(repo, queries, branch, True, strict=True)

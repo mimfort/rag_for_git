@@ -1,0 +1,14 @@
+{
+  "hooks": {
+    "PostModelRequest": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "root=\"${PLUGIN_ROOT}\"; [ -f \"$root/hooks/codex_usage.py\" ] || root=\"$root/plugin\"; exec python3 \"$root/hooks/codex_usage.py\""
+          }
+        ]
+      }
+    ]
+  }
+}

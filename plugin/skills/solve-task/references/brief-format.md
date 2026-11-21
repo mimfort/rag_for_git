@@ -4,7 +4,8 @@
    - **Path A — per-subagent model override available:** **dispatch a subagent on the chosen model** to
      execute Steps 2–4, giving it the reviewer session-less tools (`get_task`, `search_codebase`,
      `get_subsystem_summaries`, `get_task_context`, `search_tasks`, the graph tools, `get_pr_diff`) plus
-     the harness `Read`/`Bash`/`Glob`/`Write` (to persist the brief). The subagent returns the brief file
+     the harness `Read`/`Bash`/`Glob`/`Write`. When the payload has a `brief_evidence_id`, return the
+     draft to the orchestrator for verification and persistence. Otherwise return the saved brief
      path and a short summary (kept / dropped).
      **Pass the Step 0 `prepare_task_context` payload into the dispatch prompt verbatim** (or as an
      attached/inlined JSON blob) — the payload lives in the orchestrator's context, not the
@@ -70,6 +71,16 @@
    ```
 
    Cite `path:line` straight from the line-numbered Step 3 snippets — no re-Read (Step 3 contract).
+
+   **Verify citations before saving.** When Step 0 provides `brief_evidence_id`, call
+   `verify_task_brief` on the same reviewer MCP connection with the ID and the draft's citations
+   from that payload. Use `section="code"` for Relevant code and `section="test_exemplars"` for
+   Test exemplars, with the exact relative `path` and positive `line` for each. A subagent on a
+   separate connection returns its draft/citations for the orchestrator to check and persist.
+   Send the citations only. Use the original visible excerpts to correct `outside_excerpt`
+   citations or drop them. Omit `path_unseen` citations unless a later retrieval or graph call
+   independently showed that exact anchor. If evidence is unavailable, continue using the
+   original tool results. This check works without client-specific hooks.
 
    **Persist the brief (survivability).** After distilling, save the brief to a file so it
    survives context compaction / a new session and seeds the trace задача→бриф→спека→план→PR.

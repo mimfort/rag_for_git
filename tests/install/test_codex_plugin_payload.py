@@ -45,10 +45,12 @@ def test_project_manifest_rewrites_only_payload_relative_paths():
         "name": "rag-reviewer",
         "version": "0.2.27+codex.123456789abc",
         "skills": "./skills/",
+        "hooks": ["./hooks/hooks.json", "./hooks/codex-usage.json"],
         "interface": {"composerIcon": "./assets/icon.svg"},
     }
     projected = project_manifest_from(canonical)
     assert projected["skills"] == "./plugin/skills/"
+    assert projected["hooks"] == ["./plugin/hooks/hooks.json", "./plugin/hooks/codex-usage.json"]
     assert projected["interface"]["composerIcon"] == "./plugin/assets/icon.svg"
     assert projected["version"] == canonical["version"]
 

@@ -33,6 +33,7 @@ from tree_sitter import Language, Parser
 
 from reviewer.index.chunker import chunk_python
 from reviewer.metrics.brief_quality.classify import is_core_production_path
+from reviewer.metrics.brief_quality.config import BriefQualityConfig
 
 from . import ground_truth
 
@@ -357,10 +358,10 @@ def _lines_of(rng: tuple) -> set:
     return set(range(rng[0], rng[1] + 1))
 
 
-def seeds_for_merge(sha: str, core_paths: set, run_git) -> SeedSet:
+def seeds_for_merge(sha: str, core_paths: set, run_git, config: BriefQualityConfig) -> SeedSet:
     """Сид-символы и имена одного PR-мержа по его core-путям."""
     result = SeedSet()
-    for path in sorted(p for p in core_paths if is_core_production_path(p)):
+    for path in sorted(p for p in core_paths if is_core_production_path(p, config)):
         try:
             diff = run_git(["diff", "--unified=0", f"{sha}^1", sha, "--", path])
             after = run_git(["show", f"{sha}:{path}"])
@@ -396,10 +397,10 @@ def seeds_for_merge(sha: str, core_paths: set, run_git) -> SeedSet:
     return result
 
 
-def collect_seeds(truth, run_git) -> SeedSet:
+def collect_seeds(truth, run_git, config: BriefQualityConfig) -> SeedSet:
     """Сиды задачи: объединение по всем её настоящим PR-мержам."""
-    core_paths = {p for p in truth.changed if is_core_production_path(p)}
+    core_paths = {p for p in truth.changed if is_core_production_path(p, config)}
     result = SeedSet()
     for sha in truth.merge_shas:
-        result = result | seeds_for_merge(sha, core_paths, run_git)
+        result = result | seeds_for_merge(sha, core_paths, run_git, config)
     return result
