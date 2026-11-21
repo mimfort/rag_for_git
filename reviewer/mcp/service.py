@@ -24,7 +24,8 @@ from reviewer.config.settings import Settings
 from reviewer.config.task_board import migrate_legacy_board_args, normalize_task_sync_filter
 from reviewer.index.refs import base_ref
 from reviewer.mcp import task_context
-from reviewer.mcp.schemas import FindingIn, SummaryFragmentIn, VerdictIn
+from reviewer.mcp.brief_evidence import BriefEvidence
+from reviewer.mcp.schemas import BriefCitationIn, FindingIn, SummaryFragmentIn, VerdictIn
 from reviewer.mcp.session_serde import from_payload, to_payload
 from reviewer.mcp.session_store import SessionStore
 from reviewer.retrieval.retriever import ContextPack
@@ -260,6 +261,7 @@ class MCPReviewService:
             board_credentials or ProviderCredentialSource.from_settings(settings)
         )
         self._sessions: dict[tuple[str, int], _Session] = {}
+        self._brief_evidence = BriefEvidence()
         self._session_store: SessionStore | None = None
         # PRI-239: порог шума канала репорта багов. Не более одного предложения на
         # симптом за жизнь процесса, отказ пользователя запоминается. In-memory —
@@ -1858,7 +1860,8 @@ class MCPReviewService:
 
     def prepare_task_context(self, repo: str, key: str, branch: str | None = None,
                              path: str | None = None,
-                             warm_board: bool = True) -> dict:
+                             warm_board: bool = True,
+                             include_brief_evidence: bool = False) -> dict:
         """Единый контекст задачи для solve-task: преflight + сбор, один вызов.
 
         Свёртка 8-12 детерминированных тул-раундов скилла. Ни один сбой
@@ -1876,9 +1879,15 @@ class MCPReviewService:
             return payload
         normalized_repo, resolved = rb
         deps = _TaskContextDeps(self, path)
-        return task_context.build_task_context(
+        payload = task_context.build_task_context(
             deps, repo=normalized_repo, key=key, branch=resolved,
             warm_board=warm_board)
+        if include_brief_evidence and (evidence_id := self._brief_evidence.save(payload)):
+            payload["brief_evidence_id"] = evidence_id
+        return payload
+
+    def verify_task_brief(self, evidence_id: str, citations: list[BriefCitationIn]) -> dict:
+        return self._brief_evidence.verify(evidence_id, citations)
 
     def related_symbols(self, repo: str, node_id: str,
                         branch: str | None = None) -> str:

@@ -1,0 +1,96 @@
+"""Portable solve-task verification through the reviewer MCP boundary."""
+import asyncio
+import json
+from unittest.mock import MagicMock
+
+from reviewer.config.settings import Settings
+from reviewer.entrypoints.mcp_server import create_server
+from reviewer.mcp import task_context
+from reviewer.mcp.brief_evidence import BriefEvidence
+from reviewer.mcp.schemas import BriefCitationIn
+from reviewer.mcp.service import MCPReviewService
+
+CODE = """// path with spaces.py#function (path with spaces.py:2-6)
+    2 | def function():
+    3 |     standard_line()
+    4 |     unfinished_text(
+[...truncated]"""
+TEST = """// tests/test_function.py#test_it (tests/test_function.py:7-7)
+    7 | def test_it(): pass"""
+
+
+def _citation(path, line, section="code"):
+    return BriefCitationIn(path=path, line=line, section=section)
+
+
+def test_checks_visible_rows_by_section_and_ignores_board_text():
+    evidence = BriefEvidence()
+    key = evidence.save({
+        "code": CODE, "test_exemplars": TEST,
+        "related": {"linked": CODE.replace("path with spaces.py", "fabricated.py")},
+    })
+    result = evidence.verify(key, [
+        _citation("path with spaces.py", 2),
+        _citation("path with spaces.py", 4),
+        _citation("path with spaces.py", 6),
+        _citation("tests/test_function.py", 7, "test_exemplars"),
+        _citation("tests/test_function.py", 7),
+        _citation("fabricated.py", 3),
+    ])
+
+    assert result["status"] == "ok"
+    assert [item["status"] for item in result["citations"]] == [
+        "verified", "outside_excerpt", "outside_excerpt",
+        "verified", "path_unseen", "path_unseen",
+    ]
+
+
+def test_snapshots_are_isolated_bounded_and_expire():
+    now = 10.0
+    evidence = BriefEvidence(limit=2, ttl_seconds=30, clock=lambda: now)
+    first = evidence.save({"code": CODE})
+    second = evidence.save({"test_exemplars": TEST})
+
+    assert first != second
+    assert evidence.verify(second, [_citation("path with spaces.py", 2)])["citations"][0][
+        "status"
+    ] == "section_unavailable"
+
+    third = evidence.save({"code": CODE})
+    assert evidence.verify(first, []) == {"status": "evidence_unavailable", "citations": []}
+    assert evidence.verify(third, [])["status"] == "ok"
+    now += 30
+    assert evidence.verify(third, [])["status"] == "evidence_unavailable"
+
+
+def test_no_id_without_line_evidence():
+    evidence = BriefEvidence()
+    assert evidence.save({"code": "(ничего не найдено)", "test_exemplars": None}) is None
+
+
+def test_prepare_and_verify_are_available_through_mcp_without_retrieval_twice(monkeypatch):
+    service = MCPReviewService(Settings(), MagicMock())
+    monkeypatch.setattr(service, "_resolve_repo_branch", lambda repo, branch: (repo, "main"))
+    build = MagicMock(side_effect=lambda *a, **kw: {"code": CODE, "test_exemplars": TEST})
+    monkeypatch.setattr(task_context, "build_task_context", build)
+    server = create_server(service)
+
+    async def call(method, args):
+        output = await server.call_tool(method, args)
+        return json.loads(output[0].text)
+
+    async def scenario():
+        params = {"repo": "owner/repo", "key": "task", "warm_board": False}
+        legacy = await call("prepare_task_context", params)
+        assert "brief_evidence_id" not in legacy
+        payload = await call(
+            "prepare_task_context", {**params, "include_brief_evidence": True}
+        )
+        checked = await call("verify_task_brief", {
+            "evidence_id": payload["brief_evidence_id"],
+            "citations": [{"section": "code", "path": "path with spaces.py", "line": 3}],
+        })
+        assert checked["citations"][0]["status"] == "verified"
+        assert build.call_count == 2
+
+    asyncio.run(scenario())

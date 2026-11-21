@@ -76,6 +76,13 @@ COMMAND_PRESENTATION = {
         scenarios=("Обновление workflow skills",),
         keywords=("skills", "plugin", "codex"),
     ),
+    ("measure-client-usage",): CommandPresentation(
+        summary="Посчитать токены клиента",
+        details="Суммирует четыре бакета из JSONL Codex, Claude Code или другого клиента.",
+        effects=(Effect.READ,),
+        scenarios=("Сравнение прогонов", "Экспорт расхода в JSON"),
+        keywords=("tokens", "usage", "codex", "metrics"),
+    ),
     ("migrate-branches",): CommandPresentation(
         summary="Мигрировать legacy base-index",
         details="Переименовывает legacy ref base в primary branch ref после обновления.",

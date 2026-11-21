@@ -8,15 +8,17 @@ import logging
 import sys
 
 from mcp.server.fastmcp import FastMCP
+from mcp.types import ToolAnnotations
 
-from reviewer.mcp.schemas import FindingIn, SubtasksIn, SummaryFragmentIn, VerdictIn
+from reviewer.bugreport.diagnostics import diagnose
+from reviewer.mcp.schemas import BriefCitationIn, FindingIn, SubtasksIn, SummaryFragmentIn, VerdictIn
 from reviewer.mcp.service import MCPReviewService
 
 log = logging.getLogger(__name__)
 
 
 def create_server(service: MCPReviewService) -> FastMCP:
-    """Создать и вернуть сконфигурированный FastMCP-сервер с 42 тулами.
+    """Создать и вернуть сконфигурированный FastMCP-сервер.
 
     Все тулы — обычные def (sync), а не async: сервис не потокобезопасен
     и рассчитан на последовательное исполнение sync-тулов FastMCP в event loop.
@@ -350,7 +352,8 @@ def create_server(service: MCPReviewService) -> FastMCP:
     @mcp.tool()
     def prepare_task_context(repo: str, key: str, branch: str | None = None,
                              path: str | None = None,
-                             warm_board: bool = True) -> dict:
+                             warm_board: bool = True,
+                             include_brief_evidence: bool = False) -> dict:
         """Everything /solve-task needs to write a brief, in one call (no PR session).
         Returns {preflight, task_board, task, related{linked,similar}, subsystems,
         code, test_exemplars, gaps, warnings}. repo is "owner/name"; key is a board
@@ -358,8 +361,32 @@ def create_server(service: MCPReviewService) -> FastMCP:
         primary tracked branch. warm_board=True runs an incremental board sync first.
         Never raises on a missing source: an unreachable board, a down Neo4j or a
         missing index yield a partial payload with entries in `gaps`. Relevance
-        filtering and brief assembly stay with the caller."""
-        return service.prepare_task_context(repo, key, branch, path, warm_board)
+        filtering and brief assembly stay with the caller. include_brief_evidence
+        adds a short-lived brief_evidence_id when numbered excerpts are available.
+        """
+        return service.prepare_task_context(repo, key, branch, path, warm_board, include_brief_evidence)
+
+    @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False))
+    def diagnose_tool_result(tool: str, response: str) -> dict:
+        """Classify an unexpected reviewer MCP result without publishing a report.
+
+        Use the logical reviewer tool name and its error/status result (JSON or text).
+        Returns clear or suspected_defect with a class and deduplication signature.
+        External services and client configuration errors are excluded.
+        """
+        return diagnose(tool, response)
+
+    @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False))
+    def verify_task_brief(evidence_id: str, citations: list[BriefCitationIn]) -> dict:
+        """Check brief path:line citations against code or test_exemplars from one payload.
+
+        Pass brief_evidence_id from prepare_task_context(include_brief_evidence=True)
+        on the same server connection. Each citation gets verified, path_unseen,
+        outside_excerpt, or section_unavailable. An expired or absent ID gives
+        evidence_unavailable. The tool checks only numbered lines visible in the
+        selected section and does not search again.
+        """
+        return service.verify_task_brief(evidence_id, citations)
 
     @mcp.tool()
     def related_symbols(repo: str, node_id: str, branch: str | None = None) -> str:

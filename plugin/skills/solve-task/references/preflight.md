@@ -1,3 +1,7 @@
+   When forming the Step 0 `prepare_task_context` call, add `include_brief_evidence=True`
+   if the reviewer MCP server advertises `verify_task_brief`. Keep the returned
+   `brief_evidence_id` for Step 4 on the same connection.
+
    0. **Startup survey.** Ask the user, in **one panel** (`AskUserQuestion`), three questions at
       once. This is the only survey of the run: none of the three is asked again later. Talk to the
       user in Russian.

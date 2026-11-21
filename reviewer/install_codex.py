@@ -159,12 +159,16 @@ def sync_plugin_metadata(repo_root: Path, *, check: bool) -> list[str]:
     claude_path = plugin_root / ".claude-plugin" / "plugin.json"
     payload_icon = plugin_root / "assets" / "icon.svg"
     source_icon = repo_root / "assets" / "icon.svg"
+    diagnostics_source = repo_root / "reviewer" / "bugreport" / "diagnostics.py"
+    diagnostics_payload = plugin_root / "hooks" / "_reviewer_diagnostics.py"
     base_version = project_version(repo_root)
     if not check:
         canonical = json.loads(canonical_path.read_text(encoding="utf-8"))
         canonical.pop("mcpServers", None)
         payload_icon.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(source_icon, payload_icon)
+        if diagnostics_source.exists():
+            shutil.copyfile(diagnostics_source, diagnostics_payload)
         canonical["version"] = base_version
         canonical_path.write_text(_canonical_json(canonical), encoding="utf-8")
         claude = json.loads(claude_path.read_text(encoding="utf-8"))
@@ -205,6 +209,14 @@ def sync_plugin_metadata(repo_root: Path, *, check: bool) -> list[str]:
     else:
         if actual_icon != source_icon.read_bytes():
             errors.append("plugin/assets/icon.svg differs from assets/icon.svg")
+    if diagnostics_source.exists():
+        try:
+            actual = diagnostics_payload.read_bytes()
+        except OSError:
+            errors.append("plugin/hooks/_reviewer_diagnostics.py is missing or invalid")
+        else:
+            if actual != diagnostics_source.read_bytes():
+                errors.append("plugin hooks expose a different reviewer diagnostics module")
     return errors
 
 

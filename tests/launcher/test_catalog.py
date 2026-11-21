@@ -17,6 +17,7 @@ VISIBLE_COMMANDS = {
     "init",
     "install",
     "install-skills",
+    "measure-client-usage",
     "migrate-branches",
     "search",
     "serve",
