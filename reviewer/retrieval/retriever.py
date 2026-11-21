@@ -29,6 +29,14 @@ def _format_degraded_note(reason: DegradedReason | None) -> str | None:
     return _DEGRADED_NOTES.get(reason) if reason is not None else None
 
 
+class SearchUnavailableError(RuntimeError):
+    """Обязательный компонент base-поиска временно недоступен."""
+
+    def __init__(self, component: str) -> None:
+        self.component = component
+        super().__init__(f"search unavailable: {component}")
+
+
 def _is_test_path(path: str) -> bool:
     """Путь относится к тестам: содержит сегмент ``tests`` или basename
     соответствует ``test_*.py`` / ``*_test.py``.
@@ -164,11 +172,18 @@ class Retriever:
         lim = limits or CodebaseLimits()
         ceiling = ceiling_override or lim.ceiling
         bref = base_ref(branch)
-        qvec = self.embedder.embed_query(query)
-        hits = self.store.hybrid_search(
-            repo, query_text=query, query_embedding=qvec,
-            overlay_ref="__none__", changed_paths=[],
-            top_k=lim.candidate_pool, candidates=lim.candidate_pool, base_ref=bref)
+        try:
+            qvec = self.embedder.embed_query(query)
+        except Exception as error:
+            raise SearchUnavailableError("embeddings") from error
+
+        try:
+            hits = self.store.hybrid_search(
+                repo, query_text=query, query_embedding=qvec,
+                overlay_ref="__none__", changed_paths=[],
+                top_k=lim.candidate_pool, candidates=lim.candidate_pool, base_ref=bref)
+        except Exception as error:
+            raise SearchUnavailableError("storage") from error
         # ANN-префильтр: оставляем лексические хиты и близкие по вектору; далёкий не-BM25 шум режем
         hits = [h for h in hits if getattr(h, "bm25_hit", False)
                 or (getattr(h, "ann_distance", None) is not None

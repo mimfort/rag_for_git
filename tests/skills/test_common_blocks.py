@@ -73,6 +73,7 @@ def test_tool_usage_has_both_tool_families():
     assert "search_codebase" in text and "related_symbols" in text and "definition" in text
     # PRI-156: submit-тулы schema-enforced вывода
     assert "submit_findings" in text and "submit_verdicts" in text
+    assert "including files changed by the PR" in text
 
 
 def test_findings_schema_matches_finding_in_model():

@@ -147,9 +147,8 @@ def make_tools(ctx: ToolContext) -> list[StructuredTool]:
         return patch or "(файл не входит в изменения PR)"
 
     def get_impact() -> str:
-        """Радиус поражения PR: символы с ИЗМЕНЁННОЙ сигнатурой → их вызывающие вне диффа.
-        Помечает места, которые могут быть не обновлены под новый контракт (кросс-файловый impact).
-        Сам не выносит вердикт — подтверждай находки через read_file."""
+        """Радиус поражения: изменённые сигнатуры → обоснованные кандидаты вызывающих
+        внутри и вне изменённых файлов PR, плюс явные пробелы покрытия индекса."""
         from reviewer.tools.impact import compute_impact, format_impact
         if ctx.graph is None or ctx.store is None:
             return "(граф или индекс недоступны)"
