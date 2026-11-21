@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import logging
+from functools import cache
 
 from reviewer.mcp.subqueries import build_subqueries
 from reviewer.storage_health import (
@@ -234,18 +235,19 @@ def _query(task: dict | None, key: str) -> str:
     return f"{title}. {head}".strip(". ").strip() or key
 
 
-def _queries(task: dict | None, key: str) -> list[str]:
+def _queries(task: dict | None, key: str, *,
+             excluded_criteria: list[str] | None = None) -> list[str]:
     """Набор подзапросов секции code: продакшн-запрос плюс структура задачи.
 
     Первый элемент — ровно _query(task, key), поэтому на задаче без списков
     набор вырождается в один запрос и ретрив ведёт себя как раньше.
     """
-    return build_subqueries(task, _query(task, key))
+    return build_subqueries(task, _query(task, key), excluded_criteria=excluded_criteria)
 
 
-def _test_queries(task: dict | None, key: str) -> list[str]:
-    """Те же подзапросы, но про тесты области — префиксом "как тестируется: "."""
-    return [f"как тестируется: {query}" for query in _queries(task, key)]
+def _test_queries(queries: list[str]) -> list[str]:
+    """Префикс тестового поиска для каждого подзапроса задачи."""
+    return [f"как тестируется: {query}" for query in queries]
 
 
 def _endpoints(deps) -> tuple[str, ...]:
@@ -323,13 +325,23 @@ def build_task_context(deps, *, repo: str, key: str, branch: str,
     payload["subsystems"] = _safe(
         payload, "subsystems", lambda: deps.subsystems(repo, branch, query), None,
         "сводки подсистем недоступны", state)
+    excluded: list[str] = []
+
+    @cache
+    def queries() -> list[str]:
+        return build_subqueries(task, query, excluded_criteria=excluded)
+
     payload["code"] = _safe(
-        payload, "code", lambda: deps.code(repo, branch, _queries(task, key)), "",
+        payload, "code", lambda: deps.code(repo, branch, queries()), "",
         "поиск по коду недоступен", state)
     for reason in getattr(deps, "augment_gaps", []) or []:
         payload["gaps"].append(gap("code.augment", reason))
     payload["test_exemplars"] = _safe(
         payload, "test_exemplars",
-        lambda: deps.test_exemplars(repo, branch, _test_queries(task, key)), "",
+        lambda: deps.test_exemplars(repo, branch, _test_queries(queries())), "",
         "поиск по тестам недоступен", state)
+    if excluded:
+        payload["warnings"].append({"subqueries": {
+            "excluded_criteria": excluded, "reason": "subquery_budget",
+        }})
     return payload
