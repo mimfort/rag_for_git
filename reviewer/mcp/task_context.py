@@ -344,6 +344,13 @@ def build_task_context(deps, *, repo: str, key: str, branch: str,
     def queries() -> list[str]:
         return build_subqueries(task, query, excluded_criteria=excluded)
 
+    bind_optional_lookup = getattr(deps, "bind_optional_lookup", None)
+    if callable(bind_optional_lookup):
+        def optional_lookup(section, produce, reason, backend):
+            return _safe(payload, section, produce, [], reason, state, backend)
+
+        bind_optional_lookup(optional_lookup)
+
     lexical_search = getattr(deps, "lexical_search", None)
     code_fallback = test_fallback = None
     if callable(lexical_search):
