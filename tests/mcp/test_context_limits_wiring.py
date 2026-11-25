@@ -6,9 +6,11 @@ limits/hops/ceiling_override в `Retriever.search_base`.
 """
 import logging
 import subprocess
+from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import psycopg
 import pytest
 
 from reviewer.config.layers import build_config_report, resolve_policy_data
@@ -694,3 +696,63 @@ def test_prepare_task_context_keeps_explicit_paths_in_their_sections_and_applies
     ]
     assert all(c.kwargs == {"base_ref": "base:dev"}
                for c in retriever.store.fetch_retrieved_at_paths.call_args_list)
+    retriever.store.fetch_retrieved_covering_lines.assert_not_called()
+
+
+@pytest.mark.parametrize(("path", "section"), [
+    ("pkg/requested.py", "code"),
+    ("tests/test_requested.py", "test_exemplars"),
+])
+def test_prepare_task_context_verifies_requested_line_after_excerpt_limit(lexical_clone, path, section):
+    policy = "context_limits: {code_section: {max_files: 1}}"
+    (lexical_clone / ".review.yml").write_text(policy, encoding="utf-8")
+    file = lexical_clone / path
+    file.parent.mkdir()
+    lines = ["def target():", *(f"    value = 'fixture value number {i}'" for i in range(80))]
+    file.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    _git(lexical_clone, "add", ".")
+    _git(lexical_clone, "commit", "-m", "Добавить запрос строки")
+    sha = _git(lexical_clone, "rev-parse", "dev")
+    s = _task_context_service(registered_clone=lexical_clone, committed_policy=policy)
+    s.components.store.get_index_meta_row.return_value = (sha, datetime.now(UTC))
+    store = s.components.retriever.store
+    item = Retrieved(f"{path}#target", path, "target", "function",
+                     1, len(lines), "\n".join(lines), 0.0, bm25_hit=True)
+    store.hybrid_search.return_value = [item]
+    store.fetch_retrieved_covering_lines.return_value = [item]
+
+    pack = s.prepare_task_context(
+        "o/r", f"Проверить поведение `{path}:70`", "dev", warm_board=False,
+        include_brief_evidence=True,
+    )
+    checked = s.verify_task_brief(pack["brief_evidence_id"], [
+        BriefCitationIn(section=section, path=path, line=70),
+        BriefCitationIn(section=section, path=path, line=82),
+    ])
+
+    assert [c["status"] for c in checked["citations"]] == ["verified", "outside_excerpt"]
+    assert f"   70 | {lines[69]}" in pack[section]
+    assert pack["brief_source_sha"] == sha
+    store.fetch_retrieved_covering_lines.assert_called_once_with("o/r", {path: 70}, base_ref="base:dev")
+
+
+@pytest.mark.parametrize("failed", [False, True])
+def test_prepare_task_context_no_covering_line_keeps_ranked_excerpt(failed):
+    policy = "context_limits: {code_section: {max_files: 1}}"
+    s = _task_context_service(committed_policy=policy)
+    store = s.components.retriever.store
+    path = "pkg/ranked.py"
+    item = Retrieved(f"{path}#target", path, "target", "function",
+                     1, 1, "def target(): pass", 0.0, bm25_hit=True)
+    store.hybrid_search.return_value = [item]
+    if failed:
+        store.fetch_retrieved_covering_lines.side_effect = psycopg.OperationalError("connection refused")
+    else:
+        store.fetch_retrieved_covering_lines.return_value = []
+
+    pack = s.prepare_task_context("o/r", f"Проверить `{path}:999`", "dev", warm_board=False)
+    assert "def target(): pass" in pack["code"]
+    assert "999 |" not in pack["code"]
+    store.fetch_retrieved_covering_lines.assert_called_once_with("o/r", {path: 999}, base_ref="base:dev")
+    gaps = [g for g in pack["gaps"] if g["section"] == "code.explicit_lines"]
+    assert [g["cause"] for g in gaps] == (["storage_unavailable"] if failed else [])

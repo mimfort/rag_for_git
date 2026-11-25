@@ -314,6 +314,49 @@ def _explicit_candidates(
     return required, [item for item in fetched if item.path in required]
 
 
+def _line_window(item, line: int, budget: int):
+    rows = item.text.split("\n")
+    index = line - item.start_line
+    if not 0 <= index < len(rows) or len(rows[index]) > budget:
+        return None
+    first = max(0, index - 4)
+    while len("\n".join(rows[first:index + 1])) > budget:
+        first += 1
+    window = dataclasses.replace(item, text="\n".join(rows[first:]),
+                                 start_line=item.start_line + first)
+    return cap_block(window, budget)
+
+
+def _focus_explicit_lines(
+    store, repo: str, ref: str, items: list, required_paths: frozenset[str],
+    locations: dict[str, int], budget: int, lookup: OptionalLookup | None,
+) -> list:
+    missing = {p: line for p, line in locations.items() if p in required_paths}
+    for item in items:
+        if (line := missing.get(item.path)) is not None and item.start_line <= line <= item.end_line:
+            del missing[item.path]
+    if not missing:
+        return items
+    snippets = _read_optional(
+        lookup, "explicit_lines",
+        lambda: store.fetch_retrieved_covering_lines(repo, missing, base_ref=ref),
+        "чтение явно указанных строк недоступно", BACKEND_POSTGRES,
+    )
+    focused = {
+        item.path: window for item in snippets
+        if item.path in missing and (window := _line_window(item, missing[item.path], budget))
+    }
+    # Точная ссылка должна оставаться видимой даже у границы общего бюджета.
+    result = [focused[path] for path in missing if path in focused]
+    replaced = set(focused)
+    for item in items:
+        if item.path in replaced:
+            replaced.remove(item.path)
+        else:
+            result.append(item)
+    return result
+
+
 def search_multi(retriever, repo: str, queries: list[str], *, limits=None,
                  section_limits=None, hops: int = 1, branch: str = "",
                  include_tests: bool = False, augment_sources=None,
@@ -321,6 +364,7 @@ def search_multi(retriever, repo: str, queries: list[str], *, limits=None,
                  include_selection_stats: bool = False, bm25_only: bool = False,
                  git_excerpts: list | None = None,
                  explicit_paths: list[str] | None = None,
+                 explicit_lines: dict[str, int] | None = None,
                  optional_lookup: OptionalLookup | None = None) -> ContextPack:
     """Мультизапросный ретрив по base-индексу ветки: N прогонов, RRF, обрезка.
 
@@ -487,5 +531,11 @@ def search_multi(retriever, repo: str, queries: list[str], *, limits=None,
                 displaced_by_git_lexical=len(reserved_paths - selected),
                 git_lexical_files=len(selected - reserved_paths - augmented_paths),
             )
-    return ContextPack(items=[cap_block(item, sec.chars_per_file) for item in items],
+    capped = [cap_block(item, sec.chars_per_file) for item in items]
+    if explicit_lines:
+        capped = _focus_explicit_lines(
+            retriever.store, repo, bref, capped, required_paths, explicit_lines,
+            sec.chars_per_file, optional_lookup,
+        )
+    return ContextPack(items=capped,
                        max_chars=sec.max_chars, augment_note=note, selection_stats=stats)

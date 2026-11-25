@@ -1,3 +1,4 @@
+from dataclasses import replace
 from unittest.mock import Mock
 from uuid import uuid4
 
@@ -446,3 +447,28 @@ def test_bm25_search_is_bounded_by_repository_branch_and_candidate_count(store_a
     assert {hit.path for hit in hits} == {"code.py", "tests/test_code.py"}
     assert all(hit.bm25_hit and hit.ann_distance is None for hit in hits)
     assert store.bm25_search(repo, "lexicalfixture", top_k=1, base_ref="base:dev") == hits[:1]
+
+
+@pytest.mark.integration
+def test_covering_lines_prefers_narrowest_chunk_in_requested_repo_and_branch(
+    store_and_settings,
+):
+    store, settings, repo, other_repo = store_and_settings
+    vec = [1.0] + [0.0] * (settings.embedding_dim - 1)
+    path = "pkg/target.py"
+    broad = replace(_row("base:dev", path, "container", "broad", vec, repo=repo),
+                    start_line=1, end_line=50)
+    narrow = replace(_row("base:dev", path, "container.target", "narrow", vec, repo=repo),
+                     start_line=26, end_line=30)
+    store.upsert([
+        broad, narrow,
+        replace(narrow, ref="base:main", symbol_fqn="other_branch", start_line=27, end_line=27),
+        replace(narrow, repo=other_repo, symbol_fqn="other_repo", start_line=27, end_line=27),
+    ])
+    result = store.fetch_retrieved_covering_lines(
+        repo, {path: 27, "pkg/missing.py": 26}, base_ref="base:dev",
+    )
+    assert [(r.path, r.symbol_fqn, r.start_line, r.end_line) for r in result] == [
+        (path, "container.target", 26, 30),
+    ]
+    assert store.fetch_retrieved_covering_lines(repo, {path: 51}, base_ref="base:dev") == []

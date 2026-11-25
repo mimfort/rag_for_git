@@ -1918,6 +1918,7 @@ class MCPReviewService:
                                git_excerpts: "list[Retrieved] | None" = None,
                                bm25_only: bool = False,
                                explicit_paths: list[str] | None = None,
+                               explicit_lines: dict[str, int] | None = None,
                                optional_lookup: "OptionalLookup | None" = None) -> str:
         """Мультизапросный ретрив секций контекста задачи (PRI-255).
 
@@ -1947,7 +1948,7 @@ class MCPReviewService:
                 hops=cl.graph.hops, branch=resolved, include_tests=include_tests,
                 augment_sources=augment_sources, strict=strict, tests_only=tests_only,
                 include_selection_stats=code_budget is not None, git_excerpts=git_excerpts,
-                bm25_only=bm25_only, explicit_paths=explicit_paths,
+                bm25_only=bm25_only, explicit_paths=explicit_paths, explicit_lines=explicit_lines,
                 optional_lookup=optional_lookup)
         except Exception as exc:
             if strict and (bm25_only or is_embedder_unavailable(exc)):
@@ -3775,7 +3776,7 @@ class _TaskContextDeps:
         self._code_budget = code_budget
         self._similar_hits: list = []
         self._task: dict | None = None
-        self._explicit_paths_cache: list[str] | None = None
+        self._explicit_locations_cache: dict[str, int | None] | None = None
         self._check_brief_snapshot = check_brief_snapshot
         self._indexed_sha = indexed_sha
         self._optional_lookup: OptionalLookup | None = None
@@ -3974,26 +3975,29 @@ class _TaskContextDeps:
                         type(exc).__name__)
             return {}
 
-    def _explicit_paths(self, repo: str, branch: str, queries: list[str]) -> list[str]:
-        if self._explicit_paths_cache is not None:
-            return self._explicit_paths_cache
+    def _explicit_locations(
+        self, repo: str, branch: str, queries: list[str],
+    ) -> dict[str, int | None]:
+        if self._explicit_locations_cache is not None:
+            return self._explicit_locations_cache
         from reviewer.index.pathfilter import is_ignored
-        from reviewer.mcp.subqueries import explicit_python_paths
+        from reviewer.mcp.subqueries import explicit_python_locations
 
-        paths = explicit_python_paths(self._task, next(iter(queries), ""))
-        self._explicit_paths_cache = []
-        if not paths:
-            return self._explicit_paths_cache
+        locations = explicit_python_locations(self._task, next(iter(queries), ""))
+        self._explicit_locations_cache = {}
+        if not locations:
+            return self._explicit_locations_cache
         try:
             policy, meta = self._service._resolve_policy(repo, branch)
             if not meta.skipped:
-                self._explicit_paths_cache = [path for path in paths
-                                              if not is_ignored(path, policy.ignore)]
-                return self._explicit_paths_cache
+                self._explicit_locations_cache = {
+                    path: line for path, line in locations.items() if not is_ignored(path, policy.ignore)
+                }
+                return self._explicit_locations_cache
         except Exception:  # noqa: BLE001 — выдача продолжает работать без этого сигнала
             log.warning("Не удалось определить политику для явно указанных путей")
         self.augment_gaps.append("явно указанные пути пропущены: политика ветки недоступна")
-        return self._explicit_paths_cache
+        return self._explicit_locations_cache
 
     def code(self, repo: str, branch: str, queries: list[str], *, bm25_only: bool = False) -> str:
         from reviewer.retrieval.augment import AugmentSource
@@ -4004,19 +4008,23 @@ class _TaskContextDeps:
                                  paths=paths,
                                  quota=limits.code_section.max_augmented_files)]
         excerpts = self._git_excerpts(repo, branch, queries, limits.code_section)
+        explicit = self._explicit_locations(repo, branch, queries)
         return self._service._search_codebase_multi(
             repo, queries, branch, False, augment_sources=sources, strict=True,
             context_limits=limits, git_excerpts=excerpts, code_budget=self._code_budget,
             bm25_only=bm25_only,
-            explicit_paths=self._explicit_paths(repo, branch, queries),
+            explicit_paths=list(explicit),
+            explicit_lines={path: line for path, line in explicit.items() if line is not None},
             optional_lookup=self._lookup_in("code"),
         )
 
     def test_exemplars(self, repo: str, branch: str, queries: list, *,
                        bm25_only: bool = False) -> str:
+        explicit = self._explicit_locations(repo, branch, queries)
         return self._service._search_codebase_multi(
             repo, queries, branch, tests_only=True, strict=True, bm25_only=bm25_only,
-            explicit_paths=self._explicit_paths(repo, branch, queries),
+            explicit_paths=list(explicit),
+            explicit_lines={path: line for path, line in explicit.items() if line is not None},
             optional_lookup=self._lookup_in("test_exemplars"))
 
     def lexical_search(self, repo: str, branch: str, queries: list[str], *,

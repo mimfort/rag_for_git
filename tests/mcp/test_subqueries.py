@@ -253,3 +253,21 @@ def test_explicit_paths_only_from_task_and_acceptance_without_urls_or_references
         "pkg/from-title.py", "pkg/entry.py", "tests/test_entry.py", "pkg/second.py",
     ]
     assert explicit_python_paths(None, "Открыть pkg/free.py") == ["pkg/free.py"]
+
+
+def test_explicit_python_locations_preserve_first_valid_coordinate():
+    from reviewer.mcp.subqueries import explicit_python_locations
+
+    task = {
+        "title": "Открыть pkg/target.py и tests/test_target.py:22.",
+        "description": (
+            "`./pkg/target.py:15`, pkg/target.py:19, pkg/invalid.py:0, "
+            "pkg/invalid.py:9223372036854775807, https://example.org/pkg/remote.py:8.\n"
+            "## Ссылки\nСм. pkg/historical.py:17."
+        ),
+        "criteria": ["Проверить pkg/done.py:26"],
+    }
+    assert explicit_python_locations(task, "pkg/unrelated.py:4") == {
+        "pkg/target.py": 15, "tests/test_target.py": 22,
+        "pkg/invalid.py": None, "pkg/done.py": 26,
+    }

@@ -601,6 +601,26 @@ class ChunkStore:
                           start_line=sl, end_line=el, text=t, score=0.0)
                 for (p, f, k, sl, el, t) in rows]
 
+    def fetch_retrieved_covering_lines(self, repo, locations: dict[str, int], *, base_ref="base"):
+        """Взять самый узкий чанк базового индекса, покрывающий строку каждого пути."""
+        if not locations:
+            return []
+        sql = """
+        SELECT DISTINCT ON (c.path)
+            c.path, c.symbol_fqn, c.kind, c.start_line, c.end_line, c.text
+        FROM chunks c JOIN unnest(%(paths)s::text[], %(lines)s::int[]) AS q(path,line)
+          ON c.path=q.path AND q.line BETWEEN c.start_line AND c.end_line
+        WHERE c.repo=%(repo)s AND c.ref=%(base)s
+        ORDER BY c.path, c.end_line-c.start_line, c.start_line, c.id
+        """
+        params = {"repo": repo, "base": base_ref, "paths": list(locations),
+                  "lines": list(locations.values())}
+        with self._connect() as conn:
+            rows = conn.execute(sql, params).fetchall()
+        return [Retrieved(node_id=f"{p}#{f}", path=p, symbol_fqn=f, kind=k,
+                          start_line=sl, end_line=el, text=t, score=0.0)
+                for (p, f, k, sl, el, t) in rows]
+
     def fetch_nodes_at(self, repo, node_ids, ref):
         """Текст чанков по КОНКРЕТНОМУ ref (без слияния base/overlay).
 
