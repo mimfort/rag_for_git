@@ -1,0 +1,2999 @@
+{
+  "main": {
+    "control": {
+      "large": {
+        "core": 42,
+        "dependencies": 6,
+        "unlabelled": 10,
+        "core_total": 168,
+        "dependencies_total": 22,
+        "invalid": 23,
+        "missing": 0,
+        "verified_citations": 58
+      },
+      "ordinary": {
+        "core": 10,
+        "dependencies": 7,
+        "unlabelled": 6,
+        "core_total": 18,
+        "dependencies_total": 8,
+        "invalid": 4,
+        "missing": 0,
+        "verified_citations": 23
+      },
+      "usage": {
+        "input_tokens": 160688,
+        "cached_input_tokens": 39424,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 4191,
+        "reasoning_output_tokens": 0
+      },
+      "tasks": [
+        {
+          "rep": 1,
+          "key": "PRI-196",
+          "base_sha": "93de5f908c788f1c7a6ff8336e964f4f5f14406a",
+          "large": true,
+          "missing": false,
+          "citations": [
+            [
+              "reviewer/tasks/boards/base.py",
+              38
+            ],
+            [
+              "reviewer/tasks/sync.py",
+              20
+            ],
+            [
+              "reviewer/tasks/service.py",
+              17
+            ],
+            [
+              "reviewer/mcp/service.py",
+              287
+            ]
+          ],
+          "invalid": 2,
+          "core": [
+            "reviewer/tasks/boards/base.py",
+            "reviewer/tasks/service.py"
+          ],
+          "dependencies": [
+            "reviewer/tasks/sync.py"
+          ],
+          "unlabelled": [
+            "reviewer/mcp/service.py"
+          ],
+          "expected_core": 10,
+          "expected_dependencies": 1
+        },
+        {
+          "rep": 1,
+          "key": "PRI-215",
+          "base_sha": "e3de3c88f6849f686d0d92c1f9d784697ed65eff",
+          "large": true,
+          "missing": false,
+          "citations": [
+            [
+              "reviewer/tasks/boards/base.py",
+              43
+            ],
+            [
+              "reviewer/tasks/boards/__init__.py",
+              10
+            ],
+            [
+              "reviewer/tasks/boards/yougile.py",
+              117
+            ],
+            [
+              "reviewer/tasks/boards/youtrack.py",
+              131
+            ],
+            [
+              "reviewer/tasks/sync.py",
+              24
+            ],
+            [
+              "reviewer/mcp/service.py",
+              477
+            ],
+            [
+              "reviewer/config/settings.py",
+              15
+            ]
+          ],
+          "invalid": 3,
+          "core": [
+            "reviewer/config/settings.py",
+            "reviewer/mcp/service.py",
+            "reviewer/tasks/boards/__init__.py",
+            "reviewer/tasks/boards/base.py",
+            "reviewer/tasks/boards/yougile.py",
+            "reviewer/tasks/boards/youtrack.py",
+            "reviewer/tasks/sync.py"
+          ],
+          "dependencies": [],
+          "unlabelled": [],
+          "expected_core": 20,
+          "expected_dependencies": 2
+        },
+        {
+          "rep": 1,
+          "key": "PRI-223",
+          "base_sha": "dd3676eee62e76370f21a37ba99dfb506d9e4d30",
+          "large": true,
+          "missing": false,
+          "citations": [
+            [
+              "reviewer/entrypoints/cli.py",
+              971
+            ],
+            [
+              "reviewer/install.py",
+              319
+            ],
+            [
+              "reviewer/config/settings.py",
+              38
+            ],
+            [
+              "reviewer/config/provider_credentials.py",
+              27
+            ],
+            [
+              "reviewer/tasks/boards/github.py",
+              384
+            ],
+            [
+              "reviewer/tasks/boards/kaiten.py",
+              412
+            ],
+            [
+              "reviewer/services/review_service.py",
+              106
+            ],
+            [
+              "reviewer/gitutil.py",
+              15
+            ]
+          ],
+          "invalid": 1,
+          "core": [
+            "reviewer/entrypoints/cli.py",
+            "reviewer/gitutil.py",
+            "reviewer/install.py",
+            "reviewer/services/review_service.py",
+            "reviewer/tasks/boards/github.py",
+            "reviewer/tasks/boards/kaiten.py"
+          ],
+          "dependencies": [
+            "reviewer/config/provider_credentials.py",
+            "reviewer/config/settings.py"
+          ],
+          "unlabelled": [],
+          "expected_core": 23,
+          "expected_dependencies": 3
+        },
+        {
+          "rep": 1,
+          "key": "PRI-225",
+          "base_sha": "91a8227486b6cdd235f5e992c4d1930b011729ae",
+          "large": true,
+          "missing": false,
+          "citations": [
+            [
+              "reviewer/tasks/boards/base.py",
+              26
+            ],
+            [
+              "reviewer/policy/policy.py",
+              16
+            ]
+          ],
+          "invalid": 2,
+          "core": [
+            "reviewer/tasks/boards/base.py"
+          ],
+          "dependencies": [],
+          "unlabelled": [
+            "reviewer/policy/policy.py"
+          ],
+          "expected_core": 19,
+          "expected_dependencies": 3
+        },
+        {
+          "rep": 1,
+          "key": "PRI-257",
+          "base_sha": "951e791246db4577a3913d07b75001bc32ff9969",
+          "large": true,
+          "missing": false,
+          "citations": [
+            [
+              "reviewer/retrieval/retriever.py",
+              130
+            ],
+            [
+              "reviewer/services/review_service.py",
+              114
+            ],
+            [
+              "reviewer/index/store.py",
+              519
+            ],
+            [
+              "reviewer/policy/context_limits.py",
+              30
+            ]
+          ],
+          "invalid": 1,
+          "core": [
+            "reviewer/index/store.py",
+            "reviewer/policy/context_limits.py",
+            "reviewer/retrieval/retriever.py"
+          ],
+          "dependencies": [],
+          "unlabelled": [
+            "reviewer/services/review_service.py"
+          ],
+          "expected_core": 12,
+          "expected_dependencies": 2
+        },
+        {
+          "rep": 1,
+          "key": "PRI-228",
+          "base_sha": "e6a42feb3cec7660cbffcdf3f5d542525d39fbf1",
+          "large": false,
+          "missing": false,
+          "citations": [
+            [
+              "reviewer/index/embeddings.py",
+              13
+            ],
+            [
+              "reviewer/index/freshness.py",
+              18
+            ],
+            [
+              "reviewer/tasks/service.py",
+              35
+            ],
+            [
+              "reviewer/app.py",
+              81
+            ],
+            [
+              "reviewer/install.py",
+              1178
+            ]
+          ],
+          "invalid": 1,
+          "core": [
+            "reviewer/app.py",
+            "reviewer/index/embeddings.py",
+            "reviewer/install.py"
+          ],
+          "dependencies": [
+            "reviewer/index/freshness.py"
+          ],
+          "unlabelled": [
+            "reviewer/tasks/service.py"
+          ],
+          "expected_core": 4,
+          "expected_dependencies": 2
+        },
+        {
+          "rep": 1,
+          "key": "PRI-256",
+          "base_sha": "7d66a08baa462be1a2edde216dfbdc66a27fa68f",
+          "large": false,
+          "missing": false,
+          "citations": [
+            [
+              "reviewer/policy/context_limits.py",
+              8
+            ],
+            [
+              "reviewer/retrieval/retriever.py",
+              86
+            ],
+            [
+              "reviewer/index/store.py",
+              347
+            ],
+            [
+              "reviewer/index/models.py",
+              4
+            ],
+            [
+              "reviewer/index/chunker.py",
+              13
+            ]
+          ],
+          "invalid": 1,
+          "core": [
+            "reviewer/policy/context_limits.py"
+          ],
+          "dependencies": [
+            "reviewer/index/chunker.py",
+            "reviewer/retrieval/retriever.py"
+          ],
+          "unlabelled": [
+            "reviewer/index/models.py",
+            "reviewer/index/store.py"
+          ],
+          "expected_core": 5,
+          "expected_dependencies": 2
+        },
+        {
+          "rep": 2,
+          "key": "PRI-196",
+          "base_sha": "93de5f908c788f1c7a6ff8336e964f4f5f14406a",
+          "large": true,
+          "missing": false,
+          "citations": [
+            [
+              "reviewer/tasks/boards/base.py",
+              38
+            ],
+            [
+              "reviewer/tasks/sync.py",
+              29
+            ],
+            [
+              "reviewer/tasks/service.py",
+              17
+            ],
+            [
+              "reviewer/mcp/service.py",
+              287
+            ],
+            [
+              "reviewer/app.py",
+              36
+            ]
+          ],
+          "invalid": 2,
+          "core": [
+            "reviewer/app.py",
+            "reviewer/tasks/boards/base.py",
+            "reviewer/tasks/service.py"
+          ],
+          "dependencies": [
+            "reviewer/tasks/sync.py"
+          ],
+          "unlabelled": [
+            "reviewer/mcp/service.py"
+          ],
+          "expected_core": 10,
+          "expected_dependencies": 1
+        },
+        {
+          "rep": 2,
+          "key": "PRI-215",
+          "base_sha": "e3de3c88f6849f686d0d92c1f9d784697ed65eff",
+          "large": true,
+          "missing": false,
+          "citations": [
+            [
+              "reviewer/tasks/boards/base.py",
+              43
+            ],
+            [
+              "reviewer/tasks/boards/__init__.py",
+              10
+            ],
+            [
+              "reviewer/tasks/boards/yougile.py",
+              117
+            ],
+            [
+              "reviewer/tasks/boards/youtrack.py",
+              131
+            ],
+            [
+              "reviewer/config/settings.py",
+              15
+            ],
+            [
+              "reviewer/mcp/service.py",
+              477
+            ]
+          ],
+          "invalid": 9,
+          "core": [
+            "reviewer/config/settings.py",
+            "reviewer/mcp/service.py",
+            "reviewer/tasks/boards/__init__.py",
+            "reviewer/tasks/boards/base.py",
+            "reviewer/tasks/boards/yougile.py",
+            "reviewer/tasks/boards/youtrack.py"
+          ],
+          "dependencies": [],
+          "unlabelled": [],
+          "expected_core": 20,
+          "expected_dependencies": 2
+        },
+        {
+          "rep": 2,
+          "key": "PRI-223",
+          "base_sha": "dd3676eee62e76370f21a37ba99dfb506d9e4d30",
+          "large": true,
+          "missing": false,
+          "citations": [
+            [
+              "reviewer/entrypoints/cli.py",
+              971
+            ],
+            [
+              "reviewer/config/settings.py",
+              38
+            ],
+            [
+              "reviewer/install.py",
+              319
+            ],
+            [
+              "reviewer/services/review_service.py",
+              120
+            ],
+            [
+              "reviewer/tasks/boards/base.py",
+              171
+            ],
+            [
+              "reviewer/tasks/boards/github.py",
+              384
+            ],
+            [
+              "reviewer/tasks/boards/kaiten.py",
+              412
+            ],
+            [
+              "reviewer/config/provider_credentials.py",
+              27
+            ]
+          ],
+          "invalid": 2,
+          "core": [
+            "reviewer/entrypoints/cli.py",
+            "reviewer/install.py",
+            "reviewer/services/review_service.py",
+            "reviewer/tasks/boards/github.py",
+            "reviewer/tasks/boards/kaiten.py"
+          ],
+          "dependencies": [
+            "reviewer/config/provider_credentials.py",
+            "reviewer/config/settings.py"
+          ],
+          "unlabelled": [
+            "reviewer/tasks/boards/base.py"
+          ],
+          "expected_core": 23,
+          "expected_dependencies": 3
+        },
+        {
+          "rep": 2,
+          "key": "PRI-225",
+          "base_sha": "91a8227486b6cdd235f5e992c4d1930b011729ae",
+          "large": true,
+          "missing": false,
+          "citations": [
+            [
+              "reviewer/tasks/boards/base.py",
+              26
+            ],
+            [
+              "reviewer/tasks/boards/linear.py",
+              320
+            ],
+            [
+              "reviewer/policy/policy.py",
+              16
+            ],
+            [
+              "reviewer/config/settings.py",
+              38
+            ],
+            [
+              "reviewer/mcp/service.py",
+              195
+            ]
+          ],
+          "invalid": 1,
+          "core": [
+            "reviewer/mcp/service.py",
+            "reviewer/tasks/boards/base.py",
+            "reviewer/tasks/boards/linear.py"
+          ],
+          "dependencies": [],
+          "unlabelled": [
+            "reviewer/config/settings.py",
+            "reviewer/policy/policy.py"
+          ],
+          "expected_core": 19,
+          "expected_dependencies": 3
+        },
+        {
+          "rep": 2,
+          "key": "PRI-257",
+          "base_sha": "951e791246db4577a3913d07b75001bc32ff9969",
+          "large": true,
+          "missing": false,
+          "citations": [
+            [
+              "reviewer/retrieval/retriever.py",
+              130
+            ],
+            [
+              "reviewer/index/store.py",
+              519
+            ],
+            [
+              "reviewer/services/review_service.py",
+              114
+            ],
+            [
+              "reviewer/index/refs.py",
+              10
+            ],
+            [
+              "reviewer/gitutil.py",
+              87
+            ],
+            [
+              "reviewer/entrypoints/cli.py",
+              220
+            ],
+            [
+              "reviewer/mcp/service.py",
+              1821
+            ],
+            [
+              "reviewer/policy/context_limits.py",
+              30
+            ],
+            [
+              "reviewer/retrieval/multiquery.py",
+              47
+            ]
+          ],
+          "invalid": 0,
+          "core": [
+            "reviewer/gitutil.py",
+            "reviewer/index/store.py",
+            "reviewer/mcp/service.py",
+            "reviewer/policy/context_limits.py",
+            "reviewer/retrieval/multiquery.py",
+            "reviewer/retrieval/retriever.py"
+          ],
+          "dependencies": [],
+          "unlabelled": [
+            "reviewer/entrypoints/cli.py",
+            "reviewer/index/refs.py",
+            "reviewer/services/review_service.py"
+          ],
+          "expected_core": 12,
+          "expected_dependencies": 2
+        },
+        {
+          "rep": 2,
+          "key": "PRI-228",
+          "base_sha": "e6a42feb3cec7660cbffcdf3f5d542525d39fbf1",
+          "large": false,
+          "missing": false,
+          "citations": [
+            [
+              "reviewer/index/embeddings.py",
+              13
+            ],
+            [
+              "reviewer/index/freshness.py",
+              18
+            ],
+            [
+              "reviewer/tasks/service.py",
+              35
+            ],
+            [
+              "reviewer/app.py",
+              81
+            ],
+            [
+              "reviewer/install.py",
+              1178
+            ],
+            [
+              "reviewer/index/_retry.py",
+              18
+            ]
+          ],
+          "invalid": 1,
+          "core": [
+            "reviewer/app.py",
+            "reviewer/index/embeddings.py",
+            "reviewer/install.py"
+          ],
+          "dependencies": [
+            "reviewer/index/_retry.py",
+            "reviewer/index/freshness.py"
+          ],
+          "unlabelled": [
+            "reviewer/tasks/service.py"
+          ],
+          "expected_core": 4,
+          "expected_dependencies": 2
+        },
+        {
+          "rep": 2,
+          "key": "PRI-256",
+          "base_sha": "7d66a08baa462be1a2edde216dfbdc66a27fa68f",
+          "large": false,
+          "missing": false,
+          "citations": [
+            [
+              "reviewer/policy/context_limits.py",
+              8
+            ],
+            [
+              "reviewer/retrieval/retriever.py",
+              86
+            ],
+            [
+              "reviewer/retrieval/multiquery.py",
+              128
+            ],
+            [
+              "reviewer/index/models.py",
+              4
+            ],
+            [
+              "reviewer/index/chunker.py",
+              13
+            ],
+            [
+              "reviewer/index/store.py",
+              347
+            ],
+            [
+              "reviewer/mcp/service.py",
+              2062
+            ]
+          ],
+          "invalid": 1,
+          "core": [
+            "reviewer/mcp/service.py",
+            "reviewer/policy/context_limits.py",
+            "reviewer/retrieval/multiquery.py"
+          ],
+          "dependencies": [
+            "reviewer/index/chunker.py",
+            "reviewer/retrieval/retriever.py"
+          ],
+          "unlabelled": [
+            "reviewer/index/models.py",
+            "reviewer/index/store.py"
+          ],
+          "expected_core": 5,
+          "expected_dependencies": 2
+        }
+      ]
+    },
+    "alias": {
+      "large": {
+        "core": 40,
+        "dependencies": 6,
+        "unlabelled": 23,
+        "core_total": 168,
+        "dependencies_total": 22,
+        "invalid": 0,
+        "missing": 0,
+        "verified_citations": 72
+      },
+      "ordinary": {
+        "core": 8,
+        "dependencies": 8,
+        "unlabelled": 9,
+        "core_total": 18,
+        "dependencies_total": 8,
+        "invalid": 0,
+        "missing": 0,
+        "verified_citations": 26
+      },
+      "usage": {
+        "input_tokens": 156296,
+        "cached_input_tokens": 38784,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 3271,
+        "reasoning_output_tokens": 0
+      },
+      "tasks": [
+        {
+          "rep": 1,
+          "key": "PRI-196",
+          "base_sha": "93de5f908c788f1c7a6ff8336e964f4f5f14406a",
+          "large": true,
+          "missing": false,
+          "citations": [
+            [
+              "reviewer/mcp/service.py",
+              295
+            ],
+            [
+              "reviewer/tasks/sync.py",
+              29
+            ],
+            [
+              "reviewer/tasks/boards/base.py",
+              38
+            ],
+            [
+              "reviewer/tasks/service.py",
+              17
+            ],
+            [
+              "reviewer/app.py",
+              36
+            ],
+            [
+              "reviewer/vcs/base.py",
+              26
+            ],
+            [
+              "reviewer/web/api.py",
+              78
+            ]
+          ],
+          "invalid": 0,
+          "core": [
+            "reviewer/app.py",
+            "reviewer/tasks/boards/base.py",
+            "reviewer/tasks/service.py"
+          ],
+          "dependencies": [
+            "reviewer/tasks/sync.py"
+          ],
+          "unlabelled": [
+            "reviewer/mcp/service.py",
+            "reviewer/vcs/base.py",
+            "reviewer/web/api.py"
+          ],
+          "expected_core": 10,
+          "expected_dependencies": 1
+        },
+        {
+          "rep": 1,
+          "key": "PRI-215",
+          "base_sha": "e3de3c88f6849f686d0d92c1f9d784697ed65eff",
+          "large": true,
+          "missing": false,
+          "citations": [
+            [
+              "reviewer/tasks/boards/base.py",
+              43
+            ],
+            [
+              "reviewer/tasks/boards/__init__.py",
+              10
+            ],
+            [
+              "reviewer/config/settings.py",
+              15
+            ],
+            [
+              "reviewer/mcp/service.py",
+              477
+            ],
+            [
+              "reviewer/tasks/boards/yougile.py",
+              117
+            ],
+            [
+              "reviewer/tasks/boards/youtrack.py",
+              131
+            ],
+            [
+              "reviewer/tasks/sync.py",
+              24
+            ],
+            [
+              "reviewer/tasks/sync.py",
+              35
+            ]
+          ],
+          "invalid": 0,
+          "core": [
+            "reviewer/config/settings.py",
+            "reviewer/mcp/service.py",
+            "reviewer/tasks/boards/__init__.py",
+            "reviewer/tasks/boards/base.py",
+            "reviewer/tasks/boards/yougile.py",
+            "reviewer/tasks/boards/youtrack.py",
+            "reviewer/tasks/sync.py"
+          ],
+          "dependencies": [],
+          "unlabelled": [],
+          "expected_core": 20,
+          "expected_dependencies": 2
+        },
+        {
+          "rep": 1,
+          "key": "PRI-223",
+          "base_sha": "dd3676eee62e76370f21a37ba99dfb506d9e4d30",
+          "large": true,
+          "missing": false,
+          "citations": [
+            [
+              "reviewer/config/settings.py",
+              38
+            ],
+            [
+              "reviewer/entrypoints/cli.py",
+              971
+            ],
+            [
+              "reviewer/install.py",
+              319
+            ],
+            [
+              "reviewer/tasks/boards/github.py",
+              384
+            ],
+            [
+              "reviewer/services/review_service.py",
+              106
+            ],
+            [
+              "plugin/hooks/brief_guard.py",
+              326
+            ],
+            [
+              "reviewer/config/provider_credentials.py",
+              27
+            ]
+          ],
+          "invalid": 0,
+          "core": [
+            "reviewer/entrypoints/cli.py",
+            "reviewer/install.py",
+            "reviewer/services/review_service.py",
+            "reviewer/tasks/boards/github.py"
+          ],
+          "dependencies": [
+            "reviewer/config/provider_credentials.py",
+            "reviewer/config/settings.py"
+          ],
+          "unlabelled": [
+            "plugin/hooks/brief_guard.py"
+          ],
+          "expected_core": 23,
+          "expected_dependencies": 3
+        },
+        {
+          "rep": 1,
+          "key": "PRI-225",
+          "base_sha": "91a8227486b6cdd235f5e992c4d1930b011729ae",
+          "large": true,
+          "missing": false,
+          "citations": [
+            [
+              "reviewer/tasks/boards/base.py",
+              26
+            ],
+            [
+              "reviewer/config/settings.py",
+              38
+            ],
+            [
+              "reviewer/policy/policy.py",
+              16
+            ],
+            [
+              "reviewer/services/repo_id.py",
+              12
+            ]
+          ],
+          "invalid": 0,
+          "core": [
+            "reviewer/tasks/boards/base.py"
+          ],
+          "dependencies": [],
+          "unlabelled": [
+            "reviewer/config/settings.py",
+            "reviewer/policy/policy.py",
+            "reviewer/services/repo_id.py"
+          ],
+          "expected_core": 19,
+          "expected_dependencies": 3
+        },
+        {
+          "rep": 1,
+          "key": "PRI-257",
+          "base_sha": "951e791246db4577a3913d07b75001bc32ff9969",
+          "large": true,
+          "missing": false,
+          "citations": [
+            [
+              "reviewer/retrieval/retriever.py",
+              123
+            ],
+            [
+              "reviewer/services/review_service.py",
+              114
+            ],
+            [
+              "reviewer/tasks/service.py",
+              35
+            ],
+            [
+              "reviewer/config/settings.py",
+              44
+            ],
+            [
+              "reviewer/index/embeddings.py",
+              40
+            ],
+            [
+              "reviewer/index/store.py",
+              519
+            ],
+            [
+              "reviewer/index/reranker.py",
+              23
+            ],
+            [
+              "reviewer/policy/context_limits.py",
+              30
+            ]
+          ],
+          "invalid": 0,
+          "core": [
+            "reviewer/index/store.py",
+            "reviewer/policy/context_limits.py",
+            "reviewer/retrieval/retriever.py",
+            "reviewer/tasks/service.py"
+          ],
+          "dependencies": [],
+          "unlabelled": [
+            "reviewer/config/settings.py",
+            "reviewer/index/embeddings.py",
+            "reviewer/index/reranker.py",
+            "reviewer/services/review_service.py"
+          ],
+          "expected_core": 12,
+          "expected_dependencies": 2
+        },
+        {
+          "rep": 1,
+          "key": "PRI-228",
+          "base_sha": "e6a42feb3cec7660cbffcdf3f5d542525d39fbf1",
+          "large": false,
+          "missing": false,
+          "citations": [
+            [
+              "reviewer/index/embeddings.py",
+              13
+            ],
+            [
+              "reviewer/index/freshness.py",
+              18
+            ],
+            [
+              "reviewer/app.py",
+              81
+            ],
+            [
+              "reviewer/tasks/boards/weeek.py",
+              518
+            ],
+            [
+              "reviewer/index/_retry.py",
+              18
+            ],
+            [
+              "reviewer/index/store.py",
+              127
+            ],
+            [
+              "reviewer/install.py",
+              1178
+            ]
+          ],
+          "invalid": 0,
+          "core": [
+            "reviewer/app.py",
+            "reviewer/index/embeddings.py",
+            "reviewer/install.py"
+          ],
+          "dependencies": [
+            "reviewer/index/_retry.py",
+            "reviewer/index/freshness.py"
+          ],
+          "unlabelled": [
+            "reviewer/index/store.py",
+            "reviewer/tasks/boards/weeek.py"
+          ],
+          "expected_core": 4,
+          "expected_dependencies": 2
+        },
+        {
+          "rep": 1,
+          "key": "PRI-256",
+          "base_sha": "7d66a08baa462be1a2edde216dfbdc66a27fa68f",
+          "large": false,
+          "missing": false,
+          "citations": [
+            [
+              "reviewer/index/store.py",
+              347
+            ],
+            [
+              "reviewer/index/models.py",
+              4
+            ],
+            [
+              "reviewer/index/chunker.py",
+              13
+            ],
+            [
+              "reviewer/retrieval/multiquery.py",
+              128
+            ],
+            [
+              "reviewer/retrieval/retriever.py",
+              86
+            ],
+            [
+              "reviewer/entrypoints/mcp_server.py",
+              431
+            ],
+            [
+              "reviewer/retrieval/retriever.py",
+              105
+            ]
+          ],
+          "invalid": 0,
+          "core": [
+            "reviewer/retrieval/multiquery.py"
+          ],
+          "dependencies": [
+            "reviewer/index/chunker.py",
+            "reviewer/retrieval/retriever.py"
+          ],
+          "unlabelled": [
+            "reviewer/entrypoints/mcp_server.py",
+            "reviewer/index/models.py",
+            "reviewer/index/store.py"
+          ],
+          "expected_core": 5,
+          "expected_dependencies": 2
+        },
+        {
+          "rep": 2,
+          "key": "PRI-196",
+          "base_sha": "93de5f908c788f1c7a6ff8336e964f4f5f14406a",
+          "large": true,
+          "missing": false,
+          "citations": [
+            [
+              "reviewer/tasks/sync.py",
+              20
+            ],
+            [
+              "reviewer/tasks/boards/base.py",
+              38
+            ],
+            [
+              "reviewer/tasks/service.py",
+              17
+            ],
+            [
+              "reviewer/vcs/base.py",
+              26
+            ],
+            [
+              "reviewer/web/api.py",
+              78
+            ],
+            [
+              "reviewer/app.py",
+              36
+            ],
+            [
+              "reviewer/mcp/service.py",
+              287
+            ]
+          ],
+          "invalid": 0,
+          "core": [
+            "reviewer/app.py",
+            "reviewer/tasks/boards/base.py",
+            "reviewer/tasks/service.py"
+          ],
+          "dependencies": [
+            "reviewer/tasks/sync.py"
+          ],
+          "unlabelled": [
+            "reviewer/mcp/service.py",
+            "reviewer/vcs/base.py",
+            "reviewer/web/api.py"
+          ],
+          "expected_core": 10,
+          "expected_dependencies": 1
+        },
+        {
+          "rep": 2,
+          "key": "PRI-215",
+          "base_sha": "e3de3c88f6849f686d0d92c1f9d784697ed65eff",
+          "large": true,
+          "missing": false,
+          "citations": [
+            [
+              "reviewer/tasks/boards/base.py",
+              43
+            ],
+            [
+              "reviewer/tasks/boards/__init__.py",
+              10
+            ],
+            [
+              "reviewer/tasks/boards/youtrack.py",
+              140
+            ],
+            [
+              "reviewer/tasks/sync.py",
+              24
+            ],
+            [
+              "reviewer/tasks/boards/yougile.py",
+              117
+            ],
+            [
+              "reviewer/tasks/boards/youtrack.py",
+              131
+            ],
+            [
+              "reviewer/entrypoints/mcp_server.py",
+              18
+            ],
+            [
+              "reviewer/mcp/service.py",
+              477
+            ],
+            [
+              "reviewer/tasks/sync.py",
+              35
+            ],
+            [
+              "reviewer/tasks/taskdoc.py",
+              39
+            ],
+            [
+              "reviewer/config/settings.py",
+              24
+            ],
+            [
+              "plugin/hooks/brief_cost.py",
+              261
+            ]
+          ],
+          "invalid": 0,
+          "core": [
+            "reviewer/config/settings.py",
+            "reviewer/entrypoints/mcp_server.py",
+            "reviewer/mcp/service.py",
+            "reviewer/tasks/boards/__init__.py",
+            "reviewer/tasks/boards/base.py",
+            "reviewer/tasks/boards/yougile.py",
+            "reviewer/tasks/boards/youtrack.py",
+            "reviewer/tasks/sync.py"
+          ],
+          "dependencies": [],
+          "unlabelled": [
+            "plugin/hooks/brief_cost.py",
+            "reviewer/tasks/taskdoc.py"
+          ],
+          "expected_core": 20,
+          "expected_dependencies": 2
+        },
+        {
+          "rep": 2,
+          "key": "PRI-223",
+          "base_sha": "dd3676eee62e76370f21a37ba99dfb506d9e4d30",
+          "large": true,
+          "missing": false,
+          "citations": [
+            [
+              "reviewer/config/settings.py",
+              38
+            ],
+            [
+              "reviewer/entrypoints/cli.py",
+              971
+            ],
+            [
+              "reviewer/install.py",
+              319
+            ],
+            [
+              "reviewer/config/provider_credentials.py",
+              27
+            ],
+            [
+              "reviewer/tasks/boards/github.py",
+              384
+            ],
+            [
+              "reviewer/tasks/boards/kaiten.py",
+              412
+            ],
+            [
+              "reviewer/services/review_service.py",
+              106
+            ],
+            [
+              "plugin/hooks/brief_guard.py",
+              326
+            ]
+          ],
+          "invalid": 0,
+          "core": [
+            "reviewer/entrypoints/cli.py",
+            "reviewer/install.py",
+            "reviewer/services/review_service.py",
+            "reviewer/tasks/boards/github.py",
+            "reviewer/tasks/boards/kaiten.py"
+          ],
+          "dependencies": [
+            "reviewer/config/provider_credentials.py",
+            "reviewer/config/settings.py"
+          ],
+          "unlabelled": [
+            "plugin/hooks/brief_guard.py"
+          ],
+          "expected_core": 23,
+          "expected_dependencies": 3
+        },
+        {
+          "rep": 2,
+          "key": "PRI-225",
+          "base_sha": "91a8227486b6cdd235f5e992c4d1930b011729ae",
+          "large": true,
+          "missing": false,
+          "citations": [
+            [
+              "reviewer/tasks/boards/base.py",
+              27
+            ],
+            [
+              "reviewer/config/settings.py",
+              38
+            ],
+            [
+              "reviewer/mcp/service.py",
+              195
+            ],
+            [
+              "reviewer/policy/policy.py",
+              16
+            ],
+            [
+              "reviewer/mcp/session_serde.py",
+              54
+            ]
+          ],
+          "invalid": 0,
+          "core": [
+            "reviewer/mcp/service.py",
+            "reviewer/tasks/boards/base.py"
+          ],
+          "dependencies": [],
+          "unlabelled": [
+            "reviewer/config/settings.py",
+            "reviewer/mcp/session_serde.py",
+            "reviewer/policy/policy.py"
+          ],
+          "expected_core": 19,
+          "expected_dependencies": 3
+        },
+        {
+          "rep": 2,
+          "key": "PRI-257",
+          "base_sha": "951e791246db4577a3913d07b75001bc32ff9969",
+          "large": true,
+          "missing": false,
+          "citations": [
+            [
+              "reviewer/retrieval/retriever.py",
+              123
+            ],
+            [
+              "reviewer/tasks/service.py",
+              35
+            ],
+            [
+              "reviewer/services/review_service.py",
+              114
+            ],
+            [
+              "reviewer/graph/store.py",
+              76
+            ],
+            [
+              "reviewer/index/store.py",
+              519
+            ],
+            [
+              "reviewer/index/refs.py",
+              10
+            ]
+          ],
+          "invalid": 0,
+          "core": [
+            "reviewer/index/store.py",
+            "reviewer/retrieval/retriever.py",
+            "reviewer/tasks/service.py"
+          ],
+          "dependencies": [],
+          "unlabelled": [
+            "reviewer/graph/store.py",
+            "reviewer/index/refs.py",
+            "reviewer/services/review_service.py"
+          ],
+          "expected_core": 12,
+          "expected_dependencies": 2
+        },
+        {
+          "rep": 2,
+          "key": "PRI-228",
+          "base_sha": "e6a42feb3cec7660cbffcdf3f5d542525d39fbf1",
+          "large": false,
+          "missing": false,
+          "citations": [
+            [
+              "reviewer/index/embeddings.py",
+              13
+            ],
+            [
+              "reviewer/index/freshness.py",
+              18
+            ],
+            [
+              "reviewer/tasks/service.py",
+              35
+            ],
+            [
+              "reviewer/app.py",
+              81
+            ],
+            [
+              "reviewer/index/_retry.py",
+              18
+            ],
+            [
+              "reviewer/index/store.py",
+              127
+            ]
+          ],
+          "invalid": 0,
+          "core": [
+            "reviewer/app.py",
+            "reviewer/index/embeddings.py"
+          ],
+          "dependencies": [
+            "reviewer/index/_retry.py",
+            "reviewer/index/freshness.py"
+          ],
+          "unlabelled": [
+            "reviewer/index/store.py",
+            "reviewer/tasks/service.py"
+          ],
+          "expected_core": 4,
+          "expected_dependencies": 2
+        },
+        {
+          "rep": 2,
+          "key": "PRI-256",
+          "base_sha": "7d66a08baa462be1a2edde216dfbdc66a27fa68f",
+          "large": false,
+          "missing": false,
+          "citations": [
+            [
+              "reviewer/policy/context_limits.py",
+              8
+            ],
+            [
+              "reviewer/index/store.py",
+              347
+            ],
+            [
+              "reviewer/index/models.py",
+              4
+            ],
+            [
+              "reviewer/retrieval/retriever.py",
+              86
+            ],
+            [
+              "reviewer/index/chunker.py",
+              13
+            ],
+            [
+              "reviewer/retrieval/multiquery.py",
+              128
+            ]
+          ],
+          "invalid": 0,
+          "core": [
+            "reviewer/policy/context_limits.py",
+            "reviewer/retrieval/multiquery.py"
+          ],
+          "dependencies": [
+            "reviewer/index/chunker.py",
+            "reviewer/retrieval/retriever.py"
+          ],
+          "unlabelled": [
+            "reviewer/index/models.py",
+            "reviewer/index/store.py"
+          ],
+          "expected_core": 5,
+          "expected_dependencies": 2
+        }
+      ]
+    }
+  },
+  "independent": {
+    "control": {
+      "large": {
+        "core": 32,
+        "dependencies": 6,
+        "unlabelled": 31,
+        "core_total": 72,
+        "dependencies_total": 14,
+        "invalid": 0,
+        "missing": 0,
+        "verified_citations": 69
+      },
+      "ordinary": {
+        "core": 24,
+        "dependencies": 2,
+        "unlabelled": 12,
+        "core_total": 36,
+        "dependencies_total": 18,
+        "invalid": 1,
+        "missing": 0,
+        "verified_citations": 38
+      },
+      "usage": {
+        "input_tokens": 145501,
+        "cached_input_tokens": 45568,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 3875,
+        "reasoning_output_tokens": 0
+      },
+      "tasks": [
+        {
+          "rep": 1,
+          "key": "PRI-170",
+          "base_sha": "7bdc067aa45e57823285882a5bc3173253350db1",
+          "large": true,
+          "missing": false,
+          "citations": [
+            [
+              "reviewer/tasks/sync.py",
+              26
+            ],
+            [
+              "reviewer/tasks/boards/base.py",
+              35
+            ],
+            [
+              "reviewer/tasks/boards/yougile.py",
+              107
+            ],
+            [
+              "reviewer/tasks/boards/youtrack.py",
+              117
+            ],
+            [
+              "reviewer/tasks/service.py",
+              17
+            ],
+            [
+              "reviewer/tasks/graph.py",
+              25
+            ],
+            [
+              "reviewer/mcp/service.py",
+              272
+            ],
+            [
+              "reviewer/entrypoints/mcp_server.py",
+              134
+            ],
+            [
+              "reviewer/config/settings.py",
+              40
+            ],
+            [
+              "reviewer/services/review_service.py",
+              81
+            ],
+            [
+              "reviewer/mcp/session_serde.py",
+              41
+            ],
+            [
+              "reviewer/app.py",
+              36
+            ],
+            [
+              "reviewer/index/store.py",
+              150
+            ],
+            [
+              "reviewer/graph/backend.py",
+              27
+            ],
+            [
+              "reviewer/services/graph_sync.py",
+              12
+            ],
+            [
+              "reviewer/graph/scip.py",
+              69
+            ],
+            [
+              "reviewer/web/api.py",
+              61
+            ],
+            [
+              "reviewer/entrypoints/cli.py",
+              44
+            ],
+            [
+              "sync_chunk.py",
+              34
+            ]
+          ],
+          "invalid": 0,
+          "core": [
+            "reviewer/entrypoints/mcp_server.py",
+            "reviewer/mcp/service.py",
+            "reviewer/tasks/boards/base.py",
+            "reviewer/tasks/boards/yougile.py",
+            "reviewer/tasks/boards/youtrack.py",
+            "reviewer/tasks/graph.py",
+            "reviewer/tasks/service.py",
+            "reviewer/tasks/sync.py"
+          ],
+          "dependencies": [
+            "reviewer/config/settings.py"
+          ],
+          "unlabelled": [
+            "reviewer/app.py",
+            "reviewer/entrypoints/cli.py",
+            "reviewer/graph/backend.py",
+            "reviewer/graph/scip.py",
+            "reviewer/index/store.py",
+            "reviewer/mcp/session_serde.py",
+            "reviewer/services/graph_sync.py",
+            "reviewer/services/review_service.py",
+            "reviewer/web/api.py",
+            "sync_chunk.py"
+          ],
+          "expected_core": 15,
+          "expected_dependencies": 2
+        },
+        {
+          "rep": 1,
+          "key": "PRI-202",
+          "base_sha": "a7ae5931180666ac18a2c6f413c5e7b429588008",
+          "large": true,
+          "missing": false,
+          "citations": [
+            [
+              "reviewer/retrieval/retriever.py",
+              77
+            ],
+            [
+              "reviewer/mcp/service.py",
+              395
+            ],
+            [
+              "reviewer/entrypoints/cli.py",
+              139
+            ],
+            [
+              "reviewer/config/settings.py",
+              15
+            ],
+            [
+              "reviewer/tasks/service.py",
+              350
+            ],
+            [
+              "reviewer/tools/code_tools.py",
+              114
+            ],
+            [
+              "reviewer/app.py",
+              36
+            ],
+            [
+              "reviewer/index/reranker.py",
+              14
+            ],
+            [
+              "reviewer/index/embeddings.py",
+              44
+            ],
+            [
+              "reviewer/index/refs.py",
+              10
+            ]
+          ],
+          "invalid": 0,
+          "core": [
+            "reviewer/index/reranker.py",
+            "reviewer/mcp/service.py",
+            "reviewer/retrieval/retriever.py",
+            "reviewer/tasks/service.py"
+          ],
+          "dependencies": [
+            "reviewer/config/settings.py"
+          ],
+          "unlabelled": [
+            "reviewer/app.py",
+            "reviewer/entrypoints/cli.py",
+            "reviewer/index/embeddings.py",
+            "reviewer/index/refs.py",
+            "reviewer/tools/code_tools.py"
+          ],
+          "expected_core": 11,
+          "expected_dependencies": 2
+        },
+        {
+          "rep": 1,
+          "key": "PRI-221",
+          "base_sha": "53f487c87e22f7a438f859ce300d549ad5b5264f",
+          "large": true,
+          "missing": false,
+          "citations": [
+            [
+              "reviewer/config/settings.py",
+              38
+            ],
+            [
+              "reviewer/policy/policy.py",
+              13
+            ],
+            [
+              "reviewer/config/provider_credentials.py",
+              50
+            ],
+            [
+              "reviewer/entrypoints/cli.py",
+              306
+            ],
+            [
+              "reviewer/tasks/boards/__init__.py",
+              16
+            ],
+            [
+              "reviewer/mcp/service.py",
+              122
+            ],
+            [
+              "reviewer/entrypoints/mcp_server.py",
+              209
+            ],
+            [
+              "reviewer/mcp/session_serde.py",
+              42
+            ],
+            [
+              "reviewer/mcp/session_store.py",
+              89
+            ],
+            [
+              "reviewer/tasks/boards/base.py",
+              19
+            ],
+            [
+              "reviewer/tasks/boards/asana.py",
+              265
+            ],
+            [
+              "reviewer/tasks/boards/youtrack.py",
+              491
+            ],
+            [
+              "reviewer/tasks/boards/registry.py",
+              119
+            ]
+          ],
+          "invalid": 0,
+          "core": [
+            "reviewer/entrypoints/cli.py",
+            "reviewer/mcp/service.py",
+            "reviewer/mcp/session_serde.py",
+            "reviewer/policy/policy.py"
+          ],
+          "dependencies": [
+            "reviewer/config/settings.py",
+            "reviewer/entrypoints/mcp_server.py"
+          ],
+          "unlabelled": [
+            "reviewer/config/provider_credentials.py",
+            "reviewer/mcp/session_store.py",
+            "reviewer/tasks/boards/__init__.py",
+            "reviewer/tasks/boards/asana.py",
+            "reviewer/tasks/boards/base.py",
+            "reviewer/tasks/boards/registry.py",
+            "reviewer/tasks/boards/youtrack.py"
+          ],
+          "expected_core": 10,
+          "expected_dependencies": 3
+        },
+        {
+          "rep": 1,
+          "key": "PRI-179",
+          "base_sha": "aa17f64ff90d553b4c251689bfeb0ab8d14ecccf",
+          "large": false,
+          "missing": false,
+          "citations": [
+            [
+              "reviewer/graph/store.py",
+              5
+            ],
+            [
+              "reviewer/mcp/service.py",
+              612
+            ],
+            [
+              "reviewer/graph/scip.py",
+              56
+            ],
+            [
+              "reviewer/entrypoints/mcp_server.py",
+              208
+            ],
+            [
+              "reviewer/retrieval/retriever.py",
+              89
+            ],
+            [
+              "reviewer/app.py",
+              36
+            ],
+            [
+              "reviewer/tasks/graph.py",
+              25
+            ],
+            [
+              "reviewer/tasks/service.py",
+              17
+            ]
+          ],
+          "invalid": 0,
+          "core": [
+            "reviewer/entrypoints/mcp_server.py",
+            "reviewer/graph/store.py",
+            "reviewer/mcp/service.py"
+          ],
+          "dependencies": [
+            "reviewer/graph/scip.py"
+          ],
+          "unlabelled": [
+            "reviewer/app.py",
+            "reviewer/retrieval/retriever.py",
+            "reviewer/tasks/graph.py",
+            "reviewer/tasks/service.py"
+          ],
+          "expected_core": 5,
+          "expected_dependencies": 3
+        },
+        {
+          "rep": 1,
+          "key": "PRI-205",
+          "base_sha": "8d31abf79cc7aa63aa8807531403bc28cb6a1566",
+          "large": false,
+          "missing": false,
+          "citations": [
+            [
+              "reviewer/tasks/boards/base.py",
+              24
+            ],
+            [
+              "reviewer/tasks/boards/youtrack.py",
+              130
+            ],
+            [
+              "reviewer/tasks/boards/yougile.py",
+              112
+            ],
+            [
+              "reviewer/tasks/boards/__init__.py",
+              10
+            ],
+            [
+              "reviewer/mcp/service.py",
+              299
+            ],
+            [
+              "reviewer/entrypoints/mcp_server.py",
+              120
+            ],
+            [
+              "reviewer/tasks/sync.py",
+              81
+            ]
+          ],
+          "invalid": 0,
+          "core": [
+            "reviewer/entrypoints/mcp_server.py",
+            "reviewer/mcp/service.py",
+            "reviewer/tasks/boards/base.py",
+            "reviewer/tasks/boards/yougile.py",
+            "reviewer/tasks/boards/youtrack.py"
+          ],
+          "dependencies": [],
+          "unlabelled": [
+            "reviewer/tasks/boards/__init__.py",
+            "reviewer/tasks/sync.py"
+          ],
+          "expected_core": 7,
+          "expected_dependencies": 3
+        },
+        {
+          "rep": 1,
+          "key": "PRI-207",
+          "base_sha": "8dd053c232d903f4895886ea36bdb24e96bc39a5",
+          "large": false,
+          "missing": false,
+          "citations": [
+            [
+              "reviewer/tasks/boards/base.py",
+              24
+            ],
+            [
+              "reviewer/tasks/sync.py",
+              20
+            ],
+            [
+              "reviewer/tasks/service.py",
+              17
+            ],
+            [
+              "reviewer/tasks/store.py",
+              72
+            ],
+            [
+              "reviewer/tasks/graph.py",
+              25
+            ],
+            [
+              "reviewer/index/store.py",
+              129
+            ],
+            [
+              "reviewer/index/freshness.py",
+              18
+            ]
+          ],
+          "invalid": 1,
+          "core": [
+            "reviewer/tasks/boards/base.py",
+            "reviewer/tasks/service.py",
+            "reviewer/tasks/store.py",
+            "reviewer/tasks/sync.py"
+          ],
+          "dependencies": [],
+          "unlabelled": [
+            "reviewer/index/freshness.py",
+            "reviewer/index/store.py",
+            "reviewer/tasks/graph.py"
+          ],
+          "expected_core": 6,
+          "expected_dependencies": 3
+        },
+        {
+          "rep": 2,
+          "key": "PRI-170",
+          "base_sha": "7bdc067aa45e57823285882a5bc3173253350db1",
+          "large": true,
+          "missing": false,
+          "citations": [
+            [
+              "reviewer/tasks/sync.py",
+              26
+            ],
+            [
+              "reviewer/tasks/boards/base.py",
+              35
+            ],
+            [
+              "reviewer/tasks/boards/yougile.py",
+              107
+            ],
+            [
+              "reviewer/tasks/boards/youtrack.py",
+              117
+            ],
+            [
+              "reviewer/tasks/service.py",
+              17
+            ],
+            [
+              "reviewer/tasks/graph.py",
+              25
+            ],
+            [
+              "reviewer/index/store.py",
+              150
+            ],
+            [
+              "reviewer/mcp/service.py",
+              272
+            ],
+            [
+              "reviewer/entrypoints/mcp_server.py",
+              134
+            ],
+            [
+              "reviewer/services/review_service.py",
+              81
+            ],
+            [
+              "reviewer/mcp/session_serde.py",
+              41
+            ]
+          ],
+          "invalid": 0,
+          "core": [
+            "reviewer/entrypoints/mcp_server.py",
+            "reviewer/mcp/service.py",
+            "reviewer/tasks/boards/base.py",
+            "reviewer/tasks/boards/yougile.py",
+            "reviewer/tasks/boards/youtrack.py",
+            "reviewer/tasks/graph.py",
+            "reviewer/tasks/service.py",
+            "reviewer/tasks/sync.py"
+          ],
+          "dependencies": [],
+          "unlabelled": [
+            "reviewer/index/store.py",
+            "reviewer/mcp/session_serde.py",
+            "reviewer/services/review_service.py"
+          ],
+          "expected_core": 15,
+          "expected_dependencies": 2
+        },
+        {
+          "rep": 2,
+          "key": "PRI-202",
+          "base_sha": "a7ae5931180666ac18a2c6f413c5e7b429588008",
+          "large": true,
+          "missing": false,
+          "citations": [
+            [
+              "reviewer/entrypoints/cli.py",
+              139
+            ],
+            [
+              "reviewer/retrieval/retriever.py",
+              77
+            ],
+            [
+              "reviewer/mcp/service.py",
+              395
+            ],
+            [
+              "reviewer/index/reranker.py",
+              14
+            ],
+            [
+              "reviewer/tasks/service.py",
+              350
+            ],
+            [
+              "reviewer/tools/code_tools.py",
+              127
+            ],
+            [
+              "reviewer/app.py",
+              36
+            ]
+          ],
+          "invalid": 0,
+          "core": [
+            "reviewer/index/reranker.py",
+            "reviewer/mcp/service.py",
+            "reviewer/retrieval/retriever.py",
+            "reviewer/tasks/service.py"
+          ],
+          "dependencies": [],
+          "unlabelled": [
+            "reviewer/app.py",
+            "reviewer/entrypoints/cli.py",
+            "reviewer/tools/code_tools.py"
+          ],
+          "expected_core": 11,
+          "expected_dependencies": 2
+        },
+        {
+          "rep": 2,
+          "key": "PRI-221",
+          "base_sha": "53f487c87e22f7a438f859ce300d549ad5b5264f",
+          "large": true,
+          "missing": false,
+          "citations": [
+            [
+              "reviewer/config/settings.py",
+              38
+            ],
+            [
+              "reviewer/policy/policy.py",
+              13
+            ],
+            [
+              "reviewer/config/provider_credentials.py",
+              50
+            ],
+            [
+              "reviewer/entrypoints/cli.py",
+              306
+            ],
+            [
+              "reviewer/tasks/boards/__init__.py",
+              16
+            ],
+            [
+              "reviewer/mcp/service.py",
+              114
+            ],
+            [
+              "reviewer/mcp/session_serde.py",
+              42
+            ],
+            [
+              "reviewer/mcp/session_store.py",
+              89
+            ],
+            [
+              "reviewer/entrypoints/mcp_server.py",
+              209
+            ]
+          ],
+          "invalid": 0,
+          "core": [
+            "reviewer/entrypoints/cli.py",
+            "reviewer/mcp/service.py",
+            "reviewer/mcp/session_serde.py",
+            "reviewer/policy/policy.py"
+          ],
+          "dependencies": [
+            "reviewer/config/settings.py",
+            "reviewer/entrypoints/mcp_server.py"
+          ],
+          "unlabelled": [
+            "reviewer/config/provider_credentials.py",
+            "reviewer/mcp/session_store.py",
+            "reviewer/tasks/boards/__init__.py"
+          ],
+          "expected_core": 10,
+          "expected_dependencies": 3
+        },
+        {
+          "rep": 2,
+          "key": "PRI-179",
+          "base_sha": "aa17f64ff90d553b4c251689bfeb0ab8d14ecccf",
+          "large": false,
+          "missing": false,
+          "citations": [
+            [
+              "reviewer/graph/store.py",
+              5
+            ],
+            [
+              "reviewer/mcp/service.py",
+              612
+            ],
+            [
+              "reviewer/graph/scip.py",
+              56
+            ],
+            [
+              "reviewer/entrypoints/mcp_server.py",
+              208
+            ],
+            [
+              "reviewer/app.py",
+              36
+            ]
+          ],
+          "invalid": 0,
+          "core": [
+            "reviewer/entrypoints/mcp_server.py",
+            "reviewer/graph/store.py",
+            "reviewer/mcp/service.py"
+          ],
+          "dependencies": [
+            "reviewer/graph/scip.py"
+          ],
+          "unlabelled": [
+            "reviewer/app.py"
+          ],
+          "expected_core": 5,
+          "expected_dependencies": 3
+        },
+        {
+          "rep": 2,
+          "key": "PRI-205",
+          "base_sha": "8d31abf79cc7aa63aa8807531403bc28cb6a1566",
+          "large": false,
+          "missing": false,
+          "citations": [
+            [
+              "reviewer/tasks/boards/base.py",
+              24
+            ],
+            [
+              "reviewer/tasks/boards/youtrack.py",
+              130
+            ],
+            [
+              "reviewer/mcp/service.py",
+              299
+            ],
+            [
+              "reviewer/tasks/boards/__init__.py",
+              10
+            ],
+            [
+              "reviewer/tasks/boards/yougile.py",
+              112
+            ],
+            [
+              "reviewer/entrypoints/mcp_server.py",
+              120
+            ],
+            [
+              "reviewer/tasks/sync.py",
+              81
+            ]
+          ],
+          "invalid": 0,
+          "core": [
+            "reviewer/entrypoints/mcp_server.py",
+            "reviewer/mcp/service.py",
+            "reviewer/tasks/boards/base.py",
+            "reviewer/tasks/boards/yougile.py",
+            "reviewer/tasks/boards/youtrack.py"
+          ],
+          "dependencies": [],
+          "unlabelled": [
+            "reviewer/tasks/boards/__init__.py",
+            "reviewer/tasks/sync.py"
+          ],
+          "expected_core": 7,
+          "expected_dependencies": 3
+        },
+        {
+          "rep": 2,
+          "key": "PRI-207",
+          "base_sha": "8dd053c232d903f4895886ea36bdb24e96bc39a5",
+          "large": false,
+          "missing": false,
+          "citations": [
+            [
+              "reviewer/tasks/boards/base.py",
+              24
+            ],
+            [
+              "reviewer/tasks/sync.py",
+              20
+            ],
+            [
+              "reviewer/tasks/store.py",
+              72
+            ],
+            [
+              "reviewer/tasks/service.py",
+              17
+            ]
+          ],
+          "invalid": 0,
+          "core": [
+            "reviewer/tasks/boards/base.py",
+            "reviewer/tasks/service.py",
+            "reviewer/tasks/store.py",
+            "reviewer/tasks/sync.py"
+          ],
+          "dependencies": [],
+          "unlabelled": [],
+          "expected_core": 6,
+          "expected_dependencies": 3
+        }
+      ]
+    },
+    "alias": {
+      "large": {
+        "core": 22,
+        "dependencies": 3,
+        "unlabelled": 16,
+        "core_total": 72,
+        "dependencies_total": 14,
+        "invalid": 0,
+        "missing": 2,
+        "verified_citations": 83
+      },
+      "ordinary": {
+        "core": 20,
+        "dependencies": 3,
+        "unlabelled": 11,
+        "core_total": 36,
+        "dependencies_total": 18,
+        "invalid": 0,
+        "missing": 0,
+        "verified_citations": 34
+      },
+      "usage": {
+        "input_tokens": 142325,
+        "cached_input_tokens": 32640,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 3504,
+        "reasoning_output_tokens": 0
+      },
+      "tasks": [
+        {
+          "rep": 1,
+          "key": "PRI-170",
+          "base_sha": "7bdc067aa45e57823285882a5bc3173253350db1",
+          "large": true,
+          "missing": false,
+          "citations": [
+            [
+              "reviewer/tasks/boards/base.py",
+              35
+            ],
+            [
+              "reviewer/tasks/sync.py",
+              26
+            ],
+            [
+              "reviewer/tasks/sync.py",
+              35
+            ],
+            [
+              "reviewer/tasks/sync.py",
+              41
+            ],
+            [
+              "reviewer/tasks/graph.py",
+              40
+            ],
+            [
+              "reviewer/tasks/service.py",
+              26
+            ],
+            [
+              "reviewer/tasks/boards/yougile.py",
+              107
+            ],
+            [
+              "reviewer/tasks/boards/youtrack.py",
+              117
+            ],
+            [
+              "reviewer/mcp/service.py",
+              272
+            ],
+            [
+              "reviewer/services/review_service.py",
+              98
+            ],
+            [
+              "reviewer/entrypoints/mcp_server.py",
+              134
+            ],
+            [
+              "reviewer/app.py",
+              36
+            ],
+            [
+              "reviewer/index/store.py",
+              150
+            ],
+            [
+              "reviewer/tasks/graph.py",
+              25
+            ],
+            [
+              "reviewer/tasks/service.py",
+              17
+            ],
+            [
+              "reviewer/services/graph_sync.py",
+              17
+            ],
+            [
+              "reviewer/entrypoints/cli.py",
+              60
+            ],
+            [
+              "reviewer/entrypoints/cli.py",
+              69
+            ],
+            [
+              "reviewer/mcp/session_serde.py",
+              61
+            ],
+            [
+              "reviewer/graph/backend.py",
+              29
+            ],
+            [
+              "reviewer/tasks/sync.py",
+              40
+            ],
+            [
+              "reviewer/entrypoints/cli.py",
+              62
+            ],
+            [
+              "reviewer/entrypoints/mcp_server.py",
+              135
+            ],
+            [
+              "sync_chunk.py",
+              34
+            ],
+            [
+              "reviewer/config/settings.py",
+              40
+            ],
+            [
+              "reviewer/web/api.py",
+              61
+            ],
+            [
+              "reviewer/mcp/session_serde.py",
+              41
+            ],
+            [
+              "reviewer/graph/backend.py",
+              27
+            ],
+            [
+              "reviewer/services/graph_sync.py",
+              12
+            ],
+            [
+              "reviewer/services/review_service.py",
+              81
+            ],
+            [
+              "reviewer/tasks/boards/base.py",
+              28
+            ],
+            [
+              "reviewer/index/store.py",
+              150
+            ],
+            [
+              "reviewer/entrypoints/cli.py",
+              44
+            ],
+            [
+              "reviewer/tasks/graph.py",
+              31
+            ],
+            [
+              "reviewer/tasks/sync.py",
+              20
+            ],
+            [
+              "reviewer/graph/backend.py",
+              44
+            ],
+            [
+              "reviewer/graph/scip.py",
+              69
+            ],
+            [
+              "reviewer/mcp/session_serde.py",
+              44
+            ],
+            [
+              "reviewer/services/graph_sync.py",
+              16
+            ],
+            [
+              "reviewer/services/graph_sync.py",
+              24
+            ],
+            [
+              "reviewer/config/settings.py",
+              47
+            ],
+            [
+              "reviewer/tasks/sync.py",
+              20
+            ],
+            [
+              "reviewer/graph/scip.py",
+              71
+            ],
+            [
+              "reviewer/index/store.py",
+              157
+            ],
+            [
+              "reviewer/index/store.py",
+              160
+            ],
+            [
+              "reviewer/mcp/session_serde.py",
+              44
+            ],
+            [
+              "reviewer/config/settings.py",
+              40
+            ],
+            [
+              "reviewer/services/review_service.py",
+              81
+            ],
+            [
+              "reviewer/mcp/service.py",
+              278
+            ],
+            [
+              "reviewer/services/review_service.py",
+              99
+            ],
+            [
+              "reviewer/tasks/sync.py",
+              33
+            ],
+            [
+              "reviewer/services/graph_sync.py",
+              22
+            ],
+            [
+              "reviewer/graph/backend.py",
+              42
+            ],
+            [
+              "reviewer/app.py",
+              51
+            ],
+            [
+              "reviewer/index/store.py",
+              152
+            ],
+            [
+              "reviewer/mcp/session_serde.py",
+              44
+            ],
+            [
+              "reviewer/tasks/boards/youtrack.py",
+              122
+            ],
+            [
+              "reviewer/tasks/boards/youtrack.py",
+              127
+            ],
+            [
+              "reviewer/tasks/service.py",
+              19
+            ]
+          ],
+          "invalid": 0,
+          "core": [
+            "reviewer/entrypoints/mcp_server.py",
+            "reviewer/mcp/service.py",
+            "reviewer/tasks/boards/base.py",
+            "reviewer/tasks/boards/yougile.py",
+            "reviewer/tasks/boards/youtrack.py",
+            "reviewer/tasks/graph.py",
+            "reviewer/tasks/service.py",
+            "reviewer/tasks/sync.py"
+          ],
+          "dependencies": [
+            "reviewer/config/settings.py"
+          ],
+          "unlabelled": [
+            "reviewer/app.py",
+            "reviewer/entrypoints/cli.py",
+            "reviewer/graph/backend.py",
+            "reviewer/graph/scip.py",
+            "reviewer/index/store.py",
+            "reviewer/mcp/session_serde.py",
+            "reviewer/services/graph_sync.py",
+            "reviewer/services/review_service.py",
+            "reviewer/web/api.py",
+            "sync_chunk.py"
+          ],
+          "expected_core": 15,
+          "expected_dependencies": 2
+        },
+        {
+          "rep": 1,
+          "key": "PRI-202",
+          "base_sha": "a7ae5931180666ac18a2c6f413c5e7b429588008",
+          "large": true,
+          "missing": true,
+          "citations": [],
+          "invalid": 0,
+          "core": [],
+          "dependencies": [],
+          "unlabelled": [],
+          "expected_core": 11,
+          "expected_dependencies": 2
+        },
+        {
+          "rep": 1,
+          "key": "PRI-221",
+          "base_sha": "53f487c87e22f7a438f859ce300d549ad5b5264f",
+          "large": true,
+          "missing": true,
+          "citations": [],
+          "invalid": 0,
+          "core": [],
+          "dependencies": [],
+          "unlabelled": [],
+          "expected_core": 10,
+          "expected_dependencies": 3
+        },
+        {
+          "rep": 1,
+          "key": "PRI-179",
+          "base_sha": "aa17f64ff90d553b4c251689bfeb0ab8d14ecccf",
+          "large": false,
+          "missing": false,
+          "citations": [
+            [
+              "reviewer/graph/store.py",
+              5
+            ],
+            [
+              "reviewer/tasks/graph.py",
+              41
+            ],
+            [
+              "reviewer/retrieval/retriever.py",
+              82
+            ],
+            [
+              "reviewer/graph/scip.py",
+              56
+            ],
+            [
+              "reviewer/mcp/service.py",
+              612
+            ]
+          ],
+          "invalid": 0,
+          "core": [
+            "reviewer/graph/store.py",
+            "reviewer/mcp/service.py"
+          ],
+          "dependencies": [
+            "reviewer/graph/scip.py"
+          ],
+          "unlabelled": [
+            "reviewer/retrieval/retriever.py",
+            "reviewer/tasks/graph.py"
+          ],
+          "expected_core": 5,
+          "expected_dependencies": 3
+        },
+        {
+          "rep": 1,
+          "key": "PRI-205",
+          "base_sha": "8d31abf79cc7aa63aa8807531403bc28cb6a1566",
+          "large": false,
+          "missing": false,
+          "citations": [
+            [
+              "reviewer/tasks/boards/youtrack.py",
+              130
+            ],
+            [
+              "reviewer/tasks/boards/yougile.py",
+              112
+            ],
+            [
+              "reviewer/tasks/boards/__init__.py",
+              10
+            ],
+            [
+              "reviewer/mcp/service.py",
+              299
+            ],
+            [
+              "reviewer/entrypoints/mcp_server.py",
+              120
+            ],
+            [
+              "reviewer/config/settings.py",
+              40
+            ]
+          ],
+          "invalid": 0,
+          "core": [
+            "reviewer/entrypoints/mcp_server.py",
+            "reviewer/mcp/service.py",
+            "reviewer/tasks/boards/yougile.py",
+            "reviewer/tasks/boards/youtrack.py"
+          ],
+          "dependencies": [
+            "reviewer/config/settings.py"
+          ],
+          "unlabelled": [
+            "reviewer/tasks/boards/__init__.py"
+          ],
+          "expected_core": 7,
+          "expected_dependencies": 3
+        },
+        {
+          "rep": 1,
+          "key": "PRI-207",
+          "base_sha": "8dd053c232d903f4895886ea36bdb24e96bc39a5",
+          "large": false,
+          "missing": false,
+          "citations": [
+            [
+              "reviewer/tasks/sync.py",
+              20
+            ],
+            [
+              "reviewer/tasks/store.py",
+              72
+            ],
+            [
+              "reviewer/llm/_retry.py",
+              47
+            ],
+            [
+              "reviewer/index/store.py",
+              129
+            ],
+            [
+              "reviewer/index/freshness.py",
+              18
+            ],
+            [
+              "reviewer/tasks/service.py",
+              17
+            ]
+          ],
+          "invalid": 0,
+          "core": [
+            "reviewer/tasks/service.py",
+            "reviewer/tasks/store.py",
+            "reviewer/tasks/sync.py"
+          ],
+          "dependencies": [],
+          "unlabelled": [
+            "reviewer/index/freshness.py",
+            "reviewer/index/store.py",
+            "reviewer/llm/_retry.py"
+          ],
+          "expected_core": 6,
+          "expected_dependencies": 3
+        },
+        {
+          "rep": 2,
+          "key": "PRI-170",
+          "base_sha": "7bdc067aa45e57823285882a5bc3173253350db1",
+          "large": true,
+          "missing": false,
+          "citations": [
+            [
+              "reviewer/tasks/sync.py",
+              20
+            ],
+            [
+              "reviewer/tasks/sync.py",
+              26
+            ],
+            [
+              "reviewer/tasks/graph.py",
+              25
+            ],
+            [
+              "reviewer/tasks/service.py",
+              17
+            ],
+            [
+              "reviewer/tasks/boards/base.py",
+              28
+            ],
+            [
+              "reviewer/tasks/boards/yougile.py",
+              107
+            ],
+            [
+              "reviewer/tasks/boards/youtrack.py",
+              117
+            ],
+            [
+              "reviewer/mcp/service.py",
+              272
+            ],
+            [
+              "reviewer/services/review_service.py",
+              98
+            ]
+          ],
+          "invalid": 0,
+          "core": [
+            "reviewer/mcp/service.py",
+            "reviewer/tasks/boards/base.py",
+            "reviewer/tasks/boards/yougile.py",
+            "reviewer/tasks/boards/youtrack.py",
+            "reviewer/tasks/graph.py",
+            "reviewer/tasks/service.py",
+            "reviewer/tasks/sync.py"
+          ],
+          "dependencies": [],
+          "unlabelled": [
+            "reviewer/services/review_service.py"
+          ],
+          "expected_core": 15,
+          "expected_dependencies": 2
+        },
+        {
+          "rep": 2,
+          "key": "PRI-202",
+          "base_sha": "a7ae5931180666ac18a2c6f413c5e7b429588008",
+          "large": true,
+          "missing": false,
+          "citations": [
+            [
+              "reviewer/retrieval/retriever.py",
+              77
+            ],
+            [
+              "reviewer/mcp/service.py",
+              395
+            ],
+            [
+              "reviewer/index/reranker.py",
+              14
+            ],
+            [
+              "reviewer/tasks/service.py",
+              350
+            ],
+            [
+              "reviewer/app.py",
+              36
+            ],
+            [
+              "reviewer/index/embeddings.py",
+              44
+            ],
+            [
+              "reviewer/graph/store.py",
+              76
+            ]
+          ],
+          "invalid": 0,
+          "core": [
+            "reviewer/index/reranker.py",
+            "reviewer/mcp/service.py",
+            "reviewer/retrieval/retriever.py",
+            "reviewer/tasks/service.py"
+          ],
+          "dependencies": [],
+          "unlabelled": [
+            "reviewer/app.py",
+            "reviewer/graph/store.py",
+            "reviewer/index/embeddings.py"
+          ],
+          "expected_core": 11,
+          "expected_dependencies": 2
+        },
+        {
+          "rep": 2,
+          "key": "PRI-221",
+          "base_sha": "53f487c87e22f7a438f859ce300d549ad5b5264f",
+          "large": true,
+          "missing": false,
+          "citations": [
+            [
+              "reviewer/policy/policy.py",
+              13
+            ],
+            [
+              "reviewer/config/settings.py",
+              38
+            ],
+            [
+              "reviewer/config/provider_credentials.py",
+              50
+            ],
+            [
+              "reviewer/mcp/session_serde.py",
+              42
+            ],
+            [
+              "reviewer/mcp/session_store.py",
+              89
+            ],
+            [
+              "reviewer/mcp/session_serde.py",
+              42
+            ],
+            [
+              "reviewer/entrypoints/mcp_server.py",
+              209
+            ],
+            [
+              "reviewer/entrypoints/cli.py",
+              306
+            ]
+          ],
+          "invalid": 0,
+          "core": [
+            "reviewer/entrypoints/cli.py",
+            "reviewer/mcp/session_serde.py",
+            "reviewer/policy/policy.py"
+          ],
+          "dependencies": [
+            "reviewer/config/settings.py",
+            "reviewer/entrypoints/mcp_server.py"
+          ],
+          "unlabelled": [
+            "reviewer/config/provider_credentials.py",
+            "reviewer/mcp/session_store.py"
+          ],
+          "expected_core": 10,
+          "expected_dependencies": 3
+        },
+        {
+          "rep": 2,
+          "key": "PRI-179",
+          "base_sha": "aa17f64ff90d553b4c251689bfeb0ab8d14ecccf",
+          "large": false,
+          "missing": false,
+          "citations": [
+            [
+              "reviewer/mcp/service.py",
+              612
+            ],
+            [
+              "reviewer/tasks/graph.py",
+              25
+            ],
+            [
+              "reviewer/retrieval/retriever.py",
+              82
+            ],
+            [
+              "reviewer/graph/scip.py",
+              56
+            ],
+            [
+              "reviewer/graph/store.py",
+              5
+            ]
+          ],
+          "invalid": 0,
+          "core": [
+            "reviewer/graph/store.py",
+            "reviewer/mcp/service.py"
+          ],
+          "dependencies": [
+            "reviewer/graph/scip.py"
+          ],
+          "unlabelled": [
+            "reviewer/retrieval/retriever.py",
+            "reviewer/tasks/graph.py"
+          ],
+          "expected_core": 5,
+          "expected_dependencies": 3
+        },
+        {
+          "rep": 2,
+          "key": "PRI-205",
+          "base_sha": "8d31abf79cc7aa63aa8807531403bc28cb6a1566",
+          "large": false,
+          "missing": false,
+          "citations": [
+            [
+              "reviewer/entrypoints/mcp_server.py",
+              120
+            ],
+            [
+              "reviewer/tasks/boards/__init__.py",
+              10
+            ],
+            [
+              "reviewer/tasks/boards/youtrack.py",
+              130
+            ],
+            [
+              "reviewer/tasks/boards/yougile.py",
+              112
+            ],
+            [
+              "reviewer/mcp/service.py",
+              299
+            ],
+            [
+              "reviewer/tasks/boards/base.py",
+              24
+            ]
+          ],
+          "invalid": 0,
+          "core": [
+            "reviewer/entrypoints/mcp_server.py",
+            "reviewer/mcp/service.py",
+            "reviewer/tasks/boards/base.py",
+            "reviewer/tasks/boards/yougile.py",
+            "reviewer/tasks/boards/youtrack.py"
+          ],
+          "dependencies": [],
+          "unlabelled": [
+            "reviewer/tasks/boards/__init__.py"
+          ],
+          "expected_core": 7,
+          "expected_dependencies": 3
+        },
+        {
+          "rep": 2,
+          "key": "PRI-207",
+          "base_sha": "8dd053c232d903f4895886ea36bdb24e96bc39a5",
+          "large": false,
+          "missing": false,
+          "citations": [
+            [
+              "reviewer/tasks/sync.py",
+              20
+            ],
+            [
+              "reviewer/tasks/store.py",
+              72
+            ],
+            [
+              "reviewer/tasks/service.py",
+              17
+            ],
+            [
+              "reviewer/index/freshness.py",
+              18
+            ],
+            [
+              "reviewer/tasks/boards/base.py",
+              24
+            ],
+            [
+              "reviewer/tasks/graph.py",
+              25
+            ]
+          ],
+          "invalid": 0,
+          "core": [
+            "reviewer/tasks/boards/base.py",
+            "reviewer/tasks/service.py",
+            "reviewer/tasks/store.py",
+            "reviewer/tasks/sync.py"
+          ],
+          "dependencies": [],
+          "unlabelled": [
+            "reviewer/index/freshness.py",
+            "reviewer/tasks/graph.py"
+          ],
+          "expected_core": 6,
+          "expected_dependencies": 3
+        }
+      ]
+    }
+  }
+}
