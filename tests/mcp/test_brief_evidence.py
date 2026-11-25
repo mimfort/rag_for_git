@@ -377,24 +377,14 @@ def test_structured_brief_round_trips_only_verified_citations_through_mcp(monkey
     assert "Повторить проверку".encode() not in persisted
 
 
-@pytest.mark.parametrize(
-    ("line", "status", "reason"),
-    [
-        (3, "verified", ""),
-        (3, "verified", "   "),
-        (3, "verified", "первая строка\nвторая строка"),
-        (3, "verified", "одна\u2028две"),
-        (3, "verified", "строка\n"),
-        (4, "outside_excerpt", "строка\nпродолжение"),
-    ],
-)
-def test_mcp_reports_invalid_reason_even_when_line_is_not_verified(monkeypatch, line, status, reason):
+@pytest.mark.parametrize("reason", [
+    "", "   ", "первая строка\nвторая строка", "одна\u2028две", "строка\n", "строка\x00",
+])
+def test_mcp_reports_invalid_format_when_every_anchored_reason_is_malformed(reason):
     service = MCPReviewService(Settings(), MagicMock())
-    evidence = BriefEvidence()
-    monkeypatch.setattr(service, "_brief_evidence", evidence)
     server = create_server(service)
-    key = evidence.save({"code": CODE})
-    reference = {"section": "code", "path": "path with spaces.py", "line": line, "reason": reason}
+    key = service._brief_evidence.save({"code": CODE})
+    reference = {"section": "code", "path": "path with spaces.py", "line": 3, "reason": reason}
     result = asyncio.run(server.call_tool("verify_task_brief", {
         "evidence_id": key, "references": [reference],
     }))
@@ -402,8 +392,78 @@ def test_mcp_reports_invalid_reason_even_when_line_is_not_verified(monkeypatch, 
     checked = json.loads(result[0].text)
     assert checked == {
         "status": "ok", "render_status": "invalid_format", "markdown": None,
-        "citations": [{**reference, "role": None, "status": status}],
+        "citations": [{**reference, "role": None, "status": "invalid_reason"}],
     }
+
+
+@pytest.mark.parametrize(("path", "line", "verdict"), [
+    ("path with spaces.py", 3, "invalid_reason"),
+    ("path with spaces.py", 4, "outside_excerpt"),
+    ("other.py", 3, "path_unseen"),
+])
+def test_mcp_preserves_renderable_code_and_tests_with_one_malformed_reason(path, line, verdict):
+    service = MCPReviewService(Settings(), MagicMock())
+    server = create_server(service)
+    key = service._brief_evidence.save({"code": CODE, "test_exemplars": TEST})
+    references = [
+        {"section": "code", "path": "path with spaces.py", "line": 2, "reason": "Контракт"},
+        {"section": "code", "path": path, "line": line, "reason": "строка\nпродолжение"},
+        {"section": "test_exemplars", "path": "tests/test_function.py", "line": 7, "reason": "Сценарий"},
+    ]
+    result = asyncio.run(server.call_tool("verify_task_brief", {
+        "evidence_id": key, "references": references,
+    }))
+
+    checked = json.loads(result[0].text)
+    assert checked["status"] == "ok"
+    assert checked["render_status"] == "ok"
+    assert [entry["status"] for entry in checked["citations"]] == ["verified", verdict, "verified"]
+    markdown = checked["markdown"]
+    assert briefs.parse_rendered_citations(markdown, briefs.RELEVANT_HEADER) == [
+        ("path with spaces.py", 2),
+    ]
+    assert briefs.parse_rendered_citations(markdown, briefs.TEST_HEADER) == [
+        ("tests/test_function.py", 7),
+    ]
+    assert "продолжение" not in markdown
+
+
+def test_mcp_ignores_malformed_reason_when_all_coordinates_are_rejected():
+    service = MCPReviewService(Settings(), MagicMock())
+    server = create_server(service)
+    key = service._brief_evidence.save({"code": CODE})
+    result = asyncio.run(server.call_tool("verify_task_brief", {
+        "evidence_id": key,
+        "references": [{
+            "section": "code", "path": "path with spaces.py", "line": 4, "reason": "строка\nпродолжение",
+        }],
+    }))
+
+    checked = json.loads(result[0].text)
+    assert checked["render_status"] == "empty"
+    assert checked["citations"][0]["status"] == "outside_excerpt"
+    assert briefs.parse_rendered_citations(checked["markdown"], briefs.RELEVANT_HEADER) == []
+
+
+def test_mcp_omits_path_that_cannot_fit_a_markdown_citation():
+    service = MCPReviewService(Settings(), MagicMock())
+    server = create_server(service)
+    path = "name\ncontinuation.py"
+    key = service._brief_evidence.save_sections({"code": {path: {1}, "good.py": {1}}})
+    result = asyncio.run(server.call_tool("verify_task_brief", {
+        "evidence_id": key,
+        "references": [
+            {"section": "code", "path": path, "line": 1, "reason": "Контракт"},
+            {"section": "code", "path": "good.py", "line": 1, "reason": "Обработчик"},
+        ],
+    }))
+
+    checked = json.loads(result[0].text)
+    assert checked["render_status"] == "ok"
+    assert [row["status"] for row in checked["citations"]] == ["invalid_path", "verified"]
+    assert briefs.parse_rendered_citations(checked["markdown"], briefs.RELEVANT_HEADER) == [
+        ("good.py", 1),
+    ]
 
 
 def test_mcp_renders_empty_code_when_no_reference_is_verified(monkeypatch):

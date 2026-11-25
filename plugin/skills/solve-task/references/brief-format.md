@@ -92,9 +92,11 @@
    - `render_status` of `ok` or `empty`: copy the `markdown` field as one block without changes
      into the brief between Subsystems (or Related work) and Constraints / open questions. Replace
      both citation-section placeholders with this block. `empty` supplies a valid Relevant code
-     section with no citations. The server's block includes its verification marker. For a rejected
-     reference, correct the anchor from source and retry if appropriate, or use the
-     per-reference verdicts to account for omissions in Constraints / open questions.
+     section with no citations. The server's block includes its verification marker. An anchored
+     record with an unusable reason or path receives `invalid_reason` or `invalid_path` and is omitted
+     from the block. Preserve the confirmed rows. To recover an omitted reference, correct its
+     reason or verify its exact anchor as appropriate, then resubmit the full ordered list.
+     Account for outstanding omissions in Constraints / open questions.
    - `invalid_format`: inspect the submitted records, correct the formatting (for example, make a
      multi-line reason a single line), and retry on the same connection. If rendering still fails,
      record the issue in Constraints / open questions and continue without a rendered citation
