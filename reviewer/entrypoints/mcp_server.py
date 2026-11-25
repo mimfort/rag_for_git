@@ -397,7 +397,10 @@ def create_server(service: MCPReviewService) -> FastMCP:
         """Check brief path:line citations against code or test_exemplars from one payload.
 
         Pass brief_evidence_id from prepare_task_context(include_brief_evidence=True)
-        on the same server connection and supply exactly one of citations or references.
+        and supply exactly one of citations or references. Evidence survives a server
+        restart with the same local state directory for up to one hour, subject to
+        retention limits. The directory is $XDG_STATE_HOME/rag-reviewer/brief-evidence,
+        with ~/.local/state as the default state root.
         Each citation gets verified, path_unseen,
         outside_excerpt, or section_unavailable. An expired or absent ID gives
         evidence_unavailable. The tool checks only numbered lines visible in the

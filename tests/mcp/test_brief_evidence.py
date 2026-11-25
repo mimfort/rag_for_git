@@ -1,6 +1,9 @@
 """Portable solve-task verification through the reviewer MCP boundary."""
 import asyncio
 import json
+import sqlite3
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import closing
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -9,7 +12,7 @@ import pytest
 from reviewer.config.settings import Settings
 from reviewer.entrypoints.mcp_server import create_server
 from reviewer.index.store import Retrieved
-from reviewer.mcp import task_context
+from reviewer.mcp import brief_evidence, task_context
 from reviewer.mcp.brief_evidence import BriefEvidence
 from reviewer.mcp.schemas import BriefCitationIn
 from reviewer.mcp.service import MCPReviewService
@@ -67,7 +70,84 @@ def test_snapshots_are_isolated_bounded_and_expire():
     assert evidence.verify(first, []) == {"status": "evidence_unavailable", "citations": []}
     assert evidence.verify(third, [])["status"] == "ok"
     now += 30
-    assert evidence.verify(third, [])["status"] == "evidence_unavailable"
+    restarted = BriefEvidence(limit=2, ttl_seconds=30, clock=lambda: now)
+    assert restarted.verify(third, [])["status"] == "evidence_unavailable"
+
+
+def test_saved_evidence_is_local_to_its_state_directory(monkeypatch, tmp_path):
+    evidence = BriefEvidence()
+    key = evidence.save({"code": CODE})
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "isolated-profile"))
+
+    assert BriefEvidence().verify(key, [])["status"] == "evidence_unavailable"
+    assert evidence.verify(key, [])["status"] == "ok"
+
+
+def test_saving_purges_expired_evidence_without_refreshing_ttl(tmp_path):
+    now = 1.0
+    evidence = BriefEvidence(ttl_seconds=10, clock=lambda: now)
+    key = evidence.save({"code": CODE})
+    now += 9
+    assert BriefEvidence(clock=lambda: now).verify(key, [])["status"] == "ok"
+    now += 1
+    second = evidence.save({"code": CODE})
+
+    assert evidence.verify(key, [])["status"] == "evidence_unavailable"
+    assert evidence.verify(second, [])["status"] == "ok"
+    [path] = (tmp_path / "xdg-state").rglob("*.sqlite3")
+    with closing(sqlite3.connect(path)) as db:
+        assert db.execute("SELECT expires_at FROM brief_evidence").fetchall() == [(21,)]
+
+
+def test_disk_cap_keeps_previous_evidence_on_oversized_write(monkeypatch, tmp_path):
+    cap = 128 * 1024
+    monkeypatch.setattr(brief_evidence, "_MAX_DB_BYTES", cap)
+    evidence = BriefEvidence()
+    key = evidence.save({"code": CODE})
+    [path] = (tmp_path / "xdg-state").rglob("*.sqlite3")
+
+    assert evidence.save_sections({"code": {"huge.py": set(range(1, cap))}}) is None
+    assert evidence.verify(key, [])["status"] == "ok"
+    assert path.stat().st_size <= cap
+
+
+def test_default_capacity_keeps_evidence_after_64_more_prepares():
+    evidence = BriefEvidence()
+    first = evidence.save({"code": CODE})
+    for _ in range(64):
+        assert evidence.save({"test_exemplars": TEST})
+
+    restarted = BriefEvidence()
+    result = restarted.verify(first, [_citation("path with spaces.py", 2)])
+    assert result["status"] == "ok"
+    assert result["citations"][0]["status"] == "verified"
+
+
+def test_concurrent_writers_share_one_retention_limit():
+    def save(_):
+        return BriefEvidence(limit=5).save({"code": CODE})
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        ids = list(pool.map(save, range(12)))
+
+    assert len(set(ids)) == 12 and all(ids)
+    restarted = BriefEvidence(limit=5)
+    assert sum(restarted.verify(key, [])["status"] == "ok" for key in ids) == 5
+
+
+def test_unavailable_state_keeps_prepare_usable(monkeypatch, tmp_path):
+    blocked = tmp_path / "blocked"
+    blocked.write_text("not a directory")
+    monkeypatch.setenv("XDG_STATE_HOME", str(blocked))
+    service = MCPReviewService(Settings(), MagicMock())
+    monkeypatch.setattr(service, "_resolve_repo_branch", lambda repo, branch: (repo, "main"))
+    monkeypatch.setattr(task_context, "build_task_context", lambda *a, **kw: {"code": CODE})
+
+    payload = service.prepare_task_context("owner/repo", "task", include_brief_evidence=True)
+    assert payload == {"code": CODE}
+    assert service.verify_task_brief("unknown", citations=[]) == {
+        "status": "evidence_unavailable", "citations": [],
+    }
 
 
 def test_no_id_without_line_evidence():
@@ -124,7 +204,7 @@ def test_prepare_and_verify_are_available_through_mcp_without_retrieval_twice(mo
     asyncio.run(scenario())
 
 
-def test_structured_brief_round_trips_only_verified_citations_through_mcp(monkeypatch):
+def test_structured_brief_round_trips_only_verified_citations_through_mcp(monkeypatch, tmp_path):
     path = "`path with ``backticks``.py"
     service = MCPReviewService(Settings(), MagicMock())
     monkeypatch.setattr(service, "_resolve_repo_branch", lambda repo, branch: (repo, "main"))
@@ -149,11 +229,18 @@ def test_structured_brief_round_trips_only_verified_citations_through_mcp(monkey
             "repo": "owner/repo", "key": "task", "warm_board": False,
             "include_brief_evidence": True,
         })
-        result = await server.call_tool("verify_task_brief", {
+        verify = {
             "evidence_id": json.loads(prepared[0].text)["brief_evidence_id"],
             "references": references,
-        })
-        return json.loads(result[0].text)
+        }
+        original = await server.call_tool("verify_task_brief", verify)
+        other_cwd = tmp_path / "other-repo"
+        other_cwd.mkdir()
+        monkeypatch.chdir(other_cwd)
+        restarted = create_server(MCPReviewService(Settings(), MagicMock()))
+        after_restart = await restarted.call_tool("verify_task_brief", verify)
+        assert json.loads(after_restart[0].text) == json.loads(original[0].text)
+        return json.loads(after_restart[0].text)
 
     checked = asyncio.run(scenario())
     assert checked["status"] == "ok"
@@ -174,6 +261,11 @@ def test_structured_brief_round_trips_only_verified_citations_through_mcp(monkey
     assert "Править: Вызов упоминает `unrelated.py:9`" in markdown
     assert "Прочитать: Повторить проверку" in markdown
     assert build.call_count == 1
+    state = list((tmp_path / "xdg-state").rglob("*.sqlite3"))
+    assert len(state) == 1
+    persisted = state[0].read_bytes()
+    assert b"standard_line" not in persisted
+    assert "Повторить проверку".encode() not in persisted
 
 
 @pytest.mark.parametrize(

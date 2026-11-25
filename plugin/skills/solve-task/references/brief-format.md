@@ -84,7 +84,8 @@
    `verify_task_brief` accepts `references`, the orchestrator calls
    `verify_task_brief(evidence_id=<brief_evidence_id>, references=<ordered list>)` on the same
    reviewer MCP connection used for Step 0. For an inline brief, call the verifier directly on
-   that connection. Send `references` alone as the citation input. For this path, only fully
+   that connection. After a restart, retry with the same ID on the reconnected reviewer under
+   the same local state directory. Send `references` alone as the citation input. Only fully
    visible rows of the corresponding Step 0 section can enter the rendered block. When the
    verification `status` is `ok`, branch on `render_status` below.
 
