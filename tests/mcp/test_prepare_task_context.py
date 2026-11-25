@@ -236,7 +236,10 @@ def test_context_similar_filters_current_task_before_render_and_augment(key, mon
     embedder.embed_query.assert_called_once_with("T" if resolved_task else key)
     store.search.assert_called_once()
     history.diff_paths_for_tasks.assert_called_once_with(
-        [identity for hit in expected_hits for identity in [hit.key, *hit.aliases]])
+        list(dict.fromkeys(identity for hit in expected_hits
+                           for identity in [hit.key, *hit.aliases])),
+        repo="o/n",
+    )
     sources = svc._search_codebase_multi.call_args_list[0].kwargs["augment_sources"]
     expected_paths = ["neighbor.py"] if resolved_task else [
         "own.py", "neighbor.py", "own-alias.py"]

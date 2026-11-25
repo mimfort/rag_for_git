@@ -68,7 +68,7 @@ def freeze(components, service, clone, target):
     limits = service._resolve_context_limits(REPO, BRANCH)
     candidates = {}
     for key, task in tasks.items():
-        deps = _TaskContextDeps(service, str(clone))
+        deps = _TaskContextDeps(service, str(clone), indexed_sha=current[0])
         deps.similar(_query(task, key), "PRI")
         candidates[key] = deps._augment_paths(REPO)
         if deps.augment_gaps:

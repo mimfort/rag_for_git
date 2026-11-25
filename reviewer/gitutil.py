@@ -1,12 +1,13 @@
 import os
+import re
 import shutil
 import subprocess
 import tempfile
 
 
-def _git(repo: str, *args: str) -> str:
+def _git(repo: str, *args: str, env: dict[str, str] | None = None) -> str:
     return subprocess.run(["git", "-C", repo, *args],
-                          check=True, capture_output=True, text=True).stdout
+                          check=True, capture_output=True, text=True, env=env).stdout
 
 
 def repo_root(path: str = ".") -> str | None:
@@ -93,8 +94,9 @@ def remove_worktree(repo: str, path: str) -> None:
     shutil.rmtree(os.path.dirname(path), ignore_errors=True)
 
 
-def paths_touched_by_grep(repo: str, pattern: str, *, limit: int) -> list[str]:
-    """Пути коммитов, чьё сообщение содержит ``pattern`` (ключ задачи).
+def paths_touched_by_grep(repo: str, pattern: str, *, limit: int,
+                         indexed_sha: str | None = None) -> list[str]:
+    """Пути коммитов, где сообщение содержит отдельный ключ задачи.
 
     Фолбэк к истории прогонов: ключ задачи присутствует в именах веток
     (feat/pri-256-…), сообщениях merge-коммитов и телах PR. В этом репозитории
@@ -102,13 +104,24 @@ def paths_touched_by_grep(repo: str, pattern: str, *, limit: int) -> list[str]:
     merge-коммита («Merge pull request #N from owner/feat/PRI-…»), а обычные
     коммиты его не содержат — поэтому нужен ``--diff-merges=first-parent``:
     без него `--name-only` для merge-коммита файлов не печатает и фолбэк
-    тихо вернул бы пустой список. Fail-soft.
+    тихо вернул бы пустой список. При заданном SHA ошибки Git передаются
+    вызывающему, чтобы отсутствие снимка отличалось от пустого результата.
     """
+    if not pattern or limit <= 0:
+        return []
+    if indexed_sha is not None and not re.fullmatch(r"[0-9a-f]{40}(?:[0-9a-f]{24})?", indexed_sha):
+        raise ValueError("Для git-фолбэка нужен полный SHA индекса")
+    revision = indexed_sha or "HEAD"
+    literal = "".join("\\" + char if char in r"\.^$|?*+()[]{}" else char for char in pattern)
+    exact = f"(^|[^[:alnum:]]){literal}([^[:alnum:]]|$)"
     try:
-        out = _git(repo, "log", f"-n{limit}", "--name-only",
+        out = _git(repo, "--no-replace-objects", "log", f"-n{limit}", "--name-only",
                    "--diff-merges=first-parent", "--pretty=format:",
-                   "-i", f"--grep={pattern}")
+                   "-i", "-E", f"--grep={exact}", f"{revision}^{{commit}}", "--",
+                   env={**os.environ, "GIT_NO_LAZY_FETCH": "1", "GIT_ALLOW_PROTOCOL": ""})
     except (OSError, subprocess.CalledProcessError):
+        if indexed_sha is not None:
+            raise
         return []
     seen: dict[str, None] = {}
     for line in out.splitlines():

@@ -3765,14 +3765,14 @@ class _TaskContextDeps:
 
     def __init__(self, service: "MCPReviewService", path: str | None,
                  code_budget: dict[str, int] | None = None, *,
-                 check_brief_snapshot: bool = False):
+                 check_brief_snapshot: bool = False, indexed_sha: str | None = None):
         self._service = service
         self._path = path or None
         self._code_budget = code_budget
         self._similar_hits: list = []
         self._task: dict | None = None
         self._check_brief_snapshot = check_brief_snapshot
-        self._indexed_sha: str | None = None
+        self._indexed_sha = indexed_sha
         self.augment_gaps: list[str] = []
         self.git_gap: str | None = None
         self.git_context_sha: str | None = None
@@ -3875,8 +3875,9 @@ class _TaskContextDeps:
                 log.warning("_TaskContextDeps._augment_paths: %s", reason, exc_info=True)
                 self.augment_gaps.append(reason)
             result = collect_similar_task_paths(
-                keys=keys, aliases_by_key=aliases, history=history,
-                clone_path=self._clone_path(repo), limit=AUGMENT_LOOKUP_LIMIT)
+                repo=repo, keys=keys, aliases_by_key=aliases, history=history,
+                clone_path=self._clone_path(repo), indexed_sha=self._indexed_sha,
+                limit=AUGMENT_LOOKUP_LIMIT)
             for reason in result.gaps:
                 log.warning("_TaskContextDeps._augment_paths: %s", reason)
             self.augment_gaps.extend(result.gaps)
