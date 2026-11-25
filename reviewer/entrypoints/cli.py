@@ -1258,6 +1258,42 @@ def _render_measure(summary: Mapping[str, object]) -> str:
     return "\n".join(lines)
 
 
+@cli.command("brief-provenance")
+@click.argument("brief", type=click.Path(exists=True, dir_okay=False, path_type=Path))
+@click.option("--path", default=".", help="Локальный клон")
+@click.option("--indexed-sha", default=None, help="Сохранить ссылки к указанному снимку")
+@click.option("--repo", "repo_tag", default=None, help="Репозиторий из предполёта")
+@click.option("--branch", default=None, help="Ветка из предполёта")
+def brief_provenance(
+    brief: Path, path: str, indexed_sha: str | None, repo_tag: str | None, branch: str | None,
+) -> None:
+    """Сверить сохранённые ссылки с HEAD локального клона и вывести результат в JSON."""
+    from reviewer.services import brief_provenance as provenance
+
+    if (indexed_sha is None and (repo_tag is not None or branch is not None)
+        or indexed_sha is not None and not (repo_tag and branch)):
+        raise click.UsageError("Укажите --indexed-sha, --repo и --branch вместе для записи")
+
+    root = repo_root(path)
+    if root is None:
+        result = {"status": "unavailable", "reason": "checkout_unavailable"}
+    else:
+        try:
+            brief = brief.resolve(strict=True)
+            text = brief.read_bytes().decode("utf-8")
+            git = provenance.GitCheckout(root)
+            if indexed_sha is None:
+                result = provenance.revalidate(git, text)
+            else:
+                result, updated = provenance.capture(git, text, repo=repo_tag or "", branch=branch or "",
+                                          indexed_sha=indexed_sha)
+                if updated != text:
+                    provenance.replace_brief(brief, text, updated)
+        except (OSError, UnicodeError):
+            result = {"status": "unavailable", "reason": "brief_io_error"}
+    click.echo(json.dumps(result, ensure_ascii=False))
+
+
 @cli.command("measure-briefs")
 @click.argument("path", default=".")
 @click.option("--repo", "repo_tag", default=None,
