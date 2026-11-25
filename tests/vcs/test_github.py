@@ -61,6 +61,9 @@ def test_compare_files_returns_changed_files():
     def handler(req):
         if "/compare/" in req.url.path:
             return httpx.Response(200, json={
+                "status": "ahead",
+                "ahead_by": 1,
+                "behind_by": 0,
                 "files": [
                     {"filename": "a.py", "status": "modified", "patch": "@@ -1 +1 @@\n-old\n+new"},
                     {"filename": "b.py", "status": "added", "patch": "@@ -0,0 +1 @@\n+new"},
@@ -79,6 +82,25 @@ def test_compare_files_returns_changed_files():
     assert files[2].path == "c.py"
     assert files[2].status == "removed"
     assert files[2].patch is None
+
+
+@pytest.mark.parametrize(("status", "ahead_by", "file_count"), [
+    ("identical", 0, 0),
+    ("ahead", 1, 0),
+    ("ahead", 1, 299),
+])
+def test_compare_files_accepts_complete_comparisons(status, ahead_by, file_count):
+    reply = {
+        "status": status,
+        "ahead_by": ahead_by,
+        "behind_by": 0,
+        "files": [
+            {"filename": f"file-{number}.py", "status": "modified"}
+            for number in range(file_count)
+        ],
+    }
+    provider = make_provider(lambda _: httpx.Response(200, json=reply))
+    assert len(provider.compare_files("old", "new")) == file_count
 
 
 def test_compare_files_404_raises():

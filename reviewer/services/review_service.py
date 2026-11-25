@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from reviewer.app import Components
 from reviewer.config.settings import Settings
 from reviewer.vcs.base import ChangedFile, PullRequest, VCSProvider
-from reviewer.vcs.github import GitHubProvider
+from reviewer.vcs.github import GitHubComparisonError, GitHubProvider
 from reviewer.policy.policy import ReviewPolicy
 from reviewer.index.chunker import chunk_python
 from reviewer.index.pathfilter import is_ignored
@@ -295,6 +295,12 @@ class ReviewService:
                     log.info(
                         "Base-индекс синхронизирован: %d файлов (%s..%s)",
                         len(diff_files), indexed[:7], prq.base_sha[:7],
+                    )
+                except GitHubComparisonError as exc:
+                    log.warning(
+                        "Инкрементальное обновление base-индекса %s (%s) пропущено: %s. "
+                        "Для полного обновления выполните reviewer index /path/to/repo --ref BRANCH.",
+                        repo, branch, exc,
                     )
                 except Exception as e:
                     log.warning("Не удалось синхронизировать base-индекс: %s", e)

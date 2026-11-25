@@ -338,6 +338,74 @@ def test_prepare_runs_base_sync_for_real_review(
     components.store.set_index_meta.assert_not_called()
 
 
+@pytest.mark.parametrize(("status", "ahead", "behind", "files", "reason"), [
+    ("behind", 0, 12, [], "behind"),
+    ("diverged", 3, 2, [{"filename": "base.py", "status": "modified"}], "diverged"),
+    (None, 1, 0, [], "статус"),
+    ("ahead", 1, 1, [], "счётчики"),
+    ("ahead", True, 0, [], "счётчики"),
+    ("ahead", 1, 0, None, "список файлов"),
+    ("ahead", 1, 0, [{}], "путь или тип"),
+    ("ahead", 1, 0, [
+        {"filename": f"base{i}.py", "status": "modified"} for i in range(300)
+    ], "300"),
+    ("identical", 0, 0, [{"filename": "base.py", "status": "modified"}], "identical"),
+])
+def test_prepare_rejects_incomplete_github_compare_before_publishing_base(
+    status, ahead, behind, files, reason, settings, components, caplog,
+):
+    reply = {"status": status, "ahead_by": ahead, "behind_by": behind, "files": files}
+    transport = httpx.MockTransport(lambda _: httpx.Response(200, json=reply))
+    service = ReviewService(settings, components)
+    components.store.get_index_meta_row.return_value = ("oldsha000", None)
+    vcs = _vcs_with_files([_changed("review.py")])
+
+    with httpx.Client(transport=transport, base_url="https://api.github.com") as client:
+        provider = GitHubProvider("owner", "repo", token="test", client=client)
+        vcs.compare_files.side_effect = provider.compare_files
+        with (patch.object(service, "_create_vcs_provider", return_value=vcs),
+              patch("reviewer.services.review_service.build_overlay")):
+            result = service.prepare("owner", "repo", 1)
+
+    assert result.prq.number == 1
+    assert result.changed_paths == ["review.py"]
+    components.store.commit_base_update.assert_not_called()
+    assert reason in caplog.text
+    assert "reviewer index" in caplog.text
+
+
+def test_prepare_publishes_base_from_complete_github_compare(settings, components):
+    components.store.get_index_meta_row.return_value = ("oldsha000", None)
+    components.store.chunk_locations.return_value = {}
+    components.store.find_embeddings_by_hashes.return_value = {}
+    components.embedder.embed_documents.side_effect = lambda texts: [[0.1] for _ in texts]
+    components.graph = None
+    reply = {
+        "status": "ahead",
+        "ahead_by": 1,
+        "behind_by": 0,
+        "files": [{"filename": "base.py", "status": "modified"}],
+    }
+    transport = httpx.MockTransport(lambda _: httpx.Response(200, json=reply))
+    service = ReviewService(settings, components)
+    vcs = _vcs_with_files([_changed("review.py")])
+
+    with httpx.Client(transport=transport, base_url="https://api.github.com") as client:
+        provider = GitHubProvider("owner", "repo", token="test", client=client)
+        vcs.compare_files.side_effect = provider.compare_files
+        with (patch.object(service, "_create_vcs_provider", return_value=vcs),
+              patch("reviewer.services.review_service.build_overlay")):
+            result = service.prepare("owner", "repo", 1)
+
+    assert result.changed_paths == ["review.py"]
+    components.store.commit_base_update.assert_called_once()
+    args, kwargs = components.store.commit_base_update.call_args
+    assert args[:2] == ("owner/repo", "base:main")
+    assert {row.path for row in args[2]} == {"base.py"}
+    assert kwargs["indexed_sha"] == "base123"
+    assert kwargs["expected_meta"] == ("oldsha000", None)
+
+
 @pytest.mark.parametrize(
     ("old", "new", "old_recreated", "removed", "graph_removed"),
     [
@@ -358,7 +426,8 @@ def test_prepare_base_sync_applies_rename_to_index_and_graph(
         files.append({"filename": old, "status": "added"})
         changed.append(old)
 
-    transport = httpx.MockTransport(lambda _: httpx.Response(200, json={"files": files}))
+    reply = {"status": "ahead", "ahead_by": 1, "behind_by": 0, "files": files}
+    transport = httpx.MockTransport(lambda _: httpx.Response(200, json=reply))
     with httpx.Client(transport=transport, base_url="https://api.github.com") as client:
         provider = GitHubProvider("owner", "repo", token="test", client=client)
         vcs = _vcs_with_files([_changed("review.py")])
