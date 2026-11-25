@@ -135,3 +135,40 @@ def test_run_preserves_verified_bytes_when_appending_token_block(hook_module, tm
 
     assert hook_module.run(payload) == 0
     assert brief.read_bytes() == expected
+
+
+def test_run_preserves_legacy_markdown_and_clears_warning_on_rewrite(hook_module, tmp_path):
+    original = (
+        "## Relevant code\r\n"
+        "- `src/visible.py:7` — delegates to `src/downstream.py:41`.\r\n"
+        "- `src/missing.py:9` — applies if the defaults are absent.\r\n"
+    )
+    brief = _brief(tmp_path, original)
+    transcript = _write_transcript(
+        tmp_path,
+        [_SOLVE_USER, *_retrieval_rows("// src/visible.py#f (src/visible.py:1-15)"), _write_call()],
+    )
+    payload = _payload(brief, transcript)
+    warning = hook_module.brief_guard.WARNING
+    guarded = original.replace("`src/missing.py:9` —", f"`src/missing.py:9` {warning} —")
+
+    assert hook_module.run(payload) == 0
+    assert brief.read_bytes() == guarded.encode()
+    assert hook_module.run(payload) == 0
+    assert brief.read_bytes() == guarded.encode()
+
+    rewritten_transcript = _write_transcript(
+        tmp_path,
+        [
+            _SOLVE_USER,
+            *_retrieval_rows(
+                "// src/visible.py#f (src/visible.py:1-15)\n"
+                "// src/missing.py#g (src/missing.py:1-15)"
+            ),
+            _write_call(tool_id="rewrite-brief"),
+        ],
+    )
+    payload.update(tool_use_id="rewrite-brief", transcript_path=str(rewritten_transcript))
+
+    assert hook_module.run(payload) == 0
+    assert brief.read_bytes() == original.encode()
