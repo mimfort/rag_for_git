@@ -26,6 +26,13 @@ def test_solve_task_has_preflight():
     assert "rag-reviewer:sync-codebase" in text             # делегирование reindex
 
 
+def test_solve_task_retains_lexical_context_when_embedder_is_unavailable():
+    text = _solve()
+    assert "warnings[].retrieval" in text and "bm25_only" in text
+    assert "<section>.semantic_search" in text and "<section>.bm25" in text
+    assert "Продолжить с доступным контекстом" in text
+
+
 def test_ask_has_warn_only_freshness():
     text = ASK.read_text(encoding="utf-8")
     assert "--json" in text and "reviewer status" in text   # читает машиночитаемый статус
