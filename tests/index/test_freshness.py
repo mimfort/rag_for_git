@@ -23,7 +23,17 @@ class FakeStore:
     def upsert(self, rows): self.rows.extend(rows)
 
     def find_embeddings_by_hashes(self, repo, hashes):
-        return {h: self.cached_embeddings[h] for h in hashes if h in self.cached_embeddings}
+        available = {**self.cached_embeddings, **{
+            row.content_hash: row.embedding for row in self.rows if row.repo == repo
+        }}
+        return {h: available[h] for h in hashes if h in available}
+
+    def chunk_locations(self, repo, ref, paths):
+        return {
+            (row.path, row.symbol_fqn):
+                (row.content_hash, row.start_line, row.end_line, row.kind)
+            for row in self.rows if row.repo == repo and row.ref == ref and row.path in paths
+        }
 
     def delete_paths(self, repo, ref, paths):
         if paths:
@@ -155,3 +165,24 @@ def test_update_base_reuses_cached_embedding_across_branches():
     # эмбеддер не звался (единственный чанк взят из кэша)
     assert emb.calls == []
     assert any(r.embedding == [9.0, 9.0, 9.0, 9.0] for r in store.rows)
+
+
+def test_update_base_refreshes_locations_for_unchanged_text_and_keeps_identical_files():
+    source = "def calculate(value):\n    return value + 1\n"
+    store, emb = FakeStore(), FakeEmb()
+    files = {"a.py": source, "b.py": source}
+    update_base(store, emb, "a/x", "dev", list(files), files.get)
+    assert [(row.path, row.start_line) for row in store.rows] == [("a.py", 1), ("b.py", 1)]
+    assert len(emb.calls) == 1 and len(emb.calls[0]) == 1
+
+    files["a.py"] = "# first\n# second\n\n" + source
+    update_base(store, emb, "a/x", "dev", list(files), files.get)
+    assert store.rows[-1].path == "a.py"
+    assert (store.rows[-1].start_line, store.rows[-1].end_line) == (4, 5)
+    assert len(store.rows) == 3
+
+    files["a.py"] = source
+    update_base(store, emb, "a/x", "dev", list(files), files.get)
+    assert (store.rows[-1].start_line, store.rows[-1].end_line) == (1, 2)
+    assert len(store.rows) == 4
+    assert len(emb.calls) == 1

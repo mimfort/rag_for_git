@@ -126,6 +126,21 @@ class ChunkStore:
             ).fetchall()
         return {r[0] for r in rows}
 
+    def chunk_locations(
+        self, repo: str, ref: str, paths: list[str],
+    ) -> dict[tuple[str, str], tuple[str, int, int, str]]:
+        """Координаты и хеши чанков по их ключу в заданной ветке."""
+        if not paths:
+            return {}
+        with self._connect() as conn:
+            rows = conn.execute(
+                """SELECT path, symbol_fqn, content_hash, start_line, end_line, kind
+                   FROM chunks WHERE repo=%s AND ref=%s AND path=ANY(%s)""",
+                (repo, ref, paths),
+            ).fetchall()
+        return {(path, symbol): (digest, start, end, kind)
+                for path, symbol, digest, start, end, kind in rows}
+
     # Проба для check_vector_roundtrip: значения обязаны быть точно представимы
     # в float32 (pgvector хранит vector как float4) — сравнение ниже строгое.
     # Знаки и дробная часть при этом подобраны так, чтобы искажение типа не

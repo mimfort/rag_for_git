@@ -1977,14 +1977,36 @@ class MCPReviewService:
             return payload
         normalized_repo, resolved = rb
         budget = {} if include_code_budget else None
-        deps = _TaskContextDeps(self, path, budget)
+        deps = _TaskContextDeps(self, path, budget, check_brief_snapshot=include_brief_evidence)
         payload = task_context.build_task_context(
             deps, repo=normalized_repo, key=key, branch=resolved,
             warm_board=warm_board)
         if deps.git_gap:
             payload["gaps"].append(task_context.gap("code.git_lexical", deps.git_gap))
-        if include_brief_evidence and (evidence_id := self._brief_evidence.save(payload)):
-            payload["brief_evidence_id"] = evidence_id
+        if include_brief_evidence:
+            from reviewer.mcp.brief_anchors import check_brief_anchors
+
+            sha = (payload.get("preflight") or {}).get("indexed_sha") or deps.git_context_sha
+            eligible, checks = check_brief_anchors(
+                payload, lambda paths: deps.brief_sources(normalized_repo, sha, paths),
+            )
+            if checks:
+                payload["brief_line_checks"] = checks
+                payload["brief_source_sha"] = sha
+            for section, counts in checks.items():
+                if counts["mismatched"]:
+                    payload["gaps"].append(task_context.gap(
+                        f"{section}.line_numbers",
+                        f"текст строк расходится со снимком Git ({counts['mismatched']}). "
+                        "Проверьте координаты и обновите индекс через reviewer index.",
+                    ))
+                if counts["unavailable"]:
+                    payload["gaps"].append(task_context.gap(
+                        f"{section}.line_sources",
+                        f"Git-объекты снимка недоступны для строк ({counts['unavailable']}).",
+                    ))
+            if evidence_id := self._brief_evidence.save_sections(eligible):
+                payload["brief_evidence_id"] = evidence_id
         if budget:
             payload["code_budget"] = budget
         return payload
@@ -3740,14 +3762,18 @@ class _TaskContextDeps:
     """
 
     def __init__(self, service: "MCPReviewService", path: str | None,
-                 code_budget: dict[str, int] | None = None):
+                 code_budget: dict[str, int] | None = None, *,
+                 check_brief_snapshot: bool = False):
         self._service = service
-        self._path = path
+        self._path = path or None
         self._code_budget = code_budget
         self._similar_hits: list = []
         self._task: dict | None = None
+        self._check_brief_snapshot = check_brief_snapshot
+        self._indexed_sha: str | None = None
         self.augment_gaps: list[str] = []
         self.git_gap: str | None = None
+        self.git_context_sha: str | None = None
 
     def _clone_path(self, repo: str) -> str:
         """Путь к локальному клону, строго относительно недоступности хранилища.
@@ -3757,7 +3783,9 @@ class _TaskContextDeps:
         здесь `strict=True`: до PRI-275 сбой глотался тут же, `build_status_report`
         всё равно шёл читать стор дальше и платил второй таймаут пула.
         """
-        return self._path or self._service._repo_clone_path(repo, strict=True) or ""
+        if self._path is None:
+            self._path = self._service._repo_clone_path(repo, strict=True) or ""
+        return self._path
 
     def preflight(self, repo: str, branch: str) -> dict:
         from reviewer.services.status import build_status_report
@@ -3767,6 +3795,7 @@ class _TaskContextDeps:
             self._clone_path(repo),
             summary_store=getattr(components, "summary_store", None))
         status = report.branches[0]
+        self._indexed_sha = status.indexed_sha
         return {
             "branch": status.branch,
             "indexed_sha": status.indexed_sha,
@@ -3887,7 +3916,9 @@ class _TaskContextDeps:
             if clone is None:
                 self.git_gap = "локальный Git-клон репозитория недоступен"
                 return []
-            sha = resolve_git_commit(clone, branch)
+            sha = (self._indexed_sha if self._check_brief_snapshot else None)
+            if sha is None:
+                sha = resolve_git_commit(clone, branch)
             policy, _ = self._service._resolve_policy(
                 repo, branch, fetch_committed=lambda _: read_git_blob(clone, sha, POLICY_FILE),
             )
@@ -3895,14 +3926,31 @@ class _TaskContextDeps:
             if not isinstance(ignore, list) or any(not isinstance(value, str) for value in ignore):
                 self.git_gap = "фильтр paths.ignore для Git-снимка недоступен"
                 return []
-            return search_git(
+            excerpts = search_git(
                 clone, sha, query, ignore=ignore, limit=limit,
                 chars_per_file=limits.chars_per_file,
             )
+            if excerpts:
+                self.git_context_sha = sha
+            return excerpts
         except Exception as exc:  # noqa: BLE001 — Git-источник дополняет гибридный поиск
             log.warning("Лексический поиск по Git недоступен: %s", type(exc).__name__)
             self.git_gap = "лексический поиск по Git-снимку недоступен"
             return []
+
+    def brief_sources(self, repo: str, sha: str | None, paths: list[str]) -> dict[str, str]:
+        if not sha:
+            return {}
+        from reviewer.config.committed import validate_clone
+        from reviewer.retrieval.git_lexical import read_git_blobs
+
+        try:
+            clone = validate_clone(self._clone_path(repo), repo)
+            return read_git_blobs(clone, sha, paths) if clone else {}
+        except Exception as exc:  # noqa: BLE001 — контекст сохраняется без проверки недоступных строк
+            log.warning("Не удалось проверить строки брифа на снимке индекса: %s",
+                        type(exc).__name__)
+            return {}
 
     def code(self, repo: str, branch: str, queries: list[str]) -> str:
         from reviewer.retrieval.augment import AugmentSource

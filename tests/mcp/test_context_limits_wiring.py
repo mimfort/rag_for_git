@@ -535,6 +535,8 @@ def test_prepare_task_context_verifies_git_citation_from_selected_branch(
     assert "tests/test_hybrid.py" in payload["test_exemplars"]
     assert payload["code_budget"]["git_lexical_files"] == 1
     assert payload["code_budget"]["visible_files"] == 2
+    assert payload["brief_source_sha"] == sha
+    assert payload["brief_line_checks"]["test_exemplars"]["unavailable"] == 1
     checked = service.verify_task_brief(
         payload["brief_evidence_id"],
         [
@@ -544,7 +546,7 @@ def test_prepare_task_context_verifies_git_citation_from_selected_branch(
         ],
     )
     assert [citation["status"] for citation in checked["citations"]] == [
-        "verified", "outside_excerpt", "path_unseen",
+        "verified", "outside_excerpt", "section_unavailable",
     ]
 
 

@@ -69,16 +69,15 @@ class _Git:
         oid = self._run("rev-parse", "--verify", "--end-of-options", f"{ref}^{{commit}}")
         return oid.decode("ascii").strip()
 
-    def tree(self, sha: str, path: str | None = None) -> bytes:
+    def tree(self, sha: str, paths: Sequence[str] = ()) -> bytes:
         """Ограничить объём дерева, не запрашивая блобы из него."""
         if not _SHA.fullmatch(sha):
             raise OSError("Git tree requires a full commit SHA")
         args = [*self.command, "ls-tree", "-z", "--full-tree"]
-        if path is None:
-            args.append("-r")
+        args.append("-r")
         args.append(sha)
-        if path is not None:
-            args.extend(["--", f":(top,literal){path}"])
+        if paths:
+            args.extend(["--", *(f":(top,literal){path}" for path in paths)])
         with subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                               env=self.env) as proc, ThreadPoolExecutor(max_workers=1) as worker:
             stdout = proc.stdout
@@ -132,7 +131,7 @@ def _candidate_blobs(tree: bytes, ignore: list[str], wide: bool) -> list[tuple[s
 
 
 def _read_blobs(
-    git: _Git, blobs: list[tuple[str, bytes]],
+    git: _Git, blobs: list[tuple[str, bytes]], *, skip_missing: bool = False,
 ) -> Iterator[tuple[str, bytes]]:
     if not blobs:
         return
@@ -143,6 +142,8 @@ def _read_blobs(
     remaining = _MAX_TOTAL_BLOB_BYTES
     for (path, blob_id), row in zip(blobs, metadata, strict=True):
         fields = row.split()
+        if skip_missing and fields == [blob_id, b"missing"]:
+            continue
         if len(fields) != 3 or fields[:2] != [blob_id, b"blob"] or not fields[2].isdigit():
             raise OSError("Git batch blob is missing or has an unexpected type")
         size = int(fields[2])
@@ -229,7 +230,7 @@ def resolve_git_commit(repo_path: str | os.PathLike[str], ref: str) -> str:
 def read_git_blob(repo_path: str | os.PathLike[str], sha: str, path: str) -> str | None:
     """Прочитать текстовый файл по SHA. None означает отсутствие пути."""
     git = _Git(repo_path)
-    entry = next(_entries(git.tree(sha, path)), None)
+    entry = next(_entries(git.tree(sha, [path])), None)
     if entry is None:
         return None
     mode, kind, blob_id, raw_path = entry
@@ -242,6 +243,29 @@ def read_git_blob(repo_path: str | os.PathLike[str], sha: str, path: str) -> str
         return blob[1].decode("utf-8")
     except UnicodeDecodeError as exc:
         raise OSError("Git blob is not UTF-8 text") from exc
+
+
+def read_git_blobs(
+    repo_path: str | os.PathLike[str], sha: str, paths: Sequence[str],
+) -> dict[str, str]:
+    """Прочитать конкретные UTF-8 файлы с одним общим лимитом времени и объёма."""
+    paths = tuple(dict.fromkeys(paths))[:_MAX_BLOBS]
+    if not paths:
+        return {}
+    git = _Git(repo_path)
+    requested = {path.encode("utf-8"): path for path in paths}
+    blobs = [(requested[raw_path], blob_id)
+             for mode, kind, blob_id, raw_path in _entries(git.tree(sha, paths))
+             if raw_path in requested and mode in _REGULAR_MODES and kind == b"blob"]
+    text = {}
+    for path, raw in _read_blobs(git, blobs, skip_missing=True):
+        if b"\0" in raw:
+            continue
+        try:
+            text[path] = raw.decode("utf-8")
+        except UnicodeDecodeError:
+            continue
+    return text
 
 
 def search_git(

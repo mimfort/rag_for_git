@@ -371,7 +371,8 @@ def create_server(service: MCPReviewService) -> FastMCP:
         Never raises on a missing source: an unreachable board, a down Neo4j or a
         missing index yield a partial payload with entries in `gaps`. Relevance
         filtering and brief assembly stay with the caller. include_brief_evidence
-        adds a short-lived brief_evidence_id when numbered excerpts are available.
+        adds brief_line_checks for displayed rows and a short-lived brief_evidence_id
+        when rows match brief_source_sha (the indexed Git snapshot when available).
         include_code_budget adds file counts before selection and after rendering
         when the code search ran.
         """
@@ -402,9 +403,9 @@ def create_server(service: MCPReviewService) -> FastMCP:
         retention limits. The directory is $XDG_STATE_HOME/rag-reviewer/brief-evidence,
         with ~/.local/state as the default state root.
         Each citation gets verified, path_unseen,
-        outside_excerpt, or section_unavailable. An expired or absent ID gives
-        evidence_unavailable. The tool checks only numbered lines visible in the
-        selected section and does not search again.
+        outside_excerpt, or section_unavailable. Expired, absent, and pre-Git-check
+        IDs give evidence_unavailable. Only visible lines matched to the indexed Git
+        snapshot can be verified. This call does not search again.
 
         References have a non-empty single-line reason and an optional edit/read role.
         This mode returns the verdicts in citations, plus render_status and markdown.

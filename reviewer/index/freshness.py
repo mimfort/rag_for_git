@@ -18,16 +18,15 @@ def _rows_for_file(repo: str, path: str, source: str, ref: str) -> list[ChunkRow
 def _embed_and_upsert(store, embedder, repo: str, rows: list[ChunkRow]) -> None:
     if not rows:
         return
-    # cross-branch reuse: готовые векторы из других ветвей того же репо по content_hash
-    cached = store.find_embeddings_by_hashes(repo, [r.content_hash for r in rows])
-    to_embed = [r for r in rows if r.content_hash not in cached]
+    # Один вектор на текст даже при нескольких путях или символах.
+    texts = {row.content_hash: row.text for row in rows}
+    cached = store.find_embeddings_by_hashes(repo, list(texts))
+    to_embed = {digest: text for digest, text in texts.items() if digest not in cached}
     if to_embed:
-        vecs = embedder.embed_documents([r.text for r in to_embed])
-        for r, v in zip(to_embed, vecs):
-            r.embedding = v
+        vectors = embedder.embed_documents(list(to_embed.values()))
+        cached.update(zip(to_embed, vectors, strict=True))
     for r in rows:
-        if r.content_hash in cached:
-            r.embedding = cached[r.content_hash]
+        r.embedding = cached[r.content_hash]
     store.upsert(rows)
 
 
@@ -72,27 +71,29 @@ def update_base(store, embedder, repo: str, target_ref: str,
     """
     ref = base_ref(target_ref)
     ignore_list = list(ignore)
-    py_removed = [p for p in removed_files if p.endswith(".py")]
-    store.delete_paths(repo, ref, py_removed)
-
-    seen = store.existing_hashes(repo, ref)
+    removed = [path for path in removed_files if path.endswith(".py")]
+    locations = store.chunk_locations(repo, ref, changed_files)
+    kept_symbols: dict[str, list[str]] = {}
     batch: list[ChunkRow] = []
     for path in changed_files:
         if not path.endswith(".py"):
             continue
         if is_ignored(path, ignore_list):
-            store.delete_paths(repo, ref, [path])   # путь стал игнор — вычищаем из base
+            removed.append(path)
             continue
         src = read(path)
         if src is None:
-            # Файл недоступен/удалён — вычищаем его чанки из индекса
-            store.delete_paths(repo, ref, [path])
+            removed.append(path)
             continue
-        rows = _rows_for_file(repo, path, src, ref)
-        # Удаляем символы, исчезнувшие из новой версии файла
-        store.delete_missing_symbols(repo, ref, path, [r.symbol_fqn for r in rows])
-        for row in rows:
-            if row.content_hash not in seen:
-                seen.add(row.content_hash)
+        rows = {row.symbol_fqn: row for row in _rows_for_file(repo, path, src, ref)}
+        kept_symbols[path] = list(rows)
+        for symbol, row in rows.items():
+            location = (row.content_hash, row.start_line, row.end_line, row.kind)
+            if locations.get((path, symbol)) != location:
                 batch.append(row)
+    # Старые строки ещё нужны для переиспользования векторов при переносе кода.
     _embed_and_upsert(store, embedder, repo, batch)
+    store.delete_paths(repo, ref, [path for path in dict.fromkeys(removed)
+                                   if path not in kept_symbols])
+    for path, symbols in kept_symbols.items():
+        store.delete_missing_symbols(repo, ref, path, symbols)

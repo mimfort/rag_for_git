@@ -1,9 +1,11 @@
+from unittest.mock import Mock
 from uuid import uuid4
 
 import psycopg
 import pytest
 
 from reviewer.config.settings import Settings
+from reviewer.index.freshness import update_base
 from reviewer.index.store import ChunkRow, ChunkStore
 
 
@@ -42,6 +44,42 @@ def store_and_settings():
                 store.clear(other_repo)
             finally:
                 store.close()
+
+
+@pytest.mark.integration
+def test_incremental_index_repairs_existing_coordinates_like_clean_index(
+    store_and_settings,
+):
+    store, settings, repo, _ = store_and_settings
+    embedding_provider = Mock()
+    vector = [1.0] + [0.0] * (settings.embedding_dim - 1)
+    embedding_provider.embed_documents.side_effect = lambda texts: [vector for _ in texts]
+    unchanged = "def kept():\n    return 1\n"
+    files = {
+        "a.py": unchanged + "\ndef removed(): pass\n",
+        "b.py": unchanged,
+        "moving.py": "def moved():\n    return 42\n",
+    }
+    paths = list(files)
+    update_base(store, embedding_provider, repo, "dev", paths, files.get)
+    assert store.chunk_locations(repo, "base:dev", paths)["a.py", "kept"][1:3] == (1, 2)
+    assert embedding_provider.embed_documents.call_count == 1
+    assert len(embedding_provider.embed_documents.call_args.args[0]) == 3
+
+    files["a.py"] = "# inserted before kept\n\n" + unchanged
+    files["moved.py"] = files.pop("moving.py")
+    paths = list(files)
+    update_base(store, embedding_provider, repo, "dev", paths, files.get, ["moving.py"])
+    update_base(store, embedding_provider, repo, "clean", paths, files.get)
+
+    repaired = store.chunk_locations(repo, "base:dev", paths)
+    assert repaired == store.chunk_locations(repo, "base:clean", paths)
+    assert repaired["a.py", "kept"][1:3] == (3, 4)
+    assert repaired["b.py", "kept"][1:3] == (1, 2)
+    assert repaired["moved.py", "moved"][1:3] == (1, 2)
+    assert ("a.py", "removed") not in repaired
+    assert store.chunk_locations(repo, "base:dev", ["moving.py"]) == {}
+    assert embedding_provider.embed_documents.call_count == 1
 
 
 @pytest.mark.integration

@@ -1055,14 +1055,15 @@ def index(repo: str, ref: str | None, branch_opt: str | None, repo_tag: str | No
     bref = base_ref(branch)
     try:
         c.store.init_schema()
-        files = list_python_files(repo, ref)
+        sha = rev_parse(repo, f"{ref}^{{commit}}")
+        files = list_python_files(repo, sha)
         # strict_committed: неполный paths.ignore залил бы в индекс файлы,
         # которые репозиторий исключил; фетчер здесь локальный (file_at_ref),
         # его сбой означает битый клон, а не недоступную сеть.
         policy_data, policy_meta = resolve_policy_data(
             repo_id,
             ref,
-            lambda selected_ref: file_at_ref(repo, ".review.yml", selected_ref),
+            lambda _: file_at_ref(repo, ".review.yml", sha),
             strict_committed=True,
         )
         policy = ReviewPolicy.load_data(s, policy_data)
@@ -1072,9 +1073,8 @@ def index(repo: str, ref: str | None, branch_opt: str | None, repo_tag: str | No
         if ignore:
             files = [f for f in files if not is_ignored(f, ignore)]
         update_base(c.store, c.embedder, repo_id, branch, files,
-                    read=lambda p: file_at_ref(repo, p, ref), ignore=ignore)
+                    read=lambda p: file_at_ref(repo, p, sha), ignore=ignore)
         c.store.delete_paths_except(repo_id, bref, files)
-        sha = rev_parse(repo, ref)
         c.store.set_index_meta(repo_id, bref, sha)
         # Платформа VCS репо (PRI-133): auto-derive из git remote локального
         # клона → repo_vcs. Читается при ревью (API-only) для выбора провайдера.
@@ -1093,7 +1093,7 @@ def index(repo: str, ref: str | None, branch_opt: str | None, repo_tag: str | No
             except Exception:  # noqa: BLE001 — индекс уже построен, путь вторичен
                 log.warning("Не удалось записать путь к клону для %s", repo_id)
         # --- граф кода (в рамках ветки) ---
-        src_by_path = {p: file_at_ref(repo, p, ref) for p in files}
+        src_by_path = {p: file_at_ref(repo, p, sha) for p in files}
         src_by_path = {p: v for p, v in src_by_path.items() if v is not None}
         # Предыдущий замер полноты графа читается ДО перестройки: сравнивать
         # нужно с тем, что стояло в индексе этой ветки раньше (PRI-252).
@@ -1104,7 +1104,7 @@ def index(repo: str, ref: str | None, branch_opt: str | None, repo_tag: str | No
             log.warning("Не удалось прочитать предыдущие счётчики рёбер для %s", repo_id)
             prev_edges = None
         gnodes, gedges, backend = build_code_graph(
-            repo, ref, files, src_by_path, s.graph_backend,
+            repo, sha, files, src_by_path, s.graph_backend,
         )
         c.graph.init_schema()
         c.graph.clear(repo_id, branch=branch)   # rebuild только этой ветки репо

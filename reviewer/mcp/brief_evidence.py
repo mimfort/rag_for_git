@@ -24,9 +24,10 @@ log = logging.getLogger(__name__)
 _HEADERS = {"code": briefs.RELEVANT_HEADER, "test_exemplars": briefs.TEST_HEADER}
 _ROLE_LABELS = {"edit": "Править: ", "read": "Прочитать: "}
 _HEADER = re.compile(r"^// .+ \((?P<path>.+):(?P<first>\d+)-(?P<last>\d+)\)$")
-_NUMBERED = re.compile(r"^\s*(\d+) \|")
+_NUMBERED = re.compile(r"^\s*(\d+) \| (.*)$")
 _BACKTICKS = re.compile(r"`+")
 _TRUNCATED = "[...truncated]"
+_GIT_EVIDENCE_PREFIX = "git1."  # Точка отсутствует в ранее выдаваемых token_urlsafe ID.
 _MAX_DB_BYTES = 16 * 1024 * 1024
 _SECTIONS = TypeAdapter(dict[str, dict[str, set[int]]])
 _SCHEMA = """CREATE TABLE IF NOT EXISTS brief_evidence (
@@ -34,26 +35,35 @@ _SCHEMA = """CREATE TABLE IF NOT EXISTS brief_evidence (
 )"""
 
 
-def _visible_lines(text: str) -> dict[str, set[int]]:
-    """Index actual numbered rows. A header may advertise more than was rendered."""
+def _visible_blocks(text: str) -> list[tuple[str, int, list[tuple[int, str]]]]:
+    """Пути, начальные номера и полностью показанные строки фрагментов."""
     lines = text.split("\n")
     if _TRUNCATED in lines:
         # as_context may cut the preceding row and append notes after the marker.
         lines = lines[:max(0, lines.index(_TRUNCATED) - 1)]
-    visible: dict[str, set[int]] = {}
-    path = None
+    blocks: list[tuple[str, int, list[tuple[int, str]]]] = []
+    rows: list[tuple[int, str]] | None = None
     first = last = 0
     for line in lines:
         if header := _HEADER.fullmatch(line):
-            path = header["path"]
             first, last = int(header["first"]), int(header["last"])
+            rows = []
+            blocks.append((header["path"], first, rows))
             continue
-        if path is not None and (row := _NUMBERED.match(line)):
+        if rows is not None and (row := _NUMBERED.match(line)):
             number = int(row[1])
             if first <= number <= last:
-                visible.setdefault(path, set()).add(number)
+                rows.append((number, row[2]))
         else:
-            path = None
+            rows = None
+    return [block for block in blocks if block[2]]
+
+
+def _visible_lines(text: str) -> dict[str, set[int]]:
+    """Index actual numbered rows. A header may advertise more than was rendered."""
+    visible: dict[str, set[int]] = {}
+    for path, _, rows in _visible_blocks(text):
+        visible.setdefault(path, set()).update(number for number, _ in rows)
     return visible
 
 
@@ -130,7 +140,7 @@ class BriefEvidence:
     def save_sections(self, sections: dict[str, dict[str, set[int]]]) -> str | None:
         if not sections or self._limit <= 0:
             return None
-        key = secrets.token_urlsafe(16)
+        key = _GIT_EVIDENCE_PREFIX + secrets.token_urlsafe(16)
         now = self._clock()
         try:
             with self._connect() as db:
@@ -153,7 +163,7 @@ class BriefEvidence:
         return key
 
     def verify(self, key: str, citations: Sequence[BriefCitationIn]) -> dict:
-        if (sections := self._load(key)) is None:
+        if not key.startswith(_GIT_EVIDENCE_PREFIX) or (sections := self._load(key)) is None:
             return {"status": "evidence_unavailable", "citations": []}
         checked = []
         for citation in citations:
