@@ -13,6 +13,8 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import NamedTuple
 
+from reviewer.gitutil import task_key_grep_pattern
+
 GitRunner = Callable[[list], str]
 
 
@@ -71,9 +73,10 @@ def git_runner(repo_root: pathlib.Path) -> GitRunner:
 
 
 def merge_rows(task_key: str, run_git: GitRunner) -> list:
-    """Пары (sha, субъект) merge-коммитов, упоминающих ключ задачи."""
+    """Пары (sha, субъект) merge-коммитов, упоминающих отдельный ключ задачи."""
+    pattern = task_key_grep_pattern(task_key)
     out = run_git(
-        ["log", "--merges", "--all", "--format=%H %s", "-i", f"--grep={task_key}"]
+        ["log", "--merges", "--all", "--format=%H %s", "-i", "-E", f"--grep={pattern}"]
     )
     rows: list = []
     for line in out.splitlines():

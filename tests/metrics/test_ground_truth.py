@@ -1,4 +1,6 @@
-"""Unit-тесты ground truth: только настоящие PR-мержи считаются работой задачи."""
+"""Ground truth включает только настоящие PR-мержи для точного ключа задачи."""
+import subprocess
+
 import pytest
 
 from reviewer.metrics.brief_quality import ground_truth
@@ -75,6 +77,45 @@ def test_merge_rows_parses_git_output():
         ("aaa111", "Merge pull request #148 from mimfort/feature/pri-134-x"),
         ("bbb222", "merge: dev в feature/pri-134-x"),
     ]
+
+
+def test_merge_rows_uses_literal_complete_case_insensitive_keys(tmp_path, commit_snapshot):
+    base = commit_snapshot()
+
+    def git(*args):
+        subprocess.run(
+            ["git", "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
+             "-c", "commit.gpgsign=false", *args],
+            cwd=tmp_path, capture_output=True, check=True,
+        )
+
+    git("switch", "-c", "history")
+    cases = [
+        (1, "feat/pri-27-short", ""),
+        (2, "feat/pri-270-long", ""),
+        (3, "feat/xpri-27-prefix", ""),
+        (4, "feat/no-key", "Fixes (pRi-27)."),
+        (5, "feat/literal", "Fixes [ops+[x]-7]."),
+        (6, "feat/regex-lookalike", "Fixes OPS+X-7."),
+        (7, "feat/literal-long", "Fixes OPS+[X]-70."),
+    ]
+    for number, branch, body in cases:
+        git("switch", "-c", branch)
+        git("commit", "--allow-empty", "-m", "fixture")
+        git("switch", "history")
+        git("merge", "--no-ff", branch, "-m", f"Merge pull request #{number} from owner/{branch}",
+            "-m", body)
+    git("switch", "--detach", base)
+
+    run_git = ground_truth.git_runner(tmp_path)
+
+    def matching_prs(key):
+        merges, _ = ground_truth.filter_pr_merges(ground_truth.merge_rows(key, run_git))
+        return {merge.number for merge in merges}
+
+    assert matching_prs("PRI-27") == {1, 4}
+    assert matching_prs("PRI-270") == {2}
+    assert matching_prs("OPS+[X]-7") == {5}
 
 
 def test_changed_files_splits_names():
