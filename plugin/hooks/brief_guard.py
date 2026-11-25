@@ -40,12 +40,13 @@ _HEADER_RE = re.compile(
     re.MULTILINE,
 )
 _GUARD_WARNING = r"[ \t]*" + re.escape(WARNING)
+_CITATION_LABEL = r"(?P<label>(?P<path>[A-Za-z0-9_./\\+\-]+\.[A-Za-z0-9]{1,6}):\d+(?:-\d+)?)"
 _CITATION_RE = re.compile(
-    r"(?P<quote>`*)"
-    r"(?P<label>(?P<path>[A-Za-z0-9_./\\+\-]+\.[A-Za-z0-9]{1,6}):\d+(?:-\d+)?)"
+    rf"(?P<quote>`*){_CITATION_LABEL}"
     # Старый хук мог записать предупреждение до закрывающих бэктиков.
     rf"(?:{_GUARD_WARNING})?(?P=quote)(?:{_GUARD_WARNING})?"
 )
+_OLD_REASON_WARNING_RE = re.compile(rf"{_CITATION_LABEL} {re.escape(WARNING)}")
 _INCOMPLETE_RE = re.compile(r"\[(?:\.\.\.|…)?truncated\]")
 
 
@@ -207,6 +208,7 @@ def guard_brief(text: str, observed: set[str]) -> tuple[str, list[str], list[str
 
         # В формате solve-task после разделителя идёт пояснение к ссылкам.
         citation_part, separator, reason = line.partition(" — ")
+        reason = _OLD_REASON_WARNING_RE.sub(r"\g<label>", reason)
         guarded_lines.append(_CITATION_RE.sub(annotate, citation_part) + separator + reason)
 
     return "".join(guarded_lines), cited, missing

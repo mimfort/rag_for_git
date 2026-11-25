@@ -172,3 +172,24 @@ def test_run_preserves_legacy_markdown_and_clears_warning_on_rewrite(hook_module
 
     assert hook_module.run(payload) == 0
     assert brief.read_bytes() == original.encode()
+
+
+def test_run_repairs_old_inline_warnings_in_legacy_citation_and_reason(hook_module, tmp_path):
+    warning = hook_module.brief_guard.WARNING
+    original = (
+        "## Relevant code\r\n"
+        f"- (`app.py:1`) — Uses (`worker.py:2`), then `default.py:3`. Note {warning}.\r\n"
+    )
+    corrupted = original.replace("app.py:1`", f"app.py:1 {warning}`").replace(
+        "worker.py:2`", f"worker.py:2 {warning}`"
+    )
+    brief = _brief(tmp_path, corrupted)
+    transcript = _write_transcript(
+        tmp_path, [_SOLVE_USER, *_retrieval_rows("// app.py#f (app.py:1-3)"), _write_call()],
+    )
+    payload = _payload(brief, transcript)
+
+    assert hook_module.run(payload) == 0
+    assert brief.read_bytes() == original.encode()
+    assert hook_module.run(payload) == 0
+    assert brief.read_bytes() == original.encode()
