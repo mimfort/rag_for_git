@@ -19,7 +19,7 @@ from collections.abc import Callable
 
 from reviewer.index.refs import base_ref
 from reviewer.retrieval.retriever import (
-    ContextPack, _dedupe_overlapping, _is_test_path,
+    ContextPack, _dedupe_overlapping, _is_test_path, _render_block,
 )
 from reviewer.rrf import RRF_K
 from reviewer.storage_health import (
@@ -317,7 +317,7 @@ def _explicit_candidates(
 def _line_window(item, line: int, budget: int):
     rows = item.text.split("\n")
     index = line - item.start_line
-    if not 0 <= index < len(rows) or len(rows[index]) > budget:
+    if line > item.end_line or not 0 <= index < len(rows) or len(rows[index]) > budget:
         return None
     first = max(0, index - 4)
     while len("\n".join(rows[first:index + 1])) > budget:
@@ -327,26 +327,69 @@ def _line_window(item, line: int, budget: int):
     return cap_block(window, budget)
 
 
+def _single_line(item, line: int):
+    text = item.text.split("\n")[line - item.start_line]
+    return dataclasses.replace(item, text=text, start_line=line, end_line=line)
+
+
+def _explicit_lines_fit(items: list, targets: dict[int, int], budget: int) -> bool:
+    pending = len(targets)
+    for index, item in enumerate(items):
+        block = _render_block(item, line_numbers=True)
+        if (line := targets.get(id(item))) is not None:
+            row_count = line - item.start_line + 2  # заголовок и строки по целевую включительно
+            through_target = len("\n".join(block.split("\n", row_count)[:row_count]))
+            if through_target > budget:
+                return False
+            # При усечении проверка брифа исключает последнюю строку перед маркером.
+            if through_target == budget and (len(block) > budget or index + 1 < len(items)):
+                return False
+            pending -= 1
+            if pending == 0:
+                return True
+        budget -= len(block) + 2  # пустая строка между блоками
+    return True
+
+
+def _prioritize_explicit_lines(items: list, targets: dict[int, int], budget: int) -> list:
+    if not targets or budget <= 0 or _explicit_lines_fit(items, targets, budget):
+        return items
+    first = [item for item in items if id(item) in targets]
+    rest = [item for item in items if id(item) not in targets]
+    if _explicit_lines_fit([*first, *rest], targets, budget):
+        return [*first, *rest]
+    return [*(_single_line(item, targets[id(item)]) for item in first), *rest]
+
+
 def _focus_explicit_lines(
     store, repo: str, ref: str, items: list, required_paths: frozenset[str],
-    locations: dict[str, int], budget: int, lookup: OptionalLookup | None,
+    locations: dict[str, int], budget: int, render_budget: int, lookup: OptionalLookup | None,
 ) -> list:
     missing = {p: line for p, line in locations.items() if p in required_paths}
+    targets = {}
     for item in items:
-        if (line := missing.get(item.path)) is not None and item.start_line <= line <= item.end_line:
+        line = missing.get(item.path)
+        if (line is not None and item.start_line <= line <= item.end_line
+                and line - item.start_line <= item.text.count("\n")):
+            targets[id(item)] = line
             del missing[item.path]
     if not missing:
-        return items
+        return _prioritize_explicit_lines(items, targets, render_budget)
     snippets = _read_optional(
         lookup, "explicit_lines",
         lambda: store.fetch_retrieved_covering_lines(repo, missing, base_ref=ref),
         "чтение явно указанных строк недоступно", BACKEND_POSTGRES,
     )
-    focused = {
-        item.path: window for item in snippets
-        if item.path in missing and (window := _line_window(item, missing[item.path], budget))
-    }
-    # Точная ссылка должна оставаться видимой даже у границы общего бюджета.
+    focused = {}
+    for item in snippets:
+        line = missing.get(item.path)
+        if line is None or (window := _line_window(item, line, budget)) is None:
+            continue
+        if render_budget > 0 and len(_render_block(_single_line(window, line),
+                                                   line_numbers=True)) > render_budget:
+            continue
+        focused[item.path] = window
+    targets.update((id(item), missing[path]) for path, item in focused.items())
     result = [focused[path] for path in missing if path in focused]
     replaced = set(focused)
     for item in items:
@@ -354,7 +397,7 @@ def _focus_explicit_lines(
             replaced.remove(item.path)
         else:
             result.append(item)
-    return result
+    return _prioritize_explicit_lines(result, targets, render_budget)
 
 
 def search_multi(retriever, repo: str, queries: list[str], *, limits=None,
@@ -535,7 +578,7 @@ def search_multi(retriever, repo: str, queries: list[str], *, limits=None,
     if explicit_lines:
         capped = _focus_explicit_lines(
             retriever.store, repo, bref, capped, required_paths, explicit_lines,
-            sec.chars_per_file, optional_lookup,
+            sec.chars_per_file, sec.max_chars, optional_lookup,
         )
     return ContextPack(items=capped,
                        max_chars=sec.max_chars, augment_note=note, selection_stats=stats)
