@@ -665,3 +665,32 @@ def test_prepare_task_context_default_git_quota_never_opens_explicit_clone(
 
     assert "hybrid.py" in payload["code"]
     assert calls == []
+
+
+def test_prepare_task_context_keeps_explicit_paths_in_their_sections_and_applies_ignore():
+    service = _task_context_service(
+        committed_policy="paths: {ignore: [pkg/ignored.py]}\n",
+        task={
+            "key": "ID-1", "title": "Use pkg/explicit.py and tests/test_explicit.py",
+            "description": (
+                "Проверить pkg/ignored.py и https://example.org/pkg/linked.py.\n"
+                "## Контекст\nСправка pkg/historical.py."
+            ),
+        },
+    )
+    exact = ["pkg/explicit.py", "tests/test_explicit.py"]
+    retriever = service.components.retriever
+    retriever.store.fetch_retrieved_at_paths.side_effect = lambda repo, paths, *, base_ref: [
+        Retrieved(f"{path}#f", path, "f", "function", 1, 1, "def f(): pass", 0.0)
+        for path in paths
+    ]
+
+    payload = service.prepare_task_context("o/r", "ID-1", "dev", warm_board=False)
+
+    assert exact[0] in payload["code"] and exact[1] not in payload["code"]
+    assert exact[1] in payload["test_exemplars"] and exact[0] not in payload["test_exemplars"]
+    assert [c.args for c in retriever.store.fetch_retrieved_at_paths.call_args_list] == [
+        ("o/r", [exact[0]]), ("o/r", [exact[1]]),
+    ]
+    assert all(c.kwargs == {"base_ref": "base:dev"}
+               for c in retriever.store.fetch_retrieved_at_paths.call_args_list)

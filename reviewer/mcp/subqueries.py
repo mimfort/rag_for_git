@@ -29,6 +29,10 @@ _FILE_NAMES = frozenset({
     ".codexignore", ".dockerignore", ".env", ".env.example", ".gitattributes",
     ".gitignore", "Dockerfile", "Makefile",
 })
+_REFERENCE_HEADING_RE = re.compile(
+    r"^(?:контекст|справочно|ссылки|источники|context|references|background)\b",
+    re.IGNORECASE,
+)
 _TOPIC_RE = re.compile(r"[^\W\d]\w*(?:[./-]\w+)*")
 _TOPIC_STOPWORDS = {
     "после", "перед", "когда", "если", "также", "только", "можно", "через",
@@ -133,6 +137,41 @@ def _tokens(lines: Iterable[str]) -> Iterator[str]:
     for line in lines:
         for token in _TOKEN_RE.findall(_URL_RE.sub(" ", line)):
             yield token.rstrip(".")
+
+
+def _without_reference_sections(description: str) -> Iterator[str]:
+    skip_depth = None
+    for line in description.splitlines():
+        if heading := _HEADING_RE.match(line):
+            depth = len(heading[1])
+            if skip_depth is None or depth <= skip_depth:
+                skip_depth = (
+                    depth if _REFERENCE_HEADING_RE.match(line[heading.end():]) else None
+                )
+        if skip_depth is None:
+            yield line
+
+
+def explicit_python_paths(task: dict | None, free_text: str) -> list[str]:
+    """Относительные Git-пути из постановки и критериев, в порядке упоминания."""
+    if task:
+        text = [
+            str(task.get("title") or ""),
+            *_without_reference_sections(str(task.get("description") or "")),
+            *(str(criterion) for criterion in task.get("criteria") or []),
+        ]
+    else:
+        text = [free_text]
+    paths: dict[str, None] = {}
+    for token in _tokens(text):
+        path = token.removeprefix("./")
+        if ("/" not in token or not path.endswith(".py")
+                or any(part in ("", ".", "..") for part in path.split("/"))):
+            continue
+        paths.setdefault(path, None)
+        if len(paths) == MAX_IDENTIFIERS:
+            break
+    return list(paths)
 
 
 def _identifiers(lines: list[str], queries: list[str]) -> list[str]:
