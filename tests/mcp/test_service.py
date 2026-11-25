@@ -969,7 +969,7 @@ def test_task_context_deps_code_augments_from_similar_hits_with_aliases() -> Non
     ]
     fake_service.components.task_service.render_hits.return_value = "1. ID-311 ..."
     fake_service._search_codebase_multi.return_value = "code-out"
-    deps = _TaskContextDeps(fake_service, None)
+    deps = _TaskContextDeps(fake_service, None, indexed_sha="a" * 40)
 
     deps.similar("query", "PRI")
     with patch("reviewer.retrieval.augment.collect_similar_task_paths") as collect:
@@ -977,6 +977,8 @@ def test_task_context_deps_code_augments_from_similar_hits_with_aliases() -> Non
         deps.code("o/r", "dev", ["q1"])
 
     call_kwargs = collect.call_args.kwargs
+    assert call_kwargs["repo"] == "o/r"
+    assert call_kwargs["indexed_sha"] == "a" * 40
     assert call_kwargs["keys"] == ["ID-311"]
     assert call_kwargs["aliases_by_key"] == {"ID-311": ["PRI-257"]}
 
