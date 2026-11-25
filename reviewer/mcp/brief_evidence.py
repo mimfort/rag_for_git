@@ -2,16 +2,24 @@
 
 from __future__ import annotations
 
+import logging
+import os
 import re
 import secrets
+import sqlite3
 import time
-from collections import OrderedDict
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
+from contextlib import closing, contextmanager
+from hashlib import sha256
 from html import escape
-from threading import Lock
+from pathlib import Path
+
+from pydantic import TypeAdapter, ValidationError
 
 from reviewer.mcp.schemas import BriefCitationIn, BriefReferenceIn
 from reviewer.metrics.brief_quality import briefs
+
+log = logging.getLogger(__name__)
 
 _HEADERS = {"code": briefs.RELEVANT_HEADER, "test_exemplars": briefs.TEST_HEADER}
 _ROLE_LABELS = {"edit": "Править: ", "read": "Прочитать: "}
@@ -19,6 +27,11 @@ _HEADER = re.compile(r"^// .+ \((?P<path>.+):(?P<first>\d+)-(?P<last>\d+)\)$")
 _NUMBERED = re.compile(r"^\s*(\d+) \|")
 _BACKTICKS = re.compile(r"`+")
 _TRUNCATED = "[...truncated]"
+_MAX_DB_BYTES = 16 * 1024 * 1024
+_SECTIONS = TypeAdapter(dict[str, dict[str, set[int]]])
+_SCHEMA = """CREATE TABLE IF NOT EXISTS brief_evidence (
+    id_hash BLOB NOT NULL UNIQUE, expires_at REAL NOT NULL, sections BLOB NOT NULL
+)"""
 
 
 def _visible_lines(text: str) -> dict[str, set[int]]:
@@ -78,19 +91,33 @@ def _render_references(references: list[BriefReferenceIn]) -> str:
 
 
 class BriefEvidence:
-    """Bounded process-local index of what the user received, without source text."""
+    """Ограниченное локальное хранилище выданных координат без текста кода."""
 
     def __init__(
-        self, *, limit: int = 64, ttl_seconds: int = 3600,
-        clock: Callable[[], float] = time.monotonic,
+        self, *, limit: int = 1024, ttl_seconds: int = 3600,
+        clock: Callable[[], float] = time.time,
     ) -> None:
         self._limit = limit
         self._ttl = ttl_seconds
         self._clock = clock
-        self._lock = Lock()
-        self._entries: OrderedDict[str, tuple[float, dict[str, dict[str, set[int]]]]] = (
-            OrderedDict()
-        )
+        self._state_home = Path(os.environ.get("XDG_STATE_HOME", ""))
+
+    @contextmanager
+    def _connect(self) -> Iterator[sqlite3.Connection]:
+        state_home = self._state_home
+        if not state_home.is_absolute():
+            state_home = Path.home() / ".local" / "state"
+        path = state_home / "rag-reviewer" / "brief-evidence" / "entries.sqlite3"
+        path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        try:
+            fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        except FileExistsError:
+            pass
+        else:
+            os.close(fd)
+        with closing(sqlite3.connect(path, timeout=1.0)) as db, db:
+            db.execute(_SCHEMA)
+            yield db
 
     def save(self, payload: Mapping[str, object]) -> str | None:
         sections: dict[str, dict[str, set[int]]] = {}
@@ -98,24 +125,36 @@ class BriefEvidence:
             text = payload.get(name)
             if isinstance(text, str) and (visible := _visible_lines(text)):
                 sections[name] = visible
-        if not sections:
+        return self.save_sections(sections)
+
+    def save_sections(self, sections: dict[str, dict[str, set[int]]]) -> str | None:
+        if not sections or self._limit <= 0:
             return None
         key = secrets.token_urlsafe(16)
-        with self._lock:
-            self._entries[key] = (self._clock() + self._ttl, sections)
-            if len(self._entries) > self._limit:
-                self._entries.popitem(last=False)
+        now = self._clock()
+        try:
+            with self._connect() as db:
+                page_size, = db.execute("PRAGMA page_size").fetchone()
+                db.execute(f"PRAGMA max_page_count = {_MAX_DB_BYTES // page_size}")
+                db.execute("PRAGMA secure_delete = ON")
+                db.execute("DELETE FROM brief_evidence WHERE expires_at <= ?", (now,))
+                db.execute(
+                    "INSERT INTO brief_evidence (id_hash, expires_at, sections) VALUES (?, ?, ?)",
+                    (sha256(key.encode()).digest(), now + self._ttl, _SECTIONS.dump_json(sections)),
+                )
+                db.execute("""
+                    DELETE FROM brief_evidence WHERE rowid IN (
+                        SELECT rowid FROM brief_evidence ORDER BY rowid DESC LIMIT -1 OFFSET ?
+                    )
+                """, (self._limit,))
+        except (OSError, RuntimeError, sqlite3.Error) as error:
+            log.warning("Не удалось сохранить данные проверки брифа (%s)", type(error).__name__)
+            return None
         return key
 
     def verify(self, key: str, citations: Sequence[BriefCitationIn]) -> dict:
-        with self._lock:
-            entry = self._entries.get(key)
-            if entry is None:
-                return {"status": "evidence_unavailable", "citations": []}
-            expires, sections = entry
-            if self._clock() >= expires:
-                del self._entries[key]
-                return {"status": "evidence_unavailable", "citations": []}
+        if (sections := self._load(key)) is None:
+            return {"status": "evidence_unavailable", "citations": []}
         checked = []
         for citation in citations:
             paths = sections.get(citation.section)
@@ -129,6 +168,18 @@ class BriefEvidence:
                 status = "verified"
             checked.append({**citation.model_dump(), "status": status})
         return {"status": "ok", "citations": checked}
+
+    def _load(self, key: str) -> dict[str, dict[str, set[int]]] | None:
+        try:
+            with self._connect() as db:
+                entry = db.execute(
+                    "SELECT sections FROM brief_evidence WHERE id_hash = ? AND expires_at > ?",
+                    (sha256(key.encode()).digest(), self._clock()),
+                ).fetchone()
+            return _SECTIONS.validate_json(entry[0]) if entry else None
+        except (OSError, RuntimeError, sqlite3.Error, UnicodeEncodeError, ValidationError) as error:
+            log.warning("Не удалось загрузить данные проверки брифа (%s)", type(error).__name__)
+            return None
 
     def verify_references(self, evidence_id: str, references: list[BriefReferenceIn]) -> dict:
         checked = self.verify(evidence_id, references)

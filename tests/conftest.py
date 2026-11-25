@@ -166,9 +166,10 @@ def isolated_xdg_config_home(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> Path:
-    """Изолировать policy/.env каждого теста от home конфигурации оператора."""
+    """Изолировать конфигурацию и локальное состояние теста от home оператора."""
     config_home = tmp_path / "xdg-config"
     monkeypatch.setenv("XDG_CONFIG_HOME", str(config_home))
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "xdg-state"))
     return config_home
 
 
