@@ -1,0 +1,25 @@
+{
+  "model": "gpt-6-luna",
+  "effort": "low",
+  "prompt_sha256": "9777c6d0559037b6a35960fa520e87117aeb12cef9428e875840b2e03f9264f3",
+  "schema_sha256": "f226405f740e509fb8b617f2926766e6350090b311c911a3ca46317ac866ff32",
+  "client": "codex-cli 0.170.0",
+  "schedule": {
+    "r1": [
+      "base",
+      "reframe"
+    ],
+    "r2": [
+      "reframe",
+      "base"
+    ]
+  },
+  "pair_mode": "singleton_first_attempt",
+  "cases": [
+    "PRI-271",
+    "PRI-299",
+    "PRI-274",
+    "PRI-311",
+    "PYTEST-7777"
+  ]
+}

@@ -1,0 +1,1902 @@
+{
+  "scheduled": {
+    "all": {
+      "base": {
+        "all": {
+          "tasks": 5,
+          "briefs": 10,
+          "missing_briefs": 0,
+          "core": {
+            "hit": 41,
+            "all": 96
+          },
+          "task_median_core": 0.4090909090909091,
+          "python_core": {
+            "hit": 41,
+            "all": 84
+          },
+          "task_median_python_core": 0.5625,
+          "dependencies": {
+            "hit": 5,
+            "all": 12
+          },
+          "chars": 175230,
+          "verified_paths": 98,
+          "labelled_paths": 46
+        },
+        "large": {
+          "tasks": 3,
+          "briefs": 6,
+          "missing_briefs": 0,
+          "core": {
+            "hit": 25,
+            "all": 62
+          },
+          "task_median_core": 0.4090909090909091,
+          "python_core": {
+            "hit": 25,
+            "all": 56
+          },
+          "task_median_python_core": 0.5625,
+          "dependencies": {
+            "hit": 2,
+            "all": 6
+          },
+          "chars": 107476,
+          "verified_paths": 61,
+          "labelled_paths": 27
+        },
+        "ordinary": {
+          "tasks": 2,
+          "briefs": 4,
+          "missing_briefs": 0,
+          "core": {
+            "hit": 16,
+            "all": 34
+          },
+          "task_median_core": 0.4583333333333333,
+          "python_core": {
+            "hit": 16,
+            "all": 28
+          },
+          "task_median_python_core": 0.5714285714285714,
+          "dependencies": {
+            "hit": 3,
+            "all": 6
+          },
+          "chars": 67754,
+          "verified_paths": 37,
+          "labelled_paths": 19
+        }
+      },
+      "reframe": {
+        "all": {
+          "tasks": 5,
+          "briefs": 10,
+          "missing_briefs": 0,
+          "core": {
+            "hit": 43,
+            "all": 96
+          },
+          "task_median_core": 0.4375,
+          "python_core": {
+            "hit": 43,
+            "all": 84
+          },
+          "task_median_python_core": 0.5,
+          "dependencies": {
+            "hit": 6,
+            "all": 12
+          },
+          "chars": 169762,
+          "verified_paths": 104,
+          "labelled_paths": 49
+        },
+        "large": {
+          "tasks": 3,
+          "briefs": 6,
+          "missing_briefs": 0,
+          "core": {
+            "hit": 24,
+            "all": 62
+          },
+          "task_median_core": 0.3,
+          "python_core": {
+            "hit": 24,
+            "all": 56
+          },
+          "task_median_python_core": 0.375,
+          "dependencies": {
+            "hit": 2,
+            "all": 6
+          },
+          "chars": 104872,
+          "verified_paths": 49,
+          "labelled_paths": 26
+        },
+        "ordinary": {
+          "tasks": 2,
+          "briefs": 4,
+          "missing_briefs": 0,
+          "core": {
+            "hit": 19,
+            "all": 34
+          },
+          "task_median_core": 0.5520833333333333,
+          "python_core": {
+            "hit": 19,
+            "all": 28
+          },
+          "task_median_python_core": 0.6785714285714286,
+          "dependencies": {
+            "hit": 4,
+            "all": 6
+          },
+          "chars": 64890,
+          "verified_paths": 55,
+          "labelled_paths": 23
+        }
+      }
+    },
+    "mimfort/rag_for_git": {
+      "base": {
+        "all": {
+          "tasks": 4,
+          "briefs": 8,
+          "missing_briefs": 0,
+          "core": {
+            "hit": 37,
+            "all": 76
+          },
+          "task_median_core": 0.5045454545454545,
+          "python_core": {
+            "hit": 37,
+            "all": 64
+          },
+          "task_median_python_core": 0.58125,
+          "dependencies": {
+            "hit": 5,
+            "all": 12
+          },
+          "chars": 142176,
+          "verified_paths": 90,
+          "labelled_paths": 42
+        },
+        "large": {
+          "tasks": 2,
+          "briefs": 4,
+          "missing_briefs": 0,
+          "core": {
+            "hit": 21,
+            "all": 42
+          },
+          "task_median_core": 0.5045454545454545,
+          "python_core": {
+            "hit": 21,
+            "all": 36
+          },
+          "task_median_python_core": 0.58125,
+          "dependencies": {
+            "hit": 2,
+            "all": 6
+          },
+          "chars": 74422,
+          "verified_paths": 53,
+          "labelled_paths": 23
+        },
+        "ordinary": {
+          "tasks": 2,
+          "briefs": 4,
+          "missing_briefs": 0,
+          "core": {
+            "hit": 16,
+            "all": 34
+          },
+          "task_median_core": 0.4583333333333333,
+          "python_core": {
+            "hit": 16,
+            "all": 28
+          },
+          "task_median_python_core": 0.5714285714285714,
+          "dependencies": {
+            "hit": 3,
+            "all": 6
+          },
+          "chars": 67754,
+          "verified_paths": 37,
+          "labelled_paths": 19
+        }
+      },
+      "reframe": {
+        "all": {
+          "tasks": 4,
+          "briefs": 8,
+          "missing_briefs": 0,
+          "core": {
+            "hit": 37,
+            "all": 76
+          },
+          "task_median_core": 0.51875,
+          "python_core": {
+            "hit": 37,
+            "all": 64
+          },
+          "task_median_python_core": 0.55,
+          "dependencies": {
+            "hit": 6,
+            "all": 12
+          },
+          "chars": 137654,
+          "verified_paths": 92,
+          "labelled_paths": 43
+        },
+        "large": {
+          "tasks": 2,
+          "briefs": 4,
+          "missing_briefs": 0,
+          "core": {
+            "hit": 18,
+            "all": 42
+          },
+          "task_median_core": 0.43636363636363634,
+          "python_core": {
+            "hit": 18,
+            "all": 36
+          },
+          "task_median_python_core": 0.4875,
+          "dependencies": {
+            "hit": 2,
+            "all": 6
+          },
+          "chars": 72764,
+          "verified_paths": 37,
+          "labelled_paths": 20
+        },
+        "ordinary": {
+          "tasks": 2,
+          "briefs": 4,
+          "missing_briefs": 0,
+          "core": {
+            "hit": 19,
+            "all": 34
+          },
+          "task_median_core": 0.5520833333333333,
+          "python_core": {
+            "hit": 19,
+            "all": 28
+          },
+          "task_median_python_core": 0.6785714285714286,
+          "dependencies": {
+            "hit": 4,
+            "all": 6
+          },
+          "chars": 64890,
+          "verified_paths": 55,
+          "labelled_paths": 23
+        }
+      }
+    },
+    "pytest-dev/pytest": {
+      "base": {
+        "all": {
+          "tasks": 1,
+          "briefs": 2,
+          "missing_briefs": 0,
+          "core": {
+            "hit": 4,
+            "all": 20
+          },
+          "task_median_core": 0.2,
+          "python_core": {
+            "hit": 4,
+            "all": 20
+          },
+          "task_median_python_core": 0.2,
+          "dependencies": {
+            "hit": 0,
+            "all": 0
+          },
+          "chars": 33054,
+          "verified_paths": 8,
+          "labelled_paths": 4
+        },
+        "large": {
+          "tasks": 1,
+          "briefs": 2,
+          "missing_briefs": 0,
+          "core": {
+            "hit": 4,
+            "all": 20
+          },
+          "task_median_core": 0.2,
+          "python_core": {
+            "hit": 4,
+            "all": 20
+          },
+          "task_median_python_core": 0.2,
+          "dependencies": {
+            "hit": 0,
+            "all": 0
+          },
+          "chars": 33054,
+          "verified_paths": 8,
+          "labelled_paths": 4
+        },
+        "ordinary": {
+          "tasks": 0,
+          "briefs": 0,
+          "missing_briefs": 0,
+          "core": {
+            "hit": 0,
+            "all": 0
+          },
+          "task_median_core": null,
+          "python_core": {
+            "hit": 0,
+            "all": 0
+          },
+          "task_median_python_core": null,
+          "dependencies": {
+            "hit": 0,
+            "all": 0
+          },
+          "chars": 0,
+          "verified_paths": 0,
+          "labelled_paths": 0
+        }
+      },
+      "reframe": {
+        "all": {
+          "tasks": 1,
+          "briefs": 2,
+          "missing_briefs": 0,
+          "core": {
+            "hit": 6,
+            "all": 20
+          },
+          "task_median_core": 0.3,
+          "python_core": {
+            "hit": 6,
+            "all": 20
+          },
+          "task_median_python_core": 0.3,
+          "dependencies": {
+            "hit": 0,
+            "all": 0
+          },
+          "chars": 32108,
+          "verified_paths": 12,
+          "labelled_paths": 6
+        },
+        "large": {
+          "tasks": 1,
+          "briefs": 2,
+          "missing_briefs": 0,
+          "core": {
+            "hit": 6,
+            "all": 20
+          },
+          "task_median_core": 0.3,
+          "python_core": {
+            "hit": 6,
+            "all": 20
+          },
+          "task_median_python_core": 0.3,
+          "dependencies": {
+            "hit": 0,
+            "all": 0
+          },
+          "chars": 32108,
+          "verified_paths": 12,
+          "labelled_paths": 6
+        },
+        "ordinary": {
+          "tasks": 0,
+          "briefs": 0,
+          "missing_briefs": 0,
+          "core": {
+            "hit": 0,
+            "all": 0
+          },
+          "task_median_core": null,
+          "python_core": {
+            "hit": 0,
+            "all": 0
+          },
+          "task_median_python_core": null,
+          "dependencies": {
+            "hit": 0,
+            "all": 0
+          },
+          "chars": 0,
+          "verified_paths": 0,
+          "labelled_paths": 0
+        }
+      }
+    }
+  },
+  "complete_pairs": {
+    "all": {
+      "base": {
+        "all": {
+          "tasks": 5,
+          "briefs": 10,
+          "missing_briefs": 0,
+          "core": {
+            "hit": 41,
+            "all": 96
+          },
+          "task_median_core": 0.4090909090909091,
+          "python_core": {
+            "hit": 41,
+            "all": 84
+          },
+          "task_median_python_core": 0.5625,
+          "dependencies": {
+            "hit": 5,
+            "all": 12
+          },
+          "chars": 175230,
+          "verified_paths": 98,
+          "labelled_paths": 46
+        },
+        "large": {
+          "tasks": 3,
+          "briefs": 6,
+          "missing_briefs": 0,
+          "core": {
+            "hit": 25,
+            "all": 62
+          },
+          "task_median_core": 0.4090909090909091,
+          "python_core": {
+            "hit": 25,
+            "all": 56
+          },
+          "task_median_python_core": 0.5625,
+          "dependencies": {
+            "hit": 2,
+            "all": 6
+          },
+          "chars": 107476,
+          "verified_paths": 61,
+          "labelled_paths": 27
+        },
+        "ordinary": {
+          "tasks": 2,
+          "briefs": 4,
+          "missing_briefs": 0,
+          "core": {
+            "hit": 16,
+            "all": 34
+          },
+          "task_median_core": 0.4583333333333333,
+          "python_core": {
+            "hit": 16,
+            "all": 28
+          },
+          "task_median_python_core": 0.5714285714285714,
+          "dependencies": {
+            "hit": 3,
+            "all": 6
+          },
+          "chars": 67754,
+          "verified_paths": 37,
+          "labelled_paths": 19
+        }
+      },
+      "reframe": {
+        "all": {
+          "tasks": 5,
+          "briefs": 10,
+          "missing_briefs": 0,
+          "core": {
+            "hit": 43,
+            "all": 96
+          },
+          "task_median_core": 0.4375,
+          "python_core": {
+            "hit": 43,
+            "all": 84
+          },
+          "task_median_python_core": 0.5,
+          "dependencies": {
+            "hit": 6,
+            "all": 12
+          },
+          "chars": 169762,
+          "verified_paths": 104,
+          "labelled_paths": 49
+        },
+        "large": {
+          "tasks": 3,
+          "briefs": 6,
+          "missing_briefs": 0,
+          "core": {
+            "hit": 24,
+            "all": 62
+          },
+          "task_median_core": 0.3,
+          "python_core": {
+            "hit": 24,
+            "all": 56
+          },
+          "task_median_python_core": 0.375,
+          "dependencies": {
+            "hit": 2,
+            "all": 6
+          },
+          "chars": 104872,
+          "verified_paths": 49,
+          "labelled_paths": 26
+        },
+        "ordinary": {
+          "tasks": 2,
+          "briefs": 4,
+          "missing_briefs": 0,
+          "core": {
+            "hit": 19,
+            "all": 34
+          },
+          "task_median_core": 0.5520833333333333,
+          "python_core": {
+            "hit": 19,
+            "all": 28
+          },
+          "task_median_python_core": 0.6785714285714286,
+          "dependencies": {
+            "hit": 4,
+            "all": 6
+          },
+          "chars": 64890,
+          "verified_paths": 55,
+          "labelled_paths": 23
+        }
+      }
+    },
+    "mimfort/rag_for_git": {
+      "base": {
+        "all": {
+          "tasks": 4,
+          "briefs": 8,
+          "missing_briefs": 0,
+          "core": {
+            "hit": 37,
+            "all": 76
+          },
+          "task_median_core": 0.5045454545454545,
+          "python_core": {
+            "hit": 37,
+            "all": 64
+          },
+          "task_median_python_core": 0.58125,
+          "dependencies": {
+            "hit": 5,
+            "all": 12
+          },
+          "chars": 142176,
+          "verified_paths": 90,
+          "labelled_paths": 42
+        },
+        "large": {
+          "tasks": 2,
+          "briefs": 4,
+          "missing_briefs": 0,
+          "core": {
+            "hit": 21,
+            "all": 42
+          },
+          "task_median_core": 0.5045454545454545,
+          "python_core": {
+            "hit": 21,
+            "all": 36
+          },
+          "task_median_python_core": 0.58125,
+          "dependencies": {
+            "hit": 2,
+            "all": 6
+          },
+          "chars": 74422,
+          "verified_paths": 53,
+          "labelled_paths": 23
+        },
+        "ordinary": {
+          "tasks": 2,
+          "briefs": 4,
+          "missing_briefs": 0,
+          "core": {
+            "hit": 16,
+            "all": 34
+          },
+          "task_median_core": 0.4583333333333333,
+          "python_core": {
+            "hit": 16,
+            "all": 28
+          },
+          "task_median_python_core": 0.5714285714285714,
+          "dependencies": {
+            "hit": 3,
+            "all": 6
+          },
+          "chars": 67754,
+          "verified_paths": 37,
+          "labelled_paths": 19
+        }
+      },
+      "reframe": {
+        "all": {
+          "tasks": 4,
+          "briefs": 8,
+          "missing_briefs": 0,
+          "core": {
+            "hit": 37,
+            "all": 76
+          },
+          "task_median_core": 0.51875,
+          "python_core": {
+            "hit": 37,
+            "all": 64
+          },
+          "task_median_python_core": 0.55,
+          "dependencies": {
+            "hit": 6,
+            "all": 12
+          },
+          "chars": 137654,
+          "verified_paths": 92,
+          "labelled_paths": 43
+        },
+        "large": {
+          "tasks": 2,
+          "briefs": 4,
+          "missing_briefs": 0,
+          "core": {
+            "hit": 18,
+            "all": 42
+          },
+          "task_median_core": 0.43636363636363634,
+          "python_core": {
+            "hit": 18,
+            "all": 36
+          },
+          "task_median_python_core": 0.4875,
+          "dependencies": {
+            "hit": 2,
+            "all": 6
+          },
+          "chars": 72764,
+          "verified_paths": 37,
+          "labelled_paths": 20
+        },
+        "ordinary": {
+          "tasks": 2,
+          "briefs": 4,
+          "missing_briefs": 0,
+          "core": {
+            "hit": 19,
+            "all": 34
+          },
+          "task_median_core": 0.5520833333333333,
+          "python_core": {
+            "hit": 19,
+            "all": 28
+          },
+          "task_median_python_core": 0.6785714285714286,
+          "dependencies": {
+            "hit": 4,
+            "all": 6
+          },
+          "chars": 64890,
+          "verified_paths": 55,
+          "labelled_paths": 23
+        }
+      }
+    },
+    "pytest-dev/pytest": {
+      "base": {
+        "all": {
+          "tasks": 1,
+          "briefs": 2,
+          "missing_briefs": 0,
+          "core": {
+            "hit": 4,
+            "all": 20
+          },
+          "task_median_core": 0.2,
+          "python_core": {
+            "hit": 4,
+            "all": 20
+          },
+          "task_median_python_core": 0.2,
+          "dependencies": {
+            "hit": 0,
+            "all": 0
+          },
+          "chars": 33054,
+          "verified_paths": 8,
+          "labelled_paths": 4
+        },
+        "large": {
+          "tasks": 1,
+          "briefs": 2,
+          "missing_briefs": 0,
+          "core": {
+            "hit": 4,
+            "all": 20
+          },
+          "task_median_core": 0.2,
+          "python_core": {
+            "hit": 4,
+            "all": 20
+          },
+          "task_median_python_core": 0.2,
+          "dependencies": {
+            "hit": 0,
+            "all": 0
+          },
+          "chars": 33054,
+          "verified_paths": 8,
+          "labelled_paths": 4
+        },
+        "ordinary": {
+          "tasks": 0,
+          "briefs": 0,
+          "missing_briefs": 0,
+          "core": {
+            "hit": 0,
+            "all": 0
+          },
+          "task_median_core": null,
+          "python_core": {
+            "hit": 0,
+            "all": 0
+          },
+          "task_median_python_core": null,
+          "dependencies": {
+            "hit": 0,
+            "all": 0
+          },
+          "chars": 0,
+          "verified_paths": 0,
+          "labelled_paths": 0
+        }
+      },
+      "reframe": {
+        "all": {
+          "tasks": 1,
+          "briefs": 2,
+          "missing_briefs": 0,
+          "core": {
+            "hit": 6,
+            "all": 20
+          },
+          "task_median_core": 0.3,
+          "python_core": {
+            "hit": 6,
+            "all": 20
+          },
+          "task_median_python_core": 0.3,
+          "dependencies": {
+            "hit": 0,
+            "all": 0
+          },
+          "chars": 32108,
+          "verified_paths": 12,
+          "labelled_paths": 6
+        },
+        "large": {
+          "tasks": 1,
+          "briefs": 2,
+          "missing_briefs": 0,
+          "core": {
+            "hit": 6,
+            "all": 20
+          },
+          "task_median_core": 0.3,
+          "python_core": {
+            "hit": 6,
+            "all": 20
+          },
+          "task_median_python_core": 0.3,
+          "dependencies": {
+            "hit": 0,
+            "all": 0
+          },
+          "chars": 32108,
+          "verified_paths": 12,
+          "labelled_paths": 6
+        },
+        "ordinary": {
+          "tasks": 0,
+          "briefs": 0,
+          "missing_briefs": 0,
+          "core": {
+            "hit": 0,
+            "all": 0
+          },
+          "task_median_core": null,
+          "python_core": {
+            "hit": 0,
+            "all": 0
+          },
+          "task_median_python_core": null,
+          "dependencies": {
+            "hit": 0,
+            "all": 0
+          },
+          "chars": 0,
+          "verified_paths": 0,
+          "labelled_paths": 0
+        }
+      }
+    }
+  },
+  "per_brief": [
+    {
+      "key": "PRI-271",
+      "repo": "mimfort/rag_for_git",
+      "arm": "base",
+      "repeat": 1,
+      "base_sha": "bfcefdf96b9ea67beea766aa75adf0acbbcbcdc2",
+      "large": true,
+      "status": "verified",
+      "returned": true,
+      "complete": true,
+      "core": {
+        "hit": 6,
+        "all": 10
+      },
+      "python_core": {
+        "hit": 6,
+        "all": 10
+      },
+      "dependencies": {
+        "hit": 1,
+        "all": 1
+      },
+      "verified_paths": [
+        "reviewer/config/committed.py",
+        "reviewer/config/layers.py",
+        "reviewer/config/settings.py",
+        "reviewer/entrypoints/cli.py",
+        "reviewer/entrypoints/mcp_server.py",
+        "reviewer/mcp/service.py",
+        "reviewer/metrics/brief_quality/briefs.py",
+        "reviewer/metrics/brief_quality/classify.py",
+        "reviewer/services/brief_quality.py",
+        "reviewer/services/review_service.py",
+        "reviewer/tasks/boards/github.py",
+        "reviewer/web/api.py",
+        "reviewer/web/history.py"
+      ],
+      "core_paths": [
+        "reviewer/entrypoints/cli.py",
+        "reviewer/mcp/service.py",
+        "reviewer/metrics/brief_quality/briefs.py",
+        "reviewer/metrics/brief_quality/classify.py",
+        "reviewer/services/brief_quality.py",
+        "reviewer/web/history.py"
+      ],
+      "labelled_paths": 7,
+      "rejected_references": 0,
+      "chars": 19922,
+      "git_lines": 352,
+      "elapsed_s": 18.608,
+      "usage": {
+        "input_tokens": 27189,
+        "cached_input_tokens": 19712,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 547,
+        "reasoning_output_tokens": 0
+      }
+    },
+    {
+      "key": "PRI-271",
+      "repo": "mimfort/rag_for_git",
+      "arm": "reframe",
+      "repeat": 1,
+      "base_sha": "bfcefdf96b9ea67beea766aa75adf0acbbcbcdc2",
+      "large": true,
+      "status": "verified",
+      "returned": true,
+      "complete": true,
+      "core": {
+        "hit": 6,
+        "all": 10
+      },
+      "python_core": {
+        "hit": 6,
+        "all": 10
+      },
+      "dependencies": {
+        "hit": 1,
+        "all": 1
+      },
+      "verified_paths": [
+        "reviewer/config/committed.py",
+        "reviewer/config/layers.py",
+        "reviewer/config/settings.py",
+        "reviewer/entrypoints/cli.py",
+        "reviewer/mcp/service.py",
+        "reviewer/metrics/brief_quality/briefs.py",
+        "reviewer/metrics/brief_quality/classify.py",
+        "reviewer/services/brief_quality.py",
+        "reviewer/tasks/boards/github.py",
+        "reviewer/web/api.py",
+        "reviewer/web/history.py"
+      ],
+      "core_paths": [
+        "reviewer/entrypoints/cli.py",
+        "reviewer/mcp/service.py",
+        "reviewer/metrics/brief_quality/briefs.py",
+        "reviewer/metrics/brief_quality/classify.py",
+        "reviewer/services/brief_quality.py",
+        "reviewer/web/history.py"
+      ],
+      "labelled_paths": 7,
+      "rejected_references": 0,
+      "chars": 19789,
+      "git_lines": 353,
+      "elapsed_s": 21.31,
+      "usage": {
+        "input_tokens": 27241,
+        "cached_input_tokens": 12928,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 532,
+        "reasoning_output_tokens": 0
+      }
+    },
+    {
+      "key": "PRI-271",
+      "repo": "mimfort/rag_for_git",
+      "arm": "base",
+      "repeat": 2,
+      "base_sha": "bfcefdf96b9ea67beea766aa75adf0acbbcbcdc2",
+      "large": true,
+      "status": "verified",
+      "returned": true,
+      "complete": true,
+      "core": {
+        "hit": 6,
+        "all": 10
+      },
+      "python_core": {
+        "hit": 6,
+        "all": 10
+      },
+      "dependencies": {
+        "hit": 1,
+        "all": 1
+      },
+      "verified_paths": [
+        "reviewer/config/layers.py",
+        "reviewer/config/settings.py",
+        "reviewer/entrypoints/cli.py",
+        "reviewer/entrypoints/mcp_server.py",
+        "reviewer/mcp/service.py",
+        "reviewer/metrics/brief_quality/briefs.py",
+        "reviewer/metrics/brief_quality/classify.py",
+        "reviewer/services/brief_quality.py",
+        "reviewer/services/review_service.py",
+        "reviewer/tasks/boards/github.py",
+        "reviewer/web/api.py",
+        "reviewer/web/history.py"
+      ],
+      "core_paths": [
+        "reviewer/entrypoints/cli.py",
+        "reviewer/mcp/service.py",
+        "reviewer/metrics/brief_quality/briefs.py",
+        "reviewer/metrics/brief_quality/classify.py",
+        "reviewer/services/brief_quality.py",
+        "reviewer/web/history.py"
+      ],
+      "labelled_paths": 7,
+      "rejected_references": 0,
+      "chars": 19922,
+      "git_lines": 352,
+      "elapsed_s": 16.784,
+      "usage": {
+        "input_tokens": 27189,
+        "cached_input_tokens": 12928,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 529,
+        "reasoning_output_tokens": 0
+      }
+    },
+    {
+      "key": "PRI-271",
+      "repo": "mimfort/rag_for_git",
+      "arm": "reframe",
+      "repeat": 2,
+      "base_sha": "bfcefdf96b9ea67beea766aa75adf0acbbcbcdc2",
+      "large": true,
+      "status": "verified",
+      "returned": true,
+      "complete": true,
+      "core": {
+        "hit": 6,
+        "all": 10
+      },
+      "python_core": {
+        "hit": 6,
+        "all": 10
+      },
+      "dependencies": {
+        "hit": 1,
+        "all": 1
+      },
+      "verified_paths": [
+        "reviewer/config/committed.py",
+        "reviewer/config/layers.py",
+        "reviewer/config/settings.py",
+        "reviewer/entrypoints/cli.py",
+        "reviewer/entrypoints/mcp_server.py",
+        "reviewer/mcp/service.py",
+        "reviewer/metrics/brief_quality/briefs.py",
+        "reviewer/metrics/brief_quality/classify.py",
+        "reviewer/services/brief_quality.py",
+        "reviewer/tasks/boards/github.py",
+        "reviewer/web/api.py",
+        "reviewer/web/history.py"
+      ],
+      "core_paths": [
+        "reviewer/entrypoints/cli.py",
+        "reviewer/mcp/service.py",
+        "reviewer/metrics/brief_quality/briefs.py",
+        "reviewer/metrics/brief_quality/classify.py",
+        "reviewer/services/brief_quality.py",
+        "reviewer/web/history.py"
+      ],
+      "labelled_paths": 7,
+      "rejected_references": 0,
+      "chars": 19789,
+      "git_lines": 353,
+      "elapsed_s": 15.108,
+      "usage": {
+        "input_tokens": 26982,
+        "cached_input_tokens": 0,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 354,
+        "reasoning_output_tokens": 0
+      }
+    },
+    {
+      "key": "PRI-299",
+      "repo": "mimfort/rag_for_git",
+      "arm": "base",
+      "repeat": 1,
+      "base_sha": "b8d1a3f4024b372f7c472c1d4e4e7bcbcaea45af",
+      "large": true,
+      "status": "verified",
+      "returned": true,
+      "complete": true,
+      "core": {
+        "hit": 3,
+        "all": 11
+      },
+      "python_core": {
+        "hit": 3,
+        "all": 8
+      },
+      "dependencies": {
+        "hit": 0,
+        "all": 2
+      },
+      "verified_paths": [
+        "reviewer/config/settings.py",
+        "reviewer/entrypoints/cli.py",
+        "reviewer/entrypoints/mcp_server.py",
+        "reviewer/install.py",
+        "reviewer/mcp/schemas.py",
+        "reviewer/metrics/brief_quality/briefs.py",
+        "reviewer/tasks/boards/asana.py",
+        "reviewer/tasks/boards/markup.py"
+      ],
+      "core_paths": [
+        "reviewer/entrypoints/mcp_server.py",
+        "reviewer/mcp/schemas.py",
+        "reviewer/metrics/brief_quality/briefs.py"
+      ],
+      "labelled_paths": 3,
+      "rejected_references": 0,
+      "chars": 17289,
+      "git_lines": 311,
+      "elapsed_s": 13.626,
+      "usage": {
+        "input_tokens": 26470,
+        "cached_input_tokens": 12928,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 337,
+        "reasoning_output_tokens": 0
+      }
+    },
+    {
+      "key": "PRI-299",
+      "repo": "mimfort/rag_for_git",
+      "arm": "reframe",
+      "repeat": 1,
+      "base_sha": "b8d1a3f4024b372f7c472c1d4e4e7bcbcaea45af",
+      "large": true,
+      "status": "verified",
+      "returned": true,
+      "complete": true,
+      "core": {
+        "hit": 3,
+        "all": 11
+      },
+      "python_core": {
+        "hit": 3,
+        "all": 8
+      },
+      "dependencies": {
+        "hit": 0,
+        "all": 2
+      },
+      "verified_paths": [
+        "reviewer/entrypoints/cli.py",
+        "reviewer/entrypoints/mcp_server.py",
+        "reviewer/install.py",
+        "reviewer/mcp/schemas.py",
+        "reviewer/metrics/brief_quality/briefs.py",
+        "reviewer/tasks/boards/asana.py",
+        "reviewer/tasks/boards/markup.py"
+      ],
+      "core_paths": [
+        "reviewer/entrypoints/mcp_server.py",
+        "reviewer/mcp/schemas.py",
+        "reviewer/metrics/brief_quality/briefs.py"
+      ],
+      "labelled_paths": 3,
+      "rejected_references": 0,
+      "chars": 16593,
+      "git_lines": 297,
+      "elapsed_s": 13.85,
+      "usage": {
+        "input_tokens": 26280,
+        "cached_input_tokens": 19712,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 289,
+        "reasoning_output_tokens": 0
+      }
+    },
+    {
+      "key": "PRI-299",
+      "repo": "mimfort/rag_for_git",
+      "arm": "base",
+      "repeat": 2,
+      "base_sha": "b8d1a3f4024b372f7c472c1d4e4e7bcbcaea45af",
+      "large": true,
+      "status": "verified",
+      "returned": true,
+      "complete": true,
+      "core": {
+        "hit": 6,
+        "all": 11
+      },
+      "python_core": {
+        "hit": 6,
+        "all": 8
+      },
+      "dependencies": {
+        "hit": 0,
+        "all": 2
+      },
+      "verified_paths": [
+        "plugin/hooks/brief_cost.py",
+        "plugin/hooks/brief_guard.py",
+        "plugin/hooks/brief_post_write.py",
+        "plugin/hooks/review_cost.py",
+        "plugin/hooks/reviewer_defect.py",
+        "reviewer/agent/assemble.py",
+        "reviewer/config/provider_credentials.py",
+        "reviewer/config/settings.py",
+        "reviewer/entrypoints/cli.py",
+        "reviewer/entrypoints/mcp_server.py",
+        "reviewer/install.py",
+        "reviewer/mcp/schemas.py",
+        "reviewer/metrics/brief_quality/briefs.py",
+        "reviewer/metrics/brief_quality/ground_truth.py",
+        "reviewer/services/brief_quality.py",
+        "reviewer/tasks/boards/asana.py",
+        "reviewer/tasks/boards/markup.py",
+        "reviewer/tasks/boards/registry.py",
+        "reviewer/tasks/boards/trello.py",
+        "reviewer/tasks/boards/weeek.py"
+      ],
+      "core_paths": [
+        "plugin/hooks/brief_cost.py",
+        "plugin/hooks/brief_guard.py",
+        "reviewer/entrypoints/mcp_server.py",
+        "reviewer/mcp/schemas.py",
+        "reviewer/metrics/brief_quality/briefs.py",
+        "reviewer/services/brief_quality.py"
+      ],
+      "labelled_paths": 6,
+      "rejected_references": 0,
+      "chars": 17289,
+      "git_lines": 311,
+      "elapsed_s": 18.345,
+      "usage": {
+        "input_tokens": 26470,
+        "cached_input_tokens": 12928,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 577,
+        "reasoning_output_tokens": 0
+      }
+    },
+    {
+      "key": "PRI-299",
+      "repo": "mimfort/rag_for_git",
+      "arm": "reframe",
+      "repeat": 2,
+      "base_sha": "b8d1a3f4024b372f7c472c1d4e4e7bcbcaea45af",
+      "large": true,
+      "status": "verified",
+      "returned": true,
+      "complete": true,
+      "core": {
+        "hit": 3,
+        "all": 11
+      },
+      "python_core": {
+        "hit": 3,
+        "all": 8
+      },
+      "dependencies": {
+        "hit": 0,
+        "all": 2
+      },
+      "verified_paths": [
+        "reviewer/entrypoints/cli.py",
+        "reviewer/entrypoints/mcp_server.py",
+        "reviewer/install.py",
+        "reviewer/mcp/schemas.py",
+        "reviewer/metrics/brief_quality/briefs.py",
+        "reviewer/tasks/boards/asana.py",
+        "reviewer/tasks/boards/markup.py"
+      ],
+      "core_paths": [
+        "reviewer/entrypoints/mcp_server.py",
+        "reviewer/mcp/schemas.py",
+        "reviewer/metrics/brief_quality/briefs.py"
+      ],
+      "labelled_paths": 3,
+      "rejected_references": 0,
+      "chars": 16593,
+      "git_lines": 297,
+      "elapsed_s": 13.735,
+      "usage": {
+        "input_tokens": 26280,
+        "cached_input_tokens": 0,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 265,
+        "reasoning_output_tokens": 0
+      }
+    },
+    {
+      "key": "PRI-274",
+      "repo": "mimfort/rag_for_git",
+      "arm": "base",
+      "repeat": 1,
+      "base_sha": "ebfa663cb96004d5c6ce49e9817233ff35100b9c",
+      "large": false,
+      "status": "verified",
+      "returned": true,
+      "complete": true,
+      "core": {
+        "hit": 6,
+        "all": 9
+      },
+      "python_core": {
+        "hit": 6,
+        "all": 7
+      },
+      "dependencies": {
+        "hit": 0,
+        "all": 1
+      },
+      "verified_paths": [
+        "reviewer/app.py",
+        "reviewer/bugreport/triage.py",
+        "reviewer/entrypoints/cli.py",
+        "reviewer/entrypoints/mcp_server.py",
+        "reviewer/mcp/service.py",
+        "reviewer/mcp/task_context.py",
+        "reviewer/services/status.py",
+        "reviewer/storage_health.py",
+        "reviewer/tasks/service.py",
+        "reviewer/tasks/store.py",
+        "reviewer/tasks/sync.py"
+      ],
+      "core_paths": [
+        "reviewer/entrypoints/cli.py",
+        "reviewer/mcp/service.py",
+        "reviewer/mcp/task_context.py",
+        "reviewer/storage_health.py",
+        "reviewer/tasks/service.py",
+        "reviewer/tasks/sync.py"
+      ],
+      "labelled_paths": 6,
+      "rejected_references": 0,
+      "chars": 14631,
+      "git_lines": 250,
+      "elapsed_s": 13.657,
+      "usage": {
+        "input_tokens": 25481,
+        "cached_input_tokens": 19712,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 405,
+        "reasoning_output_tokens": 0
+      }
+    },
+    {
+      "key": "PRI-274",
+      "repo": "mimfort/rag_for_git",
+      "arm": "reframe",
+      "repeat": 1,
+      "base_sha": "ebfa663cb96004d5c6ce49e9817233ff35100b9c",
+      "large": false,
+      "status": "verified",
+      "returned": true,
+      "complete": true,
+      "core": {
+        "hit": 6,
+        "all": 9
+      },
+      "python_core": {
+        "hit": 6,
+        "all": 7
+      },
+      "dependencies": {
+        "hit": 1,
+        "all": 1
+      },
+      "verified_paths": [
+        "reviewer/app.py",
+        "reviewer/bugreport/triage.py",
+        "reviewer/config/settings.py",
+        "reviewer/entrypoints/cli.py",
+        "reviewer/entrypoints/mcp_server.py",
+        "reviewer/mcp/service.py",
+        "reviewer/mcp/task_context.py",
+        "reviewer/services/status.py",
+        "reviewer/storage_health.py",
+        "reviewer/tasks/graph.py",
+        "reviewer/tasks/service.py",
+        "reviewer/tasks/store.py",
+        "reviewer/tasks/subtasks.py",
+        "reviewer/tasks/sync.py"
+      ],
+      "core_paths": [
+        "reviewer/entrypoints/cli.py",
+        "reviewer/mcp/service.py",
+        "reviewer/mcp/task_context.py",
+        "reviewer/storage_health.py",
+        "reviewer/tasks/service.py",
+        "reviewer/tasks/sync.py"
+      ],
+      "labelled_paths": 7,
+      "rejected_references": 0,
+      "chars": 14303,
+      "git_lines": 243,
+      "elapsed_s": 15.802,
+      "usage": {
+        "input_tokens": 25406,
+        "cached_input_tokens": 19712,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 478,
+        "reasoning_output_tokens": 0
+      }
+    },
+    {
+      "key": "PRI-274",
+      "repo": "mimfort/rag_for_git",
+      "arm": "base",
+      "repeat": 2,
+      "base_sha": "ebfa663cb96004d5c6ce49e9817233ff35100b9c",
+      "large": false,
+      "status": "verified",
+      "returned": true,
+      "complete": true,
+      "core": {
+        "hit": 6,
+        "all": 9
+      },
+      "python_core": {
+        "hit": 6,
+        "all": 7
+      },
+      "dependencies": {
+        "hit": 1,
+        "all": 1
+      },
+      "verified_paths": [
+        "reviewer/app.py",
+        "reviewer/bugreport/triage.py",
+        "reviewer/config/settings.py",
+        "reviewer/entrypoints/cli.py",
+        "reviewer/entrypoints/mcp_server.py",
+        "reviewer/mcp/service.py",
+        "reviewer/mcp/task_context.py",
+        "reviewer/services/status.py",
+        "reviewer/storage_health.py",
+        "reviewer/tasks/graph.py",
+        "reviewer/tasks/service.py",
+        "reviewer/tasks/store.py",
+        "reviewer/tasks/subtasks.py",
+        "reviewer/tasks/sync.py"
+      ],
+      "core_paths": [
+        "reviewer/entrypoints/cli.py",
+        "reviewer/mcp/service.py",
+        "reviewer/mcp/task_context.py",
+        "reviewer/storage_health.py",
+        "reviewer/tasks/service.py",
+        "reviewer/tasks/sync.py"
+      ],
+      "labelled_paths": 7,
+      "rejected_references": 0,
+      "chars": 14631,
+      "git_lines": 250,
+      "elapsed_s": 16.519,
+      "usage": {
+        "input_tokens": 25501,
+        "cached_input_tokens": 19712,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 521,
+        "reasoning_output_tokens": 0
+      }
+    },
+    {
+      "key": "PRI-274",
+      "repo": "mimfort/rag_for_git",
+      "arm": "reframe",
+      "repeat": 2,
+      "base_sha": "ebfa663cb96004d5c6ce49e9817233ff35100b9c",
+      "large": false,
+      "status": "verified",
+      "returned": true,
+      "complete": true,
+      "core": {
+        "hit": 6,
+        "all": 9
+      },
+      "python_core": {
+        "hit": 6,
+        "all": 7
+      },
+      "dependencies": {
+        "hit": 1,
+        "all": 1
+      },
+      "verified_paths": [
+        "reviewer/app.py",
+        "reviewer/bugreport/triage.py",
+        "reviewer/config/settings.py",
+        "reviewer/entrypoints/cli.py",
+        "reviewer/entrypoints/mcp_server.py",
+        "reviewer/mcp/service.py",
+        "reviewer/mcp/task_context.py",
+        "reviewer/services/status.py",
+        "reviewer/storage_health.py",
+        "reviewer/tasks/graph.py",
+        "reviewer/tasks/service.py",
+        "reviewer/tasks/store.py",
+        "reviewer/tasks/subtasks.py",
+        "reviewer/tasks/sync.py"
+      ],
+      "core_paths": [
+        "reviewer/entrypoints/cli.py",
+        "reviewer/mcp/service.py",
+        "reviewer/mcp/task_context.py",
+        "reviewer/storage_health.py",
+        "reviewer/tasks/service.py",
+        "reviewer/tasks/sync.py"
+      ],
+      "labelled_paths": 7,
+      "rejected_references": 0,
+      "chars": 14303,
+      "git_lines": 243,
+      "elapsed_s": 18.35,
+      "usage": {
+        "input_tokens": 25395,
+        "cached_input_tokens": 12928,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 510,
+        "reasoning_output_tokens": 0
+      }
+    },
+    {
+      "key": "PRI-311",
+      "repo": "mimfort/rag_for_git",
+      "arm": "base",
+      "repeat": 1,
+      "base_sha": "f78f448dd9de42dc8c3a8e28f398c6aa98a38515",
+      "large": false,
+      "status": "verified",
+      "returned": true,
+      "complete": true,
+      "core": {
+        "hit": 2,
+        "all": 8
+      },
+      "python_core": {
+        "hit": 2,
+        "all": 7
+      },
+      "dependencies": {
+        "hit": 1,
+        "all": 2
+      },
+      "verified_paths": [
+        "reviewer/index/chunker.py",
+        "reviewer/mcp/brief_evidence.py",
+        "reviewer/mcp/schemas.py",
+        "reviewer/mcp/service.py",
+        "reviewer/mcp/task_context.py",
+        "reviewer/retrieval/multiquery.py"
+      ],
+      "core_paths": [
+        "reviewer/mcp/brief_evidence.py",
+        "reviewer/mcp/service.py"
+      ],
+      "labelled_paths": 3,
+      "rejected_references": 0,
+      "chars": 19246,
+      "git_lines": 326,
+      "elapsed_s": 11.704,
+      "usage": {
+        "input_tokens": 27165,
+        "cached_input_tokens": 12928,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 278,
+        "reasoning_output_tokens": 0
+      }
+    },
+    {
+      "key": "PRI-311",
+      "repo": "mimfort/rag_for_git",
+      "arm": "reframe",
+      "repeat": 1,
+      "base_sha": "f78f448dd9de42dc8c3a8e28f398c6aa98a38515",
+      "large": false,
+      "status": "verified",
+      "returned": true,
+      "complete": true,
+      "core": {
+        "hit": 4,
+        "all": 8
+      },
+      "python_core": {
+        "hit": 4,
+        "all": 7
+      },
+      "dependencies": {
+        "hit": 1,
+        "all": 2
+      },
+      "verified_paths": [
+        "reviewer/app.py",
+        "reviewer/bugreport/publish.py",
+        "reviewer/config/committed.py",
+        "reviewer/config/layers.py",
+        "reviewer/config/provider_credentials.py",
+        "reviewer/config/settings.py",
+        "reviewer/entrypoints/cli.py",
+        "reviewer/entrypoints/mcp_server.py",
+        "reviewer/graph/backend.py",
+        "reviewer/graph/builder.py",
+        "reviewer/graph/family.py",
+        "reviewer/graph/inherit.py",
+        "reviewer/index/chunker.py",
+        "reviewer/mcp/brief_evidence.py",
+        "reviewer/mcp/schemas.py",
+        "reviewer/mcp/service.py",
+        "reviewer/mcp/task_context.py",
+        "reviewer/retrieval/multiquery.py",
+        "reviewer/tasks/service.py",
+        "reviewer/web/api.py"
+      ],
+      "core_paths": [
+        "reviewer/entrypoints/cli.py",
+        "reviewer/entrypoints/mcp_server.py",
+        "reviewer/mcp/brief_evidence.py",
+        "reviewer/mcp/service.py"
+      ],
+      "labelled_paths": 5,
+      "rejected_references": 0,
+      "chars": 18142,
+      "git_lines": 296,
+      "elapsed_s": 18.192,
+      "usage": {
+        "input_tokens": 26675,
+        "cached_input_tokens": 19712,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 680,
+        "reasoning_output_tokens": 0
+      }
+    },
+    {
+      "key": "PRI-311",
+      "repo": "mimfort/rag_for_git",
+      "arm": "base",
+      "repeat": 2,
+      "base_sha": "f78f448dd9de42dc8c3a8e28f398c6aa98a38515",
+      "large": false,
+      "status": "verified",
+      "returned": true,
+      "complete": true,
+      "core": {
+        "hit": 2,
+        "all": 8
+      },
+      "python_core": {
+        "hit": 2,
+        "all": 7
+      },
+      "dependencies": {
+        "hit": 1,
+        "all": 2
+      },
+      "verified_paths": [
+        "reviewer/index/chunker.py",
+        "reviewer/mcp/brief_evidence.py",
+        "reviewer/mcp/schemas.py",
+        "reviewer/mcp/service.py",
+        "reviewer/mcp/task_context.py",
+        "reviewer/retrieval/multiquery.py"
+      ],
+      "core_paths": [
+        "reviewer/mcp/brief_evidence.py",
+        "reviewer/mcp/service.py"
+      ],
+      "labelled_paths": 3,
+      "rejected_references": 0,
+      "chars": 19246,
+      "git_lines": 326,
+      "elapsed_s": 11.913,
+      "usage": {
+        "input_tokens": 27174,
+        "cached_input_tokens": 12928,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 331,
+        "reasoning_output_tokens": 0
+      }
+    },
+    {
+      "key": "PRI-311",
+      "repo": "mimfort/rag_for_git",
+      "arm": "reframe",
+      "repeat": 2,
+      "base_sha": "f78f448dd9de42dc8c3a8e28f398c6aa98a38515",
+      "large": false,
+      "status": "verified",
+      "returned": true,
+      "complete": true,
+      "core": {
+        "hit": 3,
+        "all": 8
+      },
+      "python_core": {
+        "hit": 3,
+        "all": 7
+      },
+      "dependencies": {
+        "hit": 1,
+        "all": 2
+      },
+      "verified_paths": [
+        "reviewer/entrypoints/mcp_server.py",
+        "reviewer/index/chunker.py",
+        "reviewer/mcp/brief_evidence.py",
+        "reviewer/mcp/schemas.py",
+        "reviewer/mcp/service.py",
+        "reviewer/mcp/task_context.py",
+        "reviewer/retrieval/multiquery.py"
+      ],
+      "core_paths": [
+        "reviewer/entrypoints/mcp_server.py",
+        "reviewer/mcp/brief_evidence.py",
+        "reviewer/mcp/service.py"
+      ],
+      "labelled_paths": 4,
+      "rejected_references": 0,
+      "chars": 18142,
+      "git_lines": 296,
+      "elapsed_s": 12.663,
+      "usage": {
+        "input_tokens": 26666,
+        "cached_input_tokens": 12928,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 312,
+        "reasoning_output_tokens": 0
+      }
+    },
+    {
+      "key": "PYTEST-7777",
+      "repo": "pytest-dev/pytest",
+      "arm": "base",
+      "repeat": 1,
+      "base_sha": "c7ee55993b77315f0031b629a2fb7db17ad5cee1",
+      "large": true,
+      "status": "verified",
+      "returned": true,
+      "complete": true,
+      "core": {
+        "hit": 2,
+        "all": 10
+      },
+      "python_core": {
+        "hit": 2,
+        "all": 10
+      },
+      "dependencies": {
+        "hit": 0,
+        "all": 0
+      },
+      "verified_paths": [
+        "src/_pytest/main.py",
+        "src/_pytest/python.py",
+        "src/_pytest/scope.py",
+        "testing/python/collect.py"
+      ],
+      "core_paths": [
+        "src/_pytest/main.py",
+        "src/_pytest/python.py"
+      ],
+      "labelled_paths": 2,
+      "rejected_references": 0,
+      "chars": 16527,
+      "git_lines": 345,
+      "elapsed_s": 10.731,
+      "usage": {
+        "input_tokens": 26113,
+        "cached_input_tokens": 19712,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 245,
+        "reasoning_output_tokens": 0
+      }
+    },
+    {
+      "key": "PYTEST-7777",
+      "repo": "pytest-dev/pytest",
+      "arm": "reframe",
+      "repeat": 1,
+      "base_sha": "c7ee55993b77315f0031b629a2fb7db17ad5cee1",
+      "large": true,
+      "status": "verified",
+      "returned": true,
+      "complete": true,
+      "core": {
+        "hit": 4,
+        "all": 10
+      },
+      "python_core": {
+        "hit": 4,
+        "all": 10
+      },
+      "dependencies": {
+        "hit": 0,
+        "all": 0
+      },
+      "verified_paths": [
+        "src/_pytest/cacheprovider.py",
+        "src/_pytest/fixtures.py",
+        "src/_pytest/main.py",
+        "src/_pytest/pathlib.py",
+        "src/_pytest/python.py",
+        "src/_pytest/scope.py",
+        "testing/python/collect.py",
+        "testing/python/fixtures.py"
+      ],
+      "core_paths": [
+        "src/_pytest/cacheprovider.py",
+        "src/_pytest/main.py",
+        "src/_pytest/pathlib.py",
+        "src/_pytest/python.py"
+      ],
+      "labelled_paths": 4,
+      "rejected_references": 0,
+      "chars": 16054,
+      "git_lines": 316,
+      "elapsed_s": 12.782,
+      "usage": {
+        "input_tokens": 25911,
+        "cached_input_tokens": 19712,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 346,
+        "reasoning_output_tokens": 0
+      }
+    },
+    {
+      "key": "PYTEST-7777",
+      "repo": "pytest-dev/pytest",
+      "arm": "base",
+      "repeat": 2,
+      "base_sha": "c7ee55993b77315f0031b629a2fb7db17ad5cee1",
+      "large": true,
+      "status": "verified",
+      "returned": true,
+      "complete": true,
+      "core": {
+        "hit": 2,
+        "all": 10
+      },
+      "python_core": {
+        "hit": 2,
+        "all": 10
+      },
+      "dependencies": {
+        "hit": 0,
+        "all": 0
+      },
+      "verified_paths": [
+        "src/_pytest/main.py",
+        "src/_pytest/python.py",
+        "src/_pytest/scope.py",
+        "testing/python/collect.py"
+      ],
+      "core_paths": [
+        "src/_pytest/main.py",
+        "src/_pytest/python.py"
+      ],
+      "labelled_paths": 2,
+      "rejected_references": 0,
+      "chars": 16527,
+      "git_lines": 345,
+      "elapsed_s": 10.457,
+      "usage": {
+        "input_tokens": 26122,
+        "cached_input_tokens": 0,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 229,
+        "reasoning_output_tokens": 0
+      }
+    },
+    {
+      "key": "PYTEST-7777",
+      "repo": "pytest-dev/pytest",
+      "arm": "reframe",
+      "repeat": 2,
+      "base_sha": "c7ee55993b77315f0031b629a2fb7db17ad5cee1",
+      "large": true,
+      "status": "verified",
+      "returned": true,
+      "complete": true,
+      "core": {
+        "hit": 2,
+        "all": 10
+      },
+      "python_core": {
+        "hit": 2,
+        "all": 10
+      },
+      "dependencies": {
+        "hit": 0,
+        "all": 0
+      },
+      "verified_paths": [
+        "src/_pytest/main.py",
+        "src/_pytest/python.py",
+        "src/_pytest/scope.py",
+        "testing/python/collect.py"
+      ],
+      "core_paths": [
+        "src/_pytest/main.py",
+        "src/_pytest/python.py"
+      ],
+      "labelled_paths": 2,
+      "rejected_references": 0,
+      "chars": 16054,
+      "git_lines": 316,
+      "elapsed_s": 10.967,
+      "usage": {
+        "input_tokens": 25902,
+        "cached_input_tokens": 19712,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 249,
+        "reasoning_output_tokens": 0
+      }
+    }
+  ]
+}
