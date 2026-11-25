@@ -362,7 +362,8 @@ def create_server(service: MCPReviewService) -> FastMCP:
                              path: str | None = None,
                              warm_board: bool = True,
                              include_brief_evidence: bool = False,
-                             include_code_budget: bool = False) -> dict:
+                             include_code_budget: bool = False,
+                             split_free_text_requirements: bool = False) -> dict:
         """Everything /solve-task needs to write a brief, in one call (no PR session).
         Returns {preflight, task_board, task, related{linked,similar}, subsystems,
         code, test_exemplars, gaps, warnings}. repo is "owner/name"; key is a board
@@ -375,9 +376,12 @@ def create_server(service: MCPReviewService) -> FastMCP:
         when rows match brief_source_sha (the indexed Git snapshot when available).
         include_code_budget adds file counts before selection and after rendering
         when the code search ran.
+        split_free_text_requirements=True adds up to six explicitly structured Markdown
+        requirements or acceptance criteria to code search for a free-text description.
         """
         return service.prepare_task_context(
-            repo, key, branch, path, warm_board, include_brief_evidence, include_code_budget)
+            repo, key, branch, path, warm_board, include_brief_evidence, include_code_budget,
+            split_free_text_requirements=split_free_text_requirements)
 
     @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False))
     def diagnose_tool_result(tool: str, response: str) -> dict:

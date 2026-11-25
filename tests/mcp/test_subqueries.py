@@ -1,4 +1,5 @@
 """Извлечение подзапросов ретрива из структуры и сущностей задачи (PRI-255)."""
+from reviewer.mcp import subqueries
 from reviewer.mcp.subqueries import MAX_SUBQUERIES, build_subqueries
 
 SMALL = {
@@ -31,6 +32,43 @@ def test_base_query_is_always_first():
 
 def test_board_less_input_yields_only_base_query():
     assert build_subqueries(None, "свободная формулировка") == ["свободная формулировка"]
+
+
+def test_free_text_subqueries_keep_original_and_only_add_authored_requirements():
+    text = (
+        "  Перенести сбор данных.\n\n## Что сделать\n"
+        "- Сохранить формат кэша.\n  Оставить совместимость.\n"
+        "- сохранить формат кэша. оставить совместимость.\n"
+        "## References\n### Requirements\n- Устаревший интерфейс.\n"
+        "## Acceptance criteria\n1. Сохраняется порядок выдачи.\n"
+    )
+    assert subqueries.build_free_text_subqueries(text) == [
+        text, "Сохранить формат кэша. Оставить совместимость.",
+        "Сохраняется порядок выдачи.",
+    ]
+
+
+def test_free_text_subqueries_are_bounded_and_leave_unstructured_text_intact():
+    simple = "Проверить parse_tokens и CacheProvider для вывода отчёта."
+    assert subqueries.build_free_text_subqueries(simple) == [simple]
+    assert subqueries.build_free_text_subqueries(" \n ") == []
+
+    items = [f"Требование {i}." for i in range(10)]
+    text = "## Requirements\n- " + "a" * 1001 + "\n- " + "\n- ".join(items)
+    assert subqueries.build_free_text_subqueries(text) == [text, *items[:6]]
+
+
+def test_free_text_reference_heading_in_fenced_example_keeps_later_requirements():
+    text = (
+        "## Requirements\n- Reproduce the template.\n"
+        "\n  ```md\n  ## Background\n  Example description\n  ```\n"
+        "- Keep the report format.\n"
+        "## Background\n### Requirements\n- Old behavior.\n"
+    )
+    assert subqueries.build_free_text_subqueries(text) == [
+        text, "Reproduce the template. ## Background Example description",
+        "Keep the report format.",
+    ]
 
 
 def test_small_task_yields_few_subqueries():

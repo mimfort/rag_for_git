@@ -14,7 +14,7 @@ from __future__ import annotations
 import logging
 from functools import cache
 
-from reviewer.mcp.subqueries import build_subqueries
+from reviewer.mcp.subqueries import build_free_text_subqueries, build_subqueries
 from reviewer.storage_health import (
     BACKEND_GRAPH, BACKEND_POSTGRES, CAUSE_EMBEDDER_UNAVAILABLE,
     CAUSE_STORAGE_UNAVAILABLE, CAUSE_UNKNOWN, DETAIL_AUTH_FAILED,
@@ -280,7 +280,8 @@ def _endpoints(deps) -> tuple[str, ...]:
 
 
 def build_task_context(deps, *, repo: str, key: str, branch: str,
-                       warm_board: bool = True) -> dict:
+                       warm_board: bool = True,
+                       split_free_text_requirements: bool = False) -> dict:
     """Единый payload контекста задачи. Ни один сбой секции не прерывает сборку."""
     payload: dict = {section: None for section in SECTIONS}
     payload["gaps"] = []
@@ -344,6 +345,12 @@ def build_task_context(deps, *, repo: str, key: str, branch: str,
     def queries() -> list[str]:
         return build_subqueries(task, query, excluded_criteria=excluded)
 
+    @cache
+    def code_queries() -> list[str]:
+        if split_free_text_requirements and not task:
+            return build_free_text_subqueries(query)
+        return queries()
+
     bind_optional_lookup = getattr(deps, "bind_optional_lookup", None)
     if callable(bind_optional_lookup):
         def optional_lookup(section, produce, reason, backend):
@@ -355,13 +362,13 @@ def build_task_context(deps, *, repo: str, key: str, branch: str,
     code_fallback = test_fallback = None
     if callable(lexical_search):
         def code_fallback():
-            return lexical_search(repo, branch, queries())
+            return lexical_search(repo, branch, code_queries())
 
         def test_fallback():
             return lexical_search(repo, branch, _test_queries(queries()), tests_only=True)
 
     payload["code"] = _safe(
-        payload, "code", lambda: deps.code(repo, branch, queries()), "",
+        payload, "code", lambda: deps.code(repo, branch, code_queries()), "",
         "поиск по коду недоступен", state, embedder_fallback=code_fallback)
     for reason in getattr(deps, "augment_gaps", []) or []:
         payload["gaps"].append(gap("code.augment", reason))
