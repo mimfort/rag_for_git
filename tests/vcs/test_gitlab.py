@@ -83,12 +83,17 @@ def test_compare_files_maps_diffs():
             return httpx.Response(200, json={"diffs": [
                 {"old_path": "a.py", "new_path": "a.py", "diff": "@@ @@",
                  "new_file": False, "deleted_file": False, "renamed_file": False},
+                {"old_path": "old.py", "new_path": "new.py", "renamed_file": True},
             ]})
         return httpx.Response(404)
     p = make_provider(handler)
     files = p.compare_files("base", "head")
     assert files[0].path == "a.py"
     assert files[0].status == "modified"
+    assert files[0].previous_path is None
+    assert (files[1].path, files[1].status, files[1].previous_path) == (
+        "new.py", "renamed", "old.py",
+    )
 
 
 # Патч для a.py: строка 10 — добавленная (new_line=10, no old_line).

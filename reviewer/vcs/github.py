@@ -7,6 +7,16 @@ from reviewer.vcs.base import PullRequest, ChangedFile, InlineComment
 from reviewer.vcs._http import _RetryTransport, _FP  # noqa: F401  (реэкспорт для тестов)
 
 
+def _to_changed_file(file: dict) -> ChangedFile:
+    status = file["status"]
+    return ChangedFile(
+        path=file["filename"],
+        status=status,
+        patch=file.get("patch"),
+        previous_path=file.get("previous_filename") if status == "renamed" else None,
+    )
+
+
 class GitHubProvider:
     def __init__(
         self,
@@ -70,7 +80,7 @@ class GitHubProvider:
                 params={"per_page": 100, "page": page},
             ).raise_for_status()
             batch = r.json()
-            files += [ChangedFile(f["filename"], f["status"], f.get("patch")) for f in batch]
+            files += [_to_changed_file(f) for f in batch]
             if len(batch) < 100:
                 break
             page += 1
@@ -109,7 +119,7 @@ class GitHubProvider:
         """
         r = self._c.get(f"{self._base()}/compare/{base_sha}...{head_sha}").raise_for_status()
         files = r.json().get("files", [])
-        return [ChangedFile(f["filename"], f["status"], f.get("patch")) for f in files]
+        return [_to_changed_file(f) for f in files]
 
     def publish_review(
         self,
