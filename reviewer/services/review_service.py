@@ -235,12 +235,11 @@ class ReviewService:
             files = vcs.get_changed_files(pr_number)
             risk_paths, risk_skipped_paths = select_risk_paths(files)
 
-            # Свежесть base-индекса: подтягиваем чанки файлов, изменённых после
-            # последней индексации (граф кода обновляется только на reviewer index).
-            indexed = self.components.store.get_index_meta(repo, _base_ref(branch))
-            # base-sync только для реального GitHub-ревью: при внешнем vcs_provider
-            # (eval-снапшоты) синхронизация и set_index_meta затёрли бы прод-индекс
-            # данными снапшота (у снапшота base_sha="base", не настоящий SHA ветки).
+            # base-sync только для реального ревью: внешний vcs_provider может
+            # читать eval-снапшот, где base_sha="base" вместо коммита ветки.
+            expected_meta = (self.components.store.get_index_meta_row(repo, _base_ref(branch))
+                             if vcs_provider is None else None)
+            indexed = expected_meta[0] if expected_meta else None
             if vcs_provider is None and indexed and indexed != prq.base_sha:
                 try:
                     diff_files = vcs.compare_files(indexed, prq.base_sha)
@@ -266,8 +265,9 @@ class ReviewService:
                         read=lambda p: vcs.get_file_at_ref(p, prq.base_sha),
                         removed_files=removed_paths,
                         ignore=ignore,
+                        indexed_sha=prq.base_sha,
+                        expected_meta=expected_meta,
                     )
-                    self.components.store.set_index_meta(repo, _base_ref(branch), prq.base_sha)
                     # F2: инкрементальный repo-aware патч графа (fail-soft).
                     if self.components.graph is not None:
                         try:
@@ -298,7 +298,7 @@ class ReviewService:
                     )
                 except Exception as e:
                     log.warning("Не удалось синхронизировать base-индекс: %s", e)
-            elif not indexed:
+            elif vcs_provider is None and not indexed:
                 log.warning(
                     "SHA base-индекса неизвестен (выполните reviewer index) "
                     "— индекс может быть устаревшим.",

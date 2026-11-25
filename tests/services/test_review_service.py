@@ -240,7 +240,6 @@ def test_custom_vcs_provider_does_not_touch_base_index(
 ) -> None:
     """eval-прогон (передан внешний vcs_provider) не синхронизирует и не затирает
     base-индекс: снапшот с base_sha='base' не должен подменять прод-SHA/чанки."""
-    components.store.get_index_meta.return_value = "realsha999"   # есть прод-индекс
     vcs = _vcs_with_files([_changed("a.py")])
     vcs.get_pull_request.return_value = PullRequest(
         number=1, base_sha="base", head_sha="head", base_ref="main",
@@ -251,6 +250,7 @@ def test_custom_vcs_provider_does_not_touch_base_index(
     service.prepare("owner", "repo", 1, vcs_provider=vcs)
 
     mock_update_base.assert_not_called()
+    components.store.get_index_meta_row.assert_not_called()
     components.store.set_index_meta.assert_not_called()
 
 
@@ -324,7 +324,7 @@ def test_prepare_runs_base_sync_for_real_review(
 ) -> None:
     """prepare() без внешнего vcs_provider (прод-ревью) синхронизирует base-индекс,
     когда SHA индекса разошёлся с base_sha PR."""
-    components.store.get_index_meta.return_value = "oldsha000"   # индекс устарел
+    components.store.get_index_meta_row.return_value = ("oldsha000", None)   # индекс устарел
     vcs = _vcs_with_files([_changed("a.py")])
     vcs.compare_files.return_value = [_changed("b.py")]
 
@@ -333,7 +333,9 @@ def test_prepare_runs_base_sync_for_real_review(
         service.prepare("owner", "repo", 1)   # vcs_provider не передан → прод-путь
 
     mock_update_base.assert_called_once()
-    components.store.set_index_meta.assert_called_once_with("owner/repo", "base:main", "base123")
+    assert mock_update_base.call_args.kwargs["indexed_sha"] == "base123"
+    assert mock_update_base.call_args.kwargs["expected_meta"] == ("oldsha000", None)
+    components.store.set_index_meta.assert_not_called()
 
 
 @pytest.mark.parametrize(
@@ -349,7 +351,7 @@ def test_prepare_runs_base_sync_for_real_review(
 def test_prepare_base_sync_applies_rename_to_index_and_graph(
     old, new, old_recreated, removed, graph_removed, settings, components,
 ):
-    components.store.get_index_meta.return_value = "oldsha000"
+    components.store.get_index_meta_row.return_value = ("oldsha000", None)
     files = [{"filename": new, "status": "renamed", "previous_filename": old}]
     changed = [new]
     if old_recreated:
@@ -468,7 +470,7 @@ def test_prepare_patches_graph_incrementally_on_drift(
 ) -> None:
     """При дрейфе SHA base-индекса prepare() вызывает инкрементальный патч графа
     (patch_graph_incremental) для repo-aware self-heal графа кода."""
-    components.store.get_index_meta.return_value = "oldsha000"   # индекс устарел
+    components.store.get_index_meta_row.return_value = ("oldsha000", None)   # индекс устарел
 
     vcs = _vcs_with_files([_changed("a.py")])
     # compare_files возвращает один изменённый .py-файл
@@ -534,7 +536,7 @@ def test_prepare_graph_patch_fail_soft_does_not_abort_prepare(
     components: MagicMock,
 ) -> None:
     """Сбой патча графа (fail-soft) не прерывает prepare() и не ломает vector-sync."""
-    components.store.get_index_meta.return_value = "oldsha000"
+    components.store.get_index_meta_row.return_value = ("oldsha000", None)
 
     vcs = _vcs_with_files([_changed("a.py")])
     vcs.compare_files.return_value = [_changed("b.py")]
@@ -553,7 +555,9 @@ def test_prepare_graph_patch_fail_soft_does_not_abort_prepare(
     assert prepared is not None
     # vector-sync всё же выполнился
     _mock_update_base.assert_called_once()
-    components.store.set_index_meta.assert_called_once_with("owner/repo", "base:main", "base123")
+    assert _mock_update_base.call_args.kwargs["indexed_sha"] == "base123"
+    assert _mock_update_base.call_args.kwargs["expected_meta"] == ("oldsha000", None)
+    components.store.set_index_meta.assert_not_called()
 
 
 @patch("reviewer.services.review_service.chunk_python", side_effect=_fake_chunk)
@@ -683,7 +687,7 @@ def test_prepare_graph_sync_respects_ignore(
     Воспроизводит баг: changed_py строился без фильтрации по is_ignored, из-за
     чего символы vendor/ уходили в Neo4j, хотя чанков для них в Postgres нет.
     """
-    components.store.get_index_meta.return_value = "oldsha000"   # индекс устарел
+    components.store.get_index_meta_row.return_value = ("oldsha000", None)   # индекс устарел
 
     # .review.yml задаёт paths.ignore = [vendor]
     def _read(path: str, ref: str) -> str:

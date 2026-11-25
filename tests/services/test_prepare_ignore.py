@@ -79,7 +79,7 @@ def test_prepare_passes_ignore_to_build_overlay(monkeypatch):
         if path == ".review.yml" else "def f():\n    pass\n")
 
     components = MagicMock()
-    components.store.get_index_meta.return_value = None     # без base-досинка
+    components.store.get_index_meta_row.return_value = None     # без base-досинка
 
     svc = rs.ReviewService(_settings(), components)
     svc.prepare("o", "r", 7, vcs_provider=vcs)
@@ -104,7 +104,7 @@ def test_prepare_uses_home_policy_without_committed_file(monkeypatch, tmp_path):
         lambda path, ref: None if path == ".review.yml" else "def f():\n    pass\n"
     )
     components = MagicMock()
-    components.store.get_index_meta.return_value = None
+    components.store.get_index_meta_row.return_value = None
 
     prepared = rs.ReviewService(_settings(), components).prepare(
         "o", "r", 7, vcs_provider=vcs

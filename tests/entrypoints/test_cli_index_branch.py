@@ -21,9 +21,12 @@ def test_index_stores_under_branch_ref(m_update, m_lpf, m_far, m_rev, m_graph, m
     # update_base вызван с target_ref="master"
     assert m_update.call_args.args[3] == "master"
     # граф/мета пишутся под ветку master
-    c.store.set_index_meta.assert_called_with("a/x", "base:master", "deadbeef")
+    c.store.get_index_meta_row.assert_called_with("a/x", "base:master")
+    assert m_update.call_args.kwargs["indexed_sha"] == "deadbeef"
+    assert m_update.call_args.kwargs["full_snapshot"]
+    c.store.set_index_meta.assert_not_called()
     c.graph.clear.assert_called_with("a/x", branch="master")
-    c.store.delete_paths_except.assert_called_with("a/x", "base:master", ["a.py"])
+    c.store.delete_paths_except.assert_not_called()
 
 
 @patch("reviewer.entrypoints.cli.build_components")
@@ -54,9 +57,12 @@ def test_index_ref_not_validated_when_branch_given(m_update, m_lpf, m_far, m_rev
     # ...а хранение (update_base принимает branch, не ref) — под явно заданной
     # меткой main
     assert m_update.call_args.args[3] == "main"
-    c.store.set_index_meta.assert_called_with("a/x", "base:main", "deadbeef")
+    c.store.get_index_meta_row.assert_called_with("a/x", "base:main")
+    assert m_update.call_args.kwargs["indexed_sha"] == "deadbeef"
+    assert m_update.call_args.kwargs["full_snapshot"]
+    c.store.set_index_meta.assert_not_called()
     c.graph.clear.assert_called_with("a/x", branch="main")
-    c.store.delete_paths_except.assert_called_with("a/x", "base:main", ["a.py"])
+    c.store.delete_paths_except.assert_not_called()
 
 
 @patch("reviewer.entrypoints.cli.build_components")

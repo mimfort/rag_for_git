@@ -1,5 +1,6 @@
 from __future__ import annotations
 from collections.abc import Callable
+from datetime import datetime
 
 from reviewer.index.chunker import chunk_python
 from reviewer.index.pathfilter import is_ignored
@@ -15,7 +16,7 @@ def _rows_for_file(repo: str, path: str, source: str, ref: str) -> list[ChunkRow
                      text=c.text, embedding=[]) for c in chunks]
 
 
-def _embed_and_upsert(store, embedder, repo: str, rows: list[ChunkRow]) -> None:
+def _embed_rows(store, embedder, repo: str, rows: list[ChunkRow]) -> None:
     if not rows:
         return
     # Один вектор на текст даже при нескольких путях или символах.
@@ -27,7 +28,6 @@ def _embed_and_upsert(store, embedder, repo: str, rows: list[ChunkRow]) -> None:
         cached.update(zip(to_embed, vectors, strict=True))
     for r in rows:
         r.embedding = cached[r.content_hash]
-    store.upsert(rows)
 
 
 def build_overlay(store, embedder, repo: str, pr_number: int, changed_files: list[str],
@@ -55,19 +55,25 @@ def build_overlay(store, embedder, repo: str, pr_number: int, changed_files: lis
             if row.content_hash not in seen:
                 seen.add(row.content_hash)
                 batch.append(row)
-    _embed_and_upsert(store, embedder, repo, batch)
+    if batch:
+        _embed_rows(store, embedder, repo, batch)
+        store.upsert(batch)
 
 
 def update_base(store, embedder, repo: str, target_ref: str,
                 changed_files: list[str],
                 read: Callable[[str], str | None],
                 removed_files: list[str] | tuple[str, ...] = (),
-                ignore: list[str] = ()) -> None:
+                ignore: list[str] = (), *, indexed_sha: str | None = None,
+                expected_meta: tuple[str, datetime] | None = None,
+                full_snapshot: bool = False) -> None:
     """Инкрементально обновляет (repo, ref='base:<target_ref>') по изменённым файлам.
 
     removed_files — пути файлов, удалённых из репо; их чанки вычищаются из индекса.
     ignore — список ignore-паттернов; совпадающие пути пропускаются и вычищаются из base.
     Для каждого обработанного файла удаляются символы, исчезнувшие из новой версии.
+    При полном снимке список обработанных файлов задаёт все пути ветки.
+    Перед записью indexed_sha проверяется метка, прочитанная до построения плана.
     """
     ref = base_ref(target_ref)
     ignore_list = list(ignore)
@@ -92,8 +98,10 @@ def update_base(store, embedder, repo: str, target_ref: str,
             if locations.get((path, symbol)) != location:
                 batch.append(row)
     # Старые строки ещё нужны для переиспользования векторов при переносе кода.
-    _embed_and_upsert(store, embedder, repo, batch)
-    store.delete_paths(repo, ref, [path for path in dict.fromkeys(removed)
-                                   if path not in kept_symbols])
-    for path, symbols in kept_symbols.items():
-        store.delete_missing_symbols(repo, ref, path, symbols)
+    _embed_rows(store, embedder, repo, batch)
+    store.commit_base_update(
+        repo, ref, batch,
+        removed_paths=[path for path in dict.fromkeys(removed) if path not in kept_symbols],
+        kept_symbols=kept_symbols, indexed_sha=indexed_sha, expected_meta=expected_meta,
+        full_snapshot=full_snapshot,
+    )
