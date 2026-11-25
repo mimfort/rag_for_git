@@ -96,7 +96,8 @@ class _StorageState:
 
     Источник, а не только хранилище (PRI-272): эмбеддер отказывает независимо
     от Postgres и Neo4j, и его отказ обязан отменять ровно те секции, которым
-    он нужен. Класс причины хранится рядом с вердиктом — «лежит хранилище» и
+    он нужен. Для кода и тестов остаётся лексический резервный поиск.
+    Класс причины хранится рядом с вердиктом — «лежит хранилище» и
     «не отвечает эмбеддер» это разные классы, а не разные детали одного.
     """
 
@@ -169,7 +170,7 @@ def _reason_with_detail(base: str, diagnosis: StorageDiagnosis | None) -> str:
 
 
 def _safe(payload: dict, section: str, produce, default, reason: str,
-          state: _StorageState, backend: str = BACKEND_POSTGRES):
+          state: _StorageState, backend: str = BACKEND_POSTGRES, *, embedder_fallback=None):
     """Собрать секцию fail-open: сбой → default + запись в gaps.
 
     `backend` — хранилище секции; дефолт Postgres, потому что своё хранилище он
@@ -179,10 +180,22 @@ def _safe(payload: dict, section: str, produce, default, reason: str,
 
     Какой бэкенд упал, решает тип исключения, а не разметка секции: она отвечает
     на другой вопрос — кого пропускать.
+    Отказ эмбеддера оставляет доступный лексический поиск и отмечает
+    пропуск именно семантического поиска. Его резервная секция зависит от БД.
     """
+    def without_embedder(*, skipped: bool):
+        if embedder_fallback is None:
+            _source_gap(payload, section, state, SOURCE_EMBEDDER, skipped=skipped)
+            return default
+        _source_gap(payload, f"{section}.semantic_search", state, SOURCE_EMBEDDER, skipped=skipped)
+        result = _safe(payload, f"{section}.bm25", embedder_fallback, default,
+                       "лексический поиск недоступен", state, backend)
+        if result != default:
+            payload["warnings"].append({"retrieval": {"section": section, "mode": "bm25_only"}})
+        return result
+
     if section in _EMBEDDER_SECTIONS and state.is_down(SOURCE_EMBEDDER):
-        _source_gap(payload, section, state, SOURCE_EMBEDDER, skipped=True)
-        return default
+        return without_embedder(skipped=True)
     if state.is_down(backend):
         _source_gap(payload, section, state, backend, skipped=True)
         return default
@@ -192,7 +205,7 @@ def _safe(payload: dict, section: str, produce, default, reason: str,
         log.warning("prepare_task_context: секция %s недоступна", section, exc_info=True)
         if is_embedder_unavailable(exc):
             state.mark(SOURCE_EMBEDDER, exc)
-            _source_gap(payload, section, state, SOURCE_EMBEDDER, skipped=False)
+            return without_embedder(skipped=False)
         elif is_storage_unavailable(exc):
             failed = storage_backend(exc) or backend
             state.mark(failed, exc)
@@ -331,15 +344,24 @@ def build_task_context(deps, *, repo: str, key: str, branch: str,
     def queries() -> list[str]:
         return build_subqueries(task, query, excluded_criteria=excluded)
 
+    lexical_search = getattr(deps, "lexical_search", None)
+    code_fallback = test_fallback = None
+    if callable(lexical_search):
+        def code_fallback():
+            return lexical_search(repo, branch, queries())
+
+        def test_fallback():
+            return lexical_search(repo, branch, _test_queries(queries()), tests_only=True)
+
     payload["code"] = _safe(
         payload, "code", lambda: deps.code(repo, branch, queries()), "",
-        "поиск по коду недоступен", state)
+        "поиск по коду недоступен", state, embedder_fallback=code_fallback)
     for reason in getattr(deps, "augment_gaps", []) or []:
         payload["gaps"].append(gap("code.augment", reason))
     payload["test_exemplars"] = _safe(
         payload, "test_exemplars",
         lambda: deps.test_exemplars(repo, branch, _test_queries(queries())), "",
-        "поиск по тестам недоступен", state)
+        "поиск по тестам недоступен", state, embedder_fallback=test_fallback)
     if excluded:
         payload["warnings"].append({"subqueries": {
             "excluded_criteria": excluded, "reason": "subquery_budget",

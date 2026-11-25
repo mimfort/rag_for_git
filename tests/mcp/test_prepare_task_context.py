@@ -874,9 +874,9 @@ def _sections_passed_to_safe(monkeypatch) -> set[str]:
     original = task_context._safe
 
     def spy(payload, section, produce, default, reason, state,
-            backend=sh.BACKEND_POSTGRES):
+            backend=sh.BACKEND_POSTGRES, **kwargs):
         seen.add(section)
-        return original(payload, section, produce, default, reason, state, backend)
+        return original(payload, section, produce, default, reason, state, backend, **kwargs)
 
     monkeypatch.setattr(task_context, "_safe", spy)
     task_context.build_task_context(
@@ -967,3 +967,93 @@ def test_context_keeps_paths_in_both_searches_when_query_budget_is_full():
     assert all(criterion in seen["code"] for criterion in criteria)
     assert set(filenames) <= set(" ".join(seen["code"]).split())
     assert seen["tests"] == [f"как тестируется: {query}" for query in seen["code"]]
+
+
+@pytest.mark.parametrize("outage", ["similar", "code", "test_exemplars", "postgres", "bad_query", None])
+def test_task_retrieval_keeps_bm25_when_vector_provider_is_unavailable(monkeypatch, outage):
+    from types import SimpleNamespace
+
+    from voyageai.error import APIError
+
+    from reviewer.index.store import Retrieved
+    from reviewer.policy.context_limits import ContextLimits
+
+    def hit(path, symbol):
+        return Retrieved(f"{path}#{symbol}", path, symbol, "function", 1, 1,
+                         f"def {symbol}(): pass", 1.0, bm25_hit=True)
+
+    embedder = MagicMock()
+    embedder.embed_queries.side_effect = lambda queries: [[1.0] for _ in queries]
+    store = MagicMock()
+    hits = [hit("code.py", "example"), hit("tests/test_code.py", "test_example")]
+    store.bm25_search.return_value = hits
+    store.hybrid_search.return_value = hits
+    components = MagicMock()
+    components.retriever = SimpleNamespace(embedder=embedder, store=store, graph=None)
+    service = MCPReviewService(Settings(), components)
+    monkeypatch.setattr(service, "_resolve_repo_branch", lambda repo, branch: (repo, branch))
+    monkeypatch.setattr(service, "_resolve_context_limits", lambda _repo, _branch: ContextLimits())
+    monkeypatch.setattr(_TaskContextDeps, "preflight", lambda *_: {})
+    monkeypatch.setattr(_TaskContextDeps, "task_board", lambda *_: None)
+    monkeypatch.setattr(_TaskContextDeps, "task", lambda *_: None)
+    monkeypatch.setattr(_TaskContextDeps, "linked", lambda *_: "")
+    monkeypatch.setattr(_TaskContextDeps, "subsystems", lambda *_: None)
+    monkeypatch.setattr(_TaskContextDeps, "_augment_paths", lambda *_: [])
+
+    def similar(*_, **__):
+        embedder.embed_query("query")
+        return ""
+
+    monkeypatch.setattr(_TaskContextDeps, "similar", similar)
+    failure = APIError("HTTP code 403")
+    if outage in {"similar", "postgres", "bad_query"}:
+        embedder.embed_query.side_effect = failure
+    elif outage == "code":
+        embedder.embed_queries.side_effect = failure
+    elif outage == "test_exemplars":
+        embedder.embed_queries.side_effect = [[[1.0]], failure]
+    if outage == "postgres":
+        store.bm25_search.side_effect = psycopg.OperationalError("connection refused")
+    elif outage == "bad_query":
+        store.bm25_search.side_effect = psycopg.ProgrammingError("BM25 query error")
+
+    payload = service.prepare_task_context("o/n", "query", "dev", warm_board=False)
+
+    embedder.embed_query.assert_called_once_with("query")
+    if outage == "postgres":
+        store.bm25_search.assert_called_once()
+        embedder.embed_queries.assert_not_called()
+        assert payload["code"] == payload["test_exemplars"] == ""
+        assert _gap(payload, "code.bm25")["cause"] == "storage_unavailable"
+        assert _gap(payload, "test_exemplars.bm25")["reason"].startswith("пропущено")
+        assert not payload["warnings"]
+        return
+    if outage == "bad_query":
+        assert store.bm25_search.call_count == 2
+        embedder.embed_queries.assert_not_called()
+        assert payload["code"] == payload["test_exemplars"] == ""
+        assert _gap(payload, "code.bm25")["cause"] == "unknown"
+        assert not payload["warnings"]
+        return
+
+    assert "code.py#example" in payload["code"]
+    assert "tests/test_code.py#test_example" not in payload["code"]
+    assert "tests/test_code.py#test_example" in payload["test_exemplars"]
+    assert "code.py#example" not in payload["test_exemplars"]
+    expected = {
+        "similar": ["code", "test_exemplars"],
+        "code": ["code", "test_exemplars"],
+        "test_exemplars": ["test_exemplars"],
+        None: [],
+    }[outage]
+    assert payload["warnings"] == [
+        {"retrieval": {"section": section, "mode": "bm25_only"}} for section in expected
+    ]
+    for section in expected:
+        assert _gap(payload, f"{section}.semantic_search")["cause"] == "embedder_unavailable"
+    assert embedder.embed_queries.call_count == {"similar": 0, "code": 1,
+                                                  "test_exemplars": 2, None: 2}[outage]
+    assert store.bm25_search.call_count == len(expected)
+    for call in store.bm25_search.call_args_list:
+        assert call.kwargs["base_ref"] == "base:dev"
+        assert call.kwargs["top_k"] == ContextLimits().search_codebase.candidate_pool

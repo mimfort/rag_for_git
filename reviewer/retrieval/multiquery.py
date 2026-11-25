@@ -21,7 +21,7 @@ from reviewer.retrieval.retriever import (
     ContextPack, _dedupe_overlapping, _is_test_path,
 )
 from reviewer.rrf import RRF_K
-from reviewer.storage_health import is_embedder_unavailable
+from reviewer.storage_health import is_embedder_unavailable, is_storage_unavailable
 
 log = logging.getLogger(__name__)
 
@@ -259,7 +259,7 @@ def search_multi(retriever, repo: str, queries: list[str], *, limits=None,
                  section_limits=None, hops: int = 1, branch: str = "",
                  include_tests: bool = False, augment_sources=None,
                  strict: bool = False, tests_only: bool = False,
-                 include_selection_stats: bool = False,
+                 include_selection_stats: bool = False, bm25_only: bool = False,
                  git_excerpts: list | None = None) -> ContextPack:
     """Мультизапросный ретрив по base-индексу ветки: N прогонов, RRF, обрезка.
 
@@ -300,6 +300,10 @@ def search_multi(retriever, repo: str, queries: list[str], *, limits=None,
     `MCPReviewService._search_codebase_multi` (секции `code`/`test_exemplars`
     сборки контекста задачи); остальные пути (`search_codebase`, /ask,
     ревью PR, офлайн-эвал) не меняются, дефолт `False`.
+
+    `bm25_only` применяется по решению сборщика контекста при отказе Voyage.
+    В этом режиме RRF, фильтрация тестов, граф и бюджет используют кандидатов
+    из лексического поиска, а распознанный сбой хранилища прерывает прогоны.
     """
     from reviewer.policy.context_limits import CodebaseLimits, CodeSectionLimits
     lim = limits or CodebaseLimits()
@@ -311,11 +315,25 @@ def search_multi(retriever, repo: str, queries: list[str], *, limits=None,
     # отката _embed_pairs при сбое батча).
     deduped_queries = list(dict.fromkeys(queries))
     runs: list[list] = []
-    for query, qvec in _embed_pairs(retriever.embedder, deduped_queries, strict=strict):
+    last_bm25_error = None
+    pairs = ([(query, None) for query in deduped_queries] if bm25_only
+             else _embed_pairs(retriever.embedder, deduped_queries, strict=strict))
+    for query, qvec in pairs:
         try:
-            runs.append(_run(retriever.store, repo, query, qvec, lim, bref))
-        except Exception:  # noqa: BLE001 — сбой одного прогона не роняет сборку
+            if bm25_only:
+                hits = retriever.store.bm25_search(
+                    repo, query, top_k=lim.candidate_pool, base_ref=bref)
+            else:
+                hits = _run(retriever.store, repo, query, qvec, lim, bref)
+            runs.append(hits)
+        except Exception as exc:
+            if bm25_only:
+                if is_storage_unavailable(exc):
+                    raise
+                last_bm25_error = exc
             log.warning("multiquery: прогон подзапроса не удался", exc_info=True)
+    if not runs and last_bm25_error is not None:
+        raise last_bm25_error
     merged = rrf_merge(runs)
     hybrid_ids = {item.node_id for item in merged}
     items = [*merged, *_graph_items(retriever, repo, merged, lim.ceiling, hops,
