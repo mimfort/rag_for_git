@@ -56,6 +56,46 @@ def test_identifiers_are_bundled_into_one_subquery():
     assert " и " not in bundle, "предлоги в пул идентификаторов не попадают"
 
 
+def test_identifier_bundle_preserves_complete_file_names():
+    task = {
+        "description": (
+            "Сверить `.review.yml`, (pyproject.toml), "
+            "`plugin/skills/configure-review/SKILL.md:12` и .github/workflows/check-ci.yml. "
+            "Ссылка: https://example.org/remote/other.yml."
+        ),
+    }
+
+    assert build_subqueries(task, "база") == [
+        "база",
+        ".review.yml pyproject.toml plugin/skills/configure-review/SKILL.md "
+        ".github/workflows/check-ci.yml",
+    ]
+
+
+def test_file_already_in_base_does_not_add_a_redundant_query():
+    text = "Проверить настройки в `.review.yml`."
+
+    assert build_subqueries({"description": text}, text) == [text]
+
+
+def test_explicit_files_survive_when_every_slot_is_used_by_acceptance():
+    criteria = [f"criterion_{i}" for i in range(MAX_SUBQUERIES - 1)]
+    task = {
+        "description": "## Контекст\n\nСвязанный файл: `.review.yml`.",
+        "criteria": [*criteria, "Проверить pyproject.toml"],
+    }
+    excluded = []
+
+    queries = build_subqueries(task, "база", excluded_criteria=excluded)
+
+    assert len(queries) == MAX_SUBQUERIES
+    assert queries[0] == "база"
+    assert all(any(criterion in query.splitlines() for query in queries) for criterion in criteria)
+    assert excluded == ["Проверить pyproject.toml"]
+    assert ".review.yml" in queries[-1].split()
+    assert "pyproject.toml" in queries[-1].split()
+
+
 def test_criteria_items_become_subqueries():
     task = {"title": "T", "description": "D", "criteria": ["Метрика растёт", "Отчёт зафиксирован"]}
     queries = build_subqueries(task, "база")
