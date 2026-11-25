@@ -18,11 +18,9 @@ class _FakeStore:
     def upsert(self, rows):
         self.upserted.extend(rows)
 
-    def delete_paths(self, repo, ref, paths):
-        self.deleted.extend(paths)
-
-    def delete_missing_symbols(self, repo, ref, path, keep_fqns):
-        pass
+    def commit_base_update(self, _repo, _ref, rows, *, removed_paths, **_):
+        self.upsert(rows)
+        self.deleted.extend(removed_paths)
 
 
 class _FakeEmbedder:

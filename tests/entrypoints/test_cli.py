@@ -193,10 +193,11 @@ def test_index_command_runs_indexing_steps(
     fake_components.graph.upsert_edges.assert_called_once_with(
         "a/x", [("a#foo", "CALLS", "b#bar")], branch="main"
     )
-    fake_components.store.set_index_meta.assert_called_once_with("a/x", "base:main", "abc1234")
-    fake_components.store.delete_paths_except.assert_called_once_with(
-        "a/x", "base:main", ["a.py", "b.py"]
-    )
+    fake_components.store.get_index_meta_row.assert_called_once_with("a/x", "base:main")
+    assert mock_update_base.call_args.kwargs["indexed_sha"] == "abc1234"
+    assert mock_update_base.call_args.kwargs["full_snapshot"]
+    fake_components.store.set_index_meta.assert_not_called()
+    fake_components.store.delete_paths_except.assert_not_called()
     fake_components.store.close.assert_called_once()
     fake_components.graph.close.assert_called_once()
 

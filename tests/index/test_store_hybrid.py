@@ -1,4 +1,7 @@
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from dataclasses import replace
+from threading import Event
 from unittest.mock import Mock
 from uuid import uuid4
 
@@ -43,6 +46,8 @@ def store_and_settings():
         finally:
             try:
                 store.clear(other_repo)
+                with store._connect() as conn:
+                    conn.execute("DELETE FROM index_meta WHERE repo = ANY(%s)", ([repo, other_repo],))
             finally:
                 store.close()
 
@@ -81,6 +86,141 @@ def test_incremental_index_repairs_existing_coordinates_like_clean_index(
     assert ("a.py", "removed") not in repaired
     assert store.chunk_locations(repo, "base:dev", ["moving.py"]) == {}
     assert embedding_provider.embed_documents.call_count == 1
+
+
+def _snapshot_rows(store, repo):
+    return sorted((hit.path, hit.text) for hit in store.bm25_search(
+        repo, "snapshotmarker", base_ref="base:dev", top_k=10,
+    ))
+
+
+def _fixture_embedder(dim):
+    embedder = Mock()
+    vector = [1.0] + [0.0] * (dim - 1)
+    embedder.embed_documents.side_effect = lambda texts: [vector for _ in texts]
+    return embedder
+
+
+@pytest.mark.integration
+def test_base_snapshot_publication_is_atomic_for_an_independent_reader(
+    store_and_settings, monkeypatch,
+):
+    store, settings, repo, _ = store_and_settings
+    reader = ChunkStore(settings.pg_dsn)
+    embedder = _fixture_embedder(settings.embedding_dim)
+    original = {"a.py": "def primary(): return 'snapshotmarker A'\n",
+                "b.py": "def deleted(): return 'snapshotmarker obsolete'\n"}
+    changed = {"a.py": "def primary(): return 'snapshotmarker B'\n"}
+    update_base(store, embedder, repo, "dev", list(original), original.get)
+    store.set_index_meta(repo, "base:dev", "sha-a")
+    expected_meta = store.get_index_meta_row(repo, "base:dev")
+    initial = _snapshot_rows(reader, repo)
+    assert len(initial) == 2
+    observed = []
+    fail = True
+    original_connect = store._connect
+
+    class ObservedConnection:
+        def __init__(self, conn):
+            self._conn = conn
+
+        def __getattr__(self, name):
+            return getattr(self._conn, name)
+
+        def execute(self, query, params=None):
+            if query.strip().startswith("DELETE FROM chunks") and params and params[:2] == (repo, "base:dev"):
+                observed.append((reader.get_index_meta_row(repo, "base:dev"), _snapshot_rows(reader, repo)))
+                if fail:
+                    raise RuntimeError("fixture: prune failed")
+            return self._conn.execute(query, params)
+
+    @contextmanager
+    def connect():
+        with original_connect() as conn:
+            yield ObservedConnection(conn)
+
+    try:
+        monkeypatch.setattr(store, "_connect", connect)
+        with pytest.raises(RuntimeError, match="prune failed"):
+            update_base(store, embedder, repo, "dev", list(changed), changed.get, ["b.py"],
+                        indexed_sha="sha-b", expected_meta=expected_meta)
+        assert observed == [(expected_meta, initial)]
+        assert _snapshot_rows(reader, repo) == initial
+        assert reader.get_index_meta_row(repo, "base:dev") == expected_meta
+
+        fail = False
+        update_base(store, embedder, repo, "dev", list(changed), changed.get, ["b.py"],
+                    indexed_sha="sha-b", expected_meta=expected_meta)
+        assert observed and all(snapshot == (expected_meta, initial) for snapshot in observed)
+        assert _snapshot_rows(reader, repo) == [("a.py", changed["a.py"].strip())]
+        assert reader.get_index_meta(repo, "base:dev") == "sha-b"
+    finally:
+        reader.close()
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("has_previous_snapshot", [True, False])
+def test_base_snapshot_publication_rejects_a_stale_concurrent_plan(
+    store_and_settings, has_previous_snapshot,
+):
+    store, settings, repo, _ = store_and_settings
+    embedder = _fixture_embedder(settings.embedding_dim)
+    delayed = _fixture_embedder(settings.embedding_dim)
+    ready = Event()
+    release = Event()
+    real_embed = delayed.embed_documents.side_effect
+
+    def await_publish(texts):
+        ready.set()
+        assert release.wait(10), "fresh publisher was blocked during embedding"
+        return real_embed(texts)
+
+    delayed.embed_documents.side_effect = await_publish
+    original = {"original.py": "def original(): return 'snapshotmarker A'\n"}
+    if not has_previous_snapshot:
+        original = {}
+    fresh = {"fresh.py": "def added(): return 'snapshotmarker B'\n"}
+    stale = {"stale.py": "def other(): return 'snapshotmarker C'\n"}
+    if original:
+        update_base(store, embedder, repo, "dev", list(original), original.get)
+        store.set_index_meta(repo, "base:dev", "sha-a")
+    expected_meta = store.get_index_meta_row(repo, "base:dev")
+    with ThreadPoolExecutor(max_workers=1) as worker:
+        pending = worker.submit(
+            update_base, store, delayed, repo, "dev", list(stale), stale.get, list(original),
+            indexed_sha="sha-c", expected_meta=expected_meta,
+        )
+        try:
+            if not ready.wait(5) and pending.done():
+                pending.result()
+            assert ready.is_set()
+            update_base(store, embedder, repo, "dev", list(fresh), fresh.get, list(original),
+                        indexed_sha="sha-b", expected_meta=expected_meta)
+        finally:
+            release.set()
+        with pytest.raises(RuntimeError, match="индекс изменился"):
+            pending.result(timeout=5)
+    assert store.get_index_meta(repo, "base:dev") == "sha-b"
+    assert _snapshot_rows(store, repo) == [("fresh.py", fresh["fresh.py"].strip())]
+
+
+@pytest.mark.integration
+def test_full_snapshot_can_publish_an_empty_python_tree(store_and_settings):
+    store, settings, repo, other_repo = store_and_settings
+    embedder = _fixture_embedder(settings.embedding_dim)
+    sources = {"old.py": "def previous(): return 'snapshotmarker'\n"}
+    for project, branch in [(repo, "dev"), (repo, "main"), (other_repo, "dev")]:
+        update_base(store, embedder, project, branch, list(sources), sources.get,
+                    indexed_sha="sha-a")
+    expected_meta = store.get_index_meta_row(repo, "base:dev")
+
+    update_base(store, embedder, repo, "dev", [], sources.get,
+                indexed_sha="sha-b", expected_meta=expected_meta, full_snapshot=True)
+
+    assert _snapshot_rows(store, repo) == []
+    assert store.get_index_meta(repo, "base:dev") == "sha-b"
+    assert len(_snapshot_rows(store, other_repo)) == 1
+    assert store.count_chunks(repo, "base:main") == 1
 
 
 @pytest.mark.integration

@@ -17,6 +17,15 @@ def _bm25_query(text: str) -> str:
     return cleaned or "____nomatch____"
 
 _SCHEMA = Path(__file__).with_name("schema.sql").read_text(encoding="utf-8")
+_SET_INDEX_META_SQL = """
+INSERT INTO index_meta (repo, ref, sha, updated_at)
+VALUES (%s, %s, %s, clock_timestamp())
+ON CONFLICT (repo, ref) DO UPDATE SET sha = EXCLUDED.sha, updated_at = EXCLUDED.updated_at
+"""
+
+
+class ConcurrentBaseUpdateError(RuntimeError):
+    """План индексации устарел до записи в базу."""
 
 
 @dataclass
@@ -104,6 +113,13 @@ class ChunkStore:
             conn.commit()
 
     def upsert(self, rows: list[ChunkRow]) -> None:
+        with self._connect() as conn:
+            self._upsert_chunks(conn, rows)
+
+    @staticmethod
+    def _upsert_chunks(conn, rows: list[ChunkRow]) -> None:
+        if not rows:
+            return
         sql = """
         INSERT INTO chunks (repo, ref, content_hash, path, lang, symbol_fqn, kind,
                             start_line, end_line, text, embedding)
@@ -114,10 +130,43 @@ class ChunkStore:
             start_line=EXCLUDED.start_line, end_line=EXCLUDED.end_line,
             text=EXCLUDED.text, embedding=EXCLUDED.embedding
         """
-        with self._connect() as conn:
-            with conn.cursor() as cur:
-                cur.executemany(sql, [r.__dict__ for r in rows])
-            conn.commit()
+        with conn.cursor() as cur:
+            cur.executemany(sql, [r.__dict__ for r in rows])
+
+    def commit_base_update(
+        self, repo: str, ref: str, rows: list[ChunkRow], *,
+        removed_paths: list[str], kept_symbols: dict[str, list[str]],
+        indexed_sha: str | None = None, expected_meta: tuple[str, datetime] | None = None,
+        full_snapshot: bool = False,
+    ) -> None:
+        """Опубликовать чанки и метаданные base в одной транзакции."""
+        if not (rows or removed_paths or kept_symbols or full_snapshot or indexed_sha is not None):
+            return
+        with self._connect() as conn, conn.transaction():
+            # План строится вне транзакции. Первый издатель может ещё не иметь
+            # строки index_meta, поэтому блокировка привязана к паре (repo, ref).
+            conn.execute(
+                "SELECT pg_advisory_xact_lock(hashtext('base-index:' || %s), hashtext(%s))",
+                (repo, ref),
+            )
+            if indexed_sha is not None:
+                current = conn.execute(
+                    "SELECT sha, updated_at FROM index_meta WHERE repo=%s AND ref=%s",
+                    (repo, ref),
+                ).fetchone()
+                if current != expected_meta:
+                    raise ConcurrentBaseUpdateError(
+                        "Базовый индекс изменился во время подготовки. Повторите индексацию."
+                    )
+            self._upsert_chunks(conn, rows)
+            if full_snapshot:
+                self._delete_paths_except(conn, repo, ref, list(kept_symbols))
+            else:
+                self._delete_paths(conn, repo, ref, removed_paths)
+            for path, symbols in kept_symbols.items():
+                self._delete_missing_symbols(conn, repo, ref, path, symbols)
+            if indexed_sha is not None:
+                conn.execute(_SET_INDEX_META_SQL, (repo, ref, indexed_sha))
 
     def existing_hashes(self, repo: str, ref: str) -> set[str]:
         with self._connect() as conn:
@@ -218,15 +267,7 @@ class ChunkStore:
     def set_index_meta(self, repo: str, ref: str, sha: str) -> None:
         """Записать/обновить SHA индексации для ref (UPSERT, обновляет updated_at)."""
         with self._connect() as conn:
-            conn.execute(
-                """
-                INSERT INTO index_meta (repo, ref, sha, updated_at)
-                VALUES (%s, %s, %s, now())
-                ON CONFLICT (repo, ref) DO UPDATE SET sha = EXCLUDED.sha, updated_at = now()
-                """,
-                (repo, ref, sha),
-            )
-            conn.commit()
+            conn.execute(_SET_INDEX_META_SQL, (repo, ref, sha))
 
     def get_graph_edge_counts(self, repo: str, ref: str) -> dict[str, int] | None:
         """Счётчики рёбер графа предыдущего прогона для ref, или None.
@@ -443,51 +484,46 @@ class ChunkStore:
         return n
 
     def delete_paths(self, repo: str, ref: str, paths: list[str]) -> None:
-        """Удалить чанки указанных путей для ref (гигиена: удалённые файлы из индекса).
-
-        Пустой список — no-op.
-        """
+        """Удалить чанки указанных путей для ref (гигиена: удалённые файлы из индекса)."""
         if not paths:
             return
         with self._connect() as conn:
+            self._delete_paths(conn, repo, ref, paths)
+
+    @staticmethod
+    def _delete_paths(conn, repo: str, ref: str, paths: list[str]) -> None:
+        if paths:
             conn.execute(
                 "DELETE FROM chunks WHERE repo=%s AND ref=%s AND path = ANY(%s)",
                 (repo, ref, paths),
             )
-            conn.commit()
 
     def delete_missing_symbols(self, repo: str, ref: str, path: str, keep_fqns: list[str]) -> None:
-        """Удалить из индекса символы path, отсутствующие в keep_fqns (гигиена: переименованные/удалённые символы).
-
-        Пустой keep_fqns означает удалить все чанки указанного path.
-        """
+        """Удалить из индекса символы path, отсутствующие в keep_fqns."""
         with self._connect() as conn:
-            if keep_fqns:
-                conn.execute(
-                    "DELETE FROM chunks WHERE repo=%s AND ref=%s AND path=%s "
-                    "AND NOT (symbol_fqn = ANY(%s))",
-                    (repo, ref, path, keep_fqns),
-                )
-            else:
-                conn.execute(
-                    "DELETE FROM chunks WHERE repo=%s AND ref=%s AND path=%s",
-                    (repo, ref, path),
-                )
-            conn.commit()
+            self._delete_missing_symbols(conn, repo, ref, path, keep_fqns)
+
+    @staticmethod
+    def _delete_missing_symbols(conn, repo: str, ref: str, path: str, keep_fqns: list[str]) -> None:
+        conn.execute(
+            "DELETE FROM chunks WHERE repo=%s AND ref=%s AND path=%s "
+            "AND NOT (symbol_fqn = ANY(%s))",
+            (repo, ref, path, keep_fqns),
+        )
 
     def delete_paths_except(self, repo: str, ref: str, keep_paths: list[str]) -> None:
-        """Удалить из индекса все пути ref, кроме перечисленных в keep_paths (гигиена: файлы удалённые из репо).
-
-        Пустой keep_paths — no-op (защита от случайного полного удаления индекса).
-        """
+        """Удалить все пути ref, кроме keep_paths. Пустой keep_paths — no-op."""
         if not keep_paths:
             return
         with self._connect() as conn:
-            conn.execute(
-                "DELETE FROM chunks WHERE repo=%s AND ref=%s AND NOT (path = ANY(%s))",
-                (repo, ref, keep_paths),
-            )
-            conn.commit()
+            self._delete_paths_except(conn, repo, ref, keep_paths)
+
+    @staticmethod
+    def _delete_paths_except(conn, repo: str, ref: str, keep_paths: list[str]) -> None:
+        conn.execute(
+            "DELETE FROM chunks WHERE repo=%s AND ref=%s AND NOT (path = ANY(%s))",
+            (repo, ref, keep_paths),
+        )
 
     def bm25_search(self, repo: str, query_text: str, *, top_k: int,
                     base_ref: str) -> list[Retrieved]:
