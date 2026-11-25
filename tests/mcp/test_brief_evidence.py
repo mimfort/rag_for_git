@@ -17,7 +17,7 @@ from reviewer.index.store import Retrieved
 from reviewer.mcp import brief_evidence, task_context
 from reviewer.mcp.brief_anchors import check_brief_anchors
 from reviewer.mcp.brief_evidence import BriefEvidence
-from reviewer.mcp.schemas import BriefCitationIn
+from reviewer.mcp.schemas import BriefCitationIn, BriefReferenceIn
 from reviewer.mcp.service import MCPReviewService
 from reviewer.metrics.brief_quality import briefs
 from reviewer.policy.context_limits import CodeSectionLimits, ContextLimits
@@ -34,6 +34,10 @@ TEST = """// tests/test_function.py#test_it (tests/test_function.py:7-7)
 
 def _citation(path, line, section="code"):
     return BriefCitationIn(path=path, line=line, section=section)
+
+
+def _reference(path, line, section="code"):
+    return BriefReferenceIn(path=path, line=line, section=section, reason="Проверка")
 
 
 def _git_snapshot(root, files):
@@ -323,13 +327,13 @@ def test_structured_brief_round_trips_only_verified_citations_through_mcp(monkey
     monkeypatch.setattr(task_context, "build_task_context", build)
     server = create_server(service)
     references = [
-        {"section": "test_exemplars", "path": "tests/test_function.py", "line": 7,
+        {"section": "test_exemplars", "path": "tests/test_function.py#test_it", "line": 7,
          "reason": "Повторить проверку", "role": "read"},
-        {"section": "code", "path": path, "line": 3,
+        {"section": "code", "path": f"{path}#function", "line": 3,
          "reason": "Вызов упоминает `unrelated.py:9`", "role": "edit"},
-        {"section": "code", "path": path, "line": 4, "reason": "Обрезанная строка"},
+        {"section": "code", "path": f"{path}#function", "line": 4, "reason": "Обрезанная строка"},
         {"section": "code", "path": "tests/test_function.py", "line": 7, "reason": "Тест"},
-        {"section": "test_exemplars", "path": path, "line": 2, "reason": "Код"},
+        {"section": "test_exemplars", "path": f"{path}#function", "line": 2, "reason": "Код"},
         {"section": "code", "path": path, "line": 2, "reason": "Определение"},
     ]
 
@@ -355,9 +359,11 @@ def test_structured_brief_round_trips_only_verified_citations_through_mcp(monkey
     assert checked["status"] == "ok"
     assert checked["render_status"] == "ok"
     assert checked["citations"] == [
-        {"role": None, **reference, "status": status}
-        for reference, status in zip(references, [
-            "verified", "verified", "outside_excerpt", "path_unseen", "path_unseen", "verified",
+        {"role": None, **reference, "path": canonical, "status": status}
+        for reference, (canonical, status) in zip(references, [
+            ("tests/test_function.py", "verified"), (path, "verified"),
+            (f"{path}#function", "path_unseen"), ("tests/test_function.py", "path_unseen"),
+            (f"{path}#function", "path_unseen"), (path, "verified"),
         ], strict=True)
     ]
     markdown = checked["markdown"]
@@ -375,6 +381,89 @@ def test_structured_brief_round_trips_only_verified_citations_through_mcp(monkey
     persisted = state[0].read_bytes()
     assert b"standard_line" not in persisted
     assert "Повторить проверку".encode() not in persisted
+
+
+def test_prepare_uses_only_exact_identifiers_of_git_checked_blocks(monkeypatch, tmp_path):
+    sha = _git_snapshot(tmp_path, {
+        "actual.py": "def first(): pass\ndef second(): pass\ndef third(): pass\n",
+        "actual.py#first": "literal path does not appear in the context\0",
+        "actual.py#nested": "shown literal file\n",
+        "actual.py#directory/stored.txt": "file inside a literal directory\n",
+    })
+    (tmp_path / "actual.py#second").write_text("uncommitted", encoding="utf-8")
+    service = MCPReviewService(Settings(), MagicMock())
+    monkeypatch.setattr(service, "_resolve_repo_branch", lambda repo, branch: (repo, "main"))
+    code = (
+        "// actual.py#first (actual.py:1-1)\n    1 | def first(): pass\n\n"
+        "// actual.py#second (actual.py:2-2)\n    2 | def second(): pass\n\n"
+        "// actual.py#directory (actual.py:2-2)\n    2 | def second(): pass\n\n"
+        "// actual.py#broken (actual.py:3-3)\n    3 | def displaced(): pass\n\n"
+        "// actual.py#third (actual.py:3-3)\n    3 | def third(): pass\n\n"
+        "// actual.py#nested (actual.py#nested:1-1)\n    1 | shown literal file\n\n"
+        "// actual.py#nested#leaf (actual.py:1-1)\n    1 | def first(): pass\n\n"
+        "// actual.py#nested#leaf (actual.py#nested:1-1)\n    1 | shown literal file"
+    )
+    monkeypatch.setattr(task_context, "build_task_context", lambda *args, **kwargs: {
+        "preflight": {"indexed_sha": sha}, "code": code, "test_exemplars": "",
+        "gaps": [], "warnings": [],
+    })
+
+    evidence_id = service.prepare_task_context(
+        "owner/repo", "task", path=str(tmp_path), warm_board=False, include_brief_evidence=True,
+    )["brief_evidence_id"]
+    result = service.verify_task_brief(evidence_id, references=[
+        _reference("actual.py#second", 2),
+        _reference("actual.py#second", 1),
+        _reference("actual.py#typo", 2),
+        _reference("actual.py#first", 1),
+        _reference("actual.py#directory", 2),
+        _reference("actual.py#third", 3),
+        _reference("actual.py#nested", 1),
+        _reference("actual.py#nested#leaf", 1),
+    ])
+
+    assert [record["status"] for record in result["citations"]] == [
+        "verified", "path_unseen", "path_unseen", "path_unseen", "path_unseen", "path_unseen",
+        "verified", "path_unseen",
+    ]
+    assert briefs.parse_rendered_citations(result["markdown"], briefs.RELEVANT_HEADER) == [
+        ("actual.py", 2), ("actual.py#nested", 1),
+    ]
+    legacy = service.verify_task_brief(evidence_id, citations=[_citation("actual.py#second", 2)])
+    assert legacy["citations"][0]["status"] == "path_unseen"
+
+
+def test_prepare_keeps_canonical_evidence_when_literal_path_probe_fails(monkeypatch, tmp_path):
+    service = MCPReviewService(Settings(), MagicMock())
+    monkeypatch.setattr(service, "_resolve_repo_branch", lambda repo, branch: (repo, "main"))
+    sha = _matching_snapshot(tmp_path, "path with spaces.py")
+    monkeypatch.setattr(task_context, "build_task_context", lambda *args, **kwargs: {
+        "preflight": {"indexed_sha": sha}, "code": CODE, "test_exemplars": TEST,
+        "gaps": [], "warnings": [],
+    })
+    monkeypatch.setattr("reviewer.retrieval.git_lexical.existing_git_paths",
+                        MagicMock(side_effect=TimeoutError))
+
+    evidence_id = service.prepare_task_context(
+        "owner/repo", "task", path=str(tmp_path), warm_board=False, include_brief_evidence=True,
+    )["brief_evidence_id"]
+    result = service.verify_task_brief(evidence_id, references=[
+        _reference("path with spaces.py", 2),
+        _reference("path with spaces.py#function", 2),
+    ])
+
+    assert [record["status"] for record in result["citations"]] == ["verified", "path_unseen"]
+
+
+def test_git_evidence_saved_without_identifiers_stays_readable():
+    evidence = BriefEvidence()
+    key = evidence.save_sections({"code": {"example.py": {2}}})
+    result = BriefEvidence().verify_references(key, [
+        _reference("example.py", 2),
+        _reference("example.py#function", 2),
+    ])
+
+    assert [record["status"] for record in result["citations"]] == ["verified", "path_unseen"]
 
 
 @pytest.mark.parametrize("reason", [
