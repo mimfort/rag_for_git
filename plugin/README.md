@@ -55,7 +55,9 @@ calls запрещён. После любой начатой записи skill 
 /plugin install rag-reviewer@rag-reviewer-marketplace
 ```
 
-Или локально для разработки: `claude --plugin-dir /path/to/rag_for_git`.
+Для локальной разработки укажите `claude --plugin-dir /path/to/rag_for_git/plugin`.
+Корень репозитория также загружает скиллы и хуки из `plugin/` через
+синхронизируемый манифест `.claude-plugin/plugin.json`.
 
 ## Codex CLI
 
@@ -91,5 +93,5 @@ Reviewer-тулы доступны не только в ревью PR — их �
 ## Headless
 
 ```bash
-claude --plugin-dir . -p "/rag-reviewer:review-pr owner/repo#123 --dry-run" --permission-mode bypassPermissions
+claude --plugin-dir ./plugin -p "/rag-reviewer:review-pr owner/repo#123 --dry-run" --permission-mode bypassPermissions
 ```

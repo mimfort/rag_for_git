@@ -256,7 +256,28 @@ def test_sync_writes_project_version_into_claude_manifest(tmp_path):
     )
     assert claude["version"] == "1.2.3"
     assert claude["name"] == "rag-reviewer"
+    root_claude = json.loads(
+        (repo / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8")
+    )
+    assert root_claude == {
+        **claude,
+        "skills": "./plugin/skills/",
+        "hooks": "./plugin/hooks/hooks.json",
+    }
     assert sync_plugin_metadata(repo, check=True) == []
+
+
+def test_check_reports_stale_root_claude_manifest_without_rewriting_it(tmp_path):
+    repo = _synced_repo(tmp_path)
+    root_manifest = repo / ".claude-plugin" / "plugin.json"
+    root_manifest.parent.mkdir(exist_ok=True)
+    stale = '{"name":"rag-reviewer","version":"0.1.0"}'
+    root_manifest.write_text(stale, encoding="utf-8")
+
+    assert "root Claude manifest is not the canonical path projection" in sync_plugin_metadata(
+        repo, check=True
+    )
+    assert root_manifest.read_text(encoding="utf-8") == stale
 
 
 def test_check_reports_claude_manifest_version_drift(tmp_path):

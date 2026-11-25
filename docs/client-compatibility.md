@@ -21,7 +21,7 @@ On the same MCP connection, call `prepare_task_context` with `include_brief_evid
 }
 ```
 
-Use `test_exemplars` for the test section and take paths and line numbers from the visible excerpts. The optional role can be `read` or `edit`. The tool returns `verified`, `path_unseen`, `outside_excerpt`, or `section_unavailable` for each reference. For `render_status=ok` or `empty`, copy the returned `markdown` verbatim into the brief. An `empty` block has a valid code heading and zero references. For `invalid_format`, correct the records and retry.
+Use `test_exemplars` for the test section and take paths and line numbers from the visible excerpts. The optional role can be `read` or `edit`. The coordinate verdicts are `verified`, `path_unseen`, `outside_excerpt`, and `section_unavailable`. In reference mode, an anchored record with an unusable reason or path receives `invalid_reason` or `invalid_path`. The Markdown retains the remaining verified references in order. For `render_status=ok` or `empty`, copy the returned `markdown` verbatim into the brief. An `empty` block has a valid code heading and zero references. For `invalid_format`, correct the records and retry.
 
 Clients using the original `citations` argument can still send only `section`, `path`, and `line` and receive the verification verdicts. When evidence expires or the server restarts, check the captured visible excerpts. Verification uses an index of numbered rows from the original response.
 
