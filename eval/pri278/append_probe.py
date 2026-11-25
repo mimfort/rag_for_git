@@ -105,10 +105,9 @@ def main():
     batch = build_batch(cases, control, expanded, baseline)
     invocation = work / "luna-append-invocation"
     invocation.mkdir(exist_ok=True)
-    (invocation / "schema.json").write_text(json.dumps(briefs.SCHEMA))
+    briefs._write_json(invocation / "schema.json", briefs.SCHEMA)
     target = work / "append-batch.json"
-    if not target.exists():
-        briefs.run_batch(batch, invocation, target, prompt=PROMPT)
+    briefs.run_batch(batch, invocation, target, prompt=PROMPT)
     measured = report.read(target)
     output = summarize(batch, measured["briefs"], cases, control, expanded, baseline)
     output["usage"] = measured["usage"]
