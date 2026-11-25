@@ -76,6 +76,7 @@ def test_rejects_changed_paths():
         preserve_original_anchor(base, selected)
 
 
+@pytest.mark.integration
 def test_archived_displaced_anchors_remain_visible_together_with_candidate_windows():
     cases = _prepare(Path("eval/pri278"))
     composed = {}
