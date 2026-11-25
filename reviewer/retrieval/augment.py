@@ -20,6 +20,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from reviewer import gitutil
+from reviewer.config.committed import validate_clone
+from reviewer.services.repo_id import normalize_repo
 
 
 @dataclass(frozen=True)
@@ -45,50 +47,52 @@ class AugmentResult:
 
 
 GIT_GREP_COMMITS = 200
-"""Сколько последних коммитов просматривает фолбэк по ключу задачи."""
+"""Сколько совпавших коммитов берёт фолбэк по одному ключу задачи."""
 
 
-def _human_keys(key: str, aliases_by_key: dict[str, list[str]]) -> list[str]:
-    """Ключ и его алиасы: стор ключует ID-N, доска и git знают PRI-N."""
-    return [key, *(aliases_by_key.get(key) or [])]
-
-
-def collect_similar_task_paths(*, keys, aliases_by_key, history, clone_path,
+def collect_similar_task_paths(*, repo: str, keys: list[str],
+                               aliases_by_key: dict[str, list[str]], history,
+                               clone_path: str | None, indexed_sha: str | None,
                                limit: int) -> AugmentResult:
     """Фактические diff-пути похожих задач: история прогонов, фолбэк — git.
 
     Табличный источник точнее (пути уже классифицированы как core), но
     появляется только у задачи с опубликованным ревью и брифом. Фолбэк по
-    сообщениям коммитов даёт покрытие на репозитории без истории прогонов.
+    сообщениям коммитов читает историю до SHA индекса.
     """
     if not keys or limit <= 0:
         return AugmentResult()
-    lookup: list[str] = []
-    for key in keys:
-        lookup.extend(_human_keys(key, aliases_by_key))
+    repo = normalize_repo(repo)
+    lookup = list(dict.fromkeys(
+        alias for key in keys for alias in (key, *(aliases_by_key.get(key) or []))
+    ))
     gaps: list[str] = []
     ordered: dict[str, None] = {}
     if history is not None:
         try:
-            by_key = history.diff_paths_for_tasks(lookup)
+            by_key = history.diff_paths_for_tasks(lookup, repo=repo)
             for key in lookup:
                 for path in by_key.get(key) or []:
                     ordered.setdefault(path, None)
         except Exception as exc:  # noqa: BLE001 — источник недоступен, это штатный случай
             gaps.append(f"история прогонов недоступна: {type(exc).__name__}")
     if not ordered:
-        if clone_path:
+        clone = validate_clone(clone_path, repo) if indexed_sha else clone_path
+        if not clone:
+            gaps.append("клон недоступен, git-фолбэк пропущен")
+        elif not indexed_sha:
+            gaps.append("git-снимок индекса недоступен, git-фолбэк пропущен")
+        else:
             for key in lookup:
                 try:
                     for path in gitutil.paths_touched_by_grep(
-                            clone_path, key, limit=GIT_GREP_COMMITS):
+                            clone, key, limit=GIT_GREP_COMMITS, indexed_sha=indexed_sha):
                         ordered.setdefault(path, None)
                 except Exception as exc:  # noqa: BLE001 — сбой по одному ключу
                     # не должен лишать шанса остальные алиасы/ключи
-                    gaps.append(f"git-история недоступна: {type(exc).__name__}")
-                    continue
-        else:
-            gaps.append("клон недоступен, git-фолбэк пропущен")
+                    reason = f"git-история снимка недоступна: {type(exc).__name__}"
+                    if reason not in gaps:
+                        gaps.append(reason)
     paths = list(ordered)[:limit]
     return AugmentResult(paths=paths,
                          by_source={"similar_diffs": len(paths)} if paths else {},

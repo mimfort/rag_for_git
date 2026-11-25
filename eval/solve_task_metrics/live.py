@@ -16,6 +16,7 @@ from dataclasses import asdict
 from reviewer.app import build_components
 from reviewer.config.branches import resolve_repo_branches
 from reviewer.config.settings import Settings
+from reviewer.index.refs import base_ref
 from reviewer.mcp.service import MCPReviewService
 from reviewer.mcp.task_context import _query as production_query
 from reviewer.policy.context_limits import ContextLimits
@@ -149,7 +150,13 @@ class LiveRetrieval:
         if similar_paths:
             from reviewer.mcp.service import _TaskContextDeps
             from reviewer.retrieval.augment import AugmentSource
-            deps = _TaskContextDeps(self._service, None)
+            try:
+                indexed_sha = self._components.store.get_index_meta(repo, base_ref(branch))
+            except Exception:
+                log.warning("live: SHA индекса для similar-diffs недоступен", exc_info=True)
+                self.failures.append(f"similar-diffs: {repo}")
+                indexed_sha = None
+            deps = _TaskContextDeps(self._service, None, indexed_sha=indexed_sha)
             # Хиты похожих задач наполняются вызовом similar; первый подзапрос —
             # это и есть продакшн-запрос задачи целиком (см. _queries).
             # В проде этот вызов защищён `_safe`, здесь — нет, а с PRI-272 он

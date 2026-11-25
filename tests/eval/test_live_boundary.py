@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import pathlib
 import re
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -176,8 +177,8 @@ def test_code_multi_similar_paths_flag_uses_production_deps(monkeypatch):
     similar_calls = []
 
     class FakeDeps:
-        def __init__(self, service, path):
-            pass
+        def __init__(self, service, path, *, indexed_sha):
+            assert indexed_sha == "a" * 40
 
         def similar(self, query, project, *, task=None):
             similar_calls.append((query, project, task))
@@ -198,7 +199,9 @@ def test_code_multi_similar_paths_flag_uses_production_deps(monkeypatch):
             return ContextLimits()
 
     service = FakeService()
-    provider = LiveRetrieval(object(), object(), service)
+    components = MagicMock()
+    components.store.get_index_meta.return_value = "a" * 40
+    provider = LiveRetrieval(object(), components, service)
     task = {"key": "ID-388", "aliases": ["PRI-295"]}
     provider.code_multi("o/n", "dev", ["q1", "q2"], None, similar_paths=True, task=task)
 
@@ -206,6 +209,7 @@ def test_code_multi_similar_paths_flag_uses_production_deps(monkeypatch):
     assert len(service.captured) == 1
     assert service.captured[0].name == "similar-diffs"
     assert service.captured[0].paths == ["a.py"]
+    components.store.get_index_meta.assert_called_once_with("o/n", "base:dev")
 
 
 def test_code_multi_with_overrides_forwards_augment_signals(monkeypatch):
@@ -217,7 +221,7 @@ def test_code_multi_with_overrides_forwards_augment_signals(monkeypatch):
     from reviewer.mcp import service as service_mod
 
     class FakeDeps:
-        def __init__(self, service, path):
+        def __init__(self, service, path, *, indexed_sha):
             pass
 
         def similar(self, query, project, *, task=None):
@@ -234,6 +238,7 @@ def test_code_multi_with_overrides_forwards_augment_signals(monkeypatch):
 
     class FakeComponents:
         retriever = object()
+        store = MagicMock()
 
     captured: dict = {}
 
@@ -301,7 +306,7 @@ def test_code_multi_survives_similar_failure_but_records_it(monkeypatch):
     from reviewer.mcp import service as service_mod
 
     class FakeDeps:
-        def __init__(self, service, path):
+        def __init__(self, service, path, *, indexed_sha):
             pass
 
         def similar(self, query, project, *, task=None):
@@ -318,6 +323,7 @@ def test_code_multi_survives_similar_failure_but_records_it(monkeypatch):
 
     class FakeComponents:
         retriever = object()
+        store = MagicMock()
 
     def fake_search_multi(retriever, repo, queries, **kwargs):
         class Pack:
