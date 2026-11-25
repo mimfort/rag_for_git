@@ -42,6 +42,12 @@ class FakeStore:
     def delete_missing_symbols(self, repo, ref, path, keep_fqns):
         self.deleted_missing.append((repo, ref, path, list(keep_fqns)))
 
+    def commit_base_update(self, repo, ref, rows, *, removed_paths, kept_symbols, **_):
+        self.upsert(rows)
+        self.delete_paths(repo, ref, removed_paths)
+        for path, names in kept_symbols.items():
+            self.delete_missing_symbols(repo, ref, path, names)
+
 
 def test_build_overlay_chunks_changed_files_into_pr_ref(monkeypatch):
     files = {"a.py": "def f():\n    return 1\n"}

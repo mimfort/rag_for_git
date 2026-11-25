@@ -67,7 +67,7 @@ from reviewer.metrics.brief_quality.corpus import measure_corpus
 from reviewer.metrics.client_usage import SOURCES as USAGE_SOURCES
 from reviewer.metrics.client_usage import measure_usage
 from reviewer.policy.policy import ReviewPolicy
-from reviewer.index.store import ChunkStore
+from reviewer.index.store import ChunkStore, ConcurrentBaseUpdateError
 from reviewer.index.summary_store import SummaryStore
 from reviewer.mcp.session_store import SessionStore
 from reviewer.services.branch import resolve_branch
@@ -1055,6 +1055,7 @@ def index(repo: str, ref: str | None, branch_opt: str | None, repo_tag: str | No
     bref = base_ref(branch)
     try:
         c.store.init_schema()
+        expected_meta = c.store.get_index_meta_row(repo_id, bref)
         sha = rev_parse(repo, f"{ref}^{{commit}}")
         files = list_python_files(repo, sha)
         # strict_committed: неполный paths.ignore залил бы в индекс файлы,
@@ -1072,10 +1073,14 @@ def index(repo: str, ref: str | None, branch_opt: str | None, repo_tag: str | No
             log.warning("Слой policy пропущен: %s", warning)
         if ignore:
             files = [f for f in files if not is_ignored(f, ignore)]
-        update_base(c.store, c.embedder, repo_id, branch, files,
-                    read=lambda p: file_at_ref(repo, p, sha), ignore=ignore)
-        c.store.delete_paths_except(repo_id, bref, files)
-        c.store.set_index_meta(repo_id, bref, sha)
+        try:
+            update_base(
+                c.store, c.embedder, repo_id, branch, files,
+                read=lambda p: file_at_ref(repo, p, sha), ignore=ignore,
+                indexed_sha=sha, expected_meta=expected_meta, full_snapshot=True,
+            )
+        except ConcurrentBaseUpdateError as exc:
+            raise click.ClickException(str(exc)) from exc
         # Платформа VCS репо (PRI-133): auto-derive из git remote локального
         # клона → repo_vcs. Читается при ревью (API-only) для выбора провайдера.
         from reviewer.services.repo_id import derive_vcs_from_remote
