@@ -59,10 +59,12 @@ def _file_status(ch: dict) -> str:
 
 
 def _to_changed_file(ch: dict) -> ChangedFile:
+    status = _file_status(ch)
     return ChangedFile(
         path=ch.get("new_path") or ch.get("old_path"),
-        status=_file_status(ch),
+        status=status,
         patch=ch.get("diff") or None,
+        previous_path=ch.get("old_path") if status == "renamed" else None,
     )
 
 

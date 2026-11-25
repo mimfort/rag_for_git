@@ -31,6 +31,7 @@ class ChangedFile:
     path: str
     status: str              # added/removed/modified/renamed
     patch: str | None        # unified diff; None для слишком больших файлов
+    previous_path: str | None = None  # исходный путь при переименовании
 
 @dataclass
 class InlineComment:

@@ -244,14 +244,27 @@ class ReviewService:
             if vcs_provider is None and indexed and indexed != prq.base_sha:
                 try:
                     diff_files = vcs.compare_files(indexed, prq.base_sha)
+                    changed_paths = list(dict.fromkeys(
+                        f.path for f in diff_files if f.status != "removed"
+                    ))
+                    present_paths = set(changed_paths)
+                    removed_candidates = (
+                        f.path if f.status == "removed" else f.previous_path
+                        for f in diff_files if f.status in {"removed", "renamed"}
+                    )
+                    # Если прежний путь одновременно появился заново, обновим его.
+                    removed_paths = list(dict.fromkeys(
+                        path for path in removed_candidates
+                        if isinstance(path, str) and path and path not in present_paths
+                    ))
                     update_base(
                         self.components.store,
                         self.components.embedder,
                         repo,
                         prq.base_ref,
-                        [f.path for f in diff_files if f.status != "removed"],
+                        changed_paths,
                         read=lambda p: vcs.get_file_at_ref(p, prq.base_sha),
-                        removed_files=[f.path for f in diff_files if f.status == "removed"],
+                        removed_files=removed_paths,
                         ignore=ignore,
                     )
                     self.components.store.set_index_meta(repo, _base_ref(branch), prq.base_sha)
@@ -260,20 +273,16 @@ class ReviewService:
                         try:
                             from reviewer.services.graph_sync import patch_graph_incremental
                             changed_py: dict[str, str] = {}
-                            for f in diff_files:
-                                if f.status == "removed" or not f.path.endswith(".py"):
+                            removed_py = [path for path in removed_paths if path.endswith(".py")]
+                            for path in changed_paths:
+                                if not path.endswith(".py"):
                                     continue
-                                if is_ignored(f.path, ignore):
-                                    continue  # игнор-путь: не в граф (parity с чанками)
-                                src = vcs.get_file_at_ref(f.path, prq.base_sha)
+                                if is_ignored(path, ignore):
+                                    removed_py.append(path)
+                                    continue
+                                src = vcs.get_file_at_ref(path, prq.base_sha)
                                 if src:
-                                    changed_py[f.path] = src
-                            # removed: явно удалённые + ставшие игнор (чистим их символы из графа)
-                            removed_py = [
-                                f.path for f in diff_files
-                                if f.path.endswith(".py")
-                                and (f.status == "removed" or is_ignored(f.path, ignore))
-                            ]
+                                    changed_py[path] = src
                             patch_graph_incremental(
                                 self.components.graph, repo, branch=branch,
                                 changed_sources=changed_py, removed_paths=removed_py)

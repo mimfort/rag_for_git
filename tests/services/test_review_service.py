@@ -11,6 +11,7 @@ import subprocess
 import sys
 from unittest.mock import MagicMock, call, patch
 
+import httpx
 import pytest
 
 from reviewer.config.settings import Settings
@@ -19,6 +20,7 @@ from reviewer.vcs.base import (
     ChangedFile,
     PullRequest,
 )
+from reviewer.vcs.github import GitHubProvider
 
 
 # ---------------------------------------------------------------------------
@@ -332,6 +334,47 @@ def test_prepare_runs_base_sync_for_real_review(
 
     mock_update_base.assert_called_once()
     components.store.set_index_meta.assert_called_once_with("owner/repo", "base:main", "base123")
+
+
+@pytest.mark.parametrize(
+    ("old", "new", "old_recreated", "removed", "graph_removed"),
+    [
+        ("old.py", "new.py", False, ["old.py"], ["old.py"]),
+        ("old.py", "new.txt", False, ["old.py"], ["old.py"]),
+        ("old.txt", "new.py", False, ["old.txt"], []),
+        ("old.py", "new.py", True, [], []),
+        (None, "new.py", False, [], []),
+    ],
+)
+def test_prepare_base_sync_applies_rename_to_index_and_graph(
+    old, new, old_recreated, removed, graph_removed, settings, components,
+):
+    components.store.get_index_meta.return_value = "oldsha000"
+    files = [{"filename": new, "status": "renamed", "previous_filename": old}]
+    changed = [new]
+    if old_recreated:
+        files.append({"filename": old, "status": "added"})
+        changed.append(old)
+
+    transport = httpx.MockTransport(lambda _: httpx.Response(200, json={"files": files}))
+    with httpx.Client(transport=transport, base_url="https://api.github.com") as client:
+        provider = GitHubProvider("owner", "repo", token="test", client=client)
+        vcs = _vcs_with_files([_changed("review.py")])
+        vcs.compare_files.side_effect = provider.compare_files
+        service = ReviewService(settings, components)
+        with (
+            patch.object(service, "_create_vcs_provider", return_value=vcs),
+            patch("reviewer.services.review_service.update_base") as update_base,
+            patch("reviewer.services.graph_sync.patch_graph_incremental") as patch_graph,
+        ):
+            service.prepare("owner", "repo", 1)
+
+    assert update_base.call_args.args[4] == changed
+    assert update_base.call_args.kwargs["removed_files"] == removed
+    assert set(patch_graph.call_args.kwargs["changed_sources"]) == {
+        path for path in changed if path.endswith(".py")
+    }
+    assert patch_graph.call_args.kwargs["removed_paths"] == graph_removed
 
 
 def test_prepare_closes_internal_vcs_on_failure(
