@@ -67,9 +67,13 @@ def _visible_lines(text: str) -> dict[str, set[int]]:
     return visible
 
 
+def _is_single_line(text: str) -> bool:
+    return text.splitlines() == [text] and "\x00" not in text
+
+
 def _render_reference(reference: BriefReferenceIn) -> str:
     label = f"{reference.path}:{reference.line}"
-    if label.splitlines() != [label] or "\x00" in label:
+    if not _is_single_line(label):
         raise ValueError("A citation must fit on one line")
     fence = "`" * (1 + max((len(run) for run in _BACKTICKS.findall(label)), default=0))
     # CommonMark removes one padding space on each side, keeping the path intact.
@@ -195,17 +199,25 @@ class BriefEvidence:
         checked = self.verify(evidence_id, references)
         if checked["status"] != "ok":
             return checked
-        verified = [
-            reference for reference, verdict in zip(references, checked["citations"], strict=True)
-            if verdict["status"] == "verified"
-        ]
+        renderable = []
+        malformed = False
+        for reference, verdict in zip(references, checked["citations"], strict=True):
+            if verdict["status"] != "verified":
+                continue
+            if not _is_single_line(reference.path):
+                verdict["status"] = "invalid_path"
+            elif not reference.reason.strip() or not _is_single_line(reference.reason):
+                verdict["status"] = "invalid_reason"
+            else:
+                renderable.append(reference)
+                continue
+            malformed = True
+
+        failure = {**checked, "render_status": "invalid_format", "markdown": None}
+        if malformed and not renderable:
+            return failure
         try:
-            if any(
-                not reason.strip() or reason.splitlines() != [reason] or "\x00" in reason
-                for reason in (reference.reason for reference in references)
-            ):
-                raise ValueError("A reference reason must be a non-empty single line")
-            markdown = _render_references(verified)
+            markdown = _render_references(renderable)
         except ValueError:
-            return {**checked, "render_status": "invalid_format", "markdown": None}
-        return {**checked, "render_status": "ok" if verified else "empty", "markdown": markdown}
+            return failure
+        return {**checked, "render_status": "ok" if renderable else "empty", "markdown": markdown}

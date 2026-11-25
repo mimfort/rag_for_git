@@ -408,6 +408,8 @@ def create_server(service: MCPReviewService) -> FastMCP:
         snapshot can be verified. This call does not search again.
 
         References have a non-empty single-line reason and an optional edit/read role.
+        Anchored references with an invalid reason or path receive invalid_reason or
+        invalid_path. Remaining anchored references are rendered in order.
         This mode returns the verdicts in citations, plus render_status and markdown.
         Copy markdown verbatim for ok or empty. For invalid_format, correct the inputs
         and retry.
