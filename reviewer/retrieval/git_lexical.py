@@ -69,12 +69,14 @@ class _Git:
         oid = self._run("rev-parse", "--verify", "--end-of-options", f"{ref}^{{commit}}")
         return oid.decode("ascii").strip()
 
-    def tree(self, sha: str, paths: Sequence[str] = ()) -> bytes:
+    def tree(self, sha: str, paths: Sequence[str] = (), *, include_trees: bool = False) -> bytes:
         """Ограничить объём дерева, не запрашивая блобы из него."""
         if not _SHA.fullmatch(sha):
             raise OSError("Git tree requires a full commit SHA")
         args = [*self.command, "ls-tree", "-z", "--full-tree"]
         args.append("-r")
+        if include_trees:
+            args.append("-t")
         args.append(sha)
         if paths:
             args.extend(["--", *(f":(top,literal){path}" for path in paths)])
@@ -243,6 +245,19 @@ def read_git_blob(repo_path: str | os.PathLike[str], sha: str, path: str) -> str
         return blob[1].decode("utf-8")
     except UnicodeDecodeError as exc:
         raise OSError("Git blob is not UTF-8 text") from exc
+
+
+def existing_git_paths(
+    repo_path: str | os.PathLike[str], sha: str, paths: Sequence[str],
+) -> set[str]:
+    """Проверить буквальные пути в снимке без чтения содержимого."""
+    requested = {path.encode("utf-8"): path for path in paths}
+    if not requested:
+        return set()
+    if len(requested) > _MAX_BLOBS:
+        raise OSError("Git path check exceeds lexical search bounds")
+    tree = _Git(repo_path).tree(sha, paths, include_trees=True)
+    return {requested[raw_path] for _, _, _, raw_path in _entries(tree) if raw_path in requested}
 
 
 def read_git_blobs(
