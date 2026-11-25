@@ -1914,7 +1914,8 @@ class MCPReviewService:
                                tests_only: bool = False,
                                code_budget: dict[str, int] | None = None,
                                context_limits: "ContextLimits | None" = None,
-                               git_excerpts: "list[Retrieved] | None" = None) -> str:
+                               git_excerpts: "list[Retrieved] | None" = None,
+                               bm25_only: bool = False) -> str:
         """Мультизапросный ретрив секций контекста задачи (PRI-255).
 
         Приватный: публичный search_codebase остаётся однозапросным, чтобы
@@ -1942,9 +1943,10 @@ class MCPReviewService:
                 limits=cl.search_codebase, section_limits=cl.code_section,
                 hops=cl.graph.hops, branch=resolved, include_tests=include_tests,
                 augment_sources=augment_sources, strict=strict, tests_only=tests_only,
-                include_selection_stats=code_budget is not None, git_excerpts=git_excerpts)
+                include_selection_stats=code_budget is not None, git_excerpts=git_excerpts,
+                bm25_only=bm25_only)
         except Exception as exc:
-            if strict and is_embedder_unavailable(exc):
+            if strict and (bm25_only or is_embedder_unavailable(exc)):
                 raise
             log.warning("_search_codebase_multi: сбой поиска", exc_info=True)
             return "(ничего не найдено)"
@@ -3952,7 +3954,7 @@ class _TaskContextDeps:
                         type(exc).__name__)
             return {}
 
-    def code(self, repo: str, branch: str, queries: list[str]) -> str:
+    def code(self, repo: str, branch: str, queries: list[str], *, bm25_only: bool = False) -> str:
         from reviewer.retrieval.augment import AugmentSource
 
         paths = self._augment_paths(repo)
@@ -3964,8 +3966,15 @@ class _TaskContextDeps:
         return self._service._search_codebase_multi(
             repo, queries, branch, False, augment_sources=sources, strict=True,
             context_limits=limits, git_excerpts=excerpts, code_budget=self._code_budget,
+            bm25_only=bm25_only,
         )
 
-    def test_exemplars(self, repo: str, branch: str, queries: list) -> str:
+    def test_exemplars(self, repo: str, branch: str, queries: list, *,
+                       bm25_only: bool = False) -> str:
         return self._service._search_codebase_multi(
-            repo, queries, branch, tests_only=True, strict=True)
+            repo, queries, branch, tests_only=True, strict=True, bm25_only=bm25_only)
+
+    def lexical_search(self, repo: str, branch: str, queries: list[str], *,
+                       tests_only: bool = False) -> str:
+        search = self.test_exemplars if tests_only else self.code
+        return search(repo, branch, queries, bm25_only=True)

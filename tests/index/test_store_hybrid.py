@@ -423,3 +423,26 @@ def test_two_branch_isolation(store_and_settings):
     texts = {r.text for r in res_main}
     assert any("on_main" in text for text in texts)
     assert not any("on_master" in text for text in texts)
+
+
+@pytest.mark.integration
+def test_bm25_search_is_bounded_by_repository_branch_and_candidate_count(store_and_settings):
+    store, settings, repo, other_repo = store_and_settings
+    vector = [1.0] + [0.0] * (settings.embedding_dim - 1)
+    text = "def lexicalfixture(): pass"
+    store.upsert([
+        _row(ref, path, "lexicalfixture", text, vector, repo=owner)
+        for owner, ref, path in (
+            (repo, "base:dev", "code.py"),
+            (repo, "base:dev", "tests/test_code.py"),
+            (repo, "base:main", "other_branch.py"),
+            (repo, "pr:7", "overlay.py"),
+            (other_repo, "base:dev", "other_repo.py"),
+        )
+    ])
+
+    hits = store.bm25_search(repo, "lexicalfixture", top_k=2, base_ref="base:dev")
+
+    assert {hit.path for hit in hits} == {"code.py", "tests/test_code.py"}
+    assert all(hit.bm25_hit and hit.ann_distance is None for hit in hits)
+    assert store.bm25_search(repo, "lexicalfixture", top_k=1, base_ref="base:dev") == hits[:1]

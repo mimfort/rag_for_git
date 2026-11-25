@@ -489,6 +489,24 @@ class ChunkStore:
             )
             conn.commit()
 
+    def bm25_search(self, repo: str, query_text: str, *, top_k: int,
+                    base_ref: str) -> list[Retrieved]:
+        """Лексические кандидаты индекса ветки без вектора запроса."""
+        sql = """
+        SELECT path, symbol_fqn, kind, start_line, end_line, text, pdb.score(id) AS score
+        FROM chunks
+        WHERE repo = %s AND ref = %s AND text @@@ %s
+        ORDER BY score DESC, id ASC
+        LIMIT %s
+        """
+        with self._connect() as conn:
+            rows = conn.execute(sql, (repo, base_ref, _bm25_query(query_text), top_k)).fetchall()
+        return [
+            Retrieved(node_id=f"{path}#{symbol}", path=path, symbol_fqn=symbol, kind=kind,
+                      start_line=first, end_line=last, text=body, score=float(score), bm25_hit=True)
+            for path, symbol, kind, first, last, body, score in rows
+        ]
+
     def hybrid_search(self, repo, query_text, query_embedding, overlay_ref,
                       changed_paths, top_k=20, candidates=50, *, base_ref="base") -> list[Retrieved]:
         where = ("repo=%(repo)s AND "
