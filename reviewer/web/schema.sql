@@ -106,7 +106,8 @@ CREATE TABLE IF NOT EXISTS brief_quality (
     task_key            TEXT,
     head_sha            TEXT,
     status              TEXT        NOT NULL,   -- measured | no_task_key | no_brief
-                                                -- | brief_unreadable | empty_core_denominator
+                                                -- | brief_unreadable | brief_revision_unavailable
+                                                -- | empty_core_denominator
                                                 -- | unconfigured_core_denominator
     brief_path          TEXT,
     expected            INT         NOT NULL DEFAULT 0,

@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 import socket
+import subprocess
 import sys
 from types import FunctionType
 from typing import Any
@@ -159,6 +160,24 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
             raise pytest.UsageError(
                 f"Unit-тест {item.nodeid} не может использовать socket_enabled"
             )
+
+
+@pytest.fixture
+def commit_snapshot(tmp_path: Path):
+    """Зафиксировать содержимое временного Git-репозитория и вернуть полный SHA."""
+    def commit() -> str:
+        def git(*args: str) -> str:
+            return subprocess.check_output(
+                ["git", "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
+                 "-c", "commit.gpgsign=false", *args],
+                cwd=tmp_path, text=True,
+            ).strip()
+
+        git("init", "-q")
+        git("add", "--all")
+        git("commit", "-qm", "test snapshot", "--allow-empty")
+        return git("rev-parse", "HEAD")
+    return commit
 
 
 @pytest.fixture(autouse=True)

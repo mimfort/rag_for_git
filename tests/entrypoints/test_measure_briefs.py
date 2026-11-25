@@ -11,44 +11,87 @@ from reviewer.metrics.brief_quality.corpus import measure_corpus
 from reviewer.metrics.brief_quality.ground_truth import GitError
 
 
-def test_measure_corpus_writes_row_per_pr(tmp_path):
-    """Строка на PR-мерж, а не на задачу: два мержа одной задачи — две строки
-    с разными pr_number (а не одна строка, продублированная на оба мержа)."""
+def test_measure_corpus_writes_row_per_pr(tmp_path, commit_snapshot):
+    """Две версии брифа и два PR считаются по своим снимкам, один раз на PR."""
     briefs = tmp_path / "docs" / "superpowers" / "briefs"
     briefs.mkdir(parents=True)
     (briefs / "2026-09-01-PRI-1-x.md").write_text(
         "# Brief\n\n## Relevant code\n- `reviewer/app.py` — зачем\n", encoding="utf-8")
+    first_head = commit_snapshot()
+    (briefs / "2026-09-02-PRI-1-y.md").write_text(
+        "# Brief\n\n## Relevant code\n- `reviewer/cli.py` — зачем\n", encoding="utf-8")
+    second_head = commit_snapshot()
 
     def run_git(args):
         if args[0] == "log":
             return (
-                "abc Merge pull request #7 from o/feat/pri-1\n"
-                "def Merge pull request #9 from o/feat/pri-1-follow-up\n"
+                f"{first_head} Merge pull request #7 from o/feat/pri-1\n"
+                f"{second_head} Merge pull request #9 from o/feat/pri-1-follow-up\n"
+                f"{first_head} Merge pull request #7 from o/feat/pri-1\n"
             )
         if args[:2] == ["diff", "--name-status"]:
-            return "M\0reviewer/app.py\0"
+            path = "reviewer/app.py" if args[-1] == first_head else "reviewer/cli.py"
+            return f"M\0{path}\0"
         raise AssertionError(args)
 
     rows = []
 
-    class _History:
+    class History:
         def record_brief_quality(self, run_id, repo, pr_number, head_sha, measurement):
-            rows.append((run_id, repo, pr_number, measurement.status))
+            rows.append((pr_number, measurement.status, measurement.core_recall))
             return len(rows)
 
-    summary = measure_corpus(str(tmp_path), "o/r", DEFAULT, run_git, _History())
-    assert rows == [(None, "o/r", 7, "measured"), (None, "o/r", 9, "measured")]
-    assert summary["measured"] == 2 and summary["briefs"] == 1 and summary["rows"] == 2
+    summary = measure_corpus(str(tmp_path), "o/r", DEFAULT, run_git, History())
+    assert rows == [(7, "measured", 1.0), (9, "measured", 1.0)]
+    assert summary["measured"] == 2 and summary["briefs"] == 2 and summary["rows"] == 2
 
 
-def test_measure_corpus_preserves_existing_rows_on_failed_git_diff(tmp_path):
+def test_measure_corpus_discovers_keys_in_head_despite_worktree_edits(tmp_path, commit_snapshot):
+    briefs = tmp_path / DEFAULT.briefs_dir
+    briefs.mkdir(parents=True)
+    tracked = briefs / "2026-09-01-PRI-1-brief.md"
+    text = "# Brief\n\n## Relevant code\n- `reviewer/app.py` — зачем\n"
+    tracked.write_text(text, encoding="utf-8")
+    head = commit_snapshot()
+
+    def run_git(args):
+        if args[0] == "log":
+            assert args[-1] == "--grep=PRI-1"
+            return f"{head} Merge pull request #7 from o/feat/pri-1\n"
+        if args[:2] == ["diff", "--name-status"]:
+            return "M\0reviewer/app.py\0"
+        raise AssertionError(args)
+
+    history = MagicMock()
+    summary = measure_corpus(tmp_path, "o/r", DEFAULT, run_git, history)
+    tracked.unlink()
+    (briefs / "2026-09-01-PRI-2-draft.md").write_text(text, encoding="utf-8")
+    assert measure_corpus(tmp_path, "o/r", DEFAULT, run_git, history) == summary
+    assert summary["briefs"] == summary["rows"] == summary["measured"] == 1
+    assert history.record_brief_quality.call_count == 2
+
+
+def test_measure_corpus_reports_unavailable_head(tmp_path):
+    history = MagicMock()
+    run_git = MagicMock()
+    summary = measure_corpus(tmp_path, "o/r", DEFAULT, run_git, history)
+
+    assert summary["brief_corpus_unavailable"] == 1
+    assert summary["rows"] == 0
+    history.record_brief_quality.assert_not_called()
+    run_git.assert_not_called()
+
+
+def test_measure_corpus_preserves_existing_rows_on_failed_git_diff(tmp_path, commit_snapshot):
     briefs = tmp_path / "docs" / "superpowers" / "briefs"
     briefs.mkdir(parents=True)
     (briefs / "2026-09-01-PRI-1-x.md").write_text("# Brief\n", encoding="utf-8")
 
+    head = commit_snapshot()
+
     def run_git(args):
         if args[0] == "log":
-            return "abc Merge pull request #7 from o/feat/pri-1\n"
+            return f"{head} Merge pull request #7 from o/feat/pri-1\n"
         raise GitError("missing parent")
 
     history = MagicMock()
@@ -59,7 +102,7 @@ def test_measure_corpus_preserves_existing_rows_on_failed_git_diff(tmp_path):
     history.record_brief_quality.assert_not_called()
 
 
-def test_measure_corpus_counts_write_failures_separately(tmp_path):
+def test_measure_corpus_counts_write_failures_separately(tmp_path, commit_snapshot):
     """Сбой записи (history гасит DB-ошибку и отдаёт None) — отдельный счётчик
     write_failed, а не общий not_recorded: тот же случай, что реально бывает
     при живом Postgres в начале прогона и упавшем на середине."""
@@ -68,9 +111,11 @@ def test_measure_corpus_counts_write_failures_separately(tmp_path):
     (briefs / "2026-09-01-PRI-1-x.md").write_text(
         "# Brief\n\n## Relevant code\n- `reviewer/app.py` — зачем\n", encoding="utf-8")
 
+    head = commit_snapshot()
+
     def run_git(args):
         if args[0] == "log":
-            return "abc Merge pull request #7 from o/feat/pri-1\n"
+            return f"{head} Merge pull request #7 from o/feat/pri-1\n"
         if args[:2] == ["diff", "--name-status"]:
             return "M\0reviewer/app.py\0"
         raise AssertionError(args)
@@ -90,23 +135,26 @@ def test_measure_corpus_counts_write_failures_separately(tmp_path):
     assert "measured" not in summary
 
 
-def test_measure_corpus_skips_brief_without_key(tmp_path):
+def test_measure_corpus_skips_brief_without_key(tmp_path, commit_snapshot):
     briefs = tmp_path / "docs" / "superpowers" / "briefs"
     briefs.mkdir(parents=True)
     (briefs / "2026-09-01-no-key.md").write_text("# Brief\n", encoding="utf-8")
+    commit_snapshot()
     summary = measure_corpus(str(tmp_path), "o/r", DEFAULT, lambda args: "", None)
     assert summary["skipped_no_key"] == 1
 
 
-def test_measure_corpus_skips_task_without_pr_merges(tmp_path):
+def test_measure_corpus_skips_task_without_pr_merges(tmp_path, commit_snapshot):
     """Ключ есть, но настоящих PR-мержей нет — считается отдельно от skipped_no_key."""
     briefs = tmp_path / "docs" / "superpowers" / "briefs"
     briefs.mkdir(parents=True)
     (briefs / "2026-09-01-PRI-2-x.md").write_text("# Brief\n", encoding="utf-8")
 
+    head = commit_snapshot()
+
     def run_git(args):
         if args[0] == "log":
-            return "abc merge: dev в feature/pri-2\n"
+            return f"{head} merge: dev в feature/pri-2\n"
         raise AssertionError(args)
 
     summary = measure_corpus(str(tmp_path), "o/r", DEFAULT, run_git, None)
