@@ -6,9 +6,11 @@ limits/hops/ceiling_override в `Retriever.search_base`.
 """
 import logging
 import subprocess
+from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import psycopg
 import pytest
 
 from reviewer.config.layers import build_config_report, resolve_policy_data
@@ -694,3 +696,112 @@ def test_prepare_task_context_keeps_explicit_paths_in_their_sections_and_applies
     ]
     assert all(c.kwargs == {"base_ref": "base:dev"}
                for c in retriever.store.fetch_retrieved_at_paths.call_args_list)
+    retriever.store.fetch_retrieved_covering_lines.assert_not_called()
+
+
+@pytest.mark.parametrize(("path", "section"), [
+    ("pkg/requested.py", "code"),
+    ("tests/test_requested.py", "test_exemplars"),
+])
+def test_prepare_task_context_verifies_requested_line_after_excerpt_limit(lexical_clone, path, section):
+    policy = "context_limits: {code_section: {max_files: 1}}"
+    (lexical_clone / ".review.yml").write_text(policy, encoding="utf-8")
+    file = lexical_clone / path
+    file.parent.mkdir()
+    lines = ["def target():", *(f"    value = 'fixture value number {i}'" for i in range(80))]
+    file.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    _git(lexical_clone, "add", ".")
+    _git(lexical_clone, "commit", "-m", "Добавить запрос строки")
+    sha = _git(lexical_clone, "rev-parse", "dev")
+    s = _task_context_service(registered_clone=lexical_clone, committed_policy=policy)
+    s.components.store.get_index_meta_row.return_value = (sha, datetime.now(UTC))
+    store = s.components.retriever.store
+    item = Retrieved(f"{path}#target", path, "target", "function",
+                     1, len(lines), "\n".join(lines), 0.0, bm25_hit=True)
+    store.hybrid_search.return_value = [item]
+    store.fetch_retrieved_covering_lines.return_value = [item]
+
+    pack = s.prepare_task_context(
+        "o/r", f"Проверить поведение `{path}:70`", "dev", warm_board=False,
+        include_brief_evidence=True,
+    )
+    checked = s.verify_task_brief(pack["brief_evidence_id"], [
+        BriefCitationIn(section=section, path=path, line=70),
+        BriefCitationIn(section=section, path=path, line=82),
+    ])
+
+    assert [c["status"] for c in checked["citations"]] == ["verified", "outside_excerpt"]
+    assert f"   70 | {lines[69]}" in pack[section]
+    assert pack["brief_source_sha"] == sha
+    store.fetch_retrieved_covering_lines.assert_called_once_with("o/r", {path: 70}, base_ref="base:dev")
+
+
+@pytest.mark.parametrize(("max_files", "line", "chars_per_file"), [(2, 1, 60), (1, 10, 60), (2, 1, 975)])
+def test_prepare_task_context_verifies_explicit_line_after_rendering_limit(
+    lexical_clone, max_files, line, chars_per_file,
+):
+    policy = ("context_limits: {code_section: {"
+              f"max_files: {max_files}, chars_per_file: {chars_per_file}" "}}")
+    (lexical_clone / ".review.yml").write_text(policy, encoding="utf-8")
+    (lexical_clone / "pkg").mkdir()
+
+    def indexed_file(path, rows):
+        text = "\n".join(rows)
+        (lexical_clone / path).write_text(text + "\n", encoding="utf-8")
+        return Retrieved(f"{path}#f", path, "f", "function", 1, len(rows), text, 0.0, bm25_hit=True)
+
+    path = "pkg/target.py"
+    rows = ["answer = 42"] if line == 1 else [f"x{i} = 1000" for i in range(13)]
+    target = indexed_file(path, rows)
+    ranked = [target]
+    if max_files == 2:
+        ranked.insert(0, indexed_file("pkg/first.py", [f"x{i} = 1000" for i in range(6)]))
+    _git(lexical_clone, "add", ".")
+    _git(lexical_clone, "commit", "-m", "Добавить файлы для проверки бюджета рендера")
+    sha = _git(lexical_clone, "rev-parse", "dev")
+    service = _task_context_service(registered_clone=lexical_clone, committed_policy=policy)
+    service.components.store.get_index_meta_row.return_value = (sha, datetime.now(UTC))
+    store = service.components.retriever.store
+    store.hybrid_search.return_value = ranked
+    store.fetch_retrieved_covering_lines.return_value = [target] if line > 1 else []
+
+    path_only = service.prepare_task_context("o/r", f"Открыть `{path}`", "dev", warm_board=False)
+    pack = service.prepare_task_context(
+        "o/r", f"Открыть `{path}:{line}`", "dev", warm_board=False,
+        include_brief_evidence=True, include_code_budget=True,
+    )
+    checked = service.verify_task_brief(pack["brief_evidence_id"], [
+        BriefCitationIn(section="code", path=path, line=line),
+    ])
+
+    assert checked["citations"][0]["status"] == "verified"
+    assert f"{line:>5} | {rows[line - 1]}" in pack["code"]
+    assert pack["code"].count(f"// {path}#f") == 1
+    assert pack["code_budget"]["selected_files"] == max_files
+    assert len(pack["code"].split("\n[...truncated]", 1)[0]) <= max_files * chars_per_file * 3 // 2
+    if chars_per_file == 975:
+        assert pack["code"] == path_only["code"]
+    else:
+        assert f"{line:>5} | {rows[line - 1]}" not in path_only["code"]
+
+
+@pytest.mark.parametrize("failed", [False, True])
+def test_prepare_task_context_no_covering_line_keeps_ranked_excerpt(failed):
+    policy = "context_limits: {code_section: {max_files: 1}}"
+    s = _task_context_service(committed_policy=policy)
+    store = s.components.retriever.store
+    path = "pkg/ranked.py"
+    item = Retrieved(f"{path}#target", path, "target", "function",
+                     1, 1, "def target(): pass", 0.0, bm25_hit=True)
+    store.hybrid_search.return_value = [item]
+    if failed:
+        store.fetch_retrieved_covering_lines.side_effect = psycopg.OperationalError("connection refused")
+    else:
+        store.fetch_retrieved_covering_lines.return_value = []
+
+    pack = s.prepare_task_context("o/r", f"Проверить `{path}:999`", "dev", warm_board=False)
+    assert "def target(): pass" in pack["code"]
+    assert "999 |" not in pack["code"]
+    store.fetch_retrieved_covering_lines.assert_called_once_with("o/r", {path: 999}, base_ref="base:dev")
+    gaps = [g for g in pack["gaps"] if g["section"] == "code.explicit_lines"]
+    assert [g["cause"] for g in gaps] == (["storage_unavailable"] if failed else [])

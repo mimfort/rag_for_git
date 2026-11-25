@@ -91,6 +91,17 @@ def _select_degraded_context(hybrid_items: list, graph_items: list, ceiling: int
     return hybrid_items[:ceiling]
 
 
+def _render_block(item, *, line_numbers: bool) -> str:
+    header = f"// {item.node_id} ({item.path}:{item.start_line}-{item.end_line})"
+    body = item.text
+    if line_numbers:
+        body = "\n".join(
+            f"{item.start_line + i:>5} | {line}"
+            for i, line in enumerate(body.split("\n"))
+        )
+    return f"{header}\n{body}"
+
+
 @dataclass
 class ContextPack:
     items: list
@@ -102,18 +113,7 @@ class ContextPack:
     selection_stats: dict[str, int] | None = None
 
     def as_context(self, line_numbers: bool = False) -> str:
-        parts = []
-        for it in self.items:
-            header = f"// {it.node_id} ({it.path}:{it.start_line}-{it.end_line})"
-            if line_numbers:
-                body = "\n".join(
-                    f"{it.start_line + i:>5} | {line}"
-                    for i, line in enumerate(it.text.split("\n"))
-                )
-            else:
-                body = it.text
-            parts.append(f"{header}\n{body}")
-        text = "\n\n".join(parts)
+        text = "\n\n".join(_render_block(it, line_numbers=line_numbers) for it in self.items)
         limit = 0
         if self.max_chars > 0:
             limit = self.max_chars

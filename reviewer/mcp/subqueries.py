@@ -20,6 +20,7 @@ _HEADING_RE = re.compile(r"^ {0,3}(#{1,6})[ \t]+")
 _ITEM_RE = re.compile(r"^([ \t]*)(?:[-*+]|\d+[.)])[ \t]+(.*\S)\s*$")
 _FENCE_RE = re.compile(r"^\s*(`{3,}|~{3,})(.*)$")
 _TOKEN_RE = re.compile(r"[\w./-]+")
+_LINE_SUFFIX_RE = re.compile(r":([1-9][0-9]{0,8})(?![\w:-]|\.\w)")
 _URL_RE = re.compile(r"(?:[a-z][a-z0-9+.-]*://|www\.)[^\s`<>()]+", re.IGNORECASE)
 _FILE_SUFFIXES = frozenset(
     "cfg css csv html ini js json jsonl jsx lock md proto py pyi rst sql svg "
@@ -152,26 +153,37 @@ def _without_reference_sections(description: str) -> Iterator[str]:
             yield line
 
 
-def explicit_python_paths(task: dict | None, free_text: str) -> list[str]:
-    """Относительные Git-пути из постановки и критериев, в порядке упоминания."""
+def explicit_python_locations(task: dict | None, free_text: str) -> dict[str, int | None]:
+    """Относительные Git-пути, для каждого сохраняется первая явная координата."""
     if task:
-        text = [
+        lines = [
             str(task.get("title") or ""),
             *_without_reference_sections(str(task.get("description") or "")),
             *(str(criterion) for criterion in task.get("criteria") or []),
         ]
     else:
-        text = [free_text]
-    paths: dict[str, None] = {}
-    for token in _tokens(text):
-        path = token.removeprefix("./")
-        if ("/" not in token or not path.endswith(".py")
-                or any(part in ("", ".", "..") for part in path.split("/"))):
-            continue
-        paths.setdefault(path, None)
-        if len(paths) == MAX_IDENTIFIERS:
-            break
-    return list(paths)
+        lines = [free_text]
+    locations: dict[str, int | None] = {}
+    for raw in lines:
+        line = _URL_RE.sub(" ", raw)
+        for match in _TOKEN_RE.finditer(line):
+            token = match[0].rstrip(".")
+            path = token.removeprefix("./")
+            if ("/" not in token or not path.endswith(".py")
+                    or any(part in ("", ".", "..") for part in path.split("/"))):
+                continue
+            if path not in locations and len(locations) == MAX_IDENTIFIERS:
+                continue
+            if locations.setdefault(path, None) is None:
+                number = _LINE_SUFFIX_RE.match(line, match.end())
+                if number and match[0] == token:
+                    locations[path] = int(number[1])
+    return locations
+
+
+def explicit_python_paths(task: dict | None, free_text: str) -> list[str]:
+    """Относительные Git-пути из постановки и критериев, в порядке упоминания."""
+    return list(explicit_python_locations(task, free_text))
 
 
 def _identifiers(lines: list[str], queries: list[str]) -> list[str]:
