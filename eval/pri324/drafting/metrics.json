@@ -1,0 +1,4855 @@
+{
+  "requirements": [
+    {
+      "corpus": "PRI-278",
+      "size": "large",
+      "condition": "baseline",
+      "repeat": 1,
+      "elapsed_s": 40.599,
+      "usage": {
+        "input_tokens": 48250,
+        "cached_input_tokens": 0,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 1801,
+        "reasoning_output_tokens": 0
+      },
+      "totals": {
+        "core": 21,
+        "core_total": 84,
+        "dep": 3,
+        "dep_total": 11,
+        "paths": 27,
+        "labelled": 24,
+        "invalid": 7,
+        "git_rejects": 0,
+        "missing": 0,
+        "median_core": 0.21739130434782608
+      },
+      "tasks": [
+        {
+          "key": "PRI-196",
+          "core": 2,
+          "core_total": 10,
+          "dep": 1,
+          "dep_total": 1,
+          "paths": 4,
+          "labelled": 3,
+          "invalid": 2,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/mcp/service.py",
+            "reviewer/tasks/boards/base.py",
+            "reviewer/tasks/service.py",
+            "reviewer/tasks/sync.py"
+          ]
+        },
+        {
+          "key": "PRI-215",
+          "core": 7,
+          "core_total": 20,
+          "dep": 0,
+          "dep_total": 2,
+          "paths": 7,
+          "labelled": 7,
+          "invalid": 1,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/config/settings.py",
+            "reviewer/mcp/service.py",
+            "reviewer/policy/policy.py",
+            "reviewer/tasks/boards/__init__.py",
+            "reviewer/tasks/boards/base.py",
+            "reviewer/tasks/boards/yougile.py",
+            "reviewer/tasks/boards/youtrack.py"
+          ]
+        },
+        {
+          "key": "PRI-223",
+          "core": 5,
+          "core_total": 23,
+          "dep": 2,
+          "dep_total": 3,
+          "paths": 7,
+          "labelled": 7,
+          "invalid": 1,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/config/provider_credentials.py",
+            "reviewer/config/settings.py",
+            "reviewer/entrypoints/cli.py",
+            "reviewer/install.py",
+            "reviewer/services/review_service.py",
+            "reviewer/tasks/boards/github.py",
+            "reviewer/tasks/boards/kaiten.py"
+          ]
+        },
+        {
+          "key": "PRI-225",
+          "core": 1,
+          "core_total": 19,
+          "dep": 0,
+          "dep_total": 3,
+          "paths": 2,
+          "labelled": 1,
+          "invalid": 3,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/policy/policy.py",
+            "reviewer/tasks/boards/base.py"
+          ]
+        },
+        {
+          "key": "PRI-257",
+          "core": 6,
+          "core_total": 12,
+          "dep": 0,
+          "dep_total": 2,
+          "paths": 7,
+          "labelled": 6,
+          "invalid": 0,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/graph/store.py",
+            "reviewer/index/store.py",
+            "reviewer/mcp/service.py",
+            "reviewer/policy/context_limits.py",
+            "reviewer/retrieval/multiquery.py",
+            "reviewer/retrieval/retriever.py",
+            "reviewer/tasks/service.py"
+          ]
+        }
+      ]
+    },
+    {
+      "corpus": "PRI-278",
+      "size": "large",
+      "condition": "requirements",
+      "repeat": 1,
+      "elapsed_s": 44.204,
+      "usage": {
+        "input_tokens": 48415,
+        "cached_input_tokens": 12928,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 2089,
+        "reasoning_output_tokens": 0
+      },
+      "totals": {
+        "core": 20,
+        "core_total": 84,
+        "dep": 3,
+        "dep_total": 11,
+        "paths": 27,
+        "labelled": 23,
+        "invalid": 9,
+        "git_rejects": 0,
+        "missing": 0,
+        "median_core": 0.21739130434782608
+      },
+      "tasks": [
+        {
+          "key": "PRI-196",
+          "core": 1,
+          "core_total": 10,
+          "dep": 1,
+          "dep_total": 1,
+          "paths": 3,
+          "labelled": 2,
+          "invalid": 3,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/mcp/service.py",
+            "reviewer/tasks/boards/base.py",
+            "reviewer/tasks/sync.py"
+          ]
+        },
+        {
+          "key": "PRI-215",
+          "core": 6,
+          "core_total": 20,
+          "dep": 0,
+          "dep_total": 2,
+          "paths": 6,
+          "labelled": 6,
+          "invalid": 4,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/mcp/service.py",
+            "reviewer/tasks/boards/__init__.py",
+            "reviewer/tasks/boards/base.py",
+            "reviewer/tasks/boards/yougile.py",
+            "reviewer/tasks/boards/youtrack.py",
+            "reviewer/tasks/sync.py"
+          ]
+        },
+        {
+          "key": "PRI-223",
+          "core": 5,
+          "core_total": 23,
+          "dep": 2,
+          "dep_total": 3,
+          "paths": 8,
+          "labelled": 7,
+          "invalid": 1,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/config/provider_credentials.py",
+            "reviewer/config/settings.py",
+            "reviewer/entrypoints/cli.py",
+            "reviewer/install.py",
+            "reviewer/services/review_service.py",
+            "reviewer/tasks/boards/base.py",
+            "reviewer/tasks/boards/github.py",
+            "reviewer/tasks/boards/kaiten.py"
+          ]
+        },
+        {
+          "key": "PRI-225",
+          "core": 2,
+          "core_total": 19,
+          "dep": 0,
+          "dep_total": 3,
+          "paths": 3,
+          "labelled": 2,
+          "invalid": 1,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/policy/policy.py",
+            "reviewer/tasks/boards/base.py",
+            "reviewer/tasks/boards/linear.py"
+          ]
+        },
+        {
+          "key": "PRI-257",
+          "core": 6,
+          "core_total": 12,
+          "dep": 0,
+          "dep_total": 2,
+          "paths": 7,
+          "labelled": 6,
+          "invalid": 0,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/graph/store.py",
+            "reviewer/index/store.py",
+            "reviewer/mcp/service.py",
+            "reviewer/policy/context_limits.py",
+            "reviewer/retrieval/multiquery.py",
+            "reviewer/retrieval/retriever.py",
+            "reviewer/tasks/service.py"
+          ]
+        }
+      ]
+    },
+    {
+      "corpus": "PRI-278",
+      "size": "large",
+      "condition": "baseline",
+      "repeat": 2,
+      "elapsed_s": 36.039,
+      "usage": {
+        "input_tokens": 48280,
+        "cached_input_tokens": 0,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 1639,
+        "reasoning_output_tokens": 0
+      },
+      "totals": {
+        "core": 20,
+        "core_total": 84,
+        "dep": 2,
+        "dep_total": 11,
+        "paths": 25,
+        "labelled": 22,
+        "invalid": 6,
+        "git_rejects": 0,
+        "missing": 0,
+        "median_core": 0.21739130434782608
+      },
+      "tasks": [
+        {
+          "key": "PRI-196",
+          "core": 2,
+          "core_total": 10,
+          "dep": 1,
+          "dep_total": 1,
+          "paths": 3,
+          "labelled": 3,
+          "invalid": 2,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/tasks/boards/base.py",
+            "reviewer/tasks/service.py",
+            "reviewer/tasks/sync.py"
+          ]
+        },
+        {
+          "key": "PRI-215",
+          "core": 6,
+          "core_total": 20,
+          "dep": 0,
+          "dep_total": 2,
+          "paths": 6,
+          "labelled": 6,
+          "invalid": 2,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/config/settings.py",
+            "reviewer/mcp/service.py",
+            "reviewer/tasks/boards/__init__.py",
+            "reviewer/tasks/boards/base.py",
+            "reviewer/tasks/boards/yougile.py",
+            "reviewer/tasks/boards/youtrack.py"
+          ]
+        },
+        {
+          "key": "PRI-223",
+          "core": 5,
+          "core_total": 23,
+          "dep": 1,
+          "dep_total": 3,
+          "paths": 6,
+          "labelled": 6,
+          "invalid": 0,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/config/provider_credentials.py",
+            "reviewer/entrypoints/cli.py",
+            "reviewer/install.py",
+            "reviewer/services/review_service.py",
+            "reviewer/tasks/boards/github.py",
+            "reviewer/tasks/boards/kaiten.py"
+          ]
+        },
+        {
+          "key": "PRI-225",
+          "core": 1,
+          "core_total": 19,
+          "dep": 0,
+          "dep_total": 3,
+          "paths": 3,
+          "labelled": 1,
+          "invalid": 2,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/config/settings.py",
+            "reviewer/policy/policy.py",
+            "reviewer/tasks/boards/base.py"
+          ]
+        },
+        {
+          "key": "PRI-257",
+          "core": 6,
+          "core_total": 12,
+          "dep": 0,
+          "dep_total": 2,
+          "paths": 7,
+          "labelled": 6,
+          "invalid": 0,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/graph/store.py",
+            "reviewer/index/store.py",
+            "reviewer/mcp/service.py",
+            "reviewer/policy/context_limits.py",
+            "reviewer/retrieval/multiquery.py",
+            "reviewer/retrieval/retriever.py",
+            "reviewer/tasks/service.py"
+          ]
+        }
+      ]
+    },
+    {
+      "corpus": "PRI-278",
+      "size": "large",
+      "condition": "requirements",
+      "repeat": 2,
+      "elapsed_s": 47.856,
+      "usage": {
+        "input_tokens": 48385,
+        "cached_input_tokens": 12928,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 2122,
+        "reasoning_output_tokens": 0
+      },
+      "totals": {
+        "core": 18,
+        "core_total": 84,
+        "dep": 3,
+        "dep_total": 11,
+        "paths": 27,
+        "labelled": 21,
+        "invalid": 9,
+        "git_rejects": 0,
+        "missing": 0,
+        "median_core": 0.2
+      },
+      "tasks": [
+        {
+          "key": "PRI-196",
+          "core": 2,
+          "core_total": 10,
+          "dep": 1,
+          "dep_total": 1,
+          "paths": 4,
+          "labelled": 3,
+          "invalid": 2,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/mcp/service.py",
+            "reviewer/tasks/boards/base.py",
+            "reviewer/tasks/service.py",
+            "reviewer/tasks/sync.py"
+          ]
+        },
+        {
+          "key": "PRI-215",
+          "core": 4,
+          "core_total": 20,
+          "dep": 0,
+          "dep_total": 2,
+          "paths": 5,
+          "labelled": 4,
+          "invalid": 3,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/mcp/service.py",
+            "reviewer/mcp/session_store.py",
+            "reviewer/tasks/boards/__init__.py",
+            "reviewer/tasks/boards/base.py",
+            "reviewer/tasks/sync.py"
+          ]
+        },
+        {
+          "key": "PRI-223",
+          "core": 3,
+          "core_total": 23,
+          "dep": 2,
+          "dep_total": 3,
+          "paths": 5,
+          "labelled": 5,
+          "invalid": 3,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/config/provider_credentials.py",
+            "reviewer/config/settings.py",
+            "reviewer/entrypoints/cli.py",
+            "reviewer/install.py",
+            "reviewer/services/review_service.py"
+          ]
+        },
+        {
+          "key": "PRI-225",
+          "core": 2,
+          "core_total": 19,
+          "dep": 0,
+          "dep_total": 3,
+          "paths": 3,
+          "labelled": 2,
+          "invalid": 1,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/policy/policy.py",
+            "reviewer/tasks/boards/base.py",
+            "reviewer/tasks/boards/linear.py"
+          ]
+        },
+        {
+          "key": "PRI-257",
+          "core": 7,
+          "core_total": 12,
+          "dep": 0,
+          "dep_total": 2,
+          "paths": 10,
+          "labelled": 7,
+          "invalid": 0,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/gitutil.py",
+            "reviewer/graph/store.py",
+            "reviewer/index/refs.py",
+            "reviewer/index/store.py",
+            "reviewer/mcp/service.py",
+            "reviewer/policy/context_limits.py",
+            "reviewer/retrieval/multiquery.py",
+            "reviewer/retrieval/retriever.py",
+            "reviewer/services/review_service.py",
+            "reviewer/tasks/service.py"
+          ]
+        }
+      ]
+    },
+    {
+      "corpus": "PRI-278",
+      "size": "ordinary",
+      "condition": "baseline",
+      "repeat": 1,
+      "elapsed_s": 28.205,
+      "usage": {
+        "input_tokens": 42993,
+        "cached_input_tokens": 0,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 1196,
+        "reasoning_output_tokens": 0
+      },
+      "totals": {
+        "core": 10,
+        "core_total": 20,
+        "dep": 1,
+        "dep_total": 9,
+        "paths": 17,
+        "labelled": 11,
+        "invalid": 5,
+        "git_rejects": 0,
+        "missing": 0,
+        "median_core": 0.6333333333333333
+      },
+      "tasks": [
+        {
+          "key": "PRI-228",
+          "core": 3,
+          "core_total": 4,
+          "dep": 1,
+          "dep_total": 2,
+          "paths": 5,
+          "labelled": 4,
+          "invalid": 1,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/app.py",
+            "reviewer/index/embeddings.py",
+            "reviewer/index/freshness.py",
+            "reviewer/install.py",
+            "reviewer/tasks/service.py"
+          ]
+        },
+        {
+          "key": "PRI-235",
+          "core": 3,
+          "core_total": 5,
+          "dep": 0,
+          "dep_total": 2,
+          "paths": 3,
+          "labelled": 3,
+          "invalid": 2,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/config/layers.py",
+            "reviewer/entrypoints/cli.py",
+            "reviewer/mcp/service.py"
+          ]
+        },
+        {
+          "key": "PRI-238",
+          "core": 2,
+          "core_total": 3,
+          "dep": 0,
+          "dep_total": 3,
+          "paths": 5,
+          "labelled": 2,
+          "invalid": 1,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/entrypoints/mcp_server.py",
+            "reviewer/mcp/service.py",
+            "reviewer/tasks/boards/clickup.py",
+            "reviewer/tasks/boards/linear.py",
+            "reviewer/tasks/boards/yandex_tracker.py"
+          ]
+        },
+        {
+          "key": "PRI-239",
+          "core": 2,
+          "core_total": 8,
+          "dep": 0,
+          "dep_total": 2,
+          "paths": 4,
+          "labelled": 2,
+          "invalid": 1,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/entrypoints/mcp_server.py",
+            "reviewer/mcp/service.py",
+            "reviewer/services/repo_id.py",
+            "reviewer/tasks/boards/github.py"
+          ]
+        }
+      ]
+    },
+    {
+      "corpus": "PRI-278",
+      "size": "ordinary",
+      "condition": "requirements",
+      "repeat": 1,
+      "elapsed_s": 29.554,
+      "usage": {
+        "input_tokens": 43126,
+        "cached_input_tokens": 0,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 1175,
+        "reasoning_output_tokens": 0
+      },
+      "totals": {
+        "core": 8,
+        "core_total": 20,
+        "dep": 0,
+        "dep_total": 9,
+        "paths": 13,
+        "labelled": 8,
+        "invalid": 4,
+        "git_rejects": 0,
+        "missing": 0,
+        "median_core": 0.45
+      },
+      "tasks": [
+        {
+          "key": "PRI-228",
+          "core": 2,
+          "core_total": 4,
+          "dep": 0,
+          "dep_total": 2,
+          "paths": 2,
+          "labelled": 2,
+          "invalid": 0,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/app.py",
+            "reviewer/index/embeddings.py"
+          ]
+        },
+        {
+          "key": "PRI-235",
+          "core": 2,
+          "core_total": 5,
+          "dep": 0,
+          "dep_total": 2,
+          "paths": 3,
+          "labelled": 2,
+          "invalid": 4,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/config/layers.py",
+            "reviewer/entrypoints/cli.py",
+            "reviewer/entrypoints/mcp_server.py"
+          ]
+        },
+        {
+          "key": "PRI-238",
+          "core": 2,
+          "core_total": 3,
+          "dep": 0,
+          "dep_total": 3,
+          "paths": 5,
+          "labelled": 2,
+          "invalid": 0,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/entrypoints/mcp_server.py",
+            "reviewer/mcp/service.py",
+            "reviewer/tasks/boards/clickup.py",
+            "reviewer/tasks/boards/linear.py",
+            "reviewer/tasks/boards/yandex_tracker.py"
+          ]
+        },
+        {
+          "key": "PRI-239",
+          "core": 2,
+          "core_total": 8,
+          "dep": 0,
+          "dep_total": 2,
+          "paths": 3,
+          "labelled": 2,
+          "invalid": 0,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/entrypoints/mcp_server.py",
+            "reviewer/mcp/service.py",
+            "reviewer/tasks/boards/github.py"
+          ]
+        }
+      ]
+    },
+    {
+      "corpus": "PRI-278",
+      "size": "ordinary",
+      "condition": "baseline",
+      "repeat": 2,
+      "elapsed_s": 25.993,
+      "usage": {
+        "input_tokens": 42983,
+        "cached_input_tokens": 19712,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 1021,
+        "reasoning_output_tokens": 0
+      },
+      "totals": {
+        "core": 9,
+        "core_total": 20,
+        "dep": 0,
+        "dep_total": 9,
+        "paths": 11,
+        "labelled": 9,
+        "invalid": 3,
+        "git_rejects": 0,
+        "missing": 0,
+        "median_core": 0.55
+      },
+      "tasks": [
+        {
+          "key": "PRI-228",
+          "core": 2,
+          "core_total": 4,
+          "dep": 0,
+          "dep_total": 2,
+          "paths": 2,
+          "labelled": 2,
+          "invalid": 0,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/app.py",
+            "reviewer/index/embeddings.py"
+          ]
+        },
+        {
+          "key": "PRI-235",
+          "core": 3,
+          "core_total": 5,
+          "dep": 0,
+          "dep_total": 2,
+          "paths": 4,
+          "labelled": 3,
+          "invalid": 3,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/config/layers.py",
+            "reviewer/config/settings.py",
+            "reviewer/entrypoints/cli.py",
+            "reviewer/mcp/service.py"
+          ]
+        },
+        {
+          "key": "PRI-238",
+          "core": 2,
+          "core_total": 3,
+          "dep": 0,
+          "dep_total": 3,
+          "paths": 2,
+          "labelled": 2,
+          "invalid": 0,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/entrypoints/mcp_server.py",
+            "reviewer/mcp/service.py"
+          ]
+        },
+        {
+          "key": "PRI-239",
+          "core": 2,
+          "core_total": 8,
+          "dep": 0,
+          "dep_total": 2,
+          "paths": 3,
+          "labelled": 2,
+          "invalid": 0,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/entrypoints/mcp_server.py",
+            "reviewer/mcp/service.py",
+            "reviewer/tasks/boards/github.py"
+          ]
+        }
+      ]
+    },
+    {
+      "corpus": "PRI-278",
+      "size": "ordinary",
+      "condition": "requirements",
+      "repeat": 2,
+      "elapsed_s": 23.854,
+      "usage": {
+        "input_tokens": 43148,
+        "cached_input_tokens": 0,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 932,
+        "reasoning_output_tokens": 0
+      },
+      "totals": {
+        "core": 9,
+        "core_total": 20,
+        "dep": 0,
+        "dep_total": 9,
+        "paths": 10,
+        "labelled": 9,
+        "invalid": 3,
+        "git_rejects": 0,
+        "missing": 0,
+        "median_core": 0.55
+      },
+      "tasks": [
+        {
+          "key": "PRI-228",
+          "core": 2,
+          "core_total": 4,
+          "dep": 0,
+          "dep_total": 2,
+          "paths": 2,
+          "labelled": 2,
+          "invalid": 0,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/app.py",
+            "reviewer/index/embeddings.py"
+          ]
+        },
+        {
+          "key": "PRI-235",
+          "core": 3,
+          "core_total": 5,
+          "dep": 0,
+          "dep_total": 2,
+          "paths": 3,
+          "labelled": 3,
+          "invalid": 3,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/config/layers.py",
+            "reviewer/entrypoints/cli.py",
+            "reviewer/mcp/service.py"
+          ]
+        },
+        {
+          "key": "PRI-238",
+          "core": 2,
+          "core_total": 3,
+          "dep": 0,
+          "dep_total": 3,
+          "paths": 2,
+          "labelled": 2,
+          "invalid": 0,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/entrypoints/mcp_server.py",
+            "reviewer/mcp/service.py"
+          ]
+        },
+        {
+          "key": "PRI-239",
+          "core": 2,
+          "core_total": 8,
+          "dep": 0,
+          "dep_total": 2,
+          "paths": 3,
+          "labelled": 2,
+          "invalid": 0,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/entrypoints/mcp_server.py",
+            "reviewer/mcp/service.py",
+            "reviewer/tasks/boards/github.py"
+          ]
+        }
+      ]
+    },
+    {
+      "corpus": "PRI-283",
+      "size": "large",
+      "condition": "baseline",
+      "repeat": 1,
+      "elapsed_s": 29.731,
+      "usage": {
+        "input_tokens": 37234,
+        "cached_input_tokens": 0,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 1145,
+        "reasoning_output_tokens": 0
+      },
+      "totals": {
+        "core": 13,
+        "core_total": 36,
+        "dep": 2,
+        "dep_total": 7,
+        "paths": 17,
+        "labelled": 15,
+        "invalid": 1,
+        "git_rejects": 0,
+        "missing": 0,
+        "median_core": 0.4
+      },
+      "tasks": [
+        {
+          "key": "PRI-170",
+          "core": 7,
+          "core_total": 15,
+          "dep": 0,
+          "dep_total": 2,
+          "paths": 7,
+          "labelled": 7,
+          "invalid": 1,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/mcp/service.py",
+            "reviewer/tasks/boards/base.py",
+            "reviewer/tasks/boards/yougile.py",
+            "reviewer/tasks/boards/youtrack.py",
+            "reviewer/tasks/graph.py",
+            "reviewer/tasks/service.py",
+            "reviewer/tasks/sync.py"
+          ]
+        },
+        {
+          "key": "PRI-202",
+          "core": 2,
+          "core_total": 11,
+          "dep": 1,
+          "dep_total": 2,
+          "paths": 4,
+          "labelled": 3,
+          "invalid": 0,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/app.py",
+            "reviewer/config/settings.py",
+            "reviewer/mcp/service.py",
+            "reviewer/retrieval/retriever.py"
+          ]
+        },
+        {
+          "key": "PRI-221",
+          "core": 4,
+          "core_total": 10,
+          "dep": 1,
+          "dep_total": 3,
+          "paths": 6,
+          "labelled": 5,
+          "invalid": 0,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/config/provider_credentials.py",
+            "reviewer/config/settings.py",
+            "reviewer/entrypoints/cli.py",
+            "reviewer/mcp/service.py",
+            "reviewer/mcp/session_serde.py",
+            "reviewer/policy/policy.py"
+          ]
+        }
+      ]
+    },
+    {
+      "corpus": "PRI-283",
+      "size": "large",
+      "condition": "requirements",
+      "repeat": 1,
+      "elapsed_s": 24.598,
+      "usage": {
+        "input_tokens": 37390,
+        "cached_input_tokens": 12928,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 997,
+        "reasoning_output_tokens": 0
+      },
+      "totals": {
+        "core": 11,
+        "core_total": 36,
+        "dep": 2,
+        "dep_total": 7,
+        "paths": 15,
+        "labelled": 13,
+        "invalid": 1,
+        "git_rejects": 0,
+        "missing": 0,
+        "median_core": 0.3333333333333333
+      },
+      "tasks": [
+        {
+          "key": "PRI-170",
+          "core": 5,
+          "core_total": 15,
+          "dep": 0,
+          "dep_total": 2,
+          "paths": 5,
+          "labelled": 5,
+          "invalid": 1,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/tasks/boards/yougile.py",
+            "reviewer/tasks/boards/youtrack.py",
+            "reviewer/tasks/graph.py",
+            "reviewer/tasks/service.py",
+            "reviewer/tasks/sync.py"
+          ]
+        },
+        {
+          "key": "PRI-202",
+          "core": 2,
+          "core_total": 11,
+          "dep": 1,
+          "dep_total": 2,
+          "paths": 4,
+          "labelled": 3,
+          "invalid": 0,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/app.py",
+            "reviewer/config/settings.py",
+            "reviewer/mcp/service.py",
+            "reviewer/retrieval/retriever.py"
+          ]
+        },
+        {
+          "key": "PRI-221",
+          "core": 4,
+          "core_total": 10,
+          "dep": 1,
+          "dep_total": 3,
+          "paths": 6,
+          "labelled": 5,
+          "invalid": 0,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/config/provider_credentials.py",
+            "reviewer/config/settings.py",
+            "reviewer/entrypoints/cli.py",
+            "reviewer/mcp/service.py",
+            "reviewer/mcp/session_serde.py",
+            "reviewer/policy/policy.py"
+          ]
+        }
+      ]
+    },
+    {
+      "corpus": "PRI-283",
+      "size": "large",
+      "condition": "baseline",
+      "repeat": 2,
+      "elapsed_s": 36.039,
+      "usage": {
+        "input_tokens": 37264,
+        "cached_input_tokens": 19840,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 1573,
+        "reasoning_output_tokens": 0
+      },
+      "totals": {
+        "core": 14,
+        "core_total": 36,
+        "dep": 3,
+        "dep_total": 7,
+        "paths": 23,
+        "labelled": 17,
+        "invalid": 9,
+        "git_rejects": 0,
+        "missing": 0,
+        "median_core": 0.4
+      },
+      "tasks": [
+        {
+          "key": "PRI-170",
+          "core": 8,
+          "core_total": 15,
+          "dep": 1,
+          "dep_total": 2,
+          "paths": 12,
+          "labelled": 9,
+          "invalid": 5,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/config/settings.py",
+            "reviewer/entrypoints/mcp_server.py",
+            "reviewer/index/store.py",
+            "reviewer/mcp/service.py",
+            "reviewer/mcp/session_serde.py",
+            "reviewer/services/review_service.py",
+            "reviewer/tasks/boards/base.py",
+            "reviewer/tasks/boards/yougile.py",
+            "reviewer/tasks/boards/youtrack.py",
+            "reviewer/tasks/graph.py",
+            "reviewer/tasks/service.py",
+            "reviewer/tasks/sync.py"
+          ]
+        },
+        {
+          "key": "PRI-202",
+          "core": 2,
+          "core_total": 11,
+          "dep": 1,
+          "dep_total": 2,
+          "paths": 4,
+          "labelled": 3,
+          "invalid": 3,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/config/settings.py",
+            "reviewer/entrypoints/cli.py",
+            "reviewer/mcp/service.py",
+            "reviewer/retrieval/retriever.py"
+          ]
+        },
+        {
+          "key": "PRI-221",
+          "core": 4,
+          "core_total": 10,
+          "dep": 1,
+          "dep_total": 3,
+          "paths": 7,
+          "labelled": 5,
+          "invalid": 1,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/config/provider_credentials.py",
+            "reviewer/config/settings.py",
+            "reviewer/entrypoints/cli.py",
+            "reviewer/mcp/service.py",
+            "reviewer/mcp/session_serde.py",
+            "reviewer/policy/policy.py",
+            "reviewer/tasks/boards/__init__.py"
+          ]
+        }
+      ]
+    },
+    {
+      "corpus": "PRI-283",
+      "size": "large",
+      "condition": "requirements",
+      "repeat": 2,
+      "elapsed_s": 33.159,
+      "usage": {
+        "input_tokens": 37369,
+        "cached_input_tokens": 0,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 1370,
+        "reasoning_output_tokens": 0
+      },
+      "totals": {
+        "core": 14,
+        "core_total": 36,
+        "dep": 3,
+        "dep_total": 7,
+        "paths": 21,
+        "labelled": 17,
+        "invalid": 1,
+        "git_rejects": 0,
+        "missing": 0,
+        "median_core": 0.4
+      },
+      "tasks": [
+        {
+          "key": "PRI-170",
+          "core": 8,
+          "core_total": 15,
+          "dep": 0,
+          "dep_total": 2,
+          "paths": 8,
+          "labelled": 8,
+          "invalid": 1,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/entrypoints/mcp_server.py",
+            "reviewer/mcp/service.py",
+            "reviewer/tasks/boards/base.py",
+            "reviewer/tasks/boards/yougile.py",
+            "reviewer/tasks/boards/youtrack.py",
+            "reviewer/tasks/graph.py",
+            "reviewer/tasks/service.py",
+            "reviewer/tasks/sync.py"
+          ]
+        },
+        {
+          "key": "PRI-202",
+          "core": 2,
+          "core_total": 11,
+          "dep": 1,
+          "dep_total": 2,
+          "paths": 4,
+          "labelled": 3,
+          "invalid": 0,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/app.py",
+            "reviewer/config/settings.py",
+            "reviewer/mcp/service.py",
+            "reviewer/retrieval/retriever.py"
+          ]
+        },
+        {
+          "key": "PRI-221",
+          "core": 4,
+          "core_total": 10,
+          "dep": 2,
+          "dep_total": 3,
+          "paths": 9,
+          "labelled": 6,
+          "invalid": 0,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/config/provider_credentials.py",
+            "reviewer/config/settings.py",
+            "reviewer/entrypoints/cli.py",
+            "reviewer/entrypoints/mcp_server.py",
+            "reviewer/mcp/service.py",
+            "reviewer/mcp/session_serde.py",
+            "reviewer/mcp/session_store.py",
+            "reviewer/policy/policy.py",
+            "reviewer/tasks/boards/__init__.py"
+          ]
+        }
+      ]
+    },
+    {
+      "corpus": "PRI-283",
+      "size": "ordinary",
+      "condition": "baseline",
+      "repeat": 1,
+      "elapsed_s": 31.565,
+      "usage": {
+        "input_tokens": 38563,
+        "cached_input_tokens": 0,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 1387,
+        "reasoning_output_tokens": 0
+      },
+      "totals": {
+        "core": 16,
+        "core_total": 25,
+        "dep": 2,
+        "dep_total": 12,
+        "paths": 24,
+        "labelled": 18,
+        "invalid": 2,
+        "git_rejects": 0,
+        "missing": 0,
+        "median_core": 0.6333333333333333
+      },
+      "tasks": [
+        {
+          "key": "PRI-179",
+          "core": 3,
+          "core_total": 5,
+          "dep": 1,
+          "dep_total": 3,
+          "paths": 8,
+          "labelled": 4,
+          "invalid": 0,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/app.py",
+            "reviewer/entrypoints/mcp_server.py",
+            "reviewer/graph/scip.py",
+            "reviewer/graph/store.py",
+            "reviewer/mcp/service.py",
+            "reviewer/retrieval/retriever.py",
+            "reviewer/tasks/graph.py",
+            "reviewer/tasks/service.py"
+          ]
+        },
+        {
+          "key": "PRI-205",
+          "core": 5,
+          "core_total": 7,
+          "dep": 0,
+          "dep_total": 3,
+          "paths": 7,
+          "labelled": 5,
+          "invalid": 0,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/entrypoints/mcp_server.py",
+            "reviewer/mcp/service.py",
+            "reviewer/tasks/boards/__init__.py",
+            "reviewer/tasks/boards/base.py",
+            "reviewer/tasks/boards/yougile.py",
+            "reviewer/tasks/boards/youtrack.py",
+            "reviewer/tasks/sync.py"
+          ]
+        },
+        {
+          "key": "PRI-207",
+          "core": 4,
+          "core_total": 6,
+          "dep": 0,
+          "dep_total": 3,
+          "paths": 4,
+          "labelled": 4,
+          "invalid": 0,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/tasks/boards/base.py",
+            "reviewer/tasks/service.py",
+            "reviewer/tasks/store.py",
+            "reviewer/tasks/sync.py"
+          ]
+        },
+        {
+          "key": "PRI-213",
+          "core": 4,
+          "core_total": 7,
+          "dep": 1,
+          "dep_total": 3,
+          "paths": 5,
+          "labelled": 5,
+          "invalid": 2,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/mcp/service.py",
+            "reviewer/tasks/boards/base.py",
+            "reviewer/tasks/boards/yougile.py",
+            "reviewer/tasks/boards/youtrack.py",
+            "reviewer/tasks/service.py"
+          ]
+        }
+      ]
+    },
+    {
+      "corpus": "PRI-283",
+      "size": "ordinary",
+      "condition": "requirements",
+      "repeat": 1,
+      "elapsed_s": 33.891,
+      "usage": {
+        "input_tokens": 38439,
+        "cached_input_tokens": 0,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 1402,
+        "reasoning_output_tokens": 0
+      },
+      "totals": {
+        "core": 13,
+        "core_total": 25,
+        "dep": 2,
+        "dep_total": 12,
+        "paths": 19,
+        "labelled": 15,
+        "invalid": 3,
+        "git_rejects": 0,
+        "missing": 0,
+        "median_core": 0.5333333333333333
+      },
+      "tasks": [
+        {
+          "key": "PRI-179",
+          "core": 2,
+          "core_total": 5,
+          "dep": 1,
+          "dep_total": 3,
+          "paths": 6,
+          "labelled": 3,
+          "invalid": 0,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/app.py",
+            "reviewer/graph/scip.py",
+            "reviewer/graph/store.py",
+            "reviewer/mcp/service.py",
+            "reviewer/retrieval/retriever.py",
+            "reviewer/tasks/graph.py"
+          ]
+        },
+        {
+          "key": "PRI-205",
+          "core": 5,
+          "core_total": 7,
+          "dep": 0,
+          "dep_total": 3,
+          "paths": 6,
+          "labelled": 5,
+          "invalid": 0,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/entrypoints/mcp_server.py",
+            "reviewer/mcp/service.py",
+            "reviewer/tasks/boards/__init__.py",
+            "reviewer/tasks/boards/base.py",
+            "reviewer/tasks/boards/yougile.py",
+            "reviewer/tasks/boards/youtrack.py"
+          ]
+        },
+        {
+          "key": "PRI-207",
+          "core": 4,
+          "core_total": 6,
+          "dep": 0,
+          "dep_total": 3,
+          "paths": 4,
+          "labelled": 4,
+          "invalid": 0,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/tasks/boards/base.py",
+            "reviewer/tasks/service.py",
+            "reviewer/tasks/store.py",
+            "reviewer/tasks/sync.py"
+          ]
+        },
+        {
+          "key": "PRI-213",
+          "core": 2,
+          "core_total": 7,
+          "dep": 1,
+          "dep_total": 3,
+          "paths": 3,
+          "labelled": 3,
+          "invalid": 3,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/tasks/boards/base.py",
+            "reviewer/tasks/boards/yougile.py",
+            "reviewer/tasks/service.py"
+          ]
+        }
+      ]
+    },
+    {
+      "corpus": "PRI-283",
+      "size": "ordinary",
+      "condition": "baseline",
+      "repeat": 2,
+      "elapsed_s": 36.195,
+      "usage": {
+        "input_tokens": 38533,
+        "cached_input_tokens": 0,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 1552,
+        "reasoning_output_tokens": 0
+      },
+      "totals": {
+        "core": 14,
+        "core_total": 25,
+        "dep": 2,
+        "dep_total": 12,
+        "paths": 25,
+        "labelled": 16,
+        "invalid": 4,
+        "git_rejects": 0,
+        "missing": 0,
+        "median_core": 0.6333333333333333
+      },
+      "tasks": [
+        {
+          "key": "PRI-179",
+          "core": 3,
+          "core_total": 5,
+          "dep": 1,
+          "dep_total": 3,
+          "paths": 9,
+          "labelled": 4,
+          "invalid": 0,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/app.py",
+            "reviewer/entrypoints/cli.py",
+            "reviewer/entrypoints/mcp_server.py",
+            "reviewer/graph/scip.py",
+            "reviewer/graph/store.py",
+            "reviewer/mcp/service.py",
+            "reviewer/retrieval/retriever.py",
+            "reviewer/tasks/graph.py",
+            "reviewer/tasks/service.py"
+          ]
+        },
+        {
+          "key": "PRI-205",
+          "core": 5,
+          "core_total": 7,
+          "dep": 0,
+          "dep_total": 3,
+          "paths": 7,
+          "labelled": 5,
+          "invalid": 0,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/entrypoints/mcp_server.py",
+            "reviewer/mcp/service.py",
+            "reviewer/tasks/boards/__init__.py",
+            "reviewer/tasks/boards/base.py",
+            "reviewer/tasks/boards/yougile.py",
+            "reviewer/tasks/boards/youtrack.py",
+            "reviewer/tasks/sync.py"
+          ]
+        },
+        {
+          "key": "PRI-207",
+          "core": 4,
+          "core_total": 6,
+          "dep": 0,
+          "dep_total": 3,
+          "paths": 6,
+          "labelled": 4,
+          "invalid": 0,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/index/freshness.py",
+            "reviewer/index/store.py",
+            "reviewer/tasks/boards/base.py",
+            "reviewer/tasks/service.py",
+            "reviewer/tasks/store.py",
+            "reviewer/tasks/sync.py"
+          ]
+        },
+        {
+          "key": "PRI-213",
+          "core": 2,
+          "core_total": 7,
+          "dep": 1,
+          "dep_total": 3,
+          "paths": 3,
+          "labelled": 3,
+          "invalid": 4,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/mcp/service.py",
+            "reviewer/tasks/boards/base.py",
+            "reviewer/tasks/service.py"
+          ]
+        }
+      ]
+    },
+    {
+      "corpus": "PRI-283",
+      "size": "ordinary",
+      "condition": "requirements",
+      "repeat": 2,
+      "elapsed_s": 30.237,
+      "usage": {
+        "input_tokens": 38469,
+        "cached_input_tokens": 0,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 1276,
+        "reasoning_output_tokens": 0
+      },
+      "totals": {
+        "core": 12,
+        "core_total": 25,
+        "dep": 1,
+        "dep_total": 12,
+        "paths": 19,
+        "labelled": 13,
+        "invalid": 3,
+        "git_rejects": 0,
+        "missing": 0,
+        "median_core": 0.45
+      },
+      "tasks": [
+        {
+          "key": "PRI-179",
+          "core": 2,
+          "core_total": 5,
+          "dep": 0,
+          "dep_total": 3,
+          "paths": 5,
+          "labelled": 2,
+          "invalid": 0,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/graph/store.py",
+            "reviewer/mcp/service.py",
+            "reviewer/retrieval/retriever.py",
+            "reviewer/tasks/graph.py",
+            "reviewer/tasks/service.py"
+          ]
+        },
+        {
+          "key": "PRI-205",
+          "core": 5,
+          "core_total": 7,
+          "dep": 0,
+          "dep_total": 3,
+          "paths": 6,
+          "labelled": 5,
+          "invalid": 0,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/entrypoints/mcp_server.py",
+            "reviewer/mcp/service.py",
+            "reviewer/tasks/boards/__init__.py",
+            "reviewer/tasks/boards/base.py",
+            "reviewer/tasks/boards/yougile.py",
+            "reviewer/tasks/boards/youtrack.py"
+          ]
+        },
+        {
+          "key": "PRI-207",
+          "core": 3,
+          "core_total": 6,
+          "dep": 0,
+          "dep_total": 3,
+          "paths": 5,
+          "labelled": 3,
+          "invalid": 0,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/index/freshness.py",
+            "reviewer/index/store.py",
+            "reviewer/tasks/boards/base.py",
+            "reviewer/tasks/store.py",
+            "reviewer/tasks/sync.py"
+          ]
+        },
+        {
+          "key": "PRI-213",
+          "core": 2,
+          "core_total": 7,
+          "dep": 1,
+          "dep_total": 3,
+          "paths": 3,
+          "labelled": 3,
+          "invalid": 3,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/mcp/service.py",
+            "reviewer/tasks/boards/base.py",
+            "reviewer/tasks/service.py"
+          ]
+        }
+      ]
+    }
+  ],
+  "anchor_copy": [
+    {
+      "corpus": "PRI-278",
+      "size": "large",
+      "condition": "baseline",
+      "repeat": 1,
+      "elapsed_s": 39.341,
+      "usage": {
+        "input_tokens": 48248,
+        "cached_input_tokens": 19712,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 1730,
+        "reasoning_output_tokens": 0
+      },
+      "totals": {
+        "core": 20,
+        "core_total": 84,
+        "dep": 3,
+        "dep_total": 11,
+        "paths": 27,
+        "labelled": 23,
+        "invalid": 6,
+        "git_rejects": 0,
+        "missing": 0,
+        "median_core": 0.25
+      },
+      "tasks": [
+        {
+          "key": "PRI-196",
+          "core": 3,
+          "core_total": 10,
+          "dep": 1,
+          "dep_total": 1,
+          "paths": 4,
+          "labelled": 4,
+          "invalid": 2,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/app.py",
+            "reviewer/tasks/boards/base.py",
+            "reviewer/tasks/service.py",
+            "reviewer/tasks/sync.py"
+          ]
+        },
+        {
+          "key": "PRI-215",
+          "core": 5,
+          "core_total": 20,
+          "dep": 0,
+          "dep_total": 2,
+          "paths": 5,
+          "labelled": 5,
+          "invalid": 2,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/config/settings.py",
+            "reviewer/mcp/service.py",
+            "reviewer/tasks/boards/__init__.py",
+            "reviewer/tasks/boards/base.py",
+            "reviewer/tasks/sync.py"
+          ]
+        },
+        {
+          "key": "PRI-223",
+          "core": 5,
+          "core_total": 23,
+          "dep": 2,
+          "dep_total": 3,
+          "paths": 7,
+          "labelled": 7,
+          "invalid": 1,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/config/provider_credentials.py",
+            "reviewer/config/settings.py",
+            "reviewer/entrypoints/cli.py",
+            "reviewer/install.py",
+            "reviewer/services/review_service.py",
+            "reviewer/tasks/boards/github.py",
+            "reviewer/tasks/boards/kaiten.py"
+          ]
+        },
+        {
+          "key": "PRI-225",
+          "core": 1,
+          "core_total": 19,
+          "dep": 0,
+          "dep_total": 3,
+          "paths": 3,
+          "labelled": 1,
+          "invalid": 1,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/config/settings.py",
+            "reviewer/policy/policy.py",
+            "reviewer/tasks/boards/base.py"
+          ]
+        },
+        {
+          "key": "PRI-257",
+          "core": 6,
+          "core_total": 12,
+          "dep": 0,
+          "dep_total": 2,
+          "paths": 8,
+          "labelled": 6,
+          "invalid": 0,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/graph/store.py",
+            "reviewer/index/reranker.py",
+            "reviewer/index/store.py",
+            "reviewer/mcp/service.py",
+            "reviewer/policy/context_limits.py",
+            "reviewer/retrieval/multiquery.py",
+            "reviewer/retrieval/retriever.py",
+            "reviewer/tasks/service.py"
+          ]
+        }
+      ]
+    },
+    {
+      "corpus": "PRI-278",
+      "size": "large",
+      "condition": "anchor_copy",
+      "repeat": 1,
+      "elapsed_s": 40.912,
+      "usage": {
+        "input_tokens": 48378,
+        "cached_input_tokens": 12928,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 1853,
+        "reasoning_output_tokens": 0
+      },
+      "totals": {
+        "core": 19,
+        "core_total": 84,
+        "dep": 3,
+        "dep_total": 11,
+        "paths": 26,
+        "labelled": 22,
+        "invalid": 8,
+        "git_rejects": 0,
+        "missing": 0,
+        "median_core": 0.21739130434782608
+      },
+      "tasks": [
+        {
+          "key": "PRI-196",
+          "core": 1,
+          "core_total": 10,
+          "dep": 1,
+          "dep_total": 1,
+          "paths": 2,
+          "labelled": 2,
+          "invalid": 3,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/tasks/boards/base.py",
+            "reviewer/tasks/sync.py"
+          ]
+        },
+        {
+          "key": "PRI-215",
+          "core": 6,
+          "core_total": 20,
+          "dep": 0,
+          "dep_total": 2,
+          "paths": 6,
+          "labelled": 6,
+          "invalid": 2,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/mcp/service.py",
+            "reviewer/tasks/boards/__init__.py",
+            "reviewer/tasks/boards/base.py",
+            "reviewer/tasks/boards/yougile.py",
+            "reviewer/tasks/boards/youtrack.py",
+            "reviewer/tasks/sync.py"
+          ]
+        },
+        {
+          "key": "PRI-223",
+          "core": 5,
+          "core_total": 23,
+          "dep": 2,
+          "dep_total": 3,
+          "paths": 7,
+          "labelled": 7,
+          "invalid": 1,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/config/provider_credentials.py",
+            "reviewer/config/settings.py",
+            "reviewer/entrypoints/cli.py",
+            "reviewer/install.py",
+            "reviewer/services/review_service.py",
+            "reviewer/tasks/boards/github.py",
+            "reviewer/tasks/boards/kaiten.py"
+          ]
+        },
+        {
+          "key": "PRI-225",
+          "core": 2,
+          "core_total": 19,
+          "dep": 0,
+          "dep_total": 3,
+          "paths": 3,
+          "labelled": 2,
+          "invalid": 2,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/mcp/service.py",
+            "reviewer/policy/policy.py",
+            "reviewer/tasks/boards/base.py"
+          ]
+        },
+        {
+          "key": "PRI-257",
+          "core": 5,
+          "core_total": 12,
+          "dep": 0,
+          "dep_total": 2,
+          "paths": 8,
+          "labelled": 5,
+          "invalid": 0,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/graph/store.py",
+            "reviewer/index/embeddings.py",
+            "reviewer/index/reranker.py",
+            "reviewer/index/store.py",
+            "reviewer/policy/context_limits.py",
+            "reviewer/retrieval/multiquery.py",
+            "reviewer/retrieval/retriever.py",
+            "reviewer/tasks/service.py"
+          ]
+        }
+      ]
+    },
+    {
+      "corpus": "PRI-278",
+      "size": "large",
+      "condition": "baseline",
+      "repeat": 2,
+      "elapsed_s": 42.304,
+      "usage": {
+        "input_tokens": 48269,
+        "cached_input_tokens": 12928,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 1962,
+        "reasoning_output_tokens": 0
+      },
+      "totals": {
+        "core": 22,
+        "core_total": 84,
+        "dep": 3,
+        "dep_total": 11,
+        "paths": 30,
+        "labelled": 25,
+        "invalid": 8,
+        "git_rejects": 0,
+        "missing": 0,
+        "median_core": 0.35
+      },
+      "tasks": [
+        {
+          "key": "PRI-196",
+          "core": 4,
+          "core_total": 10,
+          "dep": 1,
+          "dep_total": 1,
+          "paths": 6,
+          "labelled": 5,
+          "invalid": 2,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/app.py",
+            "reviewer/entrypoints/mcp_server.py",
+            "reviewer/mcp/service.py",
+            "reviewer/tasks/boards/base.py",
+            "reviewer/tasks/service.py",
+            "reviewer/tasks/sync.py"
+          ]
+        },
+        {
+          "key": "PRI-215",
+          "core": 7,
+          "core_total": 20,
+          "dep": 0,
+          "dep_total": 2,
+          "paths": 7,
+          "labelled": 7,
+          "invalid": 4,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/config/settings.py",
+            "reviewer/mcp/service.py",
+            "reviewer/tasks/boards/__init__.py",
+            "reviewer/tasks/boards/base.py",
+            "reviewer/tasks/boards/yougile.py",
+            "reviewer/tasks/boards/youtrack.py",
+            "reviewer/tasks/sync.py"
+          ]
+        },
+        {
+          "key": "PRI-223",
+          "core": 5,
+          "core_total": 23,
+          "dep": 2,
+          "dep_total": 3,
+          "paths": 8,
+          "labelled": 7,
+          "invalid": 1,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/config/provider_credentials.py",
+            "reviewer/config/settings.py",
+            "reviewer/entrypoints/cli.py",
+            "reviewer/install.py",
+            "reviewer/services/review_service.py",
+            "reviewer/tasks/boards/base.py",
+            "reviewer/tasks/boards/github.py",
+            "reviewer/tasks/boards/kaiten.py"
+          ]
+        },
+        {
+          "key": "PRI-225",
+          "core": 1,
+          "core_total": 19,
+          "dep": 0,
+          "dep_total": 3,
+          "paths": 3,
+          "labelled": 1,
+          "invalid": 1,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/config/settings.py",
+            "reviewer/policy/policy.py",
+            "reviewer/tasks/boards/base.py"
+          ]
+        },
+        {
+          "key": "PRI-257",
+          "core": 5,
+          "core_total": 12,
+          "dep": 0,
+          "dep_total": 2,
+          "paths": 6,
+          "labelled": 5,
+          "invalid": 0,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/graph/store.py",
+            "reviewer/index/store.py",
+            "reviewer/mcp/service.py",
+            "reviewer/policy/context_limits.py",
+            "reviewer/retrieval/multiquery.py",
+            "reviewer/retrieval/retriever.py"
+          ]
+        }
+      ]
+    },
+    {
+      "corpus": "PRI-278",
+      "size": "large",
+      "condition": "anchor_copy",
+      "repeat": 2,
+      "elapsed_s": 51.828,
+      "usage": {
+        "input_tokens": 48386,
+        "cached_input_tokens": 0,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 1752,
+        "reasoning_output_tokens": 0
+      },
+      "totals": {
+        "core": 20,
+        "core_total": 84,
+        "dep": 3,
+        "dep_total": 11,
+        "paths": 27,
+        "labelled": 23,
+        "invalid": 5,
+        "git_rejects": 0,
+        "missing": 0,
+        "median_core": 0.21739130434782608
+      },
+      "tasks": [
+        {
+          "key": "PRI-196",
+          "core": 2,
+          "core_total": 10,
+          "dep": 1,
+          "dep_total": 1,
+          "paths": 3,
+          "labelled": 3,
+          "invalid": 2,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/tasks/boards/base.py",
+            "reviewer/tasks/service.py",
+            "reviewer/tasks/sync.py"
+          ]
+        },
+        {
+          "key": "PRI-215",
+          "core": 6,
+          "core_total": 20,
+          "dep": 0,
+          "dep_total": 2,
+          "paths": 6,
+          "labelled": 6,
+          "invalid": 2,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/mcp/service.py",
+            "reviewer/tasks/boards/__init__.py",
+            "reviewer/tasks/boards/base.py",
+            "reviewer/tasks/boards/yougile.py",
+            "reviewer/tasks/boards/youtrack.py",
+            "reviewer/tasks/sync.py"
+          ]
+        },
+        {
+          "key": "PRI-223",
+          "core": 5,
+          "core_total": 23,
+          "dep": 2,
+          "dep_total": 3,
+          "paths": 7,
+          "labelled": 7,
+          "invalid": 0,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/config/provider_credentials.py",
+            "reviewer/config/settings.py",
+            "reviewer/entrypoints/cli.py",
+            "reviewer/install.py",
+            "reviewer/services/review_service.py",
+            "reviewer/tasks/boards/github.py",
+            "reviewer/tasks/boards/kaiten.py"
+          ]
+        },
+        {
+          "key": "PRI-225",
+          "core": 1,
+          "core_total": 19,
+          "dep": 0,
+          "dep_total": 3,
+          "paths": 3,
+          "labelled": 1,
+          "invalid": 1,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/config/settings.py",
+            "reviewer/policy/policy.py",
+            "reviewer/tasks/boards/base.py"
+          ]
+        },
+        {
+          "key": "PRI-257",
+          "core": 6,
+          "core_total": 12,
+          "dep": 0,
+          "dep_total": 2,
+          "paths": 8,
+          "labelled": 6,
+          "invalid": 0,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/graph/store.py",
+            "reviewer/index/reranker.py",
+            "reviewer/index/store.py",
+            "reviewer/mcp/service.py",
+            "reviewer/policy/context_limits.py",
+            "reviewer/retrieval/multiquery.py",
+            "reviewer/retrieval/retriever.py",
+            "reviewer/tasks/service.py"
+          ]
+        }
+      ]
+    },
+    {
+      "corpus": "PRI-278",
+      "size": "ordinary",
+      "condition": "baseline",
+      "repeat": 1,
+      "elapsed_s": 24.791,
+      "usage": {
+        "input_tokens": 43011,
+        "cached_input_tokens": 12928,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 1044,
+        "reasoning_output_tokens": 0
+      },
+      "totals": {
+        "core": 9,
+        "core_total": 20,
+        "dep": 0,
+        "dep_total": 9,
+        "paths": 14,
+        "labelled": 9,
+        "invalid": 3,
+        "git_rejects": 0,
+        "missing": 0,
+        "median_core": 0.55
+      },
+      "tasks": [
+        {
+          "key": "PRI-228",
+          "core": 2,
+          "core_total": 4,
+          "dep": 0,
+          "dep_total": 2,
+          "paths": 3,
+          "labelled": 2,
+          "invalid": 0,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/app.py",
+            "reviewer/index/embeddings.py",
+            "reviewer/tasks/service.py"
+          ]
+        },
+        {
+          "key": "PRI-235",
+          "core": 3,
+          "core_total": 5,
+          "dep": 0,
+          "dep_total": 2,
+          "paths": 3,
+          "labelled": 3,
+          "invalid": 3,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/config/layers.py",
+            "reviewer/entrypoints/cli.py",
+            "reviewer/mcp/service.py"
+          ]
+        },
+        {
+          "key": "PRI-238",
+          "core": 2,
+          "core_total": 3,
+          "dep": 0,
+          "dep_total": 3,
+          "paths": 5,
+          "labelled": 2,
+          "invalid": 0,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/entrypoints/mcp_server.py",
+            "reviewer/mcp/service.py",
+            "reviewer/tasks/boards/clickup.py",
+            "reviewer/tasks/boards/linear.py",
+            "reviewer/tasks/boards/yandex_tracker.py"
+          ]
+        },
+        {
+          "key": "PRI-239",
+          "core": 2,
+          "core_total": 8,
+          "dep": 0,
+          "dep_total": 2,
+          "paths": 3,
+          "labelled": 2,
+          "invalid": 0,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/entrypoints/mcp_server.py",
+            "reviewer/mcp/service.py",
+            "reviewer/tasks/boards/github.py"
+          ]
+        }
+      ]
+    },
+    {
+      "corpus": "PRI-278",
+      "size": "ordinary",
+      "condition": "anchor_copy",
+      "repeat": 1,
+      "elapsed_s": 27.72,
+      "usage": {
+        "input_tokens": 43101,
+        "cached_input_tokens": 12928,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 1130,
+        "reasoning_output_tokens": 0
+      },
+      "totals": {
+        "core": 9,
+        "core_total": 20,
+        "dep": 1,
+        "dep_total": 9,
+        "paths": 15,
+        "labelled": 10,
+        "invalid": 4,
+        "git_rejects": 0,
+        "missing": 0,
+        "median_core": 0.55
+      },
+      "tasks": [
+        {
+          "key": "PRI-228",
+          "core": 2,
+          "core_total": 4,
+          "dep": 1,
+          "dep_total": 2,
+          "paths": 4,
+          "labelled": 3,
+          "invalid": 0,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/app.py",
+            "reviewer/index/embeddings.py",
+            "reviewer/index/freshness.py",
+            "reviewer/tasks/service.py"
+          ]
+        },
+        {
+          "key": "PRI-235",
+          "core": 3,
+          "core_total": 5,
+          "dep": 0,
+          "dep_total": 2,
+          "paths": 3,
+          "labelled": 3,
+          "invalid": 3,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/config/layers.py",
+            "reviewer/entrypoints/cli.py",
+            "reviewer/mcp/service.py"
+          ]
+        },
+        {
+          "key": "PRI-238",
+          "core": 2,
+          "core_total": 3,
+          "dep": 0,
+          "dep_total": 3,
+          "paths": 5,
+          "labelled": 2,
+          "invalid": 0,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/entrypoints/mcp_server.py",
+            "reviewer/mcp/service.py",
+            "reviewer/tasks/boards/clickup.py",
+            "reviewer/tasks/boards/linear.py",
+            "reviewer/tasks/boards/yandex_tracker.py"
+          ]
+        },
+        {
+          "key": "PRI-239",
+          "core": 2,
+          "core_total": 8,
+          "dep": 0,
+          "dep_total": 2,
+          "paths": 3,
+          "labelled": 2,
+          "invalid": 1,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/entrypoints/mcp_server.py",
+            "reviewer/mcp/service.py",
+            "reviewer/tasks/boards/github.py"
+          ]
+        }
+      ]
+    },
+    {
+      "corpus": "PRI-278",
+      "size": "ordinary",
+      "condition": "baseline",
+      "repeat": 2,
+      "elapsed_s": 41.247,
+      "usage": {
+        "input_tokens": 42833,
+        "cached_input_tokens": 12928,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 1051,
+        "reasoning_output_tokens": 0
+      },
+      "totals": {
+        "core": 8,
+        "core_total": 20,
+        "dep": 0,
+        "dep_total": 9,
+        "paths": 14,
+        "labelled": 8,
+        "invalid": 3,
+        "git_rejects": 0,
+        "missing": 0,
+        "median_core": 0.45
+      },
+      "tasks": [
+        {
+          "key": "PRI-228",
+          "core": 2,
+          "core_total": 4,
+          "dep": 0,
+          "dep_total": 2,
+          "paths": 2,
+          "labelled": 2,
+          "invalid": 0,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/app.py",
+            "reviewer/index/embeddings.py"
+          ]
+        },
+        {
+          "key": "PRI-235",
+          "core": 2,
+          "core_total": 5,
+          "dep": 0,
+          "dep_total": 2,
+          "paths": 4,
+          "labelled": 2,
+          "invalid": 3,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/config/layers.py",
+            "reviewer/config/settings.py",
+            "reviewer/entrypoints/cli.py",
+            "reviewer/entrypoints/mcp_server.py"
+          ]
+        },
+        {
+          "key": "PRI-238",
+          "core": 2,
+          "core_total": 3,
+          "dep": 0,
+          "dep_total": 3,
+          "paths": 5,
+          "labelled": 2,
+          "invalid": 0,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/entrypoints/mcp_server.py",
+            "reviewer/mcp/service.py",
+            "reviewer/tasks/boards/clickup.py",
+            "reviewer/tasks/boards/linear.py",
+            "reviewer/tasks/boards/yandex_tracker.py"
+          ]
+        },
+        {
+          "key": "PRI-239",
+          "core": 2,
+          "core_total": 8,
+          "dep": 0,
+          "dep_total": 2,
+          "paths": 3,
+          "labelled": 2,
+          "invalid": 0,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/entrypoints/mcp_server.py",
+            "reviewer/mcp/service.py",
+            "reviewer/tasks/boards/github.py"
+          ]
+        }
+      ]
+    },
+    {
+      "corpus": "PRI-278",
+      "size": "ordinary",
+      "condition": "anchor_copy",
+      "repeat": 2,
+      "elapsed_s": 22.539,
+      "usage": {
+        "input_tokens": 43131,
+        "cached_input_tokens": 0,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 861,
+        "reasoning_output_tokens": 0
+      },
+      "totals": {
+        "core": 9,
+        "core_total": 20,
+        "dep": 0,
+        "dep_total": 9,
+        "paths": 9,
+        "labelled": 9,
+        "invalid": 2,
+        "git_rejects": 0,
+        "missing": 0,
+        "median_core": 0.55
+      },
+      "tasks": [
+        {
+          "key": "PRI-228",
+          "core": 2,
+          "core_total": 4,
+          "dep": 0,
+          "dep_total": 2,
+          "paths": 2,
+          "labelled": 2,
+          "invalid": 0,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/app.py",
+            "reviewer/index/embeddings.py"
+          ]
+        },
+        {
+          "key": "PRI-235",
+          "core": 3,
+          "core_total": 5,
+          "dep": 0,
+          "dep_total": 2,
+          "paths": 3,
+          "labelled": 3,
+          "invalid": 1,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/config/layers.py",
+            "reviewer/entrypoints/cli.py",
+            "reviewer/mcp/service.py"
+          ]
+        },
+        {
+          "key": "PRI-238",
+          "core": 2,
+          "core_total": 3,
+          "dep": 0,
+          "dep_total": 3,
+          "paths": 2,
+          "labelled": 2,
+          "invalid": 1,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/entrypoints/mcp_server.py",
+            "reviewer/mcp/service.py"
+          ]
+        },
+        {
+          "key": "PRI-239",
+          "core": 2,
+          "core_total": 8,
+          "dep": 0,
+          "dep_total": 2,
+          "paths": 2,
+          "labelled": 2,
+          "invalid": 0,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/entrypoints/mcp_server.py",
+            "reviewer/mcp/service.py"
+          ]
+        }
+      ]
+    },
+    {
+      "corpus": "PRI-283",
+      "size": "large",
+      "condition": "baseline",
+      "repeat": 1,
+      "elapsed_s": 39.714,
+      "usage": {
+        "input_tokens": 37242,
+        "cached_input_tokens": 0,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 1586,
+        "reasoning_output_tokens": 0
+      },
+      "totals": {
+        "core": 15,
+        "core_total": 36,
+        "dep": 3,
+        "dep_total": 7,
+        "paths": 31,
+        "labelled": 18,
+        "invalid": 2,
+        "git_rejects": 0,
+        "missing": 0,
+        "median_core": 0.4
+      },
+      "tasks": [
+        {
+          "key": "PRI-170",
+          "core": 8,
+          "core_total": 15,
+          "dep": 1,
+          "dep_total": 2,
+          "paths": 15,
+          "labelled": 9,
+          "invalid": 2,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/app.py",
+            "reviewer/config/settings.py",
+            "reviewer/entrypoints/mcp_server.py",
+            "reviewer/graph/backend.py",
+            "reviewer/graph/scip.py",
+            "reviewer/index/store.py",
+            "reviewer/mcp/service.py",
+            "reviewer/mcp/session_serde.py",
+            "reviewer/services/review_service.py",
+            "reviewer/tasks/boards/base.py",
+            "reviewer/tasks/boards/yougile.py",
+            "reviewer/tasks/boards/youtrack.py",
+            "reviewer/tasks/graph.py",
+            "reviewer/tasks/service.py",
+            "reviewer/tasks/sync.py"
+          ]
+        },
+        {
+          "key": "PRI-202",
+          "core": 3,
+          "core_total": 11,
+          "dep": 1,
+          "dep_total": 2,
+          "paths": 8,
+          "labelled": 4,
+          "invalid": 0,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/app.py",
+            "reviewer/config/settings.py",
+            "reviewer/entrypoints/cli.py",
+            "reviewer/graph/store.py",
+            "reviewer/index/reranker.py",
+            "reviewer/mcp/service.py",
+            "reviewer/retrieval/retriever.py",
+            "reviewer/tools/code_tools.py"
+          ]
+        },
+        {
+          "key": "PRI-221",
+          "core": 4,
+          "core_total": 10,
+          "dep": 1,
+          "dep_total": 3,
+          "paths": 8,
+          "labelled": 5,
+          "invalid": 0,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/config/provider_credentials.py",
+            "reviewer/config/settings.py",
+            "reviewer/entrypoints/cli.py",
+            "reviewer/mcp/service.py",
+            "reviewer/mcp/session_serde.py",
+            "reviewer/policy/policy.py",
+            "reviewer/tasks/boards/__init__.py",
+            "reviewer/tasks/boards/registry.py"
+          ]
+        }
+      ]
+    },
+    {
+      "corpus": "PRI-283",
+      "size": "large",
+      "condition": "anchor_copy",
+      "repeat": 1,
+      "elapsed_s": 24.788,
+      "usage": {
+        "input_tokens": 37362,
+        "cached_input_tokens": 12928,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 959,
+        "reasoning_output_tokens": 0
+      },
+      "totals": {
+        "core": 10,
+        "core_total": 36,
+        "dep": 1,
+        "dep_total": 7,
+        "paths": 13,
+        "labelled": 11,
+        "invalid": 1,
+        "git_rejects": 0,
+        "missing": 0,
+        "median_core": 0.2
+      },
+      "tasks": [
+        {
+          "key": "PRI-170",
+          "core": 6,
+          "core_total": 15,
+          "dep": 0,
+          "dep_total": 2,
+          "paths": 6,
+          "labelled": 6,
+          "invalid": 0,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/tasks/boards/base.py",
+            "reviewer/tasks/boards/yougile.py",
+            "reviewer/tasks/boards/youtrack.py",
+            "reviewer/tasks/graph.py",
+            "reviewer/tasks/service.py",
+            "reviewer/tasks/sync.py"
+          ]
+        },
+        {
+          "key": "PRI-202",
+          "core": 2,
+          "core_total": 11,
+          "dep": 0,
+          "dep_total": 2,
+          "paths": 3,
+          "labelled": 2,
+          "invalid": 0,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/app.py",
+            "reviewer/mcp/service.py",
+            "reviewer/retrieval/retriever.py"
+          ]
+        },
+        {
+          "key": "PRI-221",
+          "core": 2,
+          "core_total": 10,
+          "dep": 1,
+          "dep_total": 3,
+          "paths": 4,
+          "labelled": 3,
+          "invalid": 1,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/config/provider_credentials.py",
+            "reviewer/config/settings.py",
+            "reviewer/mcp/session_serde.py",
+            "reviewer/policy/policy.py"
+          ]
+        }
+      ]
+    },
+    {
+      "corpus": "PRI-283",
+      "size": "large",
+      "condition": "baseline",
+      "repeat": 2,
+      "elapsed_s": 30.146,
+      "usage": {
+        "input_tokens": 37262,
+        "cached_input_tokens": 12928,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 1255,
+        "reasoning_output_tokens": 0
+      },
+      "totals": {
+        "core": 13,
+        "core_total": 36,
+        "dep": 2,
+        "dep_total": 7,
+        "paths": 21,
+        "labelled": 15,
+        "invalid": 1,
+        "git_rejects": 0,
+        "missing": 0,
+        "median_core": 0.4
+      },
+      "tasks": [
+        {
+          "key": "PRI-170",
+          "core": 7,
+          "core_total": 15,
+          "dep": 0,
+          "dep_total": 2,
+          "paths": 8,
+          "labelled": 7,
+          "invalid": 1,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/entrypoints/mcp_server.py",
+            "reviewer/index/store.py",
+            "reviewer/mcp/service.py",
+            "reviewer/tasks/boards/yougile.py",
+            "reviewer/tasks/boards/youtrack.py",
+            "reviewer/tasks/graph.py",
+            "reviewer/tasks/service.py",
+            "reviewer/tasks/sync.py"
+          ]
+        },
+        {
+          "key": "PRI-202",
+          "core": 2,
+          "core_total": 11,
+          "dep": 0,
+          "dep_total": 2,
+          "paths": 4,
+          "labelled": 2,
+          "invalid": 0,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/app.py",
+            "reviewer/entrypoints/cli.py",
+            "reviewer/mcp/service.py",
+            "reviewer/retrieval/retriever.py"
+          ]
+        },
+        {
+          "key": "PRI-221",
+          "core": 4,
+          "core_total": 10,
+          "dep": 2,
+          "dep_total": 3,
+          "paths": 9,
+          "labelled": 6,
+          "invalid": 0,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/config/provider_credentials.py",
+            "reviewer/config/settings.py",
+            "reviewer/entrypoints/cli.py",
+            "reviewer/entrypoints/mcp_server.py",
+            "reviewer/mcp/service.py",
+            "reviewer/mcp/session_serde.py",
+            "reviewer/policy/policy.py",
+            "reviewer/tasks/boards/__init__.py",
+            "reviewer/tasks/boards/registry.py"
+          ]
+        }
+      ]
+    },
+    {
+      "corpus": "PRI-283",
+      "size": "large",
+      "condition": "anchor_copy",
+      "repeat": 2,
+      "elapsed_s": 34.698,
+      "usage": {
+        "input_tokens": 37354,
+        "cached_input_tokens": 12928,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 1237,
+        "reasoning_output_tokens": 0
+      },
+      "totals": {
+        "core": 14,
+        "core_total": 36,
+        "dep": 2,
+        "dep_total": 7,
+        "paths": 22,
+        "labelled": 16,
+        "invalid": 0,
+        "git_rejects": 0,
+        "missing": 0,
+        "median_core": 0.4
+      },
+      "tasks": [
+        {
+          "key": "PRI-170",
+          "core": 8,
+          "core_total": 15,
+          "dep": 0,
+          "dep_total": 2,
+          "paths": 10,
+          "labelled": 8,
+          "invalid": 0,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/entrypoints/mcp_server.py",
+            "reviewer/mcp/service.py",
+            "reviewer/mcp/session_serde.py",
+            "reviewer/services/review_service.py",
+            "reviewer/tasks/boards/base.py",
+            "reviewer/tasks/boards/yougile.py",
+            "reviewer/tasks/boards/youtrack.py",
+            "reviewer/tasks/graph.py",
+            "reviewer/tasks/service.py",
+            "reviewer/tasks/sync.py"
+          ]
+        },
+        {
+          "key": "PRI-202",
+          "core": 2,
+          "core_total": 11,
+          "dep": 0,
+          "dep_total": 2,
+          "paths": 3,
+          "labelled": 2,
+          "invalid": 0,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/app.py",
+            "reviewer/mcp/service.py",
+            "reviewer/retrieval/retriever.py"
+          ]
+        },
+        {
+          "key": "PRI-221",
+          "core": 4,
+          "core_total": 10,
+          "dep": 2,
+          "dep_total": 3,
+          "paths": 9,
+          "labelled": 6,
+          "invalid": 0,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/config/provider_credentials.py",
+            "reviewer/config/settings.py",
+            "reviewer/entrypoints/cli.py",
+            "reviewer/entrypoints/mcp_server.py",
+            "reviewer/mcp/service.py",
+            "reviewer/mcp/session_serde.py",
+            "reviewer/policy/policy.py",
+            "reviewer/tasks/boards/__init__.py",
+            "reviewer/tasks/boards/registry.py"
+          ]
+        }
+      ]
+    },
+    {
+      "corpus": "PRI-283",
+      "size": "ordinary",
+      "condition": "baseline",
+      "repeat": 1,
+      "elapsed_s": 27.282,
+      "usage": {
+        "input_tokens": 38561,
+        "cached_input_tokens": 19840,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 1157,
+        "reasoning_output_tokens": 0
+      },
+      "totals": {
+        "core": 14,
+        "core_total": 25,
+        "dep": 2,
+        "dep_total": 12,
+        "paths": 19,
+        "labelled": 16,
+        "invalid": 3,
+        "git_rejects": 0,
+        "missing": 0,
+        "median_core": 0.6333333333333333
+      },
+      "tasks": [
+        {
+          "key": "PRI-179",
+          "core": 3,
+          "core_total": 5,
+          "dep": 1,
+          "dep_total": 3,
+          "paths": 5,
+          "labelled": 4,
+          "invalid": 0,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/entrypoints/mcp_server.py",
+            "reviewer/graph/scip.py",
+            "reviewer/graph/store.py",
+            "reviewer/mcp/service.py",
+            "reviewer/retrieval/retriever.py"
+          ]
+        },
+        {
+          "key": "PRI-205",
+          "core": 5,
+          "core_total": 7,
+          "dep": 0,
+          "dep_total": 3,
+          "paths": 7,
+          "labelled": 5,
+          "invalid": 0,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/entrypoints/mcp_server.py",
+            "reviewer/mcp/service.py",
+            "reviewer/tasks/boards/__init__.py",
+            "reviewer/tasks/boards/base.py",
+            "reviewer/tasks/boards/yougile.py",
+            "reviewer/tasks/boards/youtrack.py",
+            "reviewer/tasks/sync.py"
+          ]
+        },
+        {
+          "key": "PRI-207",
+          "core": 4,
+          "core_total": 6,
+          "dep": 0,
+          "dep_total": 3,
+          "paths": 4,
+          "labelled": 4,
+          "invalid": 0,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/tasks/boards/base.py",
+            "reviewer/tasks/service.py",
+            "reviewer/tasks/store.py",
+            "reviewer/tasks/sync.py"
+          ]
+        },
+        {
+          "key": "PRI-213",
+          "core": 2,
+          "core_total": 7,
+          "dep": 1,
+          "dep_total": 3,
+          "paths": 3,
+          "labelled": 3,
+          "invalid": 3,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/mcp/service.py",
+            "reviewer/tasks/boards/base.py",
+            "reviewer/tasks/service.py"
+          ]
+        }
+      ]
+    },
+    {
+      "corpus": "PRI-283",
+      "size": "ordinary",
+      "condition": "anchor_copy",
+      "repeat": 1,
+      "elapsed_s": 28.855,
+      "usage": {
+        "input_tokens": 38661,
+        "cached_input_tokens": 0,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 1105,
+        "reasoning_output_tokens": 0
+      },
+      "totals": {
+        "core": 7,
+        "core_total": 25,
+        "dep": 1,
+        "dep_total": 12,
+        "paths": 13,
+        "labelled": 8,
+        "invalid": 4,
+        "git_rejects": 0,
+        "missing": 0,
+        "median_core": 0.18333333333333335
+      },
+      "tasks": [
+        {
+          "key": "PRI-179",
+          "core": 1,
+          "core_total": 5,
+          "dep": 0,
+          "dep_total": 3,
+          "paths": 3,
+          "labelled": 1,
+          "invalid": 0,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/graph/store.py",
+            "reviewer/retrieval/retriever.py",
+            "reviewer/tasks/graph.py"
+          ]
+        },
+        {
+          "key": "PRI-205",
+          "core": 4,
+          "core_total": 7,
+          "dep": 0,
+          "dep_total": 3,
+          "paths": 5,
+          "labelled": 4,
+          "invalid": 0,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/entrypoints/mcp_server.py",
+            "reviewer/mcp/service.py",
+            "reviewer/tasks/boards/__init__.py",
+            "reviewer/tasks/boards/yougile.py",
+            "reviewer/tasks/boards/youtrack.py"
+          ]
+        },
+        {
+          "key": "PRI-207",
+          "core": 1,
+          "core_total": 6,
+          "dep": 0,
+          "dep_total": 3,
+          "paths": 3,
+          "labelled": 1,
+          "invalid": 1,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/index/freshness.py",
+            "reviewer/index/store.py",
+            "reviewer/tasks/sync.py"
+          ]
+        },
+        {
+          "key": "PRI-213",
+          "core": 1,
+          "core_total": 7,
+          "dep": 1,
+          "dep_total": 3,
+          "paths": 2,
+          "labelled": 2,
+          "invalid": 3,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/tasks/boards/base.py",
+            "reviewer/tasks/service.py"
+          ]
+        }
+      ]
+    },
+    {
+      "corpus": "PRI-283",
+      "size": "ordinary",
+      "condition": "baseline",
+      "repeat": 2,
+      "elapsed_s": 42.196,
+      "usage": {
+        "input_tokens": 38559,
+        "cached_input_tokens": 12928,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 1180,
+        "reasoning_output_tokens": 0
+      },
+      "totals": {
+        "core": 15,
+        "core_total": 25,
+        "dep": 2,
+        "dep_total": 12,
+        "paths": 20,
+        "labelled": 17,
+        "invalid": 2,
+        "git_rejects": 0,
+        "missing": 0,
+        "median_core": 0.6333333333333333
+      },
+      "tasks": [
+        {
+          "key": "PRI-179",
+          "core": 3,
+          "core_total": 5,
+          "dep": 1,
+          "dep_total": 3,
+          "paths": 6,
+          "labelled": 4,
+          "invalid": 0,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/app.py",
+            "reviewer/entrypoints/mcp_server.py",
+            "reviewer/graph/scip.py",
+            "reviewer/graph/store.py",
+            "reviewer/mcp/service.py",
+            "reviewer/retrieval/retriever.py"
+          ]
+        },
+        {
+          "key": "PRI-205",
+          "core": 5,
+          "core_total": 7,
+          "dep": 0,
+          "dep_total": 3,
+          "paths": 6,
+          "labelled": 5,
+          "invalid": 0,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/entrypoints/mcp_server.py",
+            "reviewer/mcp/service.py",
+            "reviewer/tasks/boards/__init__.py",
+            "reviewer/tasks/boards/base.py",
+            "reviewer/tasks/boards/yougile.py",
+            "reviewer/tasks/boards/youtrack.py"
+          ]
+        },
+        {
+          "key": "PRI-207",
+          "core": 4,
+          "core_total": 6,
+          "dep": 0,
+          "dep_total": 3,
+          "paths": 4,
+          "labelled": 4,
+          "invalid": 0,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/tasks/boards/base.py",
+            "reviewer/tasks/service.py",
+            "reviewer/tasks/store.py",
+            "reviewer/tasks/sync.py"
+          ]
+        },
+        {
+          "key": "PRI-213",
+          "core": 3,
+          "core_total": 7,
+          "dep": 1,
+          "dep_total": 3,
+          "paths": 4,
+          "labelled": 4,
+          "invalid": 2,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/mcp/service.py",
+            "reviewer/tasks/boards/base.py",
+            "reviewer/tasks/boards/youtrack.py",
+            "reviewer/tasks/service.py"
+          ]
+        }
+      ]
+    },
+    {
+      "corpus": "PRI-283",
+      "size": "ordinary",
+      "condition": "anchor_copy",
+      "repeat": 2,
+      "elapsed_s": 28.264,
+      "usage": {
+        "input_tokens": 38672,
+        "cached_input_tokens": 0,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 1115,
+        "reasoning_output_tokens": 0
+      },
+      "totals": {
+        "core": 10,
+        "core_total": 25,
+        "dep": 2,
+        "dep_total": 12,
+        "paths": 14,
+        "labelled": 12,
+        "invalid": 3,
+        "git_rejects": 0,
+        "missing": 0,
+        "median_core": 0.38095238095238093
+      },
+      "tasks": [
+        {
+          "key": "PRI-179",
+          "core": 1,
+          "core_total": 5,
+          "dep": 1,
+          "dep_total": 3,
+          "paths": 3,
+          "labelled": 2,
+          "invalid": 0,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/graph/scip.py",
+            "reviewer/graph/store.py",
+            "reviewer/retrieval/retriever.py"
+          ]
+        },
+        {
+          "key": "PRI-205",
+          "core": 4,
+          "core_total": 7,
+          "dep": 0,
+          "dep_total": 3,
+          "paths": 5,
+          "labelled": 4,
+          "invalid": 0,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/entrypoints/mcp_server.py",
+            "reviewer/mcp/service.py",
+            "reviewer/tasks/boards/__init__.py",
+            "reviewer/tasks/boards/yougile.py",
+            "reviewer/tasks/boards/youtrack.py"
+          ]
+        },
+        {
+          "key": "PRI-207",
+          "core": 2,
+          "core_total": 6,
+          "dep": 0,
+          "dep_total": 3,
+          "paths": 2,
+          "labelled": 2,
+          "invalid": 1,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/tasks/service.py",
+            "reviewer/tasks/sync.py"
+          ]
+        },
+        {
+          "key": "PRI-213",
+          "core": 3,
+          "core_total": 7,
+          "dep": 1,
+          "dep_total": 3,
+          "paths": 4,
+          "labelled": 4,
+          "invalid": 2,
+          "git_rejects": 0,
+          "missing": false,
+          "errors": [],
+          "filed_paths": [
+            "reviewer/mcp/service.py",
+            "reviewer/tasks/boards/base.py",
+            "reviewer/tasks/boards/youtrack.py",
+            "reviewer/tasks/service.py"
+          ]
+        }
+      ]
+    }
+  ],
+  "union": {
+    "requirements-fresh-control": [
+      {
+        "corpus": "PRI-278",
+        "size": "large",
+        "core_total": 84,
+        "dep_total": 11,
+        "totals": {
+          "first": {
+            "core": 21,
+            "dep": 3,
+            "labelled": 24,
+            "paths": 27
+          },
+          "second": {
+            "core": 20,
+            "dep": 2,
+            "labelled": 22,
+            "paths": 25
+          },
+          "merged": {
+            "core": 21,
+            "dep": 3,
+            "labelled": 24,
+            "paths": 28
+          },
+          "added": {
+            "core": 0,
+            "dep": 0,
+            "labelled": 0,
+            "paths": 1
+          }
+        },
+        "tasks": [
+          {
+            "key": "PRI-196",
+            "core_total": 10,
+            "dep_total": 1,
+            "metric": {
+              "first": {
+                "core": 2,
+                "dep": 1,
+                "labelled": 3,
+                "paths": 4
+              },
+              "second": {
+                "core": 2,
+                "dep": 1,
+                "labelled": 3,
+                "paths": 3
+              },
+              "merged": {
+                "core": 2,
+                "dep": 1,
+                "labelled": 3,
+                "paths": 4
+              },
+              "added": {
+                "core": 0,
+                "dep": 0,
+                "labelled": 0,
+                "paths": 0
+              }
+            }
+          },
+          {
+            "key": "PRI-215",
+            "core_total": 20,
+            "dep_total": 2,
+            "metric": {
+              "first": {
+                "core": 7,
+                "dep": 0,
+                "labelled": 7,
+                "paths": 7
+              },
+              "second": {
+                "core": 6,
+                "dep": 0,
+                "labelled": 6,
+                "paths": 6
+              },
+              "merged": {
+                "core": 7,
+                "dep": 0,
+                "labelled": 7,
+                "paths": 7
+              },
+              "added": {
+                "core": 0,
+                "dep": 0,
+                "labelled": 0,
+                "paths": 0
+              }
+            }
+          },
+          {
+            "key": "PRI-223",
+            "core_total": 23,
+            "dep_total": 3,
+            "metric": {
+              "first": {
+                "core": 5,
+                "dep": 2,
+                "labelled": 7,
+                "paths": 7
+              },
+              "second": {
+                "core": 5,
+                "dep": 1,
+                "labelled": 6,
+                "paths": 6
+              },
+              "merged": {
+                "core": 5,
+                "dep": 2,
+                "labelled": 7,
+                "paths": 7
+              },
+              "added": {
+                "core": 0,
+                "dep": 0,
+                "labelled": 0,
+                "paths": 0
+              }
+            }
+          },
+          {
+            "key": "PRI-225",
+            "core_total": 19,
+            "dep_total": 3,
+            "metric": {
+              "first": {
+                "core": 1,
+                "dep": 0,
+                "labelled": 1,
+                "paths": 2
+              },
+              "second": {
+                "core": 1,
+                "dep": 0,
+                "labelled": 1,
+                "paths": 3
+              },
+              "merged": {
+                "core": 1,
+                "dep": 0,
+                "labelled": 1,
+                "paths": 3
+              },
+              "added": {
+                "core": 0,
+                "dep": 0,
+                "labelled": 0,
+                "paths": 1
+              }
+            }
+          },
+          {
+            "key": "PRI-257",
+            "core_total": 12,
+            "dep_total": 2,
+            "metric": {
+              "first": {
+                "core": 6,
+                "dep": 0,
+                "labelled": 6,
+                "paths": 7
+              },
+              "second": {
+                "core": 6,
+                "dep": 0,
+                "labelled": 6,
+                "paths": 7
+              },
+              "merged": {
+                "core": 6,
+                "dep": 0,
+                "labelled": 6,
+                "paths": 7
+              },
+              "added": {
+                "core": 0,
+                "dep": 0,
+                "labelled": 0,
+                "paths": 0
+              }
+            }
+          }
+        ],
+        "tokens": {
+          "first": {
+            "input_tokens": 48250,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 1801,
+            "reasoning_output_tokens": 0
+          },
+          "second": {
+            "input_tokens": 48280,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 1639,
+            "reasoning_output_tokens": 0
+          }
+        }
+      },
+      {
+        "corpus": "PRI-278",
+        "size": "ordinary",
+        "core_total": 20,
+        "dep_total": 9,
+        "totals": {
+          "first": {
+            "core": 10,
+            "dep": 1,
+            "labelled": 11,
+            "paths": 17
+          },
+          "second": {
+            "core": 9,
+            "dep": 0,
+            "labelled": 9,
+            "paths": 11
+          },
+          "merged": {
+            "core": 10,
+            "dep": 1,
+            "labelled": 11,
+            "paths": 18
+          },
+          "added": {
+            "core": 0,
+            "dep": 0,
+            "labelled": 0,
+            "paths": 1
+          }
+        },
+        "tasks": [
+          {
+            "key": "PRI-228",
+            "core_total": 4,
+            "dep_total": 2,
+            "metric": {
+              "first": {
+                "core": 3,
+                "dep": 1,
+                "labelled": 4,
+                "paths": 5
+              },
+              "second": {
+                "core": 2,
+                "dep": 0,
+                "labelled": 2,
+                "paths": 2
+              },
+              "merged": {
+                "core": 3,
+                "dep": 1,
+                "labelled": 4,
+                "paths": 5
+              },
+              "added": {
+                "core": 0,
+                "dep": 0,
+                "labelled": 0,
+                "paths": 0
+              }
+            }
+          },
+          {
+            "key": "PRI-235",
+            "core_total": 5,
+            "dep_total": 2,
+            "metric": {
+              "first": {
+                "core": 3,
+                "dep": 0,
+                "labelled": 3,
+                "paths": 3
+              },
+              "second": {
+                "core": 3,
+                "dep": 0,
+                "labelled": 3,
+                "paths": 4
+              },
+              "merged": {
+                "core": 3,
+                "dep": 0,
+                "labelled": 3,
+                "paths": 4
+              },
+              "added": {
+                "core": 0,
+                "dep": 0,
+                "labelled": 0,
+                "paths": 1
+              }
+            }
+          },
+          {
+            "key": "PRI-238",
+            "core_total": 3,
+            "dep_total": 3,
+            "metric": {
+              "first": {
+                "core": 2,
+                "dep": 0,
+                "labelled": 2,
+                "paths": 5
+              },
+              "second": {
+                "core": 2,
+                "dep": 0,
+                "labelled": 2,
+                "paths": 2
+              },
+              "merged": {
+                "core": 2,
+                "dep": 0,
+                "labelled": 2,
+                "paths": 5
+              },
+              "added": {
+                "core": 0,
+                "dep": 0,
+                "labelled": 0,
+                "paths": 0
+              }
+            }
+          },
+          {
+            "key": "PRI-239",
+            "core_total": 8,
+            "dep_total": 2,
+            "metric": {
+              "first": {
+                "core": 2,
+                "dep": 0,
+                "labelled": 2,
+                "paths": 4
+              },
+              "second": {
+                "core": 2,
+                "dep": 0,
+                "labelled": 2,
+                "paths": 3
+              },
+              "merged": {
+                "core": 2,
+                "dep": 0,
+                "labelled": 2,
+                "paths": 4
+              },
+              "added": {
+                "core": 0,
+                "dep": 0,
+                "labelled": 0,
+                "paths": 0
+              }
+            }
+          }
+        ],
+        "tokens": {
+          "first": {
+            "input_tokens": 42993,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 1196,
+            "reasoning_output_tokens": 0
+          },
+          "second": {
+            "input_tokens": 42983,
+            "cached_input_tokens": 19712,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 1021,
+            "reasoning_output_tokens": 0
+          }
+        }
+      },
+      {
+        "corpus": "PRI-283",
+        "size": "large",
+        "core_total": 36,
+        "dep_total": 7,
+        "totals": {
+          "first": {
+            "core": 13,
+            "dep": 2,
+            "labelled": 15,
+            "paths": 17
+          },
+          "second": {
+            "core": 14,
+            "dep": 3,
+            "labelled": 17,
+            "paths": 23
+          },
+          "merged": {
+            "core": 14,
+            "dep": 3,
+            "labelled": 17,
+            "paths": 24
+          },
+          "added": {
+            "core": 1,
+            "dep": 1,
+            "labelled": 2,
+            "paths": 7
+          }
+        },
+        "tasks": [
+          {
+            "key": "PRI-170",
+            "core_total": 15,
+            "dep_total": 2,
+            "metric": {
+              "first": {
+                "core": 7,
+                "dep": 0,
+                "labelled": 7,
+                "paths": 7
+              },
+              "second": {
+                "core": 8,
+                "dep": 1,
+                "labelled": 9,
+                "paths": 12
+              },
+              "merged": {
+                "core": 8,
+                "dep": 1,
+                "labelled": 9,
+                "paths": 12
+              },
+              "added": {
+                "core": 1,
+                "dep": 1,
+                "labelled": 2,
+                "paths": 5
+              }
+            }
+          },
+          {
+            "key": "PRI-202",
+            "core_total": 11,
+            "dep_total": 2,
+            "metric": {
+              "first": {
+                "core": 2,
+                "dep": 1,
+                "labelled": 3,
+                "paths": 4
+              },
+              "second": {
+                "core": 2,
+                "dep": 1,
+                "labelled": 3,
+                "paths": 4
+              },
+              "merged": {
+                "core": 2,
+                "dep": 1,
+                "labelled": 3,
+                "paths": 5
+              },
+              "added": {
+                "core": 0,
+                "dep": 0,
+                "labelled": 0,
+                "paths": 1
+              }
+            }
+          },
+          {
+            "key": "PRI-221",
+            "core_total": 10,
+            "dep_total": 3,
+            "metric": {
+              "first": {
+                "core": 4,
+                "dep": 1,
+                "labelled": 5,
+                "paths": 6
+              },
+              "second": {
+                "core": 4,
+                "dep": 1,
+                "labelled": 5,
+                "paths": 7
+              },
+              "merged": {
+                "core": 4,
+                "dep": 1,
+                "labelled": 5,
+                "paths": 7
+              },
+              "added": {
+                "core": 0,
+                "dep": 0,
+                "labelled": 0,
+                "paths": 1
+              }
+            }
+          }
+        ],
+        "tokens": {
+          "first": {
+            "input_tokens": 37234,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 1145,
+            "reasoning_output_tokens": 0
+          },
+          "second": {
+            "input_tokens": 37264,
+            "cached_input_tokens": 19840,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 1573,
+            "reasoning_output_tokens": 0
+          }
+        }
+      },
+      {
+        "corpus": "PRI-283",
+        "size": "ordinary",
+        "core_total": 25,
+        "dep_total": 12,
+        "totals": {
+          "first": {
+            "core": 16,
+            "dep": 2,
+            "labelled": 18,
+            "paths": 24
+          },
+          "second": {
+            "core": 14,
+            "dep": 2,
+            "labelled": 16,
+            "paths": 25
+          },
+          "merged": {
+            "core": 16,
+            "dep": 2,
+            "labelled": 18,
+            "paths": 27
+          },
+          "added": {
+            "core": 0,
+            "dep": 0,
+            "labelled": 0,
+            "paths": 3
+          }
+        },
+        "tasks": [
+          {
+            "key": "PRI-179",
+            "core_total": 5,
+            "dep_total": 3,
+            "metric": {
+              "first": {
+                "core": 3,
+                "dep": 1,
+                "labelled": 4,
+                "paths": 8
+              },
+              "second": {
+                "core": 3,
+                "dep": 1,
+                "labelled": 4,
+                "paths": 9
+              },
+              "merged": {
+                "core": 3,
+                "dep": 1,
+                "labelled": 4,
+                "paths": 9
+              },
+              "added": {
+                "core": 0,
+                "dep": 0,
+                "labelled": 0,
+                "paths": 1
+              }
+            }
+          },
+          {
+            "key": "PRI-205",
+            "core_total": 7,
+            "dep_total": 3,
+            "metric": {
+              "first": {
+                "core": 5,
+                "dep": 0,
+                "labelled": 5,
+                "paths": 7
+              },
+              "second": {
+                "core": 5,
+                "dep": 0,
+                "labelled": 5,
+                "paths": 7
+              },
+              "merged": {
+                "core": 5,
+                "dep": 0,
+                "labelled": 5,
+                "paths": 7
+              },
+              "added": {
+                "core": 0,
+                "dep": 0,
+                "labelled": 0,
+                "paths": 0
+              }
+            }
+          },
+          {
+            "key": "PRI-207",
+            "core_total": 6,
+            "dep_total": 3,
+            "metric": {
+              "first": {
+                "core": 4,
+                "dep": 0,
+                "labelled": 4,
+                "paths": 4
+              },
+              "second": {
+                "core": 4,
+                "dep": 0,
+                "labelled": 4,
+                "paths": 6
+              },
+              "merged": {
+                "core": 4,
+                "dep": 0,
+                "labelled": 4,
+                "paths": 6
+              },
+              "added": {
+                "core": 0,
+                "dep": 0,
+                "labelled": 0,
+                "paths": 2
+              }
+            }
+          },
+          {
+            "key": "PRI-213",
+            "core_total": 7,
+            "dep_total": 3,
+            "metric": {
+              "first": {
+                "core": 4,
+                "dep": 1,
+                "labelled": 5,
+                "paths": 5
+              },
+              "second": {
+                "core": 2,
+                "dep": 1,
+                "labelled": 3,
+                "paths": 3
+              },
+              "merged": {
+                "core": 4,
+                "dep": 1,
+                "labelled": 5,
+                "paths": 5
+              },
+              "added": {
+                "core": 0,
+                "dep": 0,
+                "labelled": 0,
+                "paths": 0
+              }
+            }
+          }
+        ],
+        "tokens": {
+          "first": {
+            "input_tokens": 38563,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 1387,
+            "reasoning_output_tokens": 0
+          },
+          "second": {
+            "input_tokens": 38533,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 1552,
+            "reasoning_output_tokens": 0
+          }
+        }
+      }
+    ],
+    "anchor-copy-fresh-control": [
+      {
+        "corpus": "PRI-278",
+        "size": "large",
+        "core_total": 84,
+        "dep_total": 11,
+        "totals": {
+          "first": {
+            "core": 20,
+            "dep": 3,
+            "labelled": 23,
+            "paths": 27
+          },
+          "second": {
+            "core": 22,
+            "dep": 3,
+            "labelled": 25,
+            "paths": 30
+          },
+          "merged": {
+            "core": 23,
+            "dep": 3,
+            "labelled": 26,
+            "paths": 32
+          },
+          "added": {
+            "core": 3,
+            "dep": 0,
+            "labelled": 3,
+            "paths": 5
+          }
+        },
+        "tasks": [
+          {
+            "key": "PRI-196",
+            "core_total": 10,
+            "dep_total": 1,
+            "metric": {
+              "first": {
+                "core": 3,
+                "dep": 1,
+                "labelled": 4,
+                "paths": 4
+              },
+              "second": {
+                "core": 4,
+                "dep": 1,
+                "labelled": 5,
+                "paths": 6
+              },
+              "merged": {
+                "core": 4,
+                "dep": 1,
+                "labelled": 5,
+                "paths": 6
+              },
+              "added": {
+                "core": 1,
+                "dep": 0,
+                "labelled": 1,
+                "paths": 2
+              }
+            }
+          },
+          {
+            "key": "PRI-215",
+            "core_total": 20,
+            "dep_total": 2,
+            "metric": {
+              "first": {
+                "core": 5,
+                "dep": 0,
+                "labelled": 5,
+                "paths": 5
+              },
+              "second": {
+                "core": 7,
+                "dep": 0,
+                "labelled": 7,
+                "paths": 7
+              },
+              "merged": {
+                "core": 7,
+                "dep": 0,
+                "labelled": 7,
+                "paths": 7
+              },
+              "added": {
+                "core": 2,
+                "dep": 0,
+                "labelled": 2,
+                "paths": 2
+              }
+            }
+          },
+          {
+            "key": "PRI-223",
+            "core_total": 23,
+            "dep_total": 3,
+            "metric": {
+              "first": {
+                "core": 5,
+                "dep": 2,
+                "labelled": 7,
+                "paths": 7
+              },
+              "second": {
+                "core": 5,
+                "dep": 2,
+                "labelled": 7,
+                "paths": 8
+              },
+              "merged": {
+                "core": 5,
+                "dep": 2,
+                "labelled": 7,
+                "paths": 8
+              },
+              "added": {
+                "core": 0,
+                "dep": 0,
+                "labelled": 0,
+                "paths": 1
+              }
+            }
+          },
+          {
+            "key": "PRI-225",
+            "core_total": 19,
+            "dep_total": 3,
+            "metric": {
+              "first": {
+                "core": 1,
+                "dep": 0,
+                "labelled": 1,
+                "paths": 3
+              },
+              "second": {
+                "core": 1,
+                "dep": 0,
+                "labelled": 1,
+                "paths": 3
+              },
+              "merged": {
+                "core": 1,
+                "dep": 0,
+                "labelled": 1,
+                "paths": 3
+              },
+              "added": {
+                "core": 0,
+                "dep": 0,
+                "labelled": 0,
+                "paths": 0
+              }
+            }
+          },
+          {
+            "key": "PRI-257",
+            "core_total": 12,
+            "dep_total": 2,
+            "metric": {
+              "first": {
+                "core": 6,
+                "dep": 0,
+                "labelled": 6,
+                "paths": 8
+              },
+              "second": {
+                "core": 5,
+                "dep": 0,
+                "labelled": 5,
+                "paths": 6
+              },
+              "merged": {
+                "core": 6,
+                "dep": 0,
+                "labelled": 6,
+                "paths": 8
+              },
+              "added": {
+                "core": 0,
+                "dep": 0,
+                "labelled": 0,
+                "paths": 0
+              }
+            }
+          }
+        ],
+        "tokens": {
+          "first": {
+            "input_tokens": 48248,
+            "cached_input_tokens": 19712,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 1730,
+            "reasoning_output_tokens": 0
+          },
+          "second": {
+            "input_tokens": 48269,
+            "cached_input_tokens": 12928,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 1962,
+            "reasoning_output_tokens": 0
+          }
+        }
+      },
+      {
+        "corpus": "PRI-278",
+        "size": "ordinary",
+        "core_total": 20,
+        "dep_total": 9,
+        "totals": {
+          "first": {
+            "core": 9,
+            "dep": 0,
+            "labelled": 9,
+            "paths": 14
+          },
+          "second": {
+            "core": 8,
+            "dep": 0,
+            "labelled": 8,
+            "paths": 14
+          },
+          "merged": {
+            "core": 9,
+            "dep": 0,
+            "labelled": 9,
+            "paths": 16
+          },
+          "added": {
+            "core": 0,
+            "dep": 0,
+            "labelled": 0,
+            "paths": 2
+          }
+        },
+        "tasks": [
+          {
+            "key": "PRI-228",
+            "core_total": 4,
+            "dep_total": 2,
+            "metric": {
+              "first": {
+                "core": 2,
+                "dep": 0,
+                "labelled": 2,
+                "paths": 3
+              },
+              "second": {
+                "core": 2,
+                "dep": 0,
+                "labelled": 2,
+                "paths": 2
+              },
+              "merged": {
+                "core": 2,
+                "dep": 0,
+                "labelled": 2,
+                "paths": 3
+              },
+              "added": {
+                "core": 0,
+                "dep": 0,
+                "labelled": 0,
+                "paths": 0
+              }
+            }
+          },
+          {
+            "key": "PRI-235",
+            "core_total": 5,
+            "dep_total": 2,
+            "metric": {
+              "first": {
+                "core": 3,
+                "dep": 0,
+                "labelled": 3,
+                "paths": 3
+              },
+              "second": {
+                "core": 2,
+                "dep": 0,
+                "labelled": 2,
+                "paths": 4
+              },
+              "merged": {
+                "core": 3,
+                "dep": 0,
+                "labelled": 3,
+                "paths": 5
+              },
+              "added": {
+                "core": 0,
+                "dep": 0,
+                "labelled": 0,
+                "paths": 2
+              }
+            }
+          },
+          {
+            "key": "PRI-238",
+            "core_total": 3,
+            "dep_total": 3,
+            "metric": {
+              "first": {
+                "core": 2,
+                "dep": 0,
+                "labelled": 2,
+                "paths": 5
+              },
+              "second": {
+                "core": 2,
+                "dep": 0,
+                "labelled": 2,
+                "paths": 5
+              },
+              "merged": {
+                "core": 2,
+                "dep": 0,
+                "labelled": 2,
+                "paths": 5
+              },
+              "added": {
+                "core": 0,
+                "dep": 0,
+                "labelled": 0,
+                "paths": 0
+              }
+            }
+          },
+          {
+            "key": "PRI-239",
+            "core_total": 8,
+            "dep_total": 2,
+            "metric": {
+              "first": {
+                "core": 2,
+                "dep": 0,
+                "labelled": 2,
+                "paths": 3
+              },
+              "second": {
+                "core": 2,
+                "dep": 0,
+                "labelled": 2,
+                "paths": 3
+              },
+              "merged": {
+                "core": 2,
+                "dep": 0,
+                "labelled": 2,
+                "paths": 3
+              },
+              "added": {
+                "core": 0,
+                "dep": 0,
+                "labelled": 0,
+                "paths": 0
+              }
+            }
+          }
+        ],
+        "tokens": {
+          "first": {
+            "input_tokens": 43011,
+            "cached_input_tokens": 12928,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 1044,
+            "reasoning_output_tokens": 0
+          },
+          "second": {
+            "input_tokens": 42833,
+            "cached_input_tokens": 12928,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 1051,
+            "reasoning_output_tokens": 0
+          }
+        }
+      },
+      {
+        "corpus": "PRI-283",
+        "size": "large",
+        "core_total": 36,
+        "dep_total": 7,
+        "totals": {
+          "first": {
+            "core": 15,
+            "dep": 3,
+            "labelled": 18,
+            "paths": 31
+          },
+          "second": {
+            "core": 13,
+            "dep": 2,
+            "labelled": 15,
+            "paths": 21
+          },
+          "merged": {
+            "core": 15,
+            "dep": 4,
+            "labelled": 19,
+            "paths": 32
+          },
+          "added": {
+            "core": 0,
+            "dep": 1,
+            "labelled": 1,
+            "paths": 1
+          }
+        },
+        "tasks": [
+          {
+            "key": "PRI-170",
+            "core_total": 15,
+            "dep_total": 2,
+            "metric": {
+              "first": {
+                "core": 8,
+                "dep": 1,
+                "labelled": 9,
+                "paths": 15
+              },
+              "second": {
+                "core": 7,
+                "dep": 0,
+                "labelled": 7,
+                "paths": 8
+              },
+              "merged": {
+                "core": 8,
+                "dep": 1,
+                "labelled": 9,
+                "paths": 15
+              },
+              "added": {
+                "core": 0,
+                "dep": 0,
+                "labelled": 0,
+                "paths": 0
+              }
+            }
+          },
+          {
+            "key": "PRI-202",
+            "core_total": 11,
+            "dep_total": 2,
+            "metric": {
+              "first": {
+                "core": 3,
+                "dep": 1,
+                "labelled": 4,
+                "paths": 8
+              },
+              "second": {
+                "core": 2,
+                "dep": 0,
+                "labelled": 2,
+                "paths": 4
+              },
+              "merged": {
+                "core": 3,
+                "dep": 1,
+                "labelled": 4,
+                "paths": 8
+              },
+              "added": {
+                "core": 0,
+                "dep": 0,
+                "labelled": 0,
+                "paths": 0
+              }
+            }
+          },
+          {
+            "key": "PRI-221",
+            "core_total": 10,
+            "dep_total": 3,
+            "metric": {
+              "first": {
+                "core": 4,
+                "dep": 1,
+                "labelled": 5,
+                "paths": 8
+              },
+              "second": {
+                "core": 4,
+                "dep": 2,
+                "labelled": 6,
+                "paths": 9
+              },
+              "merged": {
+                "core": 4,
+                "dep": 2,
+                "labelled": 6,
+                "paths": 9
+              },
+              "added": {
+                "core": 0,
+                "dep": 1,
+                "labelled": 1,
+                "paths": 1
+              }
+            }
+          }
+        ],
+        "tokens": {
+          "first": {
+            "input_tokens": 37242,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 1586,
+            "reasoning_output_tokens": 0
+          },
+          "second": {
+            "input_tokens": 37262,
+            "cached_input_tokens": 12928,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 1255,
+            "reasoning_output_tokens": 0
+          }
+        }
+      },
+      {
+        "corpus": "PRI-283",
+        "size": "ordinary",
+        "core_total": 25,
+        "dep_total": 12,
+        "totals": {
+          "first": {
+            "core": 14,
+            "dep": 2,
+            "labelled": 16,
+            "paths": 19
+          },
+          "second": {
+            "core": 15,
+            "dep": 2,
+            "labelled": 17,
+            "paths": 20
+          },
+          "merged": {
+            "core": 15,
+            "dep": 2,
+            "labelled": 17,
+            "paths": 21
+          },
+          "added": {
+            "core": 1,
+            "dep": 0,
+            "labelled": 1,
+            "paths": 2
+          }
+        },
+        "tasks": [
+          {
+            "key": "PRI-179",
+            "core_total": 5,
+            "dep_total": 3,
+            "metric": {
+              "first": {
+                "core": 3,
+                "dep": 1,
+                "labelled": 4,
+                "paths": 5
+              },
+              "second": {
+                "core": 3,
+                "dep": 1,
+                "labelled": 4,
+                "paths": 6
+              },
+              "merged": {
+                "core": 3,
+                "dep": 1,
+                "labelled": 4,
+                "paths": 6
+              },
+              "added": {
+                "core": 0,
+                "dep": 0,
+                "labelled": 0,
+                "paths": 1
+              }
+            }
+          },
+          {
+            "key": "PRI-205",
+            "core_total": 7,
+            "dep_total": 3,
+            "metric": {
+              "first": {
+                "core": 5,
+                "dep": 0,
+                "labelled": 5,
+                "paths": 7
+              },
+              "second": {
+                "core": 5,
+                "dep": 0,
+                "labelled": 5,
+                "paths": 6
+              },
+              "merged": {
+                "core": 5,
+                "dep": 0,
+                "labelled": 5,
+                "paths": 7
+              },
+              "added": {
+                "core": 0,
+                "dep": 0,
+                "labelled": 0,
+                "paths": 0
+              }
+            }
+          },
+          {
+            "key": "PRI-207",
+            "core_total": 6,
+            "dep_total": 3,
+            "metric": {
+              "first": {
+                "core": 4,
+                "dep": 0,
+                "labelled": 4,
+                "paths": 4
+              },
+              "second": {
+                "core": 4,
+                "dep": 0,
+                "labelled": 4,
+                "paths": 4
+              },
+              "merged": {
+                "core": 4,
+                "dep": 0,
+                "labelled": 4,
+                "paths": 4
+              },
+              "added": {
+                "core": 0,
+                "dep": 0,
+                "labelled": 0,
+                "paths": 0
+              }
+            }
+          },
+          {
+            "key": "PRI-213",
+            "core_total": 7,
+            "dep_total": 3,
+            "metric": {
+              "first": {
+                "core": 2,
+                "dep": 1,
+                "labelled": 3,
+                "paths": 3
+              },
+              "second": {
+                "core": 3,
+                "dep": 1,
+                "labelled": 4,
+                "paths": 4
+              },
+              "merged": {
+                "core": 3,
+                "dep": 1,
+                "labelled": 4,
+                "paths": 4
+              },
+              "added": {
+                "core": 1,
+                "dep": 0,
+                "labelled": 1,
+                "paths": 1
+              }
+            }
+          }
+        ],
+        "tokens": {
+          "first": {
+            "input_tokens": 38561,
+            "cached_input_tokens": 19840,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 1157,
+            "reasoning_output_tokens": 0
+          },
+          "second": {
+            "input_tokens": 38559,
+            "cached_input_tokens": 12928,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 1180,
+            "reasoning_output_tokens": 0
+          }
+        }
+      }
+    ]
+  }
+}
