@@ -141,16 +141,22 @@ def _tokens(lines: Iterable[str]) -> Iterator[str]:
             yield token.rstrip(".")
 
 
-def _without_reference_sections(description: str, *, respect_fences: bool = False) -> Iterator[str]:
+def _without_reference_sections(
+    description: str, *, omit_fenced_examples: bool = False,
+) -> Iterator[str]:
     skip_depth = None
     fence = ""
     for line in description.splitlines():
-        marker = _FENCE_RE.match(line) if respect_fences else None
-        if marker and not fence:
-            fence = marker[1]
-        elif marker and marker[1].startswith(fence) and not marker[2].strip():
-            fence = ""
-        elif not fence and (heading := _HEADING_RE.match(line)):
+        if omit_fenced_examples:
+            marker = _FENCE_RE.match(line)
+            if fence:
+                if marker and marker[1].startswith(fence) and not marker[2].strip():
+                    fence = ""
+                continue
+            if marker:
+                fence = marker[1]
+                continue
+        if heading := _HEADING_RE.match(line):
             depth = len(heading[1])
             if skip_depth is None or depth <= skip_depth:
                 skip_depth = (
@@ -229,7 +235,7 @@ def _dedup(queries: list[str]) -> list[str]:
 
 def build_free_text_subqueries(text: str) -> list[str]:
     """Добавить ограниченное число явно оформленных требований к исходному запросу."""
-    items, _ = _section_items("\n".join(_without_reference_sections(text, respect_fences=True)))
+    items, _ = _section_items("\n".join(_without_reference_sections(text, omit_fenced_examples=True)))
     candidates = [_normalized(item) for _, item in items]
     queries = _dedup([text, *(item for item in candidates if len(item) <= _MAX_GROUP_CHARS)])
     return queries[:_MAX_FREE_TEXT_SUBQUERIES]

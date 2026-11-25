@@ -706,8 +706,9 @@ namespaced skills with `$rag-reviewer:...`.
 - **Invoke:** `/rag-reviewer:solve-task PRI-220`.
 - **Opt-in requirements search:** begin a free-text invocation with
   `/rag-reviewer:solve-task --split-requirements` and include a Markdown `## Requirements`
-  or `## Acceptance criteria` section. Code retrieval uses the full description followed
-  by up to six additional queries from those sections.
+  or `## Acceptance criteria` section with bullets. Code retrieval uses the full description
+  followed by up to six additional queries from those sections. With the flag alone, the skill
+  asks for a description.
 - **Needs:** reviewer MCP; board context is optional and the pipeline continues board-less.
 - **Reads/writes:** reads task/code context and writes one brief under `docs/superpowers/briefs/`.
 - **Result:** a compact brief handed to brainstorming; implementation happens in later skills.

@@ -23,7 +23,7 @@
      preflight «Прогрею сам» option (Step 0.4). Note in the report that the brief was built inline.
    - **Existing-artifacts warn** (Step 4, user-facing «warn, don't block»): the **orchestrator** runs
      that scan-and-warn **before dispatch** (a subagent must not prompt the user). It derives the task
-     KEY itself — the same `$ARGUMENTS`-vs-`key_pattern` regex match Step 2 opens with (no `get_task`
+     KEY itself — the same `task_input`-vs-`key_pattern` regex match Step 2 opens with (no `get_task`
      needed) — so the KEY-based artifact globs run pre-dispatch. When Steps 2–4 run in a subagent, the
      Step 4 warn is thus **orchestrator-only**; only the idempotency overwrite-glob stays inside the
      subagent's persist.

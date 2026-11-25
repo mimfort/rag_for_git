@@ -58,16 +58,16 @@ def test_free_text_subqueries_are_bounded_and_leave_unstructured_text_intact():
     assert subqueries.build_free_text_subqueries(text) == [text, *items[:6]]
 
 
-def test_free_text_reference_heading_in_fenced_example_keeps_later_requirements():
+def test_free_text_keeps_requirements_around_large_fenced_example_with_headings():
     text = (
         "## Requirements\n- Reproduce the template.\n"
-        "\n  ```md\n  ## Background\n  Example description\n  ```\n"
+        "\n  ```md\n  ## Background\n  ## Requirements\n  - Fake requirement.\n"
+        f"  {'Example description ' * 60}\n  ```\n"
         "- Keep the report format.\n"
         "## Background\n### Requirements\n- Old behavior.\n"
     )
     assert subqueries.build_free_text_subqueries(text) == [
-        text, "Reproduce the template. ## Background Example description",
-        "Keep the report format.",
+        text, "Reproduce the template.", "Keep the report format.",
     ]
 
 
