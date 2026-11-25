@@ -403,8 +403,8 @@ def create_server(service: MCPReviewService) -> FastMCP:
         retention limits. The directory is $XDG_STATE_HOME/rag-reviewer/brief-evidence,
         with ~/.local/state as the default state root.
         Each citation gets verified, path_unseen,
-        outside_excerpt, or section_unavailable. An expired or absent ID gives
-        evidence_unavailable. Only visible lines matched to the indexed Git
+        outside_excerpt, or section_unavailable. Expired, absent, and pre-Git-check
+        IDs give evidence_unavailable. Only visible lines matched to the indexed Git
         snapshot can be verified. This call does not search again.
 
         References have a non-empty single-line reason and an optional edit/read role.

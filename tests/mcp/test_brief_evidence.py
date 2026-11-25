@@ -5,6 +5,7 @@ import sqlite3
 import subprocess
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
+from hashlib import sha256
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -155,6 +156,26 @@ def test_saved_evidence_is_local_to_its_state_directory(monkeypatch, tmp_path):
 
     assert BriefEvidence().verify(key, [])["status"] == "evidence_unavailable"
     assert evidence.verify(key, [])["status"] == "ok"
+
+
+def test_restart_rejects_evidence_saved_before_git_verification(tmp_path):
+    current = BriefEvidence(clock=lambda: 10.0)
+    current_key = current.save_sections({"code": {"example.py": {2}}})
+    legacy_key = "legacy_token_without_git_verification"
+    [path] = (tmp_path / "xdg-state").rglob("*.sqlite3")
+    with closing(sqlite3.connect(path)) as db, db:
+        db.execute(
+            "INSERT INTO brief_evidence (id_hash, expires_at, sections) VALUES (?, ?, ?)",
+            (sha256(legacy_key.encode()).digest(), 100, b'{"code":{"example.py":[1]}}'),
+        )
+
+    restarted = BriefEvidence(clock=lambda: 11.0)
+    assert restarted.verify(legacy_key, [_citation("example.py", 1)]) == {
+        "status": "evidence_unavailable", "citations": [],
+    }
+    assert restarted.verify(current_key, [_citation("example.py", 2)])["citations"][0][
+        "status"
+    ] == "verified"
 
 
 def test_saving_purges_expired_evidence_without_refreshing_ttl(tmp_path):

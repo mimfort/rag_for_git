@@ -27,6 +27,7 @@ _HEADER = re.compile(r"^// .+ \((?P<path>.+):(?P<first>\d+)-(?P<last>\d+)\)$")
 _NUMBERED = re.compile(r"^\s*(\d+) \| (.*)$")
 _BACKTICKS = re.compile(r"`+")
 _TRUNCATED = "[...truncated]"
+_GIT_EVIDENCE_PREFIX = "git1."  # Точка отсутствует в ранее выдаваемых token_urlsafe ID.
 _MAX_DB_BYTES = 16 * 1024 * 1024
 _SECTIONS = TypeAdapter(dict[str, dict[str, set[int]]])
 _SCHEMA = """CREATE TABLE IF NOT EXISTS brief_evidence (
@@ -139,7 +140,7 @@ class BriefEvidence:
     def save_sections(self, sections: dict[str, dict[str, set[int]]]) -> str | None:
         if not sections or self._limit <= 0:
             return None
-        key = secrets.token_urlsafe(16)
+        key = _GIT_EVIDENCE_PREFIX + secrets.token_urlsafe(16)
         now = self._clock()
         try:
             with self._connect() as db:
@@ -162,7 +163,7 @@ class BriefEvidence:
         return key
 
     def verify(self, key: str, citations: Sequence[BriefCitationIn]) -> dict:
-        if (sections := self._load(key)) is None:
+        if not key.startswith(_GIT_EVIDENCE_PREFIX) or (sections := self._load(key)) is None:
             return {"status": "evidence_unavailable", "citations": []}
         checked = []
         for citation in citations:
