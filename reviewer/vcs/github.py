@@ -7,6 +7,16 @@ from reviewer.vcs.base import PullRequest, ChangedFile, InlineComment
 from reviewer.vcs._http import _RetryTransport, _FP  # noqa: F401  (реэкспорт для тестов)
 
 
+_COMPARE_FILE_LIMIT = 300
+_COMPARE_FILE_STATUSES = (
+    "added", "removed", "modified", "renamed", "copied", "changed", "unchanged",
+)
+
+
+class GitHubComparisonError(RuntimeError):
+    """GitHub compare не подтвердил полный инкрементальный diff."""
+
+
 def _to_changed_file(file: dict) -> ChangedFile:
     status = file["status"]
     return ChangedFile(
@@ -109,17 +119,51 @@ class GitHubProvider:
         return fps
 
     def compare_files(self, base_sha: str, head_sha: str) -> list[ChangedFile]:
-        """Изменённые файлы между двумя коммитами (GitHub compare).
-
-        Внимание: API отдаёт максимум 300 файлов — для синка base-индекса после
-        обычного продвижения ветки этого достаточно.
-
-        404 (например, force-push, sha недоступен) пробрасывается как есть —
-        вызывающий обработает.
-        """
+        """Полный список изменённых файлов для подтверждённого сравнения GitHub."""
         r = self._c.get(f"{self._base()}/compare/{base_sha}...{head_sha}").raise_for_status()
-        files = r.json().get("files", [])
-        return [_to_changed_file(f) for f in files]
+        try:
+            data = r.json()
+        except ValueError as exc:
+            raise GitHubComparisonError("GitHub compare вернул некорректный JSON") from exc
+
+        if not isinstance(data, dict):
+            raise GitHubComparisonError("GitHub compare вернул некорректный объект")
+        status = data.get("status")
+        if status in ("behind", "diverged"):
+            raise GitHubComparisonError(f"GitHub compare вернул статус {status}")
+        if status not in ("ahead", "identical"):
+            raise GitHubComparisonError("GitHub compare не подтвердил статус сравнения")
+
+        ahead_by = data.get("ahead_by")
+        behind_by = data.get("behind_by")
+        if type(ahead_by) is not int or type(behind_by) is not int or behind_by != 0:
+            raise GitHubComparisonError("GitHub compare вернул некорректные счётчики коммитов")
+        if status == "ahead" and ahead_by <= 0:
+            raise GitHubComparisonError("GitHub compare вернул некорректные счётчики коммитов")
+
+        files = data.get("files")
+        if not isinstance(files, list):
+            raise GitHubComparisonError("GitHub compare не вернул список файлов")
+        # GitHub ограничивает весь список 300 записями. Достижение лимита
+        # не позволяет подтвердить, что API вернул все изменённые файлы.
+        if len(files) >= _COMPARE_FILE_LIMIT:
+            raise GitHubComparisonError(f"GitHub compare достиг лимита {_COMPARE_FILE_LIMIT} файлов")
+        if status == "identical" and (ahead_by != 0 or files):
+            raise GitHubComparisonError("GitHub compare вернул противоречивый статус identical")
+
+        for file in files:
+            if (
+                not isinstance(file, dict)
+                or not isinstance(file.get("filename"), str)
+                or not file["filename"]
+                or file.get("status") not in _COMPARE_FILE_STATUSES
+            ):
+                raise GitHubComparisonError("GitHub compare вернул некорректный путь или тип файла")
+            for field in ("patch", "previous_filename"):
+                value = file.get(field)
+                if value is not None and not isinstance(value, str):
+                    raise GitHubComparisonError(f"GitHub compare вернул некорректное поле {field}")
+        return [_to_changed_file(file) for file in files]
 
     def publish_review(
         self,
