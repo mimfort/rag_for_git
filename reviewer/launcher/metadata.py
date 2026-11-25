@@ -9,8 +9,18 @@ from reviewer.launcher.models import (
     ParamSection,
 )
 
-
 COMMAND_PRESENTATION = {
+    ("brief-provenance",): CommandPresentation(
+        summary="Перепроверить ссылки сохранённого брифа",
+        details=(
+            "Сверяет ссылки с HEAD локального клона. Запись только при заданных "
+            "--indexed-sha, --repo и --branch. В этом режиме команда добавляет "
+            "метаданные исходного снимка в бриф."
+        ),
+        effects=(Effect.READ, Effect.WRITE),
+        scenarios=("Перед повторным использованием брифа", "После сохранения проверенного брифа"),
+        keywords=("brief", "solve-task", "git", "provenance", "ссылки", "снимок"),
+    ),
     ("check",): CommandPresentation(
         summary="Проверить окружение",
         details="Проверяет ключи, хранилища, VCS и настроенные доски без изменения данных.",
@@ -156,6 +166,21 @@ COMMAND_PRESENTATION = {
 
 
 PARAMETER_PRESENTATION = {
+    ("brief-provenance", "brief"): ParameterPresentation(
+        description="Путь к сохранённому Markdown-брифу.",
+    ),
+    ("brief-provenance", "path"): ParameterPresentation(
+        description="Локальный клон для сверки. По умолчанию текущий каталог.",
+    ),
+    ("brief-provenance", "indexed_sha"): ParameterPresentation(
+        ParamSection.ADVANCED, description="SHA исходного снимка для записи метаданных.",
+    ),
+    ("brief-provenance", "repo_tag"): ParameterPresentation(
+        ParamSection.ADVANCED, description="Идентификатор репозитория для записи, например owner/name.",
+    ),
+    ("brief-provenance", "branch"): ParameterPresentation(
+        ParamSection.ADVANCED, description="Ветка исходного снимка для записи метаданных.",
+    ),
     ("check", "board_project_values"): ParameterPresentation(ParamSection.ADVANCED),
     ("check", "env_file"): ParameterPresentation(ParamSection.ADVANCED),
     ("init", "path_opt"): ParameterPresentation(ParamSection.ADVANCED),

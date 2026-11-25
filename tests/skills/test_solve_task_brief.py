@@ -196,3 +196,14 @@ def test_solve_task_step5_asks_for_brief_link_not_verbatim_constraints():
     assert "provenance" in step5.lower()         # просим записать происхождение
     assert "Do NOT ask it to copy" in step5      # явный запрет
     assert "verbatim" in step5
+
+
+def test_solve_task_captures_and_rechecks_saved_brief():
+    text = " ".join(_solve().split())
+    persisted = text.split("**Persist the brief (survivability).**", 1)[1]
+    assert "brief-provenance" in persisted
+    assert "`--indexed-sha` from `payload.preflight.indexed_sha`" in persisted
+    step5 = re.search(STEP5_RE, _solve())
+    assert step5
+    assert "brief-provenance" in step5[1]
+    assert "before planning" in step5[1]

@@ -150,5 +150,14 @@
      and check that the citation block matches the verifier's `markdown` exactly and appears once.
      If the write changed or omitted the block, replace it with the original response and check
      again before handing off. Treat a remaining mismatch as a failed write.
+   - **Capture Git provenance.** When readback succeeds and Step 0 has an `indexed_sha`, run
+     `reviewer brief-provenance <brief> --path <local-clone> --repo <repo> --branch <branch> --indexed-sha <sha>`.
+     Read `--indexed-sha` from `payload.preflight.indexed_sha` and use the same resolved repo and
+     branch as in Step 0. Prefer the installed reviewer CLI. Use
+     `uvx --from rag-reviewer reviewer brief-provenance ...` when reviewer runs through uvx.
+     The command adds Git blob IDs to the brief without rewriting the verified sections.
+     If it is unavailable or reports missing source paths, report the gap and keep the brief.
+     Run the read-only command from Step 5 before using citations from an existing brief;
+     do not stamp an older brief with the current index SHA to repair missing provenance.
    - **Fail-open:** a failed write (read-only FS, no permission) is non-fatal — note it and still
      hand off with the in-context brief.
