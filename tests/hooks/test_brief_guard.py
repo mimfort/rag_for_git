@@ -807,3 +807,30 @@ def test_prepare_task_context_without_code_does_not_supply_evidence():
         })),
     ]
     assert bg.tool_result_texts(rows, -1) == []
+
+
+@pytest.mark.parametrize("observed", [False, True])
+def test_guard_brief_relocates_old_inline_warning_and_preserves_punctuation(observed):
+    text = f"## Test exemplars\r\n- (``test_late.py:7-9 {bg.WARNING}``).\r\n"
+    expected = "``test_late.py:7-9``"
+    if not observed:
+        expected += f" {bg.WARNING}"
+
+    evidence = {"test_late.py"} if observed else {"another.py"}
+    guarded, cited, missing = bg.guard_brief(text, evidence)
+
+    assert guarded == f"## Test exemplars\r\n- ({expected}).\r\n"
+    assert cited == ["test_late.py"]
+    assert missing == ([] if observed else ["test_late.py"])
+    assert bg.guard_brief(guarded, evidence) == (guarded, cited, missing)
+
+
+def test_guard_brief_keeps_historical_multiple_citations_without_reason_delimiter():
+    text = "## Relevant code\n- `a.py:1` calls `b.py:2`, see c.py:3.\n"
+    guarded, cited, missing = bg.guard_brief(text, {"a.py"})
+
+    assert guarded == (
+        f"## Relevant code\n- `a.py:1` calls `b.py:2` {bg.WARNING}, see c.py:3 {bg.WARNING}.\n"
+    )
+    assert cited == ["a.py", "b.py", "c.py"]
+    assert missing == ["b.py", "c.py"]

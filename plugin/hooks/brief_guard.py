@@ -39,9 +39,14 @@ _HEADER_RE = re.compile(
     r"^\s*(?://\s*)?\S+#\S+\s+\((?P<path>[^()\r\n]+?):\d+(?:-\d+)?\)",
     re.MULTILINE,
 )
+_GUARD_WARNING = r"[ \t]*" + re.escape(WARNING)
+_CITATION_LABEL = r"(?P<label>(?P<path>[A-Za-z0-9_./\\+\-]+\.[A-Za-z0-9]{1,6}):\d+(?:-\d+)?)"
 _CITATION_RE = re.compile(
-    r"([A-Za-z0-9_./\\+\-]+\.[A-Za-z0-9]{1,6}):\d+(?:-\d+)?"
+    rf"(?P<quote>`*){_CITATION_LABEL}"
+    # Старый хук мог записать предупреждение до закрывающих бэктиков.
+    rf"(?:{_GUARD_WARNING})?(?P=quote)(?:{_GUARD_WARNING})?"
 )
+_OLD_REASON_WARNING_RE = re.compile(rf"{_CITATION_LABEL} {re.escape(WARNING)}")
 _INCOMPLETE_RE = re.compile(r"\[(?:\.\.\.|…)?truncated\]")
 
 
@@ -177,6 +182,16 @@ def guard_brief(text: str, observed: set[str]) -> tuple[str, list[str], list[str
     active = False
     first_content = False
 
+    def annotate(match: re.Match[str]) -> str:
+        path = normalize_path(match.group("path"))
+        cited.append(path)
+        quote = match.group("quote")
+        label = quote + match.group("label") + quote
+        if path_is_observed(path, observed):
+            return label
+        missing.append(path)
+        return f"{label} {WARNING}"
+
     for line in text.splitlines(keepends=True):
         heading = line.rstrip("\r\n")
         if heading.startswith("## "):
@@ -191,18 +206,10 @@ def guard_brief(text: str, observed: set[str]) -> tuple[str, list[str], list[str
             guarded_lines.append(line)
             continue
 
-        def annotate(match: re.Match[str]) -> str:
-            path = normalize_path(match.group(1))
-            cited.append(path)
-            if path_is_observed(path, observed):
-                return match.group(0)
-            missing.append(path)
-            following = line[match.end():]
-            if re.match(r"[ \t]*" + re.escape(WARNING), following):
-                return match.group(0)
-            return f"{match.group(0)} {WARNING}"
-
-        guarded_lines.append(_CITATION_RE.sub(annotate, line))
+        # В формате solve-task после разделителя идёт пояснение к ссылкам.
+        citation_part, separator, reason = line.partition(" — ")
+        reason = _OLD_REASON_WARNING_RE.sub(r"\g<label>", reason)
+        guarded_lines.append(_CITATION_RE.sub(annotate, citation_part) + separator + reason)
 
     return "".join(guarded_lines), cited, missing
 
@@ -362,7 +369,7 @@ def run(payload: dict) -> int:
         _debug("missing", missing)
         if guarded != brief:
             _write_text(file_path, guarded)
-    except Exception:
+    except Exception:  # noqa: BLE001 — проверка не должна блокировать запись брифа.
         return 0
     return 0
 
@@ -370,7 +377,7 @@ def run(payload: dict) -> int:
 def main() -> int:
     try:
         payload = json.load(sys.stdin)
-    except Exception:
+    except Exception:  # noqa: BLE001 — нечитаемый вход хука оставляет бриф как есть.
         return 0
     return run(payload)
 
