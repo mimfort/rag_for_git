@@ -5,10 +5,10 @@ import click
 from reviewer.entrypoints.cli import cli
 from reviewer.launcher.catalog import build_catalog
 from reviewer.launcher.metadata import COMMAND_PRESENTATION, PARAMETER_PRESENTATION
-from reviewer.launcher.models import Effect, ParameterPresentation
-
+from reviewer.launcher.models import Effect, ParameterPresentation, ParamSection
 
 VISIBLE_COMMANDS = {
+    "brief-provenance",
     "check",
     "config migrate",
     "config show",
@@ -160,3 +160,18 @@ def test_update_metadata_discloses_complete_mutating_lifecycle():
     assert "AI-client integrations" in update.details
     assert "Compose" in update.details
     assert "не перезаписывает пользовательские изменения" in update.details
+
+
+def test_brief_provenance_metadata_describes_read_and_capture_modes():
+    provenance = next(item for item in build_catalog(cli) if item.path == ("brief-provenance",))
+    params = {parameter.name: parameter for parameter in provenance.params}
+
+    assert provenance.effects == (Effect.READ, Effect.WRITE)
+    assert "HEAD" in provenance.details
+    assert "Запись только" in provenance.details
+    assert params["brief"].required
+    assert params["brief"].description
+    assert params["path"].section is ParamSection.BASIC
+    assert {p.name for p in provenance.params if p.section is ParamSection.ADVANCED} == {
+        "indexed_sha", "repo_tag", "branch",
+    }
