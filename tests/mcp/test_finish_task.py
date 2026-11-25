@@ -340,11 +340,12 @@ class _MetricVCS(_FakeVCS):
     (get_changed_files, PR.head_sha, PR.base_ref)."""
 
     def __init__(self, *, vcs_raises=False, base_ref="main",
-                 changed_path="reviewer/app.py", **kwargs):
+                 changed_path="reviewer/app.py", head_sha="deadbeef", **kwargs):
         super().__init__(**kwargs)
         self._vcs_raises = vcs_raises
         self._base_ref = base_ref
         self._changed_path = changed_path
+        self._head_sha = head_sha
 
     def get_changed_files(self, number):
         if self._vcs_raises:
@@ -354,12 +355,14 @@ class _MetricVCS(_FakeVCS):
     def get_pull_request(self, number):
         pr = super().get_pull_request(number)
         return type("PR", (), {
-            "number": pr.number, "body": pr.body, "head_sha": "deadbeef",
+            "number": pr.number, "body": pr.body, "head_sha": self._head_sha,
             "base_ref": self._base_ref,
         })()
 
 
-def _service_with_board(monkeypatch, tmp_path, recorded, *, vcs_raises=False, on_vcs_open=None):
+def _service_with_board(
+    monkeypatch, tmp_path, recorded, *, vcs_raises=False, on_vcs_open=None, head_sha="deadbeef",
+):
     """Собрать finish_task-сервис с подложками съёма: клон, политика, история.
 
     `_resolve_policy`/`_repo_clone_path` подменены напрямую — их резолв не
@@ -369,7 +372,7 @@ def _service_with_board(monkeypatch, tmp_path, recorded, *, vcs_raises=False, on
     """
     from reviewer.metrics.brief_quality.config import DEFAULT
 
-    vcs = _MetricVCS(vcs_raises=vcs_raises)
+    vcs = _MetricVCS(vcs_raises=vcs_raises, head_sha=head_sha)
     svc = _Svc(["fake"], vcs=vcs)
     if on_vcs_open is not None:
         factory = svc._vcs_factory
@@ -390,11 +393,12 @@ def _service_with_board(monkeypatch, tmp_path, recorded, *, vcs_raises=False, on
     return svc
 
 
-def test_finish_task_records_brief_quality(monkeypatch, tmp_path):
+def test_finish_task_records_brief_quality(monkeypatch, tmp_path, commit_snapshot):
     """Съём метрики на закрытии задачи: строка пишется, run_id остаётся пустым."""
     _write_brief(tmp_path, "2026-09-01-PRI-1-x.md", ["reviewer/app.py"])
+    head_sha = commit_snapshot()
     recorded = {}
-    svc = _service_with_board(monkeypatch, tmp_path, recorded)   # хелпер модуля
+    svc = _service_with_board(monkeypatch, tmp_path, recorded, head_sha=head_sha)
     out = svc.finish_task("PRI-1", "https://github.com/o/r/pull/7")
     assert out["status"] == "ok"
     assert out["brief_quality_status"] == "measured"
@@ -411,7 +415,7 @@ def test_finish_task_survives_metric_failure(monkeypatch, tmp_path):
 
 
 def test_finish_task_metric_resolves_policy_from_pr_base_ref_not_primary_branch(
-    monkeypatch, tmp_path
+    monkeypatch, tmp_path, commit_snapshot,
 ):
     """Съём метрики на finish_task обязан взять конфиг ЦЕЛЕВОЙ ветки PR, а не
     первичной ветки репозитория — как и на публикации ревью (`_record_brief_quality`
@@ -427,7 +431,7 @@ def test_finish_task_metric_resolves_policy_from_pr_base_ref_not_primary_branch(
     target_config = BriefQualityConfig(core_paths=("release_core/**",), configured=True)
 
     # PR закрывается в "release" — неглавную ветку; "dev" — первичная.
-    vcs = _MetricVCS(base_ref="release", changed_path="release_core/app.py")
+    vcs = _MetricVCS(base_ref="release", changed_path="release_core/app.py", head_sha=commit_snapshot())
     svc = _Svc(["fake"], vcs=vcs)
     svc._review_service = type(
         "RS", (), {"_ensure_history": lambda self: _FakeHistory(recorded)}

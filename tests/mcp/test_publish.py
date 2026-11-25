@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import tempfile
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -647,17 +648,21 @@ def _write_brief(tmp_path, body: str = "- `a.py:1` — точка правки")
 
 @patch("reviewer.services.review_service.chunk_python", side_effect=_fake_chunk)
 @patch("reviewer.services.review_service.build_overlay")
-def test_publish_records_brief_quality(_ov, _ch, monkeypatch, tmp_path) -> None:
+def test_publish_records_brief_quality(_ov, _ch, monkeypatch, tmp_path, commit_snapshot) -> None:
     """Успешная публикация пишет измерение качества брифа рядом с историей."""
     _write_brief(tmp_path)
-    svc, _vcs, history = _make_mcp_service_with_publish()
+    head_sha = commit_snapshot()
+    _write_brief(tmp_path, "- `unrelated.py:1` — черновик после коммита")
+    svc, vcs, history = _make_mcp_service_with_publish()
+    monkeypatch.setattr(vcs, "get_pull_request", lambda number: replace(_pr(number), head_sha=head_sha))
     monkeypatch.setattr(svc, "_repo_clone_path", lambda repo: str(tmp_path))
     svc.prepare_review("o/r", 7)
 
     _submit_then_publish(svc, "o/r", 7, [RAW], task_key="PRI-999")
 
     assert len(history.brief_quality) == 1
-    run_id, repo, pr_number, _head, measurement = history.brief_quality[0]
+    run_id, repo, pr_number, head, measurement = history.brief_quality[0]
+    assert head == head_sha
     assert (repo, pr_number) == ("o/r", 7)
     assert run_id == 1                          # id прогона из _FakeHistory.record_run
     assert measurement.status == "measured"
@@ -669,9 +674,13 @@ def test_publish_records_brief_quality(_ov, _ch, monkeypatch, tmp_path) -> None:
 
 @patch("reviewer.services.review_service.chunk_python", side_effect=_fake_chunk)
 @patch("reviewer.services.review_service.build_overlay")
-def test_publish_brief_quality_missing_brief_is_recorded(_ov, _ch, monkeypatch, tmp_path) -> None:
-    """Брифа нет — пишется строка no_brief: «точки измерения не было и вот почему»."""
-    svc, _vcs, history = _make_mcp_service_with_publish()
+def test_publish_brief_quality_missing_brief_is_recorded(
+    _ov, _ch, monkeypatch, tmp_path, commit_snapshot,
+) -> None:
+    """Брифа нет в доступном снимке Git, поэтому статус no_brief."""
+    head_sha = commit_snapshot()
+    svc, vcs, history = _make_mcp_service_with_publish()
+    monkeypatch.setattr(vcs, "get_pull_request", lambda number: replace(_pr(number), head_sha=head_sha))
     monkeypatch.setattr(svc, "_repo_clone_path", lambda repo: str(tmp_path))
     svc.prepare_review("o/r", 7)
 

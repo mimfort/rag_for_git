@@ -1,6 +1,6 @@
 """Тесты адаптера онлайн-метрики качества брифа (PRI-249).
 
-Файловая система — только tmp_path; ни БД, ни git, ни сети.
+Временная рабочая копия и Git-снимки. БД и сеть не используются.
 """
 from __future__ import annotations
 
@@ -415,7 +415,7 @@ def test_online_matches_offline_formula_on_full_diff(tmp_path):
     }
 
 
-def test_measure_and_record_writes_row_and_returns_status(tmp_path):
+def test_measure_and_record_without_sha_uses_worktree_and_writes_row(tmp_path):
     _write_brief(tmp_path, "2026-09-01-PRI-1-x.md", ["reviewer/app.py"])
     written = {}
 
@@ -425,13 +425,67 @@ def test_measure_and_record_writes_row_and_returns_status(tmp_path):
             return 1
 
     status = brief_quality.measure_and_record(
-        task_key="PRI-1", repo="o/r", pr_number=7, head_sha="sha",
+        task_key="PRI-1", repo="o/r", pr_number=7, head_sha=None,
         changed_paths=["reviewer/app.py"], changed_status={"reviewer/app.py": "modified"},
         clone_path=str(tmp_path), config=DEFAULT, history=_History(),
     )
     assert status == brief_quality.STATUS_MEASURED
     assert written == {"run_id": None, "repo": "o/r", "pr": 7,
                        "status": brief_quality.STATUS_MEASURED}
+
+
+def test_recording_uses_the_pr_snapshot_despite_later_brief_files(tmp_path, commit_snapshot):
+    old = "2026-09-01-PRI-1-brief.md"
+    _write_brief(tmp_path, old, ["reviewer/app.py"])
+    head = commit_snapshot()
+    _write_brief(tmp_path, old, ["reviewer/changed.py"])
+    _write_brief(tmp_path, "2026-09-02-PRI-1-draft.md", ["reviewer/unrelated.py"])
+    rows = []
+
+    class History:
+        def record_brief_quality(self, *args):
+            rows.append(args[-1])
+            return len(rows)
+
+    assert brief_quality.measure_and_record(
+        task_key="PRI-1", repo="o/r", pr_number=7, head_sha=head,
+        changed_paths=["reviewer/app.py"], changed_status={"reviewer/app.py": "modified"},
+        clone_path=str(tmp_path), config=DEFAULT, history=History(),
+    ) == "measured"
+    assert rows[0].brief_path == f"{BRIEFS_DIR}/{old}"
+    assert rows[0].core_recall == 1.0
+
+
+def test_pinned_brief_respects_literal_custom_directory(tmp_path, commit_snapshot):
+    config = BriefQualityConfig(briefs_dir="custom [docs]")
+    directory = tmp_path / config.briefs_dir
+    directory.mkdir()
+    expected = "2026-09-01-pri-1-brief.md"
+    (directory / expected).write_text(_BRIEF, encoding="utf-8")
+    (directory / "2026-09-02-PRI-10-other.md").write_text("# Other task", encoding="utf-8")
+    head = commit_snapshot()
+    result = measure(
+        task_key="PRI-1", clone_path=str(tmp_path), head_sha=head,
+        changed_paths=["reviewer/mcp/service.py"],
+        changed_status={"reviewer/mcp/service.py": "modified"}, config=config,
+    )
+    assert result.brief_path == f"{config.briefs_dir}/{expected}"
+    assert result.core_recall == 1.0
+
+
+@pytest.mark.parametrize("valid_snapshot", [True, False])
+def test_pinned_measurement_distinguishes_missing_brief_and_snapshot(
+    tmp_path, commit_snapshot, valid_snapshot,
+):
+    head = commit_snapshot()
+    _write_brief(tmp_path, "2026-09-01-PRI-1-draft.md", ["reviewer/app.py"])
+    measurement = measure(
+        task_key="PRI-1", clone_path=str(tmp_path), head_sha=head if valid_snapshot else "0" * 40,
+        changed_paths=["reviewer/app.py"], changed_status={"reviewer/app.py": "modified"},
+        config=DEFAULT,
+    )
+    assert measurement.status == ("no_brief" if valid_snapshot else "brief_revision_unavailable")
+    assert measurement.core_recall is None
 
 
 def test_measure_and_record_is_fail_soft_on_history_error(tmp_path):
@@ -471,7 +525,7 @@ def test_measure_and_record_returns_none_when_write_silently_fails(tmp_path):
             return None  # как настоящий ReviewHistory при недоступном Postgres
 
     status = brief_quality.measure_and_record(
-        task_key="PRI-1", repo="o/r", pr_number=7, head_sha="sha",
+        task_key="PRI-1", repo="o/r", pr_number=7, head_sha=None,
         changed_paths=["reviewer/app.py"], changed_status={"reviewer/app.py": "modified"},
         clone_path=str(tmp_path), config=DEFAULT, history=_SilentlyFailingHistory(),
     )

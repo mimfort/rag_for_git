@@ -1245,7 +1245,8 @@ def status(path: str, repo_tag: str | None, branch_opt: str | None,
 
 def _render_measure(summary: Mapping[str, object]) -> str:
     """Человекочитаемый отчёт по сводке `measure_corpus` (для click.echo)."""
-    fixed = {"briefs", "skipped_no_key", "skipped_no_merges", "rows", "write_failed", "diff_failed"}
+    fixed = {"briefs", "skipped_no_key", "skipped_no_merges", "rows",
+             "write_failed", "diff_failed", "brief_corpus_unavailable"}
     lines = [
         f"Брифов обработано: {summary['briefs']}",
         f"Строк записано: {summary['rows']}",
@@ -1360,7 +1361,9 @@ def measure_briefs(path: str, repo_tag: str | None, briefs_dir: str | None,
         click.echo(f"⚠ Не записано в БД строк: {write_failed}", err=True)
     if summary.get("diff_failed"):
         click.echo(f"⚠ Не удалось прочитать Git diff для PR: {summary['diff_failed']}", err=True)
-    if write_failed or summary.get("diff_failed"):
+    if summary.get("brief_corpus_unavailable"):
+        click.echo("⚠ Не удалось прочитать корпус брифов в Git-снимке HEAD", err=True)
+    if write_failed or summary.get("diff_failed") or summary.get("brief_corpus_unavailable"):
         raise SystemExit(1)
 
 
