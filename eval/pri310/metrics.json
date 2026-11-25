@@ -1,0 +1,4995 @@
+{
+  "protocol": {
+    "model": "gpt-6-luna",
+    "reasoning_effort": "low",
+    "prompt_sha256": "9777c6d0559037b6a35960fa520e87117aeb12cef9428e875840b2e03f9264f3",
+    "schema_sha256": "f226405f740e509fb8b617f2926766e6350090b311c911a3ca46317ac866ff32",
+    "conditions": [
+      "rank",
+      "edges",
+      "graph_fixed"
+    ],
+    "batches": [
+      {
+        "keys": [
+          "PRI-196",
+          "PRI-215",
+          "PRI-223",
+          "PRI-225",
+          "PRI-228"
+        ],
+        "base_sha": [
+          "93de5f908c788f1c7a6ff8336e964f4f5f14406a",
+          "e3de3c88f6849f686d0d92c1f9d784697ed65eff",
+          "dd3676eee62e76370f21a37ba99dfb506d9e4d30",
+          "91a8227486b6cdd235f5e992c4d1930b011729ae",
+          "e6a42feb3cec7660cbffcdf3f5d542525d39fbf1"
+        ],
+        "sha256": {
+          "rank": "f46cd6666bf1f4004c895d843c5b34ebe168b6b5a844cb8f3158209a9fccc954",
+          "edges": "6eb2385bfb7e79d0bcccbd3d9bd5e9d2acfd4168aeb39a89f0420a36cf3d6d7a",
+          "graph_fixed": "61c96b9b2fbe6537f76381d2f1172140ecec94fd9a652c958f9f3de510e3dcbb"
+        },
+        "orders": [
+          [
+            "rank",
+            "edges",
+            "graph_fixed"
+          ],
+          [
+            "graph_fixed",
+            "edges",
+            "rank"
+          ]
+        ]
+      },
+      {
+        "keys": [
+          "PRI-235",
+          "PRI-238",
+          "PRI-239",
+          "PRI-241",
+          "PRI-242"
+        ],
+        "base_sha": [
+          "259457b825e261175b96049da26e115069274fb6",
+          "8992284033687d707c7104f1318e129f2e551cea",
+          "7c7d52ebac9f5c393ec5ec35e851e644504954bd",
+          "30d9d2866590912ba42314b610d3e3b9cb04af2a",
+          "a650c3a2de835a05e51c451d698e50e2fc0e0bf2"
+        ],
+        "sha256": {
+          "rank": "001f5121dfa1bc7dc62bf495438a50026b4fd3c084b8c15abc98774c83b4abb5",
+          "edges": "1ba1a673373cead1e1242f12b40aa0d92414ccbe81f868f6de46f2f6a6ddc87d",
+          "graph_fixed": "b3f7542d57a48283f17ca92358f91c8f00197b083674e0b808eca65376a13ff8"
+        },
+        "orders": [
+          [
+            "edges",
+            "graph_fixed",
+            "rank"
+          ],
+          [
+            "rank",
+            "graph_fixed",
+            "edges"
+          ]
+        ]
+      },
+      {
+        "keys": [
+          "PRI-245",
+          "PRI-248",
+          "PRI-251",
+          "PRI-252",
+          "PRI-255"
+        ],
+        "base_sha": [
+          "492834c3ecc6d19d9ab6fe2a273c1b0c05ddcd00",
+          "c7f1406369649edaf9fc190384765df4880099ae",
+          "10ea00830cd96c94298b3ee5f0536b4bbfced767",
+          "b911c526d232e3021564b337f3aba7cd6f3b4fb1",
+          "a1b28c157c94d230db372484b9da01389dc87869"
+        ],
+        "sha256": {
+          "rank": "eb2f0416171da475f9beda31206a25c2e24804d100d8df5c3c38b25553fe1feb",
+          "edges": "8b9cee8a1f96f03ef4f6291153574330f1047f79dd1a4a8746749d308cc24c85",
+          "graph_fixed": "2e7cbd58d26aa6a0373f3c2ff203ba33ab651110af53c350ee29ed348735c7f1"
+        },
+        "orders": [
+          [
+            "graph_fixed",
+            "rank",
+            "edges"
+          ],
+          [
+            "edges",
+            "rank",
+            "graph_fixed"
+          ]
+        ]
+      },
+      {
+        "keys": [
+          "PRI-256",
+          "PRI-257",
+          "PRI-260",
+          "PRI-267",
+          "PRI-275"
+        ],
+        "base_sha": [
+          "7d66a08baa462be1a2edde216dfbdc66a27fa68f",
+          "951e791246db4577a3913d07b75001bc32ff9969",
+          "ca5498f63825d86766b4814806b5ba1631e23e17",
+          "22ff148c426ffcdbe075c31825b4b43d704e3710",
+          "f587a559e86fa396cc771355f4d745231df9a1f4"
+        ],
+        "sha256": {
+          "rank": "14496ee81a9b7b0aac79efeeb7d13765ee08d6afba9965126055ba39e1ae93ce",
+          "edges": "5759e72f1ce391af6addd90531df15bcf635375561c7e2f125653ef4b5454178",
+          "graph_fixed": "51c0367d074573190e620972d939b1bfc27016b4ce0b141f7dc8d92785df49b2"
+        },
+        "orders": [
+          [
+            "rank",
+            "edges",
+            "graph_fixed"
+          ],
+          [
+            "graph_fixed",
+            "edges",
+            "rank"
+          ]
+        ]
+      }
+    ],
+    "codex_version": "codex-cli 0.170.0"
+  },
+  "repeats": {
+    "1": {
+      "rank": {
+        "all": {
+          "core": {
+            "matched": 52,
+            "all": 149
+          },
+          "dependencies": {
+            "matched": 20,
+            "all": 46
+          }
+        },
+        "large": {
+          "core": {
+            "matched": 17,
+            "all": 84
+          },
+          "dependencies": {
+            "matched": 3,
+            "all": 11
+          }
+        },
+        "positions": {
+          "first": {
+            "labelled": 54,
+            "visible": 134,
+            "cited": 77,
+            "labelled_cited": 43
+          },
+          "middle": {
+            "labelled": 28,
+            "visible": 134,
+            "cited": 39,
+            "labelled_cited": 17
+          },
+          "last": {
+            "labelled": 19,
+            "visible": 115,
+            "cited": 30,
+            "labelled_cited": 12
+          }
+        },
+        "missing_briefs": 0,
+        "format_errors": 5,
+        "rejected_references": 31,
+        "batches_completed": 4,
+        "batches_expected": 4,
+        "median_batch_s": 33.742999999999995,
+        "usage": {
+          "input_tokens": 188310,
+          "output_tokens": 6030
+        },
+        "tasks": [
+          {
+            "key": "PRI-196",
+            "large": true,
+            "coverage": {
+              "core": {
+                "matched": 2,
+                "all": 10
+              },
+              "dependencies": {
+                "matched": 1,
+                "all": 1
+              }
+            },
+            "positions": {
+              "first": {
+                "labelled": 3,
+                "visible": 5,
+                "cited": 2,
+                "labelled_cited": 2
+              },
+              "middle": {
+                "labelled": 3,
+                "visible": 5,
+                "cited": 1,
+                "labelled_cited": 1
+              },
+              "last": {
+                "labelled": 0,
+                "visible": 4,
+                "cited": 0,
+                "labelled_cited": 0
+              }
+            },
+            "format_errors": [],
+            "rejected_references": 2
+          },
+          {
+            "key": "PRI-215",
+            "large": true,
+            "coverage": {
+              "core": {
+                "matched": 7,
+                "all": 20
+              },
+              "dependencies": {
+                "matched": 0,
+                "all": 2
+              }
+            },
+            "positions": {
+              "first": {
+                "labelled": 3,
+                "visible": 7,
+                "cited": 3,
+                "labelled_cited": 3
+              },
+              "middle": {
+                "labelled": 3,
+                "visible": 7,
+                "cited": 2,
+                "labelled_cited": 2
+              },
+              "last": {
+                "labelled": 4,
+                "visible": 6,
+                "cited": 2,
+                "labelled_cited": 2
+              }
+            },
+            "format_errors": [],
+            "rejected_references": 1
+          },
+          {
+            "key": "PRI-223",
+            "large": true,
+            "coverage": {
+              "core": {
+                "matched": 5,
+                "all": 23
+              },
+              "dependencies": {
+                "matched": 2,
+                "all": 3
+              }
+            },
+            "positions": {
+              "first": {
+                "labelled": 6,
+                "visible": 7,
+                "cited": 7,
+                "labelled_cited": 6
+              },
+              "middle": {
+                "labelled": 3,
+                "visible": 7,
+                "cited": 1,
+                "labelled_cited": 1
+              },
+              "last": {
+                "labelled": 1,
+                "visible": 6,
+                "cited": 0,
+                "labelled_cited": 0
+              }
+            },
+            "format_errors": [],
+            "rejected_references": 1
+          },
+          {
+            "key": "PRI-225",
+            "large": true,
+            "coverage": {
+              "core": {
+                "matched": 2,
+                "all": 19
+              },
+              "dependencies": {
+                "matched": 0,
+                "all": 3
+              }
+            },
+            "positions": {
+              "first": {
+                "labelled": 3,
+                "visible": 7,
+                "cited": 4,
+                "labelled_cited": 2
+              },
+              "middle": {
+                "labelled": 1,
+                "visible": 7,
+                "cited": 0,
+                "labelled_cited": 0
+              },
+              "last": {
+                "labelled": 0,
+                "visible": 6,
+                "cited": 0,
+                "labelled_cited": 0
+              }
+            },
+            "format_errors": [],
+            "rejected_references": 1
+          },
+          {
+            "key": "PRI-228",
+            "large": false,
+            "coverage": {
+              "core": {
+                "matched": 3,
+                "all": 4
+              },
+              "dependencies": {
+                "matched": 2,
+                "all": 2
+              }
+            },
+            "positions": {
+              "first": {
+                "labelled": 3,
+                "visible": 7,
+                "cited": 4,
+                "labelled_cited": 3
+              },
+              "middle": {
+                "labelled": 2,
+                "visible": 7,
+                "cited": 2,
+                "labelled_cited": 2
+              },
+              "last": {
+                "labelled": 0,
+                "visible": 6,
+                "cited": 0,
+                "labelled_cited": 0
+              }
+            },
+            "format_errors": [],
+            "rejected_references": 1
+          },
+          {
+            "key": "PRI-235",
+            "large": false,
+            "coverage": {
+              "core": {
+                "matched": 4,
+                "all": 5
+              },
+              "dependencies": {
+                "matched": 1,
+                "all": 2
+              }
+            },
+            "positions": {
+              "first": {
+                "labelled": 2,
+                "visible": 7,
+                "cited": 7,
+                "labelled_cited": 2
+              },
+              "middle": {
+                "labelled": 1,
+                "visible": 7,
+                "cited": 7,
+                "labelled_cited": 1
+              },
+              "last": {
+                "labelled": 2,
+                "visible": 6,
+                "cited": 6,
+                "labelled_cited": 2
+              }
+            },
+            "format_errors": [],
+            "rejected_references": 4
+          },
+          {
+            "key": "PRI-238",
+            "large": false,
+            "coverage": {
+              "core": {
+                "matched": 2,
+                "all": 3
+              },
+              "dependencies": {
+                "matched": 0,
+                "all": 3
+              }
+            },
+            "positions": {
+              "first": {
+                "labelled": 1,
+                "visible": 7,
+                "cited": 6,
+                "labelled_cited": 1
+              },
+              "middle": {
+                "labelled": 1,
+                "visible": 7,
+                "cited": 2,
+                "labelled_cited": 1
+              },
+              "last": {
+                "labelled": 0,
+                "visible": 6,
+                "cited": 2,
+                "labelled_cited": 0
+              }
+            },
+            "format_errors": [],
+            "rejected_references": 2
+          },
+          {
+            "key": "PRI-239",
+            "large": false,
+            "coverage": {
+              "core": {
+                "matched": 4,
+                "all": 8
+              },
+              "dependencies": {
+                "matched": 1,
+                "all": 2
+              }
+            },
+            "positions": {
+              "first": {
+                "labelled": 3,
+                "visible": 7,
+                "cited": 7,
+                "labelled_cited": 3
+              },
+              "middle": {
+                "labelled": 1,
+                "visible": 7,
+                "cited": 7,
+                "labelled_cited": 1
+              },
+              "last": {
+                "labelled": 1,
+                "visible": 6,
+                "cited": 5,
+                "labelled_cited": 1
+              }
+            },
+            "format_errors": [],
+            "rejected_references": 1
+          },
+          {
+            "key": "PRI-241",
+            "large": false,
+            "coverage": {
+              "core": {
+                "matched": 2,
+                "all": 3
+              },
+              "dependencies": {
+                "matched": 1,
+                "all": 2
+              }
+            },
+            "positions": {
+              "first": {
+                "labelled": 3,
+                "visible": 7,
+                "cited": 5,
+                "labelled_cited": 2
+              },
+              "middle": {
+                "labelled": 1,
+                "visible": 7,
+                "cited": 4,
+                "labelled_cited": 1
+              },
+              "last": {
+                "labelled": 0,
+                "visible": 6,
+                "cited": 0,
+                "labelled_cited": 0
+              }
+            },
+            "format_errors": [],
+            "rejected_references": 0
+          },
+          {
+            "key": "PRI-242",
+            "large": false,
+            "coverage": {
+              "core": {
+                "matched": 1,
+                "all": 3
+              },
+              "dependencies": {
+                "matched": 2,
+                "all": 2
+              }
+            },
+            "positions": {
+              "first": {
+                "labelled": 3,
+                "visible": 7,
+                "cited": 5,
+                "labelled_cited": 3
+              },
+              "middle": {
+                "labelled": 0,
+                "visible": 7,
+                "cited": 4,
+                "labelled_cited": 0
+              },
+              "last": {
+                "labelled": 0,
+                "visible": 6,
+                "cited": 2,
+                "labelled_cited": 0
+              }
+            },
+            "format_errors": [],
+            "rejected_references": 0
+          },
+          {
+            "key": "PRI-245",
+            "large": false,
+            "coverage": {
+              "core": {
+                "matched": 3,
+                "all": 9
+              },
+              "dependencies": {
+                "matched": 1,
+                "all": 2
+              }
+            },
+            "positions": {
+              "first": {
+                "labelled": 2,
+                "visible": 5,
+                "cited": 2,
+                "labelled_cited": 1
+              },
+              "middle": {
+                "labelled": 1,
+                "visible": 5,
+                "cited": 2,
+                "labelled_cited": 1
+              },
+              "last": {
+                "labelled": 3,
+                "visible": 4,
+                "cited": 2,
+                "labelled_cited": 2
+              }
+            },
+            "format_errors": [
+              "citation_syntax"
+            ],
+            "rejected_references": 0
+          },
+          {
+            "key": "PRI-248",
+            "large": false,
+            "coverage": {
+              "core": {
+                "matched": 1,
+                "all": 3
+              },
+              "dependencies": {
+                "matched": 1,
+                "all": 3
+              }
+            },
+            "positions": {
+              "first": {
+                "labelled": 2,
+                "visible": 6,
+                "cited": 2,
+                "labelled_cited": 1
+              },
+              "middle": {
+                "labelled": 1,
+                "visible": 6,
+                "cited": 1,
+                "labelled_cited": 1
+              },
+              "last": {
+                "labelled": 0,
+                "visible": 5,
+                "cited": 0,
+                "labelled_cited": 0
+              }
+            },
+            "format_errors": [
+              "citation_syntax"
+            ],
+            "rejected_references": 2
+          },
+          {
+            "key": "PRI-251",
+            "large": false,
+            "coverage": {
+              "core": {
+                "matched": 3,
+                "all": 7
+              },
+              "dependencies": {
+                "matched": 1,
+                "all": 2
+              }
+            },
+            "positions": {
+              "first": {
+                "labelled": 3,
+                "visible": 6,
+                "cited": 5,
+                "labelled_cited": 3
+              },
+              "middle": {
+                "labelled": 0,
+                "visible": 6,
+                "cited": 0,
+                "labelled_cited": 0
+              },
+              "last": {
+                "labelled": 1,
+                "visible": 6,
+                "cited": 2,
+                "labelled_cited": 1
+              }
+            },
+            "format_errors": [
+              "citation_syntax"
+            ],
+            "rejected_references": 4
+          },
+          {
+            "key": "PRI-252",
+            "large": false,
+            "coverage": {
+              "core": {
+                "matched": 1,
+                "all": 4
+              },
+              "dependencies": {
+                "matched": 2,
+                "all": 2
+              }
+            },
+            "positions": {
+              "first": {
+                "labelled": 2,
+                "visible": 7,
+                "cited": 4,
+                "labelled_cited": 1
+              },
+              "middle": {
+                "labelled": 2,
+                "visible": 7,
+                "cited": 2,
+                "labelled_cited": 2
+              },
+              "last": {
+                "labelled": 0,
+                "visible": 6,
+                "cited": 0,
+                "labelled_cited": 0
+              }
+            },
+            "format_errors": [
+              "citation_syntax"
+            ],
+            "rejected_references": 1
+          },
+          {
+            "key": "PRI-255",
+            "large": false,
+            "coverage": {
+              "core": {
+                "matched": 2,
+                "all": 3
+              },
+              "dependencies": {
+                "matched": 2,
+                "all": 3
+              }
+            },
+            "positions": {
+              "first": {
+                "labelled": 2,
+                "visible": 7,
+                "cited": 3,
+                "labelled_cited": 2
+              },
+              "middle": {
+                "labelled": 0,
+                "visible": 7,
+                "cited": 0,
+                "labelled_cited": 0
+              },
+              "last": {
+                "labelled": 2,
+                "visible": 6,
+                "cited": 4,
+                "labelled_cited": 2
+              }
+            },
+            "format_errors": [
+              "citation_syntax"
+            ],
+            "rejected_references": 0
+          },
+          {
+            "key": "PRI-256",
+            "large": false,
+            "coverage": {
+              "core": {
+                "matched": 1,
+                "all": 5
+              },
+              "dependencies": {
+                "matched": 1,
+                "all": 2
+              }
+            },
+            "positions": {
+              "first": {
+                "labelled": 1,
+                "visible": 7,
+                "cited": 0,
+                "labelled_cited": 0
+              },
+              "middle": {
+                "labelled": 3,
+                "visible": 7,
+                "cited": 1,
+                "labelled_cited": 1
+              },
+              "last": {
+                "labelled": 1,
+                "visible": 6,
+                "cited": 1,
+                "labelled_cited": 1
+              }
+            },
+            "format_errors": [],
+            "rejected_references": 5
+          },
+          {
+            "key": "PRI-257",
+            "large": true,
+            "coverage": {
+              "core": {
+                "matched": 1,
+                "all": 12
+              },
+              "dependencies": {
+                "matched": 0,
+                "all": 2
+              }
+            },
+            "positions": {
+              "first": {
+                "labelled": 4,
+                "visible": 7,
+                "cited": 1,
+                "labelled_cited": 1
+              },
+              "middle": {
+                "labelled": 2,
+                "visible": 7,
+                "cited": 1,
+                "labelled_cited": 0
+              },
+              "last": {
+                "labelled": 1,
+                "visible": 6,
+                "cited": 1,
+                "labelled_cited": 0
+              }
+            },
+            "format_errors": [],
+            "rejected_references": 4
+          },
+          {
+            "key": "PRI-260",
+            "large": false,
+            "coverage": {
+              "core": {
+                "matched": 4,
+                "all": 4
+              },
+              "dependencies": {
+                "matched": 0,
+                "all": 2
+              }
+            },
+            "positions": {
+              "first": {
+                "labelled": 2,
+                "visible": 7,
+                "cited": 3,
+                "labelled_cited": 2
+              },
+              "middle": {
+                "labelled": 2,
+                "visible": 7,
+                "cited": 1,
+                "labelled_cited": 1
+              },
+              "last": {
+                "labelled": 1,
+                "visible": 6,
+                "cited": 2,
+                "labelled_cited": 1
+              }
+            },
+            "format_errors": [],
+            "rejected_references": 0
+          },
+          {
+            "key": "PRI-267",
+            "large": false,
+            "coverage": {
+              "core": {
+                "matched": 3,
+                "all": 3
+              },
+              "dependencies": {
+                "matched": 0,
+                "all": 2
+              }
+            },
+            "positions": {
+              "first": {
+                "labelled": 4,
+                "visible": 7,
+                "cited": 4,
+                "labelled_cited": 3
+              },
+              "middle": {
+                "labelled": 0,
+                "visible": 7,
+                "cited": 0,
+                "labelled_cited": 0
+              },
+              "last": {
+                "labelled": 1,
+                "visible": 6,
+                "cited": 1,
+                "labelled_cited": 0
+              }
+            },
+            "format_errors": [],
+            "rejected_references": 1
+          },
+          {
+            "key": "PRI-275",
+            "large": false,
+            "coverage": {
+              "core": {
+                "matched": 1,
+                "all": 1
+              },
+              "dependencies": {
+                "matched": 2,
+                "all": 4
+              }
+            },
+            "positions": {
+              "first": {
+                "labelled": 2,
+                "visible": 7,
+                "cited": 3,
+                "labelled_cited": 2
+              },
+              "middle": {
+                "labelled": 1,
+                "visible": 7,
+                "cited": 1,
+                "labelled_cited": 1
+              },
+              "last": {
+                "labelled": 1,
+                "visible": 6,
+                "cited": 0,
+                "labelled_cited": 0
+              }
+            },
+            "format_errors": [],
+            "rejected_references": 1
+          }
+        ]
+      },
+      "edges": {
+        "all": {
+          "core": {
+            "matched": 48,
+            "all": 149
+          },
+          "dependencies": {
+            "matched": 20,
+            "all": 46
+          }
+        },
+        "large": {
+          "core": {
+            "matched": 20,
+            "all": 84
+          },
+          "dependencies": {
+            "matched": 3,
+            "all": 11
+          }
+        },
+        "positions": {
+          "first": {
+            "labelled": 44,
+            "visible": 134,
+            "cited": 45,
+            "labelled_cited": 30
+          },
+          "middle": {
+            "labelled": 24,
+            "visible": 134,
+            "cited": 25,
+            "labelled_cited": 15
+          },
+          "last": {
+            "labelled": 33,
+            "visible": 115,
+            "cited": 31,
+            "labelled_cited": 23
+          }
+        },
+        "missing_briefs": 0,
+        "format_errors": 0,
+        "rejected_references": 34,
+        "batches_completed": 4,
+        "batches_expected": 4,
+        "median_batch_s": 29.951,
+        "usage": {
+          "input_tokens": 188400,
+          "output_tokens": 5247,
+          "cached_input_tokens": 12928
+        },
+        "tasks": [
+          {
+            "key": "PRI-196",
+            "large": true,
+            "coverage": {
+              "core": {
+                "matched": 4,
+                "all": 10
+              },
+              "dependencies": {
+                "matched": 1,
+                "all": 1
+              }
+            },
+            "positions": {
+              "first": {
+                "labelled": 1,
+                "visible": 5,
+                "cited": 0,
+                "labelled_cited": 0
+              },
+              "middle": {
+                "labelled": 1,
+                "visible": 5,
+                "cited": 1,
+                "labelled_cited": 1
+              },
+              "last": {
+                "labelled": 4,
+                "visible": 4,
+                "cited": 4,
+                "labelled_cited": 4
+              }
+            },
+            "format_errors": [],
+            "rejected_references": 2
+          },
+          {
+            "key": "PRI-215",
+            "large": true,
+            "coverage": {
+              "core": {
+                "matched": 7,
+                "all": 20
+              },
+              "dependencies": {
+                "matched": 0,
+                "all": 2
+              }
+            },
+            "positions": {
+              "first": {
+                "labelled": 2,
+                "visible": 7,
+                "cited": 2,
+                "labelled_cited": 2
+              },
+              "middle": {
+                "labelled": 5,
+                "visible": 7,
+                "cited": 3,
+                "labelled_cited": 3
+              },
+              "last": {
+                "labelled": 3,
+                "visible": 6,
+                "cited": 2,
+                "labelled_cited": 2
+              }
+            },
+            "format_errors": [],
+            "rejected_references": 3
+          },
+          {
+            "key": "PRI-223",
+            "large": true,
+            "coverage": {
+              "core": {
+                "matched": 5,
+                "all": 23
+              },
+              "dependencies": {
+                "matched": 2,
+                "all": 3
+              }
+            },
+            "positions": {
+              "first": {
+                "labelled": 4,
+                "visible": 7,
+                "cited": 5,
+                "labelled_cited": 4
+              },
+              "middle": {
+                "labelled": 2,
+                "visible": 7,
+                "cited": 0,
+                "labelled_cited": 0
+              },
+              "last": {
+                "labelled": 4,
+                "visible": 6,
+                "cited": 3,
+                "labelled_cited": 3
+              }
+            },
+            "format_errors": [],
+            "rejected_references": 0
+          },
+          {
+            "key": "PRI-225",
+            "large": true,
+            "coverage": {
+              "core": {
+                "matched": 2,
+                "all": 19
+              },
+              "dependencies": {
+                "matched": 0,
+                "all": 3
+              }
+            },
+            "positions": {
+              "first": {
+                "labelled": 4,
+                "visible": 7,
+                "cited": 3,
+                "labelled_cited": 2
+              },
+              "middle": {
+                "labelled": 0,
+                "visible": 7,
+                "cited": 0,
+                "labelled_cited": 0
+              },
+              "last": {
+                "labelled": 0,
+                "visible": 6,
+                "cited": 0,
+                "labelled_cited": 0
+              }
+            },
+            "format_errors": [],
+            "rejected_references": 3
+          },
+          {
+            "key": "PRI-228",
+            "large": false,
+            "coverage": {
+              "core": {
+                "matched": 2,
+                "all": 4
+              },
+              "dependencies": {
+                "matched": 1,
+                "all": 2
+              }
+            },
+            "positions": {
+              "first": {
+                "labelled": 2,
+                "visible": 7,
+                "cited": 1,
+                "labelled_cited": 1
+              },
+              "middle": {
+                "labelled": 0,
+                "visible": 7,
+                "cited": 0,
+                "labelled_cited": 0
+              },
+              "last": {
+                "labelled": 3,
+                "visible": 6,
+                "cited": 2,
+                "labelled_cited": 2
+              }
+            },
+            "format_errors": [],
+            "rejected_references": 2
+          },
+          {
+            "key": "PRI-235",
+            "large": false,
+            "coverage": {
+              "core": {
+                "matched": 3,
+                "all": 5
+              },
+              "dependencies": {
+                "matched": 1,
+                "all": 2
+              }
+            },
+            "positions": {
+              "first": {
+                "labelled": 2,
+                "visible": 7,
+                "cited": 2,
+                "labelled_cited": 1
+              },
+              "middle": {
+                "labelled": 2,
+                "visible": 7,
+                "cited": 2,
+                "labelled_cited": 2
+              },
+              "last": {
+                "labelled": 1,
+                "visible": 6,
+                "cited": 2,
+                "labelled_cited": 1
+              }
+            },
+            "format_errors": [],
+            "rejected_references": 4
+          },
+          {
+            "key": "PRI-238",
+            "large": false,
+            "coverage": {
+              "core": {
+                "matched": 2,
+                "all": 3
+              },
+              "dependencies": {
+                "matched": 0,
+                "all": 3
+              }
+            },
+            "positions": {
+              "first": {
+                "labelled": 2,
+                "visible": 7,
+                "cited": 2,
+                "labelled_cited": 2
+              },
+              "middle": {
+                "labelled": 0,
+                "visible": 7,
+                "cited": 0,
+                "labelled_cited": 0
+              },
+              "last": {
+                "labelled": 0,
+                "visible": 6,
+                "cited": 0,
+                "labelled_cited": 0
+              }
+            },
+            "format_errors": [],
+            "rejected_references": 1
+          },
+          {
+            "key": "PRI-239",
+            "large": false,
+            "coverage": {
+              "core": {
+                "matched": 1,
+                "all": 8
+              },
+              "dependencies": {
+                "matched": 0,
+                "all": 2
+              }
+            },
+            "positions": {
+              "first": {
+                "labelled": 1,
+                "visible": 7,
+                "cited": 2,
+                "labelled_cited": 1
+              },
+              "middle": {
+                "labelled": 1,
+                "visible": 7,
+                "cited": 0,
+                "labelled_cited": 0
+              },
+              "last": {
+                "labelled": 3,
+                "visible": 6,
+                "cited": 0,
+                "labelled_cited": 0
+              }
+            },
+            "format_errors": [],
+            "rejected_references": 1
+          },
+          {
+            "key": "PRI-241",
+            "large": false,
+            "coverage": {
+              "core": {
+                "matched": 1,
+                "all": 3
+              },
+              "dependencies": {
+                "matched": 1,
+                "all": 2
+              }
+            },
+            "positions": {
+              "first": {
+                "labelled": 3,
+                "visible": 7,
+                "cited": 2,
+                "labelled_cited": 2
+              },
+              "middle": {
+                "labelled": 0,
+                "visible": 7,
+                "cited": 0,
+                "labelled_cited": 0
+              },
+              "last": {
+                "labelled": 1,
+                "visible": 6,
+                "cited": 0,
+                "labelled_cited": 0
+              }
+            },
+            "format_errors": [],
+            "rejected_references": 0
+          },
+          {
+            "key": "PRI-242",
+            "large": false,
+            "coverage": {
+              "core": {
+                "matched": 1,
+                "all": 3
+              },
+              "dependencies": {
+                "matched": 2,
+                "all": 2
+              }
+            },
+            "positions": {
+              "first": {
+                "labelled": 3,
+                "visible": 7,
+                "cited": 4,
+                "labelled_cited": 3
+              },
+              "middle": {
+                "labelled": 0,
+                "visible": 7,
+                "cited": 0,
+                "labelled_cited": 0
+              },
+              "last": {
+                "labelled": 0,
+                "visible": 6,
+                "cited": 2,
+                "labelled_cited": 0
+              }
+            },
+            "format_errors": [],
+            "rejected_references": 0
+          },
+          {
+            "key": "PRI-245",
+            "large": false,
+            "coverage": {
+              "core": {
+                "matched": 3,
+                "all": 9
+              },
+              "dependencies": {
+                "matched": 1,
+                "all": 2
+              }
+            },
+            "positions": {
+              "first": {
+                "labelled": 3,
+                "visible": 5,
+                "cited": 3,
+                "labelled_cited": 2
+              },
+              "middle": {
+                "labelled": 3,
+                "visible": 5,
+                "cited": 3,
+                "labelled_cited": 2
+              },
+              "last": {
+                "labelled": 0,
+                "visible": 4,
+                "cited": 0,
+                "labelled_cited": 0
+              }
+            },
+            "format_errors": [],
+            "rejected_references": 0
+          },
+          {
+            "key": "PRI-248",
+            "large": false,
+            "coverage": {
+              "core": {
+                "matched": 1,
+                "all": 3
+              },
+              "dependencies": {
+                "matched": 1,
+                "all": 3
+              }
+            },
+            "positions": {
+              "first": {
+                "labelled": 1,
+                "visible": 6,
+                "cited": 5,
+                "labelled_cited": 1
+              },
+              "middle": {
+                "labelled": 0,
+                "visible": 6,
+                "cited": 4,
+                "labelled_cited": 0
+              },
+              "last": {
+                "labelled": 2,
+                "visible": 5,
+                "cited": 1,
+                "labelled_cited": 1
+              }
+            },
+            "format_errors": [],
+            "rejected_references": 0
+          },
+          {
+            "key": "PRI-251",
+            "large": false,
+            "coverage": {
+              "core": {
+                "matched": 3,
+                "all": 7
+              },
+              "dependencies": {
+                "matched": 1,
+                "all": 2
+              }
+            },
+            "positions": {
+              "first": {
+                "labelled": 2,
+                "visible": 6,
+                "cited": 3,
+                "labelled_cited": 2
+              },
+              "middle": {
+                "labelled": 1,
+                "visible": 6,
+                "cited": 2,
+                "labelled_cited": 1
+              },
+              "last": {
+                "labelled": 1,
+                "visible": 6,
+                "cited": 2,
+                "labelled_cited": 1
+              }
+            },
+            "format_errors": [],
+            "rejected_references": 5
+          },
+          {
+            "key": "PRI-252",
+            "large": false,
+            "coverage": {
+              "core": {
+                "matched": 1,
+                "all": 4
+              },
+              "dependencies": {
+                "matched": 2,
+                "all": 2
+              }
+            },
+            "positions": {
+              "first": {
+                "labelled": 2,
+                "visible": 7,
+                "cited": 4,
+                "labelled_cited": 1
+              },
+              "middle": {
+                "labelled": 1,
+                "visible": 7,
+                "cited": 1,
+                "labelled_cited": 1
+              },
+              "last": {
+                "labelled": 1,
+                "visible": 6,
+                "cited": 2,
+                "labelled_cited": 1
+              }
+            },
+            "format_errors": [],
+            "rejected_references": 1
+          },
+          {
+            "key": "PRI-255",
+            "large": false,
+            "coverage": {
+              "core": {
+                "matched": 2,
+                "all": 3
+              },
+              "dependencies": {
+                "matched": 2,
+                "all": 3
+              }
+            },
+            "positions": {
+              "first": {
+                "labelled": 1,
+                "visible": 7,
+                "cited": 2,
+                "labelled_cited": 1
+              },
+              "middle": {
+                "labelled": 2,
+                "visible": 7,
+                "cited": 5,
+                "labelled_cited": 2
+              },
+              "last": {
+                "labelled": 1,
+                "visible": 6,
+                "cited": 2,
+                "labelled_cited": 1
+              }
+            },
+            "format_errors": [],
+            "rejected_references": 3
+          },
+          {
+            "key": "PRI-256",
+            "large": false,
+            "coverage": {
+              "core": {
+                "matched": 1,
+                "all": 5
+              },
+              "dependencies": {
+                "matched": 1,
+                "all": 2
+              }
+            },
+            "positions": {
+              "first": {
+                "labelled": 3,
+                "visible": 7,
+                "cited": 0,
+                "labelled_cited": 0
+              },
+              "middle": {
+                "labelled": 1,
+                "visible": 7,
+                "cited": 1,
+                "labelled_cited": 1
+              },
+              "last": {
+                "labelled": 1,
+                "visible": 6,
+                "cited": 2,
+                "labelled_cited": 1
+              }
+            },
+            "format_errors": [],
+            "rejected_references": 4
+          },
+          {
+            "key": "PRI-257",
+            "large": true,
+            "coverage": {
+              "core": {
+                "matched": 2,
+                "all": 12
+              },
+              "dependencies": {
+                "matched": 0,
+                "all": 2
+              }
+            },
+            "positions": {
+              "first": {
+                "labelled": 3,
+                "visible": 7,
+                "cited": 1,
+                "labelled_cited": 1
+              },
+              "middle": {
+                "labelled": 1,
+                "visible": 7,
+                "cited": 0,
+                "labelled_cited": 0
+              },
+              "last": {
+                "labelled": 3,
+                "visible": 6,
+                "cited": 1,
+                "labelled_cited": 1
+              }
+            },
+            "format_errors": [],
+            "rejected_references": 4
+          },
+          {
+            "key": "PRI-260",
+            "large": false,
+            "coverage": {
+              "core": {
+                "matched": 3,
+                "all": 4
+              },
+              "dependencies": {
+                "matched": 0,
+                "all": 2
+              }
+            },
+            "positions": {
+              "first": {
+                "labelled": 2,
+                "visible": 7,
+                "cited": 1,
+                "labelled_cited": 1
+              },
+              "middle": {
+                "labelled": 1,
+                "visible": 7,
+                "cited": 1,
+                "labelled_cited": 0
+              },
+              "last": {
+                "labelled": 2,
+                "visible": 6,
+                "cited": 3,
+                "labelled_cited": 2
+              }
+            },
+            "format_errors": [],
+            "rejected_references": 0
+          },
+          {
+            "key": "PRI-267",
+            "large": false,
+            "coverage": {
+              "core": {
+                "matched": 3,
+                "all": 3
+              },
+              "dependencies": {
+                "matched": 1,
+                "all": 2
+              }
+            },
+            "positions": {
+              "first": {
+                "labelled": 2,
+                "visible": 7,
+                "cited": 2,
+                "labelled_cited": 2
+              },
+              "middle": {
+                "labelled": 1,
+                "visible": 7,
+                "cited": 0,
+                "labelled_cited": 0
+              },
+              "last": {
+                "labelled": 2,
+                "visible": 6,
+                "cited": 2,
+                "labelled_cited": 2
+              }
+            },
+            "format_errors": [],
+            "rejected_references": 0
+          },
+          {
+            "key": "PRI-275",
+            "large": false,
+            "coverage": {
+              "core": {
+                "matched": 1,
+                "all": 1
+              },
+              "dependencies": {
+                "matched": 3,
+                "all": 4
+              }
+            },
+            "positions": {
+              "first": {
+                "labelled": 1,
+                "visible": 7,
+                "cited": 1,
+                "labelled_cited": 1
+              },
+              "middle": {
+                "labelled": 2,
+                "visible": 7,
+                "cited": 2,
+                "labelled_cited": 2
+              },
+              "last": {
+                "labelled": 1,
+                "visible": 6,
+                "cited": 1,
+                "labelled_cited": 1
+              }
+            },
+            "format_errors": [],
+            "rejected_references": 1
+          }
+        ]
+      },
+      "graph_fixed": {
+        "all": {
+          "core": {
+            "matched": 48,
+            "all": 149
+          },
+          "dependencies": {
+            "matched": 17,
+            "all": 46
+          }
+        },
+        "large": {
+          "core": {
+            "matched": 18,
+            "all": 84
+          },
+          "dependencies": {
+            "matched": 3,
+            "all": 11
+          }
+        },
+        "positions": {
+          "first": {
+            "labelled": 52,
+            "visible": 134,
+            "cited": 52,
+            "labelled_cited": 40
+          },
+          "middle": {
+            "labelled": 32,
+            "visible": 134,
+            "cited": 30,
+            "labelled_cited": 17
+          },
+          "last": {
+            "labelled": 17,
+            "visible": 115,
+            "cited": 16,
+            "labelled_cited": 8
+          }
+        },
+        "missing_briefs": 0,
+        "format_errors": 0,
+        "rejected_references": 31,
+        "batches_completed": 4,
+        "batches_expected": 4,
+        "median_batch_s": 29.4125,
+        "usage": {
+          "input_tokens": 188560,
+          "cached_input_tokens": 45568,
+          "output_tokens": 5139
+        },
+        "tasks": [
+          {
+            "key": "PRI-196",
+            "large": true,
+            "coverage": {
+              "core": {
+                "matched": 2,
+                "all": 10
+              },
+              "dependencies": {
+                "matched": 1,
+                "all": 1
+              }
+            },
+            "positions": {
+              "first": {
+                "labelled": 3,
+                "visible": 5,
+                "cited": 2,
+                "labelled_cited": 2
+              },
+              "middle": {
+                "labelled": 3,
+                "visible": 5,
+                "cited": 1,
+                "labelled_cited": 1
+              },
+              "last": {
+                "labelled": 0,
+                "visible": 4,
+                "cited": 0,
+                "labelled_cited": 0
+              }
+            },
+            "format_errors": [],
+            "rejected_references": 2
+          },
+          {
+            "key": "PRI-215",
+            "large": true,
+            "coverage": {
+              "core": {
+                "matched": 6,
+                "all": 20
+              },
+              "dependencies": {
+                "matched": 0,
+                "all": 2
+              }
+            },
+            "positions": {
+              "first": {
+                "labelled": 3,
+                "visible": 7,
+                "cited": 3,
+                "labelled_cited": 3
+              },
+              "middle": {
+                "labelled": 3,
+                "visible": 7,
+                "cited": 1,
+                "labelled_cited": 1
+              },
+              "last": {
+                "labelled": 4,
+                "visible": 6,
+                "cited": 2,
+                "labelled_cited": 2
+              }
+            },
+            "format_errors": [],
+            "rejected_references": 3
+          },
+          {
+            "key": "PRI-223",
+            "large": true,
+            "coverage": {
+              "core": {
+                "matched": 5,
+                "all": 23
+              },
+              "dependencies": {
+                "matched": 2,
+                "all": 3
+              }
+            },
+            "positions": {
+              "first": {
+                "labelled": 6,
+                "visible": 7,
+                "cited": 7,
+                "labelled_cited": 6
+              },
+              "middle": {
+                "labelled": 3,
+                "visible": 7,
+                "cited": 1,
+                "labelled_cited": 1
+              },
+              "last": {
+                "labelled": 1,
+                "visible": 6,
+                "cited": 0,
+                "labelled_cited": 0
+              }
+            },
+            "format_errors": [],
+            "rejected_references": 1
+          },
+          {
+            "key": "PRI-225",
+            "large": true,
+            "coverage": {
+              "core": {
+                "matched": 2,
+                "all": 19
+              },
+              "dependencies": {
+                "matched": 0,
+                "all": 3
+              }
+            },
+            "positions": {
+              "first": {
+                "labelled": 3,
+                "visible": 7,
+                "cited": 3,
+                "labelled_cited": 2
+              },
+              "middle": {
+                "labelled": 1,
+                "visible": 7,
+                "cited": 0,
+                "labelled_cited": 0
+              },
+              "last": {
+                "labelled": 0,
+                "visible": 6,
+                "cited": 0,
+                "labelled_cited": 0
+              }
+            },
+            "format_errors": [],
+            "rejected_references": 2
+          },
+          {
+            "key": "PRI-228",
+            "large": false,
+            "coverage": {
+              "core": {
+                "matched": 3,
+                "all": 4
+              },
+              "dependencies": {
+                "matched": 1,
+                "all": 2
+              }
+            },
+            "positions": {
+              "first": {
+                "labelled": 2,
+                "visible": 7,
+                "cited": 3,
+                "labelled_cited": 2
+              },
+              "middle": {
+                "labelled": 3,
+                "visible": 7,
+                "cited": 2,
+                "labelled_cited": 2
+              },
+              "last": {
+                "labelled": 0,
+                "visible": 6,
+                "cited": 0,
+                "labelled_cited": 0
+              }
+            },
+            "format_errors": [],
+            "rejected_references": 1
+          },
+          {
+            "key": "PRI-235",
+            "large": false,
+            "coverage": {
+              "core": {
+                "matched": 3,
+                "all": 5
+              },
+              "dependencies": {
+                "matched": 1,
+                "all": 2
+              }
+            },
+            "positions": {
+              "first": {
+                "labelled": 3,
+                "visible": 7,
+                "cited": 3,
+                "labelled_cited": 3
+              },
+              "middle": {
+                "labelled": 1,
+                "visible": 7,
+                "cited": 1,
+                "labelled_cited": 0
+              },
+              "last": {
+                "labelled": 1,
+                "visible": 6,
+                "cited": 2,
+                "labelled_cited": 1
+              }
+            },
+            "format_errors": [],
+            "rejected_references": 5
+          },
+          {
+            "key": "PRI-238",
+            "large": false,
+            "coverage": {
+              "core": {
+                "matched": 2,
+                "all": 3
+              },
+              "dependencies": {
+                "matched": 0,
+                "all": 3
+              }
+            },
+            "positions": {
+              "first": {
+                "labelled": 1,
+                "visible": 7,
+                "cited": 2,
+                "labelled_cited": 1
+              },
+              "middle": {
+                "labelled": 1,
+                "visible": 7,
+                "cited": 3,
+                "labelled_cited": 1
+              },
+              "last": {
+                "labelled": 0,
+                "visible": 6,
+                "cited": 1,
+                "labelled_cited": 0
+              }
+            },
+            "format_errors": [],
+            "rejected_references": 1
+          },
+          {
+            "key": "PRI-239",
+            "large": false,
+            "coverage": {
+              "core": {
+                "matched": 1,
+                "all": 8
+              },
+              "dependencies": {
+                "matched": 0,
+                "all": 2
+              }
+            },
+            "positions": {
+              "first": {
+                "labelled": 2,
+                "visible": 7,
+                "cited": 1,
+                "labelled_cited": 1
+              },
+              "middle": {
+                "labelled": 2,
+                "visible": 7,
+                "cited": 0,
+                "labelled_cited": 0
+              },
+              "last": {
+                "labelled": 1,
+                "visible": 6,
+                "cited": 1,
+                "labelled_cited": 0
+              }
+            },
+            "format_errors": [],
+            "rejected_references": 1
+          },
+          {
+            "key": "PRI-241",
+            "large": false,
+            "coverage": {
+              "core": {
+                "matched": 2,
+                "all": 3
+              },
+              "dependencies": {
+                "matched": 1,
+                "all": 2
+              }
+            },
+            "positions": {
+              "first": {
+                "labelled": 3,
+                "visible": 7,
+                "cited": 2,
+                "labelled_cited": 2
+              },
+              "middle": {
+                "labelled": 1,
+                "visible": 7,
+                "cited": 3,
+                "labelled_cited": 1
+              },
+              "last": {
+                "labelled": 0,
+                "visible": 6,
+                "cited": 0,
+                "labelled_cited": 0
+              }
+            },
+            "format_errors": [],
+            "rejected_references": 0
+          },
+          {
+            "key": "PRI-242",
+            "large": false,
+            "coverage": {
+              "core": {
+                "matched": 1,
+                "all": 3
+              },
+              "dependencies": {
+                "matched": 2,
+                "all": 2
+              }
+            },
+            "positions": {
+              "first": {
+                "labelled": 3,
+                "visible": 7,
+                "cited": 4,
+                "labelled_cited": 3
+              },
+              "middle": {
+                "labelled": 0,
+                "visible": 7,
+                "cited": 2,
+                "labelled_cited": 0
+              },
+              "last": {
+                "labelled": 0,
+                "visible": 6,
+                "cited": 1,
+                "labelled_cited": 0
+              }
+            },
+            "format_errors": [],
+            "rejected_references": 0
+          },
+          {
+            "key": "PRI-245",
+            "large": false,
+            "coverage": {
+              "core": {
+                "matched": 3,
+                "all": 9
+              },
+              "dependencies": {
+                "matched": 1,
+                "all": 2
+              }
+            },
+            "positions": {
+              "first": {
+                "labelled": 2,
+                "visible": 5,
+                "cited": 2,
+                "labelled_cited": 1
+              },
+              "middle": {
+                "labelled": 1,
+                "visible": 5,
+                "cited": 2,
+                "labelled_cited": 1
+              },
+              "last": {
+                "labelled": 3,
+                "visible": 4,
+                "cited": 2,
+                "labelled_cited": 2
+              }
+            },
+            "format_errors": [],
+            "rejected_references": 0
+          },
+          {
+            "key": "PRI-248",
+            "large": false,
+            "coverage": {
+              "core": {
+                "matched": 1,
+                "all": 3
+              },
+              "dependencies": {
+                "matched": 1,
+                "all": 3
+              }
+            },
+            "positions": {
+              "first": {
+                "labelled": 2,
+                "visible": 6,
+                "cited": 2,
+                "labelled_cited": 2
+              },
+              "middle": {
+                "labelled": 1,
+                "visible": 6,
+                "cited": 0,
+                "labelled_cited": 0
+              },
+              "last": {
+                "labelled": 0,
+                "visible": 5,
+                "cited": 0,
+                "labelled_cited": 0
+              }
+            },
+            "format_errors": [],
+            "rejected_references": 2
+          },
+          {
+            "key": "PRI-251",
+            "large": false,
+            "coverage": {
+              "core": {
+                "matched": 3,
+                "all": 7
+              },
+              "dependencies": {
+                "matched": 0,
+                "all": 2
+              }
+            },
+            "positions": {
+              "first": {
+                "labelled": 3,
+                "visible": 6,
+                "cited": 5,
+                "labelled_cited": 3
+              },
+              "middle": {
+                "labelled": 0,
+                "visible": 6,
+                "cited": 0,
+                "labelled_cited": 0
+              },
+              "last": {
+                "labelled": 1,
+                "visible": 6,
+                "cited": 1,
+                "labelled_cited": 0
+              }
+            },
+            "format_errors": [],
+            "rejected_references": 4
+          },
+          {
+            "key": "PRI-252",
+            "large": false,
+            "coverage": {
+              "core": {
+                "matched": 2,
+                "all": 4
+              },
+              "dependencies": {
+                "matched": 2,
+                "all": 2
+              }
+            },
+            "positions": {
+              "first": {
+                "labelled": 2,
+                "visible": 7,
+                "cited": 3,
+                "labelled_cited": 2
+              },
+              "middle": {
+                "labelled": 2,
+                "visible": 7,
+                "cited": 4,
+                "labelled_cited": 2
+              },
+              "last": {
+                "labelled": 0,
+                "visible": 6,
+                "cited": 0,
+                "labelled_cited": 0
+              }
+            },
+            "format_errors": [],
+            "rejected_references": 1
+          },
+          {
+            "key": "PRI-255",
+            "large": false,
+            "coverage": {
+              "core": {
+                "matched": 1,
+                "all": 3
+              },
+              "dependencies": {
+                "matched": 2,
+                "all": 3
+              }
+            },
+            "positions": {
+              "first": {
+                "labelled": 1,
+                "visible": 7,
+                "cited": 3,
+                "labelled_cited": 1
+              },
+              "middle": {
+                "labelled": 1,
+                "visible": 7,
+                "cited": 1,
+                "labelled_cited": 0
+              },
+              "last": {
+                "labelled": 2,
+                "visible": 6,
+                "cited": 4,
+                "labelled_cited": 2
+              }
+            },
+            "format_errors": [],
+            "rejected_references": 0
+          },
+          {
+            "key": "PRI-256",
+            "large": false,
+            "coverage": {
+              "core": {
+                "matched": 1,
+                "all": 5
+              },
+              "dependencies": {
+                "matched": 1,
+                "all": 2
+              }
+            },
+            "positions": {
+              "first": {
+                "labelled": 3,
+                "visible": 7,
+                "cited": 0,
+                "labelled_cited": 0
+              },
+              "middle": {
+                "labelled": 1,
+                "visible": 7,
+                "cited": 2,
+                "labelled_cited": 1
+              },
+              "last": {
+                "labelled": 1,
+                "visible": 6,
+                "cited": 2,
+                "labelled_cited": 1
+              }
+            },
+            "format_errors": [],
+            "rejected_references": 3
+          },
+          {
+            "key": "PRI-257",
+            "large": true,
+            "coverage": {
+              "core": {
+                "matched": 3,
+                "all": 12
+              },
+              "dependencies": {
+                "matched": 0,
+                "all": 2
+              }
+            },
+            "positions": {
+              "first": {
+                "labelled": 3,
+                "visible": 7,
+                "cited": 2,
+                "labelled_cited": 2
+              },
+              "middle": {
+                "labelled": 3,
+                "visible": 7,
+                "cited": 1,
+                "labelled_cited": 1
+              },
+              "last": {
+                "labelled": 1,
+                "visible": 6,
+                "cited": 0,
+                "labelled_cited": 0
+              }
+            },
+            "format_errors": [],
+            "rejected_references": 4
+          },
+          {
+            "key": "PRI-260",
+            "large": false,
+            "coverage": {
+              "core": {
+                "matched": 3,
+                "all": 4
+              },
+              "dependencies": {
+                "matched": 0,
+                "all": 2
+              }
+            },
+            "positions": {
+              "first": {
+                "labelled": 4,
+                "visible": 7,
+                "cited": 2,
+                "labelled_cited": 2
+              },
+              "middle": {
+                "labelled": 1,
+                "visible": 7,
+                "cited": 2,
+                "labelled_cited": 1
+              },
+              "last": {
+                "labelled": 0,
+                "visible": 6,
+                "cited": 0,
+                "labelled_cited": 0
+              }
+            },
+            "format_errors": [],
+            "rejected_references": 0
+          },
+          {
+            "key": "PRI-267",
+            "large": false,
+            "coverage": {
+              "core": {
+                "matched": 3,
+                "all": 3
+              },
+              "dependencies": {
+                "matched": 0,
+                "all": 2
+              }
+            },
+            "positions": {
+              "first": {
+                "labelled": 2,
+                "visible": 7,
+                "cited": 1,
+                "labelled_cited": 1
+              },
+              "middle": {
+                "labelled": 2,
+                "visible": 7,
+                "cited": 2,
+                "labelled_cited": 2
+              },
+              "last": {
+                "labelled": 1,
+                "visible": 6,
+                "cited": 0,
+                "labelled_cited": 0
+              }
+            },
+            "format_errors": [],
+            "rejected_references": 0
+          },
+          {
+            "key": "PRI-275",
+            "large": false,
+            "coverage": {
+              "core": {
+                "matched": 1,
+                "all": 1
+              },
+              "dependencies": {
+                "matched": 2,
+                "all": 4
+              }
+            },
+            "positions": {
+              "first": {
+                "labelled": 1,
+                "visible": 7,
+                "cited": 2,
+                "labelled_cited": 1
+              },
+              "middle": {
+                "labelled": 2,
+                "visible": 7,
+                "cited": 2,
+                "labelled_cited": 2
+              },
+              "last": {
+                "labelled": 1,
+                "visible": 6,
+                "cited": 0,
+                "labelled_cited": 0
+              }
+            },
+            "format_errors": [],
+            "rejected_references": 1
+          }
+        ]
+      }
+    },
+    "2": {
+      "rank": {
+        "all": {
+          "core": {
+            "matched": 45,
+            "all": 149
+          },
+          "dependencies": {
+            "matched": 17,
+            "all": 46
+          }
+        },
+        "large": {
+          "core": {
+            "matched": 17,
+            "all": 84
+          },
+          "dependencies": {
+            "matched": 3,
+            "all": 11
+          }
+        },
+        "positions": {
+          "first": {
+            "labelled": 54,
+            "visible": 134,
+            "cited": 56,
+            "labelled_cited": 39
+          },
+          "middle": {
+            "labelled": 28,
+            "visible": 134,
+            "cited": 21,
+            "labelled_cited": 14
+          },
+          "last": {
+            "labelled": 19,
+            "visible": 115,
+            "cited": 13,
+            "labelled_cited": 9
+          }
+        },
+        "missing_briefs": 0,
+        "format_errors": 0,
+        "rejected_references": 32,
+        "batches_completed": 4,
+        "batches_expected": 4,
+        "median_batch_s": 28.917,
+        "usage": {
+          "input_tokens": 188380,
+          "cached_input_tokens": 45568,
+          "output_tokens": 4904
+        },
+        "tasks": [
+          {
+            "key": "PRI-196",
+            "large": true,
+            "coverage": {
+              "core": {
+                "matched": 2,
+                "all": 10
+              },
+              "dependencies": {
+                "matched": 1,
+                "all": 1
+              }
+            },
+            "positions": {
+              "first": {
+                "labelled": 3,
+                "visible": 5,
+                "cited": 3,
+                "labelled_cited": 2
+              },
+              "middle": {
+                "labelled": 3,
+                "visible": 5,
+                "cited": 1,
+                "labelled_cited": 1
+              },
+              "last": {
+                "labelled": 0,
+                "visible": 4,
+                "cited": 0,
+                "labelled_cited": 0
+              }
+            },
+            "format_errors": [],
+            "rejected_references": 2
+          },
+          {
+            "key": "PRI-215",
+            "large": true,
+            "coverage": {
+              "core": {
+                "matched": 5,
+                "all": 20
+              },
+              "dependencies": {
+                "matched": 0,
+                "all": 2
+              }
+            },
+            "positions": {
+              "first": {
+                "labelled": 3,
+                "visible": 7,
+                "cited": 2,
+                "labelled_cited": 2
+              },
+              "middle": {
+                "labelled": 3,
+                "visible": 7,
+                "cited": 1,
+                "labelled_cited": 1
+              },
+              "last": {
+                "labelled": 4,
+                "visible": 6,
+                "cited": 2,
+                "labelled_cited": 2
+              }
+            },
+            "format_errors": [],
+            "rejected_references": 3
+          },
+          {
+            "key": "PRI-223",
+            "large": true,
+            "coverage": {
+              "core": {
+                "matched": 5,
+                "all": 23
+              },
+              "dependencies": {
+                "matched": 2,
+                "all": 3
+              }
+            },
+            "positions": {
+              "first": {
+                "labelled": 6,
+                "visible": 7,
+                "cited": 7,
+                "labelled_cited": 6
+              },
+              "middle": {
+                "labelled": 3,
+                "visible": 7,
+                "cited": 1,
+                "labelled_cited": 1
+              },
+              "last": {
+                "labelled": 1,
+                "visible": 6,
+                "cited": 0,
+                "labelled_cited": 0
+              }
+            },
+            "format_errors": [],
+            "rejected_references": 2
+          },
+          {
+            "key": "PRI-225",
+            "large": true,
+            "coverage": {
+              "core": {
+                "matched": 2,
+                "all": 19
+              },
+              "dependencies": {
+                "matched": 0,
+                "all": 3
+              }
+            },
+            "positions": {
+              "first": {
+                "labelled": 3,
+                "visible": 7,
+                "cited": 3,
+                "labelled_cited": 2
+              },
+              "middle": {
+                "labelled": 1,
+                "visible": 7,
+                "cited": 0,
+                "labelled_cited": 0
+              },
+              "last": {
+                "labelled": 0,
+                "visible": 6,
+                "cited": 0,
+                "labelled_cited": 0
+              }
+            },
+            "format_errors": [],
+            "rejected_references": 2
+          },
+          {
+            "key": "PRI-228",
+            "large": false,
+            "coverage": {
+              "core": {
+                "matched": 2,
+                "all": 4
+              },
+              "dependencies": {
+                "matched": 1,
+                "all": 2
+              }
+            },
+            "positions": {
+              "first": {
+                "labelled": 3,
+                "visible": 7,
+                "cited": 2,
+                "labelled_cited": 2
+              },
+              "middle": {
+                "labelled": 2,
+                "visible": 7,
+                "cited": 1,
+                "labelled_cited": 1
+              },
+              "last": {
+                "labelled": 0,
+                "visible": 6,
+                "cited": 0,
+                "labelled_cited": 0
+              }
+            },
+            "format_errors": [],
+            "rejected_references": 2
+          },
+          {
+            "key": "PRI-235",
+            "large": false,
+            "coverage": {
+              "core": {
+                "matched": 3,
+                "all": 5
+              },
+              "dependencies": {
+                "matched": 1,
+                "all": 2
+              }
+            },
+            "positions": {
+              "first": {
+                "labelled": 2,
+                "visible": 7,
+                "cited": 3,
+                "labelled_cited": 2
+              },
+              "middle": {
+                "labelled": 1,
+                "visible": 7,
+                "cited": 1,
+                "labelled_cited": 0
+              },
+              "last": {
+                "labelled": 2,
+                "visible": 6,
+                "cited": 2,
+                "labelled_cited": 2
+              }
+            },
+            "format_errors": [],
+            "rejected_references": 4
+          },
+          {
+            "key": "PRI-238",
+            "large": false,
+            "coverage": {
+              "core": {
+                "matched": 2,
+                "all": 3
+              },
+              "dependencies": {
+                "matched": 0,
+                "all": 3
+              }
+            },
+            "positions": {
+              "first": {
+                "labelled": 1,
+                "visible": 7,
+                "cited": 4,
+                "labelled_cited": 1
+              },
+              "middle": {
+                "labelled": 1,
+                "visible": 7,
+                "cited": 1,
+                "labelled_cited": 1
+              },
+              "last": {
+                "labelled": 0,
+                "visible": 6,
+                "cited": 0,
+                "labelled_cited": 0
+              }
+            },
+            "format_errors": [],
+            "rejected_references": 1
+          },
+          {
+            "key": "PRI-239",
+            "large": false,
+            "coverage": {
+              "core": {
+                "matched": 2,
+                "all": 8
+              },
+              "dependencies": {
+                "matched": 0,
+                "all": 2
+              }
+            },
+            "positions": {
+              "first": {
+                "labelled": 3,
+                "visible": 7,
+                "cited": 2,
+                "labelled_cited": 2
+              },
+              "middle": {
+                "labelled": 1,
+                "visible": 7,
+                "cited": 0,
+                "labelled_cited": 0
+              },
+              "last": {
+                "labelled": 1,
+                "visible": 6,
+                "cited": 0,
+                "labelled_cited": 0
+              }
+            },
+            "format_errors": [],
+            "rejected_references": 1
+          },
+          {
+            "key": "PRI-241",
+            "large": false,
+            "coverage": {
+              "core": {
+                "matched": 1,
+                "all": 3
+              },
+              "dependencies": {
+                "matched": 1,
+                "all": 2
+              }
+            },
+            "positions": {
+              "first": {
+                "labelled": 3,
+                "visible": 7,
+                "cited": 1,
+                "labelled_cited": 1
+              },
+              "middle": {
+                "labelled": 1,
+                "visible": 7,
+                "cited": 3,
+                "labelled_cited": 1
+              },
+              "last": {
+                "labelled": 0,
+                "visible": 6,
+                "cited": 0,
+                "labelled_cited": 0
+              }
+            },
+            "format_errors": [],
+            "rejected_references": 0
+          },
+          {
+            "key": "PRI-242",
+            "large": false,
+            "coverage": {
+              "core": {
+                "matched": 1,
+                "all": 3
+              },
+              "dependencies": {
+                "matched": 1,
+                "all": 2
+              }
+            },
+            "positions": {
+              "first": {
+                "labelled": 3,
+                "visible": 7,
+                "cited": 2,
+                "labelled_cited": 2
+              },
+              "middle": {
+                "labelled": 0,
+                "visible": 7,
+                "cited": 2,
+                "labelled_cited": 0
+              },
+              "last": {
+                "labelled": 0,
+                "visible": 6,
+                "cited": 0,
+                "labelled_cited": 0
+              }
+            },
+            "format_errors": [],
+            "rejected_references": 0
+          },
+          {
+            "key": "PRI-245",
+            "large": false,
+            "coverage": {
+              "core": {
+                "matched": 3,
+                "all": 9
+              },
+              "dependencies": {
+                "matched": 1,
+                "all": 2
+              }
+            },
+            "positions": {
+              "first": {
+                "labelled": 2,
+                "visible": 5,
+                "cited": 2,
+                "labelled_cited": 1
+              },
+              "middle": {
+                "labelled": 1,
+                "visible": 5,
+                "cited": 2,
+                "labelled_cited": 1
+              },
+              "last": {
+                "labelled": 3,
+                "visible": 4,
+                "cited": 2,
+                "labelled_cited": 2
+              }
+            },
+            "format_errors": [],
+            "rejected_references": 0
+          },
+          {
+            "key": "PRI-248",
+            "large": false,
+            "coverage": {
+              "core": {
+                "matched": 1,
+                "all": 3
+              },
+              "dependencies": {
+                "matched": 1,
+                "all": 3
+              }
+            },
+            "positions": {
+              "first": {
+                "labelled": 2,
+                "visible": 6,
+                "cited": 1,
+                "labelled_cited": 1
+              },
+              "middle": {
+                "labelled": 1,
+                "visible": 6,
+                "cited": 1,
+                "labelled_cited": 1
+              },
+              "last": {
+                "labelled": 0,
+                "visible": 5,
+                "cited": 0,
+                "labelled_cited": 0
+              }
+            },
+            "format_errors": [],
+            "rejected_references": 0
+          },
+          {
+            "key": "PRI-251",
+            "large": false,
+            "coverage": {
+              "core": {
+                "matched": 3,
+                "all": 7
+              },
+              "dependencies": {
+                "matched": 0,
+                "all": 2
+              }
+            },
+            "positions": {
+              "first": {
+                "labelled": 3,
+                "visible": 6,
+                "cited": 5,
+                "labelled_cited": 3
+              },
+              "middle": {
+                "labelled": 0,
+                "visible": 6,
+                "cited": 0,
+                "labelled_cited": 0
+              },
+              "last": {
+                "labelled": 1,
+                "visible": 6,
+                "cited": 1,
+                "labelled_cited": 0
+              }
+            },
+            "format_errors": [],
+            "rejected_references": 5
+          },
+          {
+            "key": "PRI-252",
+            "large": false,
+            "coverage": {
+              "core": {
+                "matched": 1,
+                "all": 4
+              },
+              "dependencies": {
+                "matched": 2,
+                "all": 2
+              }
+            },
+            "positions": {
+              "first": {
+                "labelled": 2,
+                "visible": 7,
+                "cited": 4,
+                "labelled_cited": 1
+              },
+              "middle": {
+                "labelled": 2,
+                "visible": 7,
+                "cited": 2,
+                "labelled_cited": 2
+              },
+              "last": {
+                "labelled": 0,
+                "visible": 6,
+                "cited": 0,
+                "labelled_cited": 0
+              }
+            },
+            "format_errors": [],
+            "rejected_references": 0
+          },
+          {
+            "key": "PRI-255",
+            "large": false,
+            "coverage": {
+              "core": {
+                "matched": 1,
+                "all": 3
+              },
+              "dependencies": {
+                "matched": 2,
+                "all": 3
+              }
+            },
+            "positions": {
+              "first": {
+                "labelled": 2,
+                "visible": 7,
+                "cited": 1,
+                "labelled_cited": 1
+              },
+              "middle": {
+                "labelled": 0,
+                "visible": 7,
+                "cited": 0,
+                "labelled_cited": 0
+              },
+              "last": {
+                "labelled": 2,
+                "visible": 6,
+                "cited": 3,
+                "labelled_cited": 2
+              }
+            },
+            "format_errors": [],
+            "rejected_references": 0
+          },
+          {
+            "key": "PRI-256",
+            "large": false,
+            "coverage": {
+              "core": {
+                "matched": 1,
+                "all": 5
+              },
+              "dependencies": {
+                "matched": 2,
+                "all": 2
+              }
+            },
+            "positions": {
+              "first": {
+                "labelled": 1,
+                "visible": 7,
+                "cited": 2,
+                "labelled_cited": 0
+              },
+              "middle": {
+                "labelled": 3,
+                "visible": 7,
+                "cited": 2,
+                "labelled_cited": 2
+              },
+              "last": {
+                "labelled": 1,
+                "visible": 6,
+                "cited": 1,
+                "labelled_cited": 1
+              }
+            },
+            "format_errors": [],
+            "rejected_references": 4
+          },
+          {
+            "key": "PRI-257",
+            "large": true,
+            "coverage": {
+              "core": {
+                "matched": 3,
+                "all": 12
+              },
+              "dependencies": {
+                "matched": 0,
+                "all": 2
+              }
+            },
+            "positions": {
+              "first": {
+                "labelled": 4,
+                "visible": 7,
+                "cited": 3,
+                "labelled_cited": 3
+              },
+              "middle": {
+                "labelled": 2,
+                "visible": 7,
+                "cited": 0,
+                "labelled_cited": 0
+              },
+              "last": {
+                "labelled": 1,
+                "visible": 6,
+                "cited": 1,
+                "labelled_cited": 0
+              }
+            },
+            "format_errors": [],
+            "rejected_references": 5
+          },
+          {
+            "key": "PRI-260",
+            "large": false,
+            "coverage": {
+              "core": {
+                "matched": 3,
+                "all": 4
+              },
+              "dependencies": {
+                "matched": 0,
+                "all": 2
+              }
+            },
+            "positions": {
+              "first": {
+                "labelled": 2,
+                "visible": 7,
+                "cited": 3,
+                "labelled_cited": 2
+              },
+              "middle": {
+                "labelled": 2,
+                "visible": 7,
+                "cited": 2,
+                "labelled_cited": 1
+              },
+              "last": {
+                "labelled": 1,
+                "visible": 6,
+                "cited": 1,
+                "labelled_cited": 0
+              }
+            },
+            "format_errors": [],
+            "rejected_references": 0
+          },
+          {
+            "key": "PRI-267",
+            "large": false,
+            "coverage": {
+              "core": {
+                "matched": 3,
+                "all": 3
+              },
+              "dependencies": {
+                "matched": 0,
+                "all": 2
+              }
+            },
+            "positions": {
+              "first": {
+                "labelled": 4,
+                "visible": 7,
+                "cited": 3,
+                "labelled_cited": 3
+              },
+              "middle": {
+                "labelled": 0,
+                "visible": 7,
+                "cited": 0,
+                "labelled_cited": 0
+              },
+              "last": {
+                "labelled": 1,
+                "visible": 6,
+                "cited": 0,
+                "labelled_cited": 0
+              }
+            },
+            "format_errors": [],
+            "rejected_references": 0
+          },
+          {
+            "key": "PRI-275",
+            "large": false,
+            "coverage": {
+              "core": {
+                "matched": 1,
+                "all": 1
+              },
+              "dependencies": {
+                "matched": 2,
+                "all": 4
+              }
+            },
+            "positions": {
+              "first": {
+                "labelled": 2,
+                "visible": 7,
+                "cited": 3,
+                "labelled_cited": 2
+              },
+              "middle": {
+                "labelled": 1,
+                "visible": 7,
+                "cited": 1,
+                "labelled_cited": 1
+              },
+              "last": {
+                "labelled": 1,
+                "visible": 6,
+                "cited": 0,
+                "labelled_cited": 0
+              }
+            },
+            "format_errors": [],
+            "rejected_references": 1
+          }
+        ]
+      },
+      "edges": {
+        "all": {
+          "core": {
+            "matched": 46,
+            "all": 149
+          },
+          "dependencies": {
+            "matched": 18,
+            "all": 46
+          }
+        },
+        "large": {
+          "core": {
+            "matched": 18,
+            "all": 84
+          },
+          "dependencies": {
+            "matched": 3,
+            "all": 11
+          }
+        },
+        "positions": {
+          "first": {
+            "labelled": 44,
+            "visible": 134,
+            "cited": 44,
+            "labelled_cited": 31
+          },
+          "middle": {
+            "labelled": 24,
+            "visible": 134,
+            "cited": 21,
+            "labelled_cited": 13
+          },
+          "last": {
+            "labelled": 33,
+            "visible": 115,
+            "cited": 26,
+            "labelled_cited": 20
+          }
+        },
+        "missing_briefs": 0,
+        "format_errors": 4,
+        "rejected_references": 36,
+        "batches_completed": 4,
+        "batches_expected": 4,
+        "median_batch_s": 30.673499999999997,
+        "usage": {
+          "input_tokens": 188358,
+          "output_tokens": 5082
+        },
+        "tasks": [
+          {
+            "key": "PRI-196",
+            "large": true,
+            "coverage": {
+              "core": {
+                "matched": 3,
+                "all": 10
+              },
+              "dependencies": {
+                "matched": 1,
+                "all": 1
+              }
+            },
+            "positions": {
+              "first": {
+                "labelled": 1,
+                "visible": 5,
+                "cited": 0,
+                "labelled_cited": 0
+              },
+              "middle": {
+                "labelled": 1,
+                "visible": 5,
+                "cited": 1,
+                "labelled_cited": 1
+              },
+              "last": {
+                "labelled": 4,
+                "visible": 4,
+                "cited": 3,
+                "labelled_cited": 3
+              }
+            },
+            "format_errors": [],
+            "rejected_references": 2
+          },
+          {
+            "key": "PRI-215",
+            "large": true,
+            "coverage": {
+              "core": {
+                "matched": 6,
+                "all": 20
+              },
+              "dependencies": {
+                "matched": 0,
+                "all": 2
+              }
+            },
+            "positions": {
+              "first": {
+                "labelled": 2,
+                "visible": 7,
+                "cited": 2,
+                "labelled_cited": 2
+              },
+              "middle": {
+                "labelled": 5,
+                "visible": 7,
+                "cited": 2,
+                "labelled_cited": 2
+              },
+              "last": {
+                "labelled": 3,
+                "visible": 6,
+                "cited": 2,
+                "labelled_cited": 2
+              }
+            },
+            "format_errors": [],
+            "rejected_references": 8
+          },
+          {
+            "key": "PRI-223",
+            "large": true,
+            "coverage": {
+              "core": {
+                "matched": 5,
+                "all": 23
+              },
+              "dependencies": {
+                "matched": 2,
+                "all": 3
+              }
+            },
+            "positions": {
+              "first": {
+                "labelled": 4,
+                "visible": 7,
+                "cited": 4,
+                "labelled_cited": 4
+              },
+              "middle": {
+                "labelled": 2,
+                "visible": 7,
+                "cited": 0,
+                "labelled_cited": 0
+              },
+              "last": {
+                "labelled": 4,
+                "visible": 6,
+                "cited": 3,
+                "labelled_cited": 3
+              }
+            },
+            "format_errors": [],
+            "rejected_references": 0
+          },
+          {
+            "key": "PRI-225",
+            "large": true,
+            "coverage": {
+              "core": {
+                "matched": 2,
+                "all": 19
+              },
+              "dependencies": {
+                "matched": 0,
+                "all": 3
+              }
+            },
+            "positions": {
+              "first": {
+                "labelled": 4,
+                "visible": 7,
+                "cited": 3,
+                "labelled_cited": 2
+              },
+              "middle": {
+                "labelled": 0,
+                "visible": 7,
+                "cited": 0,
+                "labelled_cited": 0
+              },
+              "last": {
+                "labelled": 0,
+                "visible": 6,
+                "cited": 0,
+                "labelled_cited": 0
+              }
+            },
+            "format_errors": [],
+            "rejected_references": 2
+          },
+          {
+            "key": "PRI-228",
+            "large": false,
+            "coverage": {
+              "core": {
+                "matched": 3,
+                "all": 4
+              },
+              "dependencies": {
+                "matched": 1,
+                "all": 2
+              }
+            },
+            "positions": {
+              "first": {
+                "labelled": 2,
+                "visible": 7,
+                "cited": 3,
+                "labelled_cited": 2
+              },
+              "middle": {
+                "labelled": 0,
+                "visible": 7,
+                "cited": 0,
+                "labelled_cited": 0
+              },
+              "last": {
+                "labelled": 3,
+                "visible": 6,
+                "cited": 2,
+                "labelled_cited": 2
+              }
+            },
+            "format_errors": [],
+            "rejected_references": 1
+          },
+          {
+            "key": "PRI-235",
+            "large": false,
+            "coverage": {
+              "core": {
+                "matched": 3,
+                "all": 5
+              },
+              "dependencies": {
+                "matched": 1,
+                "all": 2
+              }
+            },
+            "positions": {
+              "first": {
+                "labelled": 2,
+                "visible": 7,
+                "cited": 2,
+                "labelled_cited": 1
+              },
+              "middle": {
+                "labelled": 2,
+                "visible": 7,
+                "cited": 2,
+                "labelled_cited": 2
+              },
+              "last": {
+                "labelled": 1,
+                "visible": 6,
+                "cited": 1,
+                "labelled_cited": 1
+              }
+            },
+            "format_errors": [],
+            "rejected_references": 4
+          },
+          {
+            "key": "PRI-238",
+            "large": false,
+            "coverage": {
+              "core": {
+                "matched": 2,
+                "all": 3
+              },
+              "dependencies": {
+                "matched": 0,
+                "all": 3
+              }
+            },
+            "positions": {
+              "first": {
+                "labelled": 2,
+                "visible": 7,
+                "cited": 2,
+                "labelled_cited": 2
+              },
+              "middle": {
+                "labelled": 0,
+                "visible": 7,
+                "cited": 0,
+                "labelled_cited": 0
+              },
+              "last": {
+                "labelled": 0,
+                "visible": 6,
+                "cited": 0,
+                "labelled_cited": 0
+              }
+            },
+            "format_errors": [],
+            "rejected_references": 0
+          },
+          {
+            "key": "PRI-239",
+            "large": false,
+            "coverage": {
+              "core": {
+                "matched": 1,
+                "all": 8
+              },
+              "dependencies": {
+                "matched": 0,
+                "all": 2
+              }
+            },
+            "positions": {
+              "first": {
+                "labelled": 1,
+                "visible": 7,
+                "cited": 2,
+                "labelled_cited": 1
+              },
+              "middle": {
+                "labelled": 1,
+                "visible": 7,
+                "cited": 0,
+                "labelled_cited": 0
+              },
+              "last": {
+                "labelled": 3,
+                "visible": 6,
+                "cited": 0,
+                "labelled_cited": 0
+              }
+            },
+            "format_errors": [],
+            "rejected_references": 1
+          },
+          {
+            "key": "PRI-241",
+            "large": false,
+            "coverage": {
+              "core": {
+                "matched": 1,
+                "all": 3
+              },
+              "dependencies": {
+                "matched": 1,
+                "all": 2
+              }
+            },
+            "positions": {
+              "first": {
+                "labelled": 3,
+                "visible": 7,
+                "cited": 2,
+                "labelled_cited": 2
+              },
+              "middle": {
+                "labelled": 0,
+                "visible": 7,
+                "cited": 0,
+                "labelled_cited": 0
+              },
+              "last": {
+                "labelled": 1,
+                "visible": 6,
+                "cited": 0,
+                "labelled_cited": 0
+              }
+            },
+            "format_errors": [],
+            "rejected_references": 0
+          },
+          {
+            "key": "PRI-242",
+            "large": false,
+            "coverage": {
+              "core": {
+                "matched": 1,
+                "all": 3
+              },
+              "dependencies": {
+                "matched": 1,
+                "all": 2
+              }
+            },
+            "positions": {
+              "first": {
+                "labelled": 3,
+                "visible": 7,
+                "cited": 3,
+                "labelled_cited": 2
+              },
+              "middle": {
+                "labelled": 0,
+                "visible": 7,
+                "cited": 0,
+                "labelled_cited": 0
+              },
+              "last": {
+                "labelled": 0,
+                "visible": 6,
+                "cited": 1,
+                "labelled_cited": 0
+              }
+            },
+            "format_errors": [],
+            "rejected_references": 0
+          },
+          {
+            "key": "PRI-245",
+            "large": false,
+            "coverage": {
+              "core": {
+                "matched": 3,
+                "all": 9
+              },
+              "dependencies": {
+                "matched": 1,
+                "all": 2
+              }
+            },
+            "positions": {
+              "first": {
+                "labelled": 3,
+                "visible": 5,
+                "cited": 3,
+                "labelled_cited": 2
+              },
+              "middle": {
+                "labelled": 3,
+                "visible": 5,
+                "cited": 3,
+                "labelled_cited": 2
+              },
+              "last": {
+                "labelled": 0,
+                "visible": 4,
+                "cited": 0,
+                "labelled_cited": 0
+              }
+            },
+            "format_errors": [
+              "citation_syntax"
+            ],
+            "rejected_references": 0
+          },
+          {
+            "key": "PRI-248",
+            "large": false,
+            "coverage": {
+              "core": {
+                "matched": 1,
+                "all": 3
+              },
+              "dependencies": {
+                "matched": 1,
+                "all": 3
+              }
+            },
+            "positions": {
+              "first": {
+                "labelled": 1,
+                "visible": 6,
+                "cited": 3,
+                "labelled_cited": 1
+              },
+              "middle": {
+                "labelled": 0,
+                "visible": 6,
+                "cited": 2,
+                "labelled_cited": 0
+              },
+              "last": {
+                "labelled": 2,
+                "visible": 5,
+                "cited": 1,
+                "labelled_cited": 1
+              }
+            },
+            "format_errors": [
+              "citation_syntax"
+            ],
+            "rejected_references": 1
+          },
+          {
+            "key": "PRI-251",
+            "large": false,
+            "coverage": {
+              "core": {
+                "matched": 2,
+                "all": 7
+              },
+              "dependencies": {
+                "matched": 0,
+                "all": 2
+              }
+            },
+            "positions": {
+              "first": {
+                "labelled": 2,
+                "visible": 6,
+                "cited": 3,
+                "labelled_cited": 2
+              },
+              "middle": {
+                "labelled": 1,
+                "visible": 6,
+                "cited": 1,
+                "labelled_cited": 0
+              },
+              "last": {
+                "labelled": 1,
+                "visible": 6,
+                "cited": 1,
+                "labelled_cited": 0
+              }
+            },
+            "format_errors": [
+              "citation_syntax"
+            ],
+            "rejected_references": 0
+          },
+          {
+            "key": "PRI-252",
+            "large": false,
+            "coverage": {
+              "core": {
+                "matched": 1,
+                "all": 4
+              },
+              "dependencies": {
+                "matched": 2,
+                "all": 2
+              }
+            },
+            "positions": {
+              "first": {
+                "labelled": 2,
+                "visible": 7,
+                "cited": 3,
+                "labelled_cited": 1
+              },
+              "middle": {
+                "labelled": 1,
+                "visible": 7,
+                "cited": 1,
+                "labelled_cited": 1
+              },
+              "last": {
+                "labelled": 1,
+                "visible": 6,
+                "cited": 1,
+                "labelled_cited": 1
+              }
+            },
+            "format_errors": [
+              "citation_syntax"
+            ],
+            "rejected_references": 1
+          },
+          {
+            "key": "PRI-255",
+            "large": false,
+            "coverage": {
+              "core": {
+                "matched": 1,
+                "all": 3
+              },
+              "dependencies": {
+                "matched": 2,
+                "all": 3
+              }
+            },
+            "positions": {
+              "first": {
+                "labelled": 1,
+                "visible": 7,
+                "cited": 2,
+                "labelled_cited": 1
+              },
+              "middle": {
+                "labelled": 2,
+                "visible": 7,
+                "cited": 5,
+                "labelled_cited": 2
+              },
+              "last": {
+                "labelled": 1,
+                "visible": 6,
+                "cited": 0,
+                "labelled_cited": 0
+              }
+            },
+            "format_errors": [],
+            "rejected_references": 0
+          },
+          {
+            "key": "PRI-256",
+            "large": false,
+            "coverage": {
+              "core": {
+                "matched": 1,
+                "all": 5
+              },
+              "dependencies": {
+                "matched": 2,
+                "all": 2
+              }
+            },
+            "positions": {
+              "first": {
+                "labelled": 3,
+                "visible": 7,
+                "cited": 1,
+                "labelled_cited": 1
+              },
+              "middle": {
+                "labelled": 1,
+                "visible": 7,
+                "cited": 1,
+                "labelled_cited": 1
+              },
+              "last": {
+                "labelled": 1,
+                "visible": 6,
+                "cited": 2,
+                "labelled_cited": 1
+              }
+            },
+            "format_errors": [],
+            "rejected_references": 7
+          },
+          {
+            "key": "PRI-257",
+            "large": true,
+            "coverage": {
+              "core": {
+                "matched": 2,
+                "all": 12
+              },
+              "dependencies": {
+                "matched": 0,
+                "all": 2
+              }
+            },
+            "positions": {
+              "first": {
+                "labelled": 3,
+                "visible": 7,
+                "cited": 1,
+                "labelled_cited": 1
+              },
+              "middle": {
+                "labelled": 1,
+                "visible": 7,
+                "cited": 0,
+                "labelled_cited": 0
+              },
+              "last": {
+                "labelled": 3,
+                "visible": 6,
+                "cited": 1,
+                "labelled_cited": 1
+              }
+            },
+            "format_errors": [],
+            "rejected_references": 8
+          },
+          {
+            "key": "PRI-260",
+            "large": false,
+            "coverage": {
+              "core": {
+                "matched": 4,
+                "all": 4
+              },
+              "dependencies": {
+                "matched": 0,
+                "all": 2
+              }
+            },
+            "positions": {
+              "first": {
+                "labelled": 2,
+                "visible": 7,
+                "cited": 1,
+                "labelled_cited": 1
+              },
+              "middle": {
+                "labelled": 1,
+                "visible": 7,
+                "cited": 2,
+                "labelled_cited": 1
+              },
+              "last": {
+                "labelled": 2,
+                "visible": 6,
+                "cited": 4,
+                "labelled_cited": 2
+              }
+            },
+            "format_errors": [],
+            "rejected_references": 0
+          },
+          {
+            "key": "PRI-267",
+            "large": false,
+            "coverage": {
+              "core": {
+                "matched": 3,
+                "all": 3
+              },
+              "dependencies": {
+                "matched": 1,
+                "all": 2
+              }
+            },
+            "positions": {
+              "first": {
+                "labelled": 2,
+                "visible": 7,
+                "cited": 2,
+                "labelled_cited": 2
+              },
+              "middle": {
+                "labelled": 1,
+                "visible": 7,
+                "cited": 0,
+                "labelled_cited": 0
+              },
+              "last": {
+                "labelled": 2,
+                "visible": 6,
+                "cited": 2,
+                "labelled_cited": 2
+              }
+            },
+            "format_errors": [],
+            "rejected_references": 0
+          },
+          {
+            "key": "PRI-275",
+            "large": false,
+            "coverage": {
+              "core": {
+                "matched": 1,
+                "all": 1
+              },
+              "dependencies": {
+                "matched": 2,
+                "all": 4
+              }
+            },
+            "positions": {
+              "first": {
+                "labelled": 1,
+                "visible": 7,
+                "cited": 2,
+                "labelled_cited": 1
+              },
+              "middle": {
+                "labelled": 2,
+                "visible": 7,
+                "cited": 1,
+                "labelled_cited": 1
+              },
+              "last": {
+                "labelled": 1,
+                "visible": 6,
+                "cited": 2,
+                "labelled_cited": 1
+              }
+            },
+            "format_errors": [],
+            "rejected_references": 1
+          }
+        ]
+      },
+      "graph_fixed": {
+        "all": {
+          "core": {
+            "matched": 46,
+            "all": 149
+          },
+          "dependencies": {
+            "matched": 19,
+            "all": 46
+          }
+        },
+        "large": {
+          "core": {
+            "matched": 19,
+            "all": 84
+          },
+          "dependencies": {
+            "matched": 3,
+            "all": 11
+          }
+        },
+        "positions": {
+          "first": {
+            "labelled": 52,
+            "visible": 134,
+            "cited": 60,
+            "labelled_cited": 39
+          },
+          "middle": {
+            "labelled": 32,
+            "visible": 134,
+            "cited": 31,
+            "labelled_cited": 19
+          },
+          "last": {
+            "labelled": 17,
+            "visible": 115,
+            "cited": 14,
+            "labelled_cited": 7
+          }
+        },
+        "missing_briefs": 0,
+        "format_errors": 0,
+        "rejected_references": 48,
+        "batches_completed": 4,
+        "batches_expected": 4,
+        "median_batch_s": 31.930999999999997,
+        "usage": {
+          "input_tokens": 188111,
+          "cached_input_tokens": 25856,
+          "output_tokens": 5463
+        },
+        "tasks": [
+          {
+            "key": "PRI-196",
+            "large": true,
+            "coverage": {
+              "core": {
+                "matched": 3,
+                "all": 10
+              },
+              "dependencies": {
+                "matched": 1,
+                "all": 1
+              }
+            },
+            "positions": {
+              "first": {
+                "labelled": 3,
+                "visible": 5,
+                "cited": 3,
+                "labelled_cited": 2
+              },
+              "middle": {
+                "labelled": 3,
+                "visible": 5,
+                "cited": 2,
+                "labelled_cited": 2
+              },
+              "last": {
+                "labelled": 0,
+                "visible": 4,
+                "cited": 0,
+                "labelled_cited": 0
+              }
+            },
+            "format_errors": [],
+            "rejected_references": 2
+          },
+          {
+            "key": "PRI-215",
+            "large": true,
+            "coverage": {
+              "core": {
+                "matched": 6,
+                "all": 20
+              },
+              "dependencies": {
+                "matched": 0,
+                "all": 2
+              }
+            },
+            "positions": {
+              "first": {
+                "labelled": 3,
+                "visible": 7,
+                "cited": 3,
+                "labelled_cited": 3
+              },
+              "middle": {
+                "labelled": 3,
+                "visible": 7,
+                "cited": 1,
+                "labelled_cited": 1
+              },
+              "last": {
+                "labelled": 4,
+                "visible": 6,
+                "cited": 2,
+                "labelled_cited": 2
+              }
+            },
+            "format_errors": [],
+            "rejected_references": 7
+          },
+          {
+            "key": "PRI-223",
+            "large": true,
+            "coverage": {
+              "core": {
+                "matched": 5,
+                "all": 23
+              },
+              "dependencies": {
+                "matched": 2,
+                "all": 3
+              }
+            },
+            "positions": {
+              "first": {
+                "labelled": 6,
+                "visible": 7,
+                "cited": 7,
+                "labelled_cited": 6
+              },
+              "middle": {
+                "labelled": 3,
+                "visible": 7,
+                "cited": 1,
+                "labelled_cited": 1
+              },
+              "last": {
+                "labelled": 1,
+                "visible": 6,
+                "cited": 0,
+                "labelled_cited": 0
+              }
+            },
+            "format_errors": [],
+            "rejected_references": 2
+          },
+          {
+            "key": "PRI-225",
+            "large": true,
+            "coverage": {
+              "core": {
+                "matched": 2,
+                "all": 19
+              },
+              "dependencies": {
+                "matched": 0,
+                "all": 3
+              }
+            },
+            "positions": {
+              "first": {
+                "labelled": 3,
+                "visible": 7,
+                "cited": 4,
+                "labelled_cited": 2
+              },
+              "middle": {
+                "labelled": 1,
+                "visible": 7,
+                "cited": 0,
+                "labelled_cited": 0
+              },
+              "last": {
+                "labelled": 0,
+                "visible": 6,
+                "cited": 0,
+                "labelled_cited": 0
+              }
+            },
+            "format_errors": [],
+            "rejected_references": 2
+          },
+          {
+            "key": "PRI-228",
+            "large": false,
+            "coverage": {
+              "core": {
+                "matched": 2,
+                "all": 4
+              },
+              "dependencies": {
+                "matched": 2,
+                "all": 2
+              }
+            },
+            "positions": {
+              "first": {
+                "labelled": 2,
+                "visible": 7,
+                "cited": 1,
+                "labelled_cited": 1
+              },
+              "middle": {
+                "labelled": 3,
+                "visible": 7,
+                "cited": 3,
+                "labelled_cited": 3
+              },
+              "last": {
+                "labelled": 0,
+                "visible": 6,
+                "cited": 0,
+                "labelled_cited": 0
+              }
+            },
+            "format_errors": [],
+            "rejected_references": 2
+          },
+          {
+            "key": "PRI-235",
+            "large": false,
+            "coverage": {
+              "core": {
+                "matched": 3,
+                "all": 5
+              },
+              "dependencies": {
+                "matched": 0,
+                "all": 2
+              }
+            },
+            "positions": {
+              "first": {
+                "labelled": 3,
+                "visible": 7,
+                "cited": 3,
+                "labelled_cited": 3
+              },
+              "middle": {
+                "labelled": 1,
+                "visible": 7,
+                "cited": 1,
+                "labelled_cited": 0
+              },
+              "last": {
+                "labelled": 1,
+                "visible": 6,
+                "cited": 0,
+                "labelled_cited": 0
+              }
+            },
+            "format_errors": [],
+            "rejected_references": 4
+          },
+          {
+            "key": "PRI-238",
+            "large": false,
+            "coverage": {
+              "core": {
+                "matched": 2,
+                "all": 3
+              },
+              "dependencies": {
+                "matched": 0,
+                "all": 3
+              }
+            },
+            "positions": {
+              "first": {
+                "labelled": 1,
+                "visible": 7,
+                "cited": 2,
+                "labelled_cited": 1
+              },
+              "middle": {
+                "labelled": 1,
+                "visible": 7,
+                "cited": 1,
+                "labelled_cited": 1
+              },
+              "last": {
+                "labelled": 0,
+                "visible": 6,
+                "cited": 0,
+                "labelled_cited": 0
+              }
+            },
+            "format_errors": [],
+            "rejected_references": 0
+          },
+          {
+            "key": "PRI-239",
+            "large": false,
+            "coverage": {
+              "core": {
+                "matched": 1,
+                "all": 8
+              },
+              "dependencies": {
+                "matched": 0,
+                "all": 2
+              }
+            },
+            "positions": {
+              "first": {
+                "labelled": 2,
+                "visible": 7,
+                "cited": 2,
+                "labelled_cited": 1
+              },
+              "middle": {
+                "labelled": 2,
+                "visible": 7,
+                "cited": 0,
+                "labelled_cited": 0
+              },
+              "last": {
+                "labelled": 1,
+                "visible": 6,
+                "cited": 0,
+                "labelled_cited": 0
+              }
+            },
+            "format_errors": [],
+            "rejected_references": 3
+          },
+          {
+            "key": "PRI-241",
+            "large": false,
+            "coverage": {
+              "core": {
+                "matched": 1,
+                "all": 3
+              },
+              "dependencies": {
+                "matched": 1,
+                "all": 2
+              }
+            },
+            "positions": {
+              "first": {
+                "labelled": 3,
+                "visible": 7,
+                "cited": 1,
+                "labelled_cited": 1
+              },
+              "middle": {
+                "labelled": 1,
+                "visible": 7,
+                "cited": 3,
+                "labelled_cited": 1
+              },
+              "last": {
+                "labelled": 0,
+                "visible": 6,
+                "cited": 0,
+                "labelled_cited": 0
+              }
+            },
+            "format_errors": [],
+            "rejected_references": 0
+          },
+          {
+            "key": "PRI-242",
+            "large": false,
+            "coverage": {
+              "core": {
+                "matched": 1,
+                "all": 3
+              },
+              "dependencies": {
+                "matched": 2,
+                "all": 2
+              }
+            },
+            "positions": {
+              "first": {
+                "labelled": 3,
+                "visible": 7,
+                "cited": 4,
+                "labelled_cited": 3
+              },
+              "middle": {
+                "labelled": 0,
+                "visible": 7,
+                "cited": 2,
+                "labelled_cited": 0
+              },
+              "last": {
+                "labelled": 0,
+                "visible": 6,
+                "cited": 0,
+                "labelled_cited": 0
+              }
+            },
+            "format_errors": [],
+            "rejected_references": 0
+          },
+          {
+            "key": "PRI-245",
+            "large": false,
+            "coverage": {
+              "core": {
+                "matched": 2,
+                "all": 9
+              },
+              "dependencies": {
+                "matched": 1,
+                "all": 2
+              }
+            },
+            "positions": {
+              "first": {
+                "labelled": 2,
+                "visible": 5,
+                "cited": 1,
+                "labelled_cited": 0
+              },
+              "middle": {
+                "labelled": 1,
+                "visible": 5,
+                "cited": 1,
+                "labelled_cited": 1
+              },
+              "last": {
+                "labelled": 3,
+                "visible": 4,
+                "cited": 2,
+                "labelled_cited": 2
+              }
+            },
+            "format_errors": [],
+            "rejected_references": 0
+          },
+          {
+            "key": "PRI-248",
+            "large": false,
+            "coverage": {
+              "core": {
+                "matched": 1,
+                "all": 3
+              },
+              "dependencies": {
+                "matched": 1,
+                "all": 3
+              }
+            },
+            "positions": {
+              "first": {
+                "labelled": 2,
+                "visible": 6,
+                "cited": 4,
+                "labelled_cited": 2
+              },
+              "middle": {
+                "labelled": 1,
+                "visible": 6,
+                "cited": 0,
+                "labelled_cited": 0
+              },
+              "last": {
+                "labelled": 0,
+                "visible": 5,
+                "cited": 1,
+                "labelled_cited": 0
+              }
+            },
+            "format_errors": [],
+            "rejected_references": 1
+          },
+          {
+            "key": "PRI-251",
+            "large": false,
+            "coverage": {
+              "core": {
+                "matched": 3,
+                "all": 7
+              },
+              "dependencies": {
+                "matched": 0,
+                "all": 2
+              }
+            },
+            "positions": {
+              "first": {
+                "labelled": 3,
+                "visible": 6,
+                "cited": 6,
+                "labelled_cited": 3
+              },
+              "middle": {
+                "labelled": 0,
+                "visible": 6,
+                "cited": 0,
+                "labelled_cited": 0
+              },
+              "last": {
+                "labelled": 1,
+                "visible": 6,
+                "cited": 1,
+                "labelled_cited": 0
+              }
+            },
+            "format_errors": [],
+            "rejected_references": 6
+          },
+          {
+            "key": "PRI-252",
+            "large": false,
+            "coverage": {
+              "core": {
+                "matched": 1,
+                "all": 4
+              },
+              "dependencies": {
+                "matched": 2,
+                "all": 2
+              }
+            },
+            "positions": {
+              "first": {
+                "labelled": 2,
+                "visible": 7,
+                "cited": 3,
+                "labelled_cited": 1
+              },
+              "middle": {
+                "labelled": 2,
+                "visible": 7,
+                "cited": 4,
+                "labelled_cited": 2
+              },
+              "last": {
+                "labelled": 0,
+                "visible": 6,
+                "cited": 0,
+                "labelled_cited": 0
+              }
+            },
+            "format_errors": [],
+            "rejected_references": 1
+          },
+          {
+            "key": "PRI-255",
+            "large": false,
+            "coverage": {
+              "core": {
+                "matched": 1,
+                "all": 3
+              },
+              "dependencies": {
+                "matched": 2,
+                "all": 3
+              }
+            },
+            "positions": {
+              "first": {
+                "labelled": 1,
+                "visible": 7,
+                "cited": 3,
+                "labelled_cited": 1
+              },
+              "middle": {
+                "labelled": 1,
+                "visible": 7,
+                "cited": 1,
+                "labelled_cited": 0
+              },
+              "last": {
+                "labelled": 2,
+                "visible": 6,
+                "cited": 4,
+                "labelled_cited": 2
+              }
+            },
+            "format_errors": [],
+            "rejected_references": 2
+          },
+          {
+            "key": "PRI-256",
+            "large": false,
+            "coverage": {
+              "core": {
+                "matched": 2,
+                "all": 5
+              },
+              "dependencies": {
+                "matched": 2,
+                "all": 2
+              }
+            },
+            "positions": {
+              "first": {
+                "labelled": 3,
+                "visible": 7,
+                "cited": 2,
+                "labelled_cited": 2
+              },
+              "middle": {
+                "labelled": 1,
+                "visible": 7,
+                "cited": 2,
+                "labelled_cited": 1
+              },
+              "last": {
+                "labelled": 1,
+                "visible": 6,
+                "cited": 1,
+                "labelled_cited": 1
+              }
+            },
+            "format_errors": [],
+            "rejected_references": 7
+          },
+          {
+            "key": "PRI-257",
+            "large": true,
+            "coverage": {
+              "core": {
+                "matched": 3,
+                "all": 12
+              },
+              "dependencies": {
+                "matched": 0,
+                "all": 2
+              }
+            },
+            "positions": {
+              "first": {
+                "labelled": 3,
+                "visible": 7,
+                "cited": 3,
+                "labelled_cited": 2
+              },
+              "middle": {
+                "labelled": 3,
+                "visible": 7,
+                "cited": 1,
+                "labelled_cited": 1
+              },
+              "last": {
+                "labelled": 1,
+                "visible": 6,
+                "cited": 1,
+                "labelled_cited": 0
+              }
+            },
+            "format_errors": [],
+            "rejected_references": 7
+          },
+          {
+            "key": "PRI-260",
+            "large": false,
+            "coverage": {
+              "core": {
+                "matched": 3,
+                "all": 4
+              },
+              "dependencies": {
+                "matched": 0,
+                "all": 2
+              }
+            },
+            "positions": {
+              "first": {
+                "labelled": 4,
+                "visible": 7,
+                "cited": 2,
+                "labelled_cited": 2
+              },
+              "middle": {
+                "labelled": 1,
+                "visible": 7,
+                "cited": 3,
+                "labelled_cited": 1
+              },
+              "last": {
+                "labelled": 0,
+                "visible": 6,
+                "cited": 1,
+                "labelled_cited": 0
+              }
+            },
+            "format_errors": [],
+            "rejected_references": 0
+          },
+          {
+            "key": "PRI-267",
+            "large": false,
+            "coverage": {
+              "core": {
+                "matched": 3,
+                "all": 3
+              },
+              "dependencies": {
+                "matched": 1,
+                "all": 2
+              }
+            },
+            "positions": {
+              "first": {
+                "labelled": 2,
+                "visible": 7,
+                "cited": 3,
+                "labelled_cited": 2
+              },
+              "middle": {
+                "labelled": 2,
+                "visible": 7,
+                "cited": 2,
+                "labelled_cited": 2
+              },
+              "last": {
+                "labelled": 1,
+                "visible": 6,
+                "cited": 1,
+                "labelled_cited": 0
+              }
+            },
+            "format_errors": [],
+            "rejected_references": 1
+          },
+          {
+            "key": "PRI-275",
+            "large": false,
+            "coverage": {
+              "core": {
+                "matched": 1,
+                "all": 1
+              },
+              "dependencies": {
+                "matched": 2,
+                "all": 4
+              }
+            },
+            "positions": {
+              "first": {
+                "labelled": 1,
+                "visible": 7,
+                "cited": 3,
+                "labelled_cited": 1
+              },
+              "middle": {
+                "labelled": 2,
+                "visible": 7,
+                "cited": 3,
+                "labelled_cited": 2
+              },
+              "last": {
+                "labelled": 1,
+                "visible": 6,
+                "cited": 0,
+                "labelled_cited": 0
+              }
+            },
+            "format_errors": [],
+            "rejected_references": 1
+          }
+        ]
+      }
+    }
+  },
+  "pooled": {
+    "rank": {
+      "all": {
+        "core": {
+          "matched": 97,
+          "all": 298
+        },
+        "dependencies": {
+          "matched": 37,
+          "all": 92
+        }
+      },
+      "large": {
+        "core": {
+          "matched": 34,
+          "all": 168
+        },
+        "dependencies": {
+          "matched": 6,
+          "all": 22
+        }
+      },
+      "positions": {
+        "first": {
+          "labelled": 108,
+          "visible": 268,
+          "cited": 133,
+          "labelled_cited": 82
+        },
+        "middle": {
+          "labelled": 56,
+          "visible": 268,
+          "cited": 60,
+          "labelled_cited": 31
+        },
+        "last": {
+          "labelled": 38,
+          "visible": 230,
+          "cited": 43,
+          "labelled_cited": 21
+        }
+      },
+      "missing_briefs": 0,
+      "format_errors": 5,
+      "rejected_references": 63,
+      "batches_completed": 8,
+      "batches_expected": 8,
+      "median_batch_s": 31.491,
+      "usage": {
+        "input_tokens": 376690,
+        "output_tokens": 10934,
+        "cached_input_tokens": 45568
+      }
+    },
+    "edges": {
+      "all": {
+        "core": {
+          "matched": 94,
+          "all": 298
+        },
+        "dependencies": {
+          "matched": 38,
+          "all": 92
+        }
+      },
+      "large": {
+        "core": {
+          "matched": 38,
+          "all": 168
+        },
+        "dependencies": {
+          "matched": 6,
+          "all": 22
+        }
+      },
+      "positions": {
+        "first": {
+          "labelled": 88,
+          "visible": 268,
+          "cited": 89,
+          "labelled_cited": 61
+        },
+        "middle": {
+          "labelled": 48,
+          "visible": 268,
+          "cited": 46,
+          "labelled_cited": 28
+        },
+        "last": {
+          "labelled": 66,
+          "visible": 230,
+          "cited": 57,
+          "labelled_cited": 43
+        }
+      },
+      "missing_briefs": 0,
+      "format_errors": 4,
+      "rejected_references": 70,
+      "batches_completed": 8,
+      "batches_expected": 8,
+      "median_batch_s": 30.673499999999997,
+      "usage": {
+        "input_tokens": 376758,
+        "output_tokens": 10329,
+        "cached_input_tokens": 12928
+      }
+    },
+    "graph_fixed": {
+      "all": {
+        "core": {
+          "matched": 94,
+          "all": 298
+        },
+        "dependencies": {
+          "matched": 36,
+          "all": 92
+        }
+      },
+      "large": {
+        "core": {
+          "matched": 37,
+          "all": 168
+        },
+        "dependencies": {
+          "matched": 6,
+          "all": 22
+        }
+      },
+      "positions": {
+        "first": {
+          "labelled": 104,
+          "visible": 268,
+          "cited": 112,
+          "labelled_cited": 79
+        },
+        "middle": {
+          "labelled": 64,
+          "visible": 268,
+          "cited": 61,
+          "labelled_cited": 36
+        },
+        "last": {
+          "labelled": 34,
+          "visible": 230,
+          "cited": 30,
+          "labelled_cited": 15
+        }
+      },
+      "missing_briefs": 0,
+      "format_errors": 0,
+      "rejected_references": 79,
+      "batches_completed": 8,
+      "batches_expected": 8,
+      "median_batch_s": 30.0105,
+      "usage": {
+        "input_tokens": 376671,
+        "cached_input_tokens": 71424,
+        "output_tokens": 10602
+      }
+    }
+  },
+  "gate": {
+    "edges": {
+      "core_delta_pp": -1.01,
+      "dependencies_delta_pp": 1.09,
+      "large_dependencies_delta_pp": 0.0,
+      "eligible": false
+    },
+    "graph_fixed": {
+      "core_delta_pp": -1.01,
+      "dependencies_delta_pp": -1.09,
+      "large_dependencies_delta_pp": 0.0,
+      "eligible": false
+    }
+  }
+}
