@@ -138,19 +138,68 @@ def _bm25(node_id: str, text: str = "body"):
     return item
 
 
-def test_budget_counts_files_after_final_slice_with_multiple_chunks_per_file():
-    hits = [_bm25("a.py#f"), _bm25("a.py#g"), _bm25("b.py#h")]
+@pytest.mark.parametrize(("prefix", "tests_only"), [("", False), ("tests/", True)])
+def test_budget_counts_distinct_files_with_multiple_chunks_per_file(prefix, tests_only):
+    ids = [f"{prefix}a.py#f", f"{prefix}a.py#g", f"{prefix}b.py#h"]
+    hits = [_bm25(node_id) for node_id in ids]
     store = _FakeStore({"query": hits})
     pack = search_multi(
         _Retriever(store, _FakeEmbedder()), "o/n", ["query"],
         section_limits=CodeSectionLimits(max_files=2, max_chunks_per_file=2),
-        include_selection_stats=True,
+        tests_only=tests_only, include_selection_stats=True,
     )
-    assert {item.path for item in pack.items} == {"a.py"}
+    assert [item.node_id for item in pack.items] == ids
     assert pack.selection_stats == {
-        "file_limit": 2, "candidate_files": 2, "omitted_by_file_limit": 1,
-        "displaced_by_augmentation": 0, "selected_files": 1,
+        "file_limit": 2, "candidate_files": 2, "omitted_by_file_limit": 0,
+        "displaced_by_augmentation": 0, "selected_files": 2,
     }
+
+
+@pytest.mark.parametrize("git_mode", ["absent", "duplicates", "new_path"])
+def test_file_reserves_keep_ranked_chunks_and_count_only_novel_paths(git_mode):
+    ranked = ["a.py#f", "a.py#g", "b.py#f", "b.py#g", "c.py#f", "d.py#f"]
+    augmented = _hit("related.py#f")
+    store = _FakeStore({"query": [_bm25(node_id) for node_id in ranked]},
+                       nodes_by_path={augmented.path: augmented})
+    git_excerpts = []
+    if git_mode != "absent":
+        git_excerpts = [_hit("a.py#git"), _hit("related.py#git")]
+    adds_path = git_mode == "new_path"
+    if adds_path:
+        git_excerpts.extend([_hit("notes.md#git"), _hit("notes.md#duplicate")])
+
+    pack = search_multi(
+        _Retriever(store, _FakeEmbedder()), "o/n", ["query"],
+        section_limits=CodeSectionLimits(max_files=4, max_chunks_per_file=2),
+        augment_sources=[AugmentSource("similar-diffs", [augmented.path], 1)],
+        git_excerpts=git_excerpts, include_selection_stats=True,
+    )
+
+    last_hybrid_slot = "notes.md#git" if adds_path else "c.py#f"
+    assert [item.node_id for item in pack.items] == [
+        *ranked[:4], last_hybrid_slot, augmented.node_id,
+    ]
+    expected = {
+        "file_limit": 4, "candidate_files": 4, "omitted_by_file_limit": 0,
+        "displaced_by_augmentation": 1, "selected_files": 4,
+    }
+    if git_excerpts:
+        expected.update(displaced_by_git_lexical=int(adds_path), git_lexical_files=int(adds_path))
+    assert pack.selection_stats == expected
+
+
+@pytest.mark.parametrize(("max_files", "max_chunks"), [(0, 2), (2, 0)])
+def test_disabled_file_budget_skips_augmentation_and_git(max_files, max_chunks):
+    augmented = _hit("related.py#f")
+    store = _FakeStore({"query": [_bm25("a.py#f")]},
+                       nodes_by_path={augmented.path: augmented})
+    pack = search_multi(
+        _Retriever(store, _FakeEmbedder()), "o/n", ["query"],
+        section_limits=CodeSectionLimits(max_files=max_files, max_chunks_per_file=max_chunks),
+        augment_sources=[AugmentSource("similar-diffs", [augmented.path], 1)],
+        git_excerpts=[_hit("notes.md#git")],
+    )
+    assert pack.as_context() == ""
 
 
 def test_one_batched_embedding_call_per_assembly():

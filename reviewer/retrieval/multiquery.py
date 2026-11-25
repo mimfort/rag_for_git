@@ -337,53 +337,45 @@ def search_multi(retriever, repo: str, queries: list[str], *, limits=None,
                                      max_files=sec.max_files,
                                      max_chunks_per_file=sec.max_chunks_per_file)
     hybrid_paths = {item.path for item in hybrid_final}
+    sources = None
+    if not tests_only and sec.max_files > 0 and sec.max_chunks_per_file > 0:
+        sources = augment_sources
     augmented, note = _augment_items(
-        retriever, repo, sources=None if tests_only else augment_sources, bref=bref,
+        retriever, repo, sources=sources, bref=bref,
         known_paths=hybrid_paths,
         include_tests=include_tests, rank_by_path=rank_by_path)
-    # Резерв слотов: augmented — свой путь дедупа не требует (fetch_retrieved_
-    # at_paths отдаёт по одному самому широкому чанку на путь, known_paths уже
-    # исключил пути итоговой гибридной выдачи), поэтому урезаем hybrid_final
-    # ровно на фактически занятый резерв и подмешиваем augmented напрямую.
-    reserved = min(len(augmented), sec.max_files)
-    augmented = augmented[:reserved]
+    # Каждый добавленный путь занимает один файловый слот. Сохраняем все
+    # отобранные чанки гибрида для путей, оставшихся после резерва.
+    augmented = augmented[:sec.max_files]
     augmented_paths = {item.path for item in augmented}
-    hybrid_budget = sec.max_files - reserved
-    unaugmented_hybrid = hybrid_final[:sec.max_files]
-    reserved_hybrid = hybrid_final[:hybrid_budget]
-    with_git = reserved_hybrid
-    # При добавлении Git-фрагментов оба резерва считаются по различным путям.
-    if git_excerpts and hybrid_budget > 0 and sec.max_chunks_per_file > 0:
-        file_hybrid = diversify_by_file(
+    hybrid_budget = sec.max_files - len(augmented)
+    reserved_hybrid = hybrid_final
+    if augmented:
+        reserved_hybrid = diversify_by_file(
             hybrid_final, max_files=hybrid_budget,
             max_chunks_per_file=sec.max_chunks_per_file,
         )
-        occupied = augmented_paths | {item.path for item in file_hybrid}
-        new_excerpts = [item for item in git_excerpts if item.path not in occupied]
-        if new_excerpts:
-            unaugmented_hybrid = hybrid_final
-            reserved_hybrid = file_hybrid
-            with_git = reserve_git_excerpts(
-                reserved_hybrid, new_excerpts, max_files=hybrid_budget,
-                max_chunks_per_file=sec.max_chunks_per_file,
-            )
+    with_git = reserve_git_excerpts(
+        reserved_hybrid,
+        [item for item in git_excerpts or [] if item.path not in augmented_paths],
+        max_files=hybrid_budget, max_chunks_per_file=sec.max_chunks_per_file,
+    )
     items = [*with_git, *augmented]
     stats = None
     if candidates is not None and (runs or git_excerpts):
         selected = {item.path for item in items}
-        unaugmented = {item.path for item in unaugmented_hybrid}
-        hybrid_paths = {item.path for item in reserved_hybrid}
+        reserved_paths = {item.path for item in reserved_hybrid}
         stats = {
             "file_limit": sec.max_files,
             "candidate_files": len(candidates),
-            "omitted_by_file_limit": len(candidates - unaugmented),
-            "displaced_by_augmentation": len(unaugmented - hybrid_paths - augmented_paths),
+            "omitted_by_file_limit": len(candidates - hybrid_paths),
+            "displaced_by_augmentation": len(hybrid_paths - reserved_paths - augmented_paths),
             "selected_files": len(selected),
         }
         if git_excerpts:
             stats.update(
-                displaced_by_git_lexical=len(hybrid_paths - selected),
-                git_lexical_files=len(selected - hybrid_paths - augmented_paths),
+                displaced_by_git_lexical=len(reserved_paths - selected),
+                git_lexical_files=len(selected - reserved_paths - augmented_paths),
             )
     return ContextPack(items=[cap_block(item, sec.chars_per_file) for item in items],
                        max_chars=sec.max_chars, augment_note=note, selection_stats=stats)
