@@ -1024,7 +1024,7 @@ def test_task_context_deps_test_exemplars_requests_only_tests() -> None:
     result = deps.test_exemplars("o/r", "dev", ["q1", "q2"])
 
     fake_service._search_codebase_multi.assert_called_once_with(
-        "o/r", ["q1", "q2"], "dev", tests_only=True, strict=True, bm25_only=False)
+        "o/r", ["q1", "q2"], "dev", tests_only=True, strict=True, bm25_only=False, explicit_paths=[])
     assert result == "tests-out"
 
 

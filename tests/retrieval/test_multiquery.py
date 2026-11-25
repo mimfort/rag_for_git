@@ -818,3 +818,59 @@ def test_augmented_candidates_ordered_by_raw_pool_rank():
     paths = [it.path for it in pack.items]
     assert "late.py" in paths, "низко ранжированный гибридом файл приоритетнее ненайденного"
     assert "never.py" not in paths
+
+
+def test_exact_path_uses_shared_source_quota_after_hybrid_selection():
+    exact = _hit("pkg/requested.py#entry")
+    related = _hit("pkg/related.py#entry")
+    store = _FakeStore(
+        {"q": [_bm25("pkg/first.py#entry"), _bm25("pkg/second.py#entry")]},
+        nodes_by_path={item.path: item for item in (exact, related)},
+    )
+    pack = search_multi(
+        _Retriever(store, _FakeEmbedder()), "o/r", ["q"], branch="dev",
+        section_limits=CodeSectionLimits(max_files=2, max_augmented_files=1),
+        augment_sources=[AugmentSource("similar-diffs", [related.path, exact.path], 1)],
+        explicit_paths=[exact.path], include_selection_stats=True,
+    )
+
+    assert [item.path for item in pack.items] == ["pkg/first.py", exact.path]
+    assert pack.selection_stats["explicit_path_files"] == 1
+    assert pack.selection_stats["explicit_path_added"] == 1
+
+
+def test_exact_path_in_hybrid_survives_competing_augmentation_and_git():
+    exact = _bm25("pkg/requested.py#entry")
+    similar = _hit("pkg/similar.py#entry")
+    store = _FakeStore(
+        {"q": [_bm25("pkg/first.py#entry"), _bm25("pkg/second.py#entry"), exact]},
+        nodes_by_path={similar.path: similar},
+    )
+    pack = search_multi(
+        _Retriever(store, _FakeEmbedder()), "o/r", ["q"],
+        section_limits=CodeSectionLimits(max_files=3, max_augmented_files=1),
+        augment_sources=[AugmentSource("similar-diffs", [similar.path], 1)],
+        git_excerpts=[_hit("docs/config.md#n"), _hit("docs/install.md#n")],
+        explicit_paths=[exact.path], include_selection_stats=True,
+    )
+
+    assert [item.path for item in pack.items] == [exact.path, "docs/config.md", similar.path]
+    assert pack.selection_stats["explicit_path_added"] == 0
+
+
+def test_exact_test_path_stays_in_test_section_and_uses_file_slot():
+    test = _hit("tests/test_requested.py#check")
+    code = _hit("pkg/requested.py#entry")
+    broad = _hit("tests/test_noise.py#check")
+    store = _FakeStore(
+        {"q": [_bm25("tests/test_unrelated.py#check")]},
+        nodes_by_path={item.path: item for item in (test, code, broad)},
+    )
+    pack = search_multi(
+        _Retriever(store, _FakeEmbedder()), "o/r", ["q"], tests_only=True,
+        section_limits=CodeSectionLimits(max_files=1),
+        augment_sources=[AugmentSource("similar-diffs", [broad.path], 1)],
+        explicit_paths=[code.path, test.path],
+    )
+
+    assert [item.path for item in pack.items] == [test.path]

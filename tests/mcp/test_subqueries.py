@@ -233,3 +233,23 @@ def test_nested_list_items_remain_part_of_their_acceptance_criterion():
         "base", "Add tests", "Adapt fixtures.", "Report includes parsed headers decoded payload",
         "Other output stays the same.",
     ]
+
+
+def test_explicit_paths_only_from_task_and_acceptance_without_urls_or_references():
+    from reviewer.mcp.subqueries import explicit_python_paths
+
+    task = {
+        "title": "Проверить pkg/from-title.py",
+        "description": (
+            "Прочитать `./pkg/entry.py:27` и https://example.org/pkg/remote.py.\n"
+            "Пропустить ../pkg/outside.py, /tmp/pkg/private.py, entry.py и docs/entry.md.\n"
+            "## Контекст\n" "Справка pkg/old.py.\n"
+            "### Ссылки\n" "Дополнение pkg/old-more.py.\n"
+            "## Требования\n" "Поправить tests/test_entry.py.\n"
+        ),
+        "criteria": ["Тот же pkg/entry.py и pkg/second.py"],
+    }
+    assert explicit_python_paths(task, "pkg/fallback.py") == [
+        "pkg/from-title.py", "pkg/entry.py", "tests/test_entry.py", "pkg/second.py",
+    ]
+    assert explicit_python_paths(None, "Открыть pkg/free.py") == ["pkg/free.py"]

@@ -24,6 +24,7 @@ from reviewer.rrf import RRF_K
 from reviewer.storage_health import is_embedder_unavailable, is_storage_unavailable
 
 log = logging.getLogger(__name__)
+_MAX_EXPLICIT_FILES = 2
 
 def rrf_merge(runs: list[list], k: int = RRF_K) -> list:
     """Слить выдачи подзапросов: score(node) = Σ 1/(k + rank_в_прогоне).
@@ -144,7 +145,8 @@ augmented (PRI-257, третий фикс по step8-measurement.md, «Трет�
 
 def _augment_items(retriever, repo: str, *, sources, bref: str, known_paths: set,
                    include_tests: bool = False,
-                   rank_by_path: dict | None = None) -> tuple[list, str | None]:
+                   rank_by_path: dict | None = None,
+                   limit: int | None = None) -> tuple[list, str | None]:
     """Подмешанные кандидаты по именованным источникам. Fail-soft.
 
     Известность НАКОПИТЕЛЬНАЯ: путь, занятый источником выше по списку,
@@ -171,7 +173,8 @@ def _augment_items(retriever, repo: str, *, sources, bref: str, known_paths: set
     items: list = []
     notes: list[str] = []
     for source in sources or []:
-        if source.quota <= 0:
+        quota = source.quota if limit is None else min(source.quota, limit - len(items))
+        if quota <= 0:
             continue
         ranked = sorted(
             ((rank_by_path or {}).get(path, len(rank_by_path or {}) + 1), index, path)
@@ -196,20 +199,21 @@ def _augment_items(retriever, repo: str, *, sources, bref: str, known_paths: set
             continue
         taken = 0
         for path in candidates:
-            if taken >= source.quota:
+            if taken >= quota:
                 break
             if path in fetched:
                 items.append(fetched[path])
                 seen.add(path)
                 taken += 1
         if taken:
-            notes.append(f"{source.name} {taken} (квота {source.quota})")
+            notes.append(f"{source.name} {taken} (квота {quota})")
     if not items:
         return [], None
     return items, f"— подмешано {len(items)} файлов: " + ", ".join(notes)
 
 
-def diversify_by_file(items: list, *, max_files: int, max_chunks_per_file: int) -> list:
+def diversify_by_file(items: list, *, max_files: int, max_chunks_per_file: int,
+                      required_paths: frozenset[str] = frozenset()) -> list:
     """Оставить не более max_chunks_per_file чанков на путь и не более max_files путей.
 
     Идёт по входному порядку и порядок выживших не меняет, поэтому приоритет
@@ -219,13 +223,13 @@ def diversify_by_file(items: list, *, max_files: int, max_chunks_per_file: int) 
     из вложенных, и обратный порядок удержал бы вложенный метод, выбросив
     охватывающий класс, — то есть ухудшил бы выдачу, а не улучшил.
     """
-    per_file: dict[str, int] = {}
+    per_file = dict.fromkeys(required_paths, 0)
     kept: list = []
     for item in items:
         taken = per_file.get(item.path, 0)
         if taken >= max_chunks_per_file:
             continue
-        if taken == 0 and len(per_file) >= max_files:
+        if item.path not in per_file and len(per_file) >= max_files:
             continue
         per_file[item.path] = taken + 1
         kept.append(item)
@@ -233,12 +237,16 @@ def diversify_by_file(items: list, *, max_files: int, max_chunks_per_file: int) 
 
 
 def reserve_git_excerpts(items: list, excerpts: list, *, max_files: int,
-                         max_chunks_per_file: int) -> list:
+                         max_chunks_per_file: int,
+                         required_paths: frozenset[str] = frozenset()) -> list:
     """Поместить новые Git-пути после гибрида в пределах общего бюджета файлов."""
     if not excerpts:
         return items
     if max_files <= 0 or max_chunks_per_file <= 0:
         return []
+    available = max_files - len(required_paths)
+    if available <= 0:
+        return items
     known = {item.path for item in items}
     selected = []
     for excerpt in excerpts:
@@ -246,13 +254,36 @@ def reserve_git_excerpts(items: list, excerpts: list, *, max_files: int,
             continue
         selected.append(excerpt)
         known.add(excerpt.path)
-        if len(selected) == max_files:
+        if len(selected) == available:
             break
     if not selected:
         return items
     hybrid = diversify_by_file(items, max_files=max_files - len(selected),
-                               max_chunks_per_file=max_chunks_per_file)
+                               max_chunks_per_file=max_chunks_per_file,
+                               required_paths=required_paths)
     return [*hybrid, *selected]
+
+
+def _explicit_candidates(
+    store, repo: str, ref: str, paths: list[str], ranked: list,
+    selected: set[str], limit: int,
+) -> tuple[frozenset[str], list]:
+    """Найти явно названные файлы. Сначала восстанавливаем пропуски выдачи."""
+    if limit <= 0 or not paths:
+        return frozenset(), []
+    available = {item.path for item in ranked}
+    missing = [path for path in paths if path not in available]
+    fetched = []
+    if missing:
+        try:
+            fetched = store.fetch_retrieved_at_paths(repo, missing, base_ref=ref)
+        except Exception:  # сбой этого источника оставляет обычную выдачу
+            log.warning("multiquery: явно указанные файлы недоступны", exc_info=True)
+    available.update(item.path for item in fetched)
+    ordered = sorted((path for path in dict.fromkeys(paths) if path in available),
+                     key=lambda path: path in selected)
+    required = frozenset(ordered[:limit])
+    return required, [item for item in fetched if item.path in required]
 
 
 def search_multi(retriever, repo: str, queries: list[str], *, limits=None,
@@ -260,7 +291,8 @@ def search_multi(retriever, repo: str, queries: list[str], *, limits=None,
                  include_tests: bool = False, augment_sources=None,
                  strict: bool = False, tests_only: bool = False,
                  include_selection_stats: bool = False, bm25_only: bool = False,
-                 git_excerpts: list | None = None) -> ContextPack:
+                 git_excerpts: list | None = None,
+                 explicit_paths: list[str] | None = None) -> ContextPack:
     """Мультизапросный ретрив по base-индексу ветки: N прогонов, RRF, обрезка.
 
     Реранкера и cliff-отсечки здесь нет — финальный ранкер RRF (см. докстринг
@@ -274,7 +306,8 @@ def search_multi(retriever, repo: str, queries: list[str], *, limits=None,
     рендера.
 
     `tests_only` оставляет тестовые пути после расширения графа и отключает
-    подмешивание. Этот режим имеет приоритет над `include_tests`.
+    similar-diffs. Явные пути используют собственную секцию и занимают до двух
+    слотов. Добавленные файлы делят квоту с similar-diffs. Режим tests_only имеет приоритет над `include_tests`.
 
     Источники подмешивания приходят списком AugmentSource (обобщение PRI-258):
     у каждого своё имя и своя файловая квота — РЕЗЕРВ слотов внутри max_files,
@@ -351,17 +384,35 @@ def search_multi(retriever, repo: str, queries: list[str], *, limits=None,
     # augmented не существовало вовсе: это и есть тот «итоговый» набор путей,
     # против которого рычаг проверяет свою новизну (PRI-257, второй фикс по
     # step8-measurement.md, «Повторный замер после резерва»).
-    hybrid_final = diversify_by_file(_dedupe_overlapping(items),
-                                     max_files=sec.max_files,
+    ranked = _dedupe_overlapping(items)
+    hybrid_final = diversify_by_file(ranked, max_files=sec.max_files,
                                      max_chunks_per_file=sec.max_chunks_per_file)
+    baseline_paths = {item.path for item in hybrid_final}
+    paths = [
+        path for path in explicit_paths or []
+        if _is_test_path(path) == tests_only or (include_tests and not tests_only)
+    ]
+    limit = min(_MAX_EXPLICIT_FILES, sec.max_files, sec.max_augmented_files)
+    required_paths, supplements = _explicit_candidates(
+        retriever.store, repo, bref, paths, ranked, baseline_paths,
+        limit if sec.max_chunks_per_file > 0 else 0,
+    )
+    explicit_added = len(required_paths - baseline_paths)
+    if explicit_added:
+        hybrid_final = diversify_by_file(
+            [*ranked, *supplements], max_files=sec.max_files,
+            max_chunks_per_file=sec.max_chunks_per_file, required_paths=required_paths,
+        )
     hybrid_paths = {item.path for item in hybrid_final}
     sources = None
     if not tests_only and sec.max_files > 0 and sec.max_chunks_per_file > 0:
         sources = augment_sources
     augmented, note = _augment_items(
         retriever, repo, sources=sources, bref=bref,
-        known_paths=hybrid_paths,
-        include_tests=include_tests, rank_by_path=rank_by_path)
+        known_paths=hybrid_paths, include_tests=include_tests, rank_by_path=rank_by_path,
+        limit=(min(sec.max_files - len(required_paths), sec.max_augmented_files - explicit_added)
+               if required_paths else None),
+    )
     # Каждый добавленный путь занимает один файловый слот. Сохраняем все
     # отобранные чанки гибрида для путей, оставшихся после резерва.
     augmented = augmented[:sec.max_files]
@@ -371,25 +422,33 @@ def search_multi(retriever, repo: str, queries: list[str], *, limits=None,
     if augmented:
         reserved_hybrid = diversify_by_file(
             hybrid_final, max_files=hybrid_budget,
-            max_chunks_per_file=sec.max_chunks_per_file,
+            max_chunks_per_file=sec.max_chunks_per_file, required_paths=required_paths,
         )
     with_git = reserve_git_excerpts(
         reserved_hybrid,
         [item for item in git_excerpts or [] if item.path not in augmented_paths],
         max_files=hybrid_budget, max_chunks_per_file=sec.max_chunks_per_file,
+        required_paths=required_paths,
     )
     items = [*with_git, *augmented]
     stats = None
-    if candidates is not None and (runs or git_excerpts):
+    if explicit_added:
+        explicit_note = f"Добавлено по явно указанным путям ({explicit_added})"
+        note = f"{note}\n{explicit_note}" if note else explicit_note
+    if candidates is not None and (runs or git_excerpts or required_paths):
         selected = {item.path for item in items}
         reserved_paths = {item.path for item in reserved_hybrid}
         stats = {
             "file_limit": sec.max_files,
             "candidate_files": len(candidates),
-            "omitted_by_file_limit": len(candidates - hybrid_paths),
+            "omitted_by_file_limit": len(candidates - baseline_paths),
             "displaced_by_augmentation": len(hybrid_paths - reserved_paths - augmented_paths),
             "selected_files": len(selected),
         }
+        if required_paths:
+            stats.update(explicit_path_files=len(required_paths),
+                         explicit_path_added=explicit_added,
+                         displaced_by_explicit_paths=len(baseline_paths - hybrid_paths))
         if git_excerpts:
             stats.update(
                 displaced_by_git_lexical=len(reserved_paths - selected),
