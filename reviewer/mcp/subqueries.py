@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable, Iterator
 
 MAX_SUBQUERIES = 20
 """Предохранитель против вырожденного текста и лишних обращений к хранилищу."""
@@ -18,7 +19,16 @@ _REQUIREMENTS_RE = re.compile(r"что сделать|требовани|require
 _HEADING_RE = re.compile(r"^ {0,3}(#{1,6})[ \t]+")
 _ITEM_RE = re.compile(r"^([ \t]*)(?:[-*+]|\d+[.)])[ \t]+(.*\S)\s*$")
 _FENCE_RE = re.compile(r"^\s*(`{3,}|~{3,})(.*)$")
-_TOKEN_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_./]*")
+_TOKEN_RE = re.compile(r"[\w./-]+")
+_URL_RE = re.compile(r"(?:[a-z][a-z0-9+.-]*://|www\.)[^\s`<>()]+", re.IGNORECASE)
+_FILE_SUFFIXES = frozenset(
+    "cfg css csv html ini js json jsonl jsx lock md proto py pyi rst sql svg "
+    "toml ts tsx txt xml yaml yml".split()
+)
+_FILE_NAMES = frozenset({
+    ".codexignore", ".dockerignore", ".env", ".env.example", ".gitattributes",
+    ".gitignore", "Dockerfile", "Makefile",
+})
 _TOPIC_RE = re.compile(r"[^\W\d]\w*(?:[./-]\w+)*")
 _TOPIC_STOPWORDS = {
     "после", "перед", "когда", "если", "также", "только", "можно", "через",
@@ -28,12 +38,22 @@ _TOPIC_STOPWORDS = {
 }
 
 
+def _is_file_name(token: str) -> bool:
+    name = token.rsplit("/", 1)[-1]
+    stem, _, suffix = name.rpartition(".")
+    return name in _FILE_NAMES or bool(stem.strip(".") and suffix.lower() in _FILE_SUFFIXES)
+
+
 def _is_identifier(token: str) -> bool:
-    """Технический идентификатор: snake_case, CamelCase, путь или файл .py."""
-    if len(token) < MIN_IDENTIFIER_LEN:
-        return False
-    if "/" in token or token.endswith(".py"):
+    """Технический идентификатор: snake_case, CamelCase, путь или имя файла."""
+    if _is_file_name(token):
         return True
+    if len(token) < MIN_IDENTIFIER_LEN or not token.strip("./-_"):
+        return False
+    if "/" in token:
+        return True
+    if not token.isascii():
+        return False
     if "_" in token:
         return True
     return token[:1].isupper() and any(c.isupper() for c in token[1:])
@@ -109,11 +129,30 @@ def _section_items(text: str) -> tuple[list[tuple[bool, str]], list[str]]:
     return items, prose
 
 
-def _identifiers(lines: list[str]) -> list[str]:
+def _tokens(lines: Iterable[str]) -> Iterator[str]:
+    for line in lines:
+        for token in _TOKEN_RE.findall(_URL_RE.sub(" ", line)):
+            yield token.rstrip(".")
+
+
+def _identifiers(lines: list[str], queries: list[str]) -> list[str]:
     """Идентификаторы текста, который не вошёл в отдельные подзапросы."""
+    covered = set(_tokens(queries))
     return list(dict.fromkeys(
-        token for line in lines for token in _TOKEN_RE.findall(line) if _is_identifier(token)
+        token for token in _tokens(lines)
+        if _is_identifier(token) and (token not in covered or not _is_file_name(token))
     ))
+
+
+def _keep_file_names(queries: list[str], task_text: Iterable[str], target: int) -> list[str]:
+    """Вписать пропущенные имена в выбранный запрос, сохраняя его текст и число запросов."""
+    names = dict.fromkeys(token for token in _tokens(task_text) if _is_file_name(token))
+    if names and queries:
+        emitted = set(_tokens(queries))
+        missing = [name for name in names if name not in emitted][:MAX_IDENTIFIERS]
+        if missing:
+            queries[target] += "\n" + " ".join(missing)
+    return queries
 
 
 def _normalized(text: str) -> str:
@@ -179,18 +218,22 @@ def build_subqueries(task: dict | None, base_query: str, *,
 
     text = "\n".join([str(task.get("title") or ""), str(task.get("description") or "")])
     items, prose = _section_items(text)
-    items.extend((True, str(criterion)) for criterion in (task.get("criteria") or []))
+    criteria_text = [str(criterion) for criterion in (task.get("criteria") or [])]
+    items.extend((True, criterion) for criterion in criteria_text)
     normalized = [(is_criterion, _normalized(item)) for is_criterion, item in items]
-    queries = _dedup([
-        *base, *(item for _, item in normalized), " ".join(_identifiers(prose)[:MAX_IDENTIFIERS]),
-    ])
-    if len(queries) <= MAX_SUBQUERIES:
-        return queries
-
-    criterion_keys = {item.casefold() for is_criterion, item in normalized if is_criterion}
-    criteria = [query for query in queries[len(base):] if query.casefold() in criterion_keys]
-    other = [query for query in queries[len(base):] if query.casefold() not in criterion_keys]
-    slots = MAX_SUBQUERIES - len(base)
-    groups = _group_criteria(criteria, slots, len(queries) - MAX_SUBQUERIES,
-                             excluded_criteria if excluded_criteria is not None else [])
-    return [*base, *other[:slots - len(groups)], *groups]
+    queries = _dedup([*base, *(item for _, item in normalized)])
+    bundle = " ".join(_identifiers(prose, queries)[:MAX_IDENTIFIERS])
+    queries = _dedup([*queries, bundle])
+    target = -1
+    if len(queries) > MAX_SUBQUERIES:
+        criterion_keys = {item.casefold() for is_criterion, item in normalized if is_criterion}
+        criteria = [query for query in queries[len(base):] if query.casefold() in criterion_keys]
+        other = [query for query in queries[len(base):] if query.casefold() not in criterion_keys]
+        slots = MAX_SUBQUERIES - len(base)
+        groups = _group_criteria(criteria, slots, len(queries) - MAX_SUBQUERIES,
+                                 excluded_criteria if excluded_criteria is not None else [])
+        selected_other = other[:slots - len(groups)]
+        queries = [*base, *selected_other, *groups]
+        if selected_other:
+            target = len(base) + len(selected_other) - 1
+    return _keep_file_names(queries, [text, *criteria_text], target)

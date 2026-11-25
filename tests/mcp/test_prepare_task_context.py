@@ -937,3 +937,33 @@ def test_context_reports_criteria_that_cannot_fit_in_either_search():
         {"subqueries": {"excluded_criteria": criteria[19:], "reason": "subquery_budget"}},
     ]
     assert payload["gaps"] == []
+
+
+def test_context_keeps_paths_in_both_searches_when_query_budget_is_full():
+    from reviewer.mcp.subqueries import MAX_SUBQUERIES
+
+    filenames = (".review.yml", "plugin/skills/configure-review/SKILL.md", "pyproject.toml")
+    steps = "\n".join(f"- Шаг {i}" for i in range(MAX_SUBQUERIES))
+    text = "## Требования\n" + steps + "\n\n## Контекст\n\n" + " ".join(f"`{name}`" for name in filenames)
+    criteria = ["Проверить тайм-аут после запуска.", "Отчёт показывает текущую ветку."]
+    seen = {}
+
+    class Deps(FakeDeps):
+        def code(self, repo, branch, queries):
+            seen["code"] = queries
+            return "code"
+
+        def test_exemplars(self, repo, branch, queries):
+            seen["tests"] = queries
+            return "tests"
+
+    task_context.build_task_context(
+        Deps(task={"key": "ID-1", "title": "T", "description": text, "criteria": criteria}),
+        repo="o/n", key="PRI-309", branch="dev", warm_board=False,
+    )
+
+    assert len(seen["code"]) == MAX_SUBQUERIES
+    assert seen["code"][0] == task_context._query({"title": "T", "description": text}, "PRI-309")
+    assert all(criterion in seen["code"] for criterion in criteria)
+    assert set(filenames) <= set(" ".join(seen["code"]).split())
+    assert seen["tests"] == [f"как тестируется: {query}" for query in seen["code"]]
