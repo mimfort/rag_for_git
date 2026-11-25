@@ -1992,11 +1992,12 @@ class MCPReviewService:
         if deps.git_gap:
             payload["gaps"].append(task_context.gap("code.git_lexical", deps.git_gap))
         if include_brief_evidence:
-            from reviewer.mcp.brief_anchors import check_brief_anchors
+            from reviewer.mcp.brief_anchors import collect_brief_evidence
 
             sha = (payload.get("preflight") or {}).get("indexed_sha") or deps.git_context_sha
-            eligible, checks = check_brief_anchors(
+            eligible, checks, aliases = collect_brief_evidence(
                 payload, lambda paths: deps.brief_sources(normalized_repo, sha, paths),
+                lambda paths: deps.brief_existing_paths(normalized_repo, sha, paths),
             )
             if checks:
                 payload["brief_line_checks"] = checks
@@ -2013,7 +2014,7 @@ class MCPReviewService:
                         f"{section}.line_sources",
                         f"Git-объекты снимка недоступны для строк ({counts['unavailable']}).",
                     ))
-            if evidence_id := self._brief_evidence.save_sections(eligible):
+            if evidence_id := self._brief_evidence.save_sections(eligible, aliases=aliases):
                 payload["brief_evidence_id"] = evidence_id
         if budget:
             payload["code_budget"] = budget
@@ -3975,6 +3976,19 @@ class _TaskContextDeps:
             log.warning("Не удалось проверить строки брифа на снимке индекса: %s",
                         type(exc).__name__)
             return {}
+
+    def brief_existing_paths(self, repo: str, sha: str | None, paths: list[str]) -> set[str] | None:
+        if not sha:
+            return None
+        from reviewer.config.committed import validate_clone
+        from reviewer.retrieval.git_lexical import existing_git_paths
+
+        try:
+            clone = validate_clone(self._clone_path(repo), repo)
+            return existing_git_paths(clone, sha, paths) if clone else None
+        except Exception as exc:  # noqa: BLE001 — прямые координаты уже сверены с Git
+            log.warning("Не удалось проверить буквальные Git-пути брифа: %s", type(exc).__name__)
+            return None
 
     def _explicit_locations(
         self, repo: str, branch: str, queries: list[str],
