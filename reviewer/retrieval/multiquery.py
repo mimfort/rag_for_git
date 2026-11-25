@@ -15,13 +15,16 @@ from __future__ import annotations
 
 import dataclasses
 import logging
+from collections.abc import Callable
 
 from reviewer.index.refs import base_ref
 from reviewer.retrieval.retriever import (
     ContextPack, _dedupe_overlapping, _is_test_path,
 )
 from reviewer.rrf import RRF_K
-from reviewer.storage_health import is_embedder_unavailable, is_storage_unavailable
+from reviewer.storage_health import (
+    BACKEND_GRAPH, BACKEND_POSTGRES, is_embedder_unavailable, is_storage_unavailable,
+)
 
 log = logging.getLogger(__name__)
 _MAX_EXPLICIT_FILES = 2
@@ -117,22 +120,44 @@ def _run(store, repo: str, query: str, qvec, lim, bref: str) -> list:
                 and h.ann_distance <= lim.ann_distance_max)]
 
 
+OptionalLookup = Callable[[str, Callable[[], list], str, str], list]
+
+
+def _read_optional(lookup: OptionalLookup | None, section: str, produce: Callable[[], list],
+                   reason: str, backend: str) -> list:
+    if lookup is not None:
+        return lookup(section, produce, reason, backend)
+    try:
+        return produce()
+    except Exception:
+        log.warning("multiquery: %s", reason, exc_info=True)
+        return []
+
+
 def _graph_items(retriever, repo: str, merged: list, ceiling: int, hops: int,
-                 branch: str, bref: str, hybrid_ids: set) -> list:
-    """Graph-expansion один раз, от топа слитого списка. Fail-soft."""
+                 branch: str, bref: str, hybrid_ids: set, lookup: OptionalLookup | None) -> list:
+    """Расширить основной список по графу и дочитать соседей отдельным запросом."""
     if retriever.graph is None or not merged:
         return []
-    try:
-        seeds = [item.node_id for item in merged[:ceiling]]
-        expanded = retriever.graph.expand_detailed(repo, seeds, hops=hops, branch=branch)
-        graph_ids = [row["id"] for row in expanded]
+    seeds = [item.node_id for item in merged[:ceiling]]
+
+    def expand():
+        return [row["id"] for row in
+                retriever.graph.expand_detailed(repo, seeds, hops=hops, branch=branch)]
+
+    graph_ids = _read_optional(lookup, "graph", expand, "расширение по графу недоступно",
+                               BACKEND_GRAPH)
+    if not graph_ids:
+        return []
+
+    def hydrate():
         fetched = {item.node_id: item for item in retriever.store.fetch_nodes(
             repo, graph_ids, "__none__", [], base_ref=bref)}
         return [fetched[node_id] for node_id in graph_ids
                 if node_id in fetched and node_id not in hybrid_ids]
-    except Exception:  # noqa: BLE001
-        log.warning("multiquery: graph-expansion недоступен", exc_info=True)
-        return []
+
+    return _read_optional(lookup, "graph_chunks", hydrate,
+                          "чтение чанков соседей недоступно", BACKEND_POSTGRES)
 
 
 AUGMENT_FETCH_LIMIT = 40
@@ -146,7 +171,8 @@ augmented (PRI-257, третий фикс по step8-measurement.md, «Трет�
 def _augment_items(retriever, repo: str, *, sources, bref: str, known_paths: set,
                    include_tests: bool = False,
                    rank_by_path: dict | None = None,
-                   limit: int | None = None) -> tuple[list, str | None]:
+                   limit: int | None = None,
+                   lookup: OptionalLookup | None = None) -> tuple[list, str | None]:
     """Подмешанные кандидаты по именованным источникам. Fail-soft.
 
     Известность НАКОПИТЕЛЬНАЯ: путь, занятый источником выше по списку,
@@ -190,13 +216,14 @@ def _augment_items(retriever, repo: str, *, sources, bref: str, known_paths: set
             candidates.setdefault(path, None)
         if not candidates:
             continue
-        try:
-            fetched = {item.path: item for item in retriever.store.fetch_retrieved_at_paths(
-                repo, list(candidates), base_ref=bref)}
-        except Exception:  # noqa: BLE001 — стор недоступен, это штатный случай
-            log.warning("multiquery: выборка подмешанных путей источника %s недоступна",
-                        source.name, exc_info=True)
-            continue
+        fetched = dict(_read_optional(
+            lookup, f"augment.{source.name}",
+            lambda paths=list(candidates): [
+                (item.path, item) for item in retriever.store.fetch_retrieved_at_paths(
+                    repo, paths, base_ref=bref)
+            ],
+            f"чтение чанков источника {source.name} недоступно", BACKEND_POSTGRES,
+        ))
         taken = 0
         for path in candidates:
             if taken >= quota:
@@ -266,7 +293,7 @@ def reserve_git_excerpts(items: list, excerpts: list, *, max_files: int,
 
 def _explicit_candidates(
     store, repo: str, ref: str, paths: list[str], ranked: list,
-    selected: set[str], limit: int,
+    selected: set[str], limit: int, lookup: OptionalLookup | None = None,
 ) -> tuple[frozenset[str], list]:
     """Найти явно названные файлы. Сначала восстанавливаем пропуски выдачи."""
     if limit <= 0 or not paths:
@@ -275,10 +302,11 @@ def _explicit_candidates(
     missing = [path for path in paths if path not in available]
     fetched = []
     if missing:
-        try:
-            fetched = store.fetch_retrieved_at_paths(repo, missing, base_ref=ref)
-        except Exception:  # сбой этого источника оставляет обычную выдачу
-            log.warning("multiquery: явно указанные файлы недоступны", exc_info=True)
+        fetched = _read_optional(
+            lookup, "explicit_paths",
+            lambda: store.fetch_retrieved_at_paths(repo, missing, base_ref=ref),
+            "чтение явно указанных файлов недоступно", BACKEND_POSTGRES,
+        )
     available.update(item.path for item in fetched)
     ordered = sorted((path for path in dict.fromkeys(paths) if path in available),
                      key=lambda path: path in selected)
@@ -292,7 +320,8 @@ def search_multi(retriever, repo: str, queries: list[str], *, limits=None,
                  strict: bool = False, tests_only: bool = False,
                  include_selection_stats: bool = False, bm25_only: bool = False,
                  git_excerpts: list | None = None,
-                 explicit_paths: list[str] | None = None) -> ContextPack:
+                 explicit_paths: list[str] | None = None,
+                 optional_lookup: OptionalLookup | None = None) -> ContextPack:
     """Мультизапросный ретрив по base-индексу ветки: N прогонов, RRF, обрезка.
 
     Реранкера и cliff-отсечки здесь нет — финальный ранкер RRF (см. докстринг
@@ -337,6 +366,9 @@ def search_multi(retriever, repo: str, queries: list[str], *, limits=None,
     `bm25_only` применяется по решению сборщика контекста при отказе Voyage.
     В этом режиме RRF, фильтрация тестов, граф и бюджет используют кандидатов
     из лексического поиска, а распознанный сбой хранилища прерывает прогоны.
+
+    `optional_lookup` привязывает вспомогательные запросы к состоянию источников
+    одной сборки контекста. Уже найденные кандидаты сохраняются.
     """
     from reviewer.policy.context_limits import CodebaseLimits, CodeSectionLimits
     lim = limits or CodebaseLimits()
@@ -370,7 +402,7 @@ def search_multi(retriever, repo: str, queries: list[str], *, limits=None,
     merged = rrf_merge(runs)
     hybrid_ids = {item.node_id for item in merged}
     items = [*merged, *_graph_items(retriever, repo, merged, lim.ceiling, hops,
-                                    branch, bref, hybrid_ids)]
+                                    branch, bref, hybrid_ids, optional_lookup)]
     rank_by_path: dict[str, int] = {}
     for rank, item in enumerate(items):
         rank_by_path.setdefault(item.path, rank)
@@ -395,7 +427,7 @@ def search_multi(retriever, repo: str, queries: list[str], *, limits=None,
     limit = min(_MAX_EXPLICIT_FILES, sec.max_files, sec.max_augmented_files)
     required_paths, supplements = _explicit_candidates(
         retriever.store, repo, bref, paths, ranked, baseline_paths,
-        limit if sec.max_chunks_per_file > 0 else 0,
+        limit if sec.max_chunks_per_file > 0 else 0, lookup=optional_lookup,
     )
     explicit_added = len(required_paths - baseline_paths)
     if explicit_added:
@@ -412,6 +444,7 @@ def search_multi(retriever, repo: str, queries: list[str], *, limits=None,
         known_paths=hybrid_paths, include_tests=include_tests, rank_by_path=rank_by_path,
         limit=(min(sec.max_files - len(required_paths), sec.max_augmented_files - explicit_added)
                if required_paths else None),
+        lookup=optional_lookup,
     )
     # Каждый добавленный путь занимает один файловый слот. Сохраняем все
     # отобранные чанки гибрида для путей, оставшихся после резерва.

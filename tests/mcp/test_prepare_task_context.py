@@ -1060,3 +1060,114 @@ def test_task_retrieval_keeps_bm25_when_vector_provider_is_unavailable(monkeypat
     for call in store.bm25_search.call_args_list:
         assert call.kwargs["base_ref"] == "base:dev"
         assert call.kwargs["top_k"] == ContextLimits().search_codebase.candidate_pool
+
+
+@pytest.mark.parametrize("mode", ["hybrid", "bm25"])
+@pytest.mark.parametrize("failure", [
+    "preflight_graph", "graph", "hydration", "explicit", "augment", "bad_query", None,
+])
+def test_prepare_preserves_search_hits_when_an_auxiliary_source_fails(monkeypatch, mode, failure):
+    from types import SimpleNamespace
+
+    from voyageai.error import APIError
+
+    from reviewer.index.store import Retrieved
+    from reviewer.mcp.schemas import BriefCitationIn
+    from reviewer.policy.context_limits import ContextLimits
+
+    def hit(path):
+        return Retrieved(f"{path}#example", path, "example", "function", 1, 1,
+                         "def example(): pass", 1.0, bm25_hit=True)
+
+    embedder = MagicMock()
+    embedder.embed_queries.side_effect = lambda queries: [[1.0] for _ in queries]
+    store = MagicMock()
+    hits = [hit("a.py"), hit("tests/test_a.py")]
+    store.bm25_search.return_value = store.hybrid_search.return_value = hits
+    store.fetch_nodes.return_value = [hit("b.py"), hit("tests/test_b.py")]
+    store.fetch_retrieved_at_paths.return_value = [hit("extra.py")]
+    graph = MagicMock()
+    graph.expand_detailed.return_value = [{"id": "b.py#example"}, {"id": "tests/test_b.py#example"}]
+    graph_failure = ServiceUnavailable("no routing servers")
+    if failure == "graph":
+        graph.expand_detailed.side_effect = graph_failure
+    elif failure == "hydration":
+        store.fetch_nodes.side_effect = psycopg.OperationalError("connection refused")
+    elif failure in {"explicit", "augment"}:
+        store.fetch_retrieved_at_paths.side_effect = psycopg.OperationalError("connection refused")
+    elif failure == "bad_query":
+        store.fetch_nodes.side_effect = psycopg.ProgrammingError("incorrect hydration query")
+
+    components = MagicMock()
+    components.retriever = SimpleNamespace(embedder=embedder, store=store, graph=graph)
+    service = MCPReviewService(Settings(), components)
+    monkeypatch.setattr(service, "_resolve_repo_branch", lambda repo, branch: (repo, branch))
+    monkeypatch.setattr(service, "_resolve_context_limits", lambda _repo, _branch: ContextLimits())
+    monkeypatch.setattr(_TaskContextDeps, "preflight", lambda *_: {
+        "indexed_sha": "snap",
+        "graph_error": graph_failure if failure == "preflight_graph" else None,
+    })
+    monkeypatch.setattr(_TaskContextDeps, "task_board", lambda *_: None)
+    title = "Проверить pkg/explicit.py" if failure == "explicit" else "пример"
+    monkeypatch.setattr(_TaskContextDeps, "task", lambda *_: {"title": title})
+    monkeypatch.setattr(service, "_resolve_policy",
+                        lambda *_: (SimpleNamespace(ignore=[]), SimpleNamespace(skipped=())))
+    monkeypatch.setattr(_TaskContextDeps, "linked", lambda *_: "")
+    monkeypatch.setattr(_TaskContextDeps, "subsystems", lambda *_: None)
+    monkeypatch.setattr(_TaskContextDeps, "_augment_paths", lambda *_: ["extra.py"])
+    monkeypatch.setattr(_TaskContextDeps, "brief_sources",
+                        lambda self, repo, sha, paths: {path: "def example(): pass" for path in paths})
+    similar = MagicMock(return_value="")
+    if mode == "bm25":
+        similar.side_effect = APIError("HTTP code 403")
+    monkeypatch.setattr(_TaskContextDeps, "similar", similar)
+
+    payload = service.prepare_task_context("o/n", "query", "dev", warm_board=False,
+                                           include_brief_evidence=True)
+    search = store.bm25_search if mode == "bm25" else store.hybrid_search
+    assert "a.py#example" in payload["code"]
+    citation = BriefCitationIn(section="code", path="a.py", line=1)
+    verdict = service.verify_task_brief(payload["brief_evidence_id"], citations=[citation])
+    assert verdict["citations"][0]["status"] == "verified"
+
+    if failure in {"hydration", "augment", "explicit"}:
+        store.fetch_nodes.assert_called_once()
+        if failure == "hydration":
+            store.fetch_retrieved_at_paths.assert_not_called()
+            category = "code.graph_chunks"
+        elif failure == "explicit":
+            store.fetch_retrieved_at_paths.assert_called_once_with(
+                "o/n", ["pkg/explicit.py"], base_ref="base:dev")
+            category = "code.explicit_paths"
+        else:
+            store.fetch_retrieved_at_paths.assert_called_once()
+            assert "b.py#example" in payload["code"]
+            category = "code.augment.similar-diffs"
+        search.assert_called_once()
+        assert payload["test_exemplars"] == ""
+        assert _gap(payload, category)["cause"] == "storage_unavailable"
+        tests_section = "test_exemplars.bm25" if mode == "bm25" else "test_exemplars"
+        assert _gap(payload, tests_section)["reason"].startswith("пропущено")
+        return
+
+    assert search.call_count == 2
+    assert "tests/test_a.py#example" in payload["test_exemplars"]
+    store.fetch_retrieved_at_paths.assert_called_once()
+    if failure == "graph":
+        graph.expand_detailed.assert_called_once()
+        store.fetch_nodes.assert_not_called()
+        assert _gap(payload, "code.graph")["cause"] == "storage_unavailable"
+        assert _gap(payload, "test_exemplars.graph")["reason"].startswith("пропущено")
+    elif failure == "preflight_graph":
+        graph.expand_detailed.assert_not_called()
+        store.fetch_nodes.assert_not_called()
+        assert _gap(payload, "code.graph")["reason"].startswith("пропущено")
+    elif failure == "bad_query":
+        assert store.fetch_nodes.call_count == 2
+        assert _gap(payload, "code.graph_chunks")["cause"] == "unknown"
+        assert _gap(payload, "test_exemplars.graph_chunks")["cause"] == "unknown"
+    else:
+        assert graph.expand_detailed.call_count == store.fetch_nodes.call_count == 2
+        assert payload["code"].index("a.py#example") < payload["code"].index("b.py#example")
+        assert "tests/test_b.py#example" in payload["test_exemplars"]
+        assert not any(".graph" in gap["section"] for gap in payload["gaps"])

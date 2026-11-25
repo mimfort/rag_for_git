@@ -88,6 +88,7 @@ if TYPE_CHECKING:
     from reviewer.index.store import Retrieved
     from reviewer.policy.context_limits import CodeSectionLimits, ContextLimits
     from reviewer.policy.policy import ReviewPolicy
+    from reviewer.retrieval.multiquery import OptionalLookup
 
 log = logging.getLogger(__name__)
 
@@ -1916,7 +1917,8 @@ class MCPReviewService:
                                context_limits: "ContextLimits | None" = None,
                                git_excerpts: "list[Retrieved] | None" = None,
                                bm25_only: bool = False,
-                               explicit_paths: list[str] | None = None) -> str:
+                               explicit_paths: list[str] | None = None,
+                               optional_lookup: "OptionalLookup | None" = None) -> str:
         """Мультизапросный ретрив секций контекста задачи (PRI-255).
 
         Приватный: публичный search_codebase остаётся однозапросным, чтобы
@@ -1945,7 +1947,8 @@ class MCPReviewService:
                 hops=cl.graph.hops, branch=resolved, include_tests=include_tests,
                 augment_sources=augment_sources, strict=strict, tests_only=tests_only,
                 include_selection_stats=code_budget is not None, git_excerpts=git_excerpts,
-                bm25_only=bm25_only, explicit_paths=explicit_paths)
+                bm25_only=bm25_only, explicit_paths=explicit_paths,
+                optional_lookup=optional_lookup)
         except Exception as exc:
             if strict and (bm25_only or is_embedder_unavailable(exc)):
                 raise
@@ -3775,9 +3778,23 @@ class _TaskContextDeps:
         self._explicit_paths_cache: list[str] | None = None
         self._check_brief_snapshot = check_brief_snapshot
         self._indexed_sha = indexed_sha
+        self._optional_lookup: OptionalLookup | None = None
         self.augment_gaps: list[str] = []
         self.git_gap: str | None = None
         self.git_context_sha: str | None = None
+
+    def bind_optional_lookup(self, lookup: "OptionalLookup") -> None:
+        self._optional_lookup = lookup
+
+    def _lookup_in(self, section: str) -> "OptionalLookup | None":
+        optional_lookup = self._optional_lookup
+        if optional_lookup is None:
+            return None
+
+        def lookup(name, produce, reason, backend):
+            return optional_lookup(f"{section}.{name}", produce, reason, backend)
+
+        return lookup
 
     def _clone_path(self, repo: str) -> str:
         """Путь к локальному клону, строго относительно недоступности хранилища.
@@ -3992,13 +4009,15 @@ class _TaskContextDeps:
             context_limits=limits, git_excerpts=excerpts, code_budget=self._code_budget,
             bm25_only=bm25_only,
             explicit_paths=self._explicit_paths(repo, branch, queries),
+            optional_lookup=self._lookup_in("code"),
         )
 
     def test_exemplars(self, repo: str, branch: str, queries: list, *,
                        bm25_only: bool = False) -> str:
         return self._service._search_codebase_multi(
             repo, queries, branch, tests_only=True, strict=True, bm25_only=bm25_only,
-            explicit_paths=self._explicit_paths(repo, branch, queries))
+            explicit_paths=self._explicit_paths(repo, branch, queries),
+            optional_lookup=self._lookup_in("test_exemplars"))
 
     def lexical_search(self, repo: str, branch: str, queries: list[str], *,
                        tests_only: bool = False) -> str:
