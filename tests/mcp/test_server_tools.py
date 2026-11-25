@@ -21,6 +21,24 @@ def test_task_tools_registered():
     assert {"index_task", "search_tasks", "get_task_context"} <= names
 
 
+def test_prepare_task_context_exposes_explicit_requirement_split():
+    import asyncio
+
+    svc = _service()
+    svc.prepare_task_context.return_value = {"code": "context"}
+    server = create_server(svc)
+    tools = {tool.name: tool for tool in asyncio.run(server.list_tools())}
+    schema = tools["prepare_task_context"].inputSchema["properties"]
+    assert schema["split_free_text_requirements"]["default"] is False
+    request = {"repo": "o/n", "key": "body"}
+    asyncio.run(server.call_tool("prepare_task_context", request))
+    assert svc.prepare_task_context.call_args.kwargs["split_free_text_requirements"] is False
+    asyncio.run(server.call_tool(
+        "prepare_task_context", {**request, "split_free_text_requirements": True}))
+    assert svc.prepare_task_context.call_args.args[:2] == ("o/n", "body")
+    assert svc.prepare_task_context.call_args.kwargs["split_free_text_requirements"] is True
+
+
 def test_board_tools_advertise_generic_targets_and_options_only():
     import asyncio
 

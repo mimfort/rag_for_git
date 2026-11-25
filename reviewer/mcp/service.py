@@ -1966,7 +1966,8 @@ class MCPReviewService:
                              path: str | None = None,
                              warm_board: bool = True,
                              include_brief_evidence: bool = False,
-                             include_code_budget: bool = False) -> dict:
+                             include_code_budget: bool = False,
+                             split_free_text_requirements: bool = False) -> dict:
         """Единый контекст задачи для solve-task: преflight + сбор, один вызов.
 
         Свёртка 8-12 детерминированных тул-раундов скилла. Ни один сбой
@@ -1987,7 +1988,7 @@ class MCPReviewService:
         deps = _TaskContextDeps(self, path, budget, check_brief_snapshot=include_brief_evidence)
         payload = task_context.build_task_context(
             deps, repo=normalized_repo, key=key, branch=resolved,
-            warm_board=warm_board)
+            warm_board=warm_board, split_free_text_requirements=split_free_text_requirements)
         if deps.git_gap:
             payload["gaps"].append(task_context.gap("code.git_lexical", deps.git_gap))
         if include_brief_evidence:

@@ -278,8 +278,9 @@ def test_service_method_resolves_branch_and_delegates(monkeypatch):
 
     captured = {}
 
-    def fake_build(deps, *, repo, key, branch, warm_board):
-        captured.update(repo=repo, key=key, branch=branch, warm_board=warm_board)
+    def fake_build(deps, *, repo, key, branch, warm_board, split_free_text_requirements):
+        captured.update(repo=repo, key=key, branch=branch, warm_board=warm_board,
+                        split_free_text_requirements=split_free_text_requirements)
         return {"preflight": {"branch": branch}, "gaps": []}
 
     monkeypatch.setattr(service_mod.task_context, "build_task_context", fake_build)
@@ -288,9 +289,11 @@ def test_service_method_resolves_branch_and_delegates(monkeypatch):
     monkeypatch.setattr(
         service_mod.MCPReviewService, "_resolve_repo_branch",
         lambda self, repo, branch: ("owner/name", "dev"))
-    payload = svc.prepare_task_context("owner/name", "PRI-248", branch="dev")
+    payload = svc.prepare_task_context(
+        "owner/name", "PRI-248", branch="dev", split_free_text_requirements=True)
     assert captured["repo"] == "owner/name"
     assert captured["branch"] == "dev"
+    assert captured["split_free_text_requirements"] is True
     assert payload["preflight"]["branch"] == "dev"
 
 
@@ -333,7 +336,11 @@ def test_code_section_receives_subquery_list():
     assert all(q.startswith("как тестируется: ") for q in seen["tests"])
 
 
-def test_board_less_task_degenerates_to_single_query():
+@pytest.mark.parametrize("key, split", [
+    ("добавить эндпоинт логаута", False),
+    ("PRI-404", True),
+])
+def test_board_less_task_degenerates_to_single_query(key, split):
     """Без задачи в сторе набор равен одному запросу — поведение как прежде."""
     seen = {}
 
@@ -346,9 +353,57 @@ def test_board_less_task_degenerates_to_single_query():
             return ""
 
     task_context.build_task_context(Deps(task=None), repo="o/n",
-                                    key="добавить эндпоинт логаута",
-                                    branch="dev", warm_board=False)
-    assert seen["code"] == ["добавить эндпоинт логаута"]
+                                    key=key, branch="dev", warm_board=False,
+                                    split_free_text_requirements=split)
+    assert seen["code"] == [key]
+
+
+@pytest.mark.parametrize("split, has_card", [(False, False), (True, False), (True, True)])
+def test_free_text_requirement_queries_only_extend_code_when_opted_in(split, has_card):
+    seen = {}
+
+    class Capture(FakeDeps):
+        def code(self, repo, branch, queries):
+            seen["code"] = queries
+            return "code"
+
+        def test_exemplars(self, repo, branch, queries):
+            seen["tests"] = queries
+            return "tests"
+
+    text = "Переделать отчёт.\n## Requirements\n- Сохранить порядок.\n- Сохранить сроки."
+    task = {"title": "Обновить фильтры", "criteria": ["Проверить порядок."]} if has_card else None
+    task_context.build_task_context(
+        Capture(task=task), repo="o/n", key=text, branch="dev", warm_board=False,
+        split_free_text_requirements=split,
+    )
+    expected = ["Обновить фильтры", "Проверить порядок."] if has_card else [text]
+    assert seen["tests"] == [f"как тестируется: {query}" for query in expected]
+    assert seen["code"] == (
+        [text, "Сохранить порядок.", "Сохранить сроки."] if split and not has_card else expected
+    )
+
+
+def test_free_text_requirement_queries_reach_bm25_fallback():
+    from voyageai.error import APIError
+
+    seen = []
+
+    class Capture(FakeDeps):
+        def lexical_search(self, repo, branch, queries, *, tests_only=False):
+            seen.append((tests_only, queries))
+            return "lexical"
+
+    text = "Отчёт.\n## Требования\n- Сохранить порядок."
+    payload = task_context.build_task_context(
+        Capture(task=None, similar=APIError("HTTP code 403")), repo="o/n", key=text,
+        branch="dev", warm_board=False, split_free_text_requirements=True,
+    )
+    assert payload["code"] == payload["test_exemplars"] == "lexical"
+    assert seen == [
+        (False, [text, "Сохранить порядок."]),
+        (True, [f"как тестируется: {text}"]),
+    ]
 
 
 def test_test_queries_first_element_has_test_prefix_over_production_query():

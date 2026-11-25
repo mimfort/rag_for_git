@@ -12,9 +12,9 @@ or the execution strategy chosen in the startup survey (inline / subagent / lite
 
 ## Inputs
 
-`$ARGUMENTS` is either:
-- a task key (e.g. `PRI-4`, matching the board's `key_pattern`), or
-- a free-text description (e.g. "add a logout endpoint").
+`$ARGUMENTS` contains a task key or a free-text description. Before Step 0, record and remove
+a leading standalone `--split-requirements`. Use the remaining text as `task_input` throughout.
+If the flag is alone, ask for a task description with requirement bullets before calling MCP.
 
 ## Pipeline
 
@@ -30,9 +30,8 @@ or the execution strategy chosen in the startup survey (inline / subagent / lite
    repo explicitly disables the board.
 
    **Call `prepare_task_context(repo, key, branch, warm_board=True)` once here** — pass the
-   resolved `key` when `$ARGUMENTS` matches `key_pattern`, else board-less: pass the user's
-   formulation verbatim as `key` (the tool's `key` parameter is required and accepts free text
-   when no board key matches). It folds
+   resolved `key` when `task_input` matches `key_pattern`. Otherwise pass `task_input` verbatim
+   as `key` for free-text retrieval. Reuse it for all retries and fallback. The tool folds
    the manual round trips below into one deterministic call and returns a single payload:
    `preflight` (branch, indexed_sha, drift, summaries, chunks, graph_nodes — feeds Step 0.1/0.4
    below), `task_board`/`task` (feeds Step 2), `related`/`subsystems`/`code`/`test_exemplars`
@@ -55,13 +54,13 @@ or the execution strategy chosen in the startup survey (inline / subagent / lite
 **Brief-building unit (Steps 2–4) runs on the chosen model.** Steps 2–4 (identify → gather → distill
 → persist) are non-interactive; run them on the model chosen in the Step 0 startup survey. Dispatch
 a subagent on the chosen model when a per-subagent model override is available (session-less tools +
-`Read`/`Bash`/`Glob`/`Write` to persist the brief), passing the Step 0 `prepare_task_context` payload
+`Read`/`Bash`/`Glob`/`Write` to persist the brief), passing the Step 0 payload and `task_input`
 into its dispatch prompt so it does not re-call `prepare_task_context` or the tools it already
 replaced; otherwise build the brief inline. Details, the existing-artifacts pre-dispatch warn, the
 `Собран на:` marker line and the fail-open fallback are in `references/brief-format.md` below.
 
 2. **Identify the task.**
-   - If `$ARGUMENTS` matches the board's `key_pattern`:
+   - If `task_input` matches the board's `key_pattern`:
      1. **Store-first.** Use `payload.task` from the Step 0 `prepare_task_context` call — it already
         carries the task's own normalized content (`{key, aliases[], title, description, criteria[],
         status, url}`) from the reviewer store, refreshed by that call's board warm-up. Call reviewer
@@ -79,9 +78,9 @@ replaced; otherwise build the brief inline. Details, the existing-artifacts pre-
           `sync_board(board=<task_board.project or null>, board_type=<task_board.type>,
           provider_options=<task_board.options or {}>, limit=null, purge_orphaned=false)`, then
           retry `get_task(key, project=<task_board.project>)` once. Error or second miss →
-          board-less: treat `$ARGUMENTS` as the task description and record the gap.
-        - **Miss** AND no board: board-less — treat `$ARGUMENTS` as the task description.
-   - Otherwise: treat `$ARGUMENTS` as the task description; do not perform external task reads.
+          board-less: use `task_input` as the task description and record the gap.
+        - **Miss** AND no board: use `task_input` as the task description.
+   - Otherwise: use `task_input` as the task description; do not perform external task reads.
 
    Store-first cuts the double-fetch: `prepare_task_context`'s board warm-up already pulled the whole
    board into the reviewer store, and a miss gets one generic incremental sync/retry (fewer LLM

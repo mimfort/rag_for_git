@@ -9,6 +9,11 @@
    server exposes that argument. Read `code_budget` to distinguish file selection from
    rendering losses. The counts cover every candidate path, independent of relevance.
 
+   **Optional requirements search.** When the user set `--split-requirements` for
+   a free-text task, pass `task_input` verbatim with its Markdown bullets under
+   `## Requirements` or `## Acceptance criteria`. Set `split_free_text_requirements=True`
+   if the server advertises the argument. Keep the selected option on preflight retries.
+
    0. **Startup survey.** Ask the user, in **one panel** (`AskUserQuestion`), three questions at
       once. This is the only survey of the run: none of the three is asked again later. Talk to the
       user in Russian.
