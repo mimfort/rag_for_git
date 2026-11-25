@@ -138,6 +138,17 @@ def project_manifest_from(canonical: dict) -> dict:
     return projected
 
 
+def _project_claude_manifest(canonical: dict) -> dict:
+    projected = {
+        **canonical,
+        "skills": "./plugin/skills/",
+        "hooks": "./plugin/hooks/hooks.json",
+    }
+    # Claude already discovers the root .mcp.json.
+    projected.pop("mcpServers", None)
+    return projected
+
+
 def _canonical_json(data: dict) -> str:
     return json.dumps(data, indent=2, ensure_ascii=False) + "\n"
 
@@ -162,6 +173,7 @@ def sync_plugin_metadata(repo_root: Path, *, check: bool) -> list[str]:
     canonical_path = plugin_root / ".codex-plugin" / "plugin.json"
     project_path = repo_root / ".codex-plugin" / "plugin.json"
     claude_path = plugin_root / ".claude-plugin" / "plugin.json"
+    claude_project_path = repo_root / ".claude-plugin" / "plugin.json"
     payload_icon = plugin_root / "assets" / "icon.svg"
     source_icon = repo_root / "assets" / "icon.svg"
     diagnostics_source = repo_root / "reviewer" / "bugreport" / "diagnostics.py"
@@ -179,6 +191,10 @@ def sync_plugin_metadata(repo_root: Path, *, check: bool) -> list[str]:
         claude = json.loads(claude_path.read_text(encoding="utf-8"))
         claude["version"] = base_version
         claude_path.write_text(_canonical_json(claude), encoding="utf-8")
+        claude_project_path.parent.mkdir(parents=True, exist_ok=True)
+        claude_project_path.write_text(
+            _canonical_json(_project_claude_manifest(claude)), encoding="utf-8"
+        )
         # digest берётся после записи Claude-манифеста: он лежит внутри payload и,
         # в отличие от Codex-манифеста, его версия не нормализуется.
         canonical["version"] = expected_plugin_version(repo_root)
@@ -192,8 +208,15 @@ def sync_plugin_metadata(repo_root: Path, *, check: bool) -> list[str]:
     canonical = _checked_json(canonical_path, "canonical Codex manifest", errors)
     actual_project = _checked_json(project_path, "root Codex manifest", errors)
     claude = _checked_json(claude_path, "Claude manifest", errors)
-    if claude is not None and claude.get("version") != base_version:
-        errors.append(f"Claude manifest version {claude.get('version')!r} != {base_version!r}")
+    actual_claude_project = _checked_json(claude_project_path, "root Claude manifest", errors)
+    if claude is not None:
+        if claude.get("version") != base_version:
+            errors.append(f"Claude manifest version {claude.get('version')!r} != {base_version!r}")
+        if (
+            actual_claude_project is not None
+            and actual_claude_project != _project_claude_manifest(claude)
+        ):
+            errors.append("root Claude manifest is not the canonical path projection")
     if canonical is not None:
         expected = expected_plugin_version(repo_root)
         if canonical.get("version") != expected:
