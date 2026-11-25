@@ -9,6 +9,9 @@ class _FakeStore:
     def existing_hashes(self, repo, ref):
         return set()
 
+    def chunk_locations(self, repo, ref, paths):
+        return {}
+
     def find_embeddings_by_hashes(self, repo, hashes):
         return {}
 

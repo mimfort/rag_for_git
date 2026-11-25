@@ -93,7 +93,7 @@
      into the brief between Subsystems (or Related work) and Constraints / open questions. Replace
      both citation-section placeholders with this block. `empty` supplies a valid Relevant code
      section with no citations. The server's block includes its verification marker. For a rejected
-     reference, correct the anchor from the visible Step 0 rows and retry if appropriate, or use the
+     reference, correct the anchor from source and retry if appropriate, or use the
      per-reference verdicts to account for omissions in Constraints / open questions.
    - `invalid_format`: inspect the submitted records, correct the formatting (for example, make a
      multi-line reason a single line), and retry on the same connection. If rendering still fails,
@@ -113,6 +113,10 @@
    line consisting exactly of `[...truncated]`, exclude the row immediately before
    `[...truncated]` even if it appears numbered. Also exclude the marker and all subsequent rows
    in that section. Omit unmatched anchors.
+   If Step 0 returned `brief_line_checks` with nonzero `mismatched` or `unavailable` for
+   a section, the printed numbers alone do not suffice for that section. In the fallback,
+   confirm the exact text and line using the Git object at `brief_source_sha`. Omit
+   the citation if you cannot read that snapshot or confirm its anchor.
    In both cases, use the usual Relevant code and Test exemplars headings and the one-line
    `path:line — reason` form. Do not add `<!-- reviewer:verified-citations -->`.
 

@@ -46,10 +46,11 @@ def test_index_ref_not_validated_when_branch_given(m_update, m_lpf, m_far, m_rev
               "--repo", "a/x"]
     )
     assert res.exit_code == 0, res.output
-    # чтение файлов идёт с непроверенного ref v1.2 (не проверяется против
-    # отслеживаемых веток)...
-    m_lpf.assert_called_with(str(tmp_path), "v1.2")
-    assert m_rev.call_args.args[1] == "v1.2"
+    # Тег v1.2 принимается вне списка веток и закрепляется на одном коммите.
+    m_lpf.assert_called_with(str(tmp_path), "deadbeef")
+    assert m_rev.call_args.args[1] == "v1.2^{commit}"
+    assert all(call.args[2] == "deadbeef" for call in m_far.call_args_list)
+    assert m_graph.call_args.args[1] == "deadbeef"
     # ...а хранение (update_base принимает branch, не ref) — под явно заданной
     # меткой main
     assert m_update.call_args.args[3] == "main"

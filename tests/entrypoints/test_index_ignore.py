@@ -80,4 +80,4 @@ def test_index_uses_home_policy_without_committed_file(
     assert result.exit_code == 0, result.output
     assert captured["files"] == ["reviewer/a.py"]
     assert captured["ignore"] == ["vendor"]
-    assert committed_refs == [("/tmp/repo", ".review.yml", "main")]
+    assert committed_refs == [("/tmp/repo", ".review.yml", "deadbeef")]

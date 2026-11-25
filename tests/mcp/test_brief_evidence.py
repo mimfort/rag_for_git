@@ -2,6 +2,7 @@
 import asyncio
 import json
 import sqlite3
+import subprocess
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
 from types import SimpleNamespace
@@ -13,6 +14,7 @@ from reviewer.config.settings import Settings
 from reviewer.entrypoints.mcp_server import create_server
 from reviewer.index.store import Retrieved
 from reviewer.mcp import brief_evidence, task_context
+from reviewer.mcp.brief_anchors import check_brief_anchors
 from reviewer.mcp.brief_evidence import BriefEvidence
 from reviewer.mcp.schemas import BriefCitationIn
 from reviewer.mcp.service import MCPReviewService
@@ -31,6 +33,78 @@ TEST = """// tests/test_function.py#test_it (tests/test_function.py:7-7)
 
 def _citation(path, line, section="code"):
     return BriefCitationIn(path=path, line=line, section=section)
+
+
+def _git_snapshot(root, files):
+    for path, source in files.items():
+        target = root / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(source, encoding="utf-8")
+
+    def git(*args):
+        return subprocess.check_output(
+            ["git", "-C", str(root), "-c", "user.name=Tester",
+             "-c", "user.email=tester@example.invalid", "-c", "commit.gpgsign=false", *args],
+            text=True, stderr=subprocess.DEVNULL,
+        ).strip()
+
+    git("init")
+    git("add", ".")
+    git("commit", "-m", "fixture")
+    return git("rev-parse", "HEAD")
+
+
+def _matching_snapshot(root, code_path):
+    return _git_snapshot(root, {
+        code_path: "# header\ndef function():\n    standard_line()\n    unfinished_text()\n",
+        "tests/test_function.py": "\n" * 6 + "def test_it(): pass\n",
+    })
+
+
+def test_prepare_checks_displayed_lines_against_indexed_commit(monkeypatch, tmp_path):
+    sha = _git_snapshot(tmp_path, {
+        "code.py": "# changed position\ndef moved(): pass\ndef correct(): pass\n",
+        "tests/test_code.py": "def test_it(): pass\n",
+    })
+    (tmp_path / "code.py").write_text("def moved(): pass\n", encoding="utf-8")
+    (tmp_path / "tests/test_code.py").unlink()
+    service = MCPReviewService(Settings(), MagicMock())
+    monkeypatch.setattr(service, "_resolve_repo_branch", lambda repo, branch: (repo, "main"))
+    code = ("// code.py#moved (code.py:1-1)\n    1 | def moved(): pass\n\n"
+            "// code.py#correct (code.py:3-3)\n    3 | def correct(): pass\n\n"
+            "// other.py#other (other.py:1-1)\n    1 | def other(): pass")
+    test_exemplars = "// tests/test_code.py#test_it (tests/test_code.py:1-1)\n    1 | def test_it(): pass"
+    monkeypatch.setattr(task_context, "build_task_context", lambda *args, **kwargs: {
+        "preflight": {"indexed_sha": sha}, "code": code, "test_exemplars": test_exemplars,
+        "gaps": [], "warnings": [],
+    })
+
+    payload = service.prepare_task_context(
+        "owner/repo", "task", path=str(tmp_path), warm_board=False, include_brief_evidence=True,
+    )
+    result = service.verify_task_brief(payload["brief_evidence_id"], citations=[
+        _citation("code.py", 1),
+        _citation("code.py", 3),
+        _citation("other.py", 1),
+        _citation("tests/test_code.py", 1, "test_exemplars"),
+    ])
+    assert [item["status"] for item in result["citations"]] == [
+        "outside_excerpt", "verified", "path_unseen", "verified",
+    ]
+    assert payload["brief_line_checks"] == {
+        "code": {"checked": 2, "mismatched": 1, "unavailable": 1},
+        "test_exemplars": {"checked": 1, "mismatched": 0, "unavailable": 0},
+    }
+
+
+def test_shifted_block_does_not_verify_a_matching_line_belonging_to_another_function():
+    section = "// code.py#moved (code.py:1-2)\n    1 | def moved():\n    2 |     return 1"
+    source = "def original():\n    return 1\n\ndef moved():\n    return 1"
+
+    eligible, diagnostics = check_brief_anchors({"code": section}, lambda _: {"code.py": source})
+
+    assert eligible == {}
+    assert diagnostics["code"] == {"checked": 2, "mismatched": 1, "unavailable": 0}
 
 
 def test_checks_visible_rows_by_section_and_ignores_board_text():
@@ -141,10 +215,19 @@ def test_unavailable_state_keeps_prepare_usable(monkeypatch, tmp_path):
     monkeypatch.setenv("XDG_STATE_HOME", str(blocked))
     service = MCPReviewService(Settings(), MagicMock())
     monkeypatch.setattr(service, "_resolve_repo_branch", lambda repo, branch: (repo, "main"))
-    monkeypatch.setattr(task_context, "build_task_context", lambda *a, **kw: {"code": CODE})
+    clone = tmp_path / "clone"
+    clone.mkdir()
+    sha = _matching_snapshot(clone, "path with spaces.py")
+    monkeypatch.setattr(task_context, "build_task_context", lambda *a, **kw: {
+        "code": CODE, "preflight": {"indexed_sha": sha}, "gaps": [],
+    })
 
-    payload = service.prepare_task_context("owner/repo", "task", include_brief_evidence=True)
-    assert payload == {"code": CODE}
+    payload = service.prepare_task_context(
+        "owner/repo", "task", path=str(clone), include_brief_evidence=True,
+    )
+    assert payload["code"] == CODE
+    assert payload["brief_line_checks"]["code"] == {"checked": 2, "mismatched": 0, "unavailable": 0}
+    assert "brief_evidence_id" not in payload
     assert service.verify_task_brief("unknown", citations=[]) == {
         "status": "evidence_unavailable", "citations": [],
     }
@@ -176,10 +259,13 @@ def test_rendered_truncation_with_a_note_excludes_partial_row(section):
     ]
 
 
-def test_prepare_and_verify_are_available_through_mcp_without_retrieval_twice(monkeypatch):
+def test_prepare_and_verify_are_available_through_mcp_without_retrieval_twice(monkeypatch, tmp_path):
     service = MCPReviewService(Settings(), MagicMock())
     monkeypatch.setattr(service, "_resolve_repo_branch", lambda repo, branch: (repo, "main"))
-    build = MagicMock(side_effect=lambda *a, **kw: {"code": CODE, "test_exemplars": TEST})
+    sha = _matching_snapshot(tmp_path, "path with spaces.py")
+    build = MagicMock(side_effect=lambda *a, **kw: {
+        "code": CODE, "test_exemplars": TEST, "preflight": {"indexed_sha": sha}, "gaps": [],
+    })
     monkeypatch.setattr(task_context, "build_task_context", build)
     server = create_server(service)
 
@@ -188,7 +274,7 @@ def test_prepare_and_verify_are_available_through_mcp_without_retrieval_twice(mo
         return json.loads(output[0].text)
 
     async def scenario():
-        params = {"repo": "owner/repo", "key": "task", "warm_board": False}
+        params = {"repo": "owner/repo", "key": "task", "path": str(tmp_path), "warm_board": False}
         legacy = await call("prepare_task_context", params)
         assert "brief_evidence_id" not in legacy
         payload = await call(
@@ -208,8 +294,10 @@ def test_structured_brief_round_trips_only_verified_citations_through_mcp(monkey
     path = "`path with ``backticks``.py"
     service = MCPReviewService(Settings(), MagicMock())
     monkeypatch.setattr(service, "_resolve_repo_branch", lambda repo, branch: (repo, "main"))
+    sha = _matching_snapshot(tmp_path, path)
     build = MagicMock(return_value={
         "code": CODE.replace("path with spaces.py", path), "test_exemplars": TEST,
+        "preflight": {"indexed_sha": sha}, "gaps": [],
     })
     monkeypatch.setattr(task_context, "build_task_context", build)
     server = create_server(service)
@@ -226,7 +314,7 @@ def test_structured_brief_round_trips_only_verified_citations_through_mcp(monkey
 
     async def scenario():
         prepared = await server.call_tool("prepare_task_context", {
-            "repo": "owner/repo", "key": "task", "warm_board": False,
+            "repo": "owner/repo", "key": "task", "path": str(tmp_path), "warm_board": False,
             "include_brief_evidence": True,
         })
         verify = {
