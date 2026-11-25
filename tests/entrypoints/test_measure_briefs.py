@@ -56,7 +56,7 @@ def test_measure_corpus_discovers_keys_in_head_despite_worktree_edits(tmp_path, 
 
     def run_git(args):
         if args[0] == "log":
-            assert args[-1] == "--grep=PRI-1"
+            assert args[-1] == "--grep=(^|[^[:alnum:]])PRI-1([^[:alnum:]]|$)"
             return f"{head} Merge pull request #7 from o/feat/pri-1\n"
         if args[:2] == ["diff", "--name-status"]:
             return "M\0reviewer/app.py\0"

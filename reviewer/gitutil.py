@@ -94,6 +94,12 @@ def remove_worktree(repo: str, path: str) -> None:
     shutil.rmtree(os.path.dirname(path), ignore_errors=True)
 
 
+def task_key_grep_pattern(key: str) -> str:
+    """Литеральный ключ с границами токена для git log --extended-regexp."""
+    literal = "".join("\\" + char if char in r"\.^$|?*+()[]{}" else char for char in key)
+    return f"(^|[^[:alnum:]]){literal}([^[:alnum:]]|$)"
+
+
 def paths_touched_by_grep(repo: str, pattern: str, *, limit: int,
                          indexed_sha: str | None = None) -> list[str]:
     """Пути коммитов, где сообщение содержит отдельный ключ задачи.
@@ -112,8 +118,7 @@ def paths_touched_by_grep(repo: str, pattern: str, *, limit: int,
     if indexed_sha is not None and not re.fullmatch(r"[0-9a-f]{40}(?:[0-9a-f]{24})?", indexed_sha):
         raise ValueError("Для git-фолбэка нужен полный SHA индекса")
     revision = indexed_sha or "HEAD"
-    literal = "".join("\\" + char if char in r"\.^$|?*+()[]{}" else char for char in pattern)
-    exact = f"(^|[^[:alnum:]]){literal}([^[:alnum:]]|$)"
+    exact = task_key_grep_pattern(pattern)
     try:
         out = _git(repo, "--no-replace-objects", "log", f"-n{limit}", "--name-only",
                    "--diff-merges=first-parent", "--pretty=format:",

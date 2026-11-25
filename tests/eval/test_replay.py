@@ -6,6 +6,7 @@ import pathlib
 from eval.solve_task_metrics import replay, replay_history
 from eval.solve_task_metrics.__main__ import resolve_paths
 from eval.solve_task_metrics.config import DEFAULT
+from reviewer.gitutil import task_key_grep_pattern
 
 BRIEF = """# Brief — {key}
 
@@ -42,12 +43,13 @@ class FakeGit:
 
     def __init__(self, changed_by_key, missing=()):
         self.changed_by_key = changed_by_key
+        self.keys_by_grep = {f"--grep={task_key_grep_pattern(key)}": key for key in changed_by_key}
         self.missing = set(missing)
 
     def __call__(self, args):
         if args[0] == "log":
-            key = args[-1].removeprefix("--grep=")
-            if key in self.missing or key not in self.changed_by_key:
+            key = self.keys_by_grep.get(args[-1])
+            if key is None or key in self.missing:
                 return ""
             return f"sha{key} Merge pull request #1 from owner/branch\n"
         if args[0] == "diff" and "--name-only" in args:
