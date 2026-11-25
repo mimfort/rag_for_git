@@ -108,6 +108,44 @@ def test_capture_and_revalidate_refs(repository, tmp_path):
     assert brief.read_bytes() == stamped
 
 
+@pytest.mark.parametrize("edit,expected", [
+    ("swap", [("moved", 7), ("moved", 3)]),
+    ("replace", [("ambiguous", None), ("ambiguous", None)]),
+    ("append", [("unchanged", None), ("unchanged", None)]),
+])
+def test_repeated_lines_are_checked_with_surrounding_text(repository, tmp_path, edit, expected):
+    root, _ = repository
+    original = "def original():\n    # Original default\n    return 1\n\n"
+    alternate = "def alternate():\n    # Alternate default\n    return 1\n\n"
+    file = root / "calculate.py"
+    file.write_text(original + alternate, encoding="utf-8")
+    source = commit(root, "two functions with the same return")
+    brief = tmp_path / "repeated.md"
+    brief.write_text(
+        "## Relevant code\n<!-- reviewer:verified-citations -->\n\n"
+        "- `calculate.py:3` — Original default\n"
+        "- `calculate.py:7` — Alternate default\n",
+        encoding="utf-8",
+    )
+    captured = invoke(root, brief, "--indexed-sha", source, "--repo", "owner/repo", "--branch", "dev")
+    assert captured["status"] == "captured"
+    saved = brief.read_bytes()
+
+    updated = {
+        "swap": alternate + original,
+        "replace": original.replace("Original default", "New original comment")
+        + alternate.replace("Alternate default", "New alternate comment"),
+        "append": original + alternate + "# Unrelated edit at the end\n",
+    }[edit]
+    file.write_text(updated, encoding="utf-8")
+    target = commit(root, edit)
+
+    result = invoke(root, brief)
+    assert result["target_sha"] == target
+    assert [(r["status"], r.get("suggested_line")) for r in result["citations"]] == expected
+    assert brief.read_bytes() == saved
+
+
 def test_legacy_brief_remains_readable(repository, tmp_path):
     root, source = repository
     brief = tmp_path / "legacy.md"

@@ -89,6 +89,27 @@ def prepare_case(git: GitCheckout, source: str, brief: str, context: str):
     return selected, blobs, exclusions
 
 
+def suggestion_proof(source: list[bytes], target: list[bytes], line: int, suggested: int) -> str | None:
+    """Независимо проверить номер по строке или точному окну из Git."""
+    original = source[line - 1]
+    if not original.strip() or not 1 <= suggested <= len(target) or target[suggested - 1] != original:
+        return None
+    if source.count(original) == target.count(original) == 1:
+        return "line"
+    for radius in (1, 2):
+        start = max(0, line - 1 - radius)
+        window = source[start:line + radius]
+        if not any(row.strip() and row != original for row in window):
+            continue
+        target_start = suggested - line + start
+        if target_start < 0 or target[target_start:target_start + len(window)] != window:
+            continue
+        if all(sum(rows[i:i + len(window)] == window
+                   for i in range(len(rows) - len(window) + 1)) == 1 for rows in (source, target)):
+            return "context"
+    return None
+
+
 def replay_case(root: str, source: str, target: str, anchors, blobs):
     # Для времени проверки не используем Git-кэш, заполненный разметкой эксперимента.
     git = GitCheckout(root)
@@ -101,7 +122,8 @@ def replay_case(root: str, source: str, target: str, anchors, blobs):
         source_text = git.git("show", f"{source}:{path}")
         target_text = git.git("show", f"{target}:{path}")
         assert source_text is not None
-        original = source_text.splitlines()[line - 1]
+        source_rows = source_text.splitlines()
+        original = source_rows[line - 1]
         other = target_text.splitlines() if target_text is not None else []
         observed_drift = line > len(other) or original != other[line - 1]
         detected_drift = result["status"] in {"changed", "moved", "ambiguous", "path_missing"}
@@ -109,8 +131,9 @@ def replay_case(root: str, source: str, target: str, anchors, blobs):
         result["observed_drift"] = observed_drift
         result["detected_drift"] = detected_drift
         if suggested is not None:
-            result["correct_suggestion"] = (other[suggested - 1] == original
-                                            and other.count(original) == 1)
+            proof = suggestion_proof(source_rows, other, line, suggested)
+            result["correct_suggestion"] = proof is not None
+            result["suggestion_proof"] = proof
     return {"target_sha": target, "elapsed_ms": round(elapsed_ms, 3), "citations": verdicts}
 
 
@@ -127,6 +150,7 @@ def summarize(cases: dict, arm: str) -> dict:
         "false_drift": sum(not row["observed_drift"] and row["detected_drift"]
                            for row in citations),
         "correct_suggestions": sum(row.get("correct_suggestion", False) for row in citations),
+        "context_suggestions": sum(row.get("suggestion_proof") == "context" for row in citations),
         "median_ms": round(median(row["elapsed_ms"] for row in pairs), 3) if pairs else None,
     }
 

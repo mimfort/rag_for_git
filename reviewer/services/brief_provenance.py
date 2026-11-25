@@ -137,19 +137,53 @@ def capture(
     }, updated if blobs else text
 
 
+def _unique_context_position(
+    rows: list[bytes], positions: list[int], window: list[bytes], offset: int,
+) -> int | None:
+    matches = [position for position in positions if position >= offset
+               and rows[position - offset:position - offset + len(window)] == window]
+    return matches[0] if len(matches) == 1 else None
+
+
+def _find_repeated_anchor(
+    source: list[bytes], target: list[bytes], index: int,
+    source_positions: list[int], target_positions: list[int],
+) -> int | None:
+    for radius in (1, 2):
+        start = max(0, index - radius)
+        window = source[start:index + radius + 1]
+        if not any(row.strip() and row != source[index] for row in window):
+            continue
+        offset = index - start
+        if _unique_context_position(source, source_positions, window, offset) != index:
+            continue
+        position = _unique_context_position(target, target_positions, window, offset)
+        if position is not None:
+            return position
+    return None
+
+
 def _find_anchor(source: list[bytes], target: list[bytes], line: int) -> dict:
-    """Сдвиг предлагаем только для строки с единственным совпадением в обоих снимках."""
+    """Сдвиг требует единственного совпадения строки или её окружения в обоих снимках."""
     if line > len(source):
         return {"status": "source_unavailable"}
-    original = source[line - 1]
-    if line <= len(target) and target[line - 1] == original:
-        return {"status": "unchanged"}
-    positions = [index for index, candidate in enumerate(target, 1) if candidate == original]
-    if not positions or not original.strip():
+    index = line - 1
+    original = source[index]
+    target_positions = [i for i, row in enumerate(target) if row == original]
+    if not original.strip():
+        return {"status": "unchanged" if index in target_positions else "changed"}
+    if not target_positions:
         return {"status": "changed"}
-    if len(positions) != 1 or source.count(original) != 1:
+    source_positions = [i for i, row in enumerate(source) if row == original]
+    if len(source_positions) == len(target_positions) == 1:
+        position = target_positions[0]
+    else:
+        position = _find_repeated_anchor(source, target, index, source_positions, target_positions)
+    if position is None:
         return {"status": "ambiguous"}
-    return {"status": "moved", "suggested_line": positions[0]}
+    if position == index:
+        return {"status": "unchanged"}
+    return {"status": "moved", "suggested_line": position + 1}
 
 
 def compare_citations(
